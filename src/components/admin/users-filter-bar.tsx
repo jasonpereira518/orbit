@@ -112,7 +112,8 @@ function FilterGroup({
     <div
       role="group"
       aria-label={label}
-      className="flex items-center gap-0.5 rounded-lg border border-border/70 p-0.5"
+      // Wraps rather than overflowing: the five states ran 25px past a 360px screen.
+      className="flex max-w-full flex-wrap items-center gap-0.5 rounded-lg border border-border/70 p-0.5"
     >
       {options.map((option) => (
         <button
@@ -121,7 +122,7 @@ function FilterGroup({
           onClick={() => onSelect(option.value)}
           aria-pressed={value === option.value}
           className={cn(
-            "rounded-md px-2 py-1 text-xs transition-colors duration-fast",
+            "rounded-md px-2 py-1 text-xs whitespace-nowrap transition-colors duration-fast",
             value === option.value
               ? "bg-accent/15 text-accent-foreground"
               : "text-muted-foreground hover:text-foreground"

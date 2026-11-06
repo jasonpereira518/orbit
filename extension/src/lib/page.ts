@@ -107,7 +107,8 @@ export async function readActivePage(): Promise<PageReadResult> {
 
 /** Best display name for whoever the page is about. */
 export function pageDisplayName(page: PageContext): string | null {
-  return page.identity.name?.value ?? null;
+  // An event page names the event, not a person.
+  return page.identity.name?.value ?? page.roster?.title ?? null;
 }
 
 export function pageSubtitle(page: PageContext): string | null {
@@ -124,6 +125,8 @@ const SITE_LABELS: Record<PageContext["site"], string> = {
   linkedin: "LinkedIn",
   x: "X",
   gmail: "Gmail",
+  luma: "Luma",
+  partiful: "Partiful",
   generic: "Web",
 };
 

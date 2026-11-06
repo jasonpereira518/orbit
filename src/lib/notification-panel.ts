@@ -1,6 +1,6 @@
-import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { aiSuggestions, captureJobs, contacts, reminders, suggestedReminders } from "@/db/schema";
+import { aiSuggestions, captureJobs, cloudNoteFiles, contacts, reminders, suggestedReminders } from "@/db/schema";
 import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
 import {
   getAccountAlerts,
@@ -8,6 +8,9 @@ import {
   type AccountHealthContext,
 } from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
+
+/** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
+const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
 /** Upcoming follow-ups are shown this far ahead; further out is noise. */
 const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
@@ -34,7 +37,7 @@ const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 export async function loadNotificationPanel(
   userId: string,
   now: Date,
-  opts: { withAlerts: boolean; radar?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
+  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
 ) {
   const db = await getDb();
   const context: AccountHealthContext | undefined = opts.settings
@@ -53,6 +56,7 @@ export async function loadNotificationPanel(
     alerts,
     captureRows,
     radarRows,
+    cloudNoteRows,
   ] = await Promise.all([
     db.query.reminders.findMany({
       where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
@@ -79,10 +83,24 @@ export async function loadNotificationPanel(
       orderBy: (c, { asc: ascOrder }) => [ascOrder(c.nextFollowUpAt)],
       limit: 100,
     }),
+    // A suggestion about a contact that no longer exists in this account is dropped, as the
+    // dashboard (`loadDashboardSuggestions`) and the chat attention brief already do:
+    // `related_contact_ids` is jsonb with no foreign key, so deleting the contact leaves the
+    // suggestion behind, and the panel would keep naming them with a link that 404s. Filtered
+    // in SQL so ghosts do not use up the 30 rows.
     db.query.aiSuggestions.findMany({
       where: and(
         eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending")
+        eq(aiSuggestions.status, "pending"),
+        sql`(
+          coalesce(${aiSuggestions.relatedContactIds} ->> 0, '') = ''
+          or exists (
+            select 1 from ${contacts} live
+            where live.user_id = ${userId}
+              and live.id = case when (${aiSuggestions.relatedContactIds} ->> 0) ~ ${CANONICAL_UUID_RE}
+                                 then (${aiSuggestions.relatedContactIds} ->> 0)::uuid end
+          )
+        )`
       ),
       orderBy: (s, { desc: descOrder }) => [descOrder(s.confidenceScore)],
       limit: 30,
@@ -123,13 +141,35 @@ export async function loadNotificationPanel(
            WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
         `)
       : null,
+    // Cloud notes: docs found and waiting, plus ones the scan extracted that nobody has been
+    // told about yet. Same gating as Radar — off unless the viewer can use the feature.
+    opts.cloudNotes
+      ? db
+          .select({
+            id: cloudNoteFiles.id,
+            fileId: cloudNoteFiles.fileId,
+            name: cloudNoteFiles.name,
+            provider: cloudNoteFiles.provider,
+            status: cloudNoteFiles.status,
+            notifiedAt: cloudNoteFiles.notifiedAt,
+          })
+          .from(cloudNoteFiles)
+          .where(
+            and(
+              eq(cloudNoteFiles.userId, userId),
+              sql`(${cloudNoteFiles.status} = 'found' OR (${cloudNoteFiles.status} = 'queued' AND ${cloudNoteFiles.notifiedAt} IS NULL AND ${cloudNoteFiles.detectedBy} <> 'picked'))`
+            )
+          )
+          .orderBy(desc(cloudNoteFiles.modifiedAt))
+          .limit(50)
+      : [],
   ]);
   const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
 
   type PanelItem = {
     id: string;
-    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review";
+    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review" | "cloud_notes";
     title: string;
     body: string | null;
     url: string;
@@ -146,11 +186,51 @@ export async function loadNotificationPanel(
 
   const items: PanelItem[] = [];
 
+  /**
+   * Contacts that already appear below as a due follow-up.
+   *
+   * The dashboard drops two kinds of reminder beside such a contact (`loadDashboardReminders`
+   * in lib/reminders.ts); the panel did not, so the same piece of work was listed twice and
+   * the bell's badge was inflated for exactly the contacts the user was most behind on:
+   *
+   *   1. a *generated* reminder ("Send Sarah the retrieval write-up" beside "Follow up with
+   *      Sarah Chen");
+   *   2. the reminder a day preset books beside the contact's clock: the same instant, the
+   *      scheduler's own wording. It IS the follow-up row below.
+   *
+   * A hand-written reminder that merely shares the instant is still its own thing and is
+   * still listed.
+   */
+  const dueFollowUpContacts = new Map(
+    contactRows
+      .filter((c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt) <= now)
+      .map((c) => [c.id, c])
+  );
+
   for (const r of pendingReminders) {
+    const pair = r.contactId ? dueFollowUpContacts.get(r.contactId) : undefined;
+    if (
+      pair &&
+      (r.reminderType === "generated" ||
+        (r.dueDate !== null &&
+          new Date(r.dueDate).getTime() === new Date(pair.nextFollowUpAt!).getTime() &&
+          r.title === `Follow up with ${pair.preferredName || pair.fullName}`))
+    ) {
+      continue;
+    }
     const dueAt = r.dueDate ? new Date(r.dueDate) : null;
-    const isDue = !dueAt || dueAt <= now;
+    // An undated reminder is not overdue work. It used to count as "due now", so a note
+    // captured without a date went straight into the bell's due count.
+    const isDue = dueAt !== null && dueAt <= now;
     items.push({
-      id: `reminder:${r.id}`,
+      // Scoped by due date, exactly as the follow-up id below is.
+      //
+      // A bare `reminder:<uuid>` is permanent, and `desktopNotifiedIds` remembers every
+      // id it has ever fired for (capped at 200). So a reminder could raise an OS
+      // notification exactly once, ever: snooze it a week and the id was already spent,
+      // so it came due again in silence. Follow-ups never had this because their id
+      // carries the date; reminders now match.
+      id: `reminder:${r.id}:${dueAt ? dueAt.toISOString().slice(0, 10) : "undated"}`,
       kind: "reminder",
       title: r.title,
       body: r.description,
@@ -238,6 +318,25 @@ export async function loadNotificationPanel(
     });
   }
 
+  // One row for every doc waiting, never one per doc: a first look-back can find a dozen.
+  const found = cloudNoteRows.filter((r) => r.status === "found");
+  if (found.length > 0) {
+    const providers = new Set(found.map((r) => r.provider));
+    const where = providers.size > 1 ? "Drive and OneDrive" : providers.has("google") ? "Google Drive" : "OneDrive";
+    items.push({
+      id: "cloud-notes:found",
+      kind: "cloud_notes",
+      title: `${found.length} meeting ${found.length === 1 ? "note" : "notes"} found in ${where}`,
+      body: found
+        .slice(0, 2)
+        .map((r) => r.name)
+        .join(", ") + (found.length > 2 ? ` and ${found.length - 2} more` : ""),
+      url: "/capture?mode=cloud&review=1",
+      dueAt: null,
+      urgency: "info",
+    });
+  }
+
   const urgencyRank = { due: 0, upcoming: 1, info: 2 } as const;
   items.sort((a, b) => {
     const ur = urgencyRank[a.urgency] - urgencyRank[b.urgency];
@@ -274,6 +373,18 @@ export async function loadNotificationPanel(
      */
     alerts,
     alertDot: hasErrorAlert(alerts),
+    /**
+     * Docs nobody has been toasted about yet — the watcher toasts once, then stamps them.
+     * Absent when empty, like `radar`.
+     */
+    cloudNotes: cloudNoteRows.some((r) => !r.notifiedAt)
+      ? {
+          newFound: cloudNoteRows
+            .filter((r) => r.status === "found" && !r.notifiedAt)
+            .map((r) => ({ id: r.id, name: r.name, provider: r.provider, fileId: r.fileId })),
+          newExtracted: cloudNoteRows.filter((r) => r.status === "queued").map((r) => ({ id: r.id, name: r.name })),
+        }
+      : undefined,
   };
 }
 

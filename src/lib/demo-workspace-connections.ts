@@ -56,6 +56,7 @@ export function demoOutlookConnectionStatus(
     hasContactsScope: true,
     hasCalendarScope: true,
     hasMailScope: true,
+    canSend: true,
     syncPaused: false,
     status: "active",
     syncError: null,

@@ -20,13 +20,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { IntentLink } from "@/components/ui/intent-link";
-import { integrationHref } from "@/components/settings/sections";
+import { AiKeyNotice } from "@/components/ai-key-notice";
 import { explainRecommendationAction } from "@/actions/radar";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { safeHttpUrl } from "@/lib/safe-links";
 import { friendlyError } from "@/lib/errors";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import {
+  JOB_MOVE_CODE,
   KIND_LABELS,
+  draftIntent,
+  leadReason,
   type RadarAiNote,
   type RadarDraft,
   type RadarEvidence,
@@ -40,7 +45,7 @@ import { useRadarKeys } from "@/components/radar/use-radar-keys";
 import { useRecommendationActions } from "@/components/radar/use-recommendation-actions";
 
 /** Reasons that describe the person rather than a fact about now. Shown as quiet chips. */
-const CONTEXT_CODES = new Set(["tier", "priority", "stated_close", "target_company", "goal_match"]);
+const CONTEXT_CODES = new Set(["tier", "priority", "stated_close", "target_company", "goal_match", "focus_match"]);
 /** Reasons that argue against the card. Kept for the score, never shown. */
 const HIDDEN_CODES = new Set(["touched_recently", "dismissed_recently", "already_scheduled"]);
 
@@ -83,6 +88,10 @@ export function RecommendationCard({
   const [writing, start] = useTransition();
   const pending = actions.pending || writing;
   const [note, setNote] = useState<{ why: string; opener: string } | null>(rec.aiNote);
+  // Kept with the `aiAvailable` it was seen under, so the notice resets when access changes
+  // (a key added, credits refilled) without a setState in an effect.
+  const [refusal, setRefusal] = useState<{ reason: AiAccessDenial; aiAvailable: boolean } | null>(null);
+  const denial = refusal && refusal.aiAvailable === aiAvailable ? refusal.reason : null;
 
   useRadarKeys(shortcuts && !actions.collapsed, (command) => {
     if (pending) return;
@@ -98,16 +107,19 @@ export function RecommendationCard({
   const lead = facts[0];
   const evidence = rec.evidence[0];
   const evidenceUrl = safeHttpUrl(evidence?.url);
-  const companyColor = companyBrandColor(rec.company);
+  const companyBrand = companyBrandText(rec.company);
 
   const writeWhy = () =>
     start(async () => {
       try {
         const result = await explainRecommendationAction(rec.id);
         if (!result.ok) {
-          toast.error(result.message);
+          const d = aiDenialFromMessage(result.message);
+          if (d) setRefusal({ reason: d, aiAvailable });
+          else toast.error(result.message);
           return;
         }
+        setRefusal(null);
         if (result.why || result.opener) setNote({ why: result.why ?? "", opener: result.opener ?? "" });
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t write that just now — try again?"));
@@ -136,11 +148,11 @@ export function RecommendationCard({
                   {rec.contactName}
                 </IntentLink>
                 {rec.tier && <ClosenessTierBadge tier={rec.tier} />}
-                <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide", KIND_STYLES[rec.kind])}>
+                <span className={cn("rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide", KIND_STYLES[rec.kind])}>
                   {KIND_LABELS[rec.kind]}
                 </span>
                 {rec.draft && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-primary">
                     Draft ready
                   </span>
                 )}
@@ -150,7 +162,7 @@ export function RecommendationCard({
                   {rec.title}
                   {rec.title && rec.company ? " · " : ""}
                   {rec.company && (
-                    <span className="font-medium" style={companyColor ? { color: companyColor } : undefined}>
+                    <span className={cn("font-medium", companyBrand?.className)} style={companyBrand?.style}>
                       {rec.company}
                     </span>
                   )}
@@ -240,19 +252,16 @@ export function RecommendationCard({
                   )}
                 </div>
               ) : showAiPrompt ? (
-                aiAvailable ? (
+                denial ? (
+                  <div className="mt-2">
+                    <AiKeyNotice feature="draft" reason={denial} compact />
+                  </div>
+                ) : aiAvailable ? (
                   <button type="button" onClick={writeWhy} disabled={pending} className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline disabled:opacity-50">
                     <Sparkles className="size-3" aria-hidden />
                     Write a one-line why and an opener
                   </button>
-                ) : (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    <Link href={integrationHref("ai")} className="text-primary hover:underline">
-                      Add an AI key
-                    </Link>{" "}
-                    for a one-line why and an opener.
-                  </p>
-                )
+                ) : null
               ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-1.5 pointer-coarse:gap-3">
@@ -321,17 +330,43 @@ export function RecommendationCard({
               <X className="size-4" aria-hidden />
             </Button>
           </div>
-          {draftOpen && (
-            <FollowUpDraftSheetLazy
-              open={draftOpen}
-              onOpenChange={setDraftOpen}
-              contactId={rec.contactId}
-              contactName={rec.contactName}
-              initialDraft={rec.draft?.body}
-            />
-          )}
+          {draftOpen && <RecommendationDraftSheet rec={rec} actions={actions} />}
         </article>
       </div>
     </div>
+  );
+}
+
+/**
+ * The draft sheet as a card opens it: told why the card exists, so a fallback draft or a
+ * Regenerate is about that and not a generic follow-up. A new job reads as a congratulation.
+ * A sent email folds the card away (the send retires it server-side once it goes out), and
+ * the toast's Undo brings it back.
+ */
+export function RecommendationDraftSheet({
+  rec,
+  actions,
+}: {
+  rec: RecommendationCardData;
+  actions: ReturnType<typeof useRecommendationActions>;
+}) {
+  const congrats = leadReason(rec.reasons)?.code === JOB_MOVE_CODE;
+  const firstName = rec.contactName.split(/\s+/)[0] || rec.contactName;
+  return (
+    <FollowUpDraftSheetLazy
+      open={actions.draftOpen}
+      onOpenChange={actions.setDraftOpen}
+      contactId={rec.contactId}
+      contactName={rec.contactName}
+      initialDraft={rec.draft?.body}
+      intent={draftIntent(rec)}
+      onSent={actions.hide}
+      onUndone={actions.unhide}
+      {...(congrats && {
+        title: `Congratulate ${firstName}`,
+        description: "A short note on the new role, then send it or mark it sent.",
+        subject: rec.company ? `Congrats on ${rec.company}` : "Congrats on the new role",
+      })}
+    />
   );
 }

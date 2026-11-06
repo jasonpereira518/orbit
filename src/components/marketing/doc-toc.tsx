@@ -103,7 +103,7 @@ export function DocToc({ items }: { items: readonly TocItem[] }) {
         aria-label="On this page"
         className="hidden lg:sticky lg:top-8 lg:block lg:self-start"
       >
-        <p className="mb-3 pl-2.5 text-[11px] uppercase tracking-[0.18em] text-[#6d807c]">
+        <p className="mb-3 pl-2.5 text-2xs uppercase tracking-[0.18em] text-[#6d807c]">
           On this page
         </p>
         {links}

@@ -17,6 +17,7 @@ import { eq } from "drizzle-orm";
 import { getDb, isPgvectorAvailable } from "../src/db";
 import { contacts, contactEmbeddings, tags, contactTags } from "../src/db/schema";
 import { hybridSearchContacts } from "../src/lib/hybrid-search";
+import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 
 const U = "smoke-hybrid-user";
 
@@ -112,6 +113,26 @@ async function main() {
   const ids = hits.map((h) => h.id);
   check("fusion keeps both arms' hits", ids.includes(grace.id) && ids.includes(ada.id));
 
+  // 4b. A pending embedding (LATENCY_PLAN DB-6): the lexical arms must not wait for it, and
+  // the answer must be the one a resolved embedding gives.
+  {
+    startQueryCount();
+    let issuedBeforeEmbedding = -1;
+    const pending = new Promise<number[]>((resolve) =>
+      setTimeout(() => {
+        issuedBeforeEmbedding = capturedQueries().length;
+        resolve(axisVector(0));
+      }, 80)
+    );
+    const viaPending = await hybridSearchContacts(U, { query: "Hopper", embedding: pending });
+    stopQueryCount();
+    check("lexical arms are issued before a pending embedding resolves", issuedBeforeEmbedding >= 2, String(issuedBeforeEmbedding));
+    check(
+      "a pending embedding gives the same ranking as a resolved one",
+      JSON.stringify(viaPending.map((h) => [h.id, h.matchedArms])) === JSON.stringify(hits.map((h) => [h.id, h.matchedArms]))
+    );
+  }
+
   // 5. Mixed recall-guard case: the industry filter matches exactly Ada, while
   // the unfiltered query "engineer" also lexically matches Grace (her title).
   // Filtered hits must lead with relevance 1 and filterMatched true; backfill
@@ -145,6 +166,18 @@ async function main() {
   hits = await hybridSearchContacts(U, { query: "hopper", filters: { tags: ["mentor"] } });
   check("tag filter keeps Grace", hits.length === 1 && hits[0].id === grace.id);
   check("tag-filtered Grace is filterMatched", hits[0]?.filterMatched === true);
+
+  // 6b. A country parsed into its cities: the cities are searched for, not only filtered on
+  // (the question names none of them), and the fifth value still counts.
+  hits = await hybridSearchContacts(U, {
+    query: "Who do I know in England?",
+    filters: { locations: ["England", "Manchester", "Birmingham", "Leeds", "London"] },
+  });
+  check(
+    "country-as-cities filter finds the London contacts as filtered matches",
+    [ada.id, alan.id].every((id) => hits.some((h) => h.id === id && h.filterMatched)),
+    JSON.stringify(hits.map((h) => [h.fullName, h.filterMatched]))
+  );
 
   // 7. Recall guard: absurd filter falls back to unfiltered rather than empty.
   hits = await hybridSearchContacts(U, {

@@ -13,6 +13,7 @@ import { PricingFaq } from "@/components/pricing/pricing-faq";
 import { PricingTiers } from "@/components/pricing/pricing-tiers";
 import { AI_POSITIONING } from "@/lib/plan-copy";
 import { FREE_CONTACT_LIMIT, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
+import { CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { isCheckoutConfigured } from "@/lib/stripe-config";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 
@@ -20,7 +21,7 @@ const PRO_PRICE = formatPlanPrice(PLAN_CONFIG.orbit.monthlyPriceCents ?? 0);
 const MAX_PRICE = formatPlanPrice(PLAN_CONFIG.max.monthlyPriceCents ?? 0);
 
 export const metadata: Metadata = {
-  title: "Pricing — Orbit",
+  title: "Pricing",
   description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. Orbit Pro is ${PRO_PRICE} a month and Orbit Max ${MAX_PRICE} a month, both with AI included. ${AI_POSITIONING}`,
 };
 
@@ -41,7 +42,7 @@ const TRUST = [
   {
     icon: Sparkles,
     title: "AI included, never auto-charged",
-    body: "Pro and Max include AI credits each month. Run out and AI simply pauses until you choose a $5 pack or it resets — nothing is ever charged automatically.",
+    body: `Free, Pro and Max include AI credits each month. Run out and AI simply pauses until you choose a ${CREDIT_PACK_PRICE_LABEL} pack or it resets — nothing is ever charged automatically.`,
   },
 ];
 
@@ -67,8 +68,10 @@ export default function PricingPage() {
           instead of flashing PricingPageSkeleton. No-op on a direct load. */}
       <WarpArrivalBeacon />
 
-      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-6 md:px-10">
-        <div className="flex items-center gap-4">
+      {/* Tighter on phones: at 360px Back, the wordmark and both auth buttons ran 5px past
+          the edge. Same rhythm as marketing-doc's header. */}
+      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-6 sm:gap-4 sm:px-6 md:px-10">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
           <BackControl />
           <Link
             href="/"
@@ -84,7 +87,7 @@ export default function PricingPage() {
         <LandingAuthControls {...authProps} variant="header" />
       </header>
 
-      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
+      <main id="main-content" className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-24 md:px-10">
         <section className="pt-10 text-center md:pt-16">
           <Reveal className="reveal-celestial">
             <h1 className={`${HEADING} text-[clamp(32px,5vw,56px)]`}>
@@ -96,9 +99,9 @@ export default function PricingPage() {
           </Reveal>
           <Reveal className="reveal-celestial" delay={90}>
             <p className="mx-auto mt-5 max-w-[46ch] text-base leading-relaxed text-[#9aada8] sm:text-lg">
-              Bring your own AI key on the Free Plan. Orbit Pro and Orbit Max
-              keep every contact, follow-up and warm intro in one place — with
-              AI included.
+              Free includes a small AI allowance to get you started. Orbit Pro
+              and Orbit Max keep every contact, follow-up and warm intro in one
+              place, with more AI included.
             </p>
           </Reveal>
         </section>

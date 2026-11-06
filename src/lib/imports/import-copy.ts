@@ -12,6 +12,8 @@
  */
 export const IMPORT_COPY = {
   previewFailed: "Couldn’t read that file — check it and try again",
+  tooLarge:
+    "That file is too big to upload in one go — import Connections.csv or messages.csv on its own instead of the whole archive, or split the file",
   importFailed: "That import didn’t finish — try again?",
   nothingRecognised:
     "Nothing in that drop looked like contacts, messages or a calendar — the Connections.csv from your LinkedIn export is a good place to start",
@@ -34,6 +36,7 @@ export const IMPORT_COPY = {
   driveUnavailable: "Couldn’t open Google Drive — try again in a moment",
   drivePaywalled: "Google Drive is on paid plans",
   driveWaitForQueue: "Finish or clear the files above first",
+  queueBusy: "One drop at a time — let the files above finish first",
 
   // --- Undoing an import ---------------------------------------------------------------
   // Every line a person reads on the way back out of an import. The counts and the names are

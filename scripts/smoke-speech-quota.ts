@@ -36,10 +36,12 @@ function meterFollowsTheOperation() {
   check("…as does anything else", speechKindForOperation("chat.answer") === "shortform");
 
   const ai = readFileSync("src/lib/ai.ts", "utf8");
-  const start = ai.indexOf("if (deepgramEnabled())");
+  // From where the meter is chosen through the Deepgram branch it guards.
+  const start = ai.indexOf("const kind = speechKindForOperation(operation);");
   const block = start === -1 ? "" : ai.slice(start, start + 2_500).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   check("ai.ts has a Deepgram transcription block to check", block.length > 0);
   check("…which derives the meter from the operation", /speechKindForOperation\(operation\)/.test(block));
+  check("…and asks the credit gate for that same meter", /deepgramOpenFor\(userId, kind\b/.test(block));
   check("…and never hardcodes a kind", !/kind:\s*["']shortform["']/.test(block) && !/speechAllowance\([^)]*["']shortform["']/.test(block));
 }
 
@@ -54,12 +56,12 @@ async function main() {
   let allowance = await speechAllowance(USER, "meeting");
   check("has no meeting seconds", allowance.limit === 0 && allowance.exhausted);
   allowance = await speechAllowance(USER, "shortform");
-  check("has 60 short-form minutes", allowance.limit === 3_600 && allowance.remaining === 3_600);
+  check("has 90 short-form minutes", allowance.limit === 5_400 && allowance.remaining === 5_400);
 
   console.log("\nrecording usage");
   await recordSpeechSeconds({ userId: USER, kind: "shortform", seconds: 90, source: "file" });
   allowance = await speechAllowance(USER, "shortform");
-  check("spends what it recorded", allowance.used === 90 && allowance.remaining === 3_510);
+  check("spends what it recorded", allowance.used === 90 && allowance.remaining === 5_310);
 
   await recordSpeechSeconds({ userId: USER, kind: "shortform", seconds: 30, source: "file" });
   allowance = await speechAllowance(USER, "shortform");

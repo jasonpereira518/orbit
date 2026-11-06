@@ -245,7 +245,7 @@ async function main() {
   check(`lifetime (${plans.lifetime})`, plans.lifetime === 1);
   check(`subscribed (${plans.subscribed})`, plans.subscribed === 2);
   check(`free (${plans.free})`, plans.free === 2);
-  check("paid total is the sum of its parts", plans.paidTotal === 4);
+  check("paid excludes comps; paid-or-comped is the sum of its parts", plans.paid === 3 && plans.paidOrComped === 4);
 
   console.log("\nAlerts");
   const alerts = buildAlerts(mine);

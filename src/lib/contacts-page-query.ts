@@ -27,9 +27,13 @@ import {
   encodeContactsCursor,
 } from "@/lib/contacts-page-cursor";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
-import type { RankedContact } from "@/lib/hybrid-search";
+import { openNameGuess } from "@/lib/contact-name-guess";
+import { schoolCondition, type RankedContact } from "@/lib/hybrid-search";
+import { listSchools } from "@/lib/events/target-companies";
 import {
   CONTACTS_PAGE_SIZE,
+  parseQuietDays,
+  SAME_SCHOOL_AS_ME,
   type ContactSort,
   type ContactsPage,
   type ContactsPageFilters,
@@ -79,8 +83,8 @@ export async function listContactsPage(
     matchReasons = matchReasonsFor(ranked);
     conditions.push(
       semanticIds.length
-        ? or(contactSearchCondition(q), inArray(contacts.id, semanticIds))!
-        : contactSearchCondition(q)
+        ? or(contactSearchCondition(q, userId), inArray(contacts.id, semanticIds))!
+        : contactSearchCondition(q, userId)
     );
   }
   // Name matches first in every sort while searching; see `contacts-page-cursor.ts`.
@@ -95,6 +99,43 @@ export async function listContactsPage(
 
   if (filters?.minScore) {
     conditions.push(sql`${contacts.relationshipScore} >= ${filters.minScore}`);
+  }
+
+  // Tags had a write path, a search index and no read surface at all: you could set them,
+  // find them via free-text search, and never see them again. This is the read surface —
+  // `?tag=` narrows the list. Rows do not draw their tags; `ContactListRow.tags` is carried
+  // for callers that do.
+  const tag = filters?.tag?.trim();
+  if (tag) {
+    conditions.push(sql`exists (
+      select 1 from contact_tags ct
+      join tags t on t.id = ct.tag_id
+      where ct.contact_id = ${contacts.id}
+        and t.user_id = ${userId}
+        and lower(trim(t.name)) = ${tag.toLowerCase()}
+    )`);
+  }
+
+  const school = filters?.school?.trim();
+  if (school) {
+    const schools = school === SAME_SCHOOL_AS_ME ? await listSchools(userId) : [school];
+    // No schools of your own means nobody shares one — not "the filter is off".
+    conditions.push(schools.length ? schoolCondition(userId, schools) : sql`false`);
+  }
+
+  // "Gone quiet": nothing logged for at least this many days. A contact with no interaction
+  // at all qualifies — `last_interaction_at` is stamped at create, so NULL here means the
+  // column predates that or an import left it empty, and either way "never" is quieter than
+  // any threshold. Inlined rather than bound because an interval built from a parameter is
+  // awkward in Postgres; `parseQuietDays` has already reduced it to one of three integers,
+  // so there is no user string anywhere near this.
+  const quiet = parseQuietDays(filters?.quiet);
+  if (quiet !== null) {
+    conditions.push(
+      sql`(${contacts.lastInteractionAt} is null or ${contacts.lastInteractionAt} <= now() - ${sql.raw(
+        `interval '${quiet} days'`
+      )})`
+    );
   }
 
   if (filters?.followUp === "due") {
@@ -124,6 +165,12 @@ export async function listContactsPage(
 
   if (cursor) conditions.push(contactsCursorCondition(cursor, tier));
 
+  // The total needs only the conditions, so it runs beside the page rather than after it:
+  // one round trip less on every first page and every search (LATENCY_PLAN DB-15).
+  const totalP = cursor ? Promise.resolve(null) : countContacts(and(...conditions));
+  // Still awaited below; this only keeps a failed count from going unhandled when the page
+  // query throws first.
+  totalP.catch(() => {});
   const rows = await db
     .select({ ...contactsListSelection, nameTier: tier ?? sql<number>`2` })
     .from(contacts)
@@ -140,7 +187,7 @@ export async function listContactsPage(
 
   const [tagsByContact, total, addedHere] = await Promise.all([
     tagsForContacts(page.map((r) => r.id)),
-    cursor ? Promise.resolve(null) : countContacts(and(...conditions)),
+    totalP,
     addedByImports(userId, importIds, page.map((r) => r.id)),
   ]);
 
@@ -151,6 +198,7 @@ export async function listContactsPage(
       firstName: row.firstName,
       lastName: row.lastName,
       preferredName: row.preferredName,
+      nameGuess: openNameGuess(row),
       title: row.title,
       company: row.company,
       school: row.school,
@@ -165,6 +213,7 @@ export async function listContactsPage(
       priorityLevel: row.priorityLevel,
       nextFollowUpAt: row.nextFollowUpAt,
       lastInteractionAt: row.lastInteractionAt,
+      source: row.source ?? null,
       tags: tagsByContact.get(row.id) ?? [],
       matchReason: matchReasons.get(row.id) ?? null,
       fromImport: addedHere.has(row.id),

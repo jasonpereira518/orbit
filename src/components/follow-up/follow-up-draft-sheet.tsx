@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { copyText } from "@/lib/clipboard";
 import {
   draftContactFollowUp,
   getContactFollowUpSendOptions,
@@ -20,6 +21,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { FollowUpDraftComposer } from "@/components/follow-up/follow-up-draft-composer";
+import { showUndoSendToast } from "@/components/email/undo-send-toast";
+import { AiKeyNotice } from "@/components/ai-key-notice";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -29,6 +33,12 @@ export function FollowUpDraftSheet({
   contactId,
   contactName,
   initialDraft,
+  intent,
+  subject,
+  title,
+  description,
+  onSent,
+  onUndone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -39,9 +49,20 @@ export function FollowUpDraftSheet({
    * Shown the moment the sheet opens, with no model call; Regenerate still asks for a new one.
    */
   initialDraft?: string | null;
+  /** Why this message exists ("Congratulate them on …"); every draft asked for here is told. */
+  intent?: string;
+  /** The email's subject; the send action's "Following up · Name" when absent. */
+  subject?: string;
+  title?: string;
+  description?: string;
+  /** The email is queued, or the message was marked sent; `onUndone` follows if Undo takes an email back. */
+  onSent?: () => void;
+  onUndone?: () => void;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState("");
+  const [aiDraft, setAiDraft] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
   const [sendOptions, setSendOptions] =
     useState<ContactFollowUpSendOptions | null>(null);
   const [pending, start] = useTransition();
@@ -53,6 +74,8 @@ export function FollowUpDraftSheet({
     if (!open) return;
     const session = ++sessionRef.current;
     setDraft("");
+    setAiDraft(null);
+    setAiError(null);
     setSendOptions(null);
 
     start(async () => {
@@ -76,12 +99,19 @@ export function FollowUpDraftSheet({
       // Opening the sheet shows the draft already written for this context; only
       // Regenerate below pays for a new one. A draft handed in (Radar's) needs no read at all.
       const handed = initialDraft?.trim();
-      if (handed) setDraft(handed);
+      if (handed) {
+        setDraft(handed);
+        setAiDraft(handed);
+      }
       const draftRead = handed
         ? Promise.resolve()
-        : draftContactFollowUp(contactId, { reuse: true }).then(
+        : draftContactFollowUp(contactId, { reuse: true, intent }).then(
             (result) => {
-              if (session === sessionRef.current) setDraft(result.body);
+              if (session !== sessionRef.current) return;
+              if (!result.ok) return setAiError(result.error);
+              setAiError(null);
+              setDraft(result.body);
+              setAiDraft(result.body);
             },
             report
           );
@@ -95,8 +125,14 @@ export function FollowUpDraftSheet({
   function regenerate() {
     start(async () => {
       try {
-        const result = await draftContactFollowUp(contactId);
+        const result = await draftContactFollowUp(contactId, { intent });
+        if (!result.ok) {
+          setAiError(result.error);
+          return;
+        }
+        setAiError(null);
         setDraft(result.body);
+        setAiDraft(result.body);
         toast.success("Draft ready");
       } catch (err) {
         toast.error(
@@ -116,8 +152,22 @@ export function FollowUpDraftSheet({
     if (!draft.trim()) return;
     startSend(async () => {
       try {
-        await sendContactFollowUpEmail(contactId, draft);
-        finishAndClose(`Email sent to ${contactName}`);
+        const res = await sendContactFollowUpEmail(contactId, draft, subject);
+        if (!res.ok) {
+          toast.error(res.message);
+          return;
+        }
+        showUndoSendToast({
+          sendId: res.sendId,
+          recipientLabel: contactName,
+          onUndone: () => {
+            onUndone?.();
+            router.refresh();
+          },
+        });
+        onSent?.();
+        onOpenChange(false);
+        router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "That email didn’t send — try again?"));
       }
@@ -131,7 +181,8 @@ export function FollowUpDraftSheet({
           channel,
           notes: draft.trim() || undefined,
         });
-        finishAndClose("Follow-up marked sent");
+        onSent?.();
+        finishAndClose(channel === "linkedin_message" ? "Marked sent on LinkedIn" : "Follow-up marked sent");
       } catch (err) {
         toast.error(
           friendlyError(err, "Couldn’t mark that follow-up sent — try again?")
@@ -147,10 +198,10 @@ export function FollowUpDraftSheet({
         className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md"
       >
         <SheetHeader>
-          <SheetTitle>Follow up with {contactName}</SheetTitle>
+          <SheetTitle>{title ?? `Follow up with ${contactName}`}</SheetTitle>
           <SheetDescription>
-            Draft a warm message, then send or mark it sent to clear this due
-            item.
+            {description ??
+              "Draft a warm message, then send or mark it sent to clear this due item."}
           </SheetDescription>
         </SheetHeader>
         <div className="flex flex-1 flex-col gap-4 px-4 pb-6">
@@ -166,27 +217,30 @@ export function FollowUpDraftSheet({
               {pending ? "Drafting…" : draft ? "Regenerate" : "Generate"}
             </Button>
           </div>
+          {aiError && <AiKeyNotice feature="draft" reason={aiDenialFromMessage(aiError)} compact />}
           <FollowUpDraftComposer
             contactName={contactName}
             draft={draft}
+            aiDraft={aiDraft}
             onDraftChange={setDraft}
             sendOptions={sendOptions}
             pending={pending}
             sending={sending}
             marking={marking}
-            onCopy={() => {
+            onCopy={async () => {
               if (!draft.trim()) return;
-              void navigator.clipboard.writeText(draft);
-              toast.success(TOAST_COPY.copied);
+              if (await copyText(draft)) toast.success(TOAST_COPY.copied);
+              else toast.error(TOAST_COPY.copyFailed);
             }}
             onSendEmail={sendEmail}
             onMarkSent={markSent}
             onOpenLinkedIn={(url) => {
-              if (draft.trim()) {
-                void navigator.clipboard.writeText(draft);
-                toast.success(TOAST_COPY.copied);
-              }
+              // The tab opens inside the click (popup blockers); the toast waits on the copy.
+              const copied = draft.trim() ? copyText(draft) : null;
               window.open(url, "_blank", "noopener,noreferrer");
+              void copied?.then((ok) =>
+                ok ? toast.success(TOAST_COPY.copied) : toast.error(TOAST_COPY.copyFailed)
+              );
             }}
           />
         </div>

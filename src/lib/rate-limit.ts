@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { eq, lt, sql } from "drizzle-orm";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 import { getDb } from "@/db";
 import { rateLimitBuckets } from "@/db/schema";
@@ -20,14 +20,21 @@ import { rateLimitBuckets } from "@/db/schema";
 /** What a bucket scope means to the person hitting it, for the error message. */
 const BUCKET_LABELS: Record<string, string> = {
   chat: "chat",
-  chatSend: "email send",
+  emailSend: "email send",
+  emailAttachmentUpload: "attachment upload",
   capture: "capture",
   captureHandoff: "scan",
   captureParts: "capture",
   meetingChunk: "meeting transcription",
+  meetingChunkClaim: "meeting transcription",
+  meetingCandidates: "calendar lookup",
+  calendarWindow: "calendar refresh",
   avatarResolve: "photo lookup",
+  avatarFill: "photo fill",
   feedback: "feedback",
+  survey: "survey",
   radarRefresh: "Radar refresh",
+  knowledgeRefresh: "refresh",
   interestJoin: "sign-up",
   interestProgress: "progress check",
   pollResults: "poll results",
@@ -43,26 +50,34 @@ const BUCKET_LABELS: Record<string, string> = {
   eventWhy: "attendee lookup",
   lifetimeConfirm: "checkout check",
   speechToken: "speech transcription",
+  export: "export",
+  interestWelcome: "welcome email",
   // Scope strings some call sites pass verbatim (dotted / kebab). Keyed by the literal scope
   // rather than renaming the scope, which would reset those buckets' counters.
   contactForm: "contact form",
   "interest.join": "sign-up",
   "interest.name": "sign-up",
+  "interest.welcome": "welcome email",
   "interest.progress": "progress check",
   "avatar.resolve": "photo lookup",
   "lifetime-confirm": "checkout check",
   "poll.vote": "vote",
   "poll.results": "results check",
   "work-history": "work-history lookup",
+  "web-research": "research lookup",
   "work-history-background": "background work-history check",
   "email-intel-daily": "email-insights",
   "email-intel-extract-daily": "email-insights reading",
+  "web-search": "monthly web search",
+  "web-search-all": "Orbit-wide web search",
 };
 
 function formatRetryAfter(sec: number): string {
   if (sec < 60) return `${sec}s`;
-  const min = Math.round(sec / 60);
-  return `${min} minute${min === 1 ? "" : "s"}`;
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  if (sec < 3_600) return plural(Math.round(sec / 60), "minute");
+  if (sec < 2 * 86_400) return plural(Math.round(sec / 3_600), "hour");
+  return plural(Math.round(sec / 86_400), "day");
 }
 
 export class RateLimitedError extends Error {
@@ -89,12 +104,18 @@ export const RATE_LIMITS = {
   /** `askNetwork` / `/api/chat`: a full retrieval plus a model completion per call. */
   chat: { limit: 20, windowSec: 60 },
   /**
-   * A chat draft sent from the user's own Gmail. Outbound and irreversible, so tighter than
-   * anything else here and measured over ten minutes: the shape to bound is a loop or a
-   * hijacked session mailing people in bulk from a real address, not a person sending a few
-   * follow-ups. The daily cap (`CHAT_SEND_DAILY_CAP`) is counted from the claim rows.
+   * Any person-to-person email through the outbox (`src/lib/email/outbox.ts`) — Chat,
+   * follow-ups, approved assistant drafts, recruiter replies. Outbound and sent from the user's
+   * real address, so tighter than anything else here and measured over ten minutes: the shape
+   * to bound is a loop or a hijacked session mailing people in bulk, not a person sending a
+   * few follow-ups. The daily cap is separate and per plan (`EMAIL_RECIPIENT_DAILY_CAP`).
    */
-  chatSend: { limit: 10, windowSec: 600 },
+  emailSend: { limit: 10, windowSec: 600 },
+  /**
+   * Upload tokens for email attachments. Each is good for one 20 MB file in Orbit's store,
+   * so an unmetered route was free file hosting; ten messages' worth of attachments per window.
+   */
+  emailAttachmentUpload: { limit: 60, windowSec: 600 },
   /** Capture parsing, media ingestion and confirmation: each is a model call. */
   capture: { limit: 30, windowSec: 60 },
   /**
@@ -122,6 +143,18 @@ export const RATE_LIMITS = {
    */
   meetingChunk: { limit: 20, windowSec: 60 },
   /**
+   * Reading the user's Google Calendar for the meeting about to be recorded
+   * (`getMeetingCandidates`): the setup card on open, and the calendar nudge every ten
+   * minutes per tab. Generous for several tabs, and tight enough that a client stuck in a
+   * loop cannot burn through the account's Google quota.
+   */
+  meetingCandidates: { limit: 30, windowSec: 600 },
+  /**
+   * The app pulse re-reading the user's calendar window (`refreshUserCalendarWindows`): one
+   * read per user per ten minutes however many tabs are open. Hitting it means "fresh enough".
+   */
+  calendarWindow: { limit: 1, windowSec: 600 },
+  /**
    * On-demand photo resolution in `/api/avatars/[contactId]`.
    *
    * Sized for the contacts list, where every photoless row visible resolves itself —
@@ -137,6 +170,11 @@ export const RATE_LIMITS = {
    * and the per-Lambda cooldowns cannot see each other.
    */
   avatarSourceShared: { limit: 25, windowSec: 86_400 },
+  /**
+   * The hourly shared-photo fill's own daily cap, so a Microlink key (which skips the shared
+   * allowance above) cannot turn it into hundreds of paid calls a day.
+   */
+  avatarFill: { limit: 60, windowSec: 86_400 },
   /** One user's daily slice of each source, so one large network cannot drain it for all. */
   avatarSourceUser: { limit: 5, windowSec: 86_400 },
   /** People searches per user per day on Orbit's HOSTED Apollo key. Own keys are uncapped. */
@@ -150,12 +188,30 @@ export const RATE_LIMITS = {
    */
   workHistoryResearch: { limit: 60, windowSec: 86_400 },
   /**
+   * Web research on people outside the network (`src/lib/web-research.ts`), per user per
+   * day. Cache hits are free; each miss is up to two billed searches on the account's key,
+   * and on Orbit's managed key those fees are not in any credit count — this is the cap.
+   */
+  webResearch: { limit: 30, windowSec: 86_400 },
+  /**
    * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
    * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
    * up the lookups a person clicks for; every sweep search also counts against that one,
-   * so the two together still stop at its 60.
+   * so the two together still stop at its 60. Was 20: at two searches each that was most of
+   * the web-search bill (Oct 2026), spent on contacts nobody had opened.
    */
-  workHistoryBackground: { limit: 20, windowSec: 86_400 },
+  workHistoryBackground: { limit: 4, windowSec: 86_400 },
+  /**
+   * Web SEARCHES (not calls) per account per calendar month, every feature and key together
+   * (`src/lib/web-search-budget.ts`). Keyed by month, so the window only has to outlast one.
+   */
+  webSearchMonthly: { limit: 300, windowSec: 31 * 86_400 },
+  /**
+   * Web searches across every account per UTC day: half of Anthropic's $190 monthly pool
+   * ($95) at $10 per 1,000, paced so a burst cannot spend the month early. See
+   * `WEB_SEARCH_DAILY_CEILING`, which smoke-rate-limit keeps this equal to.
+   */
+  webSearchDaily: { limit: 306, windowSec: 86_400 },
   /**
    * Gmail threads the email-insights sweep may fetch per account per UTC day (metadata only).
    * Keyed per UTC day by the sweep, like `workHistoryBackground`.
@@ -175,9 +231,18 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  /** The micro-survey prompt: a handful of tiny writes per person, once in a long while. */
+  survey: { limit: 20, windowSec: 3600 },
   // Each refresh re-scores the whole network and may write up to five AI lines on the
   // account's own key. The nightly pass does this anyway; three an hour is plenty by hand.
   radarRefresh: { limit: 3, windowSec: 600 },
+  /**
+   * `/api/knowledge/refresh`: rebuilding one person's brief on the Knowledge page — a model
+   * call on the account's own key, made when a dossier opens on a stale brief or a goal was
+   * added since it was judged. Sized for clicking through a list of people after adding a
+   * goal, and no more: past it the dossier simply shows what is on file.
+   */
+  knowledgeRefresh: { limit: 30, windowSec: 300 },
   /**
    * `joinInterestList`: ten submits per ten minutes per IP. Replaces the action's old
    * per-instance Map, which never held across instances. Loose on purpose — several friends
@@ -281,6 +346,30 @@ export const RATE_LIMITS = {
   lifetimeConfirm: { limit: 6, windowSec: 60 },
   /** One token per connection attempt; a stuck reconnect loop must not mint endlessly. */
   speechToken: { limit: 30, windowSec: 300 },
+  /**
+   * NOT a rate limit: a claim on one meeting chunk, keyed `session:seq`, taken before the chunk
+   * is transcribed. Two uploads of the same seq (a retry racing a slow first attempt, or two
+   * tabs draining an ended meeting) used to both reach Deepgram — the duplicate check ran
+   * before the call and the unique insert only after it — so Orbit paid twice. One claim per
+   * window, longer than the chunk route's 120s `maxDuration`, so the loser waits out the
+   * winner and then finds the stored segment. Released on a failed transcription so a retry
+   * is not held back (`releaseBucket`).
+   */
+  meetingChunkClaim: { limit: 1, windowSec: 150 },
+  /**
+   * `/api/export`: a streamed read of every table the account owns, up to a 300s function.
+   * A person takes a copy now and then; a script or a retry loop re-running it is the shape
+   * to stop, since each run pages through the whole network.
+   */
+  export: { limit: 5, windowSec: 3600 },
+  /**
+   * The waitlist's welcome email, across EVERY sender (keyed "global"). `interestJoin` is per
+   * IP, so a flood of fresh addresses from many IPs still mails each one — from Orbit's
+   * domain, at Resend's cost, to inboxes that never asked. 200 an hour is far above a real
+   * launch-day hour and well inside the sending plan; past it the row and ticket still land
+   * and only the mail is skipped, since the welcome is best-effort by design.
+   */
+  interestWelcome: { limit: 200, windowSec: 3600 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**
@@ -322,4 +411,46 @@ export async function consumeBucket(
     throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
   }
   return { remaining: Math.max(0, policy.limit - count) };
+}
+
+/** Forget `scope:key` entirely, e.g. a claim whose work failed and must be retried at once. */
+export async function releaseBucket(scope: string, key: string): Promise<void> {
+  const db = await getDb();
+  await db.delete(rateLimitBuckets).where(sql`${rateLimitBuckets.bucket} = ${`${scope}:${key}`}`);
+}
+
+/**
+ * What `scope:key` has counted in its live window, without counting anything. Zero for a
+ * bucket never hit or whose window has expired — the same reset `consumeBucket` applies.
+ */
+export async function bucketCount(scope: string, key: string, policy: BucketPolicy): Promise<number> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ count: rateLimitBuckets.count, startedAt: rateLimitBuckets.windowStartedAt })
+    .from(rateLimitBuckets)
+    .where(eq(rateLimitBuckets.bucket, `${scope}:${key}`))
+    .limit(1);
+  if (!row || Date.now() - row.startedAt.getTime() > policy.windowSec * 1000) return 0;
+  return row.count;
+}
+
+/**
+ * A bucket idle this long is dead weight: `consumeBucket` resets an expired window on the
+ * next hit anyway, so deleting one loses nothing. Twice the longest window in `RATE_LIMITS`
+ * (the monthly web-search one, 31 days), which `smoke-housekeeping-sweeps` asserts — at the
+ * old two days the prune deleted a monthly bucket mid-month and zeroed its count.
+ */
+export const RATE_LIMIT_BUCKET_RETENTION_MS = 62 * 24 * 60 * 60 * 1000;
+
+/**
+ * Drops long-expired buckets; nothing else ever does, so the table grows by one row per
+ * (scope, key) forever. Called by the process-stalled sweep.
+ * ponytail: seq scan on an unindexed column, fine while the table is small — index
+ * `window_started_at` if it ever reaches the hundreds of thousands.
+ */
+export async function pruneRateLimitBuckets(now: Date = new Date()): Promise<void> {
+  const db = await getDb();
+  await db
+    .delete(rateLimitBuckets)
+    .where(lt(rateLimitBuckets.windowStartedAt, new Date(now.getTime() - RATE_LIMIT_BUCKET_RETENTION_MS)));
 }

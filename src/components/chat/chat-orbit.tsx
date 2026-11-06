@@ -150,7 +150,7 @@ export function ChatOrbit({
         ))}
       </div>
 
-      <p className="mt-1 h-4 max-w-[9.5rem] truncate text-center text-[11px] text-muted-foreground">
+      <p className="mt-1 h-4 max-w-[9.5rem] truncate text-center text-2xs text-muted-foreground">
         {caption}
       </p>
     </div>

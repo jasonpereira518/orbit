@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { calendarSubscriptions } from "@/db/schema";
+import { decryptOrNull, encrypt } from "@/lib/crypto";
 import { parseIcsEvents, type ParsedCalendarEvent } from "@/lib/calendar-import";
 import { counterpartsOf } from "@/lib/calendar-classify";
 import { expandIcsEvents, seriesUidOf } from "@/lib/recurrence";
@@ -302,6 +303,31 @@ function makePostMeetingReminder(eligible: Set<string>) {
   };
 }
 
+/**
+ * A subscription's feed URL at rest. A Google "secret address" IS read access to that
+ * calendar, so it is stored encrypted like the OAuth tokens beside it. Rows saved before
+ * Oct 13 2026 hold the plain URL; both read back (`scripts/backfill-encrypt-ics-urls.ts`
+ * converts them).
+ */
+export function sealIcsUrl(url: string): string {
+  return encrypt(url);
+}
+
+/** The feed URL to fetch, from either stored form; null when it cannot be decrypted. */
+export function openIcsUrl(stored: string): string | null {
+  return /^(?:https?|webcal):\/\//i.test(stored) ? stored : decryptOrNull(stored);
+}
+
+/** What a page shows for a subscription: the host, never the path that carries the secret. */
+export function maskIcsUrl(stored: string): string {
+  const url = openIcsUrl(stored);
+  try {
+    return url ? `${new URL(url.replace(/^webcal:/i, "https:")).origin}/…` : "Calendar link";
+  } catch {
+    return "Calendar link";
+  }
+}
+
 export async function syncCalendarSubscription(
   userId: string,
   subscriptionId: string
@@ -317,7 +343,9 @@ export async function syncCalendarSubscription(
   if (!sub.enabled) throw new Error("Calendar subscription is disabled");
 
   try {
-    const ics = await fetchIcs(sub.icsUrl);
+    const url = openIcsUrl(sub.icsUrl);
+    if (!url) throw new Error("This calendar link can’t be read any more — remove it and add it again");
+    const ics = await fetchIcs(url);
     const parsed = parseIcsEvents(ics);
     // Same window `applyNetworkingEvents` filters to below (SYNC_WINDOW_PAST_MS /
     // SYNC_WINDOW_FUTURE_MS) — expansion must not manufacture occurrences that filter would

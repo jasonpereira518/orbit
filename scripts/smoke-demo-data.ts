@@ -14,6 +14,7 @@ import {
   actionItems,
   apiKeys,
   chatThreads,
+  duplicateSuggestions,
   closenessCohorts,
   companies,
   contactBriefs,
@@ -49,13 +50,22 @@ import { buildExtendedCast } from "../src/lib/demo-data/seed-extended";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { resolveRecruiterPii } from "../src/lib/recruiters";
 import { needsOnboarding } from "../src/lib/onboarding";
+import { buildConstellationClusters, toNamedGraphClusters } from "../src/lib/constellation-clusters";
+import { seedDemoWorkspace } from "../src/lib/demo-data/seed";
 
 const FRESH = "smoke-demo-fresh";
 const REMOTE_USER = "smoke-demo-remote";
 const EXISTING = "smoke-demo-existing";
 /** A second local account, seeded later onto the recruiter rows FRESH created. */
 const SECOND = "smoke-demo-second";
-const DEMO_RECRUITER_EMAILS = ["alex@riveratalent.example", "morgan.blake@insightglobal.example", "marcus.lee@example.com"];
+/** Seeded with `ORBIT_DEMO_PERSONA=student`. */
+const STUDENT = "smoke-demo-student";
+/** Seeded with `persona: "gillings"`. */
+const GILLINGS_USER = "smoke-demo-gillings";
+const DEMO_RECRUITER_EMAILS = [
+  "alex@riveratalent.example", "morgan.blake@insightglobal.example", "marcus.lee@example.com",
+  "tasha.greene@rti.example", "mark.delaney@deloitte.example", "erica.simmons@unchealth.example",
+];
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -82,11 +92,11 @@ const contactCount = (userId: string) => rowsFor(contacts, contacts.userId, user
  */
 async function cleanup() {
   const db = await getDb();
-  const users = [FRESH, REMOTE_USER, EXISTING, SECOND];
+  const users = [FRESH, REMOTE_USER, EXISTING, SECOND, STUDENT, GILLINGS_USER];
   for (const table of [
     suggestedReminders, reminders, reminderLists, outreachCampaigns, events, chatThreads,
     recruiterMessages, userRecruiterLinks, imports, userGoals, contacts, companies, tags,
-    closenessCohorts, noteBatches, meetingSessions, apiKeys, userSettings,
+    closenessCohorts, noteBatches, meetingSessions, apiKeys, duplicateSuggestions, userSettings,
   ]) {
     await db.delete(table).where(inArray(table.userId, users));
   }
@@ -97,9 +107,11 @@ async function main() {
   console.log("Demo workspace smoke test (pglite)…");
   const priorNodeEnv = env.NODE_ENV;
   const priorFlag = env.ORBIT_DEMO_DATA;
+  const priorPersona = env.ORBIT_DEMO_PERSONA;
   delete env.ORBIT_DEMO_DATA;
+  delete env.ORBIT_DEMO_PERSONA;
   const db = await getDb();
-  for (const u of [FRESH, REMOTE_USER, EXISTING, SECOND]) await ensureUserSettings(u);
+  for (const u of [FRESH, REMOTE_USER, EXISTING, SECOND, STUDENT, GILLINGS_USER]) await ensureUserSettings(u);
 
   try {
     console.log("\noff localhost");
@@ -223,11 +235,89 @@ async function main() {
     const reused = await db.select().from(recruiters).where(inArray(recruiters.emailNormalized, DEMO_RECRUITER_EMAILS));
     check("a later account reuses the rows rather than duplicating them", reused.length === 3, String(reused.length));
     check("…and still sees their details", (await seenBy(SECOND)) === 3, String(await seenBy(SECOND)));
+
+    console.log("\nthe student persona");
+    env.ORBIT_DEMO_PERSONA = "student";
+    try {
+      await ensureLocalDemoData(STUDENT);
+    } finally {
+      delete env.ORBIT_DEMO_PERSONA;
+    }
+    const { STUDENT_PEOPLE, STUDENT_GOALS, STUDENT_LISTS } = await import("../src/lib/demo-data/student");
+    const studentContacts = await contactCount(STUDENT);
+    check("seeds the student network", studentContacts === STUDENT_PEOPLE.length, String(studentContacts));
+    check("about thirty people", STUDENT_PEOPLE.length >= 28 && STUDENT_PEOPLE.length <= 32, String(STUDENT_PEOPLE.length));
+    const lists = (await db.select({ name: reminderLists.name }).from(reminderLists).where(eq(reminderLists.userId, STUDENT))).map((l) => l.name);
+    check("Recruiters, Alumni and Referrals lists", STUDENT_LISTS.every((n) => lists.includes(n)), lists.join(", "));
+    const listed = await db
+      .select({ name: reminderLists.name })
+      .from(reminders)
+      .innerJoin(reminderLists, eq(reminders.listId, reminderLists.id))
+      .where(eq(reminders.userId, STUDENT));
+    const listedNames = new Set(listed.map((r) => r.name));
+    check("every student list has a reminder in it", STUDENT_LISTS.every((n) => listedNames.has(n)), [...listedNames].join(", "));
+    const goals = (await db.select({ text: userGoals.text }).from(userGoals).where(eq(userGoals.userId, STUDENT))).map((g) => g.text);
+    check("student goals, nothing about fundraising", goals.length === STUDENT_GOALS.length && !goals.some((g) => /fundrais|investor/i.test(g)), goals.join(" | "));
+    const studentEvents = await db.select({ title: events.title }).from(events).where(eq(events.userId, STUDENT));
+    check("a career fair is on the calendar", studentEvents.some((e) => /career fair/i.test(e.title)), studentEvents.map((e) => e.title).join(", "));
+    check("no outreach campaign", (await db.select({ id: outreachCampaigns.id }).from(outreachCampaigns).where(eq(outreachCampaigns.userId, STUDENT))).length === 0);
+    check("every student email is on a reserved example domain", STUDENT_PEOPLE.every((p) => !p.email || /@([a-z0-9-]+\.)*example(\.[a-z]+)?$/.test(p.email)));
+    check("names are unique", new Set(STUDENT_PEOPLE.map((p) => p.fullName)).size === STUDENT_PEOPLE.length);
+    check("the founder persona is still the default", (await contactCount(FRESH)) === people.length);
+
+    console.log("\nthe gillings persona");
+    const { GILLINGS_PEOPLE, GILLINGS_LISTS, GILLINGS_GOALS } = await import("../src/lib/demo-data/gillings");
+    const { GILLINGS_REAL_PEOPLE } = await import("../src/lib/demo-data/gillings-real");
+    const gSummary = await seedDemoWorkspace(GILLINGS_USER, { persona: "gillings" });
+    const gRows = await db
+      .select({ fullName: contacts.fullName, email: contacts.email, linkedinUrl: contacts.linkedinUrl, company: contacts.company, school: contacts.school, industry: contacts.industry, photo: contacts.profileImageUrl })
+      .from(contacts)
+      .where(eq(contacts.userId, GILLINGS_USER));
+    check("about a hundred people", gRows.length === GILLINGS_PEOPLE.length && gRows.length >= 95 && gRows.length <= 110, String(gRows.length));
+    check("every one has a photo", gRows.every((r) => Boolean(r.photo)), gRows.filter((r) => !r.photo).map((r) => r.fullName).join(", "));
+    check("over thirty real public figures", GILLINGS_REAL_PEOPLE.length >= 30, String(GILLINGS_REAL_PEOPLE.length));
+    const realNames = new Set(GILLINGS_REAL_PEOPLE.map((r) => r.person.fullName));
+    check(
+      "real people carry no email or LinkedIn URL",
+      gRows.filter((r) => realNames.has(r.fullName)).every((r) => !r.email && !r.linkedinUrl)
+    );
+    check(
+      "real people only appear in public settings",
+      GILLINGS_REAL_PEOPLE.every((r) => (r.person.touches ?? []).every((t) => ["event", "note", "in_person"].includes(t.type)))
+    );
+    check("every other email is on a reserved example domain", gRows.every((r) => !r.email || /@([a-z0-9-]+\.)*example(\.[a-z]+)?$/.test(r.email)));
+    check("names are unique", new Set(gRows.map((r) => r.fullName)).size === gRows.length);
+    const pendingDupes = await db.select({ c: duplicateSuggestions.confidence }).from(duplicateSuggestions).where(eq(duplicateSuggestions.userId, GILLINGS_USER));
+    check("one duplicate pair waits for review, under the auto-merge line", pendingDupes.length === 1 && pendingDupes[0].c < 0.85);
+    const gLists = await db
+      .select({ name: reminderLists.name })
+      .from(reminders)
+      .innerJoin(reminderLists, eq(reminders.listId, reminderLists.id))
+      .where(eq(reminders.userId, GILLINGS_USER));
+    const gListNames = new Set(gLists.map((r) => r.name));
+    check("every gillings list has a reminder in it", GILLINGS_LISTS.every((n) => gListNames.has(n)), [...gListNames].join(", "));
+    check("about twenty-five reminders", (gSummary.reminders ?? 0) >= 20, String(gSummary.reminders));
+    const gGoals = await db.select({ text: userGoals.text }).from(userGoals).where(eq(userGoals.userId, GILLINGS_USER));
+    check("public-health goals", gGoals.length === GILLINGS_GOALS.length);
+    const { clusters } = buildConstellationClusters(gRows.map((r, i) => ({ id: String(i), ...r })));
+    const named = toNamedGraphClusters(clusters);
+    const byKind = (k: string) => named.filter((c) => c.kind === k);
+    check(
+      "the constellation clusters by company, school and industry",
+      byKind("company").length >= 8 && byKind("school").length >= 1 && byKind("industry").length >= 3,
+      named.map((c) => `${c.kind}:${c.name}(${c.count})`).join(", ")
+    );
+    for (const key of ["captures", "meetings", "opportunities", "careerMoves", "signals", "campaigns", "recruiters", "events", "chatThreads"]) {
+      check(`seeds ${key}`, (gSummary[key] ?? 0) > 0, JSON.stringify(gSummary));
+    }
+    check("several recorded meetings", (gSummary.meetings ?? 0) >= 3, String(gSummary.meetings));
   } finally {
     setNodeEnv(priorNodeEnv);
     await cleanup();
     if (priorFlag === undefined) delete env.ORBIT_DEMO_DATA;
     else env.ORBIT_DEMO_DATA = priorFlag;
+    if (priorPersona === undefined) delete env.ORBIT_DEMO_PERSONA;
+    else env.ORBIT_DEMO_PERSONA = priorPersona;
   }
 
   console.log("\nAll demo workspace checks passed.");

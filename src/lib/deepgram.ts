@@ -11,7 +11,7 @@
  * off. Deepgram is a hosted service Orbit pays for on every plan, like hosted Apollo
  * enrichment: entitlement plus quota, checked by the caller, recorded in `speech_usage`.
  */
-import { listenParams } from "@/lib/deepgram-params";
+import { keytermsFor, listenParams } from "@/lib/deepgram-params";
 import { UserFacingError } from "@/lib/errors";
 
 const GRANT_URL = "https://api.deepgram.com/v1/auth/grant";
@@ -37,10 +37,44 @@ export function deepgramConfigured(): boolean {
   return Boolean(apiKey());
 }
 
+/**
+ * Whether Deepgram accepts Orbit's key, for the admin provider panel. Lives here because
+ * this is the only file allowed to read the key or dial the host (see `smoke-ai-access.ts`).
+ *
+ * Listing projects is free — nothing is transcribed — and 401 is the one answer that means
+ * the key is dead. A key scoped away from the listing gets 403: reachable and authenticated,
+ * just not allowed to list, so that is still "accepted". Throws on a network failure or
+ * timeout so the caller can fall back to its last snapshot instead of reporting a guess.
+ */
+export async function probeDeepgramKey(): Promise<"unconfigured" | "accepted" | "rejected"> {
+  const key = apiKey();
+  if (!key) return "unconfigured";
+  const res = await fetch(PROJECTS_URL, {
+    headers: { Authorization: `Token ${key}` },
+    signal: AbortSignal.timeout(3_500),
+  });
+  return res.status === 401 ? "rejected" : "accepted";
+}
+
 /** The kill switch: `ORBIT_DEEPGRAM=off` reverts every surface to the Whisper/Gemini chain. */
 export function deepgramEnabled(): boolean {
   if (process.env.ORBIT_DEEPGRAM?.trim().toLowerCase() === "off") return false;
   return deepgramConfigured();
+}
+
+/**
+ * The keyterms a Deepgram request carries — the account's own contact names, trimmed to
+ * Deepgram's budget — or none when `ORBIT_DEEPGRAM_KEYTERMS=off`.
+ *
+ * Keyterm prompting is a per-minute add-on on every request that carries it. It is also what
+ * keeps "Priya Raman" from coming back as "Prea Ramen" and forking a second contact, so it
+ * stays ON by default. The switch exists to measure the trade (run the transcription evals in
+ * `docs/ai-evals/` with it off) before anyone decides the add-on is not worth its price.
+ * Server-side only: the browser receives whatever list the token route hands it.
+ */
+export function deepgramKeyterms(vocabulary: readonly string[]): string[] {
+  if (process.env.ORBIT_DEEPGRAM_KEYTERMS?.trim().toLowerCase() === "off") return [];
+  return keytermsFor(vocabulary);
 }
 
 function requireKey(): string {
@@ -75,7 +109,7 @@ export async function transcribeFile(
   // The tag is what makes this request visible to the nightly reconciliation job. A meeting
   // chunk recovered through this path bills exactly like a live one, so an untagged file
   // request is spend that job would never even look at.
-  const params = listenParams({ live: false, keyterms: opts.keyterms, tag: opts.tag });
+  const params = listenParams({ live: false, keyterms: deepgramKeyterms(opts.keyterms ?? []), tag: opts.tag });
   const res = await fetch(`${LISTEN_URL}?${params.toString()}`, {
     method: "POST",
     headers: { Authorization: `Token ${requireKey()}`, "content-type": audio.mimeType || "audio/wav" },

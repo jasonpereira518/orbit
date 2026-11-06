@@ -395,6 +395,46 @@ async function main() {
         .where(eq(waitlistPollVotes.voterKey, `signup:${doomed.id}`))
     ).length === 0
   );
+  // --- bulk delete: same cleanup, many rows at once, addresses returned for the audit entry
+  const { bulkDeleteInterestListRows } = await import("../src/lib/admin-interest-list");
+  const bulkRows = await db
+    .insert(interestListSignups)
+    .values([
+      mk(`${PREFIX}bulk-a@example.test`, { shareToken: `smoke-bulk-a-${generateUnsubscribeToken().slice(0, 8)}` }),
+      mk(`${PREFIX}bulk-b@example.test`, { shareToken: `smoke-bulk-b-${generateUnsubscribeToken().slice(0, 8)}` }),
+    ])
+    .returning();
+  const [bulkFriend] = await db
+    .insert(interestListSignups)
+    .values(mk(`${PREFIX}bulk-friend@example.test`, { referredById: bulkRows[0]!.id }))
+    .returning();
+  await db.insert(waitlistPollVotes).values({
+    optionId: "reminders",
+    voterKey: `signup:${bulkRows[1]!.id}`,
+    signupId: bulkRows[1]!.id,
+  });
+  const bulkErased = await bulkDeleteInterestListRows(bulkRows.map((r) => r.id));
+  check(
+    "bulk delete returns every address it removed",
+    bulkErased.length === 2 &&
+      bulkErased.includes(`${PREFIX}bulk-a@example.test`) &&
+      bulkErased.includes(`${PREFIX}bulk-b@example.test`)
+  );
+  check(
+    "bulk delete erases the rows",
+    (await db.select().from(interestListSignups).where(inArray(interestListSignups.id, bulkRows.map((r) => r.id)))).length === 0
+  );
+  const [bulkFriendAfter] = await db
+    .select()
+    .from(interestListSignups)
+    .where(eq(interestListSignups.id, bulkFriend!.id));
+  check("bulk delete clears referred_by on friends", bulkFriendAfter?.referredById == null);
+  check(
+    "bulk delete clears the signups' poll votes",
+    (await db.select().from(waitlistPollVotes).where(eq(waitlistPollVotes.voterKey, `signup:${bulkRows[1]!.id}`))).length === 0
+  );
+  check("bulk delete of nothing is a no-op", (await bulkDeleteInterestListRows([])).length === 0);
+
   // Friend row is cleaned by the final cleanup(); leave it so the rest of the script still
   // sees a stable set of seeded addresses for search / sort checks.
 

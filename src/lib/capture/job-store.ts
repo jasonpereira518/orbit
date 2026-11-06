@@ -10,7 +10,7 @@
  * while you were on /contacts" into a notification.
  */
 import { useSyncExternalStore } from "react";
-import { getCaptureJob } from "@/actions/capture-jobs";
+import type { getCaptureJob } from "@/actions/capture-jobs";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import type { CaptureJobStatus } from "@/lib/capture/types";
 import {
@@ -89,13 +89,28 @@ export function clearCaptureJob() {
   set({ job: null, error: null });
 }
 
+/**
+ * The poll itself, through `/api/capture/jobs/[id]/status` rather than the Server Action: a
+ * tab runs its actions one at a time, so the action version made every click during an
+ * extraction wait behind it (LATENCY_PLAN SRV-5). Same function on the server, same result.
+ */
+async function fetchCaptureJob(id: string, since: string | null): ReturnType<typeof getCaptureJob> {
+  const res = await fetch(`/api/capture/jobs/${encodeURIComponent(id)}/status`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ since }),
+  });
+  if (!res.ok) throw new Error(`Capture job poll failed (${res.status})`);
+  return (await res.json()) as Awaited<ReturnType<typeof getCaptureJob>>;
+}
+
 /** One poll now. Coalesced: a call while one is in flight shares its result. */
 export function refreshCaptureJob(): Promise<void> {
   const current = snapshot.job;
   if (!current) return Promise.resolve();
   if (inFlight) return inFlight;
   const id = ++sequence;
-  const run = getCaptureJob(current.id, current.updatedAt)
+  const run = fetchCaptureJob(current.id, current.updatedAt)
     .then((res) => {
       reportRequestOk();
       if (id !== sequence) return;

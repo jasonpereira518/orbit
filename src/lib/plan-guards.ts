@@ -1,6 +1,6 @@
 import { requireUserId } from "@/lib/auth";
 import { requireEntitlement } from "@/lib/entitlements";
-import { requireVisibleSurface } from "@/lib/surface-visibility";
+import { requireReleasedSurface, requireVisibleSurface } from "@/lib/surface-visibility";
 
 /**
  * Auth + plan + surface visibility in one call, so gated server actions keep the same
@@ -13,8 +13,11 @@ import { requireVisibleSurface } from "@/lib/surface-visibility";
  * WHICH ACTION MODULES ARE GATED ON A SURFACE, AND WHY NOT THE REST.
  *
  * Only modules whose every export belongs to exactly one hideable page are gated:
- * knowledge, graph, chat, outreach, recruiters, meetings (`page.capture`, via
- * `requireMeetingsUser` — note this is `meetings.ts`, not `capture.ts` itself; see below).
+ * knowledge, graph, chat, recruiters, meetings (`page.capture`, via `requireMeetingsUser` —
+ * note this is `meetings.ts`, not `capture.ts` itself; see below) use the visibility-only
+ * guard (hidden refuses). Radar, events and outreach ship closed, so their actions use
+ * `requireUserForReleasedSurface` / `requireReleasedSurface`, which refuse a coming-soon
+ * page as well as a hidden one.
  * The rest were examined and deliberately left alone, because their actions are
  * load-bearing for surfaces that stay visible:
  *
@@ -24,7 +27,7 @@ import { requireVisibleSurface } from "@/lib/surface-visibility";
  *   - `imports.ts` — `import-job-runner.ts` drives job continuation from the background
  *     watcher mounted in `AppShell`, so a running import would stall the moment the
  *     Imports page was hidden.
- *   - `capture.ts` — reached through `BulkNotesPanel`, which the onboarding wizard uses.
+ *   - `capture.ts` — reached through `BulkNotesPanel`, which onboarding’s quick setup uses.
  *     A hidden Capture page would break first-run for new accounts. `meetings.ts` is a
  *     separate module that also serves the Capture page and IS gated on `page.capture`:
  *     unlike notes/voice/scan capture, a meeting is a paid feature with a per-minute
@@ -37,29 +40,29 @@ import { requireVisibleSurface } from "@/lib/surface-visibility";
  * everyone. The user's own data is not at stake either way, so the boundary that matters
  * is the route — which `(app)/(main)/layout.tsx` closes for every page unconditionally.
  */
-export async function requireOutreachUser() {
+export async function requireOutreachUser(route = "action.outreach") {
   const userId = await requireUserId();
-  await requireEntitlement(userId, "outreach");
-  await requireVisibleSurface(userId, "page.outreach");
+  await requireEntitlement(userId, "outreach", { route });
+  await requireReleasedSurface(userId, "page.outreach");
   return userId;
 }
 
-export async function requireRecruitersUser() {
+export async function requireRecruitersUser(route = "action.recruiters") {
   const userId = await requireUserId();
-  await requireEntitlement(userId, "recruiters");
+  await requireEntitlement(userId, "recruiters", { route });
   await requireVisibleSurface(userId, "page.recruiters");
   return userId;
 }
 
-export async function requireSyncUser() {
+export async function requireSyncUser(route = "action.sync") {
   const userId = await requireUserId();
-  await requireEntitlement(userId, "sync");
+  await requireEntitlement(userId, "sync", { route });
   return userId;
 }
 
-export async function requireMeetingsUser() {
+export async function requireMeetingsUser(route = "action.meetings") {
   const userId = await requireUserId();
-  await requireEntitlement(userId, "meetings");
+  await requireEntitlement(userId, "meetings", { route });
   await requireVisibleSurface(userId, "page.capture");
   return userId;
 }
@@ -68,5 +71,12 @@ export async function requireMeetingsUser() {
 export async function requireUserForSurface(surfaceKey: string) {
   const userId = await requireUserId();
   await requireVisibleSurface(userId, surfaceKey);
+  return userId;
+}
+
+/** `requireUserForSurface`, but a coming-soon page refuses too: for the actions of a page that ships closed. */
+export async function requireUserForReleasedSurface(surfaceKey: string) {
+  const userId = await requireUserId();
+  await requireReleasedSurface(userId, surfaceKey);
   return userId;
 }

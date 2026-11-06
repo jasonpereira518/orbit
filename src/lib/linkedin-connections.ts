@@ -10,6 +10,22 @@ export type LinkedInConnectionRow = {
   url: string;
 };
 
+/** Replacement-character artifacts from decoding a non-UTF8 export as UTF-8. */
+export function hasEncodingArtifacts(
+  rows: Pick<LinkedInConnectionRow, "firstName" | "lastName" | "company" | "position">[],
+) {
+  return rows.some(
+    (r) =>
+      r.firstName.includes("\uFFFD") ||
+      r.lastName.includes("\uFFFD") ||
+      r.company.includes("\uFFFD") ||
+      r.position.includes("\uFFFD"),
+  );
+}
+
+export const ENCODING_ARTIFACTS_WARNING =
+  "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding.";
+
 /** Case/whitespace-insensitive column lookup across LinkedIn CSV header variants. */
 export function csvGet(row: Record<string, string>, ...keys: string[]) {
   for (const k of keys) {

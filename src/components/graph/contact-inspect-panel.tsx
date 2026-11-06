@@ -28,7 +28,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { safeHttpUrl } from "@/lib/safe-links";
+import { avatarRouteUrl } from "@/lib/contact-avatar-url";
+import { safeHttpUrl, safeProfileUrl } from "@/lib/safe-links";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { closenessPercentChipClass, closenessTierChipClass } from "@/lib/closeness";
 import { RING_LABELS, type GraphNodeData } from "@/lib/graph-layout";
@@ -204,7 +205,14 @@ function YouPanelBody({
   data: GraphNodeData;
   summary: Extract<InspectSelection, { type: "user" }>["summary"];
 }) {
-  const socials = summary.socialLinks || {};
+  // Values saved before saves were normalised can still be anything typed into the field.
+  const stored = summary.socialLinks || {};
+  const socials = {
+    linkedin: safeProfileUrl(stored.linkedin),
+    twitter: safeProfileUrl(stored.twitter),
+    github: safeProfileUrl(stored.github),
+    website: safeProfileUrl(stored.website),
+  };
   const hasSocials = Boolean(
     socials.linkedin || socials.twitter || socials.github || socials.website
   );
@@ -415,7 +423,7 @@ function ContactPanelBody({
     )}`;
   const photoSrc =
     !photoFailed && (Boolean(data.profileImageUrl?.trim()) || canResolvePhoto)
-      ? `/api/avatars/${id}`
+      ? avatarRouteUrl(id, data.profileImageUrl)
       : null;
 
   const howMet = formatHowMetSummary({
@@ -451,13 +459,18 @@ function ContactPanelBody({
             </div>
           )}
           <div className="min-w-0">
-            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl text-ink">
+            {/* The wrapper is already `min-w-0`, but that only lets flex shrink it — a
+                single unbroken token still overflows without `break-words`. A long name
+                ran off the right edge of the mobile sheet header. */}
+            <SheetTitle className="font-[family-name:var(--font-display)] text-2xl break-words text-ink">
               {data.label}
             </SheetTitle>
             {data.fullName &&
               data.preferredName &&
               data.preferredName !== data.fullName && (
-                <p className="text-xs text-muted-foreground">{data.fullName}</p>
+                <p className="text-xs break-words text-muted-foreground">
+                  {data.fullName}
+                </p>
               )}
             <SheetDescription>
               {[data.title, data.company].filter(Boolean).join(" · ") ||
@@ -599,7 +612,9 @@ function ContactPanelBody({
                 start(async () => {
                   try {
                     const res = await regenerateContactSummary(id);
-                    if (res.summary) {
+                    if (res.aiError) {
+                      toast.error(res.aiError);
+                    } else if (res.summary) {
                       setSummaryText(res.summary);
                       onContactPatch?.(id, { aiSummary: res.summary });
                       toast.success("Summary updated");

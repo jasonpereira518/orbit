@@ -5,8 +5,10 @@
 import {
   deleteAvatarBlobs,
   deleteReplacedAvatar,
+  deleteSharedAvatarBlob,
   isAvatarBlobUrl,
   putAvatarBlob,
+  putSharedAvatarBlob,
   setAvatarBlobClientForTests,
   type AvatarBlobClient,
 } from "../src/lib/avatar-blob";
@@ -50,6 +52,20 @@ async function main() {
     check("not another Blob path", !isAvatarBlobUrl("https://abc.public.blob.vercel-storage.com/capture/x.jpg"));
     check("not a lookalike host", !isAvatarBlobUrl("https://evil.example/avatars/x.jpg?.public.blob.vercel-storage.com"));
     check("not null", !isAvatarBlobUrl(null));
+    const SHARED = "https://abc.public.blob.vercel-storage.com/avatars-shared/k.jpg";
+    check("not a shared-pool object", !isAvatarBlobUrl(SHARED));
+
+    console.log("\nshared pool");
+    await putSharedAvatarBlob("ada-lovelace", Buffer.from([1]), "image/jpeg");
+    const shared = puts.at(-1)!;
+    check("under avatars-shared/<hash>", /^avatars-shared\/[0-9a-f]{32}\.jpg$/.test(shared.pathname), shared.pathname);
+    check("random suffix, public", shared.options.addRandomSuffix === true && shared.options.access === "public");
+    check("per-contact deletes skip it", (await deleteAvatarBlobs([SHARED])) === 0 && dels.length === 0);
+    await deleteSharedAvatarBlob(BLOB("c1"));
+    check("the shared delete skips a contact's own object", dels.length === 0);
+    await deleteSharedAvatarBlob(SHARED);
+    check("the shared delete removes a shared object", dels.at(-1)?.[0] === SHARED);
+    dels.length = 0;
 
     console.log("\ndelete");
     const n = await deleteAvatarBlobs([BLOB("a"), "data:image/png;base64,AA", null, BLOB("a"), BLOB("b")]);

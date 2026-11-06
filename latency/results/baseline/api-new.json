@@ -1,0 +1,528 @@
+{
+  "base": "http://localhost:3101",
+  "n": 30,
+  "concurrency": 5,
+  "at": "2026-10-17T11:01:17.709Z",
+  "results": {
+    "doc /dashboard": {
+      "path": "/dashboard",
+      "warm_ms": 533,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 196,
+        "ttfb_p50": 498,
+        "ttfb_p95": 809,
+        "ttfb_p99": 821,
+        "p50": 503,
+        "p95": 815,
+        "p99": 826
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 196,
+        "ttfb_p50": 2490,
+        "ttfb_p95": 2947,
+        "ttfb_p99": 2951,
+        "p50": 2616,
+        "p95": 3202,
+        "p99": 3271
+      }
+    },
+    "doc /contacts": {
+      "path": "/contacts",
+      "warm_ms": 271,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 143,
+        "ttfb_p50": 259,
+        "ttfb_p95": 295,
+        "ttfb_p99": 302,
+        "p50": 264,
+        "p95": 298,
+        "p99": 305
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 143,
+        "ttfb_p50": 1111,
+        "ttfb_p95": 1257,
+        "ttfb_p99": 1257,
+        "p50": 1120,
+        "p95": 1271,
+        "p99": 1271
+      }
+    },
+    "doc /contacts?q=hopper": {
+      "path": "/contacts?q=hopper",
+      "warm_ms": 234,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 144,
+        "ttfb_p50": 236,
+        "ttfb_p95": 312,
+        "ttfb_p99": 323,
+        "p50": 239,
+        "p95": 316,
+        "p99": 332
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 144,
+        "ttfb_p50": 1262,
+        "ttfb_p95": 1473,
+        "ttfb_p99": 1474,
+        "p50": 1275,
+        "p95": 1483,
+        "p99": 1483
+      }
+    },
+    "doc /reminders": {
+      "path": "/reminders",
+      "warm_ms": 380,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 143,
+        "ttfb_p50": 248,
+        "ttfb_p95": 336,
+        "ttfb_p99": 366,
+        "p50": 251,
+        "p95": 340,
+        "p99": 370
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 143,
+        "ttfb_p50": 1337,
+        "ttfb_p95": 2702,
+        "ttfb_p99": 2704,
+        "p50": 1349,
+        "p95": 2715,
+        "p99": 2717
+      }
+    },
+    "doc /capture": {
+      "path": "/capture",
+      "warm_ms": 251,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 137,
+        "ttfb_p50": 235,
+        "ttfb_p95": 293,
+        "ttfb_p99": 308,
+        "p50": 238,
+        "p95": 296,
+        "p99": 312
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 137,
+        "ttfb_p50": 1178,
+        "ttfb_p95": 1246,
+        "ttfb_p99": 1247,
+        "p50": 1185,
+        "p95": 1257,
+        "p99": 1257
+      }
+    },
+    "doc /chat": {
+      "path": "/chat",
+      "warm_ms": 212,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 126,
+        "ttfb_p50": 178,
+        "ttfb_p95": 225,
+        "ttfb_p99": 233,
+        "p50": 181,
+        "p95": 228,
+        "p99": 253
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 126,
+        "ttfb_p50": 846,
+        "ttfb_p95": 954,
+        "ttfb_p99": 957,
+        "p50": 852,
+        "p95": 963,
+        "p99": 964
+      }
+    },
+    "doc /graph": {
+      "path": "/graph",
+      "warm_ms": 315,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 108,
+        "ttfb_p50": 239,
+        "ttfb_p95": 314,
+        "ttfb_p99": 323,
+        "p50": 244,
+        "p95": 318,
+        "p99": 327
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 108,
+        "ttfb_p50": 1333,
+        "ttfb_p95": 2707,
+        "ttfb_p99": 2709,
+        "p50": 1342,
+        "p95": 2719,
+        "p99": 2719
+      }
+    },
+    "doc /knowledge": {
+      "path": "/knowledge",
+      "warm_ms": 210,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 111,
+        "ttfb_p50": 218,
+        "ttfb_p95": 294,
+        "ttfb_p99": 324,
+        "p50": 222,
+        "p95": 297,
+        "p99": 328
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 111,
+        "ttfb_p50": 951,
+        "ttfb_p95": 1033,
+        "ttfb_p99": 1037,
+        "p50": 962,
+        "p95": 1045,
+        "p99": 1046
+      }
+    },
+    "doc /imports": {
+      "path": "/imports",
+      "warm_ms": 217,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 134,
+        "ttfb_p50": 199,
+        "ttfb_p95": 238,
+        "ttfb_p99": 251,
+        "p50": 202,
+        "p95": 242,
+        "p99": 254
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 134,
+        "ttfb_p50": 987,
+        "ttfb_p95": 1197,
+        "ttfb_p99": 1201,
+        "p50": 1017,
+        "p95": 1235,
+        "p99": 1245
+      }
+    },
+    "doc /settings": {
+      "path": "/settings",
+      "warm_ms": 362,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 226,
+        "ttfb_p50": 297,
+        "ttfb_p95": 397,
+        "ttfb_p99": 464,
+        "p50": 302,
+        "p95": 403,
+        "p99": 469
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 226,
+        "ttfb_p50": 1550,
+        "ttfb_p95": 3533,
+        "ttfb_p99": 3534,
+        "p50": 1561,
+        "p95": 3545,
+        "p99": 3546
+      }
+    },
+    "api /api/health": {
+      "path": "/api/health",
+      "warm_ms": 40,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 46,
+        "ttfb_p95": 67,
+        "ttfb_p99": 69,
+        "p50": 47,
+        "p95": 67,
+        "p99": 69
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 151,
+        "ttfb_p95": 251,
+        "ttfb_p99": 269,
+        "p50": 152,
+        "p95": 251,
+        "p99": 269
+      }
+    },
+    "api mcp search_contacts": {
+      "path": "/api/mcp",
+      "warm_ms": 526,
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 86,
+        "ttfb_p95": 115,
+        "ttfb_p99": 115,
+        "p50": 86,
+        "p95": 115,
+        "p99": 115
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 243,
+        "ttfb_p95": 391,
+        "ttfb_p99": 391,
+        "p50": 243,
+        "p95": 391,
+        "p99": 391
+      }
+    },
+    "api mcp who_do_i_know_at": {
+      "path": "/api/mcp",
+      "warm_ms": 65,
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 72,
+        "ttfb_p95": 103,
+        "ttfb_p99": 103,
+        "p50": 73,
+        "p95": 103,
+        "p99": 103
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 234,
+        "ttfb_p95": 417,
+        "ttfb_p99": 417,
+        "p50": 238,
+        "p95": 418,
+        "p99": 418
+      }
+    },
+    "api mcp due_followups": {
+      "path": "/api/mcp",
+      "warm_ms": 94,
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 98,
+        "ttfb_p95": 134,
+        "ttfb_p99": 134,
+        "p50": 99,
+        "p95": 134,
+        "p99": 134
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 297,
+        "ttfb_p95": 505,
+        "ttfb_p99": 505,
+        "p50": 297,
+        "p95": 505,
+        "p99": 505
+      }
+    },
+    "api mcp get_network_overview": {
+      "path": "/api/mcp",
+      "warm_ms": 133,
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 1,
+        "ttfb_p50": 120,
+        "ttfb_p95": 141,
+        "ttfb_p99": 141,
+        "p50": 121,
+        "p95": 142,
+        "p99": 142
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 1,
+        "ttfb_p50": 381,
+        "ttfb_p95": 595,
+        "ttfb_p99": 595,
+        "p50": 381,
+        "p95": 595,
+        "p99": 595
+      }
+    },
+    "api v1 contacts?q=": {
+      "path": "/api/v1/contacts?q=hopper&limit=20",
+      "warm_ms": 66,
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 80,
+        "ttfb_p95": 101,
+        "ttfb_p99": 101,
+        "p50": 80,
+        "p95": 101,
+        "p99": 101
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 207,
+        "ttfb_p95": 336,
+        "ttfb_p99": 336,
+        "p50": 207,
+        "p95": 336,
+        "p99": 336
+      }
+    },
+    "api v1 followups": {
+      "path": "/api/v1/followups",
+      "warm_ms": 163,
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 95,
+        "ttfb_p95": 123,
+        "ttfb_p99": 123,
+        "p50": 95,
+        "p95": 123,
+        "p99": 123
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 298,
+        "ttfb_p95": 567,
+        "ttfb_p99": 567,
+        "p50": 298,
+        "p95": 567,
+        "p99": 567
+      }
+    },
+    "api ext me": {
+      "path": "/api/extension/me",
+      "warm_ms": 278,
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 72,
+        "ttfb_p95": 114,
+        "ttfb_p99": 114,
+        "p50": 73,
+        "p95": 114,
+        "p99": 114
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 245,
+        "ttfb_p95": 1856,
+        "ttfb_p99": 1856,
+        "p50": 245,
+        "p95": 1857,
+        "p99": 1857
+      }
+    },
+    "api ext contacts?q=": {
+      "path": "/api/extension/contacts?q=hopper",
+      "warm_ms": 199,
+      "single": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 57,
+        "ttfb_p95": 86,
+        "ttfb_p99": 86,
+        "p50": 58,
+        "p95": 86,
+        "p99": 86
+      },
+      "concurrent": {
+        "n": 10,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 189,
+        "ttfb_p95": 311,
+        "ttfb_p99": 311,
+        "p50": 189,
+        "p95": 311,
+        "p99": 311
+      }
+    },
+    "api meetings candidates": {
+      "path": "/api/meetings/candidates",
+      "warm_ms": 68,
+      "single": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 79,
+        "ttfb_p95": 99,
+        "ttfb_p99": 309,
+        "p50": 80,
+        "p95": 99,
+        "p99": 309
+      },
+      "concurrent": {
+        "n": 30,
+        "status": "200",
+        "kb": 0,
+        "ttfb_p50": 297,
+        "ttfb_p95": 375,
+        "ttfb_p99": 412,
+        "p50": 298,
+        "p95": 376,
+        "p99": 412
+      }
+    }
+  }
+}

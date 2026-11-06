@@ -803,6 +803,27 @@ export async function fetchChanges(
   };
 }
 
+/**
+ * Every calendar object overlapping [from, to), live — one time-range REPORT, no cursor. For the
+ * `calendar_events` window, which wants the whole window each pass, never just the changes.
+ */
+export async function fetchWindow(
+  creds: CalDavCredentials,
+  calendarUrl: string,
+  window: { from: Date; to: Date },
+  opts: { fetchImpl?: typeof fetch } = {}
+): Promise<string[]> {
+  const result = await davRequest(
+    creds,
+    calendarUrl,
+    "REPORT",
+    "1",
+    calendarQueryBody(toCalDavUtc(window.from), toCalDavUtc(window.to)),
+    opts.fetchImpl ?? fetch
+  );
+  return allCalendarData(result.text);
+}
+
 function allCalendarData(xml: string): string[] {
   const ms = parseMultistatus(xml);
   const docs: string[] = [];

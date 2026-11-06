@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { cache } from "react";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
@@ -20,6 +20,7 @@ import {
   inferReminderActionKind,
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
+import { normalizeCadence } from "@/lib/keep-in-touch";
 import { loadNotificationPanel } from "@/lib/notification-panel";
 import { traced } from "@/lib/perf-trace";
 import {
@@ -39,9 +40,15 @@ import {
   assertReminderContactOwned,
   createReminderForUser,
   scheduleContactFollowUpForUser,
+  clearContactFollowUpForUser,
+  trackFollowUpSet,
+  undoClearContactFollowUpForUser,
+  type ClearFollowUpSnapshot,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
 import { settle, unwrap } from "@/lib/settled";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
 import {
   REMINDERS_PAGE_SIZE,
   isReminderSource,
@@ -100,13 +107,20 @@ function validSnoozeSnapshot(snap: SnoozeSnapshot): boolean {
 }
 
 function validCompletionSnapshot(snap: CompletionSnapshot): boolean {
+  const cleared = snap?.clearedFollowUp;
   return (
     typeof snap?.reminderId === "string" &&
     REMINDER_STATUSES.has(snap.previousStatus) &&
     snap.previousStatus !== "done" &&
     Array.isArray(snap.closedActionItemIds) &&
     snap.closedActionItemIds.length <= 500 &&
-    snap.closedActionItemIds.every((id) => typeof id === "string")
+    snap.closedActionItemIds.every((id) => typeof id === "string") &&
+    (cleared === undefined ||
+      (typeof cleared?.contactId === "string" &&
+        typeof cleared.previousNextFollowUpAt === "string" &&
+        !Number.isNaN(Date.parse(cleared.previousNextFollowUpAt)) &&
+        (cleared.previousFollowUpStatus === null ||
+          FOLLOW_UP_STATUSES.has(cleared.previousFollowUpStatus))))
   );
 }
 
@@ -551,7 +565,7 @@ export async function scheduleContactFollowUp(
   days = 7
 ) {
   const userId = await requireUserId();
-  const result = await scheduleContactFollowUpForUser(userId, contactId, days);
+  const result = await scheduleContactFollowUpForUser(userId, contactId, days, { origin: "manual" });
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
   return result;
@@ -603,11 +617,10 @@ export async function scheduleContactFollowUpAt(
   if (existing) {
     const [updated] = await db
       .update(reminders)
+      // WHEN, not WHAT — same rule as `scheduleContactFollowUpForUser`: a hand-written
+      // "Send Priya the deck" must not be renamed "Follow up with Priya" by the date picker.
       .set({
-        title,
         dueDate: due,
-        reminderType: "manual",
-        actionKind,
         listId: existing.listId || inboxId,
       })
       .where(eq(reminders.id, existing.id))
@@ -640,42 +653,88 @@ export async function scheduleContactFollowUpAt(
     })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
+  if (row) trackFollowUpSet(userId, row, "manual");
+
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
   return { reminder: row, dueDate: due.toISOString() };
 }
 
-export async function clearContactFollowUp(contactId: string) {
+/**
+ * Set or clear how often the user wants to speak to this contact.
+ *
+ * Writes the SAME columns the capture path writes when a note says "check in monthly" —
+ * `cadence_days` with `cadence_source` marking who said it. This branch originally added a
+ * separate `keep_in_touch_days`; main's model is richer and already had a slot for a
+ * user-stated interval, so the column was dropped in the merge rather than kept beside it.
+ *
+ * Deliberately does NOT schedule a follow-up: a cadence is a standing preference, and
+ * materializing it into a `next_follow_up_at` would make the contact ineligible for the very
+ * suggestion it exists to produce (`isDiscoveryEligible` treats a booked follow-up as
+ * already covered).
+ */
+export async function setKeepInTouchCadence(
+  contactId: string,
+  days: number | null
+) {
   const userId = await requireUserId();
   const db = await getDb();
+
+  // Anything unusable collapses to "no cadence" rather than throwing: this is a preference
+  // control, and a bad value is better cleared than left half-set. `normalizeCadence` also
+  // rejects zero and negatives, which would otherwise make a contact permanently overdue.
+  const cadence = days === null ? null : normalizeCadence(days);
 
   await db
     .update(contacts)
     .set({
-      nextFollowUpAt: null,
-      followUpStatus: "none",
+      cadenceDays: cadence,
+      // The phrase belongs to whoever stated it. A user picking "Quarterly" from four
+      // buttons did not say anything, so the phrase is cleared rather than left quoting a
+      // note that no longer describes the interval.
+      cadencePhrase: null,
+      cadenceSource: cadence === null ? null : "user",
+      cadenceSetAt: cadence === null ? null : new Date(),
       updatedAt: new Date(),
     })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
-  const open = await db.query.reminders.findMany({
-    where: and(
-      eq(reminders.userId, userId),
-      eq(reminders.contactId, contactId),
-      eq(reminders.status, "pending")
-    ),
-  });
-  for (const r of open) {
-    await completeReminder(userId, r.id);
-  }
-
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
+  return { keepInTouchDays: cadence };
+}
+
+export async function clearContactFollowUp(contactId: string) {
+  const userId = await requireUserId();
+  return clearFollowUpAs(userId, contactId, "list");
+}
+
+/** The body of `clearContactFollowUp`, with the control that closed the reminders named. */
+async function clearFollowUpAs(userId: string, contactId: string, via: "list" | "touch") {
+  const { remindersClosed, snapshot } = await clearContactFollowUpForUser(userId, contactId, via);
   // The count is load-bearing, not telemetry: clearing a follow-up also marks every
   // pending reminder for the contact done (and completes their linked action items),
-  // which the caller has to be able to say out loud. It used to return a bare
-  // `{ ok: true }` and the UI said only "Follow-up cleared".
-  return { ok: true, remindersClosed: open.length };
+  // which the caller has to be able to say out loud. The snapshot is what lets it offer Undo.
+  return { ok: true, remindersClosed, snapshot };
+}
+
+/** Undo for `clearContactFollowUp`. The snapshot comes back from the client: validated. */
+export async function undoClearContactFollowUpAction(snapshot: ClearFollowUpSnapshot) {
+  const userId = await requireUserId();
+  if (
+    typeof snapshot?.contactId !== "string" ||
+    !isIsoOrNull(snapshot.previousNextFollowUpAt) ||
+    !(snapshot.previousFollowUpStatus === null || FOLLOW_UP_STATUSES.has(snapshot.previousFollowUpStatus)) ||
+    !Array.isArray(snapshot.completions) ||
+    snapshot.completions.length > BULK_LIMIT ||
+    !snapshot.completions.every(validCompletionSnapshot)
+  ) {
+    return { restored: false };
+  }
+  const result = await undoClearContactFollowUpForUser(userId, snapshot);
+  revalidateReminderPaths(snapshot.contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  return result;
 }
 
 export type FollowUpTouchChannel = "email" | "linkedin_message" | "note";
@@ -688,7 +747,10 @@ export async function completeFollowUpWithTouch(
     notes?: string;
   }
 ) {
+  const userId = await requireUserId();
   const channel = options?.channel ?? "note";
+  // Stamped before the touch is logged, so the card's acted_at never postdates it.
+  const at = new Date();
   const { logInteraction } = await import("@/actions/contacts");
   await logInteraction({
     contactId,
@@ -697,7 +759,21 @@ export async function completeFollowUpWithTouch(
     // Orbit only ever logs a follow-up the user sent, so this is always outbound. Set
     // explicitly rather than left NULL: NULL means "sender unknown" and would push the
     // contact onto the legacy volume fallback in constellation eligibility.
-    direction: channel === "linkedin_message" ? "out" : undefined,
+    // Orbit only ever logs a follow-up the user sent, so this is always outbound — on every
+    // channel, not just LinkedIn.
+    //
+    // This used to set it for `linkedin_message` alone, for a reason that turns out to apply
+    // only there: NULL means "sender unknown", which pushes a contact onto the legacy volume
+    // fallback in constellation eligibility. Since Oct 2026 those counts cover email and chat
+    // messages too (`constellationSignalAggregates` in `closeness-cohort.ts`), so recording
+    // `out` here is what makes a sent follow-up count as the outbound half of an exchange —
+    // correctly. A call row is a meeting there; its direction is still invisible.
+    //
+    // Recording it for every channel is what makes "waiting on a reply" possible at all: the
+    // job seeker's follow-ups are emails, and an email touch that recorded no direction was
+    // indistinguishable from a note someone typed about a conversation they had. See
+    // `@/lib/awaiting-reply`.
+    direction: "out",
     rawNotes: options?.notes,
     aiSummary:
       channel === "email"
@@ -706,13 +782,18 @@ export async function completeFollowUpWithTouch(
           ? "Sent LinkedIn follow-up"
           : "Completed follow-up",
   });
-  return clearContactFollowUp(contactId);
+  // A message sent outside Orbit (LinkedIn has no send API) answers Radar like an email
+  // sent from it: the card closes and a congratulations nudge retires.
+  const { markContactReachedOutForUser } = await import("@/lib/radar/actions-core");
+  await markContactReachedOutForUser(userId, contactId, at);
+  return clearFollowUpAs(userId, contactId, "touch");
 }
 
 export async function markReminderDone(id: string) {
   const userId = await requireUserId();
   const snapshot = await completeReminder(userId, id);
-  revalidateReminderPaths();
+  revalidateReminderPaths(snapshot?.clearedFollowUp?.contactId);
+  if (snapshot?.clearedFollowUp) revalidatePathIfRequestScoped("/contacts");
   // Handed back so the toast can offer Undo; see `reopenReminderAction`.
   return snapshot;
 }
@@ -722,7 +803,8 @@ export async function reopenReminderAction(snapshot: CompletionSnapshot) {
   const userId = await requireUserId();
   if (!validCompletionSnapshot(snapshot)) return { restored: false };
   const result = await reopenReminder(userId, snapshot);
-  revalidateReminderPaths();
+  revalidateReminderPaths(snapshot.clearedFollowUp?.contactId);
+  if (snapshot.clearedFollowUp) revalidatePathIfRequestScoped("/contacts");
   return result;
 }
 
@@ -736,7 +818,8 @@ export async function reopenDoneReminderAction(id: string) {
   const db = await getDb();
   const rows = await db
     .update(reminders)
-    .set({ status: "pending" })
+    // Reopened: no longer completed (`completed_at` is cleared with the status).
+    .set({ status: "pending", completedAt: null })
     .where(and(eq(reminders.id, id), eq(reminders.userId, userId), eq(reminders.status, "done")))
     .returning(); // bare: a field selector breaks over the Db union
   revalidateReminderPaths();
@@ -892,7 +975,7 @@ export async function bulkReminderAction(
     switch (action.op) {
       case "done": {
         const items = await mapPooled(unique, (id) =>
-          completeReminder(userId, id)
+          completeReminder(userId, id, { via: "bulk" })
         );
         snapshot = {
           op: "done",
@@ -1079,14 +1162,26 @@ export async function listDueNotificationItems() {
     }));
 }
 
-export async function dismissSuggestion(id: string) {
-  const userId = await requireUserId();
+/** Mark a suggestion dismissed. Returns whether it moved (false: already dismissed or not this user's). */
+async function markSuggestionDismissed(userId: string, id: string): Promise<boolean> {
   const db = await getDb();
   const { aiSuggestions } = await import("@/db/schema");
-  await db
+  const moved = await db
     .update(aiSuggestions)
     .set({ status: "dismissed" })
-    .where(and(eq(aiSuggestions.id, id), eq(aiSuggestions.userId, userId)));
+    .where(and(eq(aiSuggestions.id, id), eq(aiSuggestions.userId, userId), ne(aiSuggestions.status, "dismissed")))
+    .returning(); // bare: a field selector breaks over the Db union
+  return moved.length > 0;
+}
+
+export async function dismissSuggestion(id: string) {
+  const userId = await requireUserId();
+  if (await markSuggestionDismissed(userId, id)) {
+    // The person turned a suggestion down; `reminder_id` holds the suggestion's id (there is
+    // no reminder). Resolving a suggestion by ACCEPTING it goes through
+    // `markSuggestionDismissed` directly and records nothing here.
+    track("followup_dismissed", { reminder_id: id }, { userId, id: eventId("followup_dismissed", id) });
+  }
   revalidatePathIfRequestScoped("/");
   revalidatePathIfRequestScoped("/dashboard");
 }
@@ -1133,8 +1228,14 @@ export async function scheduleFromSuggestion(suggestionId: string, days = 7) {
   const contactId = suggestion.relatedContactIds?.[0];
   if (!contactId) throw new Error("No contact linked to this suggestion");
 
-  const result = await scheduleContactFollowUp(contactId, days);
-  await dismissSuggestion(suggestionId);
+  // Same writes and revalidation as `scheduleContactFollowUp`, with the origin named: the
+  // person accepted a suggestion, which is not the same signal as typing one in.
+  const result = await scheduleContactFollowUpForUser(userId, contactId, days, { origin: "suggestion" });
+  revalidateReminderPaths(contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  await markSuggestionDismissed(userId, suggestionId);
+  revalidatePathIfRequestScoped("/");
+  revalidatePathIfRequestScoped("/dashboard");
   return result;
 }
 
@@ -1174,7 +1275,9 @@ export async function acceptScoreBump(suggestionId: string) {
     })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
-  await dismissSuggestion(suggestionId);
+  await markSuggestionDismissed(userId, suggestionId);
+  revalidatePathIfRequestScoped("/");
+  revalidatePathIfRequestScoped("/dashboard");
 
   revalidatePathIfRequestScoped("/contacts");
   revalidatePath(`/contacts/${contactId}`);

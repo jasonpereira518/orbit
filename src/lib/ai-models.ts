@@ -79,19 +79,21 @@ function relativeCost(model: string): number | null {
  *  - A person whose own model is already cheaper than the tier's keeps theirs. Someone who
  *    picked Flash-Lite for everything should not be "upgraded" onto a dearer model by a
  *    tier that exists to save money.
- *  - On Orbit's managed key every tier resolves through `managedModel`, so a tier cannot
- *    reach past the managed allowlist (vision used to, and gpt-4o is 16× gpt-4o-mini).
+ *  - On Orbit's managed key every tier resolves through `managedModel` instead, so a tier
+ *    cannot reach past the managed allowlist (vision used to, and gpt-4o is 16× gpt-4o-mini)
+ *    and the account's own model choice never decides what Orbit pays for.
  */
 export function modelForOperation(
   operation: AiOperationId,
   grant: { provider: AiProvider; model: string; keyOwner: "user" | "orbit" }
 ): string {
   const tier = aiOperationTier(operation);
+  // Orbit's key: Orbit picks the model per tier (`managedModel`), never the account's choice.
+  if (grant.keyOwner === "orbit") return managedModel(grant.provider, null, tier);
   const tierModel = tier === "fast" ? FAST_MODELS[grant.provider] : tier === "vision" ? VISION_MODELS[grant.provider] : null;
   if (!tierModel) return grant.model;
 
   const own = relativeCost(grant.model);
   const tiered = relativeCost(tierModel);
-  const chosen = own !== null && tiered !== null && own <= tiered ? grant.model : tierModel;
-  return grant.keyOwner === "orbit" ? managedModel(grant.provider, chosen) : chosen;
+  return own !== null && tiered !== null && own <= tiered ? grant.model : tierModel;
 }

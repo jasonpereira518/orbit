@@ -17,8 +17,7 @@ import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { internalFetch, isInternalRequest } from "@/lib/internal-auth";
 import { runRadarPass } from "@/lib/radar/run";
 import { reportAndContinue, reportError } from "@/lib/report-error";
-import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
-import { COMING_SOON_KEYS } from "@/lib/surfaces";
+import { getComingSoonKeys, getHiddenSurfaceKeys } from "@/lib/surface-visibility";
 
 export const maxDuration = 300;
 
@@ -32,13 +31,13 @@ export async function POST(request: Request) {
 
   const handle = await startCronRun("radar.run");
   try {
-    const hidden = await getHiddenSurfaceKeys();
+    const [hidden, soon] = await Promise.all([getHiddenSurfaceKeys(), getComingSoonKeys()]);
     if (hidden.has(SURFACE_KEY)) {
       await finishCronRun(handle, { status: "ok", stats: { standDown: true } });
       return NextResponse.json({ ok: true, standDown: true });
     }
 
-    const stats = await runRadarPass({ includeUnopened: !COMING_SOON_KEYS.has(SURFACE_KEY) });
+    const stats = await runRadarPass({ includeUnopened: !soon.has(SURFACE_KEY) });
 
     // More accounts are waiting. Best-effort: a lost kick is picked up by tomorrow's pass,
     // and the page rebuilds any list older than a day on its own.

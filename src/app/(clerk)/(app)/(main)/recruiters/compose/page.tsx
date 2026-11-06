@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import {
   getGmailConnectionStatus,
@@ -15,7 +16,12 @@ import { LockedFeature } from "@/components/locked-feature";
 import { ComposeWorkspace } from "@/components/recruiters/compose-workspace";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Compose · Recruiters" };
+
 export default async function RecruiterComposePage() {
+  const gate = await pageVisibilityGate("page.recruiters");
+  if (gate) return gate;
+
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
   if (!canUseRecruiters) {
     return (

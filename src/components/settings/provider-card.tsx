@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -34,6 +35,7 @@ const MARKS: Partial<Record<AiProvider, (props: { className?: string }) => React
 export type ProviderCardStatus = {
   hasPersonalKey: boolean;
   managedAvailable: boolean;
+  clearResetsSearch?: boolean;
 };
 
 /**
@@ -43,6 +45,44 @@ export type ProviderCardStatus = {
  * wipe the key the user had just pasted and collapse the Replace field on every thrown save.
  */
 export const SAVE_THREW = Symbol("provider-card:save-threw");
+
+/** Clear a saved key in two steps — a clear can drop the account's search index. */
+export function ClearKeyButton({
+  label, resetsSearch, disabled, onConfirm, children, ...trigger
+}: {
+  label: string;
+  resetsSearch: boolean;
+  disabled: boolean;
+  onConfirm: () => void;
+  children: React.ReactNode;
+} & Pick<React.ComponentProps<typeof Button>, "variant" | "aria-label" | "aria-describedby">) {
+  const [confirming, setConfirming] = useState(false);
+  const focus = useConfirmFocus(confirming ? "clear" : null);
+  if (confirming) {
+    return (
+      <span className="flex flex-wrap items-center gap-2">
+        <span role="status" className="text-xs text-muted-foreground">
+          {resetsSearch
+            ? "Search moves to another provider and re-indexes your contacts"
+            : `AI stops using your ${label} key`}
+        </span>
+        <Button ref={focus.confirmRef("clear")} type="button" size="sm" variant="destructive"
+          disabled={disabled} onClick={() => { setConfirming(false); onConfirm(); }}>
+          Clear key
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+          Cancel
+        </Button>
+      </span>
+    );
+  }
+  return (
+    <Button ref={focus.triggerRef("clear")} type="button" size="sm" disabled={disabled}
+      {...trigger} onClick={() => setConfirming(true)}>
+      {children}
+    </Button>
+  );
+}
 
 /**
  * One provider: its mark, its name, a state line, and then the model choice, a place to
@@ -279,20 +319,16 @@ export function ProviderCard({
               Replace key
             </Button>
           )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
+          <ClearKeyButton
+            label={provider.label}
+            resetsSearch={Boolean(status?.clearResetsSearch)}
             disabled={pending}
+            variant="outline"
             aria-describedby={`provider-card-name-${provider.id}`}
-            onClick={() =>
-              start(async () => {
-                await onClear(provider.id);
-              })
-            }
+            onConfirm={() => start(async () => { await onClear(provider.id); })}
           >
             Clear key
-          </Button>
+          </ClearKeyButton>
         </div>
       ) : null}
     </li>

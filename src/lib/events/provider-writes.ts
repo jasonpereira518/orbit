@@ -113,7 +113,11 @@ export async function upsertProviderAttendees(
   const parsed: ParsedAttendee[] = [];
   const seen = new Set<string>();
   for (const a of attendees) {
-    const identityKey = attendeeIdentityKey(a);
+    // Luma always sends the guest's email, and every Luma row synced before registration
+    // answers were read was keyed on it. Keyed on a LinkedIn answer instead, the next sync
+    // would land a second row for the same guest — so Luma keys on email and only STORES
+    // the LinkedIn URL (the cross-event person key still picks it up).
+    const identityKey = attendeeIdentityKey(provider === "luma" && a.email ? { ...a, linkedinUrl: null } : a);
     if (!identityKey || seen.has(identityKey)) continue;
     seen.add(identityKey);
     parsed.push({

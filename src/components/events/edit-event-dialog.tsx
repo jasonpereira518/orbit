@@ -146,7 +146,7 @@ export function EditEventDialog({
 
   return (
     <Dialog open onOpenChange={(next) => (next ? null : onClose())}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl" showCloseButton>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl" showCloseButton>
         <DialogHeader>
           <DialogTitle>Edit event</DialogTitle>
           <DialogDescription>

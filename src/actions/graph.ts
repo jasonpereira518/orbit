@@ -1,6 +1,7 @@
 "use server";
 
 import { and, asc, count, eq, gt } from "drizzle-orm";
+import { isAiAccessError } from "@/lib/ai-access";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
@@ -40,6 +41,39 @@ export async function getFullGraphData() {
     () => loadGraphData(userId, { profile: getDisplayProfile(), scope: "all" }),
     { userId }
   );
+}
+
+/** What the inspect panel shows for one star beyond the chart payload (see `loadGraphData`). */
+export type GraphContactDetail = {
+  howMet: string | null;
+  metContext: string | null;
+  dateMet: Date | null;
+  sharedInterests: string[] | null;
+  email: string | null;
+  phone: string | null;
+  linkedinUrl: string | null;
+  website: string | null;
+};
+
+/** One contact's detail for the inspect panel, or null when it is not the caller's. */
+export async function getGraphContactDetail(contactId: string): Promise<GraphContactDetail | null> {
+  const userId = await requireUserForSurface("page.graph");
+  if (typeof contactId !== "string" || !UUID_RE.test(contactId)) return null;
+  const db = await getDb();
+  const row = await db.query.contacts.findFirst({
+    where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+    columns: {
+      howMet: true,
+      metContext: true,
+      dateMet: true,
+      sharedInterests: true,
+      email: true,
+      phone: true,
+      linkedinUrl: true,
+      website: true,
+    },
+  });
+  return row ?? null;
 }
 
 /** Wall-clock budget for one constellation refresh tick. */
@@ -114,6 +148,7 @@ export async function refreshConstellationBatch(input?: {
   let failed = 0;
   let firstError: unknown = null;
   let firstFailedId: string | null = null;
+  let aiError: string | null = null;
   for (const row of slice) {
     // Unattempted rows are simply not counted as processed; the client asks again, from
     // the cursor, which only ever advances past rows that were attempted.
@@ -123,9 +158,12 @@ export async function refreshConstellationBatch(input?: {
     }
     cursor = row.id;
     try {
-      await rebuildContactEmbedding(userId, row.id);
+      // strict: this batch reports progress to someone watching a spinner, so a
+      // swallowed provider failure would be counted as a success.
+      await rebuildContactEmbedding(userId, row.id, undefined, { strict: true });
     } catch (err) {
       failed += 1;
+      if (!aiError && isAiAccessError(err)) aiError = err.message;
       if (!firstError) {
         firstError = err;
         firstFailedId = row.id;
@@ -163,9 +201,14 @@ export async function refreshConstellationBatch(input?: {
   return {
     total,
     processed,
+    // `failed` was computed, logged and recorded — and then dropped on the floor here, so
+    // the client had no way to know anything had gone wrong and always reported success.
+    failed,
     done,
     /** Pass back as `after` on the next tick. */
     cursor,
+    /** Set when the AI gate refused embeddings: the refresh cannot succeed until that changes. */
+    aiError,
     graph,
   };
 }

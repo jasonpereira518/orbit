@@ -49,6 +49,10 @@ import {
 } from "@/lib/interest-list-ticket";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { asWelcomePlanet, planetForSignupNumber, type WelcomePlanet } from "@/lib/welcome-planets";
+import { ipBucketKey } from "@/lib/client-ip";
+import { track } from "@/lib/product-events";
+
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type WelcomeSender = (
   email: string,
@@ -92,7 +96,7 @@ export function generateShareToken() {
  * token that exists nowhere. Indistinguishable in shape from a real ticket; resolves to
  * nothing if followed.
  */
-async function plausibleTicket(): Promise<InterestTicket> {
+export async function plausibleTicket(): Promise<InterestTicket> {
   const proof = await getInterestProof();
   const number = proof.total + 1;
   return {
@@ -121,11 +125,17 @@ export async function joinInterestListCore(
   if (!parsed.success) return { ok: false, message: FORMAT_ERROR };
   const { ref } = parsed.data;
   const email = parsed.data.email.trim().toLowerCase();
+  // The visit this join came out of, so a signup can be traced to its first page view without a
+  // cookie. Anything that is not a uuid is dropped, never an error.
+  const joinSessionId =
+    typeof parsed.data.sessionId === "string" && SESSION_ID.test(parsed.data.sessionId)
+      ? parsed.data.sessionId.toLowerCase()
+      : null;
 
   // 3. Rate limit. A limiter that cannot count must not fail open into the write, and must
   //    not break a real person's signup either — so any throw is the fake ticket.
   try {
-    await consumeBucket("interest.join", ctx.ip, RATE_LIMITS.interestJoin);
+    await consumeBucket("interest.join", ipBucketKey(ctx.ip), RATE_LIMITS.interestJoin);
   } catch (err) {
     // Past the limit, or a limiter that cannot count. Either way the caller gets the fake
     // ticket — the write must never fail open — but only the first is expected. The
@@ -133,6 +143,14 @@ export async function joinInterestListCore(
     // that a real person was dropped.
     if (isRateLimitedError(err)) console.warn("[interest-list] join rate-limited", { ipTag: ipLogTag(ctx.ip) });
     else console.error("[interest-list] limiter failed", err);
+    // Count the human the limiter just dropped. Nothing about them is stored: no address, no
+    // IP, no session. "How many people did the limiter turn away" was unanswerable, because the
+    // fake ticket leaves no row (audit D6).
+    track(
+      "waitlist_join_limited",
+      { reason: isRateLimitedError(err) ? "rate_limited" : "limiter_error" },
+      { actor: "system" }
+    );
     return { ok: true, ticket: await plausibleTicket(), returning: false };
   }
 
@@ -182,6 +200,7 @@ export async function joinInterestListCore(
         utmMedium: ctx.attribution?.utmMedium ?? null,
         utmCampaign: ctx.attribution?.utmCampaign ?? null,
         landingPath: ctx.attribution?.landingPath ?? null,
+        joinSessionId,
         unsubscribeToken: generateUnsubscribeToken(),
         shareToken: generateShareToken(),
         welcomePlanet: planetForSignupNumber((before?.n ?? 0) + 1),
@@ -257,11 +276,23 @@ export async function joinInterestListCore(
     ticketError = err;
   }
 
+  // The global welcome cap (RATE_LIMITS.interestWelcome). Past it, or with a limiter that
+  // cannot count, the row and ticket still stand and only the mail is skipped.
+  if (welcome) {
+    try {
+      await consumeBucket("interest.welcome", "global", RATE_LIMITS.interestWelcome);
+    } catch (err) {
+      if (isRateLimitedError(err)) console.warn("[interest-list] welcome cap reached; mail skipped");
+      else console.error("[interest-list] welcome limiter failed; mail skipped", err);
+      welcome = false;
+    }
+  }
+
   if (welcome) {
     const pageUrl = getWaitlistPageUrl();
     const send = ctx.sendWelcome ?? sendInterestListWelcomeEmail;
     // The real sender only ever logs, so a Resend outage never fails the join.
-    await send(
+    const sent = await send(
       row.email,
       buildUnsubscribeUrl(row.unsubscribeToken),
       asWelcomePlanet(row.welcomePlanet),
@@ -273,6 +304,8 @@ export async function joinInterestListCore(
       ticket?.position ?? null,
       row.signupEventLabel
     );
+    // Only a send the provider ACCEPTED counts; a skipped or rejected one is not "went out".
+    if (sent === true) track("waitlist_email_sent", { kind: "welcome" }, { actor: "system" });
   }
   if (!ticket) throw ticketError;
 
@@ -308,7 +341,7 @@ export async function saveInterestListNameCore(
   // Same posture as the join: a limiter that cannot count must not fail open into a write,
   // and must not break a real person's step either — so any throw is a quiet no-op.
   try {
-    await consumeBucket("interest.name", ctx.ip, RATE_LIMITS.interestName);
+    await consumeBucket("interest.name", ipBucketKey(ctx.ip), RATE_LIMITS.interestName);
   } catch (err) {
     if (isRateLimitedError(err)) console.warn("[interest-list] name rate-limited", { ipTag: ipLogTag(ctx.ip) });
     else console.error("[interest-list] limiter failed", err);
@@ -360,7 +393,7 @@ async function notifyIfTierUnlocked(
     if (!tier) return;
     const pageUrl = getWaitlistPageUrl();
     const send = ctx.sendTier ?? sendTierEmail;
-    await send(
+    const sent = await send(
       referrer.email,
       buildUnsubscribeUrl(referrer.unsubscribeToken),
       asWelcomePlanet(referrer.welcomePlanet),
@@ -370,6 +403,7 @@ async function notifyIfTierUnlocked(
       },
       tier
     );
+    if (sent === true) track("waitlist_email_sent", { kind: "tier" }, { actor: "system" });
   } catch (err) {
     console.error("[interest-list] tier notice failed", err);
   }

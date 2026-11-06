@@ -1,4 +1,5 @@
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
@@ -18,6 +19,19 @@ import {
   matchRosterToNetwork,
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
+
+/** Request-memoized so `generateMetadata` and the page share one read. */
+const loadEvent = cache((id: string) => getEvent(id));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const event = await loadEvent(id).catch(() => null);
+  return { title: event?.title || "Event" };
+}
 
 async function WhoToTalkTo({ eventId }: { eventId: string }) {
   const data = await getWhoToTalkTo(eventId);
@@ -109,7 +123,7 @@ export default async function EventDetailPage({
   const matchesPromise = matchRosterToNetwork(id).catch(() => []);
   const historyPromise = getRosterHistory(id).catch(() => []);
 
-  const event = await getEvent(id);
+  const event = await loadEvent(id);
   // Before any Suspense boundary, so the route returns a real 404 rather than streaming a
   // shell and then discovering there is nothing to put in it.
   if (!event) notFound();

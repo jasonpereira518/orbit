@@ -25,6 +25,10 @@ export const KNOWN_SITES = [
   { origin: "https://*.linkedin.com/*", label: "LinkedIn" },
   { origin: "https://x.com/*", label: "X" },
   { origin: "https://mail.google.com/*", label: "Gmail" },
+  // Event pages, for the guest list you have open — Luma answers on both hosts.
+  { origin: "https://luma.com/*", label: "Luma" },
+  { origin: "https://lu.ma/*", label: "Luma (lu.ma links)" },
+  { origin: "https://partiful.com/*", label: "Partiful" },
 ] as const;
 
 export const KNOWN_ORIGINS: string[] = KNOWN_SITES.map((site) => site.origin);

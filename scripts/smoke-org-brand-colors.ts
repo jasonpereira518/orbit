@@ -24,6 +24,7 @@ import { lookupBrand, registerLearnedBrands } from "../src/lib/brand-colors";
 import { companyBrandColor } from "../src/lib/company-brand";
 import {
   extractBrandHex,
+  forgetOrgBrandColors,
   learnOrgBrandColors,
   loadOrgBrandColors,
   toDomain,
@@ -181,6 +182,8 @@ async function main() {
   check("  and has nothing left to learn — a miss is not retried every load", second.missing.length === 0, JSON.stringify(second.missing));
 
   await db.update(orgBrandColors).set({ resolvedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) }).where(eq(orgBrandColors.nameKey, "nowhere labs"));
+  check("a direct write is not seen until the per-instance copy is forgotten", !(await loadOrgBrandColors(USER)).missing.some((m) => m.nameKey === "nowhere labs"));
+  forgetOrgBrandColors();
   check("a month-old miss is tried again", (await loadOrgBrandColors(USER)).missing.some((m) => m.nameKey === "nowhere labs"));
   check("another user sees only their own organizations", (await loadOrgBrandColors(OTHER)).missing.map((m) => m.nameKey).join() === "secret co");
 

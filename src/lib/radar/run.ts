@@ -53,6 +53,8 @@ import { reportError, reportUnlessQuiet } from "@/lib/report-error";
 import { runSettledPool } from "@/lib/sync-scheduler";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
+import { loadUserFocus } from "@/lib/career-profile-server";
+import { focusFitComponent, type UserFocus } from "@/lib/focus-fit";
 
 const HOUR_MS = 3_600_000;
 
@@ -158,7 +160,12 @@ export async function loadRadarState(userId: string): Promise<RadarState | null>
   return row ? { lastRunAt: row.lastRunAt, nextAt: row.nextAt, paused: row.paused === 1 } : null;
 }
 
-function toRadarContact(row: RadarCandidateRow, targetKeys: Map<string, number>, goals: string[]): RadarContact {
+function toRadarContact(
+  row: RadarCandidateRow,
+  targetKeys: Map<string, number>,
+  goals: string[],
+  focus: UserFocus | null = null
+): RadarContact {
   let targetPriority: 1 | 2 | 3 | null = null;
   for (const key of companyMatchKeys(row.company)) {
     const p = targetKeys.get(key);
@@ -179,6 +186,7 @@ function toRadarContact(row: RadarCandidateRow, targetKeys: Map<string, number>,
     cadencePhrase: row.cadencePhrase,
     targetPriority,
     goalFit: goals.length ? goalRelevanceComponent({ company: row.company, title: row.title, industry: row.industry }, goals) : 0,
+    focusFit: focus ? focusFitComponent({ title: row.title, industry: row.industry }, focus) : 0,
     hasEvidence: row.hasEvidence,
   };
 }
@@ -191,9 +199,10 @@ export function scoreCandidates(
   goals: string[],
   suppressions: Map<string, RadarSuppression>,
   now: Date,
-  model: RadarModel | null = null
+  model: RadarModel | null = null,
+  focus: UserFocus | null = null
 ): NewRecommendation[] {
-  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model), RADAR_CAPS);
+  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model, focus), RADAR_CAPS);
 }
 
 /** Every person's winning card, before the caps: what the rerank chooses its shortlist from. */
@@ -204,7 +213,8 @@ export function scorePicks(
   goals: string[],
   suppressions: Map<string, RadarSuppression>,
   now: Date,
-  model: RadarModel | null = null
+  model: RadarModel | null = null,
+  focus: UserFocus | null = null
 ): NewRecommendation[] {
   const byContact = new Map<string, RadarSignal[]>();
   for (const s of signals) {
@@ -216,7 +226,7 @@ export function scorePicks(
   const rowById = new Map<string, RadarCandidateRow>();
   for (const row of candidates) {
     rowById.set(row.id, row);
-    const contact = toRadarContact(row, targetKeys, goals);
+    const contact = toRadarContact(row, targetKeys, goals, focus);
     const kinds = scoreContactKinds(contact, byContact.get(row.id) ?? [], suppressions.get(row.id) ?? NO_SUPPRESSION, now, model);
     const pick = pickWinner(row.id, kinds, now);
     if (pick) picks.push(pick);
@@ -273,10 +283,16 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
         runId = run!.id;
 
-        const [signals, goals, targetKeys, live, outcomes, tallies] = await Promise.all([
+        const [signals, goals, targetKeys, focus, live, outcomes, tallies] = await Promise.all([
           produceInternalSignals(userId, now),
           listActiveGoalTextsForUser(userId, { limit: 8 }),
           loadTargetKeys(userId),
+          // Skills and watched job titles from the LinkedIn export. A failure costs the nudge,
+          // never the run.
+          loadUserFocus(userId).catch((err) => {
+            reportUnlessQuiet(err, { where: "job.radar.focus", userId, level: "warning" });
+            return null;
+          }),
           loadLiveRecommendations(userId),
           // Measurement, not ranking: which accepts turned into conversations. It never
           // blocks the list, so a failure here costs the stat, not the run.
@@ -317,7 +333,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
           return [];
         });
-        const picks = scorePicks(candidates, [...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model);
+        const picks = scorePicks(candidates, [...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model, focus);
 
         // AI, on the account's own key, in one shared budget. First the rerank, which may
         // nudge the shortlist before the caps choose the final list; then, once the list is

@@ -1,13 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMotionValue } from "motion/react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { MessageSquarePlus, Sparkles } from "lucide-react";
+import { Lock, MessageSquarePlus, Sparkles } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import {
   APP_NAV,
@@ -27,7 +26,15 @@ import { cn } from "@/lib/utils";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { usePrefersReducedTransparency } from "@/lib/use-prefers-reduced-transparency";
-import { FEEDBACK_SURFACE_KEY, isHrefComingSoon, isHrefHidden } from "@/lib/surfaces";
+import {
+  FEEDBACK_SURFACE_KEY,
+  isHrefComingSoon,
+  isHrefHidden,
+  orderNavItems,
+  surfaceKeyForHref,
+  tierTagPlan,
+} from "@/lib/surfaces";
+import { PLAN_SHORT_LABELS, type Plan } from "@/lib/plans/plan-config";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { MobileCaptureButton } from "@/components/layout/mobile-capture-button";
 import {
@@ -51,15 +58,39 @@ type DraggableEntry = { type: "more" } | { type: "link"; href: string };
 // loads. The plain CSS pill shows until the lens reports it is drawn.
 const NavLens = dynamic(() => import("@/components/layout/nav-lens"), { ssr: false });
 
+/** The More panel's tag for a page an operator limited to some tiers. Same as the sidebar's. */
+function TierTag({ plans }: { plans: readonly Plan[] | undefined }) {
+  if (!plans) return null;
+  const plan = tierTagPlan(plans);
+  return (
+    <span
+      data-plan={plan}
+      className="inline-flex items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-3xs uppercase tracking-wide text-tier-accent"
+    >
+      <Lock aria-hidden className="size-2.5" />
+      {PLAN_SHORT_LABELS[plan]}
+    </span>
+  );
+}
+
 export function MobileNav({
   clerkOn,
   demoMode,
   hidden,
+  comingSoon,
+  navOrder,
+  tierTags,
 }: {
   clerkOn: boolean;
   demoMode: boolean;
   /** Surfaces hidden from this viewer. Empty for an exempt operator. */
   hidden: ReadonlySet<string>;
+  /** Pages marked coming soon, whether or not this viewer is previewing them. */
+  comingSoon: ReadonlySet<string>;
+  /** Operator-chosen order, as surface keys. */
+  navOrder: readonly string[];
+  /** Tier-limited pages → the plans that may open them. */
+  tierTags: Readonly<Record<string, Plan[]>>;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -98,8 +129,17 @@ export function MobileNav({
    * on the wrong tab. Everything downstream reads these, never the module constants.
    */
   const moreNav = useMemo(
-    () => MOBILE_MORE_NAV.filter((item) => !isHrefHidden(item.href, hidden)),
-    [hidden]
+    () => {
+      const ordered = orderNavItems(MOBILE_MORE_NAV, navOrder).filter(
+        (item) => !isHrefHidden(item.href, hidden)
+      );
+      // Coming-soon pages sink to the bottom, matching the desktop sidebar.
+      return [
+        ...ordered.filter((item) => !isHrefComingSoon(item.href, comingSoon)),
+        ...ordered.filter((item) => isHrefComingSoon(item.href, comingSoon)),
+      ];
+    },
+    [hidden, comingSoon, navOrder]
   );
   const bottomNav = useMemo(
     () =>
@@ -516,6 +556,7 @@ export function MobileNav({
                     href={navItem.href}
                     // Touch-start upgrades it to a full prefetch ~100 ms before the tap's click.
                     prefetch={fullPrefetch(navItem, isNavActive(pathname, navItem.href))}
+                    aria-current={isNavActive(pathname, navItem.href) ? "page" : undefined}
                     ref={(el) => {
                       itemRefs.current[myIndex] = el;
                     }}
@@ -608,7 +649,7 @@ export function MobileNav({
             <SheetTitle>More</SheetTitle>
           </SheetHeader>
 
-          <nav className="flex flex-col gap-1 px-1 py-2">
+          <nav aria-label="More" className="flex flex-col gap-1 px-1 py-2">
             <button
               type="button"
               onClick={() => {
@@ -641,9 +682,13 @@ export function MobileNav({
               const active = isNavActive(pathname, item.href);
               const Icon = item.icon;
               return (
-                <Link
+                // IntentLink, like the bottom bar: a touch on a row prefetches the page whole,
+                // so Meetings, Events, Radar or Imports opened from here skip the skeleton.
+                <IntentLink
                   key={item.href}
                   href={item.href}
+                  prefetch={fullPrefetch(item, active)}
+                  aria-current={active ? "page" : undefined}
                   onClick={() => setMoreOpen(false)}
                   className={cn(
                     "relative flex items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors",
@@ -654,13 +699,15 @@ export function MobileNav({
                 >
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}
-                  {isHrefComingSoon(item.href) && (
-                    <span className="rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning">
+                  {isHrefComingSoon(item.href, comingSoon) ? (
+                    <span className="rounded-full border border-warning/40 px-1.5 py-px text-3xs uppercase tracking-wide text-warning">
                       Soon
                     </span>
+                  ) : (
+                    <TierTag plans={tierTags[surfaceKeyForHref(item.href) ?? ""]} />
                   )}
                   <NavPendingDot className="top-1/2 right-3 -translate-y-1/2" />
-                </Link>
+                </IntentLink>
               );
             })}
           </nav>

@@ -13,7 +13,7 @@ import { CAPTURE_INPUT_MAX_CHARS } from "@/lib/capture/limits";
 import { combineCaptureResults } from "@/lib/capture/combine-results";
 import { randomBytes } from "node:crypto";
 import { getDb } from "@/db";
-import { captureJobs } from "@/db/schema";
+import { captureJobs, noteBatches } from "@/db/schema";
 import type { CaptureParseHints } from "@/lib/ai";
 import { sanitizeMentionPicks, type MentionPick } from "@/lib/mentions/mention-picks";
 import {
@@ -28,6 +28,7 @@ import {
   type CaptureJobSource,
 } from "@/lib/capture/types";
 import { internalFetch } from "@/lib/internal-auth";
+import { trackCaptureDiscarded, trackCaptureFailed } from "@/lib/capture-events";
 import { reportError } from "@/lib/report-error";
 
 export type CaptureJobRow = typeof captureJobs.$inferSelect;
@@ -35,9 +36,13 @@ export type CaptureJobRow = typeof captureJobs.$inferSelect;
 /**
  * How long a runner may hold a claim before the next reader or the sweep may take it. The
  * two-pass parse is a handful of sequential model calls, each bounded by `aiSignal`; a
- * save is a contact write per person. Four minutes covers both with room.
+ * save is a contact write per person.
+ *
+ * Longer than the runner routes' 300s `maxDuration`, so a claim can only go stale once its
+ * invocation is certainly gone. At four minutes a slow but live run (a save does not
+ * heartbeat) could be taken over and run twice side by side.
  */
-export const CAPTURE_CLAIM_STALE_MS = 4 * 60 * 1000;
+export const CAPTURE_CLAIM_STALE_MS = 5.5 * 60 * 1000;
 /** A queued job nobody picked up in this long lost its kick (preview → prod, a crash). */
 export const CAPTURE_QUEUE_STALE_MS = 30 * 1000;
 /** Backstop resumes before the sweep gives up on a job. */
@@ -279,6 +284,8 @@ export async function discardCaptureBatchRows(userId: string, batchGroupId: stri
       )
     )
     .returning();
+  // The person threw these away: one `capture_discarded` per job that actually moved.
+  for (const r of rows) trackCaptureDiscarded(r, r.result?.items?.length ?? 0);
   return rows.length;
 }
 
@@ -459,6 +466,38 @@ export async function findJobBySourceHash(
     orderBy: [desc(captureJobs.createdAt)],
   });
   return row ?? null;
+}
+
+/**
+ * Whether this user has already captured notes with this hash (`hashSourceNote`), and when —
+ * the question a duplicate upload asks BEFORE it spends a model call.
+ *
+ * Two places can know: an extracted job (`capture_jobs.source_hash`, set when the parse
+ * finishes) and a saved batch (`note_batches.source_hash`, which also covers notes saved from
+ * the chat sheet or the API, where no job survives). An UNDONE batch does not count — the
+ * person took that capture back, so the same notes are fair game again — and neither does a
+ * discarded job, for the reason given on `findCapturedFileRows`. A job still being read has no
+ * hash yet, so two identical uploads racing each other are not caught; that costs one extra
+ * read, not a wrong answer.
+ */
+export async function findPriorCapture(
+  userId: string,
+  sourceHash: string,
+  excludeJobId?: string | null
+): Promise<{ jobId: string | null; capturedAt: Date } | null> {
+  const job = await findJobBySourceHash(userId, sourceHash, excludeJobId);
+  if (job) return { jobId: job.id, capturedAt: job.createdAt };
+  const db = await getDb();
+  const batch = await db.query.noteBatches.findFirst({
+    columns: { createdAt: true },
+    where: and(
+      eq(noteBatches.userId, userId),
+      eq(noteBatches.sourceHash, sourceHash),
+      eq(noteBatches.status, "saved")
+    ),
+    orderBy: [desc(noteBatches.createdAt)],
+  });
+  return batch ? { jobId: null, capturedAt: batch.createdAt } : null;
 }
 
 function clipInput(text: string | null | undefined): string | null {
@@ -742,7 +781,12 @@ export async function discardCaptureJobRow(
       )
     )
     .returning();
-  if (rows.length > 0) return true;
+  if (rows.length > 0) {
+    // Stop pressed on a half-uploaded job is still the person discarding it; the id is the
+    // dedupe key, so a repeated press is one event.
+    trackCaptureDiscarded(rows[0]!, rows[0]!.result?.items?.length ?? 0);
+    return true;
+  }
   if (opts.tombstone) {
     // Nothing here when the id is already somebody's row, discarded or otherwise.
     await db
@@ -774,12 +818,22 @@ export async function bumpCaptureStallResumes(id: string): Promise<number> {
   return row?.stallResumes ?? 0;
 }
 
-export async function failCaptureJob(id: string, message: string): Promise<void> {
+export async function failCaptureJob(
+  id: string,
+  message: string,
+  /**
+   * What to record in `capture_failed`. The stage defaults to "ingest" because the only
+   * caller that does not say is the upload route, whose failures are all ingest failures.
+   */
+  event: { stage?: "ingest" | "parse" | "save"; errorKind?: string } = {}
+): Promise<void> {
   const db = await getDb();
-  await db
+  const rows = await db
     .update(captureJobs)
     .set({ status: "failed", error: message, claimToken: null, updatedAt: new Date() })
-    .where(eq(captureJobs.id, id));
+    .where(eq(captureJobs.id, id))
+    .returning();
+  if (rows[0]) trackCaptureFailed(rows[0], event.stage ?? "ingest", event.errorKind ?? "unexpected");
 }
 
 /** Stalled capture jobs picked up per sweep; the same bound as `STALL_SWEEP_LIMIT`. */
@@ -838,7 +892,10 @@ export async function resumeStalledCaptureJobs(options: {
   for (const job of stalled) {
     const resumes = await bumpCaptureStallResumes(job.id);
     if (resumes > maxResumes) {
-      await failCaptureJob(job.id, "Reading those notes stalled a few times and gave up — try extracting again.");
+      await failCaptureJob(job.id, "Reading those notes stalled a few times and gave up — try extracting again.", {
+        stage: "parse",
+        errorKind: "stalled",
+      });
       result.gaveUp += 1;
       continue;
     }
@@ -870,6 +927,7 @@ export async function resumeStalledCaptureJobs(options: {
     )
     .returning();
   result.abandoned = abandoned.length;
+  for (const r of abandoned) trackCaptureFailed(r, "ingest", "abandoned");
 
   const cutoff = new Date(now.getTime() - CAPTURE_JOB_RETENTION_DAYS * 86_400_000);
   const swept = await db

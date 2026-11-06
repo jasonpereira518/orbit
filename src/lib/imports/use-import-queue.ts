@@ -1,12 +1,19 @@
 "use client";
 
+import { previewConnections } from "@/lib/imports/linkedin-connections-client";
 import { useSyncExternalStore } from "react";
 import {
+  applyLinkedInYou,
   previewCalendarImport,
   previewContactsFile,
-  previewLinkedInCsv,
   previewLinkedInMessagesCsv,
+  previewLinkedInYou,
 } from "@/actions/imports";
+import type { YouField } from "@/lib/career-profile";
+import { isYouTarget, type YouTarget } from "@/lib/linkedin-you-shape";
+import { compactContactsFileText } from "@/lib/contacts-file";
+import { fitsInOneRequest } from "@/lib/capture-limits";
+import { RUN_ORDER } from "@/lib/imports/import-constants";
 import { failureText, friendlyError, UserFacingError } from "@/lib/errors";
 import {
   awaitImportJob,
@@ -23,6 +30,7 @@ import {
   messageThreadToReviewPerson,
 } from "@/lib/imports/review-people";
 import {
+  acceptsNewDrop,
   advance,
   nextRunnable,
   queueFromDetection,
@@ -30,14 +38,18 @@ import {
   summarize,
   summaryMessage,
   type ImportQueueSnapshot,
+  type QueuePhase,
   type QueuedImport,
 } from "@/lib/imports/import-queue";
-import type {
-  Detected,
-  DetectionResult,
-  ImportTarget,
+import {
+  LINKEDIN_PRIVATE,
+  type Detected,
+  type DetectionResult,
+  type ExportMember,
+  type ImportTarget,
 } from "@/lib/imports/detect-import-file";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
+import { toast } from "@/lib/toast";
 
 /**
  * The store and driver behind a multi-file drop.
@@ -54,7 +66,7 @@ import { IMPORT_COPY } from "@/lib/imports/import-copy";
  * the runner's shorter one. Two vocabularies with one crossing, rather than three.
  */
 const KIND_FOR_TARGET: Record<
-  Exclude<ImportTarget, "unknown">,
+  Exclude<ImportTarget, "unknown" | YouTarget>,
   ImportJobKind
 > = {
   linkedin_connections: "connections",
@@ -62,6 +74,7 @@ const KIND_FOR_TARGET: Record<
   contacts_file: "contacts_file",
   calendar_ics: "calendar",
   calendar_csv: "calendar",
+  linkedin_export: "linkedin_export",
 };
 
 /** Previews are read-only server actions, so a couple at a time is safe and keeps the first
@@ -76,10 +89,17 @@ type QueueState = {
     { text: string; fileName: string; target: ImportTarget }
   >;
   people: Map<string, ReviewPerson[]>;
+  /**
+   * What each "about you" file would change, by item id. Their `ids` are the field keys the
+   * person kept ticked, which is how they reuse the people-selection plumbing.
+   */
+  you: Map<string, YouField[]>;
   /** Files the drop could not use, for the "Not imported" list. */
   ignored: { name: string; reason: string }[];
+  /** The LinkedIn export's CSVs to keep, held until its step runs. */
+  exportFiles: ExportMember[];
   truncated: boolean;
-  phase: "idle" | "previewing" | "review" | "running" | "done";
+  phase: QueuePhase;
   /** Set while the whole queue is being torn down by the Stop button. */
   stopping: boolean;
 };
@@ -88,7 +108,9 @@ const EMPTY: QueueState = {
   items: [],
   payloads: new Map(),
   people: new Map(),
+  you: new Map(),
   ignored: [],
+  exportFiles: [],
   truncated: false,
   phase: "idle",
   stopping: false,
@@ -118,12 +140,13 @@ export function getImportQueueState() {
 }
 
 export function clearImportQueue() {
-  state = { ...EMPTY, payloads: new Map(), people: new Map() };
+  state = { ...EMPTY, payloads: new Map(), people: new Map(), you: new Map(), exportFiles: [] };
   emit();
 }
 
 export type ImportQueueView = ImportQueueSnapshot & {
   people: Map<string, ReviewPerson[]>;
+  you: Map<string, YouField[]>;
   ignored: { name: string; reason: string }[];
   truncated: boolean;
   phase: QueueState["phase"];
@@ -139,6 +162,7 @@ export function useImportQueue(): ImportQueueView {
   return {
     ...summarize(snap.items),
     people: snap.people,
+    you: snap.you,
     ignored: snap.ignored,
     truncated: snap.truncated,
     phase: snap.phase,
@@ -151,7 +175,16 @@ export function useImportQueue(): ImportQueueView {
 async function readText(d: Detected): Promise<string> {
   // ZIP members were decompressed to be identified; re-reading the archive would be wasted
   // work, and a `File` cannot be recovered from a ZIP entry anyway.
-  return d.text ?? (await d.file.text());
+  const raw = d.text ?? (await d.file.text());
+  // Same as the contacts card: photos are stripped in the browser before anything is sent.
+  const text = d.target === "contacts_file" ? compactContactsFileText(raw) : raw;
+  // Measured after unzipping and compacting: the file's size says nothing about the text a
+  // Server Action carries. Connections never travel as one request — they are checked and
+  // uploaded in batches (`linkedin-connections-client.ts`) — so any size of export goes.
+  if (d.target !== "linkedin_connections" && !fitsInOneRequest(text)) {
+    throw new UserFacingError(IMPORT_COPY.tooLarge);
+  }
+  return text;
 }
 
 type PreviewOutcome =
@@ -161,6 +194,8 @@ type PreviewOutcome =
       ids: string[];
       text: string;
       fileName: string;
+      /** Set for the "about you" files: what each would change. */
+      fields?: YouField[];
     }
   | { ok: false; error: string };
 
@@ -169,8 +204,15 @@ async function previewOne(d: Detected): Promise<PreviewOutcome> {
   try {
     const text = await readText(d);
 
+    if (isYouTarget(d.target)) {
+      const res = await previewLinkedInYou(d.target, text);
+      if ("error" in res) throw new UserFacingError(res.error);
+      const ids = res.fields.filter((f) => f.defaultOn).map((f) => f.key);
+      return { ok: true, people: [], ids, text, fileName, fields: res.fields };
+    }
     if (d.target === "linkedin_connections") {
-      const res = await previewLinkedInCsv(text);
+      // Parsed here and checked in chunks: no ceiling on the export's size.
+      const res = await previewConnections(text);
       if ("error" in res) throw new UserFacingError(res.error);
       const people = res.people.map(connectionToReviewPerson);
       return { ok: true, people, ids: unrepeated(people), text, fileName };
@@ -209,27 +251,48 @@ function unrepeated(people: ReviewPerson[]): string[] {
 /**
  * Stage a drop: build the queue, then preview everything so one review screen can cover it.
  */
-export async function stageDrop(result: DetectionResult): Promise<void> {
+export async function stageDrop(result: DetectionResult): Promise<boolean> {
+  // Synchronous, before any await: two drops racing through detection both reach here, and
+  // only the first may stage. See `acceptsNewDrop`.
+  if (!acceptsNewDrop(state.phase)) {
+    toast.message(IMPORT_COPY.queueBusy);
+    return false;
+  }
   const items = queueFromDetection(result.staged);
+  // The export is not a classified file, so it never passes through `staged` (the folder
+  // review rebuilds that). It is its own step, last, runnable without a preview.
+  if (result.exportFiles.length) {
+    items.push({
+      id: `q${items.length}-linkedin_export`,
+      target: "linkedin_export",
+      label: "LinkedIn export files",
+      fileName: `${result.exportFiles.length} files`,
+      status: "needs_review",
+      ids: ["export"],
+    });
+  }
   const payloads = new Map<
     string,
     { text: string; fileName: string; target: ImportTarget }
   >();
   const people = new Map<string, ReviewPerson[]>();
+  const you = new Map<string, YouField[]>();
 
   setState({
     items,
     payloads,
     people,
+    you,
     ignored: [...result.ignored, ...result.skipped].map((d) => ({
-      name: d.path ? (d.path.split("/").pop() ?? d.file.name) : d.file.name,
+      name: d.displayName,
       reason: d.reason,
     })),
+    exportFiles: result.exportFiles,
     truncated: result.truncated,
     phase: items.length ? "previewing" : "done",
     stopping: false,
   });
-  if (!items.length) return;
+  if (!items.length) return true;
 
   const byId = new Map(
     items.map(
@@ -267,11 +330,12 @@ export async function stageDrop(result: DetectionResult): Promise<void> {
           target: source.target,
         });
         state.people.set(item.id, outcome.people);
+        if (outcome.fields) state.you.set(item.id, outcome.fields);
         setState({
           items: advance(state.items, item.id, {
             status: "needs_review",
             ids: outcome.ids,
-            reviewCount: outcome.people.length,
+            reviewCount: outcome.fields?.length ?? outcome.people.length,
           }),
         });
       }
@@ -284,25 +348,11 @@ export async function stageDrop(result: DetectionResult): Promise<void> {
       ? "review"
       : "done",
   });
+  return true;
 }
 
 function orderOf(a: Detected, b: Detected) {
-  return (
-    [
-      "linkedin_connections",
-      "contacts_file",
-      "linkedin_messages",
-      "calendar_ics",
-      "calendar_csv",
-    ].indexOf(a.target) -
-    [
-      "linkedin_connections",
-      "contacts_file",
-      "linkedin_messages",
-      "calendar_ics",
-      "calendar_csv",
-    ].indexOf(b.target)
-  );
+  return RUN_ORDER.indexOf(a.target) - RUN_ORDER.indexOf(b.target);
 }
 
 /** Change which people a step will import. */
@@ -318,13 +368,29 @@ export function skipItem(itemId: string) {
 // ---------------------------------------------------------------------------------- running
 
 function inputFor(item: QueuedImport): ImportJobInput | null {
+  if (item.target === "linkedin_export") {
+    const files = state.exportFiles;
+    state.exportFiles = [];
+    if (!files.length) return null;
+    return {
+      kind: "linkedin_export",
+      fileName: "LinkedIn export",
+      files: files.map((m) => ({
+        path: m.path,
+        bytes: m.bytes,
+        read: () => (m.text !== undefined ? Promise.resolve(m.text) : (m.file as File).text()),
+      })),
+      privateCount: state.ignored.filter((f) => f.reason === LINKEDIN_PRIVATE).length,
+    };
+  }
   const payload = state.payloads.get(item.id);
   if (!payload) return null;
   const ids = item.ids ?? [];
 
   // Through the one map, not a second switch over targets — the whole point of having it.
+  if (isYouTarget(payload.target)) return null;
   const kind =
-    KIND_FOR_TARGET[payload.target as Exclude<ImportTarget, "unknown">];
+    KIND_FOR_TARGET[payload.target as Exclude<ImportTarget, "unknown" | YouTarget>];
   switch (kind) {
     case "connections":
     case "messages":
@@ -367,6 +433,38 @@ export async function runQueue(): Promise<RunResult> {
   for (;;) {
     const item = nextRunnable(state.items);
     if (!item) break;
+
+    // The files about the user are a few KB and one write, so they skip the job runner (no
+    // progress bar, no cancel, nothing to resume) and save through their own action.
+    if (isYouTarget(item.target)) {
+      const payload = state.payloads.get(item.id);
+      state.payloads.delete(item.id);
+      if (!payload) {
+        setState({ items: advance(state.items, item.id, { status: "skipped" }) });
+        continue;
+      }
+      setState({ items: advance(state.items, item.id, { status: "running" }) });
+      try {
+        const res = await applyLinkedInYou({ target: item.target, text: payload.text, keys: item.ids ?? [] });
+        setState({
+          items: advance(
+            state.items,
+            item.id,
+            "error" in res
+              ? { status: "failed", error: res.error }
+              : { status: "done", result: res.message },
+          ),
+        });
+      } catch (err) {
+        setState({
+          items: advance(state.items, item.id, {
+            status: "failed",
+            error: friendlyError(err, IMPORT_COPY.importFailed),
+          }),
+        });
+      }
+      continue;
+    }
 
     const input = inputFor(item);
     // The runner holds the text from here on, and nothing re-runs a step, so the queue's
@@ -438,7 +536,7 @@ export async function runQueue(): Promise<RunResult> {
 
   // Steps a Stop skipped never reached `inputFor`. The done card outlives the page — the
   // store is module-level and only its dismiss clears it — so drop their text now.
-  setState({ phase: "done", stopping: false, payloads: new Map() });
+  setState({ phase: "done", stopping: false, payloads: new Map(), exportFiles: [] });
   return { message: summaryMessage(state.items) };
 }
 

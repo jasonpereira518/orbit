@@ -5,7 +5,7 @@
  * `unresolved-mentions.ts` is, so `scripts/smoke-capture-history.ts` can drive it against
  * PGlite with no auth.
  */
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
@@ -21,7 +21,7 @@ export type CaptureHistoryItem = {
   /** ISO. */
   createdAt: string;
   status: "saved" | "undone";
-  entryPoint: "capture" | "profile";
+  entryPoint: "capture" | "profile" | "relationship";
   kinds: CaptureSourceKind[];
   title: string | null;
   excerpt: string;
@@ -62,6 +62,23 @@ function decodeCursor(cursor: string | null | undefined): { at: string; id: stri
   return { at, id };
 }
 
+/**
+ * A relationship-engine run keeps its reminders in a note batch so its Undo can reuse
+ * capture's, but it is not a capture: the history never lists it and the capture actions
+ * (open, undo, delete) treat it as not found. The run is undone from its own surface.
+ */
+export const CAPTURE_BATCH_SQL = ne(noteBatches.entryPoint, "relationship");
+
+/** True when `batchId` is one of `userId`'s captures (not a relationship run batch). */
+export async function isCaptureBatchFor(userId: string, batchId: string): Promise<boolean> {
+  const db = await getDb();
+  const row = await db.query.noteBatches.findFirst({
+    where: and(eq(noteBatches.id, batchId), eq(noteBatches.userId, userId), CAPTURE_BATCH_SQL),
+    columns: { id: true },
+  });
+  return Boolean(row);
+}
+
 export async function listCaptureHistoryFor(
   userId: string,
   opts: { cursor?: string | null; limit?: number } = {}
@@ -86,6 +103,7 @@ export async function listCaptureHistoryFor(
     .where(
       and(
         eq(noteBatches.userId, userId),
+        CAPTURE_BATCH_SQL,
         after
           ? sql`(${noteBatches.createdAt}, ${noteBatches.id}) < (${after.at}::timestamptz, ${after.id}::uuid)`
           : undefined

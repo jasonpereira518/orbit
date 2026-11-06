@@ -2,13 +2,15 @@ import { Suspense } from "react";
 import { getOutreachPerformanceSummary } from "@/actions/outreach";
 import { fetchDashboard } from "@/actions/reminders";
 import { AgentDraftsCard } from "@/components/dashboard/agent-drafts-card";
+import { TodayMeetingsSection } from "@/components/dashboard/today-meetings";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
   ChartsSection,
+  LinkedInExportNudgeSection,
   MorningBriefingSection,
-  OutreachPerformanceSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
+  SetupChecklistSection,
   StatsSection,
   SuggestedOutreachSection,
   TailSection,
@@ -22,6 +24,8 @@ import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { fetchRadarBriefing } from "@/actions/radar";
+
+export const metadata = { title: "Dashboard" };
 
 async function AgentDraftsSection() {
   const drafts = await listPendingAgentSends(await requireUserId());
@@ -38,14 +42,16 @@ export default async function DashboardPage() {
   // Unhandled until a section awaits it; an early rejection must not crash the render.
   bundle.catch(() => {});
 
-  const { hidden, comingSoon } = await resolveSurfaceVisibility(await requireUserId());
+  const { hidden, comingSoonMarked } = await resolveSurfaceVisibility(await requireUserId());
   const show = (key: string) => !hidden.has(key);
 
   // Radar's morning briefing leads the page for viewers who can open Radar, and takes over
   // from the suggestions card once their first run exists. Started only for them, so
-  // everyone else pays nothing, and never awaited ahead of the bundle.
+  // everyone else pays nothing, and never awaited ahead of the bundle. While Radar is marked
+  // coming soon the widget stays off for everyone — an admin previewing unreleased pages can
+  // still open /radar itself, but the dashboard doesn't advertise what hasn't shipped.
   const radarBriefing =
-    !hidden.has("page.radar") && !comingSoon.has("page.radar") ? fetchRadarBriefing() : null;
+    !hidden.has("page.radar") && !comingSoonMarked.has("page.radar") ? fetchRadarBriefing() : null;
   radarBriefing?.catch(() => {});
 
   // The outreach summary streams independently, and is not started at all when its card
@@ -56,13 +62,22 @@ export default async function DashboardPage() {
 
   // Each row is guarded as well as each card: a `grid` whose children are all hidden still
   // renders, and its `gap` would leave an unexplained band of empty page behind.
-  const showSuggestedRow = show("dashboard.suggested-outreach") || outreachSummary;
+  const showSuggestedRow = show("dashboard.suggested-outreach");
 
   return (
     <div className="space-y-8">
       <RenderStamp />
       <DashboardHeader />
 
+      {/* Today's meetings, when the calendar has any — nothing at all otherwise. */}
+      <Suspense fallback={null}>
+        <TodayMeetingsSection now={new Date()} />
+      </Suspense>
+
+      {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn import exists. */}
+      <Suspense fallback={null}>
+        <LinkedInExportNudgeSection />
+      </Suspense>
       {radarBriefing && (
         <Suspense fallback={<DashboardCardSkeleton className="h-48" />}>
           <MorningBriefingSection briefing={radarBriefing} />
@@ -74,6 +89,12 @@ export default async function DashboardPage() {
           than attention, and it expires. It renders nothing when there is none. */}
       <Suspense fallback={null}>
         <AgentDraftsSection />
+      </Suspense>
+
+      {/* What onboarding left open. Nothing while the guided tour is running, nothing once
+          every item is done or the person dismissed it on this device. */}
+      <Suspense fallback={null}>
+        <SetupChecklistSection />
       </Suspense>
 
       {show("dashboard.stats") && (
@@ -100,28 +121,21 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Flex, not a 2-column grid: the outreach card removes itself when the account has
-          never sent anything (see OutreachPerformanceSection), and a grid would leave its
-          empty column behind, stranding Suggested outreach at half width next to a hole.
-          A Suspense boundary renders no DOM node, so with flex the survivor just fills. */}
+      {/* Full width. The reply rate that used to be a second card here now sits beside the
+          heading, so this row holds the one card. */}
       {showSuggestedRow && (
         // `empty:hidden`: for a Radar viewer the suggestions card steps aside for the
-        // briefing, and with no outreach card either the row would be an empty band.
+        // briefing, and the row would otherwise be an empty band.
         <div className="flex flex-col items-stretch gap-6 empty:hidden lg:flex-row">
-          {show("dashboard.suggested-outreach") && (
-            <Suspense
-              fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
-            >
-              <SuggestedOutreachSection bundle={bundle} radar={radarBriefing} />
-            </Suspense>
-          )}
-          {outreachSummary && (
-            <Suspense
-              fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
-            >
-              <OutreachPerformanceSection summary={outreachSummary} />
-            </Suspense>
-          )}
+          <Suspense
+            fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
+          >
+            <SuggestedOutreachSection
+              bundle={bundle}
+              radar={radarBriefing}
+              outreach={outreachSummary}
+            />
+          </Suspense>
         </div>
       )}
 

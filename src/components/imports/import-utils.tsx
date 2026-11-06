@@ -4,7 +4,9 @@ import { type ReactNode, useRef } from "react";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { fitsInOneRequest } from "@/lib/capture-limits";
 import { UserFacingError } from "@/lib/errors";
+import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { cn } from "@/lib/utils";
 import { useEtaCountdown } from "@/lib/use-eta-countdown";
 
@@ -46,6 +48,12 @@ const ARCHIVE_MEMBERS: Record<
   },
 };
 
+/** The text the card is about to send to a Server Action, or a `UserFacingError` saying it cannot. */
+export function ensureFits(text: string) {
+  if (!fitsInOneRequest(text)) throw new UserFacingError(IMPORT_COPY.tooLarge);
+  return text;
+}
+
 /**
  * Read a LinkedIn export, whether the person kept the CSV or handed us the whole archive.
  *
@@ -59,8 +67,11 @@ export async function readLinkedInArchive(
   member: LinkedInArchiveMember,
 ): Promise<{ text: string; fileName: string }> {
   const lower = file.name.toLowerCase();
+  // Connections go up in chunks (linkedin-connections-client.ts); only messages still travel
+  // as one request.
+  const fits = (text: string) => (member === "connections" ? text : ensureFits(text));
   if (!lower.endsWith(".zip")) {
-    return { text: await file.text(), fileName: file.name };
+    return { text: fits(await file.text()), fileName: file.name };
   }
 
   const { pattern, fallbackName, missing } = ARCHIVE_MEMBERS[member];
@@ -74,7 +85,7 @@ export async function readLinkedInArchive(
     // as the generic fallback, which is why this is a `UserFacingError`.
     throw new UserFacingError(missing);
   }
-  const text = await entry.async("string");
+  const text = fits(await entry.async("string"));
   return { text, fileName: entry.name.split("/").pop() || fallbackName };
 }
 
@@ -92,6 +103,8 @@ export function ImportFilePicker({
   disabled,
   fileName,
   onFile,
+  onFiles,
+  multiple = false,
   emptyLabel = "No file chosen",
   buttonLabel = "Choose file",
   className,
@@ -99,7 +112,10 @@ export function ImportFilePicker({
   accept: string;
   disabled?: boolean;
   fileName?: string | null;
-  onFile: (file: File) => void;
+  onFile?: (file: File) => void;
+  /** With `multiple`, every picked file at once (the chat card takes several exports). */
+  onFiles?: (files: File[]) => void;
+  multiple?: boolean;
   emptyLabel?: string;
   buttonLabel?: string;
   className?: string;
@@ -112,12 +128,14 @@ export function ImportFilePicker({
         ref={inputRef}
         type="file"
         accept={accept}
+        multiple={multiple}
         disabled={disabled}
         className="sr-only"
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          onFile(file);
+          const files = [...(e.target.files ?? [])];
+          if (!files.length) return;
+          if (onFiles) onFiles(files);
+          else onFile?.(files[0]);
           e.target.value = "";
         }}
       />
@@ -254,6 +272,7 @@ export function ImportProgress({
       <div
         className="h-1.5 overflow-hidden rounded-full bg-border/80"
         role="progressbar"
+        aria-label="Import progress"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct}

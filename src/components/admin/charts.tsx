@@ -160,19 +160,18 @@ export function RevenueCostChart({
           return (
             <li
               key={point.label}
-              className="flex flex-1 flex-col items-center gap-1"
+              className="flex flex-1"
               onMouseEnter={() => setActive(i)}
               onMouseLeave={() => setActive(null)}
-              onClick={() => setActive((cur) => (cur === i ? null : i))}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" && e.key !== " ") return;
-                e.preventDefault();
-                setActive((cur) => (cur === i ? null : i));
-              }}
-              tabIndex={0}
-              role="button"
-              aria-pressed={isActive}
             >
+              {/* A real toggle inside the list item (the item itself stays a list item, so
+                  the <ol> keeps its count). Enter and Space come with the element. */}
+              <button
+                type="button"
+                aria-pressed={isActive}
+                onClick={() => setActive((cur) => (cur === i ? null : i))}
+                className="flex flex-1 flex-col items-center gap-1 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              >
               {/*
                 The numbers, unconditionally. Hover only emphasises them.
 
@@ -254,6 +253,7 @@ export function RevenueCostChart({
               >
                 {point.label}
               </div>
+              </button>
             </li>
           );
         })}
@@ -358,19 +358,15 @@ export function DistributionChart({
           return (
             <li
               key={point.label}
-              className="flex items-center gap-3 text-sm"
               onMouseEnter={() => setActive(i)}
               onMouseLeave={() => setActive(null)}
-              onClick={() => setActive((cur) => (cur === i ? null : i))}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" && e.key !== " ") return;
-                e.preventDefault();
-                setActive((cur) => (cur === i ? null : i));
-              }}
-              tabIndex={0}
-              role="button"
-              aria-pressed={isActive}
             >
+              <button
+                type="button"
+                aria-pressed={isActive}
+                onClick={() => setActive((cur) => (cur === i ? null : i))}
+                className="flex w-full items-center gap-3 text-left text-sm rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              >
               <span className="w-20 shrink-0 truncate text-xs text-muted-foreground">
                 {point.label}
               </span>
@@ -399,6 +395,7 @@ export function DistributionChart({
               <span className="w-32 shrink-0 text-right text-xs tabular-nums">
                 {format(point.p50)} · {format(point.max)}
               </span>
+              </button>
             </li>
           );
         })}
@@ -459,17 +456,13 @@ export function RankedBars({
           key={row.label}
           onMouseEnter={() => setActive(i)}
           onMouseLeave={() => setActive(null)}
-          onClick={() => setActive((cur) => (cur === i ? null : i))}
-          onKeyDown={(e) => {
-            if (e.key !== "Enter" && e.key !== " ") return;
-            e.preventDefault();
-            setActive((cur) => (cur === i ? null : i));
-          }}
-          tabIndex={0}
-          role="button"
-          aria-pressed={active === i}
         >
-          <div className="flex items-center gap-3 text-sm">
+          <button
+            type="button"
+            aria-pressed={active === i}
+            onClick={() => setActive((cur) => (cur === i ? null : i))}
+            className="flex w-full items-center gap-3 text-left text-sm rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
             <span className="w-36 shrink-0 truncate text-muted-foreground">
               {row.label}
             </span>
@@ -507,7 +500,7 @@ export function RankedBars({
                 />
               )}
             </span>
-          </div>
+          </button>
           {row.detail && active === i && (
             <div className="mt-1 pl-3 text-xs text-muted-foreground sm:pl-[9.75rem]">
               {row.detail}

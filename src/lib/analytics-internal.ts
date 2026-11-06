@@ -36,14 +36,44 @@ export function isInternalUser(userId: string | null | undefined): boolean {
 
 
 /**
- * SQL: whether `column` holds one of `internalUserIds()`. Never null, so `NOT (...)` keeps
- * anonymous rows. `false` outright when there are none (demo mode, no ADMIN_USER_IDS).
+ * SQL: whether `column` is an account that no product or revenue number should include —
+ * one of `internalUserIds()` (admins, the showcase account), OR an account the operator
+ * marked `internal` or `tester` in `user_settings.account_kind`. Never null, so
+ * `NOT (...)` keeps anonymous rows. `false` outright in demo mode.
+ *
+ * ONE PREDICATE FOR EVERY AGGREGATE. Before `account_kind` existed only the traffic pages and
+ * the Conversion funnel applied this, so the Growth page's DAU/WAU, retention, feature
+ * adoption, and every money and YC figure counted the operator's own use and test purchases.
+ * Anything that aggregates across accounts should wrap its user-id column in this.
+ *
+ * Comped accounts are deliberately NOT here: a comped user is a real person using the
+ * product, so product metrics keep them; revenue metrics exclude them separately
+ * (`comped_plan IS NULL`).
  */
 export function internalAccountSql(column: SQL): SQL {
+  if (isDemoMode()) return sql`false`;
   const ids = internalUserIds();
-  if (ids.length === 0) return sql`false`;
-  return sql`coalesce(${column} IN (${sql.join(
+  // An uncorrelated IN, NOT a correlated EXISTS: callers pass an UNQUALIFIED column (`user_id`),
+  // and inside `EXISTS (SELECT … FROM user_settings ak WHERE ak.user_id = user_id)` that name
+  // binds to the inner table, making the test true for everyone whenever any account is marked.
+  const byKind = sql`coalesce(${column} IN (
+    SELECT ak.user_id FROM user_settings ak WHERE ak.account_kind IN ('internal', 'tester')
+  ), false)`;
+  if (ids.length === 0) return sql`(${byKind})`;
+  return sql`(coalesce(${column} IN (${sql.join(
     ids.map((id) => sql`${id}`),
     sql`, `
-  )}), false)`;
+  )}), false) OR ${byKind})`;
+}
+
+/** The name new callers should use; identical to {@link internalAccountSql}. */
+export const excludedAccountSql = internalAccountSql;
+
+/** JS twin for rows already loaded (the admin roster): env ids or a marked account kind. */
+export function isExcludedAccount(row: {
+  userId: string;
+  accountKind?: "internal" | "tester" | null;
+}): boolean {
+  if (isDemoMode()) return false;
+  return row.accountKind === "internal" || row.accountKind === "tester" || internalUserIds().includes(row.userId);
 }

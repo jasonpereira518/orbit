@@ -12,10 +12,13 @@
  *
  * Run: npx tsx scripts/smoke-public-routes.ts
  */
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createRouteMatcher } from "@clerk/nextjs/server";
+import robots from "../src/app/robots";
+import sitemap from "../src/app/sitemap";
 import { PUBLIC_ROUTES } from "../src/lib/public-routes";
+import { BOTID_PATH_PREFIX, WAITLIST_ALLOWED_PATHS } from "../src/lib/waitlist-host";
 import { config as proxyConfig } from "../src/proxy";
 
 const MARKETING_DIRS = ["src/app/(site)", "src/app/(clerk)/(marketing)"];
@@ -98,12 +101,14 @@ function main() {
   // the cron never runs and a long import cannot continue, and it only shows in production.
   const internalRoutes = [
     "/api/imports/process-stalled",
+    "/api/email/drain",
     "/api/imports/imp_abc123/continue",
     "/api/capture/jobs/job_abc123/run",
     "/api/avatars/encode",
     "/api/embeddings/backfill",
     "/api/work-history/research",
     "/api/work-history/sweep",
+    "/api/contacts/name-sweep",
     "/api/linkedin/timeline-events/backfill",
     "/api/ops/sweep",
     "/api/sync/run",
@@ -127,11 +132,22 @@ function main() {
     "/api/health",
     // Browsers report CSP violations without one.
     "/api/csp-report",
+    // Crawlers have no session either, and the matcher sends .txt and .xml through Clerk.
+    "/robots.txt",
+    "/sitemap.xml",
     // The phone half of note scanning, authenticated by the opaque token in the path. If
     // these fall out of PUBLIC_ROUTES the QR code leads to a sign-in page in production
     // and nowhere else — the phone has no session and cannot get one usefully.
     "/scan/orb_scan_7f3a9c2b_" + "a".repeat(43),
     "/api/scan/orb_scan_7f3a9c2b_" + "a".repeat(43) + "/pages",
+    // Vercel BotID's proxy: the waitlist join's POSTs need its proof, signed out.
+    `/${BOTID_PATH_PREFIX}/tl`,
+    // The page-view beacon, anonymous by design: at its neutral path (ad-blocker lists match a
+    // generic /api/track) and at the old one, kept as an alias for one release.
+    "/api/p/v",
+    "/api/track",
+    // The extension's uninstall page opens in a browser with no Orbit session at all.
+    "/api/extension/uninstalled",
   ];
   const blocked: string[] = [];
   for (const route of internalRoutes) {
@@ -139,6 +155,39 @@ function main() {
     console.log(`  ${ok ? "ok  " : "FAIL"} ${route} ${ok ? "is exempt from Clerk" : "is behind Clerk"}`);
     if (!ok) blocked.push(route);
   }
+
+  // The crawler files: every sitemap entry is a public page, none is disallowed by robots,
+  // and robots points at the sitemap. The waitlist host must not serve either file.
+  const crawlerProblems: string[] = [];
+  const base = new URL(String(robots().sitemap)).origin;
+  const disallowed = ([] as string[]).concat((robots().rules as { disallow?: string | string[] }).disallow ?? []);
+  for (const { url } of sitemap()) {
+    const path = new URL(url).pathname;
+    if (!url.startsWith(base)) crawlerProblems.push(`${url} is not on the app origin`);
+    if (!check(path)) crawlerProblems.push(`${path} is in the sitemap but not public`);
+    if (disallowed.some((d) => path !== "/" && path.startsWith(d))) crawlerProblems.push(`${path} is in the sitemap but disallowed by robots`);
+  }
+  // /interest still carries waitlist copy on the app domain; it is reachable but not advertised.
+  if (sitemap().some(({ url }) => new URL(url).pathname === "/interest")) crawlerProblems.push("/interest is in the sitemap");
+  if (String(robots().sitemap) !== `${base}/sitemap.xml`) crawlerProblems.push("robots does not point at /sitemap.xml");
+  if (WAITLIST_ALLOWED_PATHS.some((p) => /robots|sitemap/.test(p))) crawlerProblems.push("the waitlist host allows a crawler file");
+  console.log(`\n  ${crawlerProblems.length === 0 ? "ok  " : "FAIL"} sitemap entries are public and not disallowed by robots`);
+
+  // The beacon's rename (audit D5): the client posts to the neutral path, the old path still
+  // answers for cached clients, and the waitlist host serves both.
+  const beaconProblems: string[] = [];
+  const beacon = readFileSync("src/components/analytics/pageview-beacon.tsx", "utf8");
+  if (!beacon.includes('"/api/p/v"')) beaconProblems.push("the beacon does not post to /api/p/v");
+  if (beacon.includes('"/api/track"')) beaconProblems.push("the beacon still posts to /api/track");
+  if (!existsSync("src/app/api/p/v/route.ts")) beaconProblems.push("src/app/api/p/v/route.ts is missing");
+  if (!/export \{ POST \} from "@\/app\/api\/p\/v\/route"/.test(readFileSync("src/app/api/track/route.ts", "utf8"))) {
+    beaconProblems.push("/api/track is no longer a thin alias of /api/p/v");
+  }
+  if (!WAITLIST_ALLOWED_PATHS.includes("api/p/v$" as never) || !WAITLIST_ALLOWED_PATHS.includes("api/track$" as never)) {
+    beaconProblems.push("the waitlist host does not allow both beacon paths");
+  }
+  console.log(`  ${beaconProblems.length === 0 ? "ok  " : "FAIL"} the beacon posts to /api/p/v; /api/track is an alias; the waitlist host serves both`);
+  crawlerProblems.push(...beaconProblems);
 
   // Static assets in public/. `proxy.ts`'s matcher skips middleware for a fixed list of
   // extensions; anything missing from that list is matched, fails isPublicRoute and gets a
@@ -166,7 +215,7 @@ function main() {
     );
   }
 
-  if (missing.length > 0 || !guardedOk || blocked.length > 0 || gated.length > 0) {
+  if (missing.length > 0 || !guardedOk || blocked.length > 0 || gated.length > 0 || crawlerProblems.length > 0) {
     if (missing.length > 0) {
       console.error(
         `\nFAILED: add ${missing.join(", ")} to PUBLIC_ROUTES in src/lib/public-routes.ts`
@@ -176,6 +225,9 @@ function main() {
       console.error(
         `\nFAILED: ${leaked.join(", ")} must NOT be in PUBLIC_ROUTES — they require a session`
       );
+    }
+    if (crawlerProblems.length > 0) {
+      console.error(`\nFAILED: ${crawlerProblems.join("; ")}`);
     }
     if (blocked.length > 0) {
       console.error(

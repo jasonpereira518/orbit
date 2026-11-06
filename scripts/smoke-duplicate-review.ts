@@ -27,8 +27,10 @@ import { getDb, rowsOf, closeDb } from "../src/db";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
 import { dismissDuplicatePair, recordDuplicateSuggestion } from "../src/lib/contact-merge";
 import { mergeConfidentDuplicates } from "../src/lib/duplicate-sweep";
+import { forgetDuplicateCount } from "../src/lib/duplicate-count-memo";
 import {
   countDuplicatesAwaitingReview,
+  findNameCollisions,
   getDuplicateReview,
 } from "../src/lib/duplicate-review";
 
@@ -193,6 +195,8 @@ async function main() {
   await db.execute(
     sql`UPDATE duplicate_suggestions SET status = 'dismissed' WHERE user_id = ${USER}`
   );
+  // A raw UPDATE bypasses the writers that forget the cached badge count.
+  forgetDuplicateCount(USER);
   check(
     "a dismissed pair leaves the proposed list",
     (await getDuplicateReview(USER)).proposed.length === 0
@@ -234,6 +238,79 @@ async function main() {
         )
       ))[0]!.v === 2
     );
+  }
+
+  console.log("\nThe name scan finds the same pairs as a plain self-join, and stays fast...");
+  {
+    // findNameCollisions pre-filters to names that occur more than once before joining
+    // (LATENCY_PLAN DB-16: the plain self-join went O(n²) — 28 s at 5,000 contacts). This
+    // pins the result to that plain join's, over the cases the pre-filter could get wrong:
+    // case and whitespace variants, a triple, blank names, and the shared-company/title
+    // exclusions.
+    await reset();
+    const names = [
+      "Grace Hopper", " grace hopper ", "GRACE HOPPER", // a triple: three pairs
+      "Alan Turing", "alan turing",                     // a pair
+      "   ", "",                                         // blanks never pair
+      "Edsger Dijkstra",                                 // a singleton
+    ];
+    for (const [i, n] of names.entries()) await seedContact(n, null, i + 1);
+    const shared = await seedContact("Barbara Liskov", null, 1);
+    const shared2 = await seedContact("barbara liskov", null, 2);
+    await db.execute(sql`UPDATE contacts SET company = 'MIT' WHERE id IN (${shared}::uuid, ${shared2}::uuid)`);
+    // Filler, so the scan runs over a network of a realistic size.
+    await db.execute(sql`
+      INSERT INTO contacts (user_id, full_name)
+      SELECT ${USER}, 'Filler Person ' || g FROM generate_series(1, 1500) g
+    `);
+
+    const reference = rowsOf<{ a: string; b: string }>(await db.execute(sql`
+      SELECT a.id::text AS a, b.id::text AS b
+        FROM contacts a
+        JOIN contacts b ON b.user_id = a.user_id
+         AND lower(btrim(b.full_name)) = lower(btrim(a.full_name)) AND a.id < b.id
+       WHERE a.user_id = ${USER} AND btrim(coalesce(a.full_name, '')) <> ''
+         AND NOT (btrim(coalesce(a.company, '')) <> '' AND lower(btrim(a.company)) = lower(btrim(b.company)))
+         AND NOT (btrim(coalesce(a.title, '')) <> '' AND lower(btrim(a.title)) = lower(btrim(b.title)))
+    `));
+    const key = (x: string, y: string) => [x, y].sort().join(":");
+    const want = new Set(reference.map((r) => key(r.a, r.b)));
+    const started = performance.now();
+    const got = await findNameCollisions(USER);
+    const ms = performance.now() - started;
+    const gotKeys = new Set(got.map((p) => key(p.keep.id, p.merge.id)));
+    check("four name-only pairs (three from the triple, one from the pair)", want.size === 4, `${want.size}`);
+    check(
+      "the scan returns exactly the plain self-join's pairs",
+      gotKeys.size === want.size && [...want].every((k) => gotKeys.has(k)),
+      `${gotKeys.size} vs ${want.size}`
+    );
+    check("over 1,500 contacts it takes well under a second", ms < 1000, `${Math.round(ms)} ms`);
+  }
+
+  console.log("\nTwo LinkedIn profiles are two people, unless one changed their URL...");
+  {
+    await reset();
+    const seedOn = async (name: string, slug: string, company: string, title: string, daysAgo: number) => {
+      const id = await seedContact(name, null, daysAgo);
+      await db.execute(sql`UPDATE contacts SET linkedin_url = ${`https://www.linkedin.com/in/${slug}`},
+                            company = ${company}, title = ${title} WHERE id = ${id}::uuid`);
+      return id;
+    };
+    // Same name and title, different employer and profile: two people.
+    const a = await seedOn("Dana Lee", "dana-lee-1", "Acme", "Designer", 40);
+    const b = await seedOn("Dana Lee", "dana-lee-2", "Globex", "Designer", 3);
+    // Same name and employer, new profile URL: one person who changed it.
+    const c = await seedOn("Priya Raman", "priya-raman-7c9d", "Stripe", "PM", 40);
+    const d = await seedOn("Priya Raman", "priyaraman", "Stripe", "PM", 3);
+    const sweep = await mergeConfidentDuplicates(USER);
+    const alive = async (ids: string[]) =>
+      rowsOf<{ v: number }>(
+        await db.execute(sql`SELECT count(*)::int AS v FROM contacts
+                              WHERE id IN (${sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)})`)
+      )[0]!.v;
+    check("name + title across two profiles is not merged", (await alive([a, b])) === 2);
+    check("a changed profile URL at the same company is merged", (await alive([c, d])) === 1, `merged ${sweep.merged}`);
   }
 
   await reset();

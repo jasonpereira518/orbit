@@ -5,6 +5,7 @@
  */
 import type { MeetingDigest } from "@/db/schema";
 import type { CaptureMeetingExtra } from "@/lib/capture/types";
+import { titlesCollide } from "@/lib/note-batches";
 
 export function meetingExtrasFromDigest(digest: MeetingDigest): CaptureMeetingExtra[] {
   return [
@@ -35,4 +36,27 @@ export function meetingExtrasFromDigest(digest: MeetingDigest): CaptureMeetingEx
       checkedByDefault: false,
     })),
   ];
+}
+
+/** "Priya" names "Priya Raman", and the other way round; case and spacing don't matter. */
+function sameName(a: string, b: string): boolean {
+  const x = a.trim().toLowerCase().replace(/\s+/g, " ");
+  const y = b.trim().toLowerCase().replace(/\s+/g, " ");
+  return Boolean(x && y) && (x === y || x.startsWith(`${y} `) || y.startsWith(`${x} `));
+}
+
+/**
+ * Who owes one saved action item, read from the call's digest: "me" when the digest says the
+ * user took it on, "them" when it names this participant, null when the digest doesn't say or
+ * names someone else. Matched by the same title rule the save uses to merge duplicates.
+ */
+export function owedByFromDigest(
+  itemText: string,
+  participantName: string | null,
+  digestItems: ReadonlyArray<{ text: string; owner: string | null }>
+): "me" | "them" | null {
+  const match = digestItems.find((d) => d.owner && titlesCollide(d.text, itemText));
+  if (!match?.owner) return null;
+  if (match.owner === "me") return "me";
+  return participantName && sameName(match.owner, participantName) ? "them" : null;
 }

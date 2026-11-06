@@ -12,6 +12,7 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
+  AudioLines,
   BellPlus,
   CalendarClock,
   CornerDownLeft,
@@ -30,6 +31,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { searchContactsForPicker } from "@/actions/contacts";
+import { openCompose } from "@/lib/compose-events";
 import { saveThemePreference } from "@/actions/settings";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { useFullPrefetch } from "@/lib/intent-prefetch";
@@ -39,12 +41,14 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { requestAskBar } from "@/lib/ask-bar-events";
 import { handOffToCapture } from "@/lib/capture-handoff";
 import {
+  emailVerbTerm,
   looksLikeNote,
   looksLikeQuestion,
   rankEntries,
   visibleEntries,
   type PaletteEntry,
 } from "@/lib/command-palette";
+import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 import type { ContactPickerOption } from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
 
@@ -83,7 +87,7 @@ const ACTIONS: Command[] = [
     hint: "Paste notes or upload photos",
     href: "/capture",
     icon: Sparkles,
-    keywords: "log interaction notes paste photo picture upload meeting extract add",
+    keywords: "log interaction notes paste photo picture upload extract add",
   },
   {
     id: "action:voice",
@@ -94,10 +98,17 @@ const ACTIONS: Command[] = [
     keywords: "dictate audio speak capture microphone",
   },
   {
+    id: "action:meeting",
+    label: "Record a meeting",
+    href: "/meetings",
+    icon: AudioLines,
+    keywords: "call zoom meet transcribe transcript summary recorder",
+  },
+  {
     id: "action:structured",
     label: "Log an interaction",
-    hint: "Fill in the fields yourself",
-    href: "/capture?mode=structured",
+    hint: "Type or paste what happened",
+    href: "/capture",
     icon: NotebookPen,
     keywords: "meeting call coffee note structured manual",
   },
@@ -179,7 +190,7 @@ function CommandIcon({ icon: Icon }: { icon: LucideIcon }) {
 
 function Key({ children }: { children: ReactNode }) {
   return (
-    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border/60 bg-background px-1 font-sans text-[11px] text-muted-foreground">
+    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border/60 bg-background px-1 font-sans text-2xs text-muted-foreground">
       {children}
     </kbd>
   );
@@ -230,13 +241,16 @@ export function CommandPaletteDialog({
   const contactsVisible = !hidden.has("page.contacts");
   // The same test the Capture actions pass, so "Capture this" goes dark along with them.
   const captureVisible = !hidden.has("page.capture");
+  // "email maya": people rows open Compose instead of the profile. Null unless Compose is
+  // available to this viewer and the query is the verb.
+  const emailTerm = contactsVisible && !hidden.has(COMPOSE_SURFACE_KEY) ? emailVerbTerm(query) : null;
 
   // People: the most recently seen when nothing is typed, a search once something is.
   // Every response is tagged, and anything but the latest is dropped, so a slow reply for
   // "sa" can never overwrite the faster one for "sarah".
   useEffect(() => {
     if (!open || !contactsVisible) return;
-    const term = query.trim();
+    const term = (emailTerm ?? query).trim();
     const request = ++requestRef.current;
     const timer = window.setTimeout(
       async () => {
@@ -257,7 +271,7 @@ export function CommandPaletteDialog({
       term ? SEARCH_DEBOUNCE_MS : 0
     );
     return () => window.clearTimeout(timer);
-  }, [open, query, contactsVisible]);
+  }, [open, query, emailTerm, contactsVisible]);
 
   function close() {
     onOpenChange(false);
@@ -346,6 +360,31 @@ export function CommandPaletteDialog({
     const note = captureRow && looksLikeNote(term);
     if (note) out.push(captureRow);
 
+    if (emailTerm) {
+      // The verb asks for one thing, so its rows are the whole answer.
+      return people.map((p) => ({
+        id: `email:${p.id}`,
+        group: "Email",
+        label: `Email ${p.preferredName || p.fullName}`,
+        hint: p.company ?? undefined,
+        hintAlways: true,
+        icon: (
+          <ContactAvatar
+            contactId={p.id}
+            firstName={p.firstName}
+            fullName={p.fullName}
+            profileImageUrl={p.avatarUrl}
+            size="sm"
+            className="size-7"
+          />
+        ),
+        run: () => {
+          close();
+          openCompose({ contactId: p.id });
+        },
+      }));
+    }
+
     const personRows: Row[] =
       contactsVisible
         ? people.map((p) => ({
@@ -408,7 +447,7 @@ export function CommandPaletteDialog({
     return out;
     // `go`/`close` only close over stable setters and the router.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, people, hidden, askMode, pathname, isDark, contactsVisible, captureVisible]);
+  }, [query, people, hidden, askMode, pathname, isDark, contactsVisible, captureVisible, emailTerm]);
 
   const active = rows[Math.min(activeIndex, Math.max(rows.length - 1, 0))];
 
@@ -467,13 +506,14 @@ export function CommandPaletteDialog({
       <DialogContent
         showCloseButton={false}
         initialFocus={inputRef}
-        className="top-[14vh] translate-y-0 gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl ring-foreground/[0.08] sm:max-w-[34rem]"
+        className="top-[14dvh] translate-y-0 gap-0 overflow-hidden rounded-2xl p-0 shadow-2xl ring-foreground/[0.08] sm:max-w-[34rem]"
       >
         <DialogTitle className="sr-only">Search Orbit</DialogTitle>
         <div className="flex items-center gap-3 px-4">
           <Search className="size-[18px] shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden />
           <input
             ref={inputRef}
+            aria-label="Search Orbit"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
@@ -487,9 +527,9 @@ export function CommandPaletteDialog({
             aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
-            className="h-14 min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80"
+            className="h-14 min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground-subtle"
           />
-          {searching && <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground/70" aria-hidden />}
+          {searching && <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground-subtle" aria-hidden />}
         </div>
 
         <div
@@ -497,7 +537,7 @@ export function CommandPaletteDialog({
           id={listboxId}
           role="listbox"
           aria-label="Results"
-          className="max-h-[min(60vh,26rem)] overflow-y-auto overscroll-contain border-t border-border/50 px-2 pb-2"
+          className="max-h-[min(60dvh,26rem)] overflow-y-auto overscroll-contain border-t border-border/50 px-2 pb-2"
         >
           {rows.length === 0 ? (
             <div className="px-4 py-10 text-center">
@@ -551,7 +591,7 @@ export function CommandPaletteDialog({
                     )}
                     {selected && (
                       <CornerDownLeft
-                        className="hidden size-3.5 shrink-0 text-muted-foreground/70 [@media(hover:hover)]:block"
+                        className="hidden size-3.5 shrink-0 text-muted-foreground-subtle [@media(hover:hover)]:block"
                         aria-hidden
                       />
                     )}

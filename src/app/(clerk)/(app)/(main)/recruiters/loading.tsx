@@ -1,12 +1,13 @@
-import { cookies } from "next/headers";
 import { RecruitersPageSkeleton } from "@/components/loading/page-skeletons";
-import { PEOPLE_NAV_COOKIE } from "@/lib/people-nav";
+import { PeopleNavFallback } from "@/components/contacts/people-nav-fallback";
 
-export default async function RecruitersLoading() {
-  const jar = await cookies();
-  // Skip skeleton when switching from Contacts via the people toggle.
-  if (jar.get(PEOPLE_NAV_COOKIE)?.value === "1") {
-    return null;
-  }
-  return <RecruitersPageSkeleton />;
+export default function RecruitersLoading() {
+  return (
+    <PeopleNavFallback
+      active="recruiters"
+      title="Recruiters"
+      subtitle="Every recruiter you've talked to — and, if you share, the ones everyone else has."
+      skeleton={<RecruitersPageSkeleton />}
+    />
+  );
 }
