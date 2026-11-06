@@ -14,7 +14,7 @@ import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contactTags, contacts, tags } from "../src/db/schema";
+import { companies, contactTags, contacts, tags, targetCompanies } from "../src/db/schema";
 import { isCometContact } from "../src/lib/comet";
 import {
   getDashboardCounts,
@@ -158,6 +158,36 @@ async function breakdownChecks() {
     `${JSON.stringify(tiedOrder.map((t) => t.id))} vs ${JSON.stringify(expectedTied)}`);
 
   await db.delete(contacts).where(eq(contacts.userId, user));
+
+  // Target-company arm: A (target, relevance 0), B (relevance 0.8, no target), C (neither),
+  // D (both, must appear once as target_company). Targets rank first, then by relevance.
+  console.log("\nTarget-company contacts…");
+  const [co] = await db.insert(companies).values({ userId: user, name: "Target Co", nameNormalized: "target co" }).returning();
+  await db.insert(targetCompanies).values({ userId: user, companyId: co.id, priority: 1 });
+  const mk = async (name: string, rel: number | null, companyId?: string) => {
+    const [row] = await db.insert(contacts).values({ userId: user, fullName: name, companyId: companyId ?? null }).returning();
+    if (rel !== null) {
+      await db.execute(sql`update contacts set closeness_breakdown = ${JSON.stringify({ raw: 0.3, goalRelevance: rel })}::jsonb where id = ${row.id}`);
+    }
+    return row.id;
+  };
+  const idA = await mk("Target A", 0, co.id);
+  const idB = await mk("Goal B", 0.8);
+  await mk("Neither C", 0);
+  const idD = await mk("Both D", 0.5, co.id);
+  const mixed = await getGoalAlignedContactIds(user, 10);
+  check("target contacts first, then goal matches; C absent; D once",
+    JSON.stringify(mixed.map((m) => m.id)) === JSON.stringify([idD, idA, idB]),
+    JSON.stringify(mixed));
+  check("reason and companyName are set",
+    mixed[0].reason === "target_company" && mixed[0].companyName === "Target Co" &&
+      mixed[1].reason === "target_company" && mixed[2].reason === "goal" && mixed[2].companyName === null,
+    JSON.stringify(mixed));
+  const cap = await getGoalAlignedContactIds(user, 2);
+  check("limit respected with the target arm", cap.length === 2 && cap.every((m) => m.reason === "target_company"), JSON.stringify(cap));
+  await db.delete(contacts).where(eq(contacts.userId, user));
+  await db.delete(targetCompanies).where(eq(targetCompanies.userId, user));
+  await db.delete(companies).where(eq(companies.userId, user));
 }
 
 async function main() {

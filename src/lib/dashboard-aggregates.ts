@@ -195,23 +195,46 @@ export async function getDashboardVocabularies(userId: string): Promise<Dashboar
 export async function getGoalAlignedContactIds(
   userId: string,
   limit: number
-): Promise<Array<{ id: string; goalRelevance: number }>> {
+): Promise<
+  Array<{
+    id: string;
+    goalRelevance: number;
+    reason: "target_company" | "goal";
+    companyName: string | null;
+  }>
+> {
   const db = await getDb();
-  const relevance = sql`(closeness_breakdown->>'goalRelevance')::float8`;
+  // Every column is qualified: unqualified names inside sql`` render bare, and with the
+  // joins below `id` / `user_id` / `company_id` would be ambiguous.
+  const relevance = sql`coalesce((c.closeness_breakdown->>'goalRelevance')::float8, 0)`;
 
+  // Contacts at one of the user's target companies come first (dream before target before
+  // curious), then goal matches by stored relevance. One row per contact: the LEFT JOIN
+  // is on a unique (user_id, company_id), so a contact that matches both appears once.
+  // ponytail: focus-fit is computed in JS from titles, so it stays out of this card.
   const result = await db.execute(sql`
-    select id, ${relevance} as goal_relevance
-    from contacts
-    where user_id = ${userId}
-      and closeness_breakdown is not null
-      and ${relevance} > 0
-    order by ${relevance} desc, updated_at desc, id desc
+    select c.id,
+           ${relevance} as goal_relevance,
+           (tc.id is not null) as is_target,
+           co.name as company_name
+    from contacts c
+    left join target_companies tc
+      on tc.user_id = c.user_id and tc.company_id = c.company_id
+    left join companies co on co.id = tc.company_id
+    where c.user_id = ${userId}
+      and (tc.id is not null or ${relevance} > 0)
+    order by (tc.id is not null) desc, tc.priority asc nulls last,
+             ${relevance} desc, c.updated_at desc, c.id desc
     limit ${limit}
   `);
 
-  return rowsOf<{ id: string; goal_relevance: number }>(result).map((r) => ({
+  return rowsOf<{
+    id: string; goal_relevance: number; is_target: boolean; company_name: string | null;
+  }>(result).map((r) => ({
     id: r.id,
     goalRelevance: Number(r.goal_relevance),
+    reason: r.is_target ? ("target_company" as const) : ("goal" as const),
+    companyName: r.is_target ? r.company_name : null,
   }));
 }
 

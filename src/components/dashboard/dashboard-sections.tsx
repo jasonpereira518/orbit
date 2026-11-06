@@ -667,6 +667,8 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
           company: c.company,
           title: c.title,
           goalRelevance: c.goalRelevance,
+          reason: c.reason,
+          companyName: c.companyName,
         }))}
       />
 
