@@ -327,7 +327,7 @@ export async function MorningBriefingSection({ briefing }: { briefing: Promise<R
   const b = await briefing.catch(() => null);
   if (!b?.hasRun) return null;
   return (
-    <div className="reveal-mount min-w-0" style={revealDelay(0)}>
+    <div className="reveal-mount min-w-0 lg:flex-1 lg:basis-0" style={revealDelay(0)}>
       <MorningBriefing
         total={b.total}
         today={b.today}
