@@ -47,7 +47,7 @@ export function AdminPageHeader({
       </div>
       {/* `max-w-full`, not `shrink-0`: a row of actions that can't fit beside the title drops
           below it and may still wrap, where `shrink-0` held it at its full width and ran it
-          off a phone's screen (/admin/growth/interest-list, +45px at 360). */}
+          off a phone's screen (/admin/access, +45px at 360). */}
       {action && <div className="min-w-0 max-w-full">{action}</div>}
     </div>
   );

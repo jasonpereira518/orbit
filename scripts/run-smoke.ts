@@ -369,6 +369,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-apple-actions": "pglite",
   "smoke-server-graph": "pure",
   "smoke-site-css-sources": "pure",
+  "smoke-admin-redirects": "pure",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-app-pulse": "pglite",

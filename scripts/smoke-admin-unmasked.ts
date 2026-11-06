@@ -163,15 +163,8 @@ async function main() {
       detail.identity.imageUrl === "https://img.clerk.test/marisol.png"
   );
 
-  check(
-    "the contact summary carries a real name, not a mask",
-    detail.contacts[0]?.name === VISIBLE.name,
-    detail.contacts[0]?.name
-  );
-  check(
-    "the contact summary carries the email",
-    detail.contacts[0]?.email === VISIBLE.email
-  );
+  // Contact names are no longer on the account read (the inspector pages them through
+  // `listAdminContacts`, checked below); the email rides there too.
   assertNoForbiddenValues(detail, forbidden);
   console.log("  ok  the account inspector carries no credential or transcript");
 
@@ -180,6 +173,7 @@ async function main() {
   // No grant argument exists to pass. That is the point: there is no opt-in left to forget.
   const page = await listAdminContacts(USER);
   check("the contact list is unmasked", page.rows[0]?.name === VISIBLE.name);
+  check("it carries the email", page.rows[0]?.email === VISIBLE.email);
   check("it carries the full record", page.rows[0]?.detail?.notes === VISIBLE.notes);
   check("it carries the phone number", page.rows[0]?.detail?.phone === "+1-555-0100");
   assertNoForbiddenValues(page, forbidden);

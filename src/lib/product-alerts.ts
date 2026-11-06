@@ -215,7 +215,7 @@ export function productConditions(f: ProductOpsFacts, now: Date): OpsCondition[]
       severity: "critical",
       title: "Traffic tracking has gone silent",
       detail: `No page view in two hours, after ${tr.pageViewsPrev24h} in the day before. The beacon, the route or the salt is broken — every traffic number is going stale.`,
-      href: "/admin/analytics",
+      href: "/admin/growth",
     });
   }
   if (inActiveHours && tr.productEvents6h === 0 && tr.productEventsPrev7d >= T.productEventsSilentFloor) {

@@ -138,9 +138,9 @@ async function main() {
   await db.insert(gateEvents).values({ userId: FREE, feature: "api", plan: "free", createdAt: new Date(Date.now() - RECENT_GATE_WINDOW_MS - 60_000) });
   check("a wall hit more than a day ago is not what sent them", (await mostRecentGate(FREE)) === null);
 
-  const demandPage = readFileSync("src/app/(clerk)/(admin)/admin/billing/demand/page.tsx", "utf8");
+  const demandPage = readFileSync("src/app/(clerk)/(admin)/admin/billing/revenue/page.tsx", "utf8");
   const unlabelled = GATES.filter((g) => !new RegExp(`\\b${g}:`).test(demandPage));
-  check("every gate key a checkout can be attributed to has a label on the Demand page", unlabelled.length === 0, unlabelled);
+  check("every gate key a checkout can be attributed to has a label on the Revenue page", unlabelled.length === 0, unlabelled);
 
   for (const u of [FREE, PRO]) {
     await db.delete(gateEvents).where(eq(gateEvents.userId, u));

@@ -10,7 +10,6 @@ import {
 import { aiVolumeTrend } from "@/lib/admin-trends";
 import {
   getAiOperationAdoption,
-  getArtifacts,
   getDataQuality,
   getFunnelParking,
 } from "@/lib/admin-product-health";
@@ -116,44 +115,6 @@ export async function AiOperationsPanel() {
             {aiOps.neverUsed.join(", ")}
           </p>
         </div>
-      )}
-    </AdminPanel>
-  );
-}
-
-/**
- * What usage_events structurally cannot show: reminders, tags and goals leave no AI call
- * behind, so a usage-only view reports them as unused.
- */
-export async function ArtifactsPanel() {
-  const artifacts = await getArtifacts().catch(() => null);
-  return (
-    <AdminPanel title="Durable artifacts">
-      {!artifacts ? (
-        <EmptyState>Row counts are unavailable.</EmptyState>
-      ) : (
-        <AdminTable label="Durable artifacts"
-          minWidth="none"
-          head={
-            <>
-              <Th>Table</Th>
-              <Th numeric>Rows</Th>
-              <Th numeric>Accounts</Th>
-            </>
-          }
-        >
-          {artifacts.map((a) => (
-            <tr key={a.label} className="border-b border-border/40 last:border-b-0">
-              <Td>{a.label}</Td>
-              <Td numeric className={a.rows === 0 ? "text-muted-foreground" : undefined}>
-                {a.rows}
-              </Td>
-              <Td numeric className="text-muted-foreground">
-                {a.users || "—"}
-              </Td>
-            </tr>
-          ))}
-        </AdminTable>
       )}
     </AdminPanel>
   );
