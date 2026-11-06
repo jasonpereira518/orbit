@@ -2155,27 +2155,16 @@ const AssistantBubble = memo(function AssistantBubble({
           </p>
         )}
         {gridRecs.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{gridRecs.map(renderCard)}</div>}
-        {/* Only once persisted: committing needs a real row to address. */}
-        {msg.persisted && (msg.proposedActions?.length ?? 0) > 0 && (
+        {/* As soon as they stream, beside the answer that proposed them; their controls wait
+            for the saved row, since committing needs its real id. */}
+        {(msg.proposedActions?.length ?? 0) > 0 && (
           <ProposedActionsList
             messageId={msg.id}
             actions={msg.proposedActions!}
             nameById={nameById}
+            pending={!msg.persisted}
             onSettled={(actionId, next) => onActionSettled?.(msg.id, actionId, next)}
           />
-        )}
-        {!msg.streaming && msg.answer && (
-          <div className="flex flex-wrap items-center gap-2">
-            <AnswerActions
-              messageId={msg.id}
-              answer={copyText}
-              persisted={Boolean(msg.persisted)}
-              initialFeedback={msg.feedback ?? null}
-              onRetry={onRetry && (() => onRetry(msg.id))}
-              retryLabel={retryLabel}
-            />
-            {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}
-          </div>
         )}
         {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
           <div className="flex flex-wrap gap-1.5">
@@ -2189,6 +2178,19 @@ const AssistantBubble = memo(function AssistantBubble({
                 {q}
               </button>
             ))}
+          </div>
+        )}
+        {!msg.streaming && msg.answer && (
+          <div className="flex flex-wrap items-center gap-2">
+            <AnswerActions
+              messageId={msg.id}
+              answer={copyText}
+              persisted={Boolean(msg.persisted)}
+              initialFeedback={msg.feedback ?? null}
+              onRetry={onRetry && (() => onRetry(msg.id))}
+              retryLabel={retryLabel}
+            />
+            {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}
           </div>
         )}
       </div>
