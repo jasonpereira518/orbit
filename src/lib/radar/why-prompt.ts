@@ -5,8 +5,9 @@
  * What the model sees, and nothing more: the person's cleaned name, title and company, the
  * kind of recommendation, and the scorer's own reason and evidence lines — the facts that
  * already chose this row. Those lines can quote the user's notes (an open action item's
- * text), so they go inside a fence. No notes, no mail, no message bodies: a prompt that
- * cannot see private data cannot leak it.
+ * text), so they go inside a fence. No notes and no message bodies. A card built from the
+ * user's email carries one model-written sentence about it inside the fence, and nothing
+ * else from the mail: never a quote, an address or a message.
  */
 import { createHash } from "node:crypto";
 import { cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";

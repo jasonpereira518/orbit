@@ -25,7 +25,7 @@ Today Orbit reads email in one narrow way: the user-triggered recruiter scan (`s
 
 1. **Plan gating:** Pro and Lifetime only, matching the recruiter scan (`requireRecruitersUser`, `src/lib/plan-guards.ts`).
 2. **First-run backfill:** 14 days, drained under the normal per-account daily cap.
-3. **Unresolved people:** shown as "Add to Orbit" chips on the event's top card. An event with no resolvable contact appears in a small "From your inbox" strip on Radar and creates no card.
+3. **Unresolved people:** deferred to P4b (section 7). A Radar card exists only for a person already in the network; `resolvePeople` already flags the named strangers (`suggestAdd`) for it.
 4. **Sweep cadence:** every 15 minutes, on its own `ops.yml` line.
 5. **Recruiter scan:** stays separate for now. Merging `user_recruiter_links` summaries into `email_events` is a follow-up.
 
@@ -110,20 +110,26 @@ New pure module `src/lib/email-intel/relevance.ts`, modelled on `scoreAttendee` 
 
 ### 7. Radar integration (P4, no new card kinds)
 
-An email producer in `src/lib/radar/signals/` sits next to `internal.ts`. New signal codes get weights in `RADAR_WEIGHTS` and cases in `scoreContactKinds`:
+A new signal kind, `email_event`, produced by `src/lib/radar/signals/email.ts`: it reads recent `email_events` for accounts with `email_intel_enabled = 1` (the opt-in check is part of the read), asks `rankEventContacts` who to reach for each, and emits at most one signal per (contact, card kind). `emailCardFor` in `src/lib/radar/score.ts` owns every rule below, so suppression, dismissal penalties, the per-account learned model, caps, expiry and the live index (unique per user, contact, kind) apply unchanged.
 
-| Email event | Radar kind |
-|---|---|
-| `process_update` | `follow_up`; `prep` when it carries an interview or call date within 7 days |
-| `job_posting` | `opportunity` |
-| `news`, `event` | `heads_up` |
-| a recruiter or named person with an open ask | `reach_out` |
+| Event | Person | Card |
+|---|---|---|
+| `process_update`, stage `rejected` or `withdrawn` | anyone | none |
+| `process_update`, interview or screen dated within 7 days | on the thread | `prep`, anchored to the date |
+| `process_update`, has an ask, or stage `screening`/`interviewing`/`offer` | on the thread | `follow_up` |
+| `process_update`, anything else | on the thread | none |
+| `process_update`, any other stage | not on the thread | `opportunity` |
+| `job_posting` with an open ask | on the thread | `follow_up` |
+| `job_posting` otherwise | anyone | `opportunity` |
+| `news`, `event` | anyone | `heads_up` |
 
-- The evidence label reads "From your email: ..." with the summary and time. Suppression, dismissal penalties, the per-account learned model and the live index (unique per user, contact, kind) apply unchanged.
-- Radar's AI prompts see labels only. The evidence quote is third-party text and stays out of the rerank prompt, or goes in fenced.
-- Accepting a card calls `scheduleContactFollowUpForUser` or `createReminderForUser` (`src/lib/reminder-writes.ts`) with `sourceExcerpt` and `origin: "implied"`. Uncertain dates go to `suggested_reminders` for review.
-- Ships dark behind Radar's `comingSoon` flag (`src/lib/surfaces.ts`) and its own setting, so the release order is independent.
-- Radar's smokes (`smoke-radar-score.ts`, `smoke-radar-run.ts`) get email cases.
+- The reason label is the model's one-line summary plus why this person ("Works at Northwind"); the evidence is a fixed "From your email" carrying a reference to the event (`RadarEvidence.ref`) and whether the person is on it. The quote and addresses never reach a card.
+- Accepting a card with such a reference creates the email's own reminder (`scheduleEmailEventReminder`): the email's ask for the person it asked, a line built from the event for a colleague, due at the chosen preset or the email's earlier stated deadline, marked `origin: implied`, `createdBy: ai`, with the quote as `sourceExcerpt`, idempotent on (event, contact). The person's click is the confirmation, so nothing is staged in `suggested_reminders`.
+- Mail-derived text stays in the app and inside the fence Radar's AI prompts already use. It is withheld from the Monday email (a fixed line) and from the unfenced "user intent" of a draft prompt (fixed phrases per reason).
+- Autopilot is unchanged: it still schedules the generic follow-up for the kinds a person opted into.
+- Radar is already released, so this is visible to opted-in accounts on deploy; the opt-in is the release control.
+- Deferred to P4b: "Add to Orbit" chips for named strangers and a "From your inbox" strip, which need a contact-creating write path and their own UI.
+- The Radar run's statement ceiling in `scripts/smoke-radar-run.ts` rises from 26 to 27 for the opt-in check; an opted-in account also pays per-event ranking reads, bounded by 20 events and an 8-second budget.
 
 ### 8. Search (P5)
 

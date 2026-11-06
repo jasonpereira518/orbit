@@ -46,6 +46,7 @@ import { applyAutopilot, loadRadarAutopilot } from "@/lib/radar/autopilot";
 import { draftTodayForRun } from "@/lib/radar/drafts";
 import { probeCompanyNews } from "@/lib/radar/signals/news";
 import { loadPostSignals } from "@/lib/radar/signals/activity";
+import { produceEmailSignals } from "@/lib/radar/signals/email";
 import { pollSocialPosts } from "@/lib/radar/signals/social";
 import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
@@ -111,6 +112,8 @@ export type RadarRunStats = {
   news: number;
   /** New public posts found by tonight's check. */
   posts: number;
+  /** Signals read from the user's mail this run (accounts that opted in to email insights). */
+  emailSignals: number;
   durationMs: number;
 };
 
@@ -269,6 +272,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     autopilot: 0,
     news: 0,
     posts: 0,
+    emailSignals: 0,
     durationMs: 0,
   };
   const db = await getDb();
@@ -283,8 +287,14 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
         runId = run!.id;
 
-        const [signals, goals, targetKeys, focus, live, outcomes, tallies] = await Promise.all([
+        const [signals, emailSignals, goals, targetKeys, focus, live, outcomes, tallies] = await Promise.all([
           produceInternalSignals(userId, now),
+          // Events read from the user's mail, for accounts that opted in. A failure costs the
+          // run these signals, never its list.
+          produceEmailSignals(userId, now).catch((err) => {
+            reportUnlessQuiet(err, { where: "job.radar.email", userId, level: "warning" });
+            return [] as RadarSignal[];
+          }),
           listActiveGoalTextsForUser(userId, { limit: 8 }),
           loadTargetKeys(userId),
           // Skills and watched job titles from the LinkedIn export. A failure costs the nudge,
@@ -310,7 +320,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const model = tallies ? buildRadarModel(tallies, now) : null;
         learned = model;
         const [candidates, suppressions] = await Promise.all([
-          loadCandidates(userId, signals.map((s) => s.contactId), now),
+          loadCandidates(userId, [...emailSignals, ...signals].map((s) => s.contactId), now),
           loadSuppressions(userId, live, now),
         ]);
 
@@ -333,7 +343,9 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
           return [];
         });
-        const picks = scorePicks(candidates, [...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model, focus);
+        // Email signals first: a card keeps at most two pieces of evidence, and the one from
+        // mail is the one an accept needs to find its email again.
+        const picks = scorePicks(candidates, [...emailSignals, ...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model, focus);
 
         // AI, on the account's own key, in one shared budget. First the rerank, which may
         // nudge the shortlist before the caps choose the final list; then, once the list is
@@ -387,6 +399,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
 
         stats.candidates = candidates.length;
         stats.signals = signals.length;
+        stats.emailSignals = emailSignals.length;
         stats.recommendations = next.length;
         stats.inserted = counts.inserted;
         stats.updated = counts.updated;
