@@ -111,7 +111,7 @@ async function main() {
       check(`…but not ${label}`, !shouldAutoApply({ ...explicit, ...change }));
     }
     check("an unasked suggestion is a card even with the setting on", !shouldAutoApply({ ...base, unasked: true }));
-    for (const ask of ["Remind me Friday to text Maya", "set up coffee with Maya tomorrow at 3", "Put lunch with Ada on my calendar", "schedule a call with Ada"]) {
+    for (const ask of ["Remind me Friday to text Maya", "set up coffee with Maya tomorrow at 3", "Put lunch with Ada on my calendar", "schedule a call with Ada", "Remind me to follow up with this person about this", "set a follow-up with Ada next week"]) {
       check(`"${ask}" is an ask`, EXPLICIT_ASK_RE.test(ask));
     }
     for (const q of ["What's on my schedule today?", "How is Maya doing?", "Who should I meet at the conference?"]) {

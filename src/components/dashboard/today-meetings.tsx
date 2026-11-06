@@ -26,6 +26,7 @@ async function orbitMeetings(userId: string, now: Date) {
       id: reminders.id,
       title: reminders.title,
       dueDate: reminders.dueDate,
+      calendarEventKey: reminders.calendarEventKey,
       contactId: reminders.contactId,
       contactName: contacts.preferredName,
       contactFullName: contacts.fullName,
@@ -60,8 +61,12 @@ export async function TodayMeetingsSection({ now }: { now: Date }) {
   const shown = events
     .filter((e) => !e.allDay && e.selfResponse !== "declined" && ymdInZone(e.startAt, tz) <= today)
     .slice(0, 6);
+  // A meeting Orbit also put on the calendar shows once, as the calendar's row.
+  const onCalendar = new Set(events.map((e) => e.providerEventId));
   const ours = kept.flatMap(({ dueDate, ...r }) =>
-    dueDate && !isDateOnlyDue(dueDate) && ymdInZone(dueDate, tz) <= today ? [{ ...r, dueDate }] : []
+    dueDate && !isDateOnlyDue(dueDate) && ymdInZone(dueDate, tz) <= today && !(r.calendarEventKey && onCalendar.has(r.calendarEventKey))
+      ? [{ ...r, dueDate }]
+      : []
   );
   if (!shown.length && !ours.length) return null;
   // Someone added since the last sync shows by name.

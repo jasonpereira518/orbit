@@ -25,7 +25,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { contacts } from "@/db/schema";
+import { contacts, reminders } from "@/db/schema";
 import { setActionItemStatusForUser } from "@/lib/action-items";
 import { deleteContactForUser } from "@/lib/contact-delete";
 import { findConfidentDuplicate } from "@/lib/contact-resolve";
@@ -51,7 +51,10 @@ import {
 } from "@/lib/tools/chat-write-kit";
 import { FEATURE_UNDO, FEATURE_WRITES } from "@/lib/tools/chat-writes-features";
 import { createEventForUser, deleteEventForUser, getEventForUser, setSpokeToForUser } from "@/lib/events/store";
-import { wallTimeToUtc } from "@/lib/reminder-due-bucket";
+import { addCalendarMeeting, removeCalendarMeeting } from "@/lib/calendar-write";
+import { reportError } from "@/lib/report-error";
+import { cookies } from "next/headers";
+import { DEFAULT_TZ, dueDayOf, resolveTimeZone, TZ_COOKIE, wallTimeToUtc, ymdInZone } from "@/lib/reminder-due-bucket";
 import { createReminderForUser, scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import {
   completeReminder,
@@ -76,6 +79,23 @@ function dueWithinYear(raw: unknown): string | null {
   const now = Date.now();
   if (d.getTime() < now - 86_400_000 || d.getTime() > now + 365 * 86_400_000) return null;
   return d.toISOString();
+}
+
+/**
+ * The Reminders view a reminder due at `due` is listed in, so its card's link opens on it:
+ * Today, Upcoming, or Anytime when it has no date. "Today" is the viewer's, from the same
+ * cookie the page reads; an MCP call has none and reads UTC.
+ */
+async function remindersHref(due: string | null): Promise<string> {
+  if (!due) return "/reminders?view=anytime";
+  let tz = DEFAULT_TZ;
+  try {
+    tz = resolveTimeZone((await cookies()).get(TZ_COOKIE)?.value);
+  } catch {
+    // Outside a request (MCP, scripts): UTC.
+  }
+  const day = dueDayOf(due, tz);
+  return day && day > ymdInZone(new Date(), tz) ? "/reminders?view=upcoming" : "/reminders";
 }
 
 /** "Fri, Oct 30, 3:00 PM" for a wall-clock "YYYY-MM-DDTHH:mm", read as written (no zone). */
@@ -370,13 +390,15 @@ const CORE_WRITES: readonly ChatWrite[] = [
         // A chat card the person accepted, which `followup_set` counts as a suggestion.
       }, { origin: "suggestion" });
       if (!row) throw new UserFacingError("Couldn’t set that reminder");
-      return { resultId: row.id, href: "/reminders", undo: { tool: "dismiss_created_reminder", input: { reminderId: row.id } } };
+      const href = await remindersHref(row.dueDate?.toISOString() ?? null);
+      return { resultId: row.id, href, undo: { tool: "dismiss_created_reminder", input: { reminderId: row.id } } };
     },
   },
   {
-    // A meeting Orbit keeps itself: a `meet` reminder at the meeting's time, so it shows in
-    // Reminders and on the dashboard's Today's meetings. Nothing is sent and no calendar is
-    // written — that needs a calendar write scope Orbit does not ask for yet.
+    // A `meet` reminder at the meeting's time, so it shows in Reminders and on the dashboard's
+    // Today's meetings — and, when the person let Orbit add events (`@/lib/calendar-write`),
+    // an event on their own calendar too, linked by the reminder's `calendar_event_key`.
+    // Nobody is invited and nothing is sent.
     name: "create_meeting",
     title: "Add a meeting",
     description:
@@ -416,10 +438,26 @@ const CORE_WRITES: readonly ChatWrite[] = [
         actionKind: "meet",
       }, { origin: "suggestion" });
       if (!row) throw new UserFacingError("Couldn’t add that meeting");
-      // Reminders opens on Today; a meeting further out is under Upcoming. The zone is not
-      // known here, so "today" is the next 24 hours.
-      const href = Date.parse(startsAt) - Date.now() < 86_400_000 ? "/reminders" : "/reminders?view=upcoming";
-      return { resultId: row.id, href, undo: { tool: "dismiss_created_reminder", input: { reminderId: row.id } } };
+      // The calendar is extra: a refusal or an outage leaves the meeting in Orbit, and the
+      // card offers to add it again.
+      let onCalendar = false;
+      try {
+        const added = await addCalendarMeeting(userId, {
+          title: row.title,
+          startsAt: new Date(startsAt),
+          durationMin: i.duration_min ? Number(i.duration_min) : null,
+          location: i.location ? text(i.location, 200) : null,
+        });
+        if (added) {
+          const db = await getDb();
+          await db.update(reminders).set({ calendarEventKey: added.eventId }).where(and(eq(reminders.id, row.id), eq(reminders.userId, userId)));
+          onCalendar = true;
+        }
+      } catch (err) {
+        reportError(err, { where: "chat.create_meeting.calendar", userId, level: "warning" });
+      }
+      const href = await remindersHref(startsAt);
+      return { resultId: row.id, href, undo: { tool: "remove_created_meeting", input: { reminderId: row.id, onCalendar } } };
     },
   },
   {
@@ -592,6 +630,17 @@ const CORE_UNDO = {
     await setActionItemStatusForUser(userId, s(input.actionItemId), "open");
   },
   async dismiss_created_reminder(userId: string, input: Record<string, unknown>) {
+    await dismissReminder(userId, s(input.reminderId));
+  },
+  async remove_created_meeting(userId: string, input: Record<string, unknown>) {
+    // The calendar event first: a reminder dismissed with its event still on the calendar
+    // would leave nothing in Orbit to undo it from.
+    const db = await getDb();
+    const row = await db.query.reminders.findFirst({
+      where: and(eq(reminders.id, s(input.reminderId)), eq(reminders.userId, userId)),
+      columns: { calendarEventKey: true },
+    });
+    if (row?.calendarEventKey) await removeCalendarMeeting(userId, row.calendarEventKey);
     await dismissReminder(userId, s(input.reminderId));
   },
   async reopen_reminder(userId: string, input: Record<string, unknown>) {

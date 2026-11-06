@@ -70,6 +70,7 @@ check("send says send", missingScopeMessage("send") === "Google didn’t grant p
 
 console.log("\nconnecting to several features at once");
 const connect = googleScopesFor(GOOGLE_CONNECT_PURPOSES);
+check("Connect never asks to add calendar events", !connect.includes(GOOGLE_SCOPES.calendarWrite));
 check("one connect asks for contacts and calendar", connect.includes(GOOGLE_SCOPES.contacts) && connect.includes(GOOGLE_SCOPES.calendar));
 check("and never for mail", !connect.includes(GOOGLE_SCOPES.gmailRead) && !connect.includes(GOOGLE_SCOPES.gmailSend));
 check("identity scopes ride along once", connect.filter((s) => s === GOOGLE_SCOPES.openid).length === 1);

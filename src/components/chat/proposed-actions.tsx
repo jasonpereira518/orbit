@@ -30,7 +30,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { commitProposedAction, dismissProposedAction, undoProposedAction } from "@/actions/chat-actions";
+import { addMeetingToCalendar, commitProposedAction, dismissProposedAction, undoProposedAction } from "@/actions/chat-actions";
+import { startGmailOAuth } from "@/actions/gmail";
+import { startOutlookOAuth } from "@/actions/outlook";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
 import { Button } from "@/components/ui/button";
@@ -166,6 +168,34 @@ export function ProposedActionsCard({
   }
 
   const resultHref = action.href ?? null;
+  // A meeting only in Orbit can still go on the person's calendar (`@/lib/calendar-write`).
+  const offerCalendar = action.args.tool === "create_meeting" && action.undo?.input?.onCalendar !== true;
+
+  async function addToCalendar() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await addMeetingToCalendar(messageId, action.id);
+      if (res.ok) {
+        onSettled({ ...action, undo: { tool: "remove_created_meeting", input: { reminderId: action.resultId, onCalendar: true } } });
+        toast.success("Added to your calendar");
+      } else if (res.grant) {
+        // The consent screen, then back here; pressing again adds it.
+        const returnTo = `${window.location.pathname}${window.location.search}`;
+        const { url } =
+          res.grant === "microsoft"
+            ? await startOutlookOAuth({ purposes: ["calendar_write"], returnTo })
+            : await startGmailOAuth({ purpose: "calendar_write", returnTo });
+        window.location.href = url;
+        return;
+      } else {
+        toast.error(res.reason);
+      }
+    } catch {
+      toast.error("Couldn’t reach your calendar — try again?");
+    }
+    setBusy(false);
+  }
 
   return (
     <div
@@ -269,6 +299,21 @@ export function ProposedActionsCard({
                   >
                     {busy ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <Undo2 className="size-3" aria-hidden />}
                     Undo
+                  </button>
+                </>
+              )}
+              {offerCalendar && (
+                <>
+                  {" · "}
+                  <button
+                    type="button"
+                    onClick={addToCalendar}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1 text-primary underline underline-offset-2 disabled:opacity-50"
+                    aria-label={`Add to calendar: ${action.preview}`}
+                  >
+                    <CalendarPlus className="size-3" aria-hidden />
+                    Add to calendar
                   </button>
                 </>
               )}
