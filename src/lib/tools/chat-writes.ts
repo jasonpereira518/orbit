@@ -53,7 +53,8 @@ import { FEATURE_UNDO, FEATURE_WRITES } from "@/lib/tools/chat-writes-features";
 import { createEventForUser, deleteEventForUser, getEventForUser, setSpokeToForUser } from "@/lib/events/store";
 import { addCalendarMeeting, removeCalendarMeeting } from "@/lib/calendar-write";
 import { reportError } from "@/lib/report-error";
-import { wallTimeToUtc } from "@/lib/reminder-due-bucket";
+import { cookies } from "next/headers";
+import { DEFAULT_TZ, dueDayOf, resolveTimeZone, TZ_COOKIE, wallTimeToUtc, ymdInZone } from "@/lib/reminder-due-bucket";
 import { createReminderForUser, scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import {
   completeReminder,
@@ -78,6 +79,23 @@ function dueWithinYear(raw: unknown): string | null {
   const now = Date.now();
   if (d.getTime() < now - 86_400_000 || d.getTime() > now + 365 * 86_400_000) return null;
   return d.toISOString();
+}
+
+/**
+ * The Reminders view a reminder due at `due` is listed in, so its card's link opens on it:
+ * Today, Upcoming, or Anytime when it has no date. "Today" is the viewer's, from the same
+ * cookie the page reads; an MCP call has none and reads UTC.
+ */
+async function remindersHref(due: string | null): Promise<string> {
+  if (!due) return "/reminders?view=anytime";
+  let tz = DEFAULT_TZ;
+  try {
+    tz = resolveTimeZone((await cookies()).get(TZ_COOKIE)?.value);
+  } catch {
+    // Outside a request (MCP, scripts): UTC.
+  }
+  const day = dueDayOf(due, tz);
+  return day && day > ymdInZone(new Date(), tz) ? "/reminders?view=upcoming" : "/reminders";
 }
 
 /** "Fri, Oct 30, 3:00 PM" for a wall-clock "YYYY-MM-DDTHH:mm", read as written (no zone). */
@@ -372,7 +390,8 @@ const CORE_WRITES: readonly ChatWrite[] = [
         // A chat card the person accepted, which `followup_set` counts as a suggestion.
       }, { origin: "suggestion" });
       if (!row) throw new UserFacingError("Couldn’t set that reminder");
-      return { resultId: row.id, href: "/reminders", undo: { tool: "dismiss_created_reminder", input: { reminderId: row.id } } };
+      const href = await remindersHref(row.dueDate?.toISOString() ?? null);
+      return { resultId: row.id, href, undo: { tool: "dismiss_created_reminder", input: { reminderId: row.id } } };
     },
   },
   {
@@ -437,9 +456,7 @@ const CORE_WRITES: readonly ChatWrite[] = [
       } catch (err) {
         reportError(err, { where: "chat.create_meeting.calendar", userId, level: "warning" });
       }
-      // Reminders opens on Today; a meeting further out is under Upcoming. The zone is not
-      // known here, so "today" is the next 24 hours.
-      const href = Date.parse(startsAt) - Date.now() < 86_400_000 ? "/reminders" : "/reminders?view=upcoming";
+      const href = await remindersHref(startsAt);
       return { resultId: row.id, href, undo: { tool: "remove_created_meeting", input: { reminderId: row.id, onCalendar } } };
     },
   },
