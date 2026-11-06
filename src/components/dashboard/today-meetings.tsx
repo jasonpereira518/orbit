@@ -80,7 +80,7 @@ function AvatarStack({ people, max, extra }: { people: Person[]; max: number; ex
         <PersonAvatar key={p.key} p={p} className="ring-2 ring-card" />
       ))}
       {more > 0 && (
-        <span className="relative flex size-6 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground ring-2 ring-card">
+        <span className="relative flex size-6 items-center justify-center rounded-full bg-muted text-3xs font-medium text-muted-foreground ring-2 ring-card">
           +{more}
         </span>
       )}
@@ -271,7 +271,7 @@ export async function TodayMeetingsSection({ now }: { now: Date }) {
       <CardContent className="space-y-3">
         {next && (
           <section aria-label="Next meeting" className="rounded-xl border border-border/60 bg-muted/40 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-primary">
+            <p className="text-2xs font-semibold uppercase tracking-wider text-primary">
               {untilLabel(next.e.startAt, now)}
             </p>
             <div className="mt-3 flex items-start gap-3">
