@@ -110,7 +110,9 @@ const freshCalls = (): Calls => ({ list: 0, fetch: [], tokens: [], queries: [] }
 /** Arms exactly `armed`, clears their schedule, and leaves everyone else switched off. */
 async function arm(armed: string[]) {
   const db = await getDb();
-  await db.update(userSettings).set({ emailIntelEnabled: 0 }).where(inArray(userSettings.userId, USERS));
+  // Everyone, not just USERS: the sweep claims every armed account, and other smokes (the claims
+  // smoke) share this DB and leave theirs armed, which made "four accounts claimed" read six in CI.
+  await db.update(userSettings).set({ emailIntelEnabled: 0 });
   await db
     .update(userSettings)
     .set({ emailIntelEnabled: 1, emailIntelNextAt: null, emailIntelCursorAt: null })
