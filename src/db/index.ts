@@ -848,6 +848,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   feedback text,
   feedback_note text,
   answer_outcome text,
+  follow_ups jsonb DEFAULT '[]',
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -2887,7 +2888,12 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // remote ref and every worktree's working file on Nov 5 2026: 188 was the highest claimed anywhere.
 // (Merged main at 186: both sides' DDL and alters are kept, and only the version is new, so a
 // database stamped 186 by main still runs this branch's 189 DDL.)
-export const SCHEMA_VERSION = 189;
+//
+// 190 = chat_messages.follow_ups: the rule-derived next questions an answer offered, stored with
+// it so the chips survive a reload and a regenerate instead of living only on the stream's
+// `done` event. Rescanned every remote ref on Nov 5 2026 after merging main at 189: 189 was the
+// highest claimed anywhere.
+export const SCHEMA_VERSION = 190;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3913,6 +3919,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "interest_list_signups", "user_id", "text");
   await ensureColumn(client, "interest_list_signups", "converted_at", "timestamptz");
   await ensureColumn(client, "chat_messages", "answer_outcome", "text");
+  await ensureColumn(client, "chat_messages", "follow_ups", "jsonb DEFAULT '[]'");
   await ensureColumn(client, "user_settings", "chat_auto_apply", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
   await ensureColumn(
@@ -4765,6 +4772,8 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   // Schema v182: whether a chat answer answered (`@/lib/chat-abstention`).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS answer_outcome text`,
+  // Schema v190: an answer's follow-up chips, so they survive a reload (`deriveFollowUps`).
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS follow_ups jsonb DEFAULT '[]'`,
   // Schema v183: chat may apply its small, reversible changes itself (`@/lib/chat-auto-apply`).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_auto_apply integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_instructions text`,

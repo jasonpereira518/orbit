@@ -1,6 +1,7 @@
 "use client";
 
-import type { ChatBlocks } from "@/lib/chat-directives";
+import { peopleIdsIn, type ChatBlocks } from "@/lib/chat-directives";
+import type { EvidenceSource } from "@/lib/chat-evidence";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import dynamic from "next/dynamic";
@@ -93,8 +94,12 @@ type AssistantMessage = {
   streaming?: boolean;
   /** The stages the server reported, so this bar narrates the same work `/chat` does. */
   steps?: ChatStep[];
-  /** What the answer's `::list` blocks show; its `::people` show as the cards below. */
+  /** What the answer's `::list` and `::people` blocks show. */
   blocks?: ChatBlocks;
+  /** The answer's citations, so `[eN]` render as source chips rather than raw text. */
+  evidence?: Record<string, EvidenceSource>;
+  /** The saved row, once `done` names it — a source chip needs it to fetch its snippet. */
+  messageId?: string | null;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -480,10 +485,14 @@ export function FloatingAskBar() {
               ensurePlaceholder();
               patch((m) => ({ ...m, blocks }));
             },
+            onEvidence: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, evidence: items }));
+            },
             onDone: (info) => {
               smoother.flush();
               ensurePlaceholder();
-              patch((m) => ({ ...m, retrieved: info.retrieved, streaming: false }));
+              patch((m) => ({ ...m, retrieved: info.retrieved, messageId: info.messageId, streaming: false }));
               if (info.notice) toast.message(info.notice);
             },
             onError: (message) => {
@@ -990,6 +999,23 @@ const AssistantBubble = memo(function AssistantBubble({
   onNavigate: (open: boolean) => void;
 }) {
   const steps = msg.steps ?? [];
+  // Same rule as the chat page: a person the answer placed inline is shown there, beside the
+  // sentence that says why, and not again in the list below.
+  const placed = useMemo(() => new Set(peopleIdsIn(msg.answer)), [msg.answer]);
+  const listed = msg.recommendations.filter((r) => !r.contact_id || !placed.has(r.contact_id));
+  const renderPeople = (ids: string[]) => (
+    <div className="space-y-2">
+      {ids.map((id) => {
+        const rec = msg.recommendations.find((r) => r.contact_id === id);
+        const person = msg.blocks?.people[id];
+        // While streaming the recommendations have not arrived yet; the block data names them.
+        const shown = rec ?? (person
+          ? { contact_id: id, recruiter_id: null, name: person.name, reason: person.subtitle ?? "", suggested_action: "", draft_message: null }
+          : null);
+        return shown ? <MiniRecommendation key={id} rec={shown} /> : null;
+      })}
+    </div>
+  );
   return (
     <div className="space-y-2">
       {steps.length > 0 && (
@@ -1001,12 +1027,18 @@ const AssistantBubble = memo(function AssistantBubble({
       )}
       {msg.answer && (
         <div className="text-sm leading-relaxed text-foreground/90">
-          <ChatMarkdown blocks={msg.blocks} streaming={msg.streaming}>
+          <ChatMarkdown
+            blocks={msg.blocks}
+            streaming={msg.streaming}
+            evidence={msg.evidence}
+            messageId={msg.messageId ?? undefined}
+            renderPeople={renderPeople}
+          >
             {msg.answer}
           </ChatMarkdown>
         </div>
       )}
-      {msg.recommendations.map((r) => (
+      {listed.map((r) => (
         <MiniRecommendation
           key={r.recruiter_id || r.contact_id || r.name}
           rec={r}
@@ -1058,10 +1090,12 @@ const MiniRecommendation = memo(function MiniRecommendation({
             <span className="text-xs text-muted-foreground"> · Recruiter</span>
           )}
           <p className="mt-0.5 text-xs text-muted-foreground">{rec.reason}</p>
-          <p className="mt-1 text-xs">
-            <span className="text-muted-foreground">Next: </span>
-            {rec.suggested_action}
-          </p>
+          {rec.suggested_action && (
+            <p className="mt-1 text-xs">
+              <span className="text-muted-foreground">Next: </span>
+              {rec.suggested_action}
+            </p>
+          )}
         </div>
         {canRemind && (
           <Button

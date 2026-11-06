@@ -316,6 +316,17 @@ export async function POST(request: Request) {
         // A beat for a title that is nearly there, never longer: if it is not ready the thread
         // is named the old way (the first message, cut short) rather than holding the answer.
         const title = await settleWithin(titlePromise, TITLE_GRACE_MS);
+        // Once, for both the row and the `done` event, so a reload shows the chips this did.
+        const followUps = deriveFollowUps({
+          question: ctx.q,
+          topRosterCompany: ctx.orgRosters[0]?.name ?? null,
+          firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
+          // Never for prep: the search's top hit is not the meeting's person. Never a handle
+          // ("calvintwong25").
+          topContactName: ctx.route?.prep
+            ? null
+            : ([ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n)) ?? null),
+        });
         // Persisted before `done` so the client learns the real message id and title. The
         // CLEANED text, not what streamed live — an invented citation was already visible
         // for that turn, but a reload should never show a dead `[e99]` nobody can resolve.
@@ -330,6 +341,7 @@ export async function POST(request: Request) {
           title,
           evidence: citedEvidence,
           proposedActions,
+          followUps,
           // Labelled on the text with its blocks still as directives, so a people or list
           // block counts as grounding — `expandLists` above has turned lists into tables.
           answerOutcome: labelAnswer(cleanAnswer, {
@@ -357,16 +369,7 @@ export async function POST(request: Request) {
           title: saved.title,
           version: versionTarget ? { slot: versionTarget.slot, version: versionTarget.nextVersion } : null,
           notice: ctx.searchNotice,
-          followUps: deriveFollowUps({
-            question: ctx.q,
-            topRosterCompany: ctx.orgRosters[0]?.name ?? null,
-            firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
-            // Never for prep: the search's top hit is not the meeting's person. Never a handle
-            // ("calvintwong25").
-            topContactName: ctx.route?.prep
-              ? null
-              : ([ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n)) ?? null),
-          }),
+          followUps,
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,
             fullName: c.fullName,

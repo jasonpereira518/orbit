@@ -763,6 +763,8 @@ export function ChatPanel({
             steps: row.activity ?? undefined,
             evidence: row.evidence ?? undefined,
             proposedActions: row.proposedActions ?? undefined,
+            // Stored since v190; older answers have none and show no chips.
+            followUps: row.followUps?.length ? row.followUps : undefined,
             feedback: row.feedback ?? null,
             // It came out of the database, so by definition there is a row to rate.
             persisted: true,
