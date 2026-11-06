@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { emailEvents, emailThreads, ignoredPeople, userSettings } from "@/db/schema";
+import { deleteEmailEventChunks } from "./search-index";
 import { INBOX_IGNORED_CONTEXT, statusFor, type ExtractedEvent, type ThreadResult } from "./types";
 
 export async function upsertThreadResult(userId: string, result: ThreadResult): Promise<{ changed: boolean }> {
@@ -116,6 +117,7 @@ export async function deleteEmailIntelData(userId: string): Promise<void> {
   const db = await getDb();
   await db.delete(emailEvents).where(eq(emailEvents.userId, userId));
   await db.delete(emailThreads).where(eq(emailThreads.userId, userId));
+  await deleteEmailEventChunks(userId);
   await deleteInboxDismissals(userId);
   await db
     .update(userSettings)

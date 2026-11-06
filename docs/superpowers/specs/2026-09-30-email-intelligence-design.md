@@ -143,8 +143,16 @@ A card needs a contact, so a stranger the email names (the recruiter who wrote t
 
 ### 8. Search (P5)
 
-- Index each `email_events` summary and evidence quote into `memory_chunks` with a new `source_kind`, `contact_ids` from resolved people, and `occurred_at`. The existing backfill sweep (`src/lib/memory-backfill.ts`) picks them up.
-- Extend the `source_kind` type and every switch on it, so `search_notes` (`src/lib/tools/definitions.ts`) and chat retrieval cite email events with source chips.
+Each `email_events` row of an opted-in account is indexed as one `memory_chunks` row, so chat's `search_notes` finds what the user's mail said and an answer cites it like a note.
+
+- **The passage** (`search-chunk.ts`, pure): the summary, then company, role, stage and due day, the asks, the people named (by name and title) and the one verified quote. Never an address, a body or a thread header. Each field is cleaned to one line and capped; a field tripping the injection detector is dropped, and a suspicious summary, company, role or stage drops the event. Headed `<day> · Email`, dated by the email. No contact ids in the text, so who an address belongs to never re-embeds anything.
+- **New `source_kind: "email_event"`** (a text column, no migration). `contact_id` is the first named person who is a contact, `contact_ids` all of them, resolved through `contact_identities`; an event naming nobody known is filed under nobody.
+- **Staleness is one predicate** (`staleEmailEvents`): no chunk of the event carries its current version, a timestamp rendered only in SQL. Opted-in accounts only. The claim and the count are the same predicate; unwritable events are `skipped`, never "remaining", so the drain's re-kick loop cannot spin on them.
+- **Three ways a chunk goes wrong, three handlers.** Event replaced (a new message re-extracts a thread, new ids), dismissed, or the account switched off, including in SQL: `pruneEmailEventChunks`, a predicate rather than a hook. People resolve differently (a contact added, merged, deleted, or `Add to Orbit`): `reconcileEmailChunkContacts` rewrites the ids in place, never the text; a merge already rewrites them and a deleted primary contact takes its chunk (it is rebuilt by the next pass). Text changed: re-chunked, carrying over any unchanged passage's embedding.
+- **When it runs.** The email sweep indexes what extraction just stored (no model call), so chat finds it within the sweep's fifteen minutes; the daily embedding backfill (`backfillMemoryChunks`) does the same and reconciles; the existing passage phase embeds. `usersWithPendingMemoryWork` also lists accounts with mail work or leftovers.
+- **Off means off.** The Settings switch deletes the account's mail chunks at once; the events stay on file (the copy already says so) and are re-indexed if it is turned back on. Gmail disconnect and an insights wipe delete chunks with the events.
+- **Citing.** `search_notes` rows of kind `email_event` are citable (`EvidenceSource` gains `email_event`); the answer prompt line reads `[eN] <day>, from your email: ...` inside the fence already used for note text. `getEvidenceSnippet` (now `loadEvidenceSnippet`) shows the summary and the quote live, and reads a dismissed event, an event of an account that switched off, or a stored id that is not a uuid as removed. The chip says "Email", links to the profile only when a contact is resolved, and never shows an address.
+- **Unchanged.** `search_notes` stays chat-only: email text is third-party text, so it must not fan out over MCP. No embedding call, route, cron or schema change.
 
 ## Phasing
 

@@ -8,6 +8,7 @@
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { addInboxPersonForUser, dismissInboxPersonForUser } from "@/lib/email-intel/inbox-actions";
+import { reconcileEmailChunkContacts } from "@/lib/email-intel/search-index";
 import { AI_ACCESS_COPY } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
 import { requireUserForReleasedSurface } from "@/lib/plan-guards";
@@ -132,6 +133,8 @@ export async function addInboxPerson(key: string): Promise<RadarActionResult & {
   const result = await addInboxPersonForUser(userId, key);
   if (!result.ok) return { ok: false, message: result.message };
   after(() => rebuildContactEmbedding(userId, result.contactId).catch(() => undefined));
+  // The new contact is named in emails already indexed for chat: make them findable from this person.
+  after(() => reconcileEmailChunkContacts(userId).catch(() => undefined));
   await refreshRadarForNewContact(userId).catch(() => false);
   revalidatePathIfRequestScoped("/contacts");
   revalidatePathIfRequestScoped("/graph");
