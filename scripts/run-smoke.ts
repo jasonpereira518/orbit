@@ -433,6 +433,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-demo-data": "pglite",
   "smoke-linkedin-reminder": "pglite",
   "smoke-linkedin-settings": "pglite",
+  "smoke-google-settings": "pglite",
   "smoke-credits-intro": "pglite",
   "smoke-onboarding-examples": "pglite",
   "smoke-demo-workspace": "pglite",

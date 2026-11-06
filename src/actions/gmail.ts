@@ -7,6 +7,7 @@ import { safeReturnPath } from "@/lib/safe-return-path";
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
+import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
 import { gmailConnections, imports, userSettings } from "@/db/schema";
 import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
@@ -34,7 +35,6 @@ import {
   type GooglePurpose,
 } from "@/lib/google-scopes";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
-import { pauseSync, resumeSync } from "@/lib/provider-connections";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { deleteEventConnection } from "@/lib/events/connections";
 import { purgeUserData } from "@/lib/user-data";
@@ -76,8 +76,13 @@ export type GmailConnectionStatus = {
    * Named to match `OutlookConnectionStatus.hasCalendarScope` so one adapter reads both.
    */
   hasCalendarScope: boolean;
-  /** True when the person switched meetings off with the Meetings switch (`setCalendarSync`). */
+  /**
+   * True when the person switched meetings off with the Meetings switch (`setCalendarSync`).
+   * Since v192 that is the calendar lane's own switch, not a pause of the whole connection.
+   */
   syncPaused: boolean;
+  /** The Google page's "Keep contacts in sync" switch (`setGoogleContactsSync`). */
+  contactsSyncEnabled: boolean;
   /** The grant covers drive.file, so the Drive picker can open. */
   canImportDrive: boolean;
   /** Safe: configured redirect URI only (no secrets). */
@@ -103,6 +108,7 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
       canImportContacts: false,
       hasCalendarScope: false,
       syncPaused: false,
+      contactsSyncEnabled: true,
       canImportDrive: false,
       redirectUri: summary.redirectUri,
     };
@@ -135,7 +141,8 @@ export async function getGmailConnectionStatus(): Promise<GmailConnectionStatus>
     canRead: Boolean(conn && conn.status === "active" && hasGmailReadScope(conn.scopes)),
     canImportContacts: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
     hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
-    syncPaused: Boolean(conn && conn.syncStatus === "paused"),
+    syncPaused: Boolean(conn && conn.calendarSyncEnabled === 0),
+    contactsSyncEnabled: !conn || conn.contactsSyncEnabled !== 0,
     canImportDrive: Boolean(conn && conn.status === "active" && grantCovers("drive", conn.scopes)),
     redirectUri: summary.redirectUri,
   };
@@ -205,11 +212,11 @@ export async function setCalendarSync(enabled: boolean): Promise<ActionResult<vo
   return asActionResult(async () => {
     const userId = await requireUserId();
     if (enabled) {
-      // `resumeSync` arms the row whatever the grant covers, and the upsert deliberately never
-      // arms a grant without calendar: the scheduler would claim it, disarm it for the missing
-      // scope, and leave the account page saying calendar sync is paused to someone who never
-      // asked for calendar — the defect this phase removes. A server action takes a direct POST,
-      // so the check belongs here and not only in front of the switch.
+      // Turning meetings on makes the connection due, and the upsert deliberately never arms a
+      // grant without calendar: the scheduler would claim it for a scope it lacks, and leave
+      // the account page saying meetings are on to someone who never granted calendar. A
+      // server action takes a direct POST, so the check belongs here and not only in front of
+      // the switch.
       const db = await getDb();
       const conn = await db.query.gmailConnections.findFirst({
         where: eq(gmailConnections.userId, userId),
@@ -220,12 +227,44 @@ export async function setCalendarSync(enabled: boolean): Promise<ActionResult<vo
           "Allow Orbit to see your calendar first — reconnect Google and tick calendar access"
         );
       }
-      await resumeSync("google", userId);
-    } else {
-      await pauseSync("google", userId);
     }
-    revalidatePath("/settings");
+    // The calendar lane's own switch (v192). It used to pause the whole connection, which
+    // silently stopped background contacts sync and email-activity logging too.
+    await setGoogleLane(userId, { calendarSyncEnabled: enabled ? 1 : 0 }, enabled);
+    revalidatePathIfRequestScoped("/settings");
   });
+}
+
+/** The "Keep contacts in sync" switch on the Google page: background contacts sync only. */
+export async function setGoogleContactsSync(enabled: boolean): Promise<ActionResult<void>> {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    if (enabled) {
+      const db = await getDb();
+      const conn = await db.query.gmailConnections.findFirst({
+        where: eq(gmailConnections.userId, userId),
+        columns: { scopes: true },
+      });
+      if (!hasContactsScope(conn?.scopes)) {
+        throw new UserFacingError("Allow Orbit to see your contacts first — reconnect Google and tick contacts access");
+      }
+    }
+    await setGoogleLane(userId, { contactsSyncEnabled: enabled ? 1 : 0 }, enabled);
+    revalidatePathIfRequestScoped("/settings");
+  });
+}
+
+/** Flip one lane switch; turning one on also makes the connection due now, so it starts soon. */
+async function setGoogleLane(
+  userId: string,
+  set: { calendarSyncEnabled?: number; contactsSyncEnabled?: number },
+  dueNow: boolean
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(gmailConnections)
+    .set({ ...set, ...(dueNow ? { nextSyncAt: new Date() } : {}), updatedAt: new Date() })
+    .where(and(eq(gmailConnections.userId, userId), eq(gmailConnections.status, "active")));
 }
 
 export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {

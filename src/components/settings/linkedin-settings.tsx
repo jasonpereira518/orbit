@@ -6,7 +6,6 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Bell,
   BriefcaseBusiness,
-  History,
   MessageSquare,
   MoreHorizontal,
   Newspaper,
@@ -32,12 +31,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FeatureRow } from "@/components/settings/account-page";
+import { IMPORT_HISTORY_LIMIT, ImportHistoryRow } from "@/components/settings/import-history-row";
 import { LinkedInMark } from "@/components/settings/provider-marks";
 import { LinkedInConnectionsImport } from "@/components/imports/linkedin-connections-import";
 import { LinkedInMessagesImport } from "@/components/imports/linkedin-messages-import";
 import { LinkedInExportGuide } from "@/components/imports/linkedin-export-guide";
 import { ImportQueueCard } from "@/components/imports/import-queue-card";
-import { ImportUndoButton } from "@/components/imports/import-finish-card";
 import {
   detectImportFiles,
   LINKEDIN_PRIVATE,
@@ -50,9 +49,6 @@ import {
   useImportQueue,
 } from "@/lib/imports/use-import-queue";
 import { IMPORT_COPY } from "@/lib/imports/import-copy";
-import { importSourceLabel } from "@/lib/imports/import-sources";
-import { summarizeImport } from "@/lib/imports/import-summary";
-import { importUndoable, withinUndoWindow } from "@/lib/imports/import-finish";
 import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-import-types";
 import { LINKEDIN_REFRESH_INTERVAL_OPTIONS } from "@/lib/linkedin-export";
 import { friendlyError } from "@/lib/errors";
@@ -70,8 +66,6 @@ const LINKEDIN_THEME =
 
 const NO_CONTROL = { kind: "none" } as const;
 const noop = () => {};
-const FIRST_IMPORTS = 5;
-const HISTORY_LIMIT = 20;
 
 const INTERVAL_LABEL: Record<number, string> = {
   0: "Off",
@@ -105,7 +99,7 @@ export function LinkedInSettings() {
       () => setFailed(true),
     );
     listImports({
-      limit: HISTORY_LIMIT,
+      limit: IMPORT_HISTORY_LIMIT,
       importTypes: [...LINKEDIN_UPLOAD_IMPORT_TYPES],
     }).then(setHistory, () => setHistory([]));
   }, []);
@@ -388,7 +382,7 @@ export function LinkedInSettings() {
             }
           />
         ) : null}
-        <HistoryRow history={history} onUndone={load} />
+        <ImportHistoryRow history={history} source="LinkedIn" onUndone={load} />
       </ul>
     </div>
   );
@@ -453,96 +447,6 @@ function IntervalPicker({
         </button>
       ))}
     </div>
-  );
-}
-
-function HistoryRow({
-  history,
-  onUndone,
-}: {
-  history: ImportHistoryItem[] | null;
-  onUndone: () => void;
-}) {
-  const [showAll, setShowAll] = useState(false);
-  const items = history
-    ? showAll
-      ? history
-      : history.slice(0, FIRST_IMPORTS)
-    : [];
-  return (
-    <FeatureRow
-      icon={<History className="size-4" />}
-      title="Import history"
-      description={
-        history === null
-          ? "Loading…"
-          : history.length
-            ? `${history.length === HISTORY_LIMIT ? `Last ${HISTORY_LIMIT}` : history.length} LinkedIn ${history.length === 1 ? "upload" : "uploads"}`
-            : "Nothing uploaded yet."
-      }
-      control={NO_CONTROL}
-      onAction={noop}
-    >
-      {items.length ? (
-        <>
-          <ul className="divide-y divide-border/60">
-            {items.map((item) => {
-              const chips = summarizeImport(item);
-              const undoable =
-                !item.stats?.undoneAt &&
-                (item.contactsCreated ?? 0) > 0 &&
-                importUndoable(item.importType) &&
-                withinUndoWindow(new Date(item.createdAt));
-              return (
-                <li
-                  key={item.id}
-                  className="flex items-start gap-3 py-2.5 first:pt-0"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-ink">
-                      {importSourceLabel(item.importType)}
-                      <span className="ml-2 text-xs font-normal text-muted-foreground">
-                        {new Date(item.createdAt).toLocaleDateString(
-                          undefined,
-                          { month: "short", day: "numeric", year: "numeric" },
-                        )}
-                      </span>
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {item.stats?.undoneAt
-                        ? "Undone"
-                        : item.status !== "completed"
-                          ? item.status === "failed"
-                            ? "Didn’t finish"
-                            : "In progress"
-                          : chips.map((c) => c.label).join(" · ") ||
-                            "Nothing new"}
-                    </p>
-                  </div>
-                  {undoable ? (
-                    <ImportUndoButton
-                      importIds={[item.id]}
-                      size="xs"
-                      onUndone={onUndone}
-                    />
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-          {history && history.length > FIRST_IMPORTS ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="-ml-2"
-              onClick={() => setShowAll((s) => !s)}
-            >
-              {showAll ? "Show fewer" : `Show all ${history.length}`}
-            </Button>
-          ) : null}
-        </>
-      ) : null}
-    </FeatureRow>
   );
 }
 

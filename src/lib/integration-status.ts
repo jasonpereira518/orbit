@@ -70,6 +70,11 @@ export type GoogleConnectionInput = {
   hasCalendarScope: boolean;
   canRead: boolean;
   canSend: boolean;
+  /**
+   * The Meetings switch is off (`gmail_connections.calendar_sync_enabled`, v192). Google no
+   * longer pauses the whole connection for it, so connection health alone can't say so.
+   */
+  syncPaused?: boolean;
 };
 
 /** The fields of `OutlookConnectionStatus` this module reads. */
@@ -140,7 +145,10 @@ export function googleAccountStatus(c: GoogleConnectionInput, plan: Plan): Accou
     email: c.emailAddress,
     capabilities: {
       contacts: { state: c.canImportContacts ? "available" : "not_allowed" },
-      meetings: meetingsStatus(c.hasCalendarScope, c.status, c.syncError, "Google"),
+      meetings:
+        c.hasCalendarScope && c.syncPaused && c.status !== "disarmed"
+          ? { state: "off", detail: "Off" }
+          : meetingsStatus(c.hasCalendarScope, c.status, c.syncError, "Google"),
       ...inboxCapability(c.canRead, plan),
       send: { state: c.canSend ? "on" : "not_allowed" },
     },
