@@ -45,7 +45,7 @@ export const INTERVALS = ["month", "year", "once"] as const;
 export const GATES = [
   "contacts", "outreach", "hostedSending", "hostedEnrichment", "recruiters", "sync", "extension",
   "api", "meetings", "creditPacks", "extraConnections", "managedCredits", "backgroundFloor",
-  "speechShortform", "speechMeeting",
+  "speechShortform", "speechMeeting", "radar", "events", "findPeople", "compose", "cloudNotes", "page",
 ] as const;
 export const FAILURE_FLOWS = ["capture", "import", "sync", "voice", "ai", "email", "checkout"] as const;
 export const SURVEYS = ["post_first_capture", "day7_not_activated", "followup_useful", "pmf", "cancellation"] as const;

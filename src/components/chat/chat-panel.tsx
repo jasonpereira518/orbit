@@ -1,5 +1,6 @@
 "use client";
 
+import { useViewerPlan } from "@/components/viewer-plan";
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import {
@@ -281,6 +282,7 @@ export function ChatPanel({
    */
   initialThreads?: ChatThreadPage | null;
 } = {}) {
+  const { planConfig } = useViewerPlan();
   const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads?.threads ?? []);
   /**
    * Whether the history list has been read at least once. Until then an empty list means
@@ -857,7 +859,7 @@ export function ChatPanel({
     if (gmail === "connected") {
       toast.success("Gmail connected — you can send now");
     } else if (gmail === "error") {
-      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
+      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"), planConfig);
       if (oauth.cancelled) toast.message(oauth.message);
       else toast.error(oauth.message);
     }

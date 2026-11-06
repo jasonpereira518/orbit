@@ -26,6 +26,7 @@ import {
   type DataCategory,
 } from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import {
@@ -522,12 +523,14 @@ export async function deleteAllData(categories?: readonly DataCategory[]) {
 /** Everything the settings billing card needs, in one round trip. */
 export async function getPlanOverview() {
   const userId = await requireUserId();
-  const [entitlements, usage] = await Promise.all([
+  const [entitlements, usage, planConfig] = await Promise.all([
     getEntitlements(userId),
     contactUsageForUser(userId),
+    getEffectivePlanConfig(),
   ]);
 
-  return { entitlements, usage, demoAccount: demoAccountReason(userId) };
+  // `planConfig`: the effective plan table, so plan copy follows an admin's plan rules.
+  return { entitlements, usage, demoAccount: demoAccountReason(userId), planConfig };
 }
 
 

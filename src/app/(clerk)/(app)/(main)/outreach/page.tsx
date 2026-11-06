@@ -5,6 +5,7 @@ import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
 import { buttonVariants } from "@/components/ui/button";
 import { formatReplyRate } from "@/lib/outreach-metrics";
@@ -24,7 +25,7 @@ export default async function OutreachPage() {
   const { canUseOutreach } = await getEntitlements(await requireUserId());
 
   if (!canUseOutreach) {
-    return <OutreachLocked />;
+    return <OutreachLocked config={await getEffectivePlanConfig()} />;
   }
 
   const campaigns = await listCampaigns();

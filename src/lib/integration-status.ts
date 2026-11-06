@@ -8,6 +8,7 @@
  * Gmail was connected when mail access had never been given.
  */
 import { formatDistance } from "date-fns";
+import { availableOn } from "@/lib/plans/plan-config";
 import type { IntegrationTabId } from "@/components/settings/sections";
 import type { ConnectorStatusId } from "@/lib/connectors/status";
 import type { ConnectionHealth } from "@/lib/connection-status";
@@ -89,7 +90,8 @@ export type MicrosoftConnectionInput = {
  * certainty and nothing else: the account still says whether it is connected, what contacts
  * and meetings it allows, and whether it signed Orbit out.
  */
-type Plan = { canUseRecruiters: boolean } | "unknown";
+/** `recruitersOn`: `availableOn("recruiters", effective config)`, for the locked inbox's line. */
+type Plan = { canUseRecruiters: boolean; recruitersOn?: string } | "unknown";
 type ProviderName = "Google" | "Microsoft";
 
 function accountState(c: { configured: boolean; connected: boolean; status: ConnectionHealth | null }): AccountState {
@@ -125,7 +127,7 @@ function meetingsStatus(
 function inboxCapability(granted: boolean, plan: Plan): { inbox?: CapabilityStatus } {
   if (plan === "unknown") return {};
   if (!plan.canUseRecruiters) {
-    return { inbox: { state: "locked", detail: "Part of Orbit Pro and Max" } };
+    return { inbox: { state: "locked", detail: `Part of ${plan.recruitersOn ?? availableOn("recruiters")}` } };
   }
   return { inbox: { state: granted ? "available" : "not_allowed" } };
 }

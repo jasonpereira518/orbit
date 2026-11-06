@@ -25,6 +25,7 @@ import {
   userSettings,
 } from "@/db/schema";
 import { entitlementsForPlan, resolvePlan } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { managedKeysConfigured } from "@/lib/ai-access";
 import type { Entitlements, Plan, PlanSource } from "@/lib/entitlements";
 import { assertRevealable } from "@/lib/admin-redaction";
@@ -561,7 +562,8 @@ export async function getAdminUserDetail(
     billing: {
       plan,
       source,
-      entitlements: entitlementsForPlan(plan, source),
+      // The effective table: what this account actually gets, operator plan rules included.
+      entitlements: entitlementsForPlan(plan, source, await getEffectivePlanConfig()),
       compedPlan: settings.compedPlan ?? null,
       compedNote: settings.compedNote,
       compedAt: settings.compedAt,

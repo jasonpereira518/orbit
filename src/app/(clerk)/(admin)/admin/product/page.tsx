@@ -10,7 +10,9 @@ import {
   isPreviewingUnreleased,
   isViewingAsUser,
 } from "@/lib/surface-visibility";
-import { surfacesOfKind } from "@/lib/surfaces";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
+import { plansWithFeature } from "@/lib/plans/plan-overrides";
+import { PAGE_FEATURE, surfacesOfKind } from "@/lib/surfaces";
 import { ProductHeader } from "./product-header";
 
 export const metadata = { title: "Admin · Product" };
@@ -31,7 +33,7 @@ export const metadata = { title: "Admin · Product" };
  */
 export default async function AdminProductPage() {
   const adminUserId = await requireAdminPage();
-  const [hidden, comingSoon, navOrder, tierRules, viewingAsUser, previewingUnreleased] =
+  const [hidden, comingSoon, navOrder, tierRules, viewingAsUser, previewingUnreleased, planConfig] =
     await Promise.all([
       getHiddenSurfaceKeys(),
       getComingSoonKeys(),
@@ -39,6 +41,7 @@ export default async function AdminProductPage() {
       getTierRules(),
       isViewingAsUser(adminUserId),
       isPreviewingUnreleased(adminUserId),
+      getEffectivePlanConfig(),
     ]);
 
   return (
@@ -81,6 +84,9 @@ export default async function AdminProductPage() {
           hidden={[...hidden]}
           comingSoon={[...comingSoon]}
           tierRules={Object.fromEntries(tierRules)}
+          featurePlans={Object.fromEntries(
+            Object.entries(PAGE_FEATURE).map(([key, feature]) => [key, plansWithFeature(planConfig, feature)])
+          )}
         />
       </AdminPanel>
     </>

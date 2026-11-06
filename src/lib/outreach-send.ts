@@ -1,4 +1,5 @@
 import { outreachFromAddress } from "@/lib/outreach-sender";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -38,7 +39,7 @@ export async function getOutreachSendConfig(
   // Resolved from the row just read rather than `getEntitlements`, which would read it again
   // (in a Server Action or route handler `cache()` does not deduplicate). The same resolver on
   // the same row; a missing row resolves as `getEntitlements` would for a brand-new account.
-  const { canUseHostedSending: hosted } = entitlementsFromSettings(userId, settings ?? {});
+  const { canUseHostedSending: hosted } = entitlementsFromSettings(userId, settings ?? {}, await getEffectivePlanConfig());
   const envKey = (value: string | undefined) => (hosted ? value || null : null);
 
   const ownResendKey = decryptOrNull(settings?.resendApiKeyEncrypted);

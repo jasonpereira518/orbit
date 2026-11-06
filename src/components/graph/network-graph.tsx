@@ -703,7 +703,7 @@ export function NetworkGraph({
     requestDefaultView();
   }, [search, requestDefaultView]);
 
-  const { plan, creditsResetAt } = useViewerPlan();
+  const { plan, creditsResetAt, planConfig } = useViewerPlan();
   const runRefresh = useCallback(async () => {
     if (refreshing) return;
     if (operationsStoppedRef.current) return;
@@ -773,7 +773,7 @@ export function NetworkGraph({
         done = result.done;
         anyFailed ||= result.failed > 0;
         if (result.aiError) {
-          finishBackgroundJob(jobId, { status: "failed", error: refusalWithRefill(result.aiError, plan, creditsResetAt) });
+          finishBackgroundJob(jobId, { status: "failed", error: refusalWithRefill(result.aiError, plan, creditsResetAt, planConfig) });
           return;
         }
         // Hand the app back to whatever else it was doing before asking for the next batch.
@@ -807,7 +807,7 @@ export function NetworkGraph({
       refreshJobIdRef.current = null;
       setRefreshing(false);
     }
-  }, [refreshing, plan, creditsResetAt]);
+  }, [refreshing, plan, creditsResetAt, planConfig]);
 
   const cometContacts = useMemo(() => {
     if (!data) return [];
