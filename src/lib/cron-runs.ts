@@ -21,6 +21,7 @@ export type CronJobName =
   | "connectors.outbox"
   | "contacts.name-sweep"
   | "credits.notices"
+  | "email-intel.sweep"
   | "email.drain"
   | "imports.process-stalled"
   | "jobs.feed-sweep"

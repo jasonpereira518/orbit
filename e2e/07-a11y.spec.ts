@@ -35,7 +35,6 @@ const APP = [
   "/recruiters/new",
   "/recruiters/compose",
   "/knowledge",
-  "/imports",
   "/radar",
   "/events",
   "/settings",
@@ -101,7 +100,9 @@ for (const size of WIDTHS) {
   test.describe(`${size.name} (${size.width}px)`, () => {
     test.use({ viewport: { width: size.width, height: size.height }, hasTouch: size.touch, isMobile: size.touch });
 
-    for (const route of [...MARKETING, ...APP, "contact profile", ...ADMIN]) {
+    // `/capture?mode=imports` is the old /imports page, now a tab: audited here (not in APP, whose
+    // routes must each have their own title, and this one shares Capture's).
+    for (const route of [...MARKETING, ...APP, "/capture?mode=imports", "contact profile", ...ADMIN]) {
       test(`axe + overflow: ${route}`, async ({ page }) => {
         const path = route === "contact profile" ? contactPath : route;
         await page.goto(path);

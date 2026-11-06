@@ -20,6 +20,7 @@ import { POST as embeddingBackfill } from "../src/app/api/embeddings/backfill/ro
 import { POST as workHistoryResearch } from "../src/app/api/work-history/research/route";
 import { POST as workHistorySweep } from "../src/app/api/work-history/sweep/route";
 import { POST as nameSweep } from "../src/app/api/contacts/name-sweep/route";
+import { POST as emailIntelSweep } from "../src/app/api/email-intel/sweep/route";
 import { POST as timelineBackfill } from "../src/app/api/linkedin/timeline-events/backfill/route";
 import { POST as runCaptureJob } from "../src/app/api/capture/jobs/[id]/run/route";
 import { POST as radarRun } from "../src/app/api/radar/run/route";
@@ -134,6 +135,8 @@ async function main() {
   check("work-history/sweep → 401", whs.status === 401, `got ${whs.status}`);
   const names = await nameSweep(req());
   check("contacts/name-sweep → 401", names.status === 401, `got ${names.status}`);
+  const emailIntel = await emailIntelSweep(req());
+  check("email-intel/sweep → 401", emailIntel.status === 401, `got ${emailIntel.status}`);
   const tl = await timelineBackfill(req());
   check("linkedin/timeline-events/backfill → 401", tl.status === 401, `got ${tl.status}`);
   const cap = await runCaptureJob(req(), { params: Promise.resolve({ id: "smoke-capture" }) });
