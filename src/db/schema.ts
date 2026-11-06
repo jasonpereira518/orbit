@@ -32,9 +32,10 @@ import type {
   RecommendationKind,
   RecommendationStatus,
 } from "@/lib/radar/types";
+import type { AimKind, Field, Timeline } from "@/lib/about-you";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
-import type { AimKind, Field, Timeline } from "@/lib/about-you";import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
+import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
 import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
 import type {
