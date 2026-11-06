@@ -107,17 +107,10 @@ const MicrosoftAccountPage = dynamic(
     })),
   { loading: () => <PanelSkeleton /> }
 );
-const LinkedInConnectionsImport = dynamic(
+const LinkedInSettings = dynamic(
   () =>
-    import("@/components/imports/linkedin-connections-import").then((m) => ({
-      default: m.LinkedInConnectionsImport,
-    })),
-  { loading: () => <PanelSkeleton /> }
-);
-const LinkedInMessagesImport = dynamic(
-  () =>
-    import("@/components/imports/linkedin-messages-import").then((m) => ({
-      default: m.LinkedInMessagesImport,
+    import("@/components/settings/linkedin-settings").then((m) => ({
+      default: m.LinkedInSettings,
     })),
   { loading: () => <PanelSkeleton /> }
 );
@@ -655,12 +648,7 @@ function Panel({
         />
       );
     case "linkedin":
-      return (
-        <div className="space-y-5">
-          <LinkedInConnectionsImport />
-          <LinkedInMessagesImport />
-        </div>
-      );
+      return <LinkedInSettings />;
     case "granola":
       return <GranolaSettings />;
     case "ai":
