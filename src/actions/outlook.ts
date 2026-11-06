@@ -232,7 +232,7 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   }
   revalidatePath("/settings");
   revalidatePath("/recruiters");
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 }
 
 export async function consumeOutlookOAuthState(

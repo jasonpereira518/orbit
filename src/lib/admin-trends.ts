@@ -326,20 +326,24 @@ export async function rollingActiveTrend(
   const result = await db.execute(sql`
     WITH spine AS (${series(grain, buckets)}),
     points AS (
+      -- The bucket's end in UTC, like the spine: timestamptz + '1 day' / '1 month' follows the
+      -- SESSION's time zone, so a DST change there moved the close by an hour.
       SELECT bucket_start,
-             least(bucket_start + ${sql.raw(`interval '${step}'`)}, now()) AS as_of
+             least(((bucket_start AT TIME ZONE 'UTC') + ${sql.raw(`interval '${step}'`)}) AT TIME ZONE 'UTC', now()) AS as_of
       FROM spine
     ),
     w AS (${writesSince(sql`${SPINE_START} - interval '30 days'`)})
+    -- Trailing windows are durations, in hours: '7 days' subtracted from a timestamptz is
+    -- 167 or 169 hours across a DST change in the session's zone (the LA smoke caught it).
     SELECT p.bucket_start,
            count(DISTINCT w.user_id)
-             FILTER (WHERE w.created_at >= p.as_of - interval '1 day')::int AS dau,
+             FILTER (WHERE w.created_at >= p.as_of - interval '24 hours')::int AS dau,
            count(DISTINCT w.user_id)
-             FILTER (WHERE w.created_at >= p.as_of - interval '7 days')::int AS wau,
+             FILTER (WHERE w.created_at >= p.as_of - interval '168 hours')::int AS wau,
            count(DISTINCT w.user_id)::int AS mau
     FROM points p
     LEFT JOIN w
-      ON w.created_at >= p.as_of - interval '30 days'
+      ON w.created_at >= p.as_of - interval '720 hours'
      AND w.created_at < p.as_of
     GROUP BY p.bucket_start
     ORDER BY p.bucket_start
