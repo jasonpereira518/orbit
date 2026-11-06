@@ -5,13 +5,14 @@
  * Pure — no React, no icons — so `src/actions/onboarding.ts` can validate against it
  * without pulling a client component into the server bundle.
  *
- * Two paths: the **guided tour** (welcome → connect → a coach rail over the real pages) and
+ * Two paths: the **guided tour** (welcome → about you → connect → a coach rail over the real pages) and
  * **quick setup** (welcome → your people → connect → a paged overview). People come first:
  * the person's own contacts are the easy win.
  */
 
 export const ONBOARDING_STEPS = [
   "welcome",
+  "about",
   "linkedin",
   "import",
   "ai-key",
@@ -37,6 +38,7 @@ export type OnboardingPath = (typeof ONBOARDING_PATHS)[number];
  */
 const STEP_IDS: Record<OnboardingStep, true> = {
   welcome: true,
+  about: true,
   linkedin: true,
   import: true,
   "ai-key": true,
@@ -66,8 +68,8 @@ export function isOnboardingPath(value: string | null | undefined): value is Onb
  * step still parses, and `resumeStep` moves it onto the path's first step.
  */
 export const PATH_STAGES = {
-  tour: ["welcome", "connect", "launch"],
-  quick: ["welcome", "people", "connect", "overview"],
+  tour: ["welcome", "about", "connect", "launch"],
+  quick: ["welcome", "about", "people", "connect", "overview"],
 } as const satisfies Record<OnboardingPath, readonly OnboardingStep[]>;
 
 export type OnboardingStage = (typeof PATH_STAGES)[OnboardingPath][number];
@@ -76,6 +78,7 @@ export const RETIRED_STEPS: readonly OnboardingStep[] = ["linkedin", "ai-key"];
 
 export const STAGE_LABELS: Record<OnboardingStage, string> = {
   welcome: "Welcome",
+  about: "About you",
   people: "Your people",
   connect: "Your accounts",
   overview: "What Orbit does",
@@ -87,6 +90,7 @@ export function stageOf(step: OnboardingStep, path: OnboardingPath): OnboardingS
   void path;
   switch (step) {
     case "welcome":
+    case "about":
     case "connect":
     case "overview":
     case "launch":
@@ -106,7 +110,7 @@ export function stageOf(step: OnboardingStep, path: OnboardingPath): OnboardingS
 
 export function stepAllowedOnPath(step: OnboardingStep, path: OnboardingPath): boolean {
   if (RETIRED_STEPS.includes(step)) return false;
-  if (step === "welcome" || step === "connect") return true;
+  if (step === "welcome" || step === "about" || step === "connect") return true;
   return path === "quick" ? step !== "launch" : step === "launch";
 }
 
