@@ -315,7 +315,8 @@ export async function gatherEvidence(
   }));
   const today = new Date().toISOString().slice(0, 10);
 
-  steps.start("gather", "Looking a little further", options.reason);
+  // Every depth reason reads as a predicate ("asks what was said"), so it finishes the sentence.
+  steps.start("gather", "Looking a little further", options.reason ? `Your question ${options.reason}` : undefined);
   let outcome: ToolLoopOutcome;
   try {
     const driver =

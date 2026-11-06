@@ -167,6 +167,8 @@ export type ChatStep = {
   /** The secondary line: which arms ran, which filters were parsed. */
   detail?: string;
   status: "active" | "done";
+  /** When the stage started, in ms since the answer's stream opened. Absent on older rows. */
+  at?: number;
   /** Wall-clock for the stage, set when it finishes. */
   ms?: number;
   refs?: ChatStepRef[];

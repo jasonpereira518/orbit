@@ -20,6 +20,7 @@ import {
 import {
   budgetContactsContext,
   CANDIDATE_POOL,
+  FINAL_CONTACT_COUNT,
   rerankCandidatesWithEngine,
   type RankEngine,
   understandQuery,
@@ -35,7 +36,15 @@ import {
 } from "@/lib/decisions/chat-route";
 import { findOrgRosters, type OrgRoster } from "@/lib/chat-roster";
 import { attachPhotos, createPhotoCache, type PhotoCache } from "@/lib/chat-photos";
-import { describeArms, NULL_STEPS, plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
+import {
+  countFound,
+  describeArms,
+  describeQuestion,
+  NULL_STEPS,
+  plural,
+  toRefs,
+  type StepEmitter,
+} from "@/lib/chat-steps";
 import { getClosenessCohort } from "@/lib/closeness-cohort";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import { getCareerLines, getContactProfile } from "@/lib/contact-profile";
@@ -265,7 +274,7 @@ async function loadActiveGoalTexts(userId: string): Promise<string[]> {
 const RANK_ENGINE_DETAIL: Record<RankEngine, string> = {
   jev: "Ranked by the decision model",
   llm: "Ranked by your AI model",
-  search: "In search order",
+  search: "Not ranked by AI this time",
 };
 
 async function retrieveRankedContacts(
@@ -288,7 +297,7 @@ async function retrieveRankedContacts(
   // Every model call below shares the one account read; each still mints its own grant.
   const complete = completeJsonOn(access);
   let searchNotice: string | null = null;
-  steps.start("understand", "Working out what you're asking for");
+  steps.start("understand", "Reading your question");
   // The embedding still degrades to keywords — but now says so, instead of letting the
   // model conclude the user knows nobody like that. (The comment lives above the call:
   // smoke-chat-pipeline asserts these two run in one Promise.all by source shape.)
@@ -305,12 +314,15 @@ async function retrieveRankedContacts(
     // TypeSafe key) for most accounts, and the rank step then runs the LLM rerank.
     routing?.decider ?? openDecider(userId, access),
   ]);
+  const asked = describeQuestion(parsedQuery, q);
   steps.done("understand", {
-    label: "Worked out what you're asking for",
-    detail: describeParsedQuery(parsedQuery),
+    // Without a reading (no key, too short, timed out) the search runs on the words alone —
+    // say so, rather than claiming an understanding nothing produced.
+    label: asked.interpreted ? "Read your question" : "Used your question as written",
+    detail: asked.detail,
   });
 
-  steps.start("search", "Searching your network");
+  steps.start("search", `Searching for ${asked.subject}`);
   const candidates = await hybridSearchContacts(userId, {
     query: q,
     embedding: queryEmbedding,
@@ -327,13 +339,23 @@ async function retrieveRankedContacts(
     "contact"
   );
   steps.done("search", {
-    label: `Searched your network, found ${plural(candidates.length, "candidate")}`,
+    label: candidates.length
+      ? `Found ${countFound(candidates.length, CANDIDATE_POOL, "possible match", "possible matches")}`
+      : "No one in your network matched",
     detail: describeArms(candidates.flatMap((c) => c.matchedArms ?? [])),
     refs: candidateRefs,
   });
   attachPhotos(steps, "search", candidateRefs, userId, photos);
 
-  steps.start("rank", `Ranking ${plural(candidates.length, "candidate")}`);
+  // At or under the final count there is nothing to choose between: the rerank returns the
+  // candidates untouched, so no step claims it ranked them.
+  const ranks = candidates.length > FINAL_CONTACT_COUNT;
+  if (ranks) {
+    steps.start(
+      "rank",
+      `Picking the best ${FINAL_CONTACT_COUNT} of ${countFound(candidates.length, CANDIDATE_POOL, "match", "matches")}`
+    );
+  }
   const { contacts: ranked, engine: rankEngine } = await rerankCandidatesWithEngine(
     userId,
     q,
@@ -342,45 +364,30 @@ async function retrieveRankedContacts(
     parsedQuery.semanticQuery,
     decider
   );
-  const keptRefs = toRefs(
-    ranked.map((c) => ({ id: c.id, name: c.fullName })),
-    "contact"
-  );
-  steps.done("rank", {
-    label: `Kept the ${plural(ranked.length, "closest match", "closest matches")}`,
-    // Which engine ranked, so a surprising order can be traced to it.
-    ...(rankEngine ? { detail: RANK_ENGINE_DETAIL[rankEngine] } : {}),
-    refs: keptRefs,
-  });
-  attachPhotos(steps, "rank", keptRefs, userId, photos);
+  if (ranks) {
+    // Every survivor, not the default handful: the finished summary counts these refs.
+    const keptRefs = toRefs(
+      ranked.map((c) => ({ id: c.id, name: c.fullName })),
+      "contact",
+      FINAL_CONTACT_COUNT
+    );
+    steps.done("rank", {
+      label:
+        rankEngine === "search"
+          ? `Kept the top ${ranked.length} in search order`
+          : `Kept the ${plural(ranked.length, "best fit")}`,
+      // Which engine ranked, so a surprising order can be traced to it.
+      ...(rankEngine ? { detail: RANK_ENGINE_DETAIL[rankEngine] } : {}),
+      refs: keptRefs,
+    });
+    attachPhotos(steps, "rank", keptRefs, userId, photos);
+  }
   // The goals come back out because they belong in the ANSWER prompt too, not just in the
   // query parse. They were loaded here and used only to help `understandQuery` read the
   // question, so the model that actually wrote the answer never learned what the user was
   // trying to accomplish — every other AI surface in the product (outreach, starters,
   // follow-up drafts) has been given them for months.
   return { ranked, searchNotice, goals: activeGoals };
-}
-
-/** What the query parser actually understood, as a line a person can check. */
-function describeParsedQuery(parsed: {
-  filters?: Record<string, unknown> | null;
-  expansionTerms?: readonly string[] | null;
-}): string | undefined {
-  const parts: string[] = [];
-  const filters = parsed.filters ?? {};
-  for (const [key, value] of Object.entries(filters)) {
-    if (value === null || value === undefined) continue;
-    if (Array.isArray(value)) {
-      if (value.length) parts.push(`${key}: ${value.join(", ")}`);
-    } else if (typeof value === "string" && value.trim()) {
-      parts.push(`${key}: ${value}`);
-    } else if (typeof value === "number" || typeof value === "boolean") {
-      parts.push(`${key}: ${String(value)}`);
-    }
-  }
-  const expansions = parsed.expansionTerms ?? [];
-  if (expansions.length) parts.push(`also: ${expansions.slice(0, 5).join(", ")}`);
-  return parts.length ? parts.join(" · ") : undefined;
 }
 
 // Every field below is written by the profile's owner, so it is exactly as
@@ -638,9 +645,11 @@ export async function prepareChatContext(
                     )
                   : undefined;
                 steps.done("attention", {
-                  label: brief
-                    ? `Checked ${plural(brief.overdue.length, "overdue follow-up")}`
-                    : "Checked overdue follow-ups",
+                  label: !brief
+                    ? "Checked overdue follow-ups"
+                    : brief.overdue.length
+                      ? `Found ${plural(brief.overdue.length, "overdue follow-up")}`
+                      : "No one is overdue",
                   refs: overdueRefs,
                 });
                 attachPhotos(steps, "attention", overdueRefs, userId, photos);
@@ -657,7 +666,7 @@ export async function prepareChatContext(
             steps.start("recruiters", "Checking your recruiter list");
             return loadRecruitersForChat(q, 8).then((list) => {
               steps.done("recruiters", {
-                label: `Checked ${plural(list.length, "recruiter")}`,
+                label: list.length ? `Found ${plural(list.length, "recruiter")}` : "No recruiters matched",
                 refs: toRefs(
                   list.map((r) => ({ id: r.id, name: r.fullName })),
                   "recruiter"
@@ -798,14 +807,20 @@ export async function prepareChatContext(
     // Count the people who actually had something written about them, not the page size —
     // "read notes on 9 people" when six of them are blank would be a lie.
     const withNotes = retrieved.filter((c) => (snippets.get(c.id)?.timeline?.length ?? 0) > 0);
+    const focusName = focusProfileData ? retrieved.find((c) => c.id === focusContactId)?.fullName : undefined;
+    const readDetail = [
+      careerLines.size ? plural(careerLines.size, "career history", "career histories") : null,
+      focusName ? `${focusName}'s full profile` : null,
+    ].filter(Boolean);
     steps.done("read", {
       label: withNotes.length
         ? `Read notes on ${plural(withNotes.length, "person", "people")}`
         : "No notes written on these people yet",
-      detail: careerLines.size ? `${plural(careerLines.size, "career history", "career histories")}` : undefined,
+      detail: readDetail.length ? readDetail.join(" · ") : undefined,
       refs: toRefs(
         withNotes.map((c) => ({ id: c.id, name: c.fullName })),
-        "contact"
+        "contact",
+        FINAL_CONTACT_COUNT
       ),
     });
   }

@@ -9,7 +9,7 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { ChatOrbit } from "@/components/chat/chat-orbit";
 import { OrbitMark } from "@/components/chat/orbit-mark";
-import { collectOrbitPeople } from "@/lib/chat-orbit-people";
+import { collectOrbitPeople, ORBIT_CAPACITY } from "@/lib/chat-orbit-people";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 
 /**
@@ -32,14 +32,25 @@ export type ChatActivityProps = {
   state: "live" | "final";
   /** `compact` is the ask bar: one line, no expansion. */
   variant?: "full" | "compact";
+  /** The answer's text has started arriving — the live card folds to its header for it. */
+  answering?: boolean;
   className?: string;
 };
 
-export function ChatActivity({ steps, state, variant = "full", className }: ChatActivityProps) {
+export function ChatActivity({
+  steps,
+  state,
+  variant = "full",
+  answering = false,
+  className,
+}: ChatActivityProps) {
   // Two separate flags: whether the live card is folded and whether the finished summary is
   // open are different questions, and sharing one would make the summary spring open (or
   // shut) the instant the answer lands.
-  const [liveOpen, setLiveOpen] = useState(true);
+  // `null` until the user toggles it: open while the work runs, folded once the answer starts
+  // (the scene and the list would sit between them and what they are reading). A click wins.
+  const [liveOpenChoice, setLiveOpen] = useState<boolean | null>(null);
+  const liveOpen = liveOpenChoice ?? !answering;
   const [finalOpen, setFinalOpen] = useState(false);
   const reduceMotion = usePrefersReducedMotion();
 
@@ -55,12 +66,12 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
     const running = [...steps].reverse().find((step) => step.status === "active");
     return running ?? steps[steps.length - 1] ?? null;
   }, [steps]);
-  const finished = useMemo(
-    () => steps.filter((step) => step.status === "done" && step.id !== current?.id),
-    [steps, current]
-  );
+  // Everything but the header's stage, in the order it started — the stages run in parallel,
+  // so several can be running at once and each of them is shown, not just the newest.
+  const others = useMemo(() => steps.filter((step) => step.id !== current?.id), [steps, current]);
   const summary = useMemo(() => summarise(steps), [steps]);
-  const people = useMemo(() => collectOrbitPeople(steps), [steps]);
+  // Uncapped, so the caption can give the real count; the scene itself takes the first few.
+  const people = useMemo(() => collectOrbitPeople(steps, Infinity), [steps]);
 
   if (steps.length === 0) return null;
 
@@ -112,7 +123,7 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
       <div className={cn("rounded-xl border border-primary/30 bg-muted/30", className)}>
         <button
           type="button"
-          onClick={() => setLiveOpen((v) => !v)}
+          onClick={() => setLiveOpen(!liveOpen)}
           aria-expanded={liveOpen}
           className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-foreground"
         >
@@ -140,21 +151,35 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
                   ticked off beside it, or above it where there is no room to sit beside. */}
               <div className="flex flex-col items-center gap-2 px-3 pb-3 sm:flex-row sm:items-center sm:gap-4">
                 <ul className="w-full min-w-0 flex-1 space-y-1.5 pl-[1.4rem]">
-                  {finished.map((step) => (
+                  {others.map((step) => (
                     <li
                       key={step.id}
                       className="relative text-xs leading-snug text-muted-foreground"
                     >
-                      <Check
-                        className="absolute -left-[1.15rem] top-px size-3.5 text-primary"
-                        aria-hidden="true"
-                      />
+                      {step.status === "done" ? (
+                        <Check
+                          className="absolute -left-[1.15rem] top-px size-3.5 text-primary"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <>
+                          <CircleDashed
+                            className="absolute -left-[1.15rem] top-px size-3.5 text-muted-foreground"
+                            aria-hidden="true"
+                          />
+                          <span className="sr-only">Still running: </span>
+                        </>
+                      )}
                       <span className="text-foreground/80">{step.label}</span>
                       {step.detail && <span> · {step.detail}</span>}
                     </li>
                   ))}
                 </ul>
-                <ChatOrbit people={people} reduceMotion={reduceMotion} />
+                <ChatOrbit
+                  people={people.slice(0, ORBIT_CAPACITY)}
+                  total={people.length}
+                  reduceMotion={reduceMotion}
+                />
               </div>
             </motion.div>
           )}
@@ -202,7 +227,9 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
                   {step.detail && (
                     <span className="block text-muted-foreground/70">{step.detail}</span>
                   )}
-                  {step.kind !== "search" && step.refs && step.refs.length > 0 && (
+                  {(step.kind !== "search" || !steps.some((s) => s.kind === "rank")) &&
+                    step.refs &&
+                    step.refs.length > 0 && (
                     <span className="mt-1 flex flex-wrap gap-1">
                       {step.refs.map((ref) =>
                         ref.kind === "contact" ? (
@@ -237,16 +264,24 @@ export function ChatActivity({ steps, state, variant = "full", className }: Chat
 
 /** "Looked at 9 contacts · 4.2s" — built only from steps that reported real numbers. */
 function summarise(steps: ChatStep[]): string {
+  const ranked = steps.some((step) => step.kind === "rank");
   const people = new Set<string>();
   for (const step of steps) {
     // The search step's refs are a live preview of candidates, most of whom the rerank then
-    // dropped. Counting them would claim the answer "looked at" people it discarded.
-    if (step.kind === "search") continue;
+    // dropped. Counting them would claim the answer "looked at" people it discarded — unless
+    // no rerank ran, and then the candidates are the answer's people.
+    if (step.kind === "search" && ranked) continue;
     for (const ref of step.refs ?? []) {
       if (ref.kind === "contact") people.add(ref.id);
     }
   }
-  const total = steps.reduce((sum, step) => sum + (step.ms ?? 0), 0);
+  // Real elapsed time: the latest finish. Stages overlap, so summing them overstated it.
+  // Rows saved before steps carried `at` show no time rather than that sum.
+  const total = steps.reduce(
+    (latest, step) =>
+      step.at === undefined || step.ms === undefined ? latest : Math.max(latest, step.at + step.ms),
+    0
+  );
 
   const parts: string[] = [];
   if (people.size > 0) {

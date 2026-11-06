@@ -2036,7 +2036,11 @@ const AssistantBubble = memo(function AssistantBubble({
     <div className="flex justify-start">
       <div className="w-full min-w-0 max-w-[92%] space-y-3">
         {steps.length > 0 && (
-          <ChatActivity steps={steps} state={msg.streaming ? "live" : "final"} />
+          <ChatActivity
+            steps={steps}
+            state={msg.streaming ? "live" : "final"}
+            answering={Boolean(msg.answer)}
+          />
         )}
         {msg.answer && (
           <div className="text-sm leading-relaxed text-foreground">

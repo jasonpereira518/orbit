@@ -34,9 +34,12 @@ const RINGS = ORBIT_RINGS;
 
 export function ChatOrbit({
   people,
+  total = people.length,
   reduceMotion,
 }: {
   people: readonly OrbitPerson[];
+  /** Everyone in play, when the scene shows only the first few of them. */
+  total?: number;
   reduceMotion: boolean;
 }) {
   // Which face the pointer or keyboard is on, so its name can be read out under the scene —
@@ -51,7 +54,7 @@ export function ChatOrbit({
   });
 
   const caption =
-    focused ?? (people.length === 0 ? "Looking…" : `Looking at ${people.length} ${people.length === 1 ? "person" : "people"}`);
+    focused ?? (total === 0 ? "Looking…" : `Looking at ${total} ${total === 1 ? "person" : "people"}`);
 
   return (
     <div className="flex shrink-0 flex-col items-center">

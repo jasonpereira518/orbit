@@ -248,20 +248,19 @@ export async function POST(request: Request) {
         const { text: cleanAnswer, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
         const cited = citedIds(cleanAnswer);
         const citedEvidence = Object.fromEntries(cited.map((id) => [id, result.evidence[id]]));
-        if (strippedCount > 0) {
-          steps.done("verify", { label: `Removed ${plural(strippedCount, "unsupported citation")}` });
-        }
 
         const rawRecommendations = result.recommendations as ChatRecommendation[];
         const recommendations = ctx.filterRecommendations(rawRecommendations);
         // Only worth a step when it actually caught something — a filter that passed
         // everything through did no work the user needs to hear about.
         const dropped = (rawRecommendations?.length ?? 0) - recommendations.length;
-        if (dropped > 0) {
-          steps.done("verify", {
-            label: `Dropped ${plural(dropped, "suggestion")} not in your network`,
-          });
-        }
+        // One step for both checks: they share the `verify` id, so two `done`s would leave
+        // only the second one standing.
+        const caught = [
+          strippedCount > 0 ? `Removed ${plural(strippedCount, "unsupported citation")}` : null,
+          dropped > 0 ? `Dropped ${plural(dropped, "suggestion")} not in your network` : null,
+        ].filter((line): line is string => line !== null);
+        if (caught.length > 0) steps.done("verify", { label: caught.join(" · ") });
         send({ type: "recommendations", items: recommendations });
         if (cited.length > 0) send({ type: "evidence", items: citedEvidence });
 
