@@ -35,6 +35,12 @@ check("the work-history sweep is called from exactly one step",
 check("that step is gated on its own :37 schedule",
   ops.includes(`- cron: "37 * * * *"`) &&
     /if: github\.event\.schedule == '37 \* \* \* \*'[\s\S]{0,400}\/api\/work-history\/sweep/.test(ops));
+// The email-insights sweep reads people's mail metadata: exactly one caller, on its own line.
+check("the email-intel sweep is called from exactly one step",
+  (ops.match(/\/api\/email-intel\/sweep/g) ?? []).length === 1);
+check("that step is gated on its own quarter-hour schedule",
+  ops.includes(`- cron: "5,20,35,50 * * * *"`) &&
+    /if: github\.event\.schedule == '5,20,35,50 \* \* \* \*'[\s\S]{0,400}\/api\/email-intel\/sweep/.test(ops));
 // A step that curls $APP_URL / $CRON_SECRET with no env block hits an empty host and a
 // blank bearer, so the sweep silently never runs. Every such step declares what it uses.
 for (const chunk of ops.split(/^ {6}- name: /m).slice(1)) {
