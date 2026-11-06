@@ -192,7 +192,8 @@ export function ProfileSettings({
         title="From your LinkedIn export"
         description="Your headline, current role, skills and the job titles you watch. Orbit uses them to pick who is worth reaching out to; it never overwrites what you typed above."
       >
-        {career ? (
+        {/* `aim` alone (onboarding's, kept by Remove) is not an import: no rows to show. */}
+        {career && careerRows(career).length ? (
           <div className="space-y-3">
             <dl className="space-y-1.5 text-sm">
               {careerRows(career).map(([label, value]) => (

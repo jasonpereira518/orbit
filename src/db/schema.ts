@@ -276,8 +276,10 @@ export const userSettings = pgTable("user_settings", {
   senderBio: text("sender_bio"),
   /**
    * What the user's own LinkedIn export says about them: headline, industry, current role,
-   * skills and the job titles they have alerts for. Written only by the LinkedIn profile
-   * imports, one key per file, so re-importing Skills.csv never touches the headline.
+   * skills and the job titles they have alerts for. Written by the LinkedIn profile imports,
+   * one key per file, so re-importing Skills.csv never touches the headline. The onboarding
+   * About you step is the other writer: it owns `aim` (which the export's "remove" keeps), and
+   * fills `profile`, `role` and `roleKeywords` only where they are empty.
    *
    * Deliberately NOT `sender_bio`: that is what the person typed, and an import must not
    * overwrite it. It feeds ranking (who to reach out to) and a fenced "about you" prompt block,

@@ -25,10 +25,11 @@
  */
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiResultCache } from "@/db/schema";
+import { aiResultCache, userSettings } from "@/db/schema";
 import { parseAiJson, userCanUseAi, webSearchJson, type WebSource } from "@/lib/ai";
 import { RESEARCH_CACHE_DAYS, aiResultCacheKey, withAiResultCache } from "@/lib/ai-result-cache";
 import { fenceUntrusted } from "@/lib/ai-security";
+import { linkedinSlug } from "@/lib/duplicates";
 import { saveContactProfile, sanitizeIncomingExperiences, type IncomingExperience } from "@/lib/contact-profile";
 import { resolveOrCreateContact, type ResolveOptions } from "@/lib/contact-resolve";
 import { wikidataOrg } from "@/lib/org-brand-learn";
@@ -395,12 +396,23 @@ export async function loadResearchedPeople(userId: string, keys: string[]): Prom
   }));
 }
 
-/** The account's recent briefs, people and companies, newest first — the /find "Recent" list. */
+/**
+ * The account's recent briefs, people and companies, newest first — the /find "Recent" list.
+ * The person's own brief (onboarding's self-lookup, anchored on their LinkedIn URL) is left
+ * off: it is not someone they are trying to meet.
+ */
 export async function listRecentResearch(
   userId: string,
   limit = 10,
 ): Promise<{ key: string; dossier: ResearchBrief }[]> {
   const db = await getDb();
+  const settings = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { socialLinks: true },
+  });
+  const ownSlug = linkedinSlug(settings?.socialLinks?.linkedin);
+  const isOwn = (brief: ResearchBrief) =>
+    !!ownSlug && brief.kind === "person" && linkedinSlug(brief.subject.linkedinUrl) === ownSlug;
   const rows = await db
     .select({ key: aiResultCache.inputHash, result: aiResultCache.result })
     .from(aiResultCache)
@@ -412,11 +424,13 @@ export async function listRecentResearch(
       ),
     )
     .orderBy(desc(aiResultCache.createdAt))
-    .limit(limit);
-  return rows.flatMap((r) => {
-    const dossier = asBrief(r.result);
-    return dossier ? [{ key: r.key, dossier }] : [];
-  });
+    .limit(limit + 1);
+  return rows
+    .flatMap((r) => {
+      const dossier = asBrief(r.result);
+      return dossier && !isOwn(dossier) ? [{ key: r.key, dossier }] : [];
+    })
+    .slice(0, limit);
 }
 
 /**
