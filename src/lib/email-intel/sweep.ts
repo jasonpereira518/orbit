@@ -98,7 +98,7 @@ const liveGmail: EmailIntelGmail = {
   fetchThreads: (token, ids) => fetchGmailThreadsBatched(token, ids),
 };
 
-async function loadConnection(userId: string): Promise<EmailIntelConnection | null> {
+export async function loadConnection(userId: string): Promise<EmailIntelConnection | null> {
   const db = await getDb();
   const conn = await db.query.gmailConnections.findFirst({
     where: eq(gmailConnections.userId, userId),
@@ -109,7 +109,7 @@ async function loadConnection(userId: string): Promise<EmailIntelConnection | nu
 }
 
 /** Background code must not use `requireEntitlement`: it records a gate hit and throws. */
-async function planAllows(userId: string): Promise<boolean> {
+export async function planAllows(userId: string): Promise<boolean> {
   try {
     return (await getEntitlements(userId)).canUseRecruiters === true;
   } catch {

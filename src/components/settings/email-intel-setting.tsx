@@ -51,7 +51,7 @@ export function EmailIntelSetting({
   return (
     <SettingsRow
       title="Email insights"
-      description="Every fifteen minutes Orbit checks Gmail for new job and hiring-process threads and notes where each application stands. It reads the sender, subject and Gmail’s short preview only — never the message — and does not send your mail to an AI provider."
+      description="Every fifteen minutes Orbit checks Gmail for new job and hiring-process threads. For a hiring conversation it reads the latest messages, sends them to your AI provider to note the company, role, where things stand, dates and people, and keeps those notes and one short quote — never the messages themselves."
     >
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" disabled={pending || !allowed} onClick={toggle}>
