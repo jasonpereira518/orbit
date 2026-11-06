@@ -243,12 +243,12 @@ const ALLOWLIST: Record<string, string> = {
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
   "src/lib/admin-user-detail.ts:520": "the \"anthropic\" arm of the same ternary — see line 518.",
-  "src/actions/settings.ts:126": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
+  "src/actions/settings.ts:127": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +
     "anthropic key for an openrouter row) — exhaustive over AiProvider.",
-  "src/actions/settings.ts:128": "the \"openai\" arm of the same ternary — see line 126.",
-  "src/actions/settings.ts:130": "the \"anthropic\" arm of the same ternary — see line 126; " +
+  "src/actions/settings.ts:129": "the \"openai\" arm of the same ternary — see line 127.",
+  "src/actions/settings.ts:131": "the \"anthropic\" arm of the same ternary — see line 127; " +
     "this is the comparison that was added, moving openrouter off the anthropic default.",
   "src/lib/outreach-readiness-server.ts:82": "the \"gemini\" arm of hasAiKeyFor's " +
     "personal-key ternary, which now has an explicit `provider === \"openrouter\"` arm " +
@@ -269,7 +269,7 @@ const ALLOWLIST: Record<string, string> = {
   "src/lib/ai-settings-write.ts:134": "same independent-ternary shape as line 97 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
-  "src/components/settings/ai-settings.tsx:341": "the standalone \"Anthropic has no " +
+  "src/components/settings/ai-settings.tsx:343": "the standalone \"Anthropic has no " +
     "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +
