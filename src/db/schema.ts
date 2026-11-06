@@ -3308,6 +3308,8 @@ export type ProviderSyncCursor = {
      */
     blockedByPlan?: number | null;
   } | null;
+  /** Google: when the contacts lane last finished a pass, for the Google page's "synced X ago". */
+  contactsSyncedAt?: string | null;
   /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
   luma?: EventProviderSyncCursor | null;
   eventbrite?: EventProviderSyncCursor | null;
@@ -3469,6 +3471,13 @@ export const gmailConnections = pgTable(
     /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     ...syncStateColumns(),
+    /**
+     * The Google page's per-feature switches. Each pauses only its own lane of the sync
+     * (`syncGoogleConnection`); the connection itself stays armed, so turning meetings off no
+     * longer stops background contacts sync or email-activity logging with it.
+     */
+    calendarSyncEnabled: integer("calendar_sync_enabled").default(1).notNull(),
+    contactsSyncEnabled: integer("contacts_sync_enabled").default(1).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

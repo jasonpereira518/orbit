@@ -40,6 +40,7 @@ export function demoGmailConnectionStatus(
     canImportDrive: true,
     // The demo workspace never pauses meetings: nothing schedules them in the first place.
     syncPaused: false,
+    contactsSyncEnabled: true,
     redirectUri: null,
   };
 }

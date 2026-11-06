@@ -421,9 +421,11 @@ async function syncGoogleCalendar(
   // sync shipped gains its `calendar_sources` row right here, carrying over whatever cursor
   // already sat on `conn.syncCursor` — the migration this whole task exists to not get wrong.
   await seedCalendarSources(conn.userId);
-  const source = (await enabledSourcesFor(conn.id))[0];
-  if (!source) {
-    // The user disabled their only calendar. Nothing to fetch, but the connection itself is
+  // Every calendar the person enabled on the Google page — just the primary one unless they
+  // picked more (`calendar_sources`, one cursor each).
+  const sources = await enabledSourcesFor(conn.id);
+  if (sources.length === 0) {
+    // The user disabled every calendar. Nothing to fetch, but the connection itself is
     // healthy — hand back what we were given and let `syncGoogleConnection` record the
     // result, rather than treating "nothing enabled" as a fault. This function never writes
     // the connection's result itself: `sync_cursor` is one jsonb column shared with the
@@ -433,15 +435,17 @@ async function syncGoogleCalendar(
 
   const accessToken = await deps.getAccessToken(conn.userId);
 
-  // The near-calendar mirror first: one windowed read, independent of the sync token below.
-  // Best-effort — a failure here costs chat a stale window, never the interactions sync.
+  // The near-calendar mirror first: one windowed read per calendar, independent of the sync
+  // tokens below. Best-effort — a failure here costs chat a stale window, never the sync.
   if (deps.fetchWindow) {
-    try {
-      const { from, to } = eventsWindow(now);
-      const read = await deps.fetchWindow({ accessToken, from, to, maxPages: 4 });
-      await refreshCalendarWindow(conn.userId, source.id, { events: storedEventsOf(read.items), complete: read.complete }, now);
-    } catch (err) {
-      reportError(err, { where: "job.sync.gcal-window", userId: conn.userId, level: "warning" });
+    const { from, to } = eventsWindow(now);
+    for (const source of sources) {
+      try {
+        const read = await deps.fetchWindow({ accessToken, calendarId: source.calendarId, from, to, maxPages: 4 });
+        await refreshCalendarWindow(conn.userId, source.id, { events: storedEventsOf(read.items), complete: read.complete }, now);
+      } catch (err) {
+        reportError(err, { where: "job.sync.gcal-window", userId: conn.userId, level: "warning" });
+      }
     }
   }
 
@@ -459,62 +463,68 @@ async function syncGoogleCalendar(
     // `calendarAdapter` keeps 0.6 because it only annotates and never creates or merges.
   });
 
-  // The cursor now lives on the `calendar_sources` row; falling back to the connection's own
-  // (pre-migration) cursor — `startCursor`, read off `conn.syncCursor?.calendar` by the caller —
-  // covers the one pass where `seedCalendarSources` just created the row and carried it over.
-  // `source.syncCursor` and `startCursor` agree in that case, so this is a belt-and-suspenders
-  // read, not a real fork in behaviour.
-  let cursor = source.syncCursor ?? startCursor;
+  for (const source of sources) {
+    // The cursor lives on the `calendar_sources` row; the connection's own (pre-migration)
+    // cursor — `startCursor` — only ever belonged to the primary calendar, and covers the one
+    // pass where `seedCalendarSources` just created that row and carried it over.
+    let cursor = source.syncCursor ?? (source.calendarId === "primary" ? startCursor : null);
 
-  for (;;) {
-    let page;
-    try {
-      page = await deps.fetchPage({ accessToken, cursor, now });
-    } catch (err) {
-      if (err instanceof CalendarSyncTokenExpiredError) {
-        // Expected lifecycle event, not a fault: drop both cursors and start the windowed
-        // fetch again. Explicitly NOT counted as a failure — doing so would walk a healthy
-        // connection up the backoff ladder and eventually disarm it.
-        cursor = null;
-        continue;
+    for (;;) {
+      let page;
+      try {
+        page = await deps.fetchPage({ accessToken, cursor, now, calendarId: source.calendarId });
+      } catch (err) {
+        if (err instanceof CalendarSyncTokenExpiredError) {
+          // Expected lifecycle event, not a fault: drop both cursors and start the windowed
+          // fetch again. Explicitly NOT counted as a failure — doing so would walk a healthy
+          // connection up the backoff ladder and eventually disarm it.
+          cursor = null;
+          continue;
+        }
+        throw err;
       }
-      throw err;
+
+      const decided = await toNetworkEventsDecided(ctx.engines, page.events, page.selfEmails);
+      const events = decided.events;
+      stats.calendarSkippedByDecision += decided.skippedByDecision;
+      stats.calendarKeptByDecision += decided.keptByDecision;
+      if (events.length > 0) {
+        const ingested = await ingestEvents(ctx, events);
+        stats.eventsIngested += ingested.eventsSeen;
+        stats.contactsCreated += ingested.contactsCreated;
+        stats.interactionsLogged += ingested.interactionsLogged;
+      }
+
+      // The same page, read for a different question: which of these are Luma/Partiful/
+      // Eventbrite invites rather than meetings? `classifyCalendarEvent` has already refused
+      // those above, so the two readings cannot double-count one entry.
+      await recordCalendarEventDiscovery(conn, stats, page, "job.sync.gcal-discovery");
+
+      cursor = advanceGoogleCalendarCursor(cursor, page);
+
+      // No more pages: this calendar is done and `cursor` now holds its fresh syncToken.
+      if (!page.nextPageToken) break;
+
+      // Out of time mid-chain. Persisting `pageToken` (which `advanceCursor` just did) is what
+      // makes the next run resume here rather than restart, and `next_sync_at = now` makes it
+      // immediately due.
+      if (deadlineReached(deadline)) {
+        await finalizeIngest(ctx);
+        await saveSourceCursor(source.id, cursor, now);
+        return { cursor: startCursor, exhausted: true };
+      }
     }
-
-    const decided = await toNetworkEventsDecided(ctx.engines, page.events, page.selfEmails);
-    const events = decided.events;
-    stats.calendarSkippedByDecision += decided.skippedByDecision;
-    stats.calendarKeptByDecision += decided.keptByDecision;
-    if (events.length > 0) {
-      const ingested = await ingestEvents(ctx, events);
-      stats.eventsIngested += ingested.eventsSeen;
-      stats.contactsCreated += ingested.contactsCreated;
-      stats.interactionsLogged += ingested.interactionsLogged;
-    }
-
-    // The same page, read for a different question: which of these are Luma/Partiful/
-    // Eventbrite invites rather than meetings? `classifyCalendarEvent` has already refused
-    // those above, so the two readings cannot double-count one entry.
-    await recordCalendarEventDiscovery(conn, stats, page, "job.sync.gcal-discovery");
-
-    cursor = advanceGoogleCalendarCursor(cursor, page);
-
-    // No more pages: the run is complete and `cursor` now holds the fresh syncToken.
-    if (!page.nextPageToken) break;
-
-    // Out of time mid-chain. Persisting `pageToken` (which `advanceCursor` just did) is what
-    // makes the next run resume here rather than restart, and `next_sync_at = now` makes it
-    // immediately due.
-    if (deadlineReached(deadline)) {
+    await saveSourceCursor(source.id, cursor, now);
+    // Out of time between calendars: the next run starts over the list, and the calendars
+    // already done answer from their fresh syncTokens almost for free.
+    if (deadlineReached(deadline) && source !== sources[sources.length - 1]) {
       await finalizeIngest(ctx);
-      await saveSourceCursor(source.id, cursor, now);
-      return { cursor, exhausted: true };
+      return { cursor: startCursor, exhausted: true };
     }
   }
 
   await finalizeIngest(ctx);
-  await saveSourceCursor(source.id, cursor, now);
-  return { cursor, exhausted: false };
+  return { cursor: startCursor, exhausted: false };
 }
 
 /**
@@ -608,6 +618,16 @@ async function syncGoogleContacts(
  * Calendar runs first because meetings are the stronger signal and the budget is shared: if
  * a first sync of a huge address book exhausts it, the user still got their meetings.
  */
+/** The Google page's Meetings and contacts switches (`gmail_connections`), on unless turned off. */
+async function googleLaneSwitches(connectionId: string): Promise<{ calendar: boolean; contacts: boolean }> {
+  const db = await getDb();
+  const row = await db.query.gmailConnections.findFirst({
+    where: eq(gmailConnections.id, connectionId),
+    columns: { calendarSyncEnabled: true, contactsSyncEnabled: true },
+  });
+  return { calendar: (row?.calendarSyncEnabled ?? 1) !== 0, contacts: (row?.contactsSyncEnabled ?? 1) !== 0 };
+}
+
 async function syncGoogleConnection(
   conn: ClaimedConnection,
   stats: SyncRunStats,
@@ -633,6 +653,8 @@ async function syncGoogleConnection(
     const result = await syncGoogleContacts(conn, stats, deps, cursor.contacts ?? null, deadline);
     cursor = { ...cursor, contacts: result.cursor };
     exhausted = result.exhausted;
+    // Only a finished pass counts as "synced": an exhausted one resumes on the next run.
+    if (!exhausted) cursor = { ...cursor, contactsSyncedAt: now.toISOString() };
   }
 
   await markSyncResult(conn.provider, conn.id, {
@@ -1207,8 +1229,15 @@ export async function runSyncPass(
       return;
     }
 
+    // The Google page's per-feature switches gate each lane on its own; the connection stays
+    // armed with both off, so the mailbox pass below (its own setting) keeps running.
+    const lanes = await googleLaneSwitches(conn.id);
+
     try {
-      await syncGoogleConnection(conn, stats, now, deps, { wantsCalendar, wantsContacts });
+      await syncGoogleConnection(conn, stats, now, deps, {
+        wantsCalendar: wantsCalendar && lanes.calendar,
+        wantsContacts: wantsContacts && lanes.contacts,
+      });
       stats.synced++;
       // Best-effort and deliberately after the calendar: a mailbox pass that throws must not
       // cost the connection its calendar sync, and the two answer different questions.

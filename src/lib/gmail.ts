@@ -303,7 +303,18 @@ export async function upsertGmailConnection(
         nextSyncAt: armed && !pausedByUser ? new Date() : null,
         syncFailures: 0,
         syncError: null,
-        ...(switchedFrom ? { syncCursor: null, syncStatus: null, syncStartedAt: null, lastSyncedAt: null } : {}),
+        // A different account starts with every lane on, as a pause did before v192. The same
+        // account reconnecting keeps its switches: they aren't in this update at all.
+        ...(switchedFrom
+          ? {
+              syncCursor: null,
+              syncStatus: null,
+              syncStartedAt: null,
+              lastSyncedAt: null,
+              calendarSyncEnabled: 1,
+              contactsSyncEnabled: 1,
+            }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(gmailConnections.id, existing.id))

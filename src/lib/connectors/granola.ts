@@ -12,7 +12,7 @@
  * preview deployments connect the same way production does. The issued `client_id` is kept on
  * the connection's cursor, because a refresh is refused without the client that obtained it.
  */
-import { and, desc, eq, like, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, notInArray, sql } from "drizzle-orm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
@@ -26,7 +26,7 @@ import {
 import { InvalidClientError, InvalidGrantError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import type { OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { getDb } from "@/db";
-import { contacts, interactions, noteBatches, type ConnectorSyncCursor } from "@/db/schema";
+import { captureJobs, contacts, interactions, noteBatches, type ConnectorSyncCursor } from "@/db/schema";
 import {
   loadConnectorConnection,
   markConnectorNeedsReauth,
@@ -45,19 +45,17 @@ import {
   type GranolaMeeting,
 } from "@/lib/connectors/granola-xml";
 import { NO_PEOPLE_OR_DATES_MESSAGE, runCaptureParse } from "@/lib/capture-parse";
-import { saveInputFromParse } from "@/lib/capture-job-runner";
 import { acceptUnattended } from "@/lib/drive-import-processor";
-import { applyDriveReminderRules, followUpStillAhead } from "@/lib/imports/drive-reminder-rules";
-import { DEFAULT_FOLLOW_UP_WINDOW_DAYS } from "@/lib/note-batches";
-import { saveNoteBatch } from "@/lib/note-batch-save";
-import { generateAndStoreContactBrief } from "@/lib/contact-brief";
+import { applyDriveReminderRules } from "@/lib/imports/drive-reminder-rules";
+import { saveGranolaDirect } from "@/lib/connectors/granola-save";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { auditUntrustedWrite } from "@/lib/ai-security";
 import { UserFacingError } from "@/lib/errors";
-import { reportError } from "@/lib/report-error";
 
 export const GRANOLA_MCP_URL = "https://mcp.granola.ai/mcp";
+/** Present on the connection while new notes are extracted automatically. */
+export const GRANOLA_AUTO_CAPABILITY = "syncEvents";
 /** `mcp` is the resource's own scope; `offline_access` is what earns a refresh token. */
 const SCOPE = "mcp offline_access";
 /** First sync reaches this far back — also all a Free Granola plan can see. */
@@ -281,38 +279,15 @@ async function ingestNote(userId: string, meeting: GranolaMeeting, ownEmails: st
   }
 
   const { keep } = applyDriveReminderRules(result.suggestedReminders, now);
-  const input = await saveInputFromParse({
-    userId,
+  const out = await saveGranolaDirect(userId, {
     result,
     decisions: acceptUnattended(result.items, keep, now.toISOString(), text),
-    sourceText: text,
+    text,
     sourceHash: hashSourceNote(text),
-    entryPoint: "capture",
-    seedContactId: null,
-    inputSources: ["text"],
-    meetingSessionId: null,
+    granola: { noteId: meeting.id, meetingAt: meeting.meetingAt },
+    now,
   });
-  input.interactionSource = "granola";
-  input.externalIdBase = `granola:${meeting.id}`;
-  input.participants = input.participants.map((p) => ({
-    ...p,
-    // The full timestamp, not the day: a day-only date is stored at noon.
-    interactionDate: meeting.meetingAt,
-    // A backfilled note's generic follow-up can already be overdue — same rule as Drive.
-    createReminder:
-      p.createReminder &&
-      followUpStillAhead(input.anchorIso, p.followUpDays || p.parsed.follow_up_days || DEFAULT_FOLLOW_UP_WINDOW_DAYS, now),
-  }));
-  if (!input.participants.length && !input.commitments.length) return [];
-
-  const out = await saveNoteBatch(userId, input);
-  // `saveNoteBatch` never regenerates summaries itself; refreshing them is the point here.
-  for (const contactId of out.contactIds) {
-    await generateAndStoreContactBrief(userId, contactId).catch((err) =>
-      reportError(err, { where: "job.granola.brief", level: "warning" }),
-    );
-  }
-  return out.contactIds;
+  return out?.contactIds ?? [];
 }
 
 /** The manifest's `sync`: everything changed since the watermark, within the pass budget. */
@@ -325,6 +300,13 @@ export async function syncGranola(connectionId: string): Promise<void> {
     ...conn.cursor,
     syncedThrough: conn.cursor?.syncedThrough ?? new Date(started - BACKFILL_MS).toISOString(),
   };
+
+  // Automatic extraction is off: notes come in only when picked from the Notes library.
+  // The watermark stays put; turning it back on moves it to "now" (`setGranolaAutoExtract`).
+  if (!conn.capabilities.includes(GRANOLA_AUTO_CAPABILITY)) {
+    await markConnectorSyncResult(conn.id, { ok: true, cursor: conn.cursor });
+    return;
+  }
 
   try {
     const token = await freshAccessToken(conn);
@@ -421,4 +403,86 @@ export async function granolaActivity(userId: string): Promise<GranolaActivity> 
     }
   }
   return { notes: totals?.notes ?? 0, people: totals?.people ?? 0, recent };
+}
+
+export type GranolaPickable = { id: string; title: string; meetingAt: string; attendees: string[] };
+
+const PICK_PAGE = 25;
+
+/**
+ * One page of the Notes library popup: the last 30 days' notes, newest first, minus any
+ * already in Orbit — logged on someone (`granola:<id>:…`), or picked earlier and still
+ * reading, waiting for review, or saved. A discarded or failed pick shows again.
+ *
+ * Every note the user can see, not only the synced folders: this is "what could I pick".
+ * A page can come back short, even empty, with a cursor — Load more continues it.
+ */
+export async function listGranolaPickable(
+  connectionId: string,
+  cursor: string | null,
+): Promise<{ notes: GranolaPickable[]; nextCursor: string | null }> {
+  const conn = await loadConnectorConnection(connectionId);
+  if (!conn) return { notes: [], nextCursor: null };
+  const token = await freshAccessToken(conn);
+  const xml = await withGranola(token, (call) =>
+    call("list_meetings", {
+      time_range: "last_30_days",
+      involvement: { captured_by_me: true, listed_as_participant: true },
+      limit: PICK_PAGE,
+      ...(cursor ? { cursor } : {}),
+    }),
+  );
+  const meetings = parseMeetings(xml);
+  const own = [connectedUserEmail(xml), conn.accountRef];
+  const taken = await takenGranolaNotes(conn.userId, meetings.map((m) => m.id));
+  return {
+    notes: meetings
+      .filter((m) => !taken.has(m.id))
+      .map((m) => ({
+        id: m.id,
+        title: m.title || "Untitled meeting",
+        meetingAt: m.meetingAt,
+        attendees: externalParticipants(m, own).map((p) => p.name ?? p.email),
+      })),
+    nextCursor: nextCursor(xml),
+  };
+}
+
+/** Of these note ids, the ones already in Orbit or already picked (see `listGranolaPickable`). */
+export async function takenGranolaNotes(userId: string, noteIds: string[]): Promise<Set<string>> {
+  if (!noteIds.length) return new Set();
+  const db = await getDb();
+  const noteOf = sql<string>`split_part(${interactions.externalId}, ':', 2)`;
+  const [logged, picked] = await Promise.all([
+    db
+      .selectDistinct({ id: noteOf })
+      .from(interactions)
+      .where(and(eq(interactions.userId, userId), eq(interactions.source, "granola"), inArray(noteOf, noteIds))),
+    db
+      .select({ id: sql<string>`${captureJobs.inputHints}->'granola'->>'noteId'` })
+      .from(captureJobs)
+      .where(
+        and(
+          eq(captureJobs.userId, userId),
+          eq(captureJobs.sourceKind, "granola"),
+          notInArray(captureJobs.status, ["discarded", "failed"]),
+          inArray(sql`${captureJobs.inputHints}->'granola'->>'noteId'`, noteIds),
+        ),
+      ),
+  ]);
+  return new Set([...logged, ...picked].map((r) => r.id));
+}
+
+/** One note, whole, plus who "you" are in it — for a pick from the Notes library. */
+export async function fetchGranolaNote(
+  connectionId: string,
+  noteId: string,
+): Promise<{ meeting: GranolaMeeting; ownEmails: string[] } | null> {
+  const conn = await loadConnectorConnection(connectionId);
+  if (!conn) return null;
+  const token = await freshAccessToken(conn);
+  const xml = await withGranola(token, (call) => call("get_meetings", { meeting_ids: [noteId], attachments: "none" }));
+  const [meeting] = parseMeetings(xml);
+  if (!meeting || meeting.id !== noteId) return null;
+  return { meeting, ownEmails: [connectedUserEmail(xml), conn.accountRef].filter((e): e is string => Boolean(e)) };
 }

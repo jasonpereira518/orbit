@@ -959,6 +959,8 @@ CREATE TABLE IF NOT EXISTS gmail_connections (
   sync_started_at timestamptz,
   sync_error text,
   sync_failures integer NOT NULL DEFAULT 0,
+  calendar_sync_enabled integer NOT NULL DEFAULT 1,
+  contacts_sync_enabled integer NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2919,7 +2921,12 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // database stamped 189 would never run a 187. NOT 190: the unpushed chat-loading-updates-pane
 // worktree claims it. Rescanned every remote ref and worktree on Nov 6 2026: 190 was the
 // highest claimed anywhere. Both sides' DDL and alters are kept; only the version is new.
-export const SCHEMA_VERSION = 191;
+//
+// 192 = gmail_connections.calendar_sync_enabled + contacts_sync_enabled: the Google page's
+// per-feature switches, replacing the Meetings switch's pause of the whole connection (paused
+// rows are converted to both-off and re-armed). Rescanned every remote ref and worktree on
+// Nov 6 2026: 191 (main) was the highest claimed anywhere.
+export const SCHEMA_VERSION = 192;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4933,6 +4940,13 @@ const alters = [
     // predicate keeps the index to the handful of armed connections rather than every row.
     `CREATE INDEX IF NOT EXISTS ${table}_due_idx ON ${table}(next_sync_at) WHERE next_sync_at IS NOT NULL`,
   ]),
+  // v192: Google's per-feature sync switches. A connection the old Meetings switch paused had
+  // its WHOLE sync stopped (contacts and email activity too), so it becomes both lanes off,
+  // as two visible switches, and the connection is re-armed — the mailbox pass is governed by
+  // its own setting. Nothing pauses a Google row any more, so this matches nothing next time.
+  `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS calendar_sync_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS contacts_sync_enabled integer NOT NULL DEFAULT 1`,
+  `UPDATE gmail_connections SET calendar_sync_enabled = 0, contacts_sync_enabled = 0, sync_status = 'idle', next_sync_at = now() WHERE sync_status = 'paused'`,
   // Arm the connections that already exist.
   //
   // `sync_status IS NULL` is the load-bearing half of this predicate, not decoration.
