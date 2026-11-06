@@ -16,6 +16,7 @@ import type { z } from "zod";
 import { ApiAuthError, requireApiCaller, touchApiKeyLastUsed, type ApiCaller } from "@/lib/api/auth";
 import type { ApiKeyScope } from "@/lib/api/keys";
 import { RATE_LIMITS, RateLimitedError, consumeBucket } from "@/lib/rate-limit";
+import { isPaywallError } from "@/lib/entitlements";
 
 export type ApiErrorCode =
   | "unauthorized"
@@ -210,6 +211,9 @@ export function apiHandler(
       if (err instanceof ApiRequestError) {
         return apiError({ code: err.code, message: err.message, param: err.param });
       }
+      // A plan refusal (the contact cap, a page an operator limited to other plans) is written
+      // for the person who hit it, so it is safe to pass on — as a 402, not a 500.
+      if (isPaywallError(err)) return apiError({ code: "payment_required", message: err.message });
       // Never leak an internal message.
       return apiError({ code: "server_error", message: "Something went wrong." });
     }

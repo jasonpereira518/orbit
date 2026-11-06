@@ -1,6 +1,6 @@
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
 import { BACKGROUND_AI_OPERATIONS } from "@/lib/ai-operations";
-import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 
 /**
  * Who may run AI on whose key — the whole rule, as pure functions.
@@ -97,9 +97,14 @@ export type AiAccessDenial = "key_required" | "managed_unavailable" | "managed_l
 /** Why an account may use Orbit's managed keys at all. Null = it may not. */
 export type ManagedEligibility = "plan" | "demo" | null;
 
-export function managedEligibility(plan: Plan, isDemo: boolean): ManagedEligibility {
+export function managedEligibility(
+  plan: Plan,
+  isDemo: boolean,
+  /** The effective plan table on the server (`getEffectivePlanConfig`); the code table by default. */
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): ManagedEligibility {
   if (isDemo) return "demo";
-  if (MANAGED_AI_ENABLED && PLAN_CONFIG[plan].features.hostedAi) return "plan";
+  if (MANAGED_AI_ENABLED && config[plan].features.hostedAi) return "plan";
   return null;
 }
 

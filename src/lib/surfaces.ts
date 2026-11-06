@@ -1,5 +1,15 @@
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
-import { PLANS, PLAN_SHORT_LABELS, type Plan, type PurchasablePlan } from "@/lib/plans/plan-config";
+import {
+  PLANS,
+  PLAN_CONFIG,
+  PLAN_RANK,
+  PLAN_SHORT_LABELS,
+  PURCHASABLE_PLANS,
+  type FeatureKey,
+  type Plan,
+  type PlanConfig,
+  type PurchasablePlan,
+} from "@/lib/plans/plan-config";
 
 /**
  * The catalogue of things an operator can hide from every user at once.
@@ -356,10 +366,54 @@ export function isHrefHidden(href: string, hidden: ReadonlySet<string>): boolean
 
 /**
  * The plan a coming-soon surface will unlock on, said on its screen and in the nav tooltip.
- * Every one is Pro today (Jason, Oct 2026). Only Outreach is gated in code so far — Radar and
- * Events need a `FeatureKey` + `requireEntitlement` before they ship, or this copy over-promises.
+ * Every one is Pro today (Jason, Oct 2026). Each now has a `FeatureKey` (`SURFACE_FEATURE`)
+ * whose code default matches; an operator can move it per plan from /admin/product/plans.
  */
 export const COMING_SOON_UNLOCK_PLAN: PurchasablePlan = "orbit";
+
+/**
+ * Surfaces that ARE one plan feature. `requireVisibleSurface`, `requireReleasedSurface`,
+ * `isSurfaceLive` and the tool release check (`tools/released.ts`) all enforce the feature
+ * with the surface, so every guard already on these surfaces is also their paywall.
+ */
+export const SURFACE_FEATURE: Readonly<Record<string, Exclude<FeatureKey, "hostedAi">>> = {
+  "page.radar": "radar",
+  "page.events": "events",
+  "page.find": "findPeople",
+  [COMPOSE_SURFACE_KEY]: "compose",
+  [CLOUD_NOTES_SURFACE_KEY]: "cloudNotes",
+};
+
+/**
+ * Pages with a plan feature behind them, shown beside the page's tier chips so an operator
+ * sees both rules. Recruiters, Outreach and Meetings check theirs inside the page and its
+ * actions (a downgraded account still reads its past meetings), so only `SURFACE_FEATURE`
+ * is enforced by the surface guards.
+ */
+export const PAGE_FEATURE: Readonly<Record<string, FeatureKey>> = {
+  "page.radar": "radar",
+  "page.events": "events",
+  "page.find": "findPeople",
+  "page.recruiters": "recruiters",
+  "page.outreach": "outreach",
+  "page.meetings": "meetings",
+};
+
+/**
+ * The plans on sale a coming-soon surface will unlock on, said on its screen and in the nav
+ * tooltip: the plans that have its feature (`SURFACE_FEATURE` / `PAGE_FEATURE`) under `config`
+ * — pass the effective plan table. A surface with no feature falls back to
+ * `COMING_SOON_UNLOCK_PLAN` and up.
+ */
+export function comingSoonUnlockPlans(
+  surfaceKey: string,
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): PurchasablePlan[] {
+  const feature = SURFACE_FEATURE[surfaceKey] ?? PAGE_FEATURE[surfaceKey];
+  return feature
+    ? PURCHASABLE_PLANS.filter((p) => config[p].features[feature])
+    : PURCHASABLE_PLANS.filter((p) => PLAN_RANK[p] >= PLAN_RANK[COMING_SOON_UNLOCK_PLAN]);
+}
 
 /** Page and feature surfaces that ship as announced-but-not-released, before any operator override. */
 export const DEFAULT_COMING_SOON_KEYS: ReadonlySet<string> = new Set(

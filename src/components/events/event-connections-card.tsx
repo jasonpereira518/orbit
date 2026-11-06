@@ -18,6 +18,7 @@
  * implied it would fetch the guest list of a party you attended would generate a support
  * ticket per user.
  */
+import { useViewerPlan } from "@/components/viewer-plan";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarPlus, ChevronDown, Loader2, Mail, Plug, Trash2 } from "lucide-react";
@@ -92,6 +93,7 @@ export function EventConnectionsCard({
   googleMailGranted: boolean;
   googleCalendarGranted: boolean;
 }) {
+  const { planConfig } = useViewerPlan();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [apiKey, setApiKey] = useState("");
@@ -178,7 +180,7 @@ export function EventConnectionsCard({
             : "Google connected"
       );
     } else if (google === "error") {
-      const oauth = describeOAuthReason(params.get("reason"), "Google", purpose);
+      const oauth = describeOAuthReason(params.get("reason"), "Google", purpose, planConfig);
       if (oauth.cancelled) toast.message(oauth.message);
       else toast.error(oauth.message);
     }
@@ -189,6 +191,8 @@ export function EventConnectionsCard({
       "",
       `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
     );
+    // Once, on arrival; the params are stripped above, so a later plan table changes nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   function saveFeed(provider: "luma_ics" | "partiful_ics") {
     start(async () => {

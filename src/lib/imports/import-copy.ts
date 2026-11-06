@@ -34,7 +34,6 @@ export const IMPORT_COPY = {
     "That folder had more files than Orbit reads in one go — drop the rest after this",
   stopped: "Import stopped",
   driveUnavailable: "Couldn’t open Google Drive — try again in a moment",
-  drivePaywalled: "Google Drive is on paid plans",
   driveWaitForQueue: "Finish or clear the files above first",
   queueBusy: "One drop at a time — let the files above finish first",
 

@@ -1,23 +1,19 @@
 import { AdminLoading } from "@/components/admin/loading-shells";
+import { GrowthTabs } from "@/components/admin/admin-tabs";
 
-/** Mirrors the page's layout block for block, so the swap does not jump. */
-export default function AdminGrowthLoading() {
+/** Mirrors Acquisition's layout block for block, so the swap does not jump. */
+export default function AdminAcquisitionLoading() {
   return (
     <AdminLoading
       title="Growth"
-      subtitle="Bucketing history…"
+      subtitle="Counting page views…"
+      tabs={<GrowthTabs />}
       blocks={[
         { range: true },
         { tiles: 5 },
-        { panel: true, title: "Accounts over time", height: "h-80" },
-        {
-          pair: [
-            { title: "Opened Orbit", height: "h-80" },
-            { title: "Did something", height: "h-80" },
-          ],
-        },
-        { panel: true, title: "Retention by signup month", height: "h-72" },
-        { panel: true, title: "Actions per active account", height: "h-72" },
+        { panel: true, title: "Views per day", height: "h-40" },
+        { panel: true, title: "Conversion funnel", height: "h-64" },
+        { panel: true, title: "Most viewed pages", height: "h-48" },
       ]}
     />
   );

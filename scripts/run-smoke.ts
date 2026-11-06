@@ -369,6 +369,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-apple-actions": "pglite",
   "smoke-server-graph": "pure",
   "smoke-site-css-sources": "pure",
+  "smoke-admin-redirects": "pure",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-app-pulse": "pglite",
@@ -391,6 +392,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-legacy-proposals": "pglite",
   "smoke-chat-writes": "pglite",
   "smoke-chat-auto-apply": "pglite",
+  "smoke-calendar-write": "pglite",
   "smoke-chat-writes-features": "pglite",
   "smoke-chat-persist": "pglite",
   "smoke-chat-photos": "pglite",
@@ -449,6 +451,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-site-access": "pglite",
   "smoke-invite-ledger": "pglite",
   "smoke-attribution-chain": "pglite",
+  "smoke-metrics-rollup": "pglite", // metrics_daily: idempotent, agrees with direct counts
+  "smoke-tracking-events": "pglite", // v187: vitals, client event kind, last touch, Resend engagement, search sampling
   "smoke-account-kind": "pglite",
   "smoke-constellation-payload-leak": "pglite",
   "smoke-constellation-pin": "pglite",
@@ -673,6 +677,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-checkout-confirm": "pglite",
   "smoke-stripe-dedupe": "pglite",
   "smoke-surface-visibility": "pglite",
+  "smoke-plan-copy": "pglite", // plan copy, comparison, denials and credit emails follow the effective plan table
+  "smoke-plan-rules": "pglite", // runtime plan rules: row format, effective config, widen/narrow, limits, page lock
   "smoke-sync-concurrency": "pglite",
   "smoke-sync-scheduler": "pglite",
   "smoke-google-contacts-sync": "pglite",

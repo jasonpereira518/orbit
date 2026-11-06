@@ -1,4 +1,5 @@
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { Suspense } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
@@ -138,7 +139,7 @@ export async function SetupChecklistSection() {
   ]);
 
   const items: SetupChecklistItem[] = [];
-  const aiDenial = aiDenialFromSettings(userId, settings);
+  const aiDenial = aiDenialFromSettings(userId, settings, await getEffectivePlanConfig());
   if (aiDenial) {
     items.push({
       id: "ai-key",
@@ -639,6 +640,7 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
   // Both are request-cached (`cache()`), and the layout above has already
   // resolved them for the sidebar's tier ring — so this costs nothing extra.
   const { plan } = await getEntitlements(await requireUserId());
+  const freeContactLimit = (await getEffectivePlanConfig()).free.contactLimit;
   return (
     // space-y-6, not the page's space-y-8: these three are a group at the foot of
     // the dashboard, and giving them the same gap as the major section breaks made
@@ -661,7 +663,7 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
       {/* Foot of the dashboard on purpose: prominent enough to find, far
           enough down that it isn't the first thing between you and your
           follow-ups. */}
-      <PlanLaunchCard plan={plan} />
+      <PlanLaunchCard plan={plan} freeContactLimit={freeContactLimit} />
     </div>
   );
 }

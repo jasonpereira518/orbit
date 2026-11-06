@@ -2,6 +2,7 @@
 // reached by most server routes (the app layout, the app pulse, health), and evaluating three
 // provider SDKs — @google/genai pulls google-auth-library, protobufjs and ws — was part of
 // every cold start for routes that never make a model call.
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
@@ -14,7 +15,7 @@ import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
-import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 import { recordGateHitThrottled } from "@/lib/gate-events";
 import { AI_OPERATIONS } from "@/lib/ai-operations";
 import {
@@ -598,7 +599,7 @@ export class AiAccess {
       if (key) personal[provider as AiProvider] = key;
     }
 
-    const eligibility = managedEligibility(plan, demoCountsAsManaged(userId));
+    const eligibility = managedEligibility(plan, demoCountsAsManaged(userId), await getEffectivePlanConfig());
     const managed: Partial<Record<AiProvider, string>> = {};
     // The admin pause stops Orbit-paid AI on every plan, and a spent pool takes its provider
     // out; a dev server's own keys are not Orbit's, so a localhost demo account is unaffected.
@@ -692,13 +693,14 @@ export class AiAccess {
   private async holdCredits(operation: string): Promise<void> {
     await ensureAllowance(this.userId, this.plan, creditPeriodFor(this.settings));
     const tier = (AI_OPERATIONS as Record<string, { tier?: string }>)[operation]?.tier;
-    const monthly = PLAN_CONFIG[this.plan].monthlyCredits ?? 0;
+    const planConfig = await getEffectivePlanConfig();
+    const monthly = planConfig[this.plan].monthlyCredits ?? 0;
     const background = BACKGROUND_OPERATIONS.has(operation);
     const hold = await placeHold({
       userId: this.userId,
       micros: holdEstimateMicros(tier),
       operation,
-      packs: packsUsable(this.plan),
+      packs: packsUsable(this.plan, planConfig),
       floorMicros: background ? creditsToMicros(monthly * BACKGROUND_FLOOR_SHARE) : 0,
       // Free's one-time starter credits are for things the person asks for, never background work.
       reserveStarter: background && this.plan === "free",
@@ -869,7 +871,7 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   // Deepgram is per-account quota, not a key someone pasted, so it is resolved here rather
   // than inside `AiAccess.canTranscribe()` — that method stays the key-presence answer other
   // callers rely on.
-  const monthlyCredits = PLAN_CONFIG[access.plan].monthlyCredits;
+  const monthlyCredits = (await getEffectivePlanConfig())[access.plan].monthlyCredits;
   const [balance, speech, paused] = await Promise.all([
     monthlyCredits && access.eligibility === "plan" ? getCreditBalance(userId, access.plan, access.settings, now) : null,
     deepgramOpenFor(userId, "shortform").then((open) => (open ? speechAllowance(userId, "shortform") : null)),
@@ -919,11 +921,16 @@ type AiSettingsRow = {
  * function as the gate, so the "add your API key" alert and the gate cannot disagree about
  * who needs a key.
  */
-export function aiDenialFromSettings(userId: string, row: AiSettingsRow | null): AiAccessDenial | null {
+export function aiDenialFromSettings(
+  userId: string,
+  row: AiSettingsRow | null,
+  /** The effective plan table (`getEffectivePlanConfig`) where the caller has it; else the code table. */
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): AiAccessDenial | null {
   const selectedProvider = resolveAiProvider(row?.aiProvider);
   const { plan } = resolvePlan(row);
   const facts = {
-    eligibility: managedEligibility(plan, demoCountsAsManaged(userId)),
+    eligibility: managedEligibility(plan, demoCountsAsManaged(userId), config),
     selectedProvider,
     selectedModel: resolveAiModel(selectedProvider, row?.aiModel),
     personal: {

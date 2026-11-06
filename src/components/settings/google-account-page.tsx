@@ -48,6 +48,8 @@
  * job (`contacts.jobRunning`) instead. It is the one deliberate behaviour change here.
  */
 
+import { useViewerPlan } from "@/components/viewer-plan";
+import { availableOn } from "@/lib/plans/plan-config";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
@@ -97,7 +99,8 @@ export function GoogleAccountPage({
   const connection = useGoogleConnection({ returnTo });
   const contacts = useContactsImport("google");
   const { status } = connection;
-  const account = status ? googleAccountStatus(status, { canUseRecruiters }) : null;
+  const recruitersOn = availableOn("recruiters", useViewerPlan().planConfig);
+  const account = status ? googleAccountStatus(status, { canUseRecruiters, recruitersOn }) : null;
   const capabilities = account?.capabilities ?? {};
 
   const showsInbox = inboxVisible && active;
@@ -378,6 +381,7 @@ function InboxRow({
   onAllow: () => void;
   onOpenPage: (page: IntegrationTabId) => void;
 }) {
+  const recruitersOn = availableOn("recruiters", useViewerPlan().planConfig);
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const { scan, running, phaseLabel, percent, start, cancel } = useRecruiterScan(
@@ -436,7 +440,7 @@ function InboxRow({
     >
       {control.kind === "locked" ? (
         <p className="text-sm text-muted-foreground">
-          {capability?.detail ?? "Part of Orbit Pro and Max"}
+          {capability?.detail ?? `Part of ${recruitersOn}`}
         </p>
       ) : null}
 

@@ -101,6 +101,7 @@
 @source "../components/motion/reveal.tsx";
 @source "../components/orbit-logo.tsx";
 @source "../components/pricing/back-control.tsx";
+@source "../components/settings/sections.ts";
 @source "../components/theme-provider.tsx";
 @source "../components/ui/button.tsx";
 @source "../components/ui/loading-region.tsx";
@@ -143,6 +144,7 @@
 @source "../lib/chat-rail-pref.ts";
 @source "../lib/chat-stream-protocol.ts";
 @source "../lib/clerk-session-hint.ts";
+@source "../lib/client-events.ts";
 @source "../lib/client-ip.ts";
 @source "../lib/closeness-evidence.ts";
 @source "../lib/closeness-materialize.ts";
@@ -183,6 +185,7 @@
 @source "../lib/demo-data/seed-extended.ts";
 @source "../lib/demo-data/seed.ts";
 @source "../lib/demo-data/student.ts";
+@source "../lib/demo-workspace.ts";
 @source "../lib/duplicates.ts";
 @source "../lib/entitlements.ts";
 @source "../lib/error-events.ts";
@@ -225,6 +228,8 @@
 @source "../lib/plan-limits.ts";
 @source "../lib/plan-upgrade-events.ts";
 @source "../lib/plans/plan-config.ts";
+@source "../lib/plans/plan-overrides.ts";
+@source "../lib/plans/plan-rules.ts";
 @source "../lib/product-event-schemas.ts";
 @source "../lib/product-events.ts";
 @source "../lib/query-counter.ts";
@@ -252,10 +257,13 @@
 @source "../lib/starfield-events.ts";
 @source "../lib/stripe-config.ts";
 @source "../lib/suggested-reminder-utils.ts";
+@source "../lib/surface-visibility.ts";
+@source "../lib/surfaces.ts";
 @source "../lib/tab-title-badge.ts";
 @source "../lib/throttle-latch.ts";
 @source "../lib/timeline-cost.ts";
 @source "../lib/touch-kinds.ts";
+@source "../lib/tour/tour-state.ts";
 @source "../lib/transcription-vocabulary.ts";
 @source "../lib/typesafe-api.ts";
 @source "../lib/usage-events.ts";

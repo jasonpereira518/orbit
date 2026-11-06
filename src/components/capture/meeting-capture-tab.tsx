@@ -4,6 +4,7 @@
  * The Meeting tab: a view of the recorder in `MeetingSessionProvider`. The capture flow
  * collects the finished analysis from that provider (`claimAnalysis`).
  */
+import { useViewerPlan } from "@/components/viewer-plan";
 import { useSyncExternalStore } from "react";
 import { MeetingCapturePanel } from "@/components/capture/meeting-capture-panel";
 import { LockedFeature } from "@/components/locked-feature";
@@ -47,9 +48,9 @@ export function MeetingCaptureTab({
   hasApiKey: boolean;
   aiReason?: AiAccessDenial | null;
   canTranscribe: boolean;
-  /** Meeting recording is on Orbit Pro, Max and Lifetime. False renders an upgrade prompt instead of the recorder. */
+  /** Whether this plan has `meetings` (effective plan table). False renders an upgrade prompt instead of the recorder. */
   canUseMeetings: boolean;
-  /** `FEATURE_DENIAL.meetings`, read on the server and threaded down — this is a client
+  /** `featureDenial("meetings", effective config)`, read on the server and threaded down — this is a client
    * component and cannot import `@/lib/entitlements` (it reaches the database). */
   meetingsDeniedMessage: string;
   panelId: string;
@@ -57,6 +58,7 @@ export function MeetingCaptureTab({
 }) {
   const supported = useMeetingCaptureSupported();
   const micSupported = useMicMeetingSupported();
+  const { planConfig } = useViewerPlan();
   return (
     <div id={panelId} role="tabpanel" aria-labelledby={tabId}>
       {canUseMeetings ? (
@@ -70,6 +72,8 @@ export function MeetingCaptureTab({
         />
       ) : (
         <LockedFeature
+          feature="meetings"
+          config={planConfig}
           title="Meeting transcription"
           description={meetingsDeniedMessage}
           highlights={[

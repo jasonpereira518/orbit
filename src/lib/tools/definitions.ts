@@ -58,7 +58,8 @@ import { listUpcomingEvents } from "@/lib/calendar-events";
 import { eventView, getMeetingContext, hhmmInZone, userTimeZone, type MeetingSelector } from "@/lib/meeting-context";
 import { addDaysYmd, ymdInZone } from "@/lib/reminder-due-bucket";
 import { freeSlots } from "@/lib/calendar-free";
-import { requireReleasedSurface } from "@/lib/surface-visibility";
+import { isPaywallError } from "@/lib/entitlements";
+import { requirePlanForSurface, requireReleasedSurface } from "@/lib/surface-visibility";
 import { discoverPeople, researchCompany, researchPerson } from "@/lib/web-research";
 
 const BOTH = ["mcp", "chat"] as const;
@@ -69,6 +70,21 @@ const MCP_ONLY = ["mcp"] as const;
  * security comment in `mcp/server.ts` keeps off the MCP surface.
  */
 const CHAT_ONLY = ["chat"] as const;
+
+/**
+ * A write tool's refusal when an operator limited `surfaceKey` to plans this account is not on
+ * (`requirePlanForSurface`, which also records the gate hit) — the same lock the page's own
+ * actions apply. Null when the account may write.
+ */
+async function pageLocked(userId: string, surfaceKey: string) {
+  try {
+    await requirePlanForSurface(userId, surfaceKey);
+    return null;
+  } catch (err) {
+    if (isPaywallError(err)) return toolError(err.message);
+    throw err;
+  }
+}
 
 /** A `YYYY-MM-DD` day, read as the start (or end) of that day in UTC. */
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
@@ -1114,6 +1130,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         externalId?: string;
       }
     ) {
+      const locked = await pageLocked(userId, "page.contacts");
+      if (locked) return locked;
       const contact = await ownedContact(userId, args.contactId);
       if (!contact) return toolError("No such contact.");
 
@@ -1255,6 +1273,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         howMet?: string;
       }
     ) {
+      const locked = await pageLocked(userId, "page.contacts");
+      if (locked) return locked;
       const { contactId, ...raw } = args;
       const existing = await ownedContact(userId, contactId);
       if (!existing) return toolError("No such contact.");
@@ -1311,6 +1331,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       userId,
       args: { contactId: string; note: string; occurredAt?: string; externalId?: string }
     ) {
+      const locked = await pageLocked(userId, "page.contacts");
+      if (locked) return locked;
       const contact = await ownedContact(userId, args.contactId);
       if (!contact) return toolError("No such contact.");
 
@@ -1354,6 +1376,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       userId,
       args: { title: string; description?: string; contactId?: string; dueDate?: string }
     ) {
+      const locked = await pageLocked(userId, "page.reminders");
+      if (locked) return locked;
       if (args.contactId) {
         const contact = await ownedContact(userId, args.contactId);
         if (!contact) return toolError("No such contact.");
@@ -1420,6 +1444,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     scope: "write",
     resultLabel: null,
     async run(userId, args: { contactId: string; days: number }) {
+      const locked = await pageLocked(userId, "page.reminders");
+      if (locked) return locked;
       try {
         const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days, {
           origin: "mcp",

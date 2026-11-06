@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getDb, rowsOf } from "@/db";
 import { aiSuggestions, captureJobs, cloudNoteFiles, contacts, reminders, suggestedReminders } from "@/db/schema";
 import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
@@ -43,7 +44,7 @@ export async function loadNotificationPanel(
   const context: AccountHealthContext | undefined = opts.settings
     ? {
         settings: opts.settings,
-        entitlements: opts.entitlements ?? entitlementsFromSettings(userId, opts.settings),
+        entitlements: opts.entitlements ?? entitlementsFromSettings(userId, opts.settings, await getEffectivePlanConfig()),
       }
     : undefined;
 

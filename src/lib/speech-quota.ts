@@ -7,6 +7,7 @@
  * browser that dies mid-meeting therefore still counts the audio it used, and a retried
  * segment batch never double-charges. Voice notes get their own row each.
  */
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { cache } from "react";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -48,7 +49,7 @@ export const speechAllowance = cache(async function speechAllowance(
       ),
     );
   const used = Number(rows[0]?.used ?? 0);
-  const limit = limitFor(kind, entitlements.plan);
+  const limit = limitFor(kind, entitlements.plan, await getEffectivePlanConfig());
   return { limit, used, resetsAt, ...quotaState(used, limit) };
 });
 
