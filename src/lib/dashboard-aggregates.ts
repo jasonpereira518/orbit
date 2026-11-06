@@ -204,27 +204,39 @@ export async function getGoalAlignedContactIds(
   }>
 > {
   const db = await getDb();
-  // Every column is qualified: unqualified names inside sql`` render bare, and with the
-  // joins below `id` / `user_id` / `company_id` would be ambiguous.
-  const relevance = sql`coalesce((c.closeness_breakdown->>'goalRelevance')::float8, 0)`;
+  // Every column is qualified: unqualified names inside sql`` render bare.
+  const raw = sql`(c.closeness_breakdown->>'goalRelevance')::float8`;
 
-  // Contacts at one of the user's target companies come first (dream before target before
-  // curious), then goal matches by stored relevance. One row per contact: the LEFT JOIN
-  // is on a unique (user_id, company_id), so a contact that matches both appears once.
+  // One statement, two limited arms. The goal arm keeps the original WHERE/ORDER shape on
+  // the raw expression so the partial index `contacts_goal_relevance_idx` still matches
+  // (a coalesce() or an OR across the join would defeat it). The target arm is driven from
+  // the small target_companies table. A contact in both appears once, as target_company.
   // ponytail: focus-fit is computed in JS from titles, so it stays out of this card.
   const result = await db.execute(sql`
-    select c.id,
-           ${relevance} as goal_relevance,
-           (tc.id is not null) as is_target,
-           co.name as company_name
-    from contacts c
-    left join target_companies tc
-      on tc.user_id = c.user_id and tc.company_id = c.company_id
-    left join companies co on co.id = tc.company_id
-    where c.user_id = ${userId}
-      and (tc.id is not null or ${relevance} > 0)
-    order by (tc.id is not null) desc, tc.priority asc nulls last,
-             ${relevance} desc, c.updated_at desc, c.id desc
+    with t as (
+      select c.id, c.updated_at, tc.priority, ${raw} as rel, co.name as company_name, true as is_target
+      from target_companies tc
+      join contacts c on c.user_id = tc.user_id and c.company_id = tc.company_id
+      join companies co on co.id = tc.company_id
+      where tc.user_id = ${userId}
+      order by tc.priority asc, ${raw} desc nulls last, c.updated_at desc, c.id desc
+      limit ${limit}
+    ), g as (
+      select c.id, c.updated_at, null::int as priority, ${raw} as rel, null::text as company_name, false as is_target
+      from contacts c
+      where c.user_id = ${userId}
+        and c.closeness_breakdown is not null
+        and ${raw} > 0
+      order by ${raw} desc, c.updated_at desc, c.id desc
+      limit ${limit}
+    ), u as (
+      select * from t union all select * from g
+    ), d as (
+      select distinct on (id) * from u order by id, is_target desc
+    )
+    select id, coalesce(rel, 0) as goal_relevance, is_target, company_name
+    from d
+    order by is_target desc, priority asc nulls last, coalesce(rel, 0) desc, updated_at desc, id desc
     limit ${limit}
   `);
 

@@ -35,6 +35,9 @@ function check(label: string, ok: boolean, detail?: string) {
   }
 }
 
+const rowsPlan = (r: unknown) =>
+  JSON.stringify((r as { rows?: unknown[] }).rows ?? r);
+
 const ago = (days: number) => new Date(Date.now() - days * DAY);
 const ahead = (days: number) => new Date(Date.now() + days * DAY);
 
@@ -183,6 +186,17 @@ async function breakdownChecks() {
     mixed[0].reason === "target_company" && mixed[0].companyName === "Target Co" &&
       mixed[1].reason === "target_company" && mixed[2].reason === "goal" && mixed[2].companyName === null,
     JSON.stringify(mixed));
+  // Priority beats relevance: a priority-2 target contact with higher relevance ranks
+  // below a priority-1 one.
+  const [co2] = await db.insert(companies).values({ userId: user, name: "Second Co", nameNormalized: "second co" }).returning();
+  await db.insert(targetCompanies).values({ userId: user, companyId: co2.id, priority: 2 });
+  const idE = await mk("Priority two E", 0.99, co2.id);
+  const prio = await getGoalAlignedContactIds(user, 10);
+  check("priority-1 target ranks before a higher-relevance priority-2 target",
+    JSON.stringify(prio.map((m) => m.id)) === JSON.stringify([idD, idA, idE, idB]),
+    JSON.stringify(prio));
+  const plan = rowsPlan(await db.execute(sql`explain select c.id from contacts c where c.user_id = ${user} and c.closeness_breakdown is not null and (c.closeness_breakdown->>'goalRelevance')::float8 > 0 order by (c.closeness_breakdown->>'goalRelevance')::float8 desc, c.updated_at desc, c.id desc limit 5`));
+  console.log(`  note goal-arm plan mentions contacts_goal_relevance_idx: ${plan.includes("contacts_goal_relevance_idx")}`);
   const cap = await getGoalAlignedContactIds(user, 2);
   check("limit respected with the target arm", cap.length === 2 && cap.every((m) => m.reason === "target_company"), JSON.stringify(cap));
   await db.delete(contacts).where(eq(contacts.userId, user));
