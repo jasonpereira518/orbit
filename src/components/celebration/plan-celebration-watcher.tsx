@@ -18,6 +18,7 @@ import {
   writeLastSeenPlan,
 } from "@/lib/celebration/upgrade-detection";
 import { isPaidPlan, tierTheme, type PaidPlan } from "@/lib/celebration/tier-theme";
+import { useViewerPlan } from "@/components/viewer-plan";
 
 /** The stage is the only heavy part (a canvas loop); it loads on first
  * celebration and never for the overwhelming majority of sessions that don't
@@ -83,6 +84,7 @@ type ActiveRun = {
 export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   const router = useRouter();
   const [active, setActive] = useState<ActiveRun | null>(null);
+  const { planConfig } = useViewerPlan();
   const activeRef = useRef<ActiveRun | null>(null);
   /** One claim at a time: the four feeds can all reach `maybeCelebrate` in one tick. */
   const claimingRef = useRef(false);
@@ -345,7 +347,7 @@ export function PlanCelebrationWatcher({ plan }: { plan: Plan }) {
   return createPortal(
     <CelebrationStage
       key={active.key}
-      theme={tierTheme(active.plan)}
+      theme={tierTheme(active.plan, planConfig)}
       startAt={active.startAt}
       onHandoff={onHandoff}
       onDone={onDone}

@@ -188,6 +188,7 @@ export default async function SettingsPage() {
             entitlements={planOverview.entitlements}
             usage={planOverview.usage}
             demoAccount={planOverview.demoAccount}
+            config={planOverview.planConfig}
           />
         </Section>
       </Group>

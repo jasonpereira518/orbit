@@ -6,6 +6,7 @@ import { PlanFeatureRules, PlanLimitRules } from "@/components/admin/plan-rules-
 import { resolvePlan } from "@/lib/entitlements";
 import { PLANS, PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 import { getEffectivePlanConfig, getPlanRules } from "@/lib/plans/plan-rules";
+import { describeOverrides } from "@/lib/plans/plan-overrides";
 import { ProductHeader } from "../product-header";
 
 export const metadata = { title: "Admin · Product · Plans" };
@@ -44,6 +45,7 @@ export default async function AdminProductPlansPage() {
     getPlanRules(),
     payingAccountsByPlan(),
   ]);
+  const changed = describeOverrides(rules, PLAN_CONFIG);
 
   return (
     <>
@@ -57,6 +59,28 @@ export default async function AdminProductPlansPage() {
         </Link>
         .
       </p>
+      {changed.length > 0 && (
+        // Pricing, plan cards, upgrade prompts and emails follow these rules on their own; the
+        // legal pages are hash-locked copy and never do.
+        <div role="note" className="mb-4 rounded-lg border border-warning-border bg-warning-surface p-3 text-xs">
+          <p className="font-medium text-foreground">
+            {changed.length === 1 ? "1 rule differs" : `${changed.length} rules differ`} from the code defaults. The{" "}
+            <Link href="/terms" className="underline underline-offset-2">
+              Terms
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="underline underline-offset-2">
+              Privacy
+            </Link>{" "}
+            pages are not updated automatically — check whether they describe any of these:
+          </p>
+          <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-muted-foreground">
+            {changed.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <AdminPanel title="Features" className="mb-6">
         <PlanFeatureRules config={config} defaults={PLAN_CONFIG} overridden={Object.keys(rules.features)} paying={paying} />
       </AdminPanel>

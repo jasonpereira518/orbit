@@ -1,5 +1,5 @@
 import { isGooglePurpose, missingScopeMessage } from "@/lib/google-scopes";
-import { EXTRA_CONNECTION_DENIAL } from "@/lib/plans/plan-config";
+import { extraConnectionDenial, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 import {
   isMicrosoftPurpose,
   missingScopeMessage as missingMicrosoftScopeMessage,
@@ -575,7 +575,9 @@ export function isRefreshRejection(status: number, body: string): boolean {
 export function describeOAuthReason(
   reason: string | null | undefined,
   provider: string,
-  purpose?: string | null
+  purpose?: string | null,
+  /** The effective plan table (`useViewerPlan().planConfig`), so a plan-limit refusal names the right plans. */
+  config?: Record<Plan, PlanConfig>
 ): { cancelled: boolean; message: string } {
   if (reason === "access_denied") {
     return {
@@ -584,7 +586,7 @@ export function describeOAuthReason(
     };
   }
   if (reason === "plan_limit") {
-    return { cancelled: false, message: EXTRA_CONNECTION_DENIAL };
+    return { cancelled: false, message: extraConnectionDenial(config) };
   }
   if (reason === "missing_scope") {
     // The purpose names overlap ("contacts", "calendar", "recruiter_scan"), so the provider

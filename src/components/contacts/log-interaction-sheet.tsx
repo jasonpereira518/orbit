@@ -85,7 +85,7 @@ export function LogInteractionSheet({
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const { plan } = useViewerPlan();
+  const { plan, planConfig } = useViewerPlan();
   const submitRef = useRef<HTMLButtonElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
 
@@ -414,7 +414,7 @@ export function LogInteractionSheet({
               <Sparkles className="mt-px size-3 shrink-0" />
               {hasApiKey
                 ? "Write it however you like — the summary, action items and any dates get pulled out for you. Type @ to link someone else who came up."
-                : `Saved as written. ${hintCopyFor(aiReason, plan)}.`}
+                : `Saved as written. ${hintCopyFor(aiReason, plan, planConfig)}.`}
             </p>
           </div>
 

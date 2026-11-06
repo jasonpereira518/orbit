@@ -416,6 +416,7 @@ export async function loadAccountHealthInput(
     contactCount: needContacts ? num(row.contactCount) : null,
     credits: await creditFacts(userId, entitlements.plan, settings, now),
     pausedApiItems: entitlements.canUseApi ? 0 : await pausedApiItems(userId),
+    planConfig: await getEffectivePlanConfig(),
   };
 }
 

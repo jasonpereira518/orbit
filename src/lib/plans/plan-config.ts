@@ -267,9 +267,48 @@ export function unlockPlanFor(
   return (["free", ...PURCHASABLE_PLANS] as const).find((plan) => config[plan].features[feature]) ?? "max";
 }
 
-/** The refusal for a Free account's second Google or Microsoft account. */
-export const EXTRA_CONNECTION_DENIAL =
-  "The Free Plan includes one Google or Microsoft account. Connecting both is available on Orbit Pro and Orbit Max.";
+/** Plan labels as a sentence list: "Orbit Max", "Orbit Pro and Orbit Max", "A, B and C". */
+export function planList(plans: readonly Plan[]): string {
+  const names = plans.map((p) => PLAN_LABELS[p]);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : (names[0] ?? "");
+}
+
+/** The plans on sale (Free, Pro, Max) that have `feature` — or, for "contacts", no contact cap — under `config`. */
+export function salePlansWith(
+  feature: FeatureKey | "contacts",
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): Array<"free" | PurchasablePlan> {
+  return (["free", ...PURCHASABLE_PLANS] as const).filter((plan) =>
+    feature === "contacts" ? config[plan].contactLimit === null : config[plan].features[feature]
+  );
+}
+
+/**
+ * THE "available on …" phrasing for user-facing copy: "every plan", "Orbit Pro and Orbit Max",
+ * "Orbit Max", "the Free Plan and Orbit Max". Read from `config` — pass the effective table
+ * (`getEffectivePlanConfig()`, or `useViewerPlan().planConfig` on the client) so an admin's
+ * plan rule changes the copy too. Lifetime is never named: it is not for sale.
+ */
+export function availableOn(
+  feature: FeatureKey | "contacts",
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): string {
+  const plans = salePlansWith(feature, config);
+  if (plans.length === 3) return "every plan";
+  if (plans.length === 0) return "no plan at the moment";
+  return planList(plans).replace(/^Free Plan/, "the Free Plan");
+}
+
+/** The refusal for a second Google or Microsoft account, naming the plans that allow both under `config`. */
+export function extraConnectionDenial(config: Record<Plan, PlanConfig> = PLAN_CONFIG): string {
+  const on = availableOn("extraConnections", config);
+  return config.free.features.extraConnections
+    ? `Connecting both Google and Microsoft is available on ${on}.`
+    : `The Free Plan includes one Google or Microsoft account. Connecting both is available on ${on}.`;
+}
+
+/** `extraConnectionDenial` under the code defaults. */
+export const EXTRA_CONNECTION_DENIAL = extraConnectionDenial();
 
 /**
  * A speech allowance as a person reads it: whole hours as hours ("8 hours", "1 hour"),

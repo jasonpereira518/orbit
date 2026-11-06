@@ -4,11 +4,11 @@ import { recordGateHit } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
 import {
   FEATURE_KEYS,
-  EXTRA_CONNECTION_DENIAL,
   FREE_CONTACT_LIMIT,
   PLAN_CONFIG,
   PLAN_LABELS,
-  unlockPlanFor,
+  availableOn,
+  extraConnectionDenial,
   type FeatureKey,
   type Plan,
   type PlanConfig,
@@ -247,12 +247,6 @@ export function entitlementsFromSettings(
   return entitlementsForPlan(plan, source, config);
 }
 
-/** "on every plan", "on Orbit Pro and Orbit Max" or "on Orbit Max" — never Lifetime, which is not sold. */
-function availableOn(feature: FeatureKey, config: Record<Plan, PlanConfig>) {
-  const from = unlockPlanFor(feature, config);
-  return from === "free" ? "every plan" : from === "orbit" ? "Orbit Pro and Orbit Max" : "Orbit Max";
-}
-
 /**
  * Every feature a plan can be refused. `hostedAi` is not one: every plan has it (it is credits,
  * not a gate), so a denial for it could never be shown.
@@ -287,7 +281,7 @@ export function featureDenial(feature: DeniableFeature, config: Record<Plan, Pla
       // Only Lifetime is ever refused a pack (Free, Pro and Max can all buy one), and it is not sold.
       return "Credit packs aren’t available on your plan — add your own AI key in Settings to keep going";
     case "extraConnections":
-      return EXTRA_CONNECTION_DENIAL;
+      return extraConnectionDenial(config);
     case "radar":
       return `Radar is available on ${on}.`;
     case "events":

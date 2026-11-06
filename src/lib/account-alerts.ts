@@ -1,6 +1,6 @@
 import { AI_PROVIDERS, type AiProvider } from "@/lib/ai-providers";
 import type { Plan, PlanSource } from "@/lib/plan-limits";
-import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, PLAN_LABELS, planList, salePlansWith, type PlanConfig } from "@/lib/plans/plan-config";
 import { CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { integrationHref } from "@/components/settings/sections";
 
@@ -194,6 +194,8 @@ export type HealthInput = {
    */
   /** Live REST API keys + webhook endpoints held on a plan that no longer includes them. */
   pausedApiItems?: number;
+  /** The effective plan table (`getEffectivePlanConfig()`), so the copy names the plans the gates use. Code defaults when absent. */
+  planConfig?: Record<Plan, PlanConfig>;
   /** Newest finished, not-undone LinkedIn upload (`getLastLinkedInImportAt`). Absent = skip. */
   lastLinkedInImportAt?: Date | null;
   credits?: {
@@ -424,7 +426,9 @@ export function evaluateAccountHealth(
 
   // --- REST API and webhooks on a plan without them ------------------------------------
   if ((input.pausedApiItems ?? 0) > 0) {
-    findings.push({ code: "plan.api_paused", severity: "warn", data: { count: input.pausedApiItems ?? 0 } });
+    // `plans`: the plans on sale with the API, as one comma list, so the copy can name them.
+    const plans = salePlansWith("api", input.planConfig ?? PLAN_CONFIG).join(",");
+    findings.push({ code: "plan.api_paused", severity: "warn", data: { count: input.pausedApiItems ?? 0, plans } });
   }
 
   // --- AI credits ---------------------------------------------------------------------
@@ -439,7 +443,7 @@ export function evaluateAccountHealth(
         code: "plan.credits_out",
         severity: "error",
         // `packs`: whether this plan can buy one (not Lifetime), so the copy offers only what exists.
-        data: { resetsAt, free: input.plan === "free" ? 1 : 0, packs: PLAN_CONFIG[input.plan].features.creditPacks ? 1 : 0 },
+        data: { resetsAt, free: input.plan === "free" ? 1 : 0, packs: (input.planConfig ?? PLAN_CONFIG)[input.plan].features.creditPacks ? 1 : 0 },
       });
     } else if (c.allowanceGranted > 0 && c.allowanceRemaining <= 0 && c.packRemaining > 0) {
       findings.push({
@@ -867,11 +871,14 @@ export function toAccountAlerts(findings: HealthFinding[]): AccountAlert[] {
       }
 
       case "plan.api_paused": {
+        // Older findings carry no `plans`: they were written when only Max had the API.
+        const listed = (str(f.data.plans) ?? "max").split(",").filter((p): p is Plan => p in PLAN_LABELS);
+        const plans = listed.length ? listed : (["max"] as Plan[]);
         alerts.push({
           ...base,
           title: "Your API keys and webhooks are paused",
-          body: "The REST API and webhooks are part of Orbit Max. Your keys and endpoints are kept exactly as they are and start working again the moment you move to Max. The Claude and ChatGPT connector is unaffected.",
-          cta: { label: "See Orbit Max", href: "/upgrade", external: true },
+          body: `The REST API and webhooks are part of ${planList(plans)}. Your keys and endpoints are kept exactly as they are and start working again the moment you move to ${plans.map((p) => PLAN_LABELS[p]).join(" or ")}. The Claude and ChatGPT connector is unaffected.`,
+          cta: { label: plans.length === 1 ? `See ${PLAN_LABELS[plans[0]]}` : "See plans", href: "/upgrade", external: true },
           surfaceKey: null,
         });
         break;

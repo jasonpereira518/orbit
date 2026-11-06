@@ -18,6 +18,7 @@
 import {
   FEATURE_KEYS,
   PLANS,
+  PLAN_SHORT_LABELS,
   type FeatureKey,
   type Plan,
   type PlanConfig,
@@ -169,3 +170,26 @@ export function plansWithFeature(config: Record<Plan, PlanConfig>, feature: Feat
   return PLANS.filter((p) => config[p].features[feature]);
 }
 
+
+/**
+ * One line per override that differs from the code default, e.g. "recruiters: Free, Pro, Max,
+ * Lifetime (default Pro, Max, Lifetime)" or "Free contactLimit: 1000 (default 500)". For the
+ * console's reminder that the hand-edited Terms and Privacy pages do not follow these.
+ */
+export function describeOverrides(rules: PlanRules, defaults: Record<Plan, PlanConfig>): string[] {
+  const names = (plans: readonly Plan[]) => (plans.length ? plans.map((p) => PLAN_SHORT_LABELS[p]).join(", ") : "no plan");
+  const value = (v: LimitValue) => (v === null ? "unlimited" : String(v));
+  const lines: string[] = [];
+  for (const feature of FEATURE_KEYS) {
+    const plans = rules.features[feature];
+    const before = plansWithFeature(defaults, feature);
+    if (plans && plans.join() !== before.join()) lines.push(`${feature}: ${names(plans)} (default ${names(before)})`);
+  }
+  for (const plan of PLANS) {
+    for (const [field, v] of Object.entries(rules.limits[plan] ?? {}) as [LimitField, LimitValue][]) {
+      const before = limitOf(defaults[plan], field);
+      if (v !== before) lines.push(`${PLAN_SHORT_LABELS[plan]} ${field}: ${value(v)} (default ${value(before)})`);
+    }
+  }
+  return lines;
+}

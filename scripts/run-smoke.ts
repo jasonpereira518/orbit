@@ -647,6 +647,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-checkout-confirm": "pglite",
   "smoke-stripe-dedupe": "pglite",
   "smoke-surface-visibility": "pglite",
+  "smoke-plan-copy": "pglite", // plan copy, comparison, denials and credit emails follow the effective plan table
   "smoke-plan-rules": "pglite", // runtime plan rules: row format, effective config, widen/narrow, limits, page lock
   "smoke-sync-concurrency": "pglite",
   "smoke-sync-scheduler": "pglite",

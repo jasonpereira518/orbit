@@ -109,7 +109,7 @@ function pure() {
 
   t.check(
     "a denial names the plans of the table it is given",
-    /every plan/.test(featureDenial("recruiters", config)) && /Pro and Orbit Max/.test(featureDenial("recruiters")),
+    /available on the Free Plan\./.test(featureDenial("recruiters", config)) && /Pro and Orbit Max/.test(featureDenial("recruiters")),
     featureDenial("recruiters", config)
   );
   t.check("the five unreleased features default to the paid plans", (["radar", "events", "findPeople", "compose", "cloudNotes"] as const).every(

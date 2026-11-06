@@ -1,5 +1,6 @@
 "use client";
 
+import { PLAN_SHORT_LABELS, type PurchasablePlan } from "@/lib/plans/plan-config";
 import type { ReactNode } from "react";
 import { motion, type Variants } from "motion/react";
 import { ChevronLeft } from "lucide-react";
@@ -132,7 +133,8 @@ export function SoonTag({ className }: { className?: string }) {
   );
 }
 
-export function ProTag({ className }: { className?: string }) {
+/** The plan a locked line unlocks on (`unlockTagPlan`); Pro unless told otherwise. */
+export function ProTag({ className, plan = "orbit" }: { className?: string; plan?: PurchasablePlan }) {
   return (
     <span
       className={cn(
@@ -140,7 +142,7 @@ export function ProTag({ className }: { className?: string }) {
         className,
       )}
     >
-      Pro
+      {PLAN_SHORT_LABELS[plan]}
     </span>
   );
 }

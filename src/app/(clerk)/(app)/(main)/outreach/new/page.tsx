@@ -3,6 +3,7 @@ import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 export const metadata = { title: "New outreach campaign" };
@@ -14,7 +15,7 @@ export default async function NewOutreachPage() {
   if (gate) return gate;
 
   const { canUseOutreach } = await getEntitlements(await requireUserId());
-  if (!canUseOutreach) return <OutreachLocked />;
+  if (!canUseOutreach) return <OutreachLocked config={await getEffectivePlanConfig()} />;
 
   return (
     <div className="space-y-6">

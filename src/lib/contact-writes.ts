@@ -34,6 +34,8 @@ import {
   type Interaction,
 } from "@/db/schema";
 import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
+import { PLAN_LABELS, availableOn, salePlansWith } from "@/lib/plans/plan-config";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { recordGateHit, recordGateHitThrottled } from "@/lib/gate-events";
 import { requirePlanForSurface, surfaceTierLock } from "@/lib/surface-visibility";
 import {
@@ -476,10 +478,14 @@ export async function createContactForUser(
       plan,
       context: { contactLimit },
     });
+    // Names the plans with no cap under the effective table, so an admin's limit change reads true.
+    const uncapped = salePlansWith("contacts", await getEffectivePlanConfig()).length
+      ? ` to ${availableOn("contacts", await getEffectivePlanConfig())}`
+      : "";
     throw new PaywallError(
       "contacts",
       plan,
-      `You've reached the ${contactLimit}-contact limit on the free plan. Upgrade to add more people to your orbit.`
+      `You've reached the ${contactLimit}-contact limit on ${plan === "free" ? "the free plan" : PLAN_LABELS[plan]}. Upgrade${uncapped} to add more people to your orbit.`
     );
   }
 

@@ -28,7 +28,8 @@ import { Disclosure } from "@/components/settings/disclosure";
 import { ClearKeyButton, ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { FREE_AI_EXPLAINER, noticeCopyFor } from "@/lib/ai-access-copy";
+import { freeAiExplainer, noticeCopyFor } from "@/lib/ai-access-copy";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { managedModel } from "@/lib/managed-ai-policy";
 import { setAiKeyPreference } from "@/actions/credits";
 import { CreditsCard } from "@/components/credits/credits-card";
@@ -48,6 +49,7 @@ function modelLabel(provider: AiProvider, id: string) {
  * up the full table, so an account already on one keeps its real name in the copy.
  */
 export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
+  const { planConfig } = useViewerPlan();
   const [settings, setSettings] = useState<Settings>(initialSettings);
   // A router refresh (the plan changed — Lifetime bought or revoked) hands down fresh
   // settings; adopt them rather than keep describing the old plan.
@@ -143,7 +145,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
       title="AI provider"
       description={
         onIncluded && ai.plan === "free"
-          ? FREE_AI_EXPLAINER
+          ? freeAiExplainer(planConfig)
           : onIncluded
             ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits. Orbit picks the model for it (Claude Haiku 5.5, with OpenAI as backup) — or bring your own key to choose, which never uses credits."
             : "Orbit uses AI to turn your notes into contacts and answer questions about your network. Pick a provider and paste its key — keys are encrypted at rest and only used for your account."
@@ -320,7 +322,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                       : `Your ${providerMeta.label} key is saved and runs first — it never uses credits`
                     : `Your ${providerMeta.label} key is saved`
                 : provider === ai.selectedProvider && ai.reason
-                  ? noticeCopyFor(ai.reason, ai.plan, null).title("use AI")
+                  ? noticeCopyFor(ai.reason, ai.plan, null, planConfig).title("use AI")
                   : managedRuns
                     ? onLocalDevKeys
                       ? `Using your .env.local ${providerMeta.label} key — ${modelLabel(provider, managedRuns)}`

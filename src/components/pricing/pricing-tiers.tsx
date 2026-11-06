@@ -9,7 +9,7 @@ import { BillingToggle } from "@/components/pricing/billing-toggle";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { SubscriptionCheckoutButton } from "@/components/pricing/subscription-checkout-button";
 import { cn } from "@/lib/utils";
-import { foundingPriceTerms, PUBLIC_PLAN_COPY } from "@/lib/plan-copy";
+import { foundingPriceTerms, PUBLIC_PLAN_COPY, type PlanCopy } from "@/lib/plan-copy";
 import { isPurchasablePlan, type BillingPeriod, type Plan } from "@/lib/plans/plan-config";
 
 /**
@@ -154,10 +154,12 @@ const TIER_ACCENT: Record<
 type TiersProps = {
   clerkOn: boolean;
   checkoutOpen: boolean;
+  /** `publicPlanCopy(getEffectivePlanConfig())` from the page, so an admin's plan rule shows here. */
+  plans?: PlanCopy[];
 };
 
 /**
- * The page is static and shared, so "who is this", "what plan are they on" and "does a
+ * The page is shared by everyone, so "who is this", "what plan are they on" and "does a
  * founding price apply" resolve in the browser after Clerk loads. `useAuth()` throws outside
  * a <ClerkProvider>, which is mounted only when Clerk is configured, so the hook lives in a
  * child that only exists when Clerk does. Signed out, nobody ever sees a founding price.
@@ -197,6 +199,7 @@ function ClerkAwareTiers(props: TiersProps) {
 
 function PricingTiersView({
   checkoutOpen,
+  plans = PUBLIC_PLAN_COPY,
   signedIn,
   currentPlan,
   founding,
@@ -206,7 +209,7 @@ function PricingTiersView({
     <div className="space-y-10">
       <BillingToggle period={period} onChange={setPeriod} />
       <div className="grid items-start gap-5 lg:grid-cols-3 lg:gap-6">
-        {PUBLIC_PLAN_COPY.map((plan) => {
+        {plans.map((plan) => {
           const accent = TIER_ACCENT[plan.id];
           const price = plan.price[period];
 

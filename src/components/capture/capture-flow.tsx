@@ -106,7 +106,7 @@ export function CaptureFlow({
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
   aiReason?: AiAccessDenial | null;
   canTranscribe?: boolean;
-  /** Meeting recording is on Orbit Pro, Max and Lifetime. False shows an upgrade prompt instead of the recorder. */
+  /** Whether this plan has `meetings` (effective plan table). False shows an upgrade prompt instead of the recorder. */
   canUseMeetings?: boolean;
   /** `featureDenial("meetings", effective config)`, read on the server — this file is a client component and cannot import `@/lib/entitlements` (it reaches the database). */
   meetingsDeniedMessage?: string;

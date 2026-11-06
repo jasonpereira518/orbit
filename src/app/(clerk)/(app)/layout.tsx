@@ -170,7 +170,7 @@ export default async function AppLayout({
   });
 
   return (
-    <ViewerPlanProvider value={{ plan, includedAiAvailable, aiReason, creditsResetAt }}>
+    <ViewerPlanProvider value={{ plan, includedAiAvailable, aiReason, creditsResetAt, planConfig }}>
       {/* Renders nothing. Before AppShell, not inside it: siblings render in order, so every
           color the shell and the page ask for is registered by then. */}
       <LearnedBrandColors brands={brandColors.learned} />

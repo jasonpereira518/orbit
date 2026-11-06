@@ -1,5 +1,15 @@
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
-import { PLANS, PLAN_SHORT_LABELS, type FeatureKey, type Plan, type PurchasablePlan } from "@/lib/plans/plan-config";
+import {
+  PLANS,
+  PLAN_CONFIG,
+  PLAN_RANK,
+  PLAN_SHORT_LABELS,
+  PURCHASABLE_PLANS,
+  type FeatureKey,
+  type Plan,
+  type PlanConfig,
+  type PurchasablePlan,
+} from "@/lib/plans/plan-config";
 
 /**
  * The catalogue of things an operator can hide from every user at once.
@@ -388,6 +398,22 @@ export const PAGE_FEATURE: Readonly<Record<string, FeatureKey>> = {
   "page.outreach": "outreach",
   "page.meetings": "meetings",
 };
+
+/**
+ * The plans on sale a coming-soon surface will unlock on, said on its screen and in the nav
+ * tooltip: the plans that have its feature (`SURFACE_FEATURE` / `PAGE_FEATURE`) under `config`
+ * — pass the effective plan table. A surface with no feature falls back to
+ * `COMING_SOON_UNLOCK_PLAN` and up.
+ */
+export function comingSoonUnlockPlans(
+  surfaceKey: string,
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): PurchasablePlan[] {
+  const feature = SURFACE_FEATURE[surfaceKey] ?? PAGE_FEATURE[surfaceKey];
+  return feature
+    ? PURCHASABLE_PLANS.filter((p) => config[p].features[feature])
+    : PURCHASABLE_PLANS.filter((p) => PLAN_RANK[p] >= PLAN_RANK[COMING_SOON_UNLOCK_PLAN]);
+}
 
 /** Page and feature surfaces that ship as announced-but-not-released, before any operator override. */
 export const DEFAULT_COMING_SOON_KEYS: ReadonlySet<string> = new Set(
