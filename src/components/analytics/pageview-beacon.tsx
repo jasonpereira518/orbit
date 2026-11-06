@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
+import { useReportWebVitals } from "next/web-vitals";
 import { isInternalBrowser, isTrackedPath } from "@/lib/analytics-redact";
 import { readNavStart, waitForContent } from "@/lib/nav-timing";
 import { PV_SESSION_KEY } from "@/lib/pageview-session";
 
 /**
- * Sends one page view per navigation, how long its content took to appear, and the time
- * spent on it when the page goes away.
+ * Sends one page view per navigation, how long its content took to appear, the time spent
+ * on it when the page goes away, and — for the document's first view only — its Core Web
+ * Vitals (LCP, INP, CLS) from Next's built-in `useReportWebVitals`.
  *
  * Mounted in the ROOT layout, so it covers marketing, auth, checkout and the product with
  * one instance. It must never import anything that reaches `@/db` — a client component
@@ -140,8 +142,49 @@ function post(payload: Record<string, unknown>, viaBeacon: boolean): Promise<voi
   }
 }
 
+/**
+ * The document's FIRST view, the only one Core Web Vitals belong to: LCP is a property of a
+ * document load, so a client-side navigation has none, and its INP and CLS are the document's
+ * too. `firstRouteSeen` flips on the very first effect run whether or not that route is
+ * tracked, so an /admin landing followed by a soft navigation into the app never claims the
+ * vitals for that later view.
+ */
+let firstRouteSeen = false;
+let firstView: { id: string; sent: Promise<void> } | null = null;
+
+type WebVitalsCallback = Parameters<typeof useReportWebVitals>[0];
+
+/**
+ * Module-level, so its reference never changes: `useReportWebVitals` replays every metric so
+ * far to each NEW callback it is handed. Each report carries the metric's current value; the
+ * server keeps the largest per column (`recordVitals`), so the repeats are harmless.
+ */
+const reportVital: WebVitalsCallback = (metric) => {
+  const view = firstView;
+  if (!view) return;
+  // A soft navigation's metrics, or a back/forward-cache restore's fresh ones, are not the
+  // first document load's.
+  const nav = (metric as { navigationType?: string }).navigationType;
+  if (nav === "soft-navigation" || nav === "back-forward-cache") return;
+  const field =
+    metric.name === "LCP"
+      ? { lcpMs: Math.round(metric.value) }
+      : metric.name === "INP"
+        ? { inpMs: Math.round(metric.value) }
+        : metric.name === "CLS"
+          ? { clsMilli: Math.round(metric.value * 1000) }
+          : null;
+  if (!field) return;
+  // INP and CLS are final as the page hides, which is when `sendBeacon` is the only safe
+  // transport. The view's own insert has long landed by then; waiting on it covers an LCP
+  // reported before it has.
+  const viaBeacon = document.visibilityState === "hidden";
+  void view.sent.then(() => post({ kind: "vitals", id: view.id, ...field }, viaBeacon));
+};
+
 export function PageviewBeacon() {
   const pathname = usePathname();
+  useReportWebVitals(reportVital);
   /**
    * The view currently on screen.
    *
@@ -207,6 +250,8 @@ export function PageviewBeacon() {
   );
 
   useEffect(() => {
+    const isFirstRoute = !firstRouteSeen;
+    firstRouteSeen = true;
     if (!pathname || !isTrackedPath(pathname)) return;
 
     const now = Date.now();
@@ -256,6 +301,7 @@ export function PageviewBeacon() {
       false
     );
     open.current = { id, since: hidden ? 0 : now, accumulated: 0, sent: viewSent, flow };
+    if (isFirstRoute) firstView = { id, sent: viewSent };
 
     // Page-load timing (`src/lib/nav-timing.ts`). The `load` beacon waits for the view's
     // own request to settle, because it UPDATEs the row that request inserts — sent first,

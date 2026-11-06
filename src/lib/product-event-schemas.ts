@@ -51,6 +51,11 @@ export const FAILURE_FLOWS = ["capture", "import", "sync", "voice", "ai", "email
 export const SURVEYS = ["post_first_capture", "day7_not_activated", "followup_useful", "pmf", "cancellation"] as const;
 export const CANCEL_REASONS = ["too_expensive", "not_using", "missing_feature", "privacy", "season_over", "other"] as const;
 export const SHARE_CHANNELS = ["copy", "x", "linkedin", "native", "ticket"] as const;
+export const SEARCH_SURFACES = ["contacts_page", "command_palette", "api"] as const;
+export const NOTIFICATION_KINDS = ["due", "meeting", "test"] as const;
+/** Query length is capped, never exact past this: a long query's length is close to a fingerprint. */
+export const SEARCH_QUERY_LENGTH_CAP = 64;
+export const SEARCH_RESULT_COUNT_CAP = 1000;
 
 /** Properties per event name. Keys are the closed event list. */
 export const eventSchemas = {
@@ -92,6 +97,14 @@ export const eventSchemas = {
   mcp_connected: z.object({ client: z.enum(MCP_CLIENTS), via: z.enum(["oauth", "api_key"]) }),
   mcp_tool_called: z.object({ tool: z.string().regex(/^[a-z_]{1,48}$/), client: z.enum(MCP_CLIENTS), ok: z.boolean(), duration_ms: ms, result_count: count.optional() }),
   mcp_disconnected: z.object({ client: z.enum(MCP_CLIENTS) }),
+  // Never the query text: its length (capped) and how many results came back (capped).
+  search_performed: z.object({
+    surface: z.enum(SEARCH_SURFACES),
+    query_length: z.number().int().min(1).max(SEARCH_QUERY_LENGTH_CAP),
+    result_count: z.number().int().min(0).max(SEARCH_RESULT_COUNT_CAP),
+  }),
+  notification_shown: z.object({ kind: z.enum(NOTIFICATION_KINDS) }),
+  notification_clicked: z.object({ kind: z.enum(NOTIFICATION_KINDS) }),
   extension_installed: z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/), browser: z.enum(["chrome", "edge", "brave", "arc", "other"]) }),
   extension_action: z.object({ action: z.enum(["save_person", "log_interaction", "open_profile", "event_roster", "starters", "schedule_follow_up", "save_activity"]), site: z.enum(["linkedin", "gmail", "luma", "partiful", "other"]), ok: z.boolean() }),
   extension_uninstalled: z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/) }),
@@ -112,6 +125,16 @@ export const eventSchemas = {
 
 export type EventName = keyof typeof eventSchemas;
 export type EventProps<N extends EventName> = z.infer<(typeof eventSchemas)[N]>;
+
+/**
+ * The only events a BROWSER may report, through the `event` kind of `/api/p/v`. Everything
+ * else is recorded server-side, where the fact happened; a name not on this list is dropped.
+ */
+export const CLIENT_EVENTS = ["error_shown", "notification_shown", "notification_clicked"] as const satisfies readonly EventName[];
+export type ClientEventName = (typeof CLIENT_EVENTS)[number];
+export function isClientEvent(name: unknown): name is ClientEventName {
+  return typeof name === "string" && (CLIENT_EVENTS as readonly string[]).includes(name);
+}
 
 /** The envelope the helper fills; call sites supply only `name` and `props`. */
 export const envelopeSchema = z.object({

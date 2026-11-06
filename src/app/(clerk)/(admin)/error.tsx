@@ -13,6 +13,7 @@ export default function GroupError({
     <ErrorFallback
       error={error}
       retry={unstable_retry}
+      where="boundary.admin"
       home={{ href: "/admin", label: "Back to the console" }}
     />
   );

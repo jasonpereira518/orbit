@@ -18,6 +18,7 @@ export default function RootError({
     <ErrorFallback
       error={error}
       retry={unstable_retry}
+      where="boundary.root"
       home={{ href: "/", label: "Back to the homepage" }}
     />
   );

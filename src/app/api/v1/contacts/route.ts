@@ -12,6 +12,7 @@ import { contacts } from "@/db/schema";
 import { apiError, apiHandler, apiOk, readJson, deferTelemetry } from "@/lib/api/http";
 import { contactCreateBody, contactsQuery, parseQuery } from "@/lib/api/schemas";
 import { hybridSearchContacts } from "@/lib/hybrid-search";
+import { trackSearchPerformed } from "@/lib/search-events";
 import { createContactForUser } from "@/lib/contact-writes";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { findConfidentDuplicate } from "@/lib/contact-resolve";
@@ -80,6 +81,7 @@ export const GET = apiHandler({ scope: "read", bucket: "apiRead" }, async (reque
   if (q) {
     // `publicContact` never exposes notes or opportunities, so they are not read.
     const ranked = await hybridSearchContacts(caller.userId, { query: q, limit, withProse: false });
+    trackSearchPerformed({ userId: caller.userId, surface: "api", query: q, resultCount: ranked.length });
     return apiOk({ contacts: ranked.map(publicContact) });
   }
 

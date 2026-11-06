@@ -144,6 +144,7 @@
 @source "../lib/chat-rail-pref.ts";
 @source "../lib/chat-stream-protocol.ts";
 @source "../lib/clerk-session-hint.ts";
+@source "../lib/client-events.ts";
 @source "../lib/client-ip.ts";
 @source "../lib/closeness-evidence.ts";
 @source "../lib/closeness-materialize.ts";

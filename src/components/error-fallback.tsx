@@ -7,6 +7,7 @@ import { onReconnect, useConnectivity } from "@/lib/connectivity-store";
 import { isNetworkError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { reportClientError } from "@/lib/sentry-lazy";
+import { reportErrorShown } from "@/lib/client-events";
 
 /**
  * The one error boundary body, shared by every route group's `error.tsx`.
@@ -23,10 +24,13 @@ export function ErrorFallback({
   error,
   retry,
   home,
+  where,
 }: {
   error: Error & { digest?: string };
   retry: () => void;
   home: { href: string; label: string };
+  /** A fixed name for the boundary (`boundary.app`), the only thing `error_shown` says about where. */
+  where: string;
 }) {
   const { status } = useConnectivity();
   // The page failed because the connection did, not because Orbit is broken. Said as such,
@@ -44,6 +48,8 @@ export function ErrorFallback({
   useEffect(() => {
     console.error(error);
     if (!offline) reportClientError(error);
+    // The product event: a fixed boundary name and a coarse kind, never the message or stack.
+    reportErrorShown(where, error, offline);
     // Decided once per error: a report must not fire later just because the connection
     // came back while this screen was up.
     // eslint-disable-next-line react-hooks/exhaustive-deps

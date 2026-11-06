@@ -20,6 +20,7 @@ export default function GraphError({
   return (
     <ErrorFallback
       error={error}
+      where="boundary.graph"
       retry={() => {
         resetConstellationModules();
         unstable_retry();
