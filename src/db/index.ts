@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   email_intel_enabled integer NOT NULL DEFAULT 0,
   email_intel_cursor_at timestamptz,
   email_intel_next_at timestamptz,
+  linkedin_refresh_interval_days integer,
   chat_auto_apply integer NOT NULL DEFAULT 0,
   relationship_engine_enabled integer NOT NULL DEFAULT 1,
   chat_self_names jsonb NOT NULL DEFAULT '[]',
@@ -2873,11 +2874,16 @@ CREATE INDEX IF NOT EXISTS page_views_internal_created_idx ON page_views(is_inte
 // instead of only in the browser, so /meetings can show and edit them. Rescanned every remote
 // ref and worktree on Nov 5 2026: 185 (main) was the highest claimed anywhere.
 //
+// 188 = user_settings.linkedin_refresh_interval_days: how often Orbit nudges for a fresh
+// LinkedIn export (null = monthly, today's rule; 0 = off), set on the LinkedIn integration page.
+// NOT 187: the unpushed admin-tracking-events worktree claims it. Rescanned every remote ref
+// and worktree on Nov 5 2026: 187 (admin-tracking-events) was the highest claimed anywhere.
+//
 // 189 = email insights (Email Intelligence P0/P1): user_settings.email_intel_enabled /
 // email_intel_cursor_at / email_intel_next_at plus the email_threads and email_events tables.
 // Built as 145 on Sep 30 2026 and renumbered here on Nov 5 2026 when merging main: main reached
-// 186, and a database stamped 186 would never run a 145. NOT 187 or 188: claude/admin-tracking-events
-// holds 187 and the brave-dijkstra-e56398 worktree holds 188 (both unpushed). Rescanned every
+// 186, and a database stamped 186 would never run a 145. NOT 187 or 188: 188 is main's linkedin_refresh_interval_days
+// and claude/admin-tracking-events holds 187 (unpushed). Rescanned every
 // remote ref and every worktree's working file on Nov 5 2026: 188 was the highest claimed anywhere.
 // (Merged main at 186: both sides' DDL and alters are kept, and only the version is new, so a
 // database stamped 186 by main still runs this branch's 189 DDL.)
@@ -4177,6 +4183,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "email_intel_enabled", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "email_intel_cursor_at", "timestamptz");
   await ensureColumn(client, "user_settings", "email_intel_next_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "linkedin_refresh_interval_days", "integer");
   await ensureColumn(client, "user_settings", "relationship_engine_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "chat_self_names", "jsonb NOT NULL DEFAULT '[]'");
   await ensureColumn(client, "action_items", "owed_by", "text");
@@ -5107,6 +5114,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_intel_enabled integer NOT NULL DEFAULT 0`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_intel_cursor_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_intel_next_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS linkedin_refresh_interval_days integer`,
   // Schema v133: Radar's nightly schedule, lease and pause flag for each account.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_next_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_lease_until timestamptz`,
