@@ -20,14 +20,16 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // naming Vercel BotID and the Slack feedback excerpt, all of which were true and unsaid.
 // 2026-11-05: reviewing the people a capture found looks each NEW one up on the web, by
 // name with the company, role, place met and city the note gives — never an email or phone.
-// Same day: page-load timings, a last-touch attribution cookie, the kind of error screen
-// shown, search and notification counts (never query text), and Resend delivery/open/click
-// for outreach Orbit sends.
-export const TERMS_VERSION = "2026-11-05";
-export const LEGAL_LAST_UPDATED = "November 5, 2026";
-// 2026-11-05 (same day): Email insights, which reads the sender, subject and Gmail's preview of
-// new job and hiring-process threads. Bump this before it ships if accounts have already
-// accepted the 2026-11-05 text above.
+// 2026-11-06: Email insights, which reads the sender, subject and Gmail's preview of new job and
+// hiring-process threads. Bumped a day after the text above so accounts that accepted 2026-11-05
+// are asked again.
+// 2026-11-06.2 (same day, after Email insights shipped as 2026-11-06): page-load timings, a
+// last-touch attribution cookie, the kind of error screen shown, search and notification
+// counts (never query text), and Resend delivery/open/click for outreach Orbit sends. A
+// suffix, not a new date: needsTermsAcceptance compares strings, and accounts that accepted
+// 2026-11-06 must be asked again.
+export const TERMS_VERSION = "2026-11-06.2";
+export const LEGAL_LAST_UPDATED = "November 6, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -112,6 +114,12 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
     permission: "See your calendar events (calendar.readonly)",
     use: "Reads your primary calendar from two days back to two weeks ahead and keeps that window in Orbit, updating it as your calendar changes and deleting meetings that leave it. Adds meetings with people in your network to their timelines, and uses upcoming meetings for prep and follow-up reminders, recording suggestions, meeting prep, recording summaries and answers in Chat and in assistants you connect.",
     askedWhen: "Connect Google Calendar on Events",
+  },
+  {
+    scope: GOOGLE_SCOPES.calendarWrite,
+    permission: "Add events to your calendar (calendar.events)",
+    use: "Puts the meetings you set up in Chat on your primary calendar, with the title, time and place you gave, and removes one when you press Undo. Nobody is invited and no email is sent. Orbit never changes or deletes an event it did not add.",
+    askedWhen: "Add to calendar on a meeting in Chat",
   },
   {
     scope: GOOGLE_SCOPES.drive,

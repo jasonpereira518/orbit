@@ -1,0 +1,258 @@
+import Link from "next/link";
+import {
+  AdminPageHeader,
+  AdminPanel,
+  AdminTable,
+  EmptyState,
+  MetricTile,
+  PlanBadge,
+  RelativeTime,
+  Td,
+  Th,
+  TrendTable,
+} from "@/components/admin/primitives";
+import { MoneyTabs } from "@/components/admin/admin-tabs";
+import { RankedBars } from "@/components/admin/charts";
+import { formatCents } from "@/lib/format-money";
+import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
+import { annualMonthlyEquivalentCents, PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { countLifetimePurchases } from "@/lib/user-settings";
+import {
+  KNOWN_GATES,
+  compedAccounts,
+  compedForegoneCents,
+  gateDemand,
+  lifetimeSales,
+  mrrMovementSeries,
+} from "@/lib/money-metrics";
+
+export const metadata = { title: "Admin · Money · Revenue" };
+
+const MONTH = new Intl.DateTimeFormat("en", {
+  month: "short",
+  year: "2-digit",
+  timeZone: "UTC",
+});
+
+// The copy below quotes the plan prices, so it is derived from the plan table and cannot go
+// stale when the prices move (it once explained a "$5/mo becomes $4.17/mo" that no plan has).
+const PRO_MONTHLY = formatCents(PLAN_CONFIG.orbit.monthlyPriceCents ?? 0);
+const PRO_ANNUAL_MONTHLY = formatCents(annualMonthlyEquivalentCents("orbit"));
+const MAX_MONTHLY = formatCents(PLAN_CONFIG.max.monthlyPriceCents ?? 0);
+const MAX_ANNUAL_MONTHLY = formatCents(annualMonthlyEquivalentCents("max"));
+
+/** Human labels for the gate keys, which are `FeatureKey` values plus the contact cap. */
+const GATE_LABELS: Record<string, string> = {
+  contacts: `Contact cap (${FREE_CONTACT_LIMIT})`,
+  outreach: "Outreach",
+  hostedSending: "Hosted sending",
+  hostedEnrichment: "Hosted enrichment",
+  hostedAi: "Included AI",
+  recruiters: "Recruiter tools",
+  sync: "Calendar / mail sync",
+  extension: "Browser extension",
+  api: "API and webhooks",
+  meetings: "Meeting transcription",
+  creditPacks: "Credit packs",
+  extraConnections: "Second Google / Microsoft account",
+  // Pricing-v2 walls, recorded since the analytics rollout (`recordGateRefusal`).
+  managedCredits: "Out of AI credits",
+  backgroundFloor: "Credits reserved for what you ask for",
+  speechShortform: "Dictation minutes",
+  speechMeeting: "Meeting transcription minutes",
+};
+
+/**
+ * Where recurring revenue came from, the one-time sales beside it, the revenue chosen not to
+ * collect (comps), and the revenue that wanted to arrive and could not (gate refusals).
+ *
+ * The movement is a table rather than a chart, deliberately: six signed dollar figures per
+ * month is what `TrendTable` was written for, and printed integers read as "basically nothing
+ * happened" where an autoscaled shape would read as a dramatic month.
+ */
+export default async function MoneyRevenuePage() {
+  const [movements, lifetime, lifetimeHolders, comps, comped, demand] = await Promise.all([
+    mrrMovementSeries("month", 6),
+    lifetimeSales(),
+    countLifetimePurchases().catch(() => 0),
+    compedForegoneCents(),
+    compedAccounts(),
+    gateDemand(30),
+  ]);
+
+  const totals = movements.reduce(
+    (acc, m) => ({
+      newCents: acc.newCents + m.newCents,
+      reactivationCents: acc.reactivationCents + m.reactivationCents,
+      churnCents: acc.churnCents + m.churnCents,
+      oneTimeCents: acc.oneTimeCents + m.oneTimeCents,
+    }),
+    { newCents: 0, reactivationCents: 0, churnCents: 0, oneTimeCents: 0 }
+  );
+
+  // Every known gate is listed, including the ones nothing hit: a wall nobody reaches is a
+  // finding (wrong tier, or nobody knows the feature exists), and filtering it out hides that.
+  const byFeature = new Map(demand.map((d) => [d.feature, d]));
+  const wallRows = KNOWN_GATES.map((feature) => {
+    const hit = byFeature.get(feature);
+    return {
+      label: GATE_LABELS[feature] ?? feature,
+      count: hit?.distinctUsers ?? 0,
+      sub: hit?.converted ?? 0,
+      subLabel: "upgraded within 30 days",
+      detail: hit
+        ? `${hit.hits} refusals across ${hit.distinctUsers} ${
+            hit.distinctUsers === 1 ? "person" : "people"
+          } · ${hit.freeUsers} on the free plan · ${hit.converted} upgraded within 30 days`
+        : "Nobody reached this wall in the last 30 days.",
+    };
+  }).sort((a, b) => b.count - a.count);
+  const refused = demand.reduce((sum, d) => sum + d.distinctUsers, 0);
+  const converted = demand.reduce((sum, d) => sum + d.converted, 0);
+
+  return (
+    <>
+      <AdminPageHeader
+        title="Revenue"
+        subtitle="Every change to recurring revenue, the one-time sales beside it, and the demand that did not convert"
+      />
+      <MoneyTabs />
+
+      <div className="space-y-6">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricTile
+            label="Gained, 6mo"
+            value={formatCents(totals.newCents + totals.reactivationCents)}
+            hint="new and returning"
+          />
+          <MetricTile
+            label="Lost, 6mo"
+            value={formatCents(Math.abs(totals.churnCents))}
+            tone={totals.churnCents < 0 ? "danger" : "muted"}
+            hint="churned"
+          />
+          <MetricTile
+            label="One-time, 6mo"
+            value={formatCents(totals.oneTimeCents)}
+            hint="credit packs and legacy Lifetime"
+          />
+          <MetricTile
+            label="Comped away"
+            value={`${formatCents(comps.foregoneMonthlyCents)}/mo`}
+            tone={comps.comped > 0 ? "accent" : "muted"}
+            hint={`${comps.comped} accounts at list price`}
+          />
+        </div>
+
+        <AdminPanel title="Recurring movement by month">
+          <TrendTable label="Recurring movement by month"
+            columns={["New", "Return", "Expand", "Contract", "Churn", "Net"]}
+            rows={movements.map((m) => ({
+              period: MONTH.format(m.bucketStart),
+              values: [
+                Math.round(m.newCents / 100),
+                Math.round(m.reactivationCents / 100),
+                Math.round(m.expansionCents / 100),
+                Math.round(m.contractionCents / 100),
+                Math.round(m.churnCents / 100),
+                Math.round(m.netCents / 100),
+              ],
+            }))}
+          />
+          <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            Whole dollars per month. <strong>Contract</strong> counts a monthly subscriber
+            moving to annual: {PRO_MONTHLY}/mo becomes {PRO_ANNUAL_MONTHLY}/mo on Pro (
+            {MAX_MONTHLY}/mo becomes {MAX_ANNUAL_MONTHLY}/mo on Max), so recurring revenue
+            genuinely falls while cash goes up. Both are true, and the cash side is on the
+            Costs tab. Internal, tester and comped accounts are not in these figures.
+          </p>
+        </AdminPanel>
+
+        <AdminPanel title="One-time sales">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <MetricTile
+              label="Lifetime sold"
+              value={lifetime.sold}
+              hint={`ledger purchases net of refunds · ${lifetimeHolders} hold it now · no longer on sale`}
+            />
+          </div>
+          <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            Revenue is booked from what each buyer actually paid. Credit packs are one-time
+            revenue too, never MRR.
+          </p>
+        </AdminPanel>
+
+        <AdminPanel title="Which wall, and who got past it">
+          <div className="mb-4 grid gap-3 sm:grid-cols-2">
+            <MetricTile
+              label="Refused, 30 days"
+              value={refused}
+              hint="people per wall, summed: someone refused at two walls counts twice"
+            />
+            <MetricTile
+              label="Upgraded after"
+              value={converted}
+              tone={converted > 0 ? "accent" : "muted"}
+              hint="paid within 30 days of the wall, and still paid"
+            />
+          </div>
+          <RankedBars rows={wallRows} />
+          <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            People, not refusals: forty hits from one person is one person who wanted the
+            feature. A tall bar with green is a wall doing its job; a tall bar with none is
+            demand not converting (price, or a broken upgrade path); an empty bar is a feature
+            in the wrong tier. Conversion is generous — any upgrade within thirty days counts,
+            whatever prompted it — so read it as an upper bound, not causation.
+          </p>
+        </AdminPanel>
+
+        <AdminPanel title="Comped accounts">
+          {comped.length === 0 ? (
+            <EmptyState>Nobody has been comped yet.</EmptyState>
+          ) : (
+            <AdminTable label="Comped accounts"
+              head={
+                <>
+                  <Th>Account</Th>
+                  <Th>Plan</Th>
+                  <Th>Reason</Th>
+                  <Th numeric>Granted</Th>
+                  <Th numeric>Worth</Th>
+                </>
+              }
+            >
+              {comped.map((row) => (
+                <tr key={row.userId} className="border-b border-border/40 last:border-b-0">
+                  <Td>
+                    <Link
+                      href={`/admin/users/${encodeURIComponent(row.userId)}`}
+                      className="hover:text-primary"
+                    >
+                      {row.email ?? row.userId}
+                    </Link>
+                  </Td>
+                  <Td>{row.plan && <PlanBadge plan={row.plan} source="comp" />}</Td>
+                  <Td className="max-w-xs truncate text-muted-foreground">
+                    {row.note ?? "—"}
+                  </Td>
+                  <Td numeric>
+                    <RelativeTime date={row.compedAt} />
+                  </Td>
+                  <Td numeric>
+                    {row.plan === "orbit" || row.plan === "max"
+                      ? `${formatCents(PLAN_CONFIG[row.plan].monthlyPriceCents ?? 0)}/mo`
+                      : "—"}
+                  </Td>
+                </tr>
+              ))}
+            </AdminTable>
+          )}
+          <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+            Priced so the decision can be reviewed rather than merely accumulated. A comp
+            is revenue chosen not to collect, which is a different thing from free.
+          </p>
+        </AdminPanel>
+      </div>
+    </>
+  );
+}

@@ -194,10 +194,10 @@ const ALLOWLIST: Record<string, string> = {
   "src/lib/ai-tools.ts:181": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
     "openai and openrouter both now take the isOpenAiShaped branch below, leaving only " +
     "Gemini as this arm's fallthrough.)",
-  "src/lib/admin-metrics.ts:356": "the \"openai\" arm of the four-way ternary that now also " +
+  "src/lib/admin-metrics.ts:299": "the \"openai\" arm of the four-way ternary that now also " +
     "checks \"anthropic\" and \"openrouter\" explicitly (this commit added the openrouter " +
     "arm and its query column), defaulting to gemini — exhaustive over AiProvider.",
-  "src/lib/admin-metrics.ts:358": "the \"anthropic\" arm of the same ternary — see line 356.",
+  "src/lib/admin-metrics.ts:301": "the \"anthropic\" arm of the same ternary — see line 299.",
   // Task 3 widened the completion arms of these cascades — completeJson,
   // completeMultimodalJsonInner and streamText, but NOT transcribeAudioWithAI, reverted in
   // fix round 1 (see its own entry below) — to `isOpenAiShaped(...)`, which already admits
@@ -239,10 +239,10 @@ const ALLOWLIST: Record<string, string> = {
     "\"gemini\": Orbit holds no managed OpenRouter key (facts.managed.openrouter is " +
     "hardcoded false and MANAGED_PROVIDER_ORDER excludes it), so no selected provider — " +
     "openrouter included — ever needs a third slot here.",
-  "src/lib/admin-user-detail.ts:570": "the \"openai\" arm of the four-way ternary that now " +
+  "src/lib/admin-user-detail.ts:517": "the \"openai\" arm of the four-way ternary that now " +
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",
-  "src/lib/admin-user-detail.ts:572": "the \"anthropic\" arm of the same ternary — see line 570.",
+  "src/lib/admin-user-detail.ts:519": "the \"anthropic\" arm of the same ternary — see line 517.",
   "src/actions/settings.ts:128": "the \"gemini\" arm of the four-way `hasPersonalKey` " +
     "ternary that now also checks \"openai\" and \"anthropic\" explicitly, defaulting to " +
     "settings?.openrouterApiKeyEncrypted (this fix round's fix — it used to default to the " +

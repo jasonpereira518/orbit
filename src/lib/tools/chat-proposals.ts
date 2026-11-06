@@ -37,6 +37,8 @@ const KIND_NOUN: Record<keyof ProposalScope, string> = {
 
 /** Cards per answer. A model that proposes more is told so, and the rest are not stored. */
 export const MAX_PROPOSALS = 10;
+/** Changes per answer the user did not ask for (`asked_for: false`): one suggestion, at most. */
+export const MAX_UNASKED = 1;
 
 type MutableScope = { [K in keyof ProposalScope]: Map<string, string> };
 
@@ -54,7 +56,11 @@ export type ProposalSink = {
   replace(action: StoredProposedAction): void;
 };
 
-export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: ReadonlyMap<string, string> }>): ProposalSink {
+export function createProposalSink(
+  seen: Partial<{ [K in keyof ProposalScope]: ReadonlyMap<string, string> }>,
+  opts: { timeZone?: string } = {}
+): ProposalSink {
+  const timeZone = opts.timeZone ?? "UTC";
   const scope = Object.fromEntries(SCOPE_KINDS.map((kind) => [kind, new Map(seen[kind] ?? [])])) as MutableScope;
   const proposals: StoredProposedAction[] = [];
   const keys = new Set<string>();
@@ -154,6 +160,13 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
           }
         }
       }
+      if (input.asked_for === false && proposals.filter((p) => p.args.input?.asked_for === false).length >= MAX_UNASKED) {
+        return { ok: false, error: "This answer already suggests one change nobody asked for; that is the most one answer may." };
+      }
+      // The sentence is written from the input as the model gave it (the user's own wall
+      // clock); what is stored is the normalized one the commit reads.
+      const preview = write.preview(input, scope);
+      input = write.normalize?.(input, { timeZone }) ?? input;
       const key = `${toolName}:${JSON.stringify(input)}`;
       const existing = proposals.find((p) => `${p.args.tool}:${JSON.stringify(p.args.input)}` === key);
       if (keys.has(key) && existing) {
@@ -164,7 +177,7 @@ export function createProposalSink(seen: Partial<{ [K in keyof ProposalScope]: R
       const action: StoredProposedAction = {
         id: randomUUID(),
         args: { kind: "tool", tool: write.name, input },
-        preview: write.preview(input, scope),
+        preview,
         status: "proposed",
         tier: tierOf(write, input),
         destructive: Boolean(write.destructive),

@@ -1,12 +1,11 @@
-import { and, desc, eq, gt, isNotNull, isNull, lt, sql } from "drizzle-orm";
-import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
+import { and, desc, eq, gt, isNotNull, lt, sql } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
 import {
   cronRuns,
   errorEvents,
   outreachCampaigns,
   outreachMessages,
   outreachProspects,
-  suggestedReminders,
   webhookDeliveries,
   opsAlertState,
 } from "@/db/schema";
@@ -97,13 +96,6 @@ export type WebhookHealth = {
   ignored: Array<{ eventType: string | null; reason: string | null; count: number }>;
   retried: Array<{ eventId: string; count: number }>;
   recentInvalid: Array<{ eventId: string | null; error: string | null; at: Date }>;
-};
-
-export type BugSignatures = {
-  confirmedWithoutReminder: number;
-  /** Rows the semantic index cannot see. Null when pgvector is unavailable (local dev). */
-  embeddingsMissingVector: number | null;
-  inlinedAvatars: number;
 };
 
 /** `usage_events.error_kind` values that mean Orbit broke, not the user's key. */
@@ -291,53 +283,6 @@ export async function getWebhookHealth(days = 7, now = new Date()): Promise<Webh
       .filter((r): r is { eventId: string; n: number } => Boolean(r.eventId))
       .map((r) => ({ eventId: r.eventId, count: r.n })),
     recentInvalid,
-  };
-}
-
-export async function getBugSignatures(): Promise<BugSignatures> {
-  const db = await getDb();
-
-  const [confirmed, inlined] = await Promise.all([
-    // A confirm that wrote its status but never landed the reminder row. A code bug, not
-    // a data-quality problem — hence Ops rather than Product.
-    db
-      .select({ n: countInt })
-      .from(suggestedReminders)
-      .where(
-        and(
-          eq(suggestedReminders.status, "confirmed"),
-          isNull(suggestedReminders.reminderId)
-        )
-      ),
-    // Measures the harm of an unconfigured Blob store directly, instead of logging the
-    // config fact once per cold start: these are base64 images living in Postgres.
-    // `substr(…, 1, 5)` is exactly `LIKE 'data:%'` but detoasts one chunk of each image
-    // rather than all of it. The same figure is on the page's data-quality panel; that one
-    // is a separate server component, so the two cannot share a read.
-    db.execute(
-      sql`SELECT count(*)::int AS n FROM contacts WHERE substr(profile_image_url, 1, 5) = 'data:'`
-    ),
-  ]);
-
-  let embeddingsMissingVector: number | null = null;
-  if (isPgvectorAvailable()) {
-    try {
-      // Raw SQL: `embedding_vector` is created by migratePgvector at runtime, is absent
-      // from schema.ts, and does not exist at all on PGlite. Rows with a null vector are
-      // invisible to semantic search and nothing else reports them.
-      const res = await db.execute(
-        sql`SELECT count(*)::int AS n FROM contact_embeddings WHERE embedding_vector IS NULL`
-      );
-      embeddingsMissingVector = rowsOf<{ n: number }>(res)[0]?.n ?? 0;
-    } catch {
-      embeddingsMissingVector = null;
-    }
-  }
-
-  return {
-    confirmedWithoutReminder: confirmed[0]?.n ?? 0,
-    embeddingsMissingVector,
-    inlinedAvatars: rowsOf<{ n: number }>(inlined)[0]?.n ?? 0,
   };
 }
 
