@@ -20,11 +20,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // naming Vercel BotID and the Slack feedback excerpt, all of which were true and unsaid.
 // 2026-11-05: reviewing the people a capture found looks each NEW one up on the web, by
 // name with the company, role, place met and city the note gives — never an email or phone.
-export const TERMS_VERSION = "2026-11-05";
-export const LEGAL_LAST_UPDATED = "November 5, 2026";
-// 2026-11-05 (same day): Email insights, which reads the sender, subject and Gmail's preview of
-// new job and hiring-process threads. Bump this before it ships if accounts have already
-// accepted the 2026-11-05 text above.
+// 2026-11-06: Email insights, which reads the sender, subject and Gmail's preview of new job and
+// hiring-process threads. Bumped a day after the text above so accounts that accepted 2026-11-05
+// are asked again.
+export const TERMS_VERSION = "2026-11-06";
+export const LEGAL_LAST_UPDATED = "November 6, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
