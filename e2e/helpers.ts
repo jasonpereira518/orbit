@@ -69,6 +69,12 @@ export async function createContact(page: Page, fullName: string): Promise<void>
   await expect(page.getByRole("heading", { level: 1, name: fullName })).toBeVisible();
 }
 
+/** The About you step follows the welcome on both paths; the specs that walk past it skip it. */
+export async function skipAboutStep(page: Page) {
+  await expect(page.getByRole("heading", { name: "Where can Orbit find you?" })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Skip for now" }).click();
+}
+
 /**
  * The connect step appears only where a Google or Microsoft OAuth client is configured (a
  * worktree with the keys in .env.local, never CI). Skip it when it shows, so the specs pass

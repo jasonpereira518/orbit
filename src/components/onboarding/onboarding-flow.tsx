@@ -18,6 +18,7 @@ import {
   StaggerItem,
   StepHeading,
 } from "@/components/onboarding/onboarding-ui";
+import { AboutStep } from "@/components/onboarding/steps/about-step";
 import { CaptureStep } from "@/components/onboarding/steps/capture-step";
 import { ConnectStep } from "@/components/onboarding/steps/connect-step";
 import { HighlightsStep, type PlanFlags } from "@/components/onboarding/steps/highlights-step";
@@ -60,6 +61,8 @@ export type OnboardingFlowProps = {
   captureJob: CaptureJobView | null;
   linkedinRequested: boolean;
   linkedinImported: boolean;
+  /** `social_links.linkedin`, so the About you step's URL field starts filled. */
+  linkedinUrl: string | null;
   /** Surface keys hidden from this viewer; their overview chapters are skipped. */
   hidden: string[];
   /** Page keys behind the coming-soon screen for this viewer. */
@@ -98,6 +101,7 @@ export function OnboardingFlow({
   captureJob: initialCaptureJob,
   linkedinRequested,
   linkedinImported,
+  linkedinUrl,
   hidden,
   comingSoon,
   connect,
@@ -335,6 +339,16 @@ export function OnboardingFlow({
               <Centered>
                 <WelcomeStep needsTerms={!termsDone} pending={pending} onChoose={choosePath} />
               </Centered>
+            )}
+
+            {step === "about" && (
+              <AboutStep
+                initialUrl={linkedinUrl}
+                pending={pending}
+                onNext={() => advance("about")}
+                onSkip={() => advance("about")}
+                onBack={() => retreat("about")}
+              />
             )}
 
             {step === "import" && (

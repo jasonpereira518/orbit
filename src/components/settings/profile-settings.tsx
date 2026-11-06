@@ -189,8 +189,8 @@ export function ProfileSettings({
       </SettingsRow>
 
       <SettingsRow
-        title="From your LinkedIn export"
-        description="Your headline, current role, skills and the job titles you watch. Orbit uses them to pick who is worth reaching out to; it never overwrites what you typed above."
+        title="From your LinkedIn"
+        description="Your headline, current role, skills and the job titles you watch, from your LinkedIn export or the profile you gave during setup. Orbit uses them to pick who is worth reaching out to; it never overwrites what you typed above."
       >
         {/* `aim` alone (onboarding's, kept by Remove) is not an import: no rows to show. */}
         {career && careerRows(career).length ? (

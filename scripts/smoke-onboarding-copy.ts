@@ -45,6 +45,21 @@ const raised = applyPlanOverrides(PLAN_CONFIG, parsePlanRules([limitRuleRow("fre
 check("…and follows the effective plan table", freeAiExplainer(raised).startsWith("Free includes 80 AI credits a month"), freeAiExplainer(raised));
 check("the highlights name the plan a locked line unlocks on", highlights.includes("unlockTagPlan("));
 
+// The About you step: skippable on every screen, never waits on the self-lookup, and only a
+// confident lookup prefills or is sent to the save.
+const about = readFileSync("src/components/onboarding/steps/about-step.tsx", "utf8");
+const flow = readFileSync("src/components/onboarding/onboarding-flow.tsx", "utf8");
+check("the stage renders the About you step", /step === "about" && \([\s\S]{0,200}<AboutStep/.test(flow));
+check("'Skip for now' is a Button that skips without saving", /<Button[^>]*onClick=\{onSkip\}[^>]*>\s*Skip for now/.test(about));
+check("there is a no-LinkedIn way through", about.includes("I don’t use LinkedIn"));
+check("an unconfirmed lookup says so", about.includes("We couldn’t confirm this is you"));
+check("the lookup is fired, never awaited", about.includes("lookUpMyself(") && !/await lookUpMyself/.test(about));
+check("only a confident lookup becomes the prefill", /status === "confident" \? lookup\.prefill : null/.test(about));
+check("chips are toggle buttons", /<button[\s\S]{0,120}aria-pressed=/.test(about));
+check("the URL field has a visible label", /<Field[^>]*label="Your LinkedIn profile"/.test(about));
+const dashboard = readFileSync("src/components/dashboard/dashboard-sections.tsx", "utf8");
+check("the setup checklist asks for a goal when none is set", /id: "about",\s*label: "Tell Orbit what you’re going for"/.test(dashboard));
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);
