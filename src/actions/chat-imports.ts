@@ -86,7 +86,7 @@ export async function startChatImport(importId: string): Promise<{ totalRows: nu
 
   after(() => runImportJobById(importId).catch(() => {}));
 
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return started;
 }
