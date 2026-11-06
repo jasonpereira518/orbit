@@ -213,16 +213,19 @@ export type { AiProvider };
  * What one hosted web search costs on top of its tokens, in micros, by provider — charged by
  * `webSearchJson` through `surchargeMicros` so included AI's credits and pools see it.
  *
- *  - anthropic: $10 per 1,000 searches (platform.claude.com/docs/en/about-claude/pricing,
- *    checked 2026-10-18), counted from `usage.server_tool_use.web_search_requests`.
- *  - openai: $10 per 1,000 calls for the hosted `web_search` tool, search content tokens not
- *    billed. One per `web_search_call` output item. NOT CHECKED against OpenAI's pricing page
- *    (unreachable when set): taken from a third-party tracker and an OpenAI community thread,
- *    which put the older $25 rate at a 2026 cut to $10. Re-check before relying on it.
- *  - gemini: Gemini 3 models bill $14 per 1,000 search QUERIES the model runs, so a prompt that
- *    searches three times costs three; earlier models (2.5 and before) bill $35 per 1,000
- *    GROUNDED PROMPTS, one per grounded response (`geminiSearchFeeMicros`). Same caveat: from a
- *    single third-party comparison, not Google's pricing page.
+ *  All checked against the providers' own pricing pages on 2026-11-06:
+ *  - anthropic: $10 per 1,000 searches (platform.claude.com/docs/en/about-claude/pricing),
+ *    counted from `usage.server_tool_use.web_search_requests`. A failed search is not billed.
+ *  - openai: $10 per 1,000 calls for the hosted `web_search` tool (developers.openai.com/api/docs/pricing,
+ *    "Web search (all models)"), one per `web_search_call` output item. Search content tokens are
+ *    billed on top at the model's rates; for gpt-4o-mini and gpt-4.1-mini that is a fixed block of
+ *    8,000 input tokens per call, which this fee does not include. The $25 rate is the older
+ *    `web_search_preview` tool for non-reasoning models, which Orbit does not use.
+ *  - gemini: Gemini 3 and later bill $14 per 1,000 search QUERIES the model runs, so a prompt that
+ *    searches three times costs three; 2.5 and earlier bill $35 per 1,000 GROUNDED PROMPTS, one per
+ *    grounded response (`geminiSearchFeeMicros`). Source: ai.google.dev/gemini-api/docs/pricing and
+ *    /docs/google-search. Free allowances (5,000 a month on Gemini 3, 1,500 a day on 2.5) are
+ *    Google's pool and are not modelled.
  *  - openrouter reports its own cost, plugin included, so it needs no entry.
  */
 export const WEB_SEARCH_FEE_MICROS = { anthropic: 10_000, openai: 10_000, gemini: 14_000 } as const;
