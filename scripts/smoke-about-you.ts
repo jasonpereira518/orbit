@@ -12,6 +12,7 @@ import {
   parseOwnLinkedInUrl,
   type AboutAnswers,
 } from "../src/lib/about-you";
+
 let failures = 0;
 function check(label: string, condition: boolean, detail?: string) {
   if (condition) return console.log(`  ok  ${label}`);
