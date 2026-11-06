@@ -3,9 +3,10 @@
 /**
  * Microsoft, as one page: connect once, then a row per feature. The Google page's twin.
  *
- * Four rows where Google has five. Microsoft has no send purpose — `microsoft-scopes.ts`
- * asks for Contacts, Calendars and Mail and nothing else — so there is no "Send from"
- * row here, and `microsoftAccountStatus` returns no `send` capability for one to read.
+ * Themed in Microsoft's four colours (header logo, a strip of square panes rather than Google's
+ * bar, tinted row tiles); controls stay Orbit's. Each sync lane has its own switch (v194), the
+ * Meetings row picks calendars, and Send from Outlook appears only where Outlook sending is
+ * released (`feature.outlook-send`, coming-soon until the privacy page discloses Mail.Send).
  *
  * The recruiter scan appears in Settings for the first time on this page. Before it, the
  * Outlook scan lived only on /recruiters: the Settings dialog had a Gmail tab and no Outlook
@@ -52,11 +53,30 @@
 
 import { useViewerPlan } from "@/components/viewer-plan";
 import { availableOn } from "@/lib/plans/plan-config";
-import { useState, useTransition } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
-import { CalendarClock, CalendarDays, Loader2, Mail, Users } from "lucide-react";
-import { getOutlookScanStatus, setCalendarSync, type OutlookScanStatus } from "@/actions/outlook";
+import { CalendarClock, CalendarDays, Cloud, Loader2, Mail, RefreshCw, Send, Users } from "lucide-react";
+import {
+  getOutlookScanStatus,
+  setCalendarSync,
+  setOutlookContactsSync,
+  type OutlookScanStatus,
+} from "@/actions/outlook";
+import {
+  getMicrosoftPanel,
+  refreshMicrosoftCalendars,
+  setMicrosoftCalendarEnabled,
+  type MicrosoftCalendarRow,
+  type MicrosoftPanel,
+} from "@/actions/microsoft-settings";
+import { listImports, type ImportHistoryItem } from "@/actions/imports";
+import { getSendCapabilityAction } from "@/actions/email-sends";
+import { CalendarPicker, SwitchRow } from "@/components/settings/account-rows";
+import { IMPORT_HISTORY_LIMIT, ImportHistoryRow } from "@/components/settings/import-history-row";
+import { MicrosoftMark } from "@/components/settings/provider-marks";
+import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
@@ -74,6 +94,13 @@ import {
 } from "@/lib/integration-status";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
+
+/** Microsoft's logo colours, exactly as `MicrosoftMark` draws them. */
+const MICROSOFT = { red: "#F25022", green: "#7FBA00", blue: "#00A4EF", yellow: "#FFB900" } as const;
+const MICROSOFT_STRIPE = [MICROSOFT.red, MICROSOFT.green, MICROSOFT.blue, MICROSOFT.yellow];
+const MICROSOFT_IMPORT_TYPES = ["outlook_contacts", OUTLOOK_SCAN_IMPORT_TYPE];
+
+type SendCapability = Awaited<ReturnType<typeof getSendCapabilityAction>>;
 
 export function MicrosoftAccountPage({
   returnTo,
@@ -139,6 +166,28 @@ export function MicrosoftAccountPage({
       ? latestScan.scan !== null
       : undefined;
 
+  // Counts, calendars, OneDrive, history and today's sends: read once the account is known to be
+  // connected, which also keeps them clear of the sign-in return's strip (see the scan read).
+  const connected = account?.state === "connected";
+  const [panel, setPanel] = useState<MicrosoftPanel | null>(null);
+  const [history, setHistory] = useState<ImportHistoryItem[] | null>(null);
+  const [sendCap, setSendCap] = useState<SendCapability | null>(null);
+  const loadPanel = useCallback(() => {
+    getMicrosoftPanel().then(setPanel, () => {});
+    listImports({ limit: IMPORT_HISTORY_LIMIT, importTypes: MICROSOFT_IMPORT_TYPES }).then(setHistory, () =>
+      setHistory([])
+    );
+    getSendCapabilityAction().then(setSendCap, () => {});
+  }, []);
+  useEffect(() => {
+    if (connected) loadPanel();
+  }, [connected, loadPanel]);
+  const refreshAll = () => {
+    connection.refresh();
+    loadPanel();
+  };
+  const router = useRouter();
+
   return (
     <AccountPageShell
       provider="microsoft"
@@ -154,19 +203,47 @@ export function MicrosoftAccountPage({
         )
       }
       hasDeletableData={hasDeletableData}
+      mark={<MicrosoftMark className="size-6" />}
+      stripe={MICROSOFT_STRIPE}
+      stripeVariant="tiles"
     >
       <ContactsRow
         capability={capabilities.contacts}
         contacts={contacts}
+        fromOutlook={panel?.contactsFromOutlook ?? null}
         busy={connection.busy}
         onAllow={() => connection.connect(["contacts"])}
       />
 
+      {status?.hasContactsScope ? (
+        <SwitchRow
+          icon={<RefreshCw className="size-4" />}
+          tone={MICROSOFT.blue}
+          title="Keep contacts in sync"
+          description={
+            status.contactsSyncEnabled
+              ? `New and changed Outlook contacts come in on their own.${
+                  panel?.contactsSyncedAt
+                    ? ` Synced ${formatDistanceToNow(new Date(panel.contactsSyncedAt), { addSuffix: true })}.`
+                    : ""
+                }`
+              : "Off — only the contacts you import yourself come in."
+          }
+          on={status.contactsSyncEnabled}
+          busy={connection.busy}
+          save={(on) => setOutlookContactsSync(on)}
+          done={(on) => (on ? "Contacts will keep in sync" : "Contacts sync is off")}
+          onSaved={refreshAll}
+        />
+      ) : null}
+
       <MeetingsRow
         capability={capabilities.meetings}
         lastCheckedAt={status?.lastSyncedAt ?? null}
+        meetingsLogged={panel?.meetingsLogged ?? null}
+        calendars={panel?.calendars ?? []}
         busy={connection.busy}
-        onRefresh={connection.refresh}
+        onRefresh={refreshAll}
         onAllow={() => connection.connect(["calendar"])}
       />
 
@@ -187,6 +264,38 @@ export function MicrosoftAccountPage({
         />
       ) : null}
 
+      {sendCap?.outlookAvailable ? (
+        <FeatureRow
+          icon={<Send className="size-4" />}
+          tone={MICROSOFT.red}
+          title="Send from Outlook"
+          description={
+            <>
+              Replies you approve go out from your address.
+              {status?.canSend ? ` ${sendCap.usedToday} of ${sendCap.dailyCap} sent today across your mailboxes. ` : " "}
+              {status?.canSend ? (
+                <Link href="/settings#settings-email" className="underline underline-offset-2 hover:text-foreground">
+                  Signature and defaults
+                </Link>
+              ) : null}
+            </>
+          }
+          control={rowControl("send", capabilities.send)}
+          disabled={connection.busy}
+          onAction={() => connection.connect(["send"])}
+        />
+      ) : null}
+
+      <FeatureRow
+        icon={<Cloud className="size-4" />}
+        tone={MICROSOFT.yellow}
+        title="Notes from OneDrive"
+        description={oneDriveLine(status?.canReadFiles ?? false, panel?.oneDrive ?? null)}
+        control={{ kind: "action", label: status?.canReadFiles ? "Review notes" : "Allow" }}
+        disabled={connection.busy}
+        onAction={() => (status?.canReadFiles ? router.push("/capture?mode=cloud") : connection.connect(["files"]))}
+      />
+
       <FeatureRow
         icon={<CalendarClock className="size-4" />}
         title="Reminders in Outlook"
@@ -196,18 +305,36 @@ export function MicrosoftAccountPage({
         control={{ kind: "action", label: "Add" }}
         onAction={() => onOpenPage("reminders")}
       />
+
+      <ImportHistoryRow history={history} source="Outlook" onUndone={loadPanel} />
     </AccountPageShell>
   );
+}
+
+/** OneDrive's watch, in a line. Never `lastError` verbatim: it can be a raw provider body. */
+function oneDriveLine(canRead: boolean, drive: MicrosoftPanel["oneDrive"]): string {
+  const base = "Orbit spots meeting notes you save to OneDrive and offers the people in them.";
+  if (!canRead) return `${base} Asks Microsoft first.`;
+  if (!drive) return `${base} Starting soon.`;
+  if (drive.lastError) return "OneDrive stopped answering — sign in again if this lasts.";
+  const found = drive.notesFound ? ` ${drive.notesFound.toLocaleString()} waiting for you.` : "";
+  const checked = drive.lastScanAt
+    ? ` Checked ${formatDistanceToNow(new Date(drive.lastScanAt), { addSuffix: true })}.`
+    : "";
+  return `Watching OneDrive for meeting notes.${found}${checked}`;
 }
 
 function ContactsRow({
   capability,
   contacts,
+  fromOutlook,
   busy,
   onAllow,
 }: {
   capability: CapabilityStatus | undefined;
   contacts: ReturnType<typeof useContactsImport>;
+  /** People already brought in from Outlook; null while loading. */
+  fromOutlook: number | null;
   busy: boolean;
   onAllow: () => void;
 }) {
@@ -234,11 +361,14 @@ function ContactsRow({
   return (
     <FeatureRow
       icon={<Users className="size-4" />}
+      tone={MICROSOFT.blue}
       title="Contacts"
       description={
         imported
           ? `${imported} You pick who comes in.`
-          : "Bring your Microsoft contacts into Orbit. You choose who before anything’s added."
+          : fromOutlook
+            ? `${fromOutlook.toLocaleString()} ${fromOutlook === 1 ? "contact" : "contacts"} from Outlook. You choose who before anything new is added.`
+            : "Bring your Microsoft contacts into Orbit. You choose who before anything’s added."
       }
       control={rowControlForState}
       disabled={working}
@@ -275,6 +405,8 @@ function ContactsRow({
 function MeetingsRow({
   capability,
   lastCheckedAt,
+  meetingsLogged,
+  calendars,
   busy,
   onRefresh,
   onAllow,
@@ -282,6 +414,8 @@ function MeetingsRow({
   capability: CapabilityStatus | undefined;
   /** ISO, from the connection status. Null until the first run. */
   lastCheckedAt: string | null;
+  meetingsLogged: number | null;
+  calendars: MicrosoftCalendarRow[];
   busy: boolean;
   onRefresh: () => void;
   onAllow: () => void;
@@ -300,7 +434,7 @@ function MeetingsRow({
           toast.error(result.error);
           return;
         }
-        toast.success(on ? "Meetings are on" : "Meetings are off");
+        toast.success(on ? "Meetings are on" : "Meetings are off — contacts keep syncing");
         onRefresh();
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.saveFailed));
@@ -311,8 +445,9 @@ function MeetingsRow({
   return (
     <FeatureRow
       icon={<CalendarDays className="size-4" />}
+      tone={MICROSOFT.green}
       title="Meetings"
-      description={meetingsLine(capability, lastCheckedAt)}
+      description={meetingsLine(capability, lastCheckedAt, meetingsLogged)}
       control={control}
       disabled={busy || pending}
       onAction={() => {
@@ -321,17 +456,36 @@ function MeetingsRow({
         if (control.kind === "switch") toggle(!control.on);
         else onAllow();
       }}
-    />
+    >
+      {control.kind === "switch" && control.on ? (
+        <CalendarPicker
+          calendars={calendars}
+          tone={MICROSOFT.green}
+          primaryLabel="Default"
+          setEnabled={setMicrosoftCalendarEnabled}
+          refreshList={refreshMicrosoftCalendars}
+          onChanged={onRefresh}
+        />
+      ) : null}
+    </FeatureRow>
   );
 }
 
 /** Never `syncError`, which can be a raw provider body — `detail` is already safe to show. */
-function meetingsLine(capability: CapabilityStatus | undefined, lastCheckedAt: string | null): string {
+function meetingsLine(
+  capability: CapabilityStatus | undefined,
+  lastCheckedAt: string | null,
+  meetingsLogged: number | null
+): string {
   if (capability?.state === "paused" && capability.detail) return capability.detail;
   if (capability?.state === "off") return "Off — meetings aren’t being logged.";
   const base = "Logs meetings with people you know onto their timelines.";
-  if (capability?.state !== "on" || !lastCheckedAt) return base;
-  return `${base} Checked ${formatDistanceToNow(new Date(lastCheckedAt), { addSuffix: true })}.`;
+  if (capability?.state !== "on") return base;
+  const logged = meetingsLogged ? ` ${meetingsLogged.toLocaleString()} logged.` : "";
+  const checked = lastCheckedAt
+    ? ` Checked ${formatDistanceToNow(new Date(lastCheckedAt), { addSuffix: true })}.`
+    : "";
+  return `${base}${logged}${checked}`;
 }
 
 /**
@@ -390,6 +544,7 @@ function InboxRow({
   return (
     <FeatureRow
       icon={<Mail className="size-4" />}
+      tone={MICROSOFT.red}
       title="Recruiters in Outlook"
       description={
         needsAi ? (

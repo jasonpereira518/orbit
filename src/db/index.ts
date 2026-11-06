@@ -981,6 +981,8 @@ CREATE TABLE IF NOT EXISTS outlook_connections (
   sync_started_at timestamptz,
   sync_error text,
   sync_failures integer NOT NULL DEFAULT 0,
+  calendar_sync_enabled integer NOT NULL DEFAULT 1,
+  contacts_sync_enabled integer NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2926,7 +2928,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // per-feature switches, replacing the Meetings switch's pause of the whole connection (paused
 // rows are converted to both-off and re-armed). Rescanned every remote ref and worktree on
 // Nov 6 2026: 191 (main) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 192;
+//
+// 194 = outlook_connections.calendar_sync_enabled + contacts_sync_enabled: the same per-feature
+// switches for the Microsoft page (paused rows converted the same way). Rescanned every remote
+// ref on Nov 6 2026: 193 is claimed by claude/chat-loading-updates-pane (unmerged), so 194.
+export const SCHEMA_VERSION = 194;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4947,6 +4953,10 @@ const alters = [
   `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS calendar_sync_enabled integer NOT NULL DEFAULT 1`,
   `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS contacts_sync_enabled integer NOT NULL DEFAULT 1`,
   `UPDATE gmail_connections SET calendar_sync_enabled = 0, contacts_sync_enabled = 0, sync_status = 'idle', next_sync_at = now() WHERE sync_status = 'paused'`,
+  // v194: the same split for Microsoft. Its Meetings switch paused the whole Outlook row too.
+  `ALTER TABLE outlook_connections ADD COLUMN IF NOT EXISTS calendar_sync_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE outlook_connections ADD COLUMN IF NOT EXISTS contacts_sync_enabled integer NOT NULL DEFAULT 1`,
+  `UPDATE outlook_connections SET calendar_sync_enabled = 0, contacts_sync_enabled = 0, sync_status = 'idle', next_sync_at = now() WHERE sync_status = 'paused'`,
   // Arm the connections that already exist.
   //
   // `sync_status IS NULL` is the load-bearing half of this predicate, not decoration.

@@ -87,6 +87,10 @@ export type MicrosoftConnectionInput = {
   hasContactsScope: boolean;
   hasCalendarScope: boolean;
   hasMailScope: boolean;
+  /** The Meetings switch is off (v194): same reading as Google's. Optional for callers that predate it. */
+  syncPaused?: boolean;
+  /** Mail.Send. Optional: callers that predate the Send row leave it out and get no `send`. */
+  canSend?: boolean;
 };
 
 /**
@@ -163,8 +167,12 @@ export function microsoftAccountStatus(c: MicrosoftConnectionInput, plan: Plan):
     email: c.emailAddress,
     capabilities: {
       contacts: { state: c.hasContactsScope ? "available" : "not_allowed" },
-      meetings: meetingsStatus(c.hasCalendarScope, c.status, c.syncError, "Microsoft"),
+      meetings:
+        c.hasCalendarScope && c.syncPaused && c.status !== "disarmed"
+          ? { state: "off", detail: "Off" }
+          : meetingsStatus(c.hasCalendarScope, c.status, c.syncError, "Microsoft"),
       ...inboxCapability(c.hasMailScope, plan),
+      ...(c.canSend === undefined ? {} : { send: { state: c.canSend ? ("on" as const) : ("not_allowed" as const) } }),
     },
   };
 }

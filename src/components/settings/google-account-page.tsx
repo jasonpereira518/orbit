@@ -82,7 +82,7 @@ import { listImports, type ImportHistoryItem } from "@/actions/imports";
 import { setEmailActivitySync } from "@/actions/email-activity";
 import { getSendCapabilityAction } from "@/actions/email-sends";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { CalendarPicker, SwitchRow } from "@/components/settings/account-rows";
 import { GoogleMark } from "@/components/settings/provider-marks";
 import { IMPORT_HISTORY_LIMIT, ImportHistoryRow } from "@/components/settings/import-history-row";
 import { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-type";
@@ -505,112 +505,16 @@ function MeetingsRow({
       }}
     >
       {control.kind === "switch" && control.on ? (
-        <CalendarPicker calendars={calendars} onChanged={onRefresh} />
+        <CalendarPicker
+          calendars={calendars}
+          tone={GOOGLE.green}
+          primaryLabel="Primary"
+          setEnabled={setGoogleCalendarEnabled}
+          refreshList={refreshGoogleCalendars}
+          onChanged={onRefresh}
+        />
       ) : null}
     </FeatureRow>
-  );
-}
-
-/**
- * Which Google calendars meetings come from. Only the primary one until the person asks Google
- * for the rest ("Show my other calendars"); new ones start off, since reading more of
- * someone's calendars is their call.
- */
-function CalendarPicker({ calendars, onChanged }: { calendars: GoogleCalendarRow[]; onChanged: () => void }) {
-  const [pending, start] = useTransition();
-  const run = (fn: () => Promise<unknown>) =>
-    start(async () => {
-      try {
-        await fn();
-        onChanged();
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
-      }
-    });
-  return (
-    <div className="space-y-2">
-      <p className="text-xs font-medium text-muted-foreground">Calendars</p>
-      {calendars.length ? (
-        <ul className="space-y-1.5">
-          {calendars.map((c) => (
-            <li key={c.id}>
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={c.enabled}
-                  disabled={pending}
-                  onCheckedChange={(on) => run(() => setGoogleCalendarEnabled(c.id, on))}
-                />
-                <span
-                  aria-hidden
-                  className="size-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: c.color ?? GOOGLE.green }}
-                />
-                <span className="min-w-0 truncate">{c.name}</span>
-                {c.primary ? <span className="text-xs text-muted-foreground">Primary</span> : null}
-              </label>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-muted-foreground">Your primary calendar.</p>
-      )}
-      <Button variant="ghost" size="sm" className="-ml-2" disabled={pending} onClick={() => run(refreshGoogleCalendars)}>
-        {calendars.length > 1 ? "Refresh calendar list" : "Show my other calendars"}
-      </Button>
-    </div>
-  );
-}
-
-/**
- * A row whose whole job is one setting. `save` answers like the actions here do (an
- * `ActionResult` whose refusal is shown verbatim), and the page re-reads on success.
- */
-function SwitchRow({
-  icon,
-  tone,
-  title,
-  description,
-  on,
-  busy,
-  save,
-  done,
-  onSaved,
-}: {
-  icon: React.ReactNode;
-  tone: string;
-  title: string;
-  description: React.ReactNode;
-  on: boolean;
-  busy: boolean;
-  save: (on: boolean) => Promise<{ ok: true } | { ok: false; error: string }>;
-  done: (on: boolean) => string;
-  onSaved: () => void;
-}) {
-  const [pending, start] = useTransition();
-  return (
-    <FeatureRow
-      icon={icon}
-      tone={tone}
-      title={title}
-      description={description}
-      control={{ kind: "switch", on }}
-      disabled={busy || pending}
-      onAction={() =>
-        start(async () => {
-          try {
-            const result = await save(!on);
-            if (!result.ok) {
-              toast.error(result.error);
-              return;
-            }
-            toast.success(done(!on));
-            onSaved();
-          } catch (err) {
-            toast.error(friendlyError(err, TOAST_COPY.saveFailed));
-          }
-        })
-      }
-    />
   );
 }
 

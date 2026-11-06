@@ -74,13 +74,16 @@ export function AccountPageShell({
   hasDeletableData,
   mark,
   stripe,
+  stripeVariant = "bar",
   children,
 }: {
   provider: AccountProvider;
-  /** The provider's logo, shown in place of the initials avatar. Optional: Microsoft passes none. */
+  /** The provider's logo, shown in place of the initials avatar. */
   mark?: React.ReactNode;
   /** Brand colors for a thin strip under the header, in order. Exact published values only. */
   stripe?: readonly string[];
+  /** `bar` (Google): one continuous rounded strip. `tiles` (Microsoft): separate square panes. */
+  stripeVariant?: "bar" | "tiles";
   /** Null while the status is still loading, or if it never arrived. */
   account: AccountStatus | null;
   loading: boolean;
@@ -149,11 +152,19 @@ export function AccountPageShell({
         hasDeletableData={hasDeletableData}
       />
       {stripe?.length ? (
-        <div aria-hidden className="flex h-1 overflow-hidden rounded-full">
-          {stripe.map((color) => (
-            <span key={color} className="flex-1" style={{ backgroundColor: color }} />
-          ))}
-        </div>
+        stripeVariant === "tiles" ? (
+          <div aria-hidden className="flex gap-[3px]">
+            {stripe.map((color) => (
+              <span key={color} className="size-2.5" style={{ backgroundColor: color }} />
+            ))}
+          </div>
+        ) : (
+          <div aria-hidden className="flex h-1 overflow-hidden rounded-full">
+            {stripe.map((color) => (
+              <span key={color} className="flex-1" style={{ backgroundColor: color }} />
+            ))}
+          </div>
+        )
       ) : null}
 
       {signedOut ? (
