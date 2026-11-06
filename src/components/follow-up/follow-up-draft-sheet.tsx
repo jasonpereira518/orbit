@@ -20,6 +20,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { DraftPurposeRow, editedPurpose } from "@/components/follow-up/draft-purpose-row";
 import { FollowUpDraftComposer } from "@/components/follow-up/follow-up-draft-composer";
 import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { AiKeyNotice } from "@/components/ai-key-notice";
@@ -63,6 +64,8 @@ export function FollowUpDraftSheet({
   const [draft, setDraft] = useState("");
   const [aiDraft, setAiDraft] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [purpose, setPurpose] = useState("");
+  const [pickedPurpose, setPickedPurpose] = useState("");
   const [sendOptions, setSendOptions] =
     useState<ContactFollowUpSendOptions | null>(null);
   const [pending, start] = useTransition();
@@ -76,6 +79,8 @@ export function FollowUpDraftSheet({
     setDraft("");
     setAiDraft(null);
     setAiError(null);
+    setPurpose("");
+    setPickedPurpose("");
     setSendOptions(null);
 
     start(async () => {
@@ -112,6 +117,8 @@ export function FollowUpDraftSheet({
               setAiError(null);
               setDraft(result.body);
               setAiDraft(result.body);
+              setPurpose(result.purpose);
+              setPickedPurpose(result.purpose);
             },
             report
           );
@@ -125,7 +132,7 @@ export function FollowUpDraftSheet({
   function regenerate() {
     start(async () => {
       try {
-        const result = await draftContactFollowUp(contactId, { intent });
+        const result = await draftContactFollowUp(contactId, { intent, purpose: editedPurpose(purpose, pickedPurpose) });
         if (!result.ok) {
           setAiError(result.error);
           return;
@@ -133,6 +140,8 @@ export function FollowUpDraftSheet({
         setAiError(null);
         setDraft(result.body);
         setAiDraft(result.body);
+        setPurpose(result.purpose);
+        setPickedPurpose(result.purpose);
         toast.success("Draft ready");
       } catch (err) {
         toast.error(
@@ -218,6 +227,7 @@ export function FollowUpDraftSheet({
             </Button>
           </div>
           {aiError && <AiKeyNotice feature="draft" reason={aiDenialFromMessage(aiError)} compact />}
+          {pickedPurpose ? <DraftPurposeRow value={purpose} onChange={setPurpose} /> : null}
           <FollowUpDraftComposer
             contactName={contactName}
             draft={draft}
