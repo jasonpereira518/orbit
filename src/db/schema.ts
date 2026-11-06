@@ -34,7 +34,7 @@ import type {
 } from "@/lib/radar/types";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
-import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
+import type { AimKind, Field, Timeline } from "@/lib/about-you";import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
 import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
 import type {
@@ -1919,6 +1919,13 @@ export type CareerProfile = {
   skills?: string[];
   /** Job titles from saved job alerts, de-duplicated. */
   roleKeywords?: string[];
+  /** What the person said they want, from the onboarding About you step. */
+  aim?: {
+    kind: AimKind;
+    timeline: Timeline | null;
+    field: Field | null;
+    setAt: string;
+  };
   importedAt?: string;
 };
 
