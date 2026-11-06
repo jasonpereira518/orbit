@@ -66,6 +66,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "work-history": "work-history lookup",
   "web-research": "research lookup",
   "work-history-background": "background work-history check",
+  "email-intel-daily": "email-insights",
   "web-search": "monthly web search",
   "web-search-all": "Orbit-wide web search",
 };
@@ -210,6 +211,11 @@ export const RATE_LIMITS = {
    * `WEB_SEARCH_DAILY_CEILING`, which smoke-rate-limit keeps this equal to.
    */
   webSearchDaily: { limit: 306, windowSec: 86_400 },
+  /**
+   * Gmail threads the email-insights sweep may fetch per account per UTC day (metadata only).
+   * Keyed per UTC day by the sweep, like `workHistoryBackground`.
+   */
+  emailIntelDaily: { limit: 300, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
   /**

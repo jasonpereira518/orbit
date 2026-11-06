@@ -22,6 +22,9 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // name with the company, role, place met and city the note gives — never an email or phone.
 export const TERMS_VERSION = "2026-11-05";
 export const LEGAL_LAST_UPDATED = "November 5, 2026";
+// 2026-11-05 (same day): Email insights, which reads the sender, subject and Gmail's preview of
+// new job and hiring-process threads. Bump this before it ships if accounts have already
+// accepted the 2026-11-05 text above.
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -92,8 +95,8 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailRead,
     permission: "Read your email (gmail.readonly)",
-    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
-    askedWhen: "Connect Gmail on Recruiters, or turn on Confirmation emails on Events",
+    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Email insights: reads the sender, subject and Gmail’s short preview of new job and hiring-process threads to note where each application stands. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
+    askedWhen: "Connect Gmail on Recruiters, turn on Confirmation emails on Events, or turn on Email insights in Settings",
   },
   {
     scope: GOOGLE_SCOPES.gmailSend,

@@ -304,6 +304,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-recruiter-query": "pure",
   "smoke-recruiter-scan": "pure",
   "smoke-recruiter-triage": "pure",
+  "smoke-email-intel-consent": "pure",
+  "smoke-email-intel-triage": "pure",
   "smoke-relationship-health": "pure",
   "smoke-relative-date": "pure",
   "smoke-reveal-reduced-motion": "pure",
@@ -448,6 +450,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-web-research": "pglite",
   "smoke-capture-review-quality": "pglite",
   "smoke-work-history-sweep": "pglite",
+  "smoke-email-intel-store": "pglite",
+  "smoke-email-intel-sweep": "pglite",
   "smoke-contact-search-rank": "pglite",
   "smoke-contacts-search-paging": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
