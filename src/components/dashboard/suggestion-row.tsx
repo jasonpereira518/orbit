@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { runToastAction, toast } from "@/lib/toast";
 import {
   acceptScoreBump,
@@ -19,6 +19,10 @@ import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 
 const REASON_LABELS: Record<string, string> = {
+  // `JOB_CHANGE_SUGGESTION_TYPE` in lib/job-changes.ts (not imported: it reaches the db).
+  job_change_congrats: "New role",
+  awaiting_reply: "No reply yet",
+  keep_in_touch: "Keep in touch",
   dormant_high_value: "Dormant",
   linkedin_thread_quiet: "LinkedIn quiet",
   post_event: "Post-event",
@@ -27,6 +31,7 @@ const REASON_LABELS: Record<string, string> = {
 
 /** One line on what acting on each kind of suggestion does, under the reason pill. */
 const NEXT_STEP: Record<string, string> = {
+  job_change_congrats: "A short congratulations lands best in the first few weeks.",
   dormant_high_value: "A quick check-in keeps this relationship warm.",
   linkedin_thread_quiet: "Pick the LinkedIn conversation back up.",
   post_event: "Follow up while the introduction is still fresh.",
@@ -34,6 +39,9 @@ const NEXT_STEP: Record<string, string> = {
 };
 
 const REASON_STYLES: Record<string, string> = {
+  job_change_congrats: "bg-indigo-500/15 text-indigo-800 dark:text-indigo-200",
+  awaiting_reply: "bg-rose-500/15 text-rose-800 dark:text-rose-200",
+  keep_in_touch: "bg-teal-500/15 text-teal-800 dark:text-teal-200",
   dormant_high_value: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
   linkedin_thread_quiet: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
   post_event: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
@@ -72,14 +80,13 @@ export function SuggestionRow({
     ? formatDistanceToNow(new Date(lastInteractionAt), { addSuffix: true })
     : null;
   const nextStep = NEXT_STEP[suggestionType];
-  const companyColor = companyBrandColor(contactCompany);
+  const companyBrand = companyBrandText(contactCompany);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            {tier && <ClosenessTierBadge tier={tier} />}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {contactId ? (
               <IntentLink
                 href={`/contacts/${contactId}`}
@@ -90,9 +97,10 @@ export function SuggestionRow({
             ) : (
               <p className="font-medium text-ink">{contactName}</p>
             )}
+            {tier && <ClosenessTierBadge tier={tier} />}
             <span
               className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
                 REASON_STYLES[suggestionType] ?? "bg-muted text-muted-foreground"
               )}
             >
@@ -100,16 +108,20 @@ export function SuggestionRow({
             </span>
           </div>
           {(contactTitle || contactCompany) && (
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {contactTitle}
-              {contactTitle && contactCompany ? " · " : ""}
+            <p className="mt-0.5 text-sm">
               {contactCompany && (
                 <span
-                  className="font-medium"
-                  style={companyColor ? { color: companyColor } : undefined}
+                  className={cn("font-semibold", companyBrand?.className)}
+                  style={companyBrand?.style}
                 >
                   {contactCompany}
                 </span>
+              )}
+              {contactTitle && contactCompany ? (
+                <span className="text-muted-foreground"> · </span>
+              ) : null}
+              {contactTitle && (
+                <span className="text-xs text-muted-foreground">{contactTitle}</span>
               )}
             </p>
           )}

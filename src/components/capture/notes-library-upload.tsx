@@ -29,7 +29,6 @@ import {
 import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
 import { DriveCaptureButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { FanoutEntry } from "@/lib/capture/fanout";
 
@@ -288,10 +287,6 @@ export function NotesFanoutList({ fanout }: { fanout: ReturnType<typeof useCaptu
       </ul>
     </div>
   );
-}
-
-export function NotesLibraryUploadFallback() {
-  return <Skeleton className="h-48 w-full rounded-2xl" />;
 }
 
 export type { FanoutEntry };

@@ -1,0 +1,637 @@
+{
+  "_readme": "Every number the model uses. Edit this file, then run `node cost/unit-economics/model.mjs`. Each rate carries `status`: CONFIRMED (read from the vendor's own published source on `checked`), UNCONFIRMED (vendor-domain search excerpt only; open `url` and correct it), MEASURED (measured in this repo on seeded data), CODE (read from Orbit's source), or GUESS (an assumption; replace with real usage). Fields set to null are unknown and must come from your dashboards; see README.md for the queries. Lifetime is an admin-granted plan and is deliberately not modelled.",
+  "rates": {
+    "vercel": {
+      "proPlatformMonthly": {
+        "value": 20,
+        "unit": "USD/month (1 deploying seat)",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "proIncludedCredit": {
+        "value": 20,
+        "unit": "USD/month usage credit",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/changelog/included-pro-usage-is-now-credit-based",
+        "checked": "2026-10-17"
+      },
+      "activeCpuPerHour": {
+        "value": 0.128,
+        "unit": "USD/CPU-hour (iad1)",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/docs/functions/usage-and-pricing",
+        "checked": "2026-10-17"
+      },
+      "memoryPerGbHour": {
+        "value": 0.0106,
+        "unit": "USD/GB-hour provisioned",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/docs/functions/usage-and-pricing",
+        "checked": "2026-10-17"
+      },
+      "invocationsPerMillion": {
+        "value": 0.6,
+        "unit": "USD/1M invocations",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/docs/functions/usage-and-pricing",
+        "checked": "2026-10-17"
+      },
+      "cdnIncludedRequests": {
+        "value": 1000000,
+        "unit": "requests/month on Pro Flat Rate CDN base tier",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/docs/pricing/flat-rate-cdn",
+        "checked": "2026-10-17"
+      },
+      "cdnTierSteps": {
+        "value": [
+          [
+            1000000,
+            0
+          ],
+          [
+            10000000,
+            20
+          ],
+          [
+            50000000,
+            100
+          ],
+          [
+            150000000,
+            300
+          ]
+        ],
+        "unit": "[requests/month, USD/month] Flat Rate CDN tiers (1 TB to 50 TB transfer)",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/docs/pricing/flat-rate-cdn",
+        "checked": "2026-10-17"
+      },
+      "blobStoragePerGbMonth": {
+        "value": 0.023,
+        "unit": "USD/GB-month",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/docs/vercel-blob/usage-and-pricing",
+        "checked": "2026-10-17"
+      },
+      "blobTransferPerGb": {
+        "value": 0.05,
+        "unit": "USD/GB",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/docs/vercel-blob/usage-and-pricing",
+        "checked": "2026-10-17"
+      },
+      "blobAdvancedOpsPerMillion": {
+        "value": 5.0,
+        "unit": "USD/1M advanced ops (uploads, list)",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/docs/vercel-blob/usage-and-pricing",
+        "checked": "2026-10-17"
+      },
+      "hobbyCommercialUseAllowed": {
+        "value": false,
+        "unit": "fair-use policy",
+        "status": "UNCONFIRMED",
+        "url": "https://vercel.com/docs/limits/fair-use-guidelines",
+        "checked": "2026-10-17"
+      }
+    },
+    "neon": {
+      "plan": {
+        "value": "launch",
+        "unit": "launch | scale (set to your actual plan)",
+        "status": "GUESS"
+      },
+      "computePerCuHour": {
+        "value": {
+          "launch": 0.106,
+          "scale": 0.222
+        },
+        "unit": "USD/CU-hour",
+        "status": "CONFIRMED",
+        "url": "https://neon.com/docs/introduction/plans (source: github.com/neondatabase/website content/docs/introduction/plans.md, updatedOn 2026-10-13)",
+        "checked": "2026-10-17"
+      },
+      "storagePerGbMonth": {
+        "value": 0.35,
+        "unit": "USD/GB-month",
+        "status": "CONFIRMED",
+        "url": "https://neon.com/docs/introduction/plans",
+        "checked": "2026-10-17"
+      },
+      "historyPerGbMonth": {
+        "value": 0.2,
+        "unit": "USD/GB-month instant-restore (PITR) history",
+        "status": "CONFIRMED",
+        "url": "https://neon.com/docs/introduction/plans",
+        "checked": "2026-10-17"
+      },
+      "egressIncludedGb": {
+        "value": 500,
+        "unit": "GB/project/month",
+        "status": "CONFIRMED",
+        "url": "https://neon.com/docs/introduction/plans",
+        "checked": "2026-10-17"
+      },
+      "minCu": {
+        "value": 0.25,
+        "unit": "CU, autoscaling floor (check Neon console)",
+        "status": "GUESS"
+      },
+      "alwaysAwake": {
+        "value": true,
+        "unit": "the ops.yml schedule touches the DB every 10 minutes, so the 5-minute scale-to-zero rarely triggers",
+        "status": "CODE",
+        "url": ".github/workflows/ops.yml"
+      },
+      "historyToDataRatio": {
+        "value": 0.3,
+        "unit": "PITR history GB per GB of data (depends on write churn and window)",
+        "status": "GUESS"
+      }
+    },
+    "clerk": {
+      "freeRetainedUsers": {
+        "value": 50000,
+        "unit": "monthly retained users free",
+        "status": "UNCONFIRMED",
+        "url": "https://clerk.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "proMonthly": {
+        "value": 25,
+        "unit": "USD/month",
+        "status": "UNCONFIRMED",
+        "url": "https://clerk.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "perUserAbove": {
+        "value": [
+          [
+            50000,
+            100000,
+            0.02
+          ],
+          [
+            100000,
+            1000000,
+            0.018
+          ]
+        ],
+        "unit": "[from, to, USD/user/month]",
+        "status": "UNCONFIRMED",
+        "url": "https://clerk.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "retainedShareOfUsers": {
+        "value": 0.55,
+        "unit": "share of registered users who count as retained in a month",
+        "status": "GUESS"
+      }
+    },
+    "stripe": {
+      "cardPercent": {
+        "value": 0.029,
+        "unit": "share of charge (US card)",
+        "status": "UNCONFIRMED",
+        "url": "https://stripe.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "cardFixed": {
+        "value": 0.3,
+        "unit": "USD per charge",
+        "status": "UNCONFIRMED",
+        "url": "https://stripe.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "billingPercent": {
+        "value": 0.007,
+        "unit": "share of recurring volume (Stripe Billing)",
+        "status": "UNCONFIRMED",
+        "url": "https://stripe.com/billing/pricing",
+        "checked": "2026-10-17"
+      },
+      "internationalSurcharge": {
+        "value": 0.015,
+        "unit": "extra share on non-US cards",
+        "status": "UNCONFIRMED",
+        "url": "https://stripe.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "internationalShare": {
+        "value": 0.2,
+        "unit": "share of charges on non-US cards",
+        "status": "GUESS"
+      }
+    },
+    "deepgram": {
+      "nova3StreamingPerMin": {
+        "value": 0.0077,
+        "unit": "USD/min, Nova-3 monolingual streaming, pay-as-you-go list (a $0.0048 promo was also shown)",
+        "status": "UNCONFIRMED",
+        "url": "https://deepgram.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "nova3PrerecordedPerMin": {
+        "value": 0.0043,
+        "unit": "USD/min, Nova-3 monolingual pre-recorded",
+        "status": "UNCONFIRMED",
+        "url": "https://deepgram.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "diarizationPerMin": {
+        "value": 0.002,
+        "unit": "USD/min add-on (meetings send diarize=true)",
+        "status": "UNCONFIRMED",
+        "url": "https://deepgram.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "keytermPerMin": {
+        "value": 0.0013,
+        "unit": "USD/min add-on (keyterm= sent when the vocabulary is non-empty)",
+        "status": "UNCONFIRMED",
+        "url": "https://deepgram.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "mipOptOutMultiplier": {
+        "value": 2.0,
+        "unit": "x base rate. Every Orbit request sends mip_opt_out=true; third-party reviews say opting out forfeits a 50% discount. Set to 1.0 if your invoice shows list price.",
+        "status": "UNCONFIRMED",
+        "url": "https://developers.deepgram.com/docs/the-deepgram-model-improvement-partnership-program",
+        "checked": "2026-10-17"
+      },
+      "keytermShareOfMinutes": {
+        "value": 0.8,
+        "unit": "share of minutes that carry keyterms",
+        "status": "GUESS"
+      },
+      "shortformStreamingShare": {
+        "value": 0.5,
+        "unit": "share of short-form minutes that stream (chat mic) vs file (voice notes)",
+        "status": "GUESS"
+      },
+      "oneTimeCredit": {
+        "value": 15000,
+        "unit": "USD, one time, no renewal (DEEPGRAM_CREDIT in src/lib/speech-cost.ts)",
+        "status": "CODE",
+        "url": "stated by the founder 2026-10-17; src/lib/speech-cost.ts"
+      },
+      "creditUsableShare": {
+        "value": 0.95,
+        "unit": "share of the credit the app lets itself spend (capMicros)",
+        "status": "CODE",
+        "url": "src/lib/speech-cost.ts"
+      }
+    },
+    "managedAi": {
+      "usdPerCredit": {
+        "value": 0.01,
+        "unit": "USD of provider list price per credit",
+        "status": "CODE",
+        "url": "docs/pricing-v2/legal-proposal.md; src/lib/credits/"
+      },
+      "anthropicHaiku55": {
+        "value": {
+          "inPerMTok": 0.1,
+          "outPerMTok": 0.5
+        },
+        "unit": "USD per million tokens",
+        "status": "CONFIRMED",
+        "url": "https://docs.claude.com/en/docs/about-claude/pricing",
+        "checked": "2026-10-17"
+      }
+    },
+    "resend": {
+      "freeMonthly": {
+        "value": 3000,
+        "unit": "emails/month",
+        "status": "UNCONFIRMED",
+        "url": "https://resend.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "freeDaily": {
+        "value": 100,
+        "unit": "emails/day on Free",
+        "status": "UNCONFIRMED",
+        "url": "https://resend.com/docs/knowledge-base/account-quotas-and-limits",
+        "checked": "2026-10-17"
+      },
+      "tiers": {
+        "value": [
+          [
+            3000,
+            0
+          ],
+          [
+            50000,
+            20
+          ],
+          [
+            100000,
+            90
+          ]
+        ],
+        "unit": "[emails/month, USD/month]; Pro may be $35 for 100k (unresolved)",
+        "status": "UNCONFIRMED",
+        "url": "https://resend.com/pricing",
+        "checked": "2026-10-17"
+      },
+      "overagePerThousand": {
+        "value": 0.9,
+        "unit": "USD/1,000 emails",
+        "status": "UNCONFIRMED",
+        "url": "https://resend.com/pricing",
+        "checked": "2026-10-17"
+      }
+    },
+    "sentry": {
+      "teamMonthly": {
+        "value": 26,
+        "unit": "USD/month billed annually ($29 monthly)",
+        "status": "UNCONFIRMED",
+        "url": "https://sentry.io/pricing/",
+        "checked": "2026-10-17"
+      },
+      "teamIncludedErrors": {
+        "value": 50000,
+        "unit": "errors/month",
+        "status": "CONFIRMED",
+        "url": "https://docs.sentry.io/pricing/ (source: github.com/getsentry/sentry-docs docs/pricing/index.mdx)",
+        "checked": "2026-10-17"
+      },
+      "developerIncludedErrors": {
+        "value": 5000,
+        "unit": "errors/month on the free plan",
+        "status": "UNCONFIRMED",
+        "url": "https://sentry.io/pricing/",
+        "checked": "2026-10-17"
+      },
+      "overagePerError": {
+        "value": 0.0003625,
+        "unit": "USD/error PAYG, 50k to 100k",
+        "status": "CONFIRMED",
+        "url": "https://docs.sentry.io/pricing/",
+        "checked": "2026-10-17"
+      },
+      "errorsPer1000Mau": {
+        "value": 400,
+        "unit": "errors per month per 1,000 active users",
+        "status": "GUESS"
+      }
+    },
+    "github": {
+      "publicRepoActionsFree": {
+        "value": true,
+        "unit": "standard hosted runners free on public repos",
+        "status": "CONFIRMED",
+        "url": "https://docs.github.com/en/billing/concepts/product-billing/github-actions",
+        "checked": "2026-10-17"
+      },
+      "linuxPerMinute": {
+        "value": 0.006,
+        "unit": "USD/min, 2-core Linux, private repos",
+        "status": "CONFIRMED",
+        "url": "https://docs.github.com/en/billing/reference/actions-runner-pricing",
+        "checked": "2026-10-17"
+      },
+      "privateIncludedMinutes": {
+        "value": 2000,
+        "unit": "minutes/month on GitHub Free (3,000 on Pro)",
+        "status": "CONFIRMED",
+        "url": "https://docs.github.com/en/billing/concepts/product-billing/github-actions",
+        "checked": "2026-10-17"
+      },
+      "opsJobsPerDay": {
+        "value": 386,
+        "unit": "scheduled job runs/day from ops.yml (each billed as at least 1 minute)",
+        "status": "CODE",
+        "url": ".github/workflows/ops.yml"
+      },
+      "ciMinutesPerPush": {
+        "value": 25,
+        "unit": "billed minutes per CI run (check + 3 smoke shards + e2e)",
+        "status": "GUESS"
+      },
+      "ciRunsPerMonth": {
+        "value": 120,
+        "unit": "CI runs/month",
+        "status": "GUESS"
+      }
+    },
+    "betterStack": {
+      "freeMonitors": {
+        "value": 10,
+        "unit": "monitors + 10 heartbeats free",
+        "status": "UNCONFIRMED",
+        "url": "https://betterstack.com/pricing",
+        "checked": "2026-10-17"
+      }
+    },
+    "domain": {
+      "comAnnual": {
+        "value": 11,
+        "unit": "USD/year per .com (registrar dependent)",
+        "status": "UNCONFIRMED",
+        "url": "https://developers.cloudflare.com/registrar/",
+        "checked": "2026-10-17"
+      },
+      "count": {
+        "value": 2,
+        "unit": "app domain + waitlist domain (WAITLIST_HOST)",
+        "status": "CODE",
+        "url": ".env.example"
+      }
+    }
+  },
+  "storage": {
+    "contactRowBytes": {
+      "value": 4127,
+      "unit": "bytes/contact incl. indexes (contacts table, 5,000 seeded contacts: 20.6 MB)",
+      "status": "MEASURED",
+      "url": "scripts/seed-scale.ts on PGlite, 2026-10-17"
+    },
+    "interactionRowBytes": {
+      "value": 534,
+      "unit": "bytes/interaction incl. indexes (5,617 seeded: 3.0 MB)",
+      "status": "MEASURED"
+    },
+    "embeddingJsonbBytes": {
+      "value": 30724,
+      "unit": "bytes per 1536-float embedding stored as jsonb (uncompressed datum)",
+      "status": "MEASURED"
+    },
+    "embeddingVectorBytes": {
+      "value": 6168,
+      "unit": "bytes per vector(1536)",
+      "status": "MEASURED"
+    },
+    "hnswBytesPerVector": {
+      "value": 7000,
+      "unit": "bytes per vector in the HNSW index (m=16 default)",
+      "status": "GUESS"
+    },
+    "embeddingsPerContact": {
+      "value": 1.3,
+      "unit": "contact_embeddings rows per contact (profile + meetings/notes)",
+      "status": "GUESS"
+    },
+    "memoryChunksPerContact": {
+      "value": 0.8,
+      "unit": "memory_chunks rows per contact",
+      "status": "GUESS"
+    },
+    "avatarShareOfContacts": {
+      "value": 0.4,
+      "unit": "share of contacts with a stored headshot",
+      "status": "GUESS"
+    },
+    "avatarBytes": {
+      "value": 25000,
+      "unit": "bytes per stored headshot",
+      "status": "GUESS"
+    },
+    "otherPerUserMb": {
+      "value": 2,
+      "unit": "MB/user of chat, usage_events, settings, logs after retention",
+      "status": "GUESS"
+    }
+  },
+  "hosting": {
+    "cpuSecondsPerRequest": {
+      "value": 0.06,
+      "unit": "active CPU seconds per dynamic request",
+      "status": "GUESS"
+    },
+    "gbSecondsPerRequest": {
+      "value": 0.6,
+      "unit": "provisioned GB-seconds per request (1 GB x 0.6 s wall)",
+      "status": "GUESS"
+    },
+    "cdnRequestsPerDynamic": {
+      "value": 6,
+      "unit": "CDN requests (assets, prefetch) per dynamic request",
+      "status": "GUESS"
+    },
+    "backgroundRequestsPerUserMonth": {
+      "value": 300,
+      "unit": "function work per user per month from crons (sync every 15 min, radar, notes), in request-equivalents",
+      "status": "GUESS"
+    },
+    "fixedCronCpuHoursMonth": {
+      "value": 15,
+      "unit": "CPU-hours/month the ops.yml schedule costs with zero users",
+      "status": "GUESS"
+    }
+  },
+  "plans": {
+    "free": {
+      "monthly": 0,
+      "annual": 0,
+      "oneTime": null,
+      "contactLimit": 500,
+      "credits": 50,
+      "meetingMin": 0,
+      "shortformMin": 90,
+      "status": "CODE",
+      "url": "src/lib/plans/plan-config.ts"
+    },
+    "pro": {
+      "monthly": 8.99,
+      "annual": 89.99,
+      "oneTime": null,
+      "contactLimit": null,
+      "credits": 300,
+      "meetingMin": 480,
+      "shortformMin": 480,
+      "status": "CODE",
+      "url": "src/lib/plans/plan-config.ts"
+    },
+    "max": {
+      "monthly": 19.99,
+      "annual": 199.99,
+      "oneTime": null,
+      "contactLimit": null,
+      "credits": 650,
+      "meetingMin": 900,
+      "shortformMin": 900,
+      "status": "CODE",
+      "url": "src/lib/plans/plan-config.ts"
+    },
+    "annualShare": {
+      "value": 0.3,
+      "unit": "share of Pro/Max subscribers on annual",
+      "status": "GUESS"
+    },
+    "freeStarterCredits": {
+      "value": 25,
+      "unit": "one-time credits per Free account",
+      "status": "CODE",
+      "url": "src/lib/plans/plan-config.ts"
+    }
+  },
+  "profiles": {
+    "_note": "Monthly usage per user. Fractions are of the plan's allowance; the model clamps every metered feature at the plan cap EXCEPT where `leak` says the cap can be exceeded. All GUESS: replace with the percentiles from README.md's queries.",
+    "light": {
+      "meetingShare": 0.0,
+      "shortformShare": 0.05,
+      "creditShare": 0.1,
+      "contacts": 150,
+      "interactions": 50,
+      "dynamicRequests": 150,
+      "emails": 5,
+      "leakMeetingMin": 0
+    },
+    "typical": {
+      "meetingShare": 0.25,
+      "shortformShare": 0.2,
+      "creditShare": 0.4,
+      "contacts": 900,
+      "interactions": 600,
+      "dynamicRequests": 900,
+      "emails": 8,
+      "leakMeetingMin": 0
+    },
+    "heavy": {
+      "meetingShare": 1.0,
+      "shortformShare": 1.0,
+      "creditShare": 1.0,
+      "contacts": 4000,
+      "interactions": 4000,
+      "dynamicRequests": 4000,
+      "emails": 15,
+      "leakMeetingMin": 0
+    },
+    "abusive": {
+      "meetingShare": 1.0,
+      "shortformShare": 1.0,
+      "creditShare": 1.0,
+      "contacts": 20000,
+      "interactions": 20000,
+      "dynamicRequests": 20000,
+      "emails": 30,
+      "leakMeetingMin": 600
+    }
+  },
+  "mix": {
+    "_note": "Population shape used at each scale point. GUESS until README.md query 1 gives real counts.",
+    "planShare": {
+      "free": 0.88,
+      "pro": 0.1,
+      "max": 0.02
+    },
+    "profileShare": {
+      "light": 0.55,
+      "typical": 0.3,
+      "heavy": 0.13,
+      "abusive": 0.02
+    },
+    "monthlyActiveShare": 0.5
+  },
+  "scalePoints": [
+    100,
+    1000,
+    10000,
+    50000
+  ]
+}

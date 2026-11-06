@@ -11,6 +11,8 @@ import { formatReplyRate } from "@/lib/outreach-metrics";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Outreach" };
+
 export default async function OutreachPage() {
   // Before the paywall on purpose: coming-soon is a stronger fact than "buy a plan to
   // unlock this" — nobody can unlock a page that is not out yet. See `pageVisibilityGate`'s

@@ -195,7 +195,7 @@ export function KnowledgeBaseView({
                       <span className="truncate text-sm font-medium text-ink">
                         {entry.contactName}
                       </span>
-                      <Badge variant="secondary" className="text-[10px]">
+                      <Badge variant="secondary" className="text-3xs">
                         {KIND_LABEL[entry.kind]}
                       </Badge>
                       {entry.date ? (

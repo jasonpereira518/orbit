@@ -152,6 +152,7 @@ export default async function AdminUsersPage({
           ) : (
             <>
               <AdminTable
+                label="Accounts"
                 head={
                   <>
                     <Th>{sortLink("email", "Account")}</Th>

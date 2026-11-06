@@ -14,7 +14,9 @@ import {
   ImportProgress,
 } from "@/components/imports/import-utils";
 import { startImportJob, useImportJob } from "@/lib/import-job-runner";
+import { fitsInOneRequest } from "@/lib/capture-limits";
 import { friendlyError } from "@/lib/errors";
+import { IMPORT_COPY } from "@/lib/imports/import-copy";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
 type CalendarPreview = Awaited<ReturnType<typeof previewCalendarImport>>;
@@ -102,9 +104,14 @@ export function CalendarImportSection({
           fileName={calendarFileName}
           onFile={async (file) => {
             const lower = file.name.toLowerCase();
+            const text = await file.text();
+            if (!fitsInOneRequest(text)) {
+              toast.error(IMPORT_COPY.tooLarge);
+              return;
+            }
             setCalendarKind(lower.endsWith(".csv") ? "csv" : "ics");
             setCalendarFileName(file.name);
-            setCalendarText(await file.text());
+            setCalendarText(text);
             setCalendarPreview(null);
           }}
         />

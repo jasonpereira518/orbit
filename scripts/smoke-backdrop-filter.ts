@@ -49,7 +49,7 @@ function main() {
   }
 
   console.log("\nGlass classes still blur:");
-  const globals = stripComments(readFileSync(join(SRC, "app/globals.css"), "utf8"));
+  const globals = stripComments(readFileSync(join(SRC, "app/theme.css"), "utf8"));
   for (const selector of MUST_BLUR) {
     // The top-level rule for exactly this selector: unindented, and `.liquid-glass-panel`
     // does not match `.liquid-glass` because the brace must follow the name.

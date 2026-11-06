@@ -15,6 +15,7 @@ import { Notice } from "./components/Notice";
 import { Button, Meta, Skeleton } from "./components/ui";
 import { AmbiguousView } from "./views/AmbiguousView";
 import { CaptureView } from "./views/CaptureView";
+import { EventRosterView } from "./views/EventRosterView";
 import { GrantAccessView } from "./views/GrantAccessView";
 import { KnownContactView } from "./views/KnownContactView";
 import { usePanel } from "./state/usePanel";
@@ -88,6 +89,8 @@ export function App() {
         </VerdictZone>
       );
     }
+    // An event page is about the room, not a person: no contact verdict to give.
+    if (state.page?.roster) return <VerdictZone>Event guest list</VerdictZone>;
     if (state.resolving || !state.resolved) return <VerdictSkeleton />;
 
     if (contact) {
@@ -198,6 +201,9 @@ export function App() {
         />
       );
     }
+
+    // A guest list needs nothing from resolve — it is ready the moment the page is read.
+    if (state.page?.roster) return <EventRosterView page={state.page} api={api} />;
 
     if (state.resolving || !state.resolved || !state.page) {
       return (

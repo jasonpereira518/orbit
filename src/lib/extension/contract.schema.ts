@@ -15,6 +15,7 @@
 import { z } from "zod";
 import type {
   ContactSearchResponse,
+  EventRosterRequest,
   ParseRequest,
   FollowUpRequest,
   LogInteractionRequest,
@@ -72,9 +73,15 @@ const pageIdentitySchema = z.object({
   photoUrl: extractedField,
 });
 
+/**
+ * Sized to the body cap: a guest with a profile link is ~100 bytes on the wire, so 400 of them
+ * leave room under MAX_BODY_BYTES. The adapter sends the first 400 and says it cut the rest.
+ */
+export const MAX_ROSTER_GUESTS = 400;
+
 export const pageContextSchema = z.object({
   schemaVersion: z.literal(1),
-  site: z.enum(["linkedin", "x", "gmail", "generic"]),
+  site: z.enum(["linkedin", "x", "gmail", "luma", "partiful", "generic"]),
   adapterVersion: z.string().max(32),
   kind: z.enum(["person", "thread", "list", "company", "post", "unknown"]),
   url: z.string().trim().max(2_048),
@@ -90,6 +97,20 @@ export const pageContextSchema = z.object({
       })
     )
     .max(10)
+    .optional(),
+  roster: z
+    .object({
+      title: z.string().trim().max(300),
+      guests: z
+        .array(
+          z.object({
+            name: z.string().max(200),
+            profileUrl: z.string().max(2_048).optional(),
+            subtitle: z.string().max(300).optional(),
+          })
+        )
+        .max(MAX_ROSTER_GUESTS),
+    })
     .optional(),
   text: z.object({
     // The outer bound catches abuse; the transform handles the normal case of a
@@ -112,6 +133,10 @@ export const resolveRequestSchema = z.object({
 });
 
 export const parseRequestSchema = z.object({
+  page: pageContextSchema,
+});
+
+export const eventRosterRequestSchema = z.object({
   page: pageContextSchema,
 });
 
@@ -201,11 +226,12 @@ export const saveActivityRequestSchema = z.object({
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;
 const _parse: Exact<z.infer<typeof parseRequestSchema>, ParseRequest> = true;
+const _roster: Exact<z.infer<typeof eventRosterRequestSchema>, EventRosterRequest> = true;
 const _starters: Exact<z.infer<typeof startersRequestSchema>, StartersRequest> = true;
 const _save: Exact<z.infer<typeof saveContactRequestSchema>, SaveContactRequest> = true;
 const _log: Exact<z.infer<typeof logInteractionRequestSchema>, LogInteractionRequest> = true;
 const _followUp: Exact<z.infer<typeof followUpRequestSchema>, FollowUpRequest> = true;
 const _activity: Exact<z.infer<typeof saveActivityRequestSchema>, SaveActivityRequest> = true;
-void [_resolve, _page, _parse, _starters, _save, _log, _followUp, _activity];
+void [_resolve, _page, _parse, _roster, _starters, _save, _log, _followUp, _activity];
 
 export type { ContactSearchResponse };

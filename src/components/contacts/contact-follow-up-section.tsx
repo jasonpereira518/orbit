@@ -28,7 +28,9 @@ import {
   completeFollowUpWithTouch,
   scheduleContactFollowUp,
   scheduleContactFollowUpAt,
+  setKeepInTouchCadence,
 } from "@/actions/reminders";
+import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -38,9 +40,12 @@ import {
 } from "@/components/ui/card";
 import { DatePickerButton, toLocalYmd } from "@/components/ui/date-picker";
 import { Textarea } from "@/components/ui/textarea";
+import { KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
 import { cn } from "@/lib/utils";
+import { AiKeyNotice } from "@/components/ai-key-notice";
+import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -71,6 +76,7 @@ export function ContactFollowUpSection({
   contactId,
   contactName,
   nextFollowUpAt,
+  keepInTouchDays,
   sendOptions,
   phone,
   initialIntent,
@@ -79,6 +85,8 @@ export function ContactFollowUpSection({
   contactId: string;
   contactName: string;
   nextFollowUpAt?: string | Date | null;
+  /** The interval the user set for this contact, or null if they never did. */
+  keepInTouchDays?: number | null;
   sendOptions: ContactFollowUpSendOptions;
   phone?: string | null;
   /** Prefill intent for intro/reach-out drafts (e.g. related person). */
@@ -90,11 +98,17 @@ export function ContactFollowUpSection({
   const router = useRouter();
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [draft, setDraft] = useState("");
+  const [aiError, setAiError] = useState<string | null>(null);
   const [intent, setIntent] = useState(initialIntent?.trim() || "");
   const [pending, start] = useTransition();
   const [sending, startSend] = useTransition();
   const [marking, startMark] = useTransition();
   const [scheduling, startSchedule] = useTransition();
+  const [cadencePending, startCadence] = useTransition();
+  // Optimistic, because the whole control is four buttons and a round-trip through
+  // `router.refresh()` is long enough to make a click feel dropped. Reset from the prop on
+  // failure so a rejected write cannot leave the UI claiming a cadence that was not saved.
+  const [cadence, setCadence] = useState<number | null>(keepInTouchDays ?? null);
 
   const scheduledYmd = dueYmd(nextFollowUpAt);
   const dueLabel = nextFollowUpAt
@@ -145,6 +159,26 @@ export function ContactFollowUpSection({
     });
   }
 
+  function saveCadence(days: number | null) {
+    const previous = cadence;
+    setCadence(days);
+    startCadence(async () => {
+      try {
+        const result = await setKeepInTouchCadence(contactId, days);
+        setCadence(result.keepInTouchDays);
+        toast.success(
+          result.keepInTouchDays
+            ? `Keeping in touch — every ${result.keepInTouchDays} days`
+            : "Cadence cleared"
+        );
+        router.refresh();
+      } catch (err) {
+        setCadence(previous);
+        toast.error(friendlyError(err, "Couldn’t save that cadence — try again?"));
+      }
+    });
+  }
+
   function draftFor(p: Platform) {
     setPlatform(p);
     start(async () => {
@@ -153,6 +187,11 @@ export function ContactFollowUpSection({
           channel: p,
           intent: intent.trim() || undefined,
         });
+        if (!result.ok) {
+          setAiError(result.error);
+          return;
+        }
+        setAiError(null);
         setDraft(result.body);
         toast.success("Draft ready");
       } catch (err) {
@@ -195,8 +234,12 @@ export function ContactFollowUpSection({
     if (!draft.trim()) return;
     startSend(async () => {
       try {
-        await sendContactFollowUpEmail(contactId, draft);
-        toast.success(`Email sent to ${contactName}`);
+        const res = await sendContactFollowUpEmail(contactId, draft);
+        if (!res.ok) {
+          toast.error(res.message);
+          return;
+        }
+        showUndoSendToast({ sendId: res.sendId, recipientLabel: contactName, onUndone: () => router.refresh() });
         router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "That email didn’t send — try again?"));
@@ -314,6 +357,43 @@ export function ContactFollowUpSection({
         </div>
 
         <div>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              Keep in touch
+            </p>
+            {cadence ? null : (
+              <p className="text-xs text-muted-foreground">Not set</p>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {KEEP_IN_TOUCH_PRESETS.map((preset) => {
+              const active = cadence === preset.days;
+              return (
+                <Button
+                  key={preset.days}
+                  type="button"
+                  size="sm"
+                  variant={active ? "default" : "outline"}
+                  disabled={cadencePending}
+                  className="h-8 px-2.5"
+                  // Clicking the active interval turns it off, so the control needs no
+                  // separate "off" button competing with the four that mean something.
+                  aria-pressed={active}
+                  onClick={() => saveCadence(active ? null : preset.days)}
+                >
+                  {preset.label}
+                </Button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {cadence
+              ? "Orbit will remind you when it has been this long — and will stop guessing on its own."
+              : "Set an interval and Orbit will surface this contact when it lapses."}
+          </p>
+        </div>
+
+        <div>
           <p className="mb-2 text-xs font-medium text-muted-foreground">
             Draft for
           </p>
@@ -323,7 +403,8 @@ export function ContactFollowUpSection({
               value={intent}
               onChange={(e) => setIntent(e.target.value)}
               placeholder="Optional intent (e.g. ask for intro)"
-              className="mb-2 w-full max-w-md rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-border"
+              aria-label="Intent (optional)"
+              className="mb-2 w-full max-w-md rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             />
           ) : null}
           <div className="flex flex-wrap gap-1.5">
@@ -364,6 +445,8 @@ export function ContactFollowUpSection({
           </div>
         </div>
 
+        {aiError && <AiKeyNotice feature="draft" reason={aiDenialFromMessage(aiError)} compact />}
+
         {pending && !draft ? (
           <p className="text-sm text-muted-foreground">Drafting…</p>
         ) : null}
@@ -372,6 +455,7 @@ export function ContactFollowUpSection({
           <div className="space-y-3">
             <Textarea
               rows={7}
+              aria-label="Follow-up draft"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               className="resize-y text-sm"

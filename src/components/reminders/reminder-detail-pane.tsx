@@ -26,7 +26,10 @@ import { dueLabelFor } from "@/lib/reminder-due-bucket";
 import { reminderTypeLabel, reminderTypeStyle } from "@/lib/reminder-display";
 import type { ReminderRow } from "@/lib/reminders-page";
 import { toast } from "@/lib/toast";
+import { TOAST_COPY } from "@/lib/toast-copy";
+import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
+import { DraftLinkWarning } from "@/components/follow-up/draft-link-warning";
 
 /**
  * Everything about one reminder, editable in place: the fields, the person it's about,
@@ -154,7 +157,7 @@ export function ReminderDetailPane({
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <h3 className="mb-2 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
       {children}
     </h3>
   );
@@ -220,21 +223,22 @@ function ContactSection({ item }: { item: ReminderRow }) {
         {draft && (
           <div className="mt-3 rounded-lg bg-muted/50 p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Draft</p>
+              <p className="text-3xs font-medium uppercase tracking-wide text-muted-foreground">Draft</p>
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
                 className="h-7 gap-1 px-2 text-xs"
-                onClick={() => {
-                  void navigator.clipboard.writeText(draft);
-                  toast.success("Copied to clipboard", { keep: false });
+                onClick={async () => {
+                  if (await copyText(draft)) toast.success("Copied to clipboard", { keep: false });
+                  else toast.error(TOAST_COPY.copyFailed);
                 }}
               >
                 <Copy className="size-3" /> Copy
               </Button>
             </div>
             <p className="whitespace-pre-wrap text-sm text-muted-foreground">{draft}</p>
+            <DraftLinkWarning text={draft} />
           </div>
         )}
       </div>
@@ -256,7 +260,7 @@ function ProvenanceSection({ item }: { item: ReminderRow }) {
         <div className="flex flex-wrap items-center gap-1.5">
           <span
             className={cn(
-              "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+              "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
               reminderTypeStyle(item.reminderType)
             )}
           >
@@ -264,7 +268,7 @@ function ProvenanceSection({ item }: { item: ReminderRow }) {
           </span>
           {item.origin === "implied" && (
             <span
-              className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+              className="rounded-full bg-muted px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-muted-foreground"
               title="Orbit inferred this from what was discussed; the notes didn't say it outright."
             >
               Implied

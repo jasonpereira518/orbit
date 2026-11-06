@@ -59,13 +59,17 @@ import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
 import { loadRadarBriefing } from "../src/lib/radar/page-data";
 import { applyAutopilot, undoAutopilotForUser } from "../src/lib/radar/autopilot";
 import { draftChannel, draftTodayForRun } from "../src/lib/radar/drafts";
+import { draftIntent } from "../src/lib/radar/types";
 import { openRadarAi } from "../src/lib/radar/explain";
 import { listPendingRecommendations, loadModelTallies } from "../src/lib/radar/store";
 import { scaleContactRows } from "./lib/scale-fixture";
 
 const USER = "smoke-radar-run-user";
-const NOW = new Date("2026-10-01T12:00:00Z");
 const DAY = 86_400_000;
+// The current hour, not a fixed date: the readers under test (the bell, the briefing) filter on
+// the database's real `now()` against each recommendation's expiry, so a pinned date made
+// this smoke fail every run once the calendar passed that expiry (Oct 14 2026).
+const NOW = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000);
 const ago = (days: number) => new Date(NOW.getTime() - days * DAY);
 const ahead = (days: number) => new Date(NOW.getTime() + days * DAY);
 
@@ -356,7 +360,8 @@ run(async () => {
   // 26: the outcome check (`detectRadarOutcomes`), the model's tallies
   // (`loadModelTallies`), the autopilot settings, the job-move read, the news probe and the
   // posts read; see smoke-page-budgets.
-  check("and a bounded number of them", statements <= 26, String(statements));
+  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`).
+  check("and a bounded number of them", statements <= 27, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);
@@ -405,6 +410,11 @@ run(async () => {
 
   console.log("\nthe rest of the app sees the same list");
   {
+    // The bell and the briefing filter on the real clock (`now()`), but these cards were made on
+    // the fixed NOW clock, so they lapse a week after it. Re-anchor their expiry to today.
+    await db.update(recommendations)
+      .set({ expiresAt: new Date(Date.now() + 7 * DAY) })
+      .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")));
     const live = await pending();
     check("the rest of the app points into Radar exactly when it is released",
       (await isSurfaceLive(USER, "page.radar")) === !DEFAULT_COMING_SOON_KEYS.has("page.radar"));
@@ -570,7 +580,34 @@ run(async () => {
       .where(and(eq(recommendations.contactId, mover!.id), eq(recommendations.status, "pending")));
     check("a logged job move becomes a heads-up card", card?.kind === "heads_up", JSON.stringify(card));
     check("that says what happened", card?.reasons.some((r) => r.label === "Joined Ramp as Staff PM (from Stripe)") === true);
-    await db.delete(contacts).where(eq(contacts.id, mover!.id));
+    check("and its draft is a congratulation", card ? draftIntent(card).startsWith("Congratulate") : false, card ? draftIntent(card) : "no card");
+
+    // A role that began two years before the check found it: history, not news.
+    const [late] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: "Late Lou", company: "Brex", title: "PM", firstInteractionAt: ago(400), lastInteractionAt: ago(40) })
+      .returning();
+    await db.insert(contactCareerMoves).values({
+      userId: USER,
+      contactId: late!.id,
+      kind: "joined",
+      fromOrg: "Stripe",
+      toOrg: "Brex",
+      toTitle: "PM",
+      startedYear: later.getFullYear() - 2,
+      startedMonth: 1,
+      source: "web",
+      dedupeKey: "smoke-radar-late-move",
+      detectedAt: new Date(later.getTime() - 2 * DAY),
+    });
+    await claimRadarLease(USER, later);
+    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    const lateCards = await db
+      .select({ kind: recommendations.kind })
+      .from(recommendations)
+      .where(and(eq(recommendations.contactId, late!.id), eq(recommendations.status, "pending")));
+    check("a move found two years late is no heads-up", lateCards.every((c) => c.kind !== "heads_up"), JSON.stringify(lateCards));
+    await db.delete(contacts).where(inArray(contacts.id, [mover!.id, late!.id]));
   }
 
   console.log("\ndrafts and autopilot");
@@ -595,7 +632,9 @@ run(async () => {
           bucket: "today",
           reasons: [{ code: "inbound_unanswered", label: "They messaged you and haven’t heard back", points: 60 }],
           evidence: [],
-          expiresAt: ahead(7),
+          // The real clock, not the fixed NOW: listPendingRecommendations compares against
+          // the database's now(), so a card expiring at NOW+7d stopped being "pending" on Oct 8.
+          expiresAt: new Date(Date.now() + 7 * DAY),
           inputsHash: hash,
         })
         .returning()

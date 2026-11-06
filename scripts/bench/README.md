@@ -487,3 +487,52 @@ client's server actions one at a time, so everything else queued behind it):
 
 Simply opening and closing the chart was, and is, indistinguishable from never opening it: no
 leaked timers, listeners, DOM or heap.
+
+# Meeting recorder benchmark
+
+`meeting-recorder.mjs` measures what recording a meeting costs the laptop while a real tab is
+shared: CPU summed over every Chrome process (`SystemInfo.getProcessInfo`, so the capturer,
+GPU and audio service count, not just JS), RSS, the recorder tab's main thread and JS heap,
+and the recorder's own rates (worklet messages/s, live-socket sends/s). Full method in the
+script's header.
+
+```bash
+# one tree copy per build (rsync + `cp -cR node_modules`), each a demo-mode dev server:
+ORBIT_DEEPGRAM=off ORBIT_MANAGED_OPENAI_API_KEY=bench-fake ORBIT_MANAGED_ANTHROPIC_API_KEY=bench-fake \
+  npx next dev -p 3101    # base commit; the branch on 3102
+caffeinate -dimsu node scripts/bench/meeting-recorder.mjs \
+  --ab before=http://localhost:3101,after=http://localhost:3102 --reps 3 --scenario-ms 120000 --out ab.json
+node scripts/bench/meeting-recorder.mjs --ab after=http://localhost:3102 --soak-ms 600000 --heap-diff
+```
+
+- Chrome runs **headful** (a window appears) and auto-selects the "Orbit Bench Call" tab, so
+  `getDisplayMedia` is the real thing. Deepgram and chunk uploads are faked in the page;
+  nothing leaves the machine.
+- Scenarios: idle baseline (call playing) → A recording, /capture visible → B recording,
+  Orbit in a background tab → C paused with the share kept → resume check.
+- `--profile` CPU-profiles the recorder tab during B; `--heap-diff` diffs heap snapshots by
+  constructor over a soak. Both are diagnostics, not measurements.
+- Chrome's auto-select now and then refuses a share; the script retries Start, and retries a
+  run whose tab dies.
+
+## Measured on Oct 15 2026 (Chrome 155, new-headless, dev servers, 1 rep, 60 s scenarios)
+
+CPU is % of one core above the idle baseline, all Chrome processes. Single rep, so read
+differences under ~2 points as noise.
+
+| | base (f9714cf6) | #449 batching | #450 + meter memo |
+|---|---|---|---|
+| A recording, tab visible (61 fps) | 20.9% | 24.0% | 20.3% |
+| B recording, tab hidden | 12.9% | 13.2% | 10.0% |
+| C paused, share kept | 9.9% | 5.2% | 3.2% |
+| worklet messages / live sends per second | 375 / 375 | 31 / 31 | 31 / 31 |
+
+A visible tab is dominated by painting at 60 fps (renderer ~15%), which batching does not
+touch. An earlier headful run reported "visible −44%", but its window was occluded: the page
+was hidden, so that number was a second hidden-tab run. The bench now runs new-headless with the
+recorder in its own window (visible, rAF running; minimized for B) and records
+`visibilityState` and rAF rate in A so it cannot happen silently again.
+
+Heap over a 5-minute hidden soak (`--heap-diff`): ~0.5 MB/min before #450 (motion jobs queued
+by the meters re-subscribing every render), ~0.2 MB/min after (transcript lines, dev-only
+React stacks).

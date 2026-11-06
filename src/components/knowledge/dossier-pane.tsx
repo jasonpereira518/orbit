@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { IntentLink } from "@/components/ui/intent-link";
 import { getAiAccessStatus } from "@/lib/ai-access";
 import { closenessTierChipClass } from "@/lib/closeness";
+import { shouldAutoRefreshBrief } from "@/lib/contact-brief";
 import { loadKnowledgeDossier } from "@/lib/knowledge-dossier";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { cn } from "@/lib/utils";
@@ -53,9 +54,12 @@ export async function DossierPane({ contactId }: { contactId: string }) {
   const aiReady = ai?.ready ?? false;
   const name = contact.preferredName?.trim() || contact.fullName;
   const role = [contact.title, contact.company].filter(Boolean).join(" at ");
-  // Rebuilding helps a stale brief with or without a key (there is a deterministic fallback);
-  // it only helps goal fit when a model can actually run, or this would be true forever.
-  const auto = dossier.stale || (dossier.goalsUnjudged && aiReady);
+  const auto = shouldAutoRefreshBrief({
+    stale: dossier.stale,
+    goalsUnjudged: dossier.goalsUnjudged,
+    aiReady,
+    modelWritten: dossier.brief?.model != null,
+  });
   const goalFitPending = dossier.goalsUnjudged && aiReady;
   const tier = contact.closenessTier;
   const hasFacts =
@@ -86,7 +90,7 @@ export async function DossierPane({ contactId }: { contactId: string }) {
           {role ? <p className="mt-0.5 text-sm text-muted-foreground">{role}</p> : null}
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {tier ? (
-              <Badge variant="secondary" className={cn("text-[10px]", closenessTierChipClass(tier))}>
+              <Badge variant="secondary" className={cn("text-3xs", closenessTierChipClass(tier))}>
                 {TIER_LABEL[tier]}
               </Badge>
             ) : null}
@@ -223,7 +227,7 @@ export async function DossierPane({ contactId }: { contactId: string }) {
                         {[r.title, r.company].filter(Boolean).join(" · ")}
                       </p>
                     </div>
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
                       {r.reasonLabel}
                     </span>
                   </IntentLink>
@@ -310,7 +314,7 @@ export async function DossierPane({ contactId }: { contactId: string }) {
             <Fact label="Tags" source="Yours">
               <div className="flex flex-wrap gap-1.5">
                 {facts.tags.map((t) => (
-                  <Badge key={t} variant="secondary" className="text-[11px]">
+                  <Badge key={t} variant="secondary" className="text-2xs">
                     {t}
                   </Badge>
                 ))}
@@ -348,7 +352,7 @@ function Fact({
     <section>
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
         <h4 className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</h4>
-        <span className="text-[11px] text-muted-foreground/80">{source}</span>
+        <span className="text-2xs text-muted-foreground-subtle">{source}</span>
       </div>
       {children}
     </section>

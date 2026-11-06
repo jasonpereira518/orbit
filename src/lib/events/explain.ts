@@ -35,6 +35,8 @@ import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { goalRelevanceComponent } from "@/lib/closeness";
 import { eventKindOf } from "@/lib/events/company-list-parse";
 import { scoreAttendee } from "@/lib/events/relevance";
+import { loadUserFocus } from "@/lib/career-profile-server";
+import { focusFitComponent } from "@/lib/focus-fit";
 
 export type AiNote = {
   why: string;
@@ -97,11 +99,12 @@ export async function explainAttendeeForUser(
   const row = rows[0];
   if (!row) return { ok: false, error: "That person is no longer on this roster." };
 
-  const [goals, targetKeys, history, userSchools] = await Promise.all([
+  const [goals, targetKeys, history, userSchools, focus] = await Promise.all([
     listActiveGoalTextsForUser(userId),
     loadTargetKeys(userId),
     eventsTogetherForRoster(userId, eventId),
     listSchools(userId),
+    loadUserFocus(userId).catch(() => null),
   ]);
 
   const scored = scoreAttendee({
@@ -118,6 +121,7 @@ export async function explainAttendeeForUser(
       >[0],
       goals
     ),
+    focusFit: focusFitComponent({ title: row.title }, focus),
     eventsTogether: history.get(row.id)?.count ?? 1,
     network: row.contact_id
       ? {

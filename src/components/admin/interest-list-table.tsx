@@ -156,7 +156,7 @@ export function InterestListTable({
             </span>
             <ConfirmActionDialog
               trigger={
-                <span
+                <button type="button"
                   className={cn(
                     BULK_BUTTON,
                     "border-border/70 text-muted-foreground hover:text-foreground"
@@ -164,7 +164,7 @@ export function InterestListTable({
                 >
                   <MailX className="size-3" aria-hidden />
                   Remove {ids.length}
-                </span>
+                </button>
               }
               title={`Take ${ids.length} ${ids.length === 1 ? "address" : "addresses"} off the waitlist?`}
               description="They leave the line and stop receiving anything immediately. The rows stay, so you keep their signup dates and sources, and each can be restored to its old place."
@@ -176,7 +176,7 @@ export function InterestListTable({
             />
             <ConfirmActionDialog
               trigger={
-                <span
+                <button type="button"
                   className={cn(
                     BULK_BUTTON,
                     "border-destructive/40 text-destructive hover:bg-destructive/10"
@@ -184,7 +184,7 @@ export function InterestListTable({
                 >
                   <Trash2 className="size-3" aria-hidden />
                   Delete {ids.length}
-                </span>
+                </button>
               }
               title={`Delete ${ids.length} ${ids.length === 1 ? "signup" : "signups"} entirely?`}
               description="The rows are erased. Their signup dates and sources are lost, and those addresses can rejoin later as brand-new signups. To take them out of line but keep the record, use Remove."
@@ -206,6 +206,7 @@ export function InterestListTable({
       </div>
 
       <AdminTable
+        label="Waitlist"
         head={
           <>
             <Th className="w-8">

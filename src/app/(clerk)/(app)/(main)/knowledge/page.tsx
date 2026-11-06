@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import Link from "next/link";
 import { BookOpen, Sparkles } from "lucide-react";
@@ -9,6 +10,8 @@ import { DossierSkeleton } from "@/components/knowledge/knowledge-skeletons";
 import { PeopleIndex } from "@/components/knowledge/people-index";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { cn } from "@/lib/utils";
+
+export const metadata = { title: "Knowledge" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -27,17 +30,18 @@ export default async function KnowledgePage({
 }: {
   searchParams: Promise<{ view?: string; p?: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.knowledge");
+  if (gate) return gate;
+
   const sp = await searchParams;
   const view = sp.view === "overview" ? "overview" : "people";
   const selectedId = view === "people" && typeof sp.p === "string" && UUID.test(sp.p) ? sp.p : null;
 
   return (
     // The page does not scroll: it fills the route (`data-fill-route`), the header holds its
-    // place, and the list and the dossier each scroll inside their own pane. The floating
-    // bell and feedback buttons get their gutter from `data-clear-floating-controls`.
+    // place, and the list and the dossier each scroll inside their own pane.
     <div
       data-fill-route
-      data-clear-floating-controls
       className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4"
     >
       <RenderStamp />

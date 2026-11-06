@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { resolvePlan, type Plan, type PlanSource } from "@/lib/entitlements";
 import type { AdminUserRow } from "@/lib/admin-metrics";
@@ -150,6 +151,7 @@ type RosterRecord = {
   subscription_period_end: string | Date | null;
   stripe_customer_id: string | null;
   suspended_at: string | Date | null;
+  account_kind: "internal" | "tester" | null;
   contacts: number;
   interactions: number;
   imports: number;
@@ -228,6 +230,7 @@ function toRow(record: RosterRecord): AdminUserRow {
     aiModel: record.ai_model,
     hasProviderKey: Boolean(record.has_provider_key),
     suspendedAt: toDate(record.suspended_at),
+    accountKind: record.account_kind,
     counts: {
       contacts: num(record.contacts),
       interactions: num(record.interactions),
@@ -331,7 +334,7 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
                0::bigint AS in_tokens, 0::bigint AS out_tokens, 0::bigint AS cost_micros,
                NULL::timestamptz AS first_interaction_at,
                min(created_at) AS first_contact_at, max(created_at) AS last_write_at
-        FROM contacts GROUP BY user_id
+        FROM contacts WHERE source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE} GROUP BY user_id
         UNION ALL
         SELECT user_id, 0, count(*)::int, 0, 0, 0, 0::bigint, 0::bigint, 0::bigint,
                0::bigint, min(created_at), NULL::timestamptz, max(created_at)
@@ -363,7 +366,7 @@ function rosterSql(query: RosterQuery, limit: number, offset: number) {
       (${sql.raw(HAS_PROVIDER_KEY_SQL)}) AS has_provider_key,
       s.comped_plan, s.comped_note, s.comped_at,
       s.lifetime_purchased_at, s.subscription_plan, s.subscription_status,
-      s.subscription_period_end, s.stripe_customer_id, s.suspended_at,
+      s.subscription_period_end, s.stripe_customer_id, s.suspended_at, s.account_kind,
       coalesce(agg.contacts, 0)      AS contacts,
       coalesce(agg.interactions, 0)  AS interactions,
       coalesce(agg.imports, 0)       AS imports,

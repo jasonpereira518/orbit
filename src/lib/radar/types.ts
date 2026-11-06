@@ -88,6 +88,7 @@ export const CONTEXT_CODES: ReadonlySet<string> = new Set([
   "stated_close",
   "target_company",
   "goal_match",
+  "focus_match",
   "touched_recently",
   "dismissed_recently",
   "already_scheduled",
@@ -103,6 +104,19 @@ export type RadarReason = { code: string; label: string; points: number };
  */
 export function leadReason(reasons: readonly RadarReason[]): RadarReason | undefined {
   return reasons.find((r) => r.points > 0 && !CONTEXT_CODES.has(r.code) && !r.code.startsWith("also:"));
+}
+
+/** A new role or title: news to congratulate. */
+export const JOB_MOVE_CODE = "job_change";
+/** A departure with no new role yet: a check-in, never a congratulation. */
+export const JOB_LEFT_CODE = "job_change_left";
+
+/** What a draft is for, in the card's own words, so it is about the reason the card exists. */
+export function draftIntent(target: { kind: RecommendationKind; reasons: readonly RadarReason[] }): string {
+  const lead = leadReason(target.reasons);
+  if (lead?.code === JOB_MOVE_CODE) return `Congratulate them on the new role: ${lead.label}. Warm and short; no ask.`;
+  if (lead?.code === JOB_LEFT_CODE) return `Check in after their move: ${lead.label}. Don't congratulate them.`;
+  return lead ? `${KIND_LABELS[target.kind]}: ${lead.label}` : KIND_LABELS[target.kind];
 }
 
 /**

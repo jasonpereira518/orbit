@@ -1,4 +1,4 @@
-import type { OutreachChannel } from "@/lib/outreach-types";
+import { isUnmailableAddress, type OutreachChannel } from "@/lib/outreach-types";
 
 export function buildMailtoUrl(input: {
   email: string;
@@ -46,11 +46,46 @@ export function canOpenInApp(
   return Boolean(prospect.linkedinUrl);
 }
 
+/**
+ * Whether a prospect row was invented by Orbit rather than found by Apollo.
+ *
+ * The no-key fallback fabricates plausible-looking people and writes them to
+ * `outreach_prospects` with reserved addresses. Those rows are for showing what the
+ * feature does — they are not people, and nothing may ever mail them.
+ */
+export function isDemoProspect(prospect: {
+  externalId?: string | null;
+  enrichment?: unknown;
+}) {
+  if (prospect.externalId?.startsWith("demo-")) return true;
+  const enrichment = prospect.enrichment as { demo?: unknown } | null | undefined;
+  return enrichment?.demo === true;
+}
+
 export function canAutoSend(
   channel: OutreachChannel,
-  prospect: { email?: string | null; phone?: string | null }
+  prospect: {
+    email?: string | null;
+    phone?: string | null;
+    externalId?: string | null;
+    enrichment?: unknown;
+  }
 ) {
   if (channel === "linkedin") return false;
-  if (channel === "email") return Boolean(prospect.email);
+  // A fabricated prospect is structurally un-sendable, not merely labelled.
+  //
+  // This used to ask only "does the row have an email", so the red Send button rendered
+  // on every demo prospect. Their addresses are `*.example.com` — reserved by RFC 2606
+  // and guaranteed to hard-bounce — and the phones are the reserved 555 range. On a
+  // deployment with hosted sending configured that is ten hard bounces per search, from
+  // a sending domain shared with every other user. The "Demo" badge on the row was a
+  // label, not a guard.
+  if (isDemoProspect(prospect)) return false;
+  // Checked on the address too, because the UI rows that call this carry `email` but not
+  // `externalId`/`enrichment` — a flag that has to be plumbed through three components is
+  // a flag that silently stops firing. The address is always present where it matters.
+  if (channel === "email") {
+    return Boolean(prospect.email) && !isUnmailableAddress(prospect.email!);
+  }
   return Boolean(prospect.phone);
 }

@@ -95,7 +95,7 @@ function IgnoredList({ onCount }: { onCount: (n: number) => void }) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
                   <p className="truncate text-sm font-medium text-foreground">{p.displayName}</p>
-                  <Badge variant="secondary" className="text-[10px]">
+                  <Badge variant="secondary" className="text-3xs">
                     {REASON_LABEL[p.reason]}
                   </Badge>
                 </div>
@@ -104,7 +104,7 @@ function IgnoredList({ onCount }: { onCount: (n: number) => void }) {
                     {[p.company, p.context].filter(Boolean).join(" · ")}
                   </p>
                 )}
-                <p className="mt-0.5 text-[11px] text-muted-foreground">{timelineDayLabel(p.updatedAt)}</p>
+                <p className="mt-0.5 text-2xs text-muted-foreground">{timelineDayLabel(p.updatedAt)}</p>
               </div>
               <Button
                 variant="outline"

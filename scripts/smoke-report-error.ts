@@ -136,6 +136,17 @@ async function finish() {
 
   console.error = realError;
   console.warn = realWarn;
+  // The browser SDK is ~83 KB gz: loaded at startup it sat on every route's critical path
+  // (Oct 13 audit). Client code reaches it only through src/lib/sentry-lazy.ts.
+  const { readFileSync } = await import("node:fs");
+  for (const file of ["src/instrumentation-client.ts", "src/components/error-fallback.tsx", "src/app/global-error.tsx"]) {
+    const source = readFileSync(file, "utf8");
+    check(
+      `${file} reaches Sentry only through sentry-lazy (no import of @sentry/nextjs)`,
+      !/from\s+["']@sentry\/nextjs["']|import\(\s*["']@sentry\/nextjs["']\s*\)/.test(source)
+    );
+  }
+
   if (failures > 0) {
     console.error(`\n${failures} report-error check(s) failed`);
     process.exit(1);

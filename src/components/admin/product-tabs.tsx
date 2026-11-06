@@ -45,7 +45,7 @@ export function ProductTabs({
       <div
         role="tablist"
         aria-label="Product sections"
-        className="relative mb-4 flex gap-1 overflow-x-auto [scrollbar-width:none]"
+        className="relative mb-4 flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         <span aria-hidden className="absolute inset-x-0 bottom-0 h-px bg-border/60" />
         {tabs.map((tab) => {

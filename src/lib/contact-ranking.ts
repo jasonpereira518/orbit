@@ -52,9 +52,12 @@ export async function rankContacts(
   const q = query.trim();
   if (!q) return [];
 
+  // Handed over pending, not awaited: the lexical arms run while the embedding is fetched,
+  // and only the semantic arm waits for it (still bounded by the same soft timeout). Awaiting
+  // it here put up to 300 ms in front of every search of 3+ characters.
   const embedding =
     q.length >= 3 && shouldUseSemanticArm(q)
-      ? await embeddingWithSoftTimeout(userId, q)
+      ? embeddingWithSoftTimeout(userId, q)
       : null;
 
   return hybridSearchContacts(userId, { query: q, embedding, limit });

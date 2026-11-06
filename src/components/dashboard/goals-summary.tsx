@@ -1,6 +1,6 @@
 "use client";
 
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
@@ -68,7 +68,9 @@ export function GoalsSummary({
             {shownGoals.map((g) => (
               <li
                 key={g.id}
-                className="rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-sm"
+                // A goal can be 200 characters (the input's maxLength), which as a
+                // single unbroken pill ran past the card's right edge.
+                className="max-w-full break-words rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-sm"
               >
                 {g.text}
               </li>
@@ -107,6 +109,7 @@ export function GoalsSummary({
         >
           <Input
             placeholder="Add a goal…"
+            aria-label="New goal"
             value={text}
             onChange={(e) => setText(e.target.value)}
             maxLength={200}
@@ -143,8 +146,8 @@ export function GoalsSummary({
                           {c.title && c.company ? " · " : ""}
                           {c.company && (
                             <span
-                              className="font-medium"
-                              style={{ color: companyBrandColor(c.company) ?? undefined }}
+                              className={cn("font-medium", companyBrandText(c.company)?.className)}
+                              style={companyBrandText(c.company)?.style}
                             >
                               {c.company}
                             </span>

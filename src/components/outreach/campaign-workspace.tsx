@@ -7,6 +7,7 @@ import {
   BulkActionBar,
 } from "@/components/outreach/bulk-action-bar";
 import { AudienceFiltersEditor } from "@/components/outreach/audience-filters-editor";
+import type { WarmPath } from "@/lib/warm-paths";
 import { CampaignInsights } from "@/components/outreach/campaign-insights";
 import { CampaignKpiStrip } from "@/components/outreach/campaign-kpi-strip";
 import { PipelineFilters } from "@/components/outreach/pipeline-filters";
@@ -23,9 +24,7 @@ import {
   updateCampaign,
 } from "@/actions/outreach";
 import { toast } from "@/lib/toast";
-import {
-  prospectPipelineBucket,
-} from "@/lib/outreach-metrics";
+import { isDeliveredMessage, prospectPipelineBucket } from "@/lib/outreach-metrics";
 import type {
   AudienceFilters,
   CampaignMetrics,
@@ -40,6 +39,8 @@ export function CampaignWorkspace({
 }: {
   campaign: {
     id: string;
+    /** Normalised company key -> people the user already knows there; see `getCampaign`. */
+    warmPaths?: Record<string, WarmPath[]>;
     name: string;
     audienceQuery: string | null;
     messageIntent: string | null;
@@ -154,6 +155,7 @@ export function CampaignWorkspace({
             stepIndex: active.stepIndex ?? 0,
             outcome: active.outcome ?? null,
             scheduledFor: active.scheduledFor ?? null,
+            sentAt: active.sentAt ?? null,
           }
         : null,
       messages: p.messages,
@@ -177,7 +179,7 @@ export function CampaignWorkspace({
   const selectedIds = useSelectedProspectIds(filtered);
 
   const bulkRows = filtered
-    .filter((p) => p.message && !p.message.outcome)
+    .filter((p) => p.message && !isDeliveredMessage({ ...p.message, outcome: p.message.outcome ?? null }))
     .map((p) => ({
       prospectId: p.id,
       prospectName: p.fullName,
@@ -334,6 +336,7 @@ export function CampaignWorkspace({
       <ProspectTable
         campaignId={campaign.id}
         prospects={filtered}
+        warmPaths={campaign.warmPaths}
         defaultChannel={defaultChannel}
         onUpdated={refresh}
       />

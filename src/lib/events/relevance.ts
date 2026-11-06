@@ -40,6 +40,8 @@ export const RELEVANCE_WEIGHTS = {
   targetCompany: { 1: 35, 2: 25, 3: 12 },
   /** Scaled by `goalRelevanceComponent`, which is already 0..1. */
   goalMatch: 20,
+  /** Scaled by `focusFitComponent` (skills and watched job titles from the LinkedIn export), 0..1. */
+  focusMatch: 8,
   /** Per event beyond the first, capped — five shared rooms is not five times two. */
   repeatPerExtraEvent: 8,
   repeatCap: 24,
@@ -92,6 +94,8 @@ export type RelevanceInput = {
   targetKeys: Map<string, number>;
   /** 0..1 from `goalRelevanceComponent`. */
   goalFit: number;
+  /** 0..1 from `focusFitComponent`. Absent means 0. */
+  focusFit?: number;
   /** How many events they have already shared with the user, this one included. */
   eventsTogether: number;
   /** Set when this roster row resolves to somebody already in the network. */
@@ -214,6 +218,14 @@ export function scoreAttendee(input: RelevanceInput): RelevanceResult {
       "goal_match",
       "Matches what you said you're working on",
       Math.round(RELEVANCE_WEIGHTS.goalMatch * Math.min(1, input.goalFit))
+    );
+  }
+
+  if ((input.focusFit ?? 0) > 0) {
+    add(
+      "focus_match",
+      "Fits your skills and the roles you’re watching",
+      Math.round(RELEVANCE_WEIGHTS.focusMatch * Math.min(1, input.focusFit ?? 0))
     );
   }
 

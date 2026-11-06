@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { friendlyError } from "@/lib/errors";
-import { PLAN_LABELS } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, PLAN_LABELS } from "@/lib/plans/plan-config";
 import { toast } from "@/lib/toast";
 
 function day(seconds: number | null) {
@@ -74,7 +74,7 @@ export function LifetimeDialog({
   const sub = preview?.subscription;
   const effects: string[] = [];
   if (preview && mode === "grant") {
-    effects.push(`Their plan changes from ${PLAN_LABELS[preview.plan]} to Orbit Lifetime now: every Max feature, with AI on their own key only (no credits, no packs).`);
+    effects.push(`Their plan changes from ${PLAN_LABELS[preview.plan]} to Orbit Lifetime now: every Max feature, with ${PLAN_CONFIG.lifetime.monthlyCredits} AI credits a month (no packs).`);
     if (sub?.kind === "ends_at_period_end") {
       effects.push(
         sub.alreadyEnding

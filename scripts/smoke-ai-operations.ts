@@ -140,6 +140,7 @@ console.log("\nDerived lists");
     [...BACKGROUND_AI_OPERATIONS].sort().join(",") ===
       [
         "calendar.kind",
+        "contact.name_guess",
         "contact.work_history",
         "duplicates.same_person",
         "duplicates.same_person.llm",
@@ -147,12 +148,15 @@ console.log("\nDerived lists");
         "import.enrich.gate",
         "import.linkedin.timeline",
         "import.linkedin.timeline.decide",
+        "notes.detect",
+        "notes.detect.llm",
         "radar.draft",
         "radar.rerank",
         "radar.why",
         "recruiter.gate",
         "recruiter.prefilter",
         "recruiter.scan",
+        "relationship.digest",
         "search.embed.batch",
       ].join(","),
     [...BACKGROUND_AI_OPERATIONS].join(",")

@@ -1,7 +1,8 @@
 import { and, eq, gt, gte, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { billingEvents, errorEvents, usageEvents } from "@/db/schema";
-import { managedAiSwitchedOff, managedCostSql, managedKeysConfigured } from "@/lib/ai-access";
+import { managedAiSwitchedOff, managedCostSql, managedKeysConfigured, managedPoolsSpent } from "@/lib/ai-access";
+import { ledgerRowCountsSql } from "@/lib/billing-events";
 import { ERROR_SOURCES } from "@/lib/error-events";
 import type { ManagedAiOpsFacts } from "@/lib/ops-alerts";
 
@@ -22,10 +23,12 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
   const orbit = eq(usageEvents.keyOwner, "orbit");
   // Deepgram rows carry keyOwner "orbit" too (Orbit's own key), but they are metered by
   // `speech_usage`, not credits — without this, voice-note volume would inflate the
-  // spend-spike and margin alerts below.
+  // spend-spike and margin alerts below. (Deepgram dollars are priced from `speech_usage` in
+  // `speech-cost.ts` and watched by the speech-credit alerts; they are added BESIDE this
+  // managed-AI figure everywhere else, never inside it.)
   const notDeepgram = ne(usageEvents.provider, "deepgram");
 
-  const [included, spend, revenue, dry, failing] = await Promise.all([
+  const [included, spend, revenue, dry, failing, poolSpentMicros] = await Promise.all([
     // `resolvePlan`, in SQL, narrowed to the plans with included AI.
     db.execute(sql`
       SELECT count(*)::int AS n FROM user_settings s
@@ -48,12 +51,21 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
     db
       .select({ cents: sql<string>`coalesce(sum(${billingEvents.amountCents}), 0)::bigint` })
       .from(billingEvents)
-      .where(and(inArray(billingEvents.kind, ["payment", "credit_pack"]), gt(billingEvents.effectiveAt, monthAgo))),
+      // The revenue behind the spend: the operator's own test charges are not revenue, but the
+      // spend above is real money whoever incurred it, so it is not filtered.
+      .where(
+        and(
+          inArray(billingEvents.kind, ["payment", "credit_pack"]),
+          gt(billingEvents.effectiveAt, monthAgo),
+          ledgerRowCountsSql(sql`${billingEvents.userId}`)
+        )
+      ),
     db.execute(sql`
       SELECT count(DISTINCT a.user_id)::int AS n
         FROM credit_grants a
        WHERE a.kind = 'allowance' AND a.status = 'active'
          AND a.period_start <= now() AND a.period_end > now()
+         AND a.plan IN ('orbit', 'max')
          AND a.micros_remaining = 0
          AND NOT EXISTS (
            SELECT 1 FROM credit_grants p
@@ -64,6 +76,7 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
       .selectDistinct({ provider: sql<string | null>`${errorEvents.context}->>'provider'` })
       .from(errorEvents)
       .where(and(eq(errorEvents.source, ERROR_SOURCES.managedAi), gte(errorEvents.createdAt, hourAgo))),
+    managedPoolsSpent(now),
   ]);
 
   return {
@@ -75,5 +88,6 @@ export async function loadManagedAiOpsFacts(now: Date): Promise<ManagedAiOpsFact
     revenueLast30dCents: Number(revenue[0]?.cents ?? 0),
     accountsAtCap: Number(rowsOf<{ n: number }>(dry)[0]?.n ?? 0),
     failingProviders: failing.map((f) => f.provider ?? "unknown"),
+    poolSpentMicros,
   };
 }

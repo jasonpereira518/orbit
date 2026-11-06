@@ -8,6 +8,7 @@
  *
  * Pure: no network, no database. Run: npx tsx scripts/smoke-security-headers.ts
  */
+import { readFileSync } from "node:fs";
 import { buildSecurityHeaders, clerkFrontendApiHost } from "../src/lib/security-headers";
 
 let failures = 0;
@@ -37,6 +38,8 @@ function main() {
   check("nosniff", header(prod, "X-Content-Type-Options") === "nosniff");
   check("Referrer-Policy strict-origin-when-cross-origin", header(prod, "Referrer-Policy") === "strict-origin-when-cross-origin");
   check("X-Frame-Options DENY", header(prod, "X-Frame-Options") === "DENY");
+  check("COOP isolates the window but keeps popups (Clerk, Picker, Google sign-in)", header(prod, "Cross-Origin-Opener-Policy") === "same-origin-allow-popups");
+  check("next.config turns off X-Powered-By", /poweredByHeader:\s*false/.test(readFileSync("next.config.ts", "utf8")));
   check("Permissions-Policy allows camera/mic to self only", /camera=\(self\)/.test(header(prod, "Permissions-Policy") ?? "") && /geolocation=\(\)/.test(header(prod, "Permissions-Policy") ?? ""));
   // Meeting capture and the feedback screenshot both need getDisplayMedia on our own origin.
   check("Permissions-Policy allows display-capture to self", /display-capture=\(self\)/.test(header(prod, "Permissions-Policy") ?? ""));
@@ -75,6 +78,7 @@ function main() {
   const waitlist = buildSecurityHeaders({ dev: false, enforce: false, clerkPublishableKey: pk, surface: "waitlist" });
   const wCsp = header(waitlist, "Content-Security-Policy-Report-Only") ?? "";
   const wAll = waitlist.map((h) => `${h.key}: ${h.value}`).join("\n");
+  check("waitlist COOP is same-origin (it opens no popups)", header(waitlist, "Cross-Origin-Opener-Policy") === "same-origin");
   check("keeps HSTS, nosniff, DENY and frame-ancestors none",
     Boolean(header(waitlist, "Strict-Transport-Security")) && header(waitlist, "X-Content-Type-Options") === "nosniff" &&
     header(waitlist, "X-Frame-Options") === "DENY" && /frame-ancestors 'none'/.test(wCsp));
@@ -88,6 +92,9 @@ function main() {
     /display-capture=\(\)/.test(header(waitlist, "Permissions-Policy") ?? ""));
   check("still reports to /api/csp-report and allows Vercel Analytics",
     /report-uri \/api\/csp-report/.test(wCsp) && /va\.vercel-scripts\.com/.test(wCsp));
+  // Vercel BotID serves its challenge frames same-origin (withBotId marks its path
+  // frame-ancestors 'self'), so the join breaks under enforcement if frames are refused.
+  check("frames only itself, for BotID", /frame-src 'self'(;|$)/.test(wCsp), wCsp);
   check("follows CSP_ENFORCE like the app's",
     Boolean(header(buildSecurityHeaders({ dev: false, enforce: true, clerkPublishableKey: pk, surface: "waitlist" }), "Content-Security-Policy")));
 

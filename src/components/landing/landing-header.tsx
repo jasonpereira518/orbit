@@ -123,7 +123,7 @@ export function LandingHeader({
           <Link
             href="/"
             className="flex shrink-0 items-center gap-2 sm:gap-2.5"
-            aria-label="Back to top"
+            aria-label="Orbit, back to top"
             onClick={(e) => {
               if (window.scrollY <= 0) return;
               e.preventDefault();

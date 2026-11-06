@@ -18,12 +18,16 @@ import { ConnectivityBanner } from "@/components/layout/connectivity-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { AvatarBackfill } from "@/components/contacts/avatar-backfill";
 import { DueNotificationsWatcher } from "@/components/notifications/due-notifications-watcher";
+import { CloudNotesWatcher } from "@/components/notifications/cloud-notes-watcher";
 import { PlanCelebrationWatcher } from "@/components/celebration/plan-celebration-watcher";
+import { CreditsIntroWatcher } from "@/components/credits-intro/credits-intro-watcher";
+import { LinkedInReminderWatcher } from "@/components/linkedin-reminder/linkedin-reminder-watcher";
 import { PlanDowngradeWatcher } from "@/components/celebration/plan-downgrade-watcher";
 import { ImportJobWatcher } from "@/components/imports/import-job-watcher";
 import { CaptureJobWatcher } from "@/components/capture/capture-job-watcher";
 import { GlobalJobProgressBar } from "@/components/jobs/global-job-progress-bar";
 import { CommandPalette } from "@/components/layout/command-palette";
+import { ComposeHost } from "@/components/email/compose-host";
 import { HiddenSurfacesProvider } from "@/components/layout/hidden-surfaces";
 import { Button } from "@/components/ui/button";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
@@ -36,6 +40,12 @@ import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import type { Plan } from "@/lib/plan-limits";
 import type { ThemePreference } from "@/lib/theme";
+
+// The guided tour's coach rail: only accounts mid-tour ever load it.
+const TourRuntime = dynamic(
+  () => import("@/components/tour/tour-runtime").then((m) => ({ default: m.TourRuntime })),
+  { ssr: false },
+);
 
 const FloatingAskBar = dynamic(
   () =>
@@ -56,7 +66,11 @@ export function AppShell({
   hiddenForUsers,
   comingSoon,
   navOrder,
+  tierTags,
   viewingAsUser,
+  linkedinReminder,
+  creditsIntroDue,
+  tour,
 }: {
   children: React.ReactNode;
   userId: string;
@@ -72,8 +86,18 @@ export function AppShell({
   comingSoon: string[];
   /** Operator-chosen sidebar order, as surface keys. */
   navOrder: string[];
+  /** Tier-limited pages to tag in the nav → the plans that may open them. */
+  tierTags: Record<string, Plan[]>;
   viewingAsUser: boolean;
-  /** True when an admin has opted into seeing real pages behind a coming-soon screen. */
+  /** The full-screen LinkedIn export reminder — see `LinkedInReminderWatcher`. */
+  linkedinReminder: { due: boolean; requested: boolean; email: string | null };
+  /** The one-time full-screen "your AI credits are here" moment — see `CreditsIntroWatcher`. */
+  creditsIntroDue: boolean;
+  /**
+   * The guided tour, when its coach rail should be on screen. A hydration seed only: the
+   * runtime owns the live stop and writes it back fire-and-forget.
+   */
+  tour: { active: boolean; stop: string | null; hasApiKey: boolean; linkedinRequested: boolean };
 }) {
   const pathname = usePathname();
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
@@ -109,6 +133,9 @@ export function AppShell({
     // A floating bar over a viewport-locked queue would sit on its last rows and on the
     // detail pane. ⌘K still asks from there (the palette falls back to /chat).
     !isReminders &&
+    // The bar IS chat, and it owns bottom-centre: during the guided tour it would both
+    // satisfy the Chat stop from any page and sit where the coach rail needs the room.
+    !tour.active &&
     !isKnowledge &&
     !hiddenSet.has("page.chat");
   // Where the palette sends a typed question: the ask bar when it is on screen, /chat when
@@ -123,7 +150,7 @@ export function AppShell({
   if (isOnboarding) {
     return (
       <MotionConfig reducedMotion="user">
-        <div className="min-h-screen bg-background">
+        <div className="min-h-dvh bg-background">
           <ThemeSync theme={theme} />
           <ConnectivityBanner />
           {children}
@@ -162,13 +189,22 @@ export function AppShell({
           )}
           <AvatarBackfill />
           <DueNotificationsWatcher />
+          <CloudNotesWatcher />
           <PlanCelebrationWatcher plan={plan} />
+          {/* The credits intro and the export reminder both wait until the tour is over: two
+              full-screen guides at once would be one too many. The intro mounts first; the
+              reminder defers while any modal dialog is open, so they play one after the other. */}
+          <CreditsIntroWatcher due={creditsIntroDue && !tour.active} />
+          <LinkedInReminderWatcher {...linkedinReminder} due={linkedinReminder.due && !tour.active} />
+          {tour.active && <TourRuntime seed={tour} hidden={hiddenSet} />}
           <PlanDowngradeWatcher key={userId} userId={userId} plan={plan} />
           <ImportJobWatcher />
           <CaptureJobWatcher />
           <GlobalJobProgressBar />
           <CommandPalette hidden={hiddenSet} askMode={paletteAskMode} />
+          <ComposeHost userId={userId} hidden={hiddenSet} />
           <div
+            data-app-sidebar
             className="hidden h-full shrink-0 p-3 md:block lg:p-4"
             style={{ viewTransitionName: "app-sidebar" }}
           >
@@ -181,15 +217,25 @@ export function AppShell({
               hiddenForUsers={hiddenForUsersSet}
               comingSoon={comingSoonSet}
               navOrder={navOrder}
+              tierTags={tierTags}
             />
           </div>
-          <main
+          {/* The scroll column. Not itself the <main> landmark: it also holds the phone
+              header and the bottom nav, which are not page content. */}
+          <div
             id="app-main-scroll"
             className={cn(
               "relative flex h-full min-h-0 flex-1 flex-col",
+              // A locked page (Chat, the constellation) fits itself to the viewport. Under
+              // 500px tall — a landscape phone, or 200% zoom — that left Chat's thread 0px
+              // tall, so there the column scrolls like any other page.
               isViewportLocked
-                ? "overflow-hidden"
+                ? "overflow-hidden [@media(max-height:500px)]:overflow-y-auto"
                 : "overflow-y-auto overscroll-contain",
+              // Focus and scrollIntoView stop clear of the sticky section headers at the top
+              // and the bottom nav and ask bar floating over the bottom (WCAG 2.4.11). The
+              // bottom value is the content's own reserved padding, below.
+              "scroll-pt-12 scroll-pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:scroll-pb-24",
             )}
           >
             <header
@@ -245,9 +291,12 @@ export function AppShell({
               <NotificationsPanelButton tooltip />
             </div>
 
-            <div
+            <main
+              id="main-content"
+              // The skip link's target and where focus lands after a navigation.
+              tabIndex={-1}
               className={cn(
-                "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-10 md:py-8",
+                "mx-auto flex w-full max-w-6xl flex-col px-4 py-6 outline-none md:px-10 md:py-8",
                 // Gutter for a page that floats a fixed rail over the right edge — the
                 // contacts A-Z scrubber is the one that does. It is an opaque card, so
                 // whatever it covers is gone, not dimmed. It publishes the variable only
@@ -265,9 +314,12 @@ export function AppShell({
                 // illustrative arbitrary value in this very comment generated an invalid
                 // rule and took the entire stylesheet down with it.
                 "pr-[calc(1rem+var(--content-rail-gutter,0px))]",
-                "md:pr-[calc(2.5rem+var(--content-rail-gutter,0px))]",
+                // From md the bell and feedback rail floats over the right edge (2rem inset,
+                // 2.5rem wide), so the column always reserves 5rem there, or the contacts
+                // rail's gutter if that is larger.
+                "md:pr-[max(5rem,calc(2.5rem+var(--content-rail-gutter,0px)))]",
                 isViewportLocked
-                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
+                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8 [@media(max-height:500px)]:flex-none [@media(max-height:500px)]:overflow-visible"
                   : isSettings
                     ? "flex-1 pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
                     : "flex-1 pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:pb-24",
@@ -275,7 +327,7 @@ export function AppShell({
               )}
             >
               <HiddenSurfacesProvider value={hiddenSet}>{children}</HiddenSurfacesProvider>
-            </div>
+            </main>
 
             {showAskBar && <FloatingAskBar />}
             <MobileNav
@@ -284,8 +336,9 @@ export function AppShell({
               hidden={hiddenSet}
               comingSoon={comingSoonSet}
               navOrder={navOrder}
+              tierTags={tierTags}
             />
-          </main>
+          </div>
         </div>
       </div>
     </MotionConfig>

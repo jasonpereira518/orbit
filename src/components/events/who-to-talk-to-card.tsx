@@ -112,7 +112,7 @@ export function WhoToTalkToCard({
                 {row.reasons.slice(0, 3).map((reason) => (
                   <li
                     key={reason.code}
-                    className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
+                    className="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground"
                   >
                     {reason.label}
                   </li>

@@ -518,7 +518,7 @@ export type DemoCapture = {
   participants: string[];
   interactionType: "meeting" | "in_person" | "event" | "call" | "note";
   topics: string[];
-  /** Present when the capture was a recorded meeting (`/capture?mode=meeting`). */
+  /** Present when the capture was a recorded meeting (`/meetings`). */
   meeting?: {
     durationMin: number;
     summary: string;

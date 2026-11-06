@@ -48,7 +48,7 @@ export function GmailImportPanel({
           imported from your inbox. You can still add recruiters by hand.
         </p>
         {process.env.NODE_ENV === "development" ? (
-          <p className="text-xs text-muted-foreground/70">
+          <p className="text-xs text-muted-foreground-subtle">
             Dev only — set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and
             GOOGLE_REDIRECT_URI
             {connection.redirectUri ? ` (redirect: ${connection.redirectUri})` : ""}

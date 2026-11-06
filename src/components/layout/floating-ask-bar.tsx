@@ -1,5 +1,6 @@
 "use client";
 
+import type { ChatBlocks } from "@/lib/chat-directives";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import dynamic from "next/dynamic";
@@ -21,6 +22,11 @@ import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { OPEN_ASK_BAR_EVENT, type OpenAskBarDetail } from "@/lib/ask-bar-events";
 import { useFeedbackPanelState } from "@/lib/feedback-events";
+import { AiKeyNotice } from "@/components/ai-key-notice";
+import { useViewerPlan } from "@/components/viewer-plan";
+import { aiDenialFromMessage, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
+import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import { getFreeCreditsLeft } from "@/actions/credits";
 import { askNetwork, createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
 import {
@@ -33,13 +39,14 @@ import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
+import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
 import { getAskBarContact } from "@/actions/contacts";
 import { searchDashboardContacts } from "@/actions/search";
 import { createReminder } from "@/actions/reminders";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
 import type { KeywordSearchHit } from "@/lib/keyword-search";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -86,6 +93,8 @@ type AssistantMessage = {
   streaming?: boolean;
   /** The stages the server reported, so this bar narrates the same work `/chat` does. */
   steps?: ChatStep[];
+  /** What the answer's `::list` blocks show; its `::people` show as the cards below. */
+  blocks?: ChatBlocks;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -136,10 +145,31 @@ export function FloatingAskBar() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<number | null>(null);
+  /** The same id as state, for the "Open in Chat" link — the ref is what async sends read. */
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const chatThreadIdRef = useRef<string | null>(null);
 
   const [open, setOpen] = useState(false);
+  const { aiReason, plan } = useViewerPlan();
+  const [askDenial, setAskDenial] = useState<AiAccessDenial | null>(null);
+  const [creditsLeft, setCreditsLeft] = useState<number | null>(null);
+  const denial = askDenial ?? aiReason;
+
+  useEffect(() => {
+    // Only Free shows the count; server actions serialize per tab, so skip the call elsewhere.
+    if (!open || plan !== "free") return;
+    let live = true;
+    getFreeCreditsLeft().then(
+      (n) => {
+        if (live) setCreditsLeft(n);
+      },
+      () => {}
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, plan]);
   const [hidden, setHidden] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KeywordSearchHit[]>([]);
@@ -345,6 +375,7 @@ export function FloatingAskBar() {
     if (chatThreadIdRef.current) return chatThreadIdRef.current;
     const created = await createChatThread();
     chatThreadIdRef.current = created.id;
+    setChatThreadId(created.id);
     return created.id;
   }, []);
 
@@ -353,6 +384,9 @@ export function FloatingAskBar() {
       const q = raw.trim();
       if (!q || chatPending) return;
 
+      // A new question starts clean: a refusal from an earlier one must not sit over this
+      // answer. A fresh refusal sets it again in onError.
+      setAskDenial(null);
       setLastUserQuery(q);
       const userMsg: UserMessage = {
         id: newId(),
@@ -442,6 +476,10 @@ export function FloatingAskBar() {
                 return { ...m, steps: next };
               });
             },
+            onBlocks: (blocks) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, blocks }));
+            },
             onDone: (info) => {
               smoother.flush();
               ensurePlaceholder();
@@ -450,7 +488,9 @@ export function FloatingAskBar() {
             },
             onError: (message) => {
               smoother.cancel();
-              toast.error(message);
+              const d = aiDenialFromMessage(message);
+              if (d) setAskDenial(d);
+              else toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               setQuery(q);
             },
@@ -459,9 +499,11 @@ export function FloatingAskBar() {
         smoother.flush();
         smootherRef.current = null;
         setChatPending(false);
+        // The answer may have spent a credit. Same guard as the read on open.
+        if (plan === "free") getFreeCreditsLeft().then(setCreditsLeft, () => {});
       })();
     },
-    [activeContactId, chatPending, ensureChatThread]
+    [activeContactId, chatPending, ensureChatThread, plan]
   );
   useEffect(() => {
     sendQuestionRef.current = (q) => sendQuestion(q);
@@ -471,7 +513,9 @@ export function FloatingAskBar() {
     setMessages([]);
     setQuery("");
     setHits([]);
+    setAskDenial(null);
     chatThreadIdRef.current = null;
+    setChatThreadId(null);
   }
 
   const showPanel = open;
@@ -532,7 +576,12 @@ export function FloatingAskBar() {
         "bottom-[calc(6.875rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
-      aria-hidden={!visible}
+      // `inert`, not `aria-hidden`: hidden on scroll, the bar's input and buttons stayed in
+      // the tab order while gone from the accessibility tree. Inert takes them out of both.
+      inert={!visible}
+      // A landmark of its own, outside <main>, so it is reachable from the landmarks list.
+      role="search"
+      aria-label="Ask your network"
     >
       {/* A slim pill at rest that opens out to full width once it is in use. A spring, not a
           CSS transition: it picks up from wherever it is when a click lands mid-animation. */}
@@ -583,6 +632,15 @@ export function FloatingAskBar() {
                           : "Ask your network"}
                 </p>
                 <div className="flex items-center gap-0.5">
+                  {chatThreadId && messages.length > 0 && !chatPending && (
+                    <Link
+                      href={`/chat?thread=${chatThreadId}`}
+                      onClick={() => setOpen(false)}
+                      className="inline-flex h-7 items-center rounded-full px-2.5 text-xs text-muted-foreground hover:bg-muted hover:text-ink"
+                    >
+                      Open in Chat
+                    </Link>
+                  )}
                   {messages.length > 0 && (
                     <Button
                       type="button"
@@ -608,7 +666,13 @@ export function FloatingAskBar() {
                 </div>
               </div>
 
-              <div className="max-h-[min(56vh,30rem)] overflow-y-auto">
+              {denial && (
+                <div className="px-3 pb-2">
+                  <AiKeyNotice feature="chat" reason={denial} compact />
+                </div>
+              )}
+
+              <div className="max-h-[min(56dvh,30rem)] overflow-y-auto">
                 {messages.length === 0 && !chatPending && hits.length === 0 && (
                   <div className="px-2 pb-2">
                     {query.trim() ? (
@@ -695,8 +759,11 @@ export function FloatingAskBar() {
                                   {hit.title}
                                   {hit.title && hit.company && ", "}
                                   {hit.company && (
-                                    <span style={{ color: companyBrandColor(hit.company) ?? undefined }}>
-                                      {hit.company}
+                                    <span
+                                      className={companyBrandText(hit.company)?.className}
+                                      style={companyBrandText(hit.company)?.style}
+                                    >
+                                      <bdi>{hit.company}</bdi>
                                     </span>
                                   )}
                                 </span>
@@ -790,7 +857,9 @@ export function FloatingAskBar() {
         <motion.div
           className={cn(
             "flex h-12 items-center gap-2 rounded-full border border-border/70 bg-card/95 pl-4 pr-1.5 shadow-lg backdrop-blur-md",
-            "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15",
+            // The same focus ring as every other field (ui/input); the old primary/15 wash was
+            // under the 3:1 a focus indicator needs.
+            "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50",
             personContextActive && "border-primary/25",
             open && "shadow-xl"
           )}
@@ -800,9 +869,11 @@ export function FloatingAskBar() {
             id={inputId}
             ref={inputRef}
             type="text"
+            aria-label="Ask your network"
             value={query}
             placeholder={placeholder}
             disabled={chatPending}
+            maxLength={CHAT_QUESTION_MAX_CHARS}
             autoComplete="off"
             className={cn(
               // 16px on phones: iOS Safari zooms the page into any focused input with
@@ -832,7 +903,7 @@ export function FloatingAskBar() {
             }}
           />
           {!open && !query && (
-            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-[11px] text-muted-foreground sm:inline-flex">
+            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-2xs text-muted-foreground sm:inline-flex">
               ⌘J
             </kbd>
           )}
@@ -873,6 +944,11 @@ export function FloatingAskBar() {
             )}
           </Button>
         </motion.div>
+        {creditsLeft !== null && creditsLeft > 0 && creditsLeft <= FREE_LOW_CREDITS && (
+          <p className="px-4 pb-2 text-xs text-muted-foreground">
+            {creditsLeft} AI {creditsLeft === 1 ? "credit" : "credits"} left this month
+          </p>
+        )}
       </motion.div>
     </motion.div>
   );
@@ -885,7 +961,10 @@ function BrandedQuestion({ question, company }: { question: string; company?: st
   return (
     <>
       {question.slice(0, at)}
-      <span className="font-medium" style={{ color: companyBrandColor(company) ?? undefined }}>
+      <span
+        className={cn("font-medium", companyBrandText(company)?.className)}
+        style={companyBrandText(company)?.style}
+      >
         {company}
       </span>
       {question.slice(at + company.length)}
@@ -922,7 +1001,9 @@ const AssistantBubble = memo(function AssistantBubble({
       )}
       {msg.answer && (
         <div className="text-sm leading-relaxed text-foreground/90">
-          <ChatMarkdown>{msg.answer}</ChatMarkdown>
+          <ChatMarkdown blocks={msg.blocks} streaming={msg.streaming}>
+            {msg.answer}
+          </ChatMarkdown>
         </div>
       )}
       {msg.recommendations.map((r) => (

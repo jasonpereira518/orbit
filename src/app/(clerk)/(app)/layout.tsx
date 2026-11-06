@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
+import { SurveyPromptLazy } from "@/components/surveys/survey-prompt-lazy";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { shouldShowTermsNotice } from "@/lib/legal";
 import { AppShell } from "@/components/layout/app-shell";
@@ -15,6 +16,7 @@ import { LearnedBrandColors } from "@/components/layout/learned-brand-colors";
 import { registerLearnedBrands } from "@/lib/brand-colors";
 import { learnOrgBrandColors, loadOrgBrandColors } from "@/lib/org-brand-learn";
 import { OfflineSync } from "@/components/layout/offline-sync";
+import { MeetingSessionProvider } from "@/components/capture/meeting-session";
 import { captureAttribution } from "@/lib/attribution-capture";
 import {
   bootstrapAuthenticatedUser,
@@ -22,11 +24,17 @@ import {
   isDemoMode,
 } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { aiDenialFromSettings } from "@/lib/ai-access";
+import { creditPeriodFor } from "@/lib/credits/ledger";
+import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { getLinkedInReminderState } from "@/lib/linkedin-reminder";
+import { tourRailVisible } from "@/lib/tour/tour-state";
 import { isOnboardingGatedPath, needsOnboarding } from "@/lib/onboarding";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { resolveThemePreference } from "@/lib/theme";
 import { isHeldByStealth } from "@/lib/site-access";
 import { stealthWaitlistUrl } from "@/lib/waitlist-host";
+import { isCreditsIntroDue } from "@/lib/credits-intro";
 
 /**
  * No route in this group can be statically prerendered: every one of them resolves a
@@ -127,13 +135,17 @@ export default async function AppLayout({
   // cannot read the database themselves. `hiddenForUsers` rides along so an exempt operator
   // can be shown a "Hidden" tag on items their users are not getting — see `AppSidebar`.
   //
+  // `linkedinReminder` arms the once-per-account "Is your LinkedIn export ready?" screen.
+  // It is free on nearly every request: the settings row above answers it unless the
+  // account is 24h–14d old and has not been shown it yet — only then is `imports` read.
   // `brandColors` is the brand color Orbit has learned for each of the viewer's companies and
   // schools that the curated table does not know, plus which ones it has not looked up yet.
   // Those are learned after the response is sent, so a newly added company shows its own
   // color from the next page load on. A failed read costs only the colors, never the page.
-  const [{ plan }, visibility, brandColors] = await Promise.all([
+  const [{ plan, canUseMeetings }, visibility, linkedinReminder, brandColors] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
+    getLinkedInReminderState(userId, settings),
     loadOrgBrandColors(userId).catch(() => ({ learned: [], missing: [] })),
   ]);
   // The server-component realm has its own copy of the registry; the client component below
@@ -145,12 +157,25 @@ export default async function AppLayout({
 
   // Whether included AI can run on this deployment at all — see ViewerPlanProvider.
   const includedAiAvailable = Object.values(managedKeysConfigured()).some(Boolean);
+  const aiReason = aiDenialFromSettings(userId, settings);
+  const creditsResetAt = PLAN_CONFIG[plan].monthlyCredits ? creditPeriodFor(settings).end.toISOString() : null;
+  // The one-time "your AI credits are here" screen. Free: answered from the row already read.
+  const creditsIntroDue = isCreditsIntroDue({
+    createdAt: settings.createdAt,
+    shownAt: settings.creditsIntroShownAt ?? null,
+    plan,
+    includedAiAvailable,
+  });
 
   return (
-    <ViewerPlanProvider value={{ plan, includedAiAvailable }}>
+    <ViewerPlanProvider value={{ plan, includedAiAvailable, aiReason, creditsResetAt }}>
       {/* Renders nothing. Before AppShell, not inside it: siblings render in order, so every
           color the shell and the page ask for is registered by then. */}
       <LearnedBrandColors brands={brandColors.learned} />
+      {/* Above AppShell, so a meeting that is recording keeps recording while the page under
+          it changes — the recorder cannot live in a page. The widget it drives is rendered
+          by AppShell's bottom-right job stack. */}
+      <MeetingSessionProvider canUseMeetings={canUseMeetings}>
       <AppShell
       userId={userId}
       clerkOn={clerkOn}
@@ -161,7 +186,18 @@ export default async function AppLayout({
       hiddenForUsers={[...visibility.hiddenForUsers]}
       comingSoon={[...visibility.comingSoonMarked]}
       navOrder={visibility.navOrder}
+      // An exempt operator sees every tier rule (they can open the page, but should see
+      // who cannot); anyone else sees only the pages their own plan is locked out of.
+      tierTags={Object.fromEntries(visibility.exempt ? visibility.tierRules : visibility.tierLocked)}
       viewingAsUser={visibility.viewingAsUser}
+      linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
+      creditsIntroDue={creditsIntroDue}
+      tour={{
+        active: tourRailVisible(settings),
+        stop: settings.tourStop,
+        hasApiKey: aiReason === null,
+        linkedinRequested: settings.linkedinExportRequestedAt != null,
+      }}
     >
       {/* Renders nothing; keeps `last_active_at` fresh enough for the admin roster to
           answer "active now". One per tab, not one per route. */}
@@ -179,6 +215,7 @@ export default async function AppLayout({
       {showTermsNotice && <TermsUpdateNotice />}
       {children}
       </AppShell>
+      </MeetingSessionProvider>
 
       {/* Deliberately a SIBLING of AppShell, not a child. AppShell early-returns a bare
           shell for `/onboarding`, so mounting inside it would need the widget in two
@@ -192,6 +229,13 @@ export default async function AppLayout({
           them into buttons that do nothing. */}
       {!visibility.hidden.has(FEEDBACK_SURFACE_KEY) && (
         <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+      )}
+
+      {/* The micro-survey: renders nothing unless one is due, which is almost always. Not
+          shown while an operator is viewing as someone else, so a prompt is never answered on
+          a person's behalf. */}
+      {!visibility.viewingAsUser && (
+        <SurveyPromptLazy canSendFeedback={!visibility.hidden.has(FEEDBACK_SURFACE_KEY)} />
       )}
     </ViewerPlanProvider>
   );

@@ -87,15 +87,27 @@ export const AI_OPERATIONS = {
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },
+  // A real name for a contact saved under a handle ("jsmith42"), when the address book and
+  // the handle itself say nothing. A few words out; `@/lib/contact-name-sweep`.
+  "contact.name_guess": { label: "Contacts: reading names from handles", tier: "fast", thinking: "minimal", background: true },
   // The fast tier, like the other background extraction: nobody reads this answer directly,
   // it runs unattended on the person's own key, and the costly part of a searched answer is
   // the result pages it reads as input — which cost per token on the pricier model too. The
   // namesake risk is carried by the prompt's "confident or nothing" rule, not model size.
   "contact.work_history": { label: "Work history (web search)", tier: "fast", thinking: "minimal", background: true },
+  // Briefing someone who is not a contact yet (/find), grounded in a web search on the
+  // account's own key. Same cost reasoning as work history: the searches dominate the bill,
+  // and the namesake risk is carried by the prompt's "confident or nothing" rule.
+  "research.person": { label: "Research a person (web search)", tier: "fast", thinking: "minimal" },
+  "research.company": { label: "Research a company (web search)", tier: "fast", thinking: "minimal" },
+  "research.discover": { label: "Find people by description (web search)", tier: "fast", thinking: "minimal" },
   "events.why": { label: "Events: why talk to them", tier: "fast", thinking: "minimal" },
   // One sentence about a Radar card the scorer already chose, written during the nightly
   // pass on the account's own key: work on the person's behalf, not something they wait on.
   "radar.why": { label: "Radar: why this person", tier: "fast", thinking: "minimal", background: true },
+  // The same sentence when the person clicks "Write a one-line why": they asked, so it may
+  // spend starter credits like any foreground operation (radar.why above may not).
+  "radar.why.ask": { label: "Radar: why this person", tier: "fast", thinking: "minimal" },
   // One call per nightly run: nudges the scorer's shortlist within ±15 points, given the
   // account's goals. It can reorder cards the rules already chose; it can never add one.
   "radar.rerank": { label: "Radar: ranking the shortlist", tier: "fast", thinking: "minimal", background: true },
@@ -105,11 +117,14 @@ export const AI_OPERATIONS = {
   "radar.draft": { label: "Radar: drafts for Today", tier: "user", background: true },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
+  // "Talking points" on a meeting's prep card: the user asked, so a foreground operation.
+  "meeting.talking_points": { label: "Meeting: talking points", tier: "fast", thinking: "minimal" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },
   "recruiter.draft": { label: "Recruiter drafts", tier: "user" },
+  // No producer since the relationship engine (2026-09-30); kept for usage history.
   "import.enrich": { label: "LinkedIn import summaries", tier: "fast", thinking: "minimal", background: true },
   // Jev (the decision model). Own ids, never an LLM operation's: `ai_result_cache` keys on
   // the operation and not the model, so a shared id would replay one engine's answer as the
@@ -124,6 +139,7 @@ export const AI_OPERATIONS = {
   "capture.merge_target": { label: "Capture: matching existing contacts (decision model)", tier: "decision" },
   "capture.checks": { label: "Capture: checking people, tags and referrals (decision model)", tier: "decision" },
   "calendar.kind": { label: "Calendar: which events are meetings (decision model)", tier: "decision", background: true },
+  "notes.detect": { label: "Cloud notes: which docs are meeting notes (decision model)", tier: "decision", background: true },
   "capture.dates.gate": { label: "Capture: any dates to extract? (decision model)", tier: "decision" },
   "contact.brief.gate": { label: "Contact briefs: anything new? (decision model)", tier: "decision" },
   "extension.starters.gate": { label: "Extension: enough for openers? (decision model)", tier: "decision" },
@@ -137,8 +153,15 @@ export const AI_OPERATIONS = {
   // (decisions/llm.ts). Own ids: the answer cache keys on the operation, not the model.
   "duplicates.same_person.llm": { label: "Duplicates: same person?", tier: "fast", thinking: "minimal", background: true },
   "mentions.resolve.llm": { label: "Capture: linking mentions", tier: "fast", thinking: "minimal" },
+  "notes.detect.llm": { label: "Cloud notes: which docs are meeting notes", tier: "fast", thinking: "minimal", background: true },
   "import.linkedin.timeline": {
     label: "LinkedIn timeline events",
+    tier: "fast",
+    thinking: "minimal",
+    background: true,
+  },
+  "relationship.digest": {
+    label: "Relationship analysis (conversations)",
     tier: "fast",
     thinking: "minimal",
     background: true,

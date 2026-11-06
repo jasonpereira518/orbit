@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import { isAiAccessError } from "@/lib/ai-access";
 import { getDb } from "@/db";
-import { contactBriefs, contactOpportunities, contacts, interactions, reminders } from "@/db/schema";
+import { contactBriefs, contactOpportunities, contacts, interactions, relationshipDigests, reminders } from "@/db/schema";
 import { completeJson, getAiConfig } from "@/lib/ai";
 import { gateSkips, gateText } from "@/lib/decisions/gates";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
@@ -203,6 +204,27 @@ export function isBriefStale(
   return generated < last;
 }
 
+/**
+ * Whether a page open may start a brief refresh on its own. An explicit Refresh click is not
+ * gated by this: it runs, and shows the refusal.
+ *
+ * With AI available, a stale brief or unjudged goals are worth a refresh. Without it, only a
+ * template brief (or none) gains: the deterministic rebuild is free and clears the staleness.
+ * A refused refresh keeps a model-written brief untouched and still stale, so starting one
+ * would just be refused again on every open.
+ */
+export function shouldAutoRefreshBrief(input: {
+  stale: boolean;
+  goalsUnjudged: boolean;
+  /** `getAiAccessStatus(...).ready`, which counts Free's credits. */
+  aiReady: boolean;
+  /** The brief on file has `model` set. */
+  modelWritten: boolean;
+}): boolean {
+  if (input.aiReady) return input.stale || input.goalsUnjudged;
+  return input.stale && !input.modelWritten;
+}
+
 export async function getContactBrief(
   userId: string,
   contactId: string
@@ -293,7 +315,7 @@ export async function generateAndStoreContactBrief(
   userId: string,
   contactId: string,
   options?: { force?: boolean; engines?: Engines }
-): Promise<{ summary: string | null; standing: string | null; nextStep?: string | null } | null> {
+): Promise<{ summary: string | null; standing: string | null; nextStep?: string | null; aiError: string | null } | null> {
   const db = await getDb();
   // Projected to exactly what the prompt, the deterministic fallback and the stored brief
   // read. Unprojected, the contact brought its inline avatar and every enrichment column,
@@ -320,21 +342,41 @@ export async function generateAndStoreContactBrief(
   });
   if (!contact) return null;
 
+  // The conversation digest stands in for the raw message threads it already covers.
+  const digest = await db.query.relationshipDigests.findFirst({
+    where: and(eq(relationshipDigests.contactId, contactId), eq(relationshipDigests.userId, userId)),
+  });
+  const hasDigest = Boolean(digest?.summary || digest?.whatTheyDo);
+
+  const recentColumns = {
+    id: true,
+    interactionDate: true,
+    interactionType: true,
+    aiSummary: true,
+    rawNotes: true,
+  } as const;
+  // Unfiltered: drives the stored recent discussions and the basis interaction, as before.
   const recent = await db.query.interactions.findMany({
-    where: and(
-      eq(interactions.userId, userId),
-      eq(interactions.contactId, contactId)
-    ),
-    columns: {
-      id: true,
-      interactionDate: true,
-      interactionType: true,
-      aiSummary: true,
-      rawNotes: true,
-    },
+    where: and(eq(interactions.userId, userId), eq(interactions.contactId, contactId)),
+    columns: recentColumns,
     orderBy: [desc(interactions.interactionDate)],
     limit: 20,
   });
+  // The prompt's transcript only: with a digest, raw chat messages are left out. Excluded in
+  // SQL, not after the limit, so dozens of messages cannot push a meeting out of the newest
+  // 20. coalesce keeps NULL-source rows (NOT over NULL would drop them).
+  const promptInteractions = hasDigest
+    ? await db.query.interactions.findMany({
+        where: and(
+          eq(interactions.userId, userId),
+          eq(interactions.contactId, contactId),
+          sql`NOT (${interactions.interactionType} = 'linkedin_message' OR (${interactions.interactionType} = 'message' AND coalesce(${interactions.source}, '') IN ('whatsapp', 'imessage')))`
+        ),
+        columns: recentColumns,
+        orderBy: [desc(interactions.interactionDate)],
+        limit: 20,
+      })
+    : recent;
 
   // What the brief could never see before: the things this relationship actually owes.
   // Loaded in parallel and each guarded, because a brief that fails because one side query
@@ -397,7 +439,7 @@ export async function generateAndStoreContactBrief(
     ...openItems.slice(0, OPEN_ITEM_LIMIT).map((i) => `- ${i.text}`),
   ];
 
-  const interactionSnippets = recent
+  const interactionSnippets = promptInteractions
     .map((i) => {
       const text = (i.aiSummary || i.rawNotes || "").trim();
       if (!text) return null;
@@ -413,10 +455,11 @@ export async function generateAndStoreContactBrief(
     Boolean(contact.metContext) ||
     Boolean(contact.notes?.trim()) ||
     Boolean(contact.title || contact.company || career) ||
+    hasDigest ||
     interactionSnippets.length > 0;
 
   if (!hasSignal && !options?.force) {
-    return { summary: contact.aiSummary, standing: null };
+    return { summary: contact.aiSummary, standing: null, aiError: null };
   }
 
   const profileBlock = [
@@ -459,6 +502,18 @@ export async function generateAndStoreContactBrief(
     `Profile:\n${profileBlock}`,
     opportunityLines.length ? `Open opportunities:\n${opportunityLines.join("\n")}` : null,
     commitmentLines.length ? `Open commitments:\n${commitmentLines.join("\n")}` : null,
+    hasDigest
+      ? [
+          "Conversation digest:",
+          digest!.whatTheyDo ? `What they do: ${digest!.whatTheyDo}` : null,
+          digest!.workingOn ? `Working on: ${digest!.workingOn}` : null,
+          digest!.summary ? `Summary: ${digest!.summary}` : null,
+          digest!.topics.length ? `Topics: ${digest!.topics.map((t) => t.label).join(", ")}` : null,
+          digest!.openThreads.length ? `Open threads: ${digest!.openThreads.map((t) => t.text).join("; ")}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : null,
     goals.length
       ? `Active goals (id — goal):\n${goals.map((g) => `- ${g.id} — ${g.text}`).join("\n")}`
       : null,
@@ -478,7 +533,7 @@ export async function generateAndStoreContactBrief(
         .update(contactBriefs)
         .set({ generatedAt: new Date() })
         .where(and(eq(contactBriefs.contactId, contactId), eq(contactBriefs.userId, userId)));
-      return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep };
+      return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep, aiError: null };
     }
     // The input changed — a tag, a logged call, an edited note — but a changed input is not
     // the same as a changed relationship, and rewriting the brief to say what it already
@@ -500,7 +555,7 @@ export async function generateAndStoreContactBrief(
           .update(contactBriefs)
           .set({ generatedAt: new Date(), inputHash })
           .where(and(eq(contactBriefs.contactId, contactId), eq(contactBriefs.userId, userId)));
-        return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep };
+        return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep, aiError: null };
       }
     }
   }
@@ -509,6 +564,7 @@ export async function generateAndStoreContactBrief(
   let standing: string | null = null;
   let nextStep: string | null = null;
   let model: string | null = null;
+  let aiError: string | null = null;
   let goalFit: GoalFit | null = null;
 
   try {
@@ -531,9 +587,17 @@ export async function generateAndStoreContactBrief(
       ? { judged: goals.map((g) => g.id), items: sanitizeGoalFit(parsed.goal_fit, goals) }
       : null;
   } catch (err) {
+    if (isAiAccessError(err)) aiError = err.message;
     // The deterministic summary is a fine fallback, but a brief that silently never uses
     // the model is a fault worth seeing — unless the cause is the person's own key setup.
     reportUnlessQuiet(err, { where: "job.contact-brief", userId, extra: { contactId } });
+    // A failed or refused refresh never replaces a brief the model wrote (`model` is set
+    // only on those) with template text. Nothing is touched, `generatedAt` included: a stale
+    // brief stays stale, so it is retried on the next open — once per open, not in a loop.
+    const onFile = await getContactBrief(userId, contactId).catch(() => null);
+    if (onFile?.model && contact.aiSummary?.trim()) {
+      return { summary: contact.aiSummary, standing: onFile.standing, nextStep: onFile.nextStep, aiError };
+    }
     summary = buildDeterministicSummary({
       fullName: contact.fullName,
       preferredName: contact.preferredName,
@@ -556,7 +620,7 @@ export async function generateAndStoreContactBrief(
     goalFit = null;
   }
 
-  if (!summary?.trim()) return { summary: contact.aiSummary, standing: null };
+  if (!summary?.trim()) return { summary: contact.aiSummary, standing: null, aiError };
 
   await db
     .update(contacts)
@@ -612,7 +676,7 @@ export async function generateAndStoreContactBrief(
     return null;
   });
 
-  return { summary: summary.trim(), standing, nextStep };
+  return { summary: summary.trim(), standing, nextStep, aiError };
 }
 
 /**

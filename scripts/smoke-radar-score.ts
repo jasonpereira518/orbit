@@ -38,7 +38,7 @@ import {
   buildRadarModel,
   multiplierFrom,
 } from "../src/lib/radar/model";
-import type { RadarSignal, RecommendationKind } from "../src/lib/radar/types";
+import { CONTEXT_CODES, type RadarSignal, type RecommendationKind } from "../src/lib/radar/types";
 import { cardLine, draftsReady, whatChanged, WHAT_CHANGED_MAX } from "../src/lib/radar/briefing";
 import { radarKeyFor } from "../src/lib/radar/focus-keys";
 import { APP_NAV, APP_NAV_CORE, APP_NAV_EXTRAS, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
@@ -165,6 +165,22 @@ function main() {
       scoreOf(kinds(contact({ tier: "outer", hasEvidence: false, priorityLevel: 2, lastInteractionAt: ago(60) })), "reconnect") !== null);
     check("context alone never creates a recommendation",
       kinds(contact({ tier: "inner", priorityLevel: 3, targetPriority: 1, goalFit: 1, lastInteractionAt: ago(3) })).length === 0);
+    check("a fit with your skills and watched roles is context too — it never creates one",
+      kinds(contact({ focusFit: 1, lastInteractionAt: ago(3) })).length === 0);
+  }
+
+  console.log("\nskills and watched roles (focus fit)");
+  {
+    const inbound: RadarSignal = { kind: "inbound_unanswered", contactId: "c1", at: ago(9) };
+    const plain = kinds(contact({ lastInteractionAt: ago(45) }), [inbound]);
+    const fit = kinds(contact({ lastInteractionAt: ago(45), focusFit: 1 }), [inbound]);
+    const lift = (scoreOf(fit, "reach_out") ?? 0) - (scoreOf(plain, "reach_out") ?? 0);
+    check("a full fit lifts a card that already exists, by a small fixed amount", lift > 0 && lift <= 8, String(lift));
+    check("no fit, or an absent one, changes nothing", scoreOf(kinds(contact({ lastInteractionAt: ago(45), focusFit: 0 }), [inbound]), "reach_out") === scoreOf(plain, "reach_out"));
+    const reasons = pickWinner("c1", fit, NOW)?.reasons ?? [];
+    check("the reason is shown, in plain words", reasons.some((r) => r.code === "focus_match" && /skills/.test(r.label) && r.points > 0));
+    check("but it never leads the card — the message does", pickWinner("c1", fit, NOW)?.kind === "reach_out" && CONTEXT_CODES.has("focus_match"));
+    check("an out-of-range fit is clamped", (scoreOf(kinds(contact({ lastInteractionAt: ago(45), focusFit: 9 }), [inbound]), "reach_out") ?? 0) === (scoreOf(fit, "reach_out") ?? -1));
   }
 
   console.log("\nmessage windows");

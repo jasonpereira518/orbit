@@ -28,7 +28,6 @@ export function KnowledgePageSkeleton() {
   return (
     <div
       data-fill-route
-      data-clear-floating-controls
       className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4"
     >
       <div className="shrink-0 space-y-2">

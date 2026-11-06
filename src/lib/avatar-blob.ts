@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { del, put } from "@/lib/blob-lazy";
 
 /**
@@ -39,13 +40,47 @@ function client(): AvatarBlobClient {
 const BLOB_HOST_SUFFIX = ".public.blob.vercel-storage.com";
 const DELETE_BATCH = 100;
 
-export function isAvatarBlobUrl(url: string | null | undefined): url is string {
+function isBlobUnder(url: string | null | undefined, prefix: string): url is string {
   if (!url) return false;
   try {
     const parsed = new URL(url);
-    return parsed.hostname.endsWith(BLOB_HOST_SUFFIX) && parsed.pathname.startsWith("/avatars/");
+    return parsed.hostname.endsWith(BLOB_HOST_SUFFIX) && parsed.pathname.startsWith(prefix);
   } catch {
     return false;
+  }
+}
+
+/** A contact's own photo object. Never matches a shared (`avatars-shared/`) one. */
+export function isAvatarBlobUrl(url: string | null | undefined): url is string {
+  return isBlobUnder(url, "/avatars/");
+}
+
+/**
+ * The shared LinkedIn photo pool (`linkedin_avatars`) lives under its own prefix, so no
+ * per-contact cleanup (delete, merge, purge) can ever reach it: other accounts display it.
+ * The key is a hash of the slug, not the slug itself.
+ */
+export async function putSharedAvatarBlob(
+  slug: string,
+  body: Buffer,
+  contentType: string
+): Promise<string> {
+  const key = createHash("sha256").update(slug, "utf8").digest("hex").slice(0, 32);
+  const blob = await client().put(`avatars-shared/${key}.jpg`, body, {
+    access: "public",
+    contentType,
+    addRandomSuffix: true,
+  });
+  return blob.url;
+}
+
+/** Best-effort delete of one shared-pool object; anything else is ignored. Never throws. */
+export async function deleteSharedAvatarBlob(url: string | null | undefined): Promise<void> {
+  if (!isBlobUnder(url, "/avatars-shared/")) return;
+  try {
+    await client().del([url]);
+  } catch {
+    // See the header.
   }
 }
 

@@ -1,5 +1,6 @@
 "use server";
 
+import { startJobInOwnInvocation } from "@/lib/import-stall";
 import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -31,6 +32,7 @@ import {
   hasCalendarScope,
   hasContactsScope,
   hasMailScope,
+  hasSendScope,
 } from "@/lib/outlook";
 import {
   isMicrosoftPurpose,
@@ -38,6 +40,7 @@ import {
   serializeMicrosoftPurposes,
   type MicrosoftPurpose,
 } from "@/lib/microsoft-scopes";
+import { dropCloudNoteSource } from "@/lib/cloud-notes/sources";
 
 const OAUTH_STATE_COOKIE = "orbit_outlook_oauth_state";
 
@@ -55,6 +58,8 @@ export type OutlookConnectionStatus = {
   hasCalendarScope: boolean;
   /** False until the person allows mail access for the recruiter scan. */
   hasMailScope: boolean;
+  /** False until the person allows Orbit to send as them (Mail.Send). */
+  canSend: boolean;
   /** True when the person switched meetings off with the Meetings switch (`setCalendarSync`). */
   syncPaused: boolean;
   /** Null when there is no connection row. See `deriveConnectionHealth`. */
@@ -81,6 +86,7 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
       hasContactsScope: false,
       hasCalendarScope: false,
       hasMailScope: false,
+      canSend: false,
       syncPaused: false,
       status: null,
       syncError: null,
@@ -102,6 +108,7 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
     hasContactsScope: Boolean(conn && conn.status === "active" && hasContactsScope(conn.scopes)),
     hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
     hasMailScope: Boolean(conn && conn.status === "active" && hasMailScope(conn.scopes)),
+    canSend: Boolean(conn && conn.status === "active" && hasSendScope(conn.scopes)),
     syncPaused: Boolean(conn && conn.syncStatus === "paused"),
     status: conn
       ? deriveConnectionHealth({
@@ -218,13 +225,14 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
   // double the calendar.
   await deleteCalendarSourcesForProvider(userId, "microsoft");
+  await dropCloudNoteSource(userId, "microsoft");
   const extra = DISCONNECT_DELETE_CATEGORIES.outlook;
   if (opts.alsoDelete === true && extra.length > 0) {
     await purgeUserData(userId, { only: extra });
   }
   revalidatePath("/settings");
   revalidatePath("/recruiters");
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 }
 
 export async function consumeOutlookOAuthState(
@@ -338,7 +346,7 @@ export async function startOutlookRecruiterScan(): Promise<ActionResult<{ import
       })
       .returning();
 
-    after(() => runOutlookRecruiterScanJob(row.id).catch(() => {}));
+    after(() => startJobInOwnInvocation(row.id, runOutlookRecruiterScanJob).catch(() => {}));
     revalidatePath("/recruiters");
     return { importId: row.id };
   });

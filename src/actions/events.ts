@@ -12,20 +12,19 @@
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { requireSyncUser, requireUserForSurface } from "@/lib/plan-guards";
+import { requireSyncUser, requireUserForReleasedSurface } from "@/lib/plan-guards";
+import { requireReleasedSurface } from "@/lib/surface-visibility";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { fetchEventPage, EventPageError } from "@/lib/events/fetch-page";
 import { canonicalizeEventUrl } from "@/lib/events/canonical-url";
 import { enrichEvent } from "@/lib/events/enrich";
 import { IcsFeedGoneError, syncIcsFeed } from "@/lib/events/discovery/from-ics-feed";
 import {
-  combineResolutions,
   dismissEventForUser,
-  resolveAliases,
   restoreEventForUser,
   tombstoneAliasesForEvent,
 } from "@/lib/events/discovery/aliases";
-import { claimEventAliases, keysForEvent } from "@/lib/events/discovery/record";
+import { findOrCreateEventByLink } from "@/lib/events/discovery/record";
 import {
   eventsTogetherForRoster,
   listEventsTogetherForContact,
@@ -46,12 +45,10 @@ import { whoToTalkTo, type WhoToTalkTo } from "@/lib/events/who-to-talk-to";
 import { explainAttendeeForUser } from "@/lib/events/explain";
 import { userCanUseAi } from "@/lib/ai";
 import { getAiAccessStatus } from "@/lib/ai-access";
-import { AI_ACCESS_COPY } from "@/lib/ai-access-copy";
+import { refusalCopyFor } from "@/lib/ai-access-copy";
 import { diffEventAgainstPage, type EventFieldChange } from "@/lib/events/resync";
-import { resolveThemeColor } from "@/lib/events/theme";
 import { parseRosterCsv, parseRosterText } from "@/lib/events/parse-roster";
 import {
-  createEventForUser,
   deleteEventForUser,
   getEventForUser,
   listEventsForUser,
@@ -81,6 +78,7 @@ import {
 } from "@/lib/events/connections";
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
 import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
 import type {
   AttendeeRole,
   ConnectSummary,
@@ -105,7 +103,7 @@ export async function listEventsByTab(): Promise<{
   upcoming: EventListRow[];
   past: EventListRow[];
 }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const now = new Date();
   const [upcoming, past] = await Promise.all([
     listEventsForUser(userId, 100, { when: "upcoming", now }),
@@ -116,7 +114,7 @@ export async function listEventsByTab(): Promise<{
 
 /** Everything the user has said "not mine" to, so a mistake is one click from undone. */
 export async function listHiddenEvents(): Promise<EventListRow[]> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   return listEventsForUser(userId, 100, { hidden: true });
 }
 
@@ -130,7 +128,7 @@ export async function getRepeatCoAttendees(options?: {
   limit?: number;
   includeWeak?: boolean;
 }): Promise<RepeatPerson[]> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const self = await loadSelfIdentity(userId);
   return listRepeatCoAttendees(userId, {
     limit: options?.limit ?? 8,
@@ -142,17 +140,17 @@ export async function getRepeatCoAttendees(options?: {
 
 /** Every event a contact shares with the user. Rendered on the contact page. */
 export async function getEventsWithContact(contactId: string): Promise<EventTogether[]> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   return listEventsTogetherForContact(userId, contactId);
 }
 
 export async function getEvent(eventId: string): Promise<EventRecord | null> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   return getEventForUser(userId, eventId);
 }
 
 export async function getRoster(eventId: string): Promise<RosterRow[]> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   return listRosterForUser(userId, eventId);
 }
 
@@ -165,7 +163,7 @@ export async function getRoster(eventId: string): Promise<RosterRow[]> {
 export async function getRosterHistory(
   eventId: string
 ): Promise<Array<{ attendeeId: string; eventsTogether: number }>> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const history = await eventsTogetherForRoster(userId, eventId);
   return [...history.entries()]
     .filter(([, value]) => value.count > 1)
@@ -182,7 +180,7 @@ export async function createEvent(input: {
   notes?: string | null;
 }): Promise<ActionResult<{ id: string; existing?: boolean }>> {
   return asActionResult(async () => {
-    const userId = await requireUserForSurface(SURFACE);
+    const userId = await requireUserForReleasedSurface(SURFACE);
     const title = input.title.trim();
     if (!title) throw new UserFacingError("Give the event a name first");
 
@@ -195,34 +193,24 @@ export async function createEvent(input: {
     // Already here? Discovery may have added this event days ago, and a user pasting its link
     // means "show me this", not "make me a second one". Taking them to the row they already
     // have is also how they find the roster they have already built on it.
-    const keys = keysForEvent({ url });
-    if (keys.length > 0) {
-      const known = combineResolutions(keys, await resolveAliases(userId, keys));
-      if (known.eventId) {
-        // A pasted link is an explicit statement and outranks a previous "not mine" — the
-        // dismissal was an answer about a suggestion, not about this.
-        if (known.dismissed) await restoreEventForUser(userId, known.eventId);
-        revalidateEvents(known.eventId);
-        return { id: known.eventId, existing: true };
-      }
+    const found = await findOrCreateEventByLink(
+      userId,
+      {
+        title,
+        startsAt: input.startsAt ? new Date(input.startsAt) : null,
+        venue: input.venue ?? null,
+        city: input.city ?? null,
+        url,
+        role: input.role ?? "attended",
+        notes: input.notes ?? null,
+      },
+      "manual"
+    );
+    if (found.existing) {
+      revalidateEvents(found.id);
+      return { id: found.id, existing: true };
     }
-
-    const event = await createEventForUser(userId, {
-      title,
-      startsAt: input.startsAt ? new Date(input.startsAt) : null,
-      venue: input.venue ?? null,
-      city: input.city ?? null,
-      url,
-      role: input.role ?? "attended",
-      notes: input.notes ?? null,
-      // Seeded from the title so the card has an identity immediately; enrichment may improve
-      // it, but nothing renders grey in the meantime.
-      ...seedTheme(url ?? title),
-    });
-
-    // Claimed with `repoint`, which is what makes a paste override a tombstone: if this link
-    // was dismissed as a suggestion last week, asking for it by hand today wins.
-    if (keys.length > 0) await claimEventAliases(userId, event.id, keys, "manual");
+    const event = { id: found.id };
 
     if (input.url) {
       // Off the request path: the user should land on their event, not wait on someone
@@ -232,11 +220,6 @@ export async function createEvent(input: {
     revalidateEvents();
     return { id: event.id };
   });
-}
-
-function seedTheme(seed: string) {
-  const theme = resolveThemeColor({ seed });
-  return { themeColor: theme.color, themeSource: theme.source };
 }
 
 /**
@@ -250,7 +233,7 @@ export async function enrichEventFromUrl(
   eventId: string,
   url: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   try {
     await consumeBucket("eventEnrich", userId, RATE_LIMITS.eventEnrich);
   } catch (error) {
@@ -332,7 +315,7 @@ export async function updateEvent(
     role?: "attended" | "hosted";
   }
 ): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   // Read before and after so the interactions already written from this event can be brought
   // back in step — the note and date they carry are derived from exactly these fields.
   const before = await getEventForUser(userId, eventId);
@@ -367,7 +350,7 @@ export async function updateEvent(
 export async function previewResync(
   eventId: string
 ): Promise<{ ok: true; changes: EventFieldChange[] } | { ok: false; error: string }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const event = await getEventForUser(userId, eventId);
   if (!event) return { ok: false, error: "That event no longer exists" };
   if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
@@ -404,7 +387,7 @@ export async function previewResync(
  * the contents of a row.
  */
 export async function resyncEvent(eventId: string): Promise<{ ok: boolean; error?: string }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const event = await getEventForUser(userId, eventId);
   if (!event) return { ok: false, error: "That event no longer exists" };
   if (!event.url) return { ok: false, error: "This event has no link to refresh from" };
@@ -447,7 +430,7 @@ async function restampFromEvent(
 }
 
 export async function deleteEvent(eventId: string): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   // Before the delete, not after: the FK would null these anyway, but a discovery pass
   // running in the gap could otherwise re-create the event from the very keys we are about
   // to orphan — and it would come back with the same link, minutes later, looking like a bug.
@@ -464,13 +447,13 @@ export async function deleteEvent(eventId: string): Promise<void> {
  * which is what stops the next sync of the same calendar adding it straight back.
  */
 export async function dismissEvent(eventId: string): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   await dismissEventForUser(userId, eventId);
   revalidateEvents(eventId);
 }
 
 export async function restoreEvent(eventId: string): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   await restoreEventForUser(userId, eventId);
   revalidateEvents(eventId);
 }
@@ -481,7 +464,7 @@ export async function setEventThemeColor(
   color: string,
   source: "image" | "manual"
 ): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   if (!/^#[0-9a-f]{6}$/i.test(color)) return;
   const existing = await getEventForUser(userId, eventId);
   if (!existing) return;
@@ -501,7 +484,7 @@ export async function importAttendeesFromText(
   text: string,
   kind: "paste" | "screenshot" = "paste"
 ): Promise<{ added: number; skipped: number; deduped: number }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const parsed = parseRosterText(text);
   await upsertEventAttendees(userId, eventId, parsed.attendees, kind);
   revalidateEvents(eventId);
@@ -512,7 +495,7 @@ export async function importAttendeesFromCsv(
   eventId: string,
   csv: string
 ): Promise<{ added: number; skipped: number; deduped: number }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const parsed = parseRosterCsv(csv);
   await upsertEventAttendees(userId, eventId, parsed.attendees, "csv");
   revalidateEvents(eventId);
@@ -524,7 +507,7 @@ export async function setSpokeTo(
   attendeeIds: string[],
   spokeTo: boolean
 ): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   await setSpokeToForUser(userId, eventId, attendeeIds, spokeTo);
   revalidateEvents(eventId);
 }
@@ -550,7 +533,7 @@ export async function updateAttendee(
     attendeeRole: AttendeeRole | null;
   }
 ): Promise<UpdateAttendeeResult> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const blank = (value: string | null) => {
     const text = value?.trim();
     return text ? text : null;
@@ -575,7 +558,7 @@ export async function updateAttendee(
  * roster row is a guest-list entry, not the record of having met them.
  */
 export async function deleteAttendee(eventId: string, attendeeId: string): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   await deleteAttendeeForUser(userId, attendeeId);
   revalidateEvents(eventId);
 }
@@ -592,7 +575,7 @@ export async function deleteAttendee(eventId: string, attendeeId: string): Promi
  * linked, and asking would pay for a match we already have.
  */
 export async function matchRosterToNetwork(eventId: string): Promise<ConnectPreviewRow[]> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const event = await getEventForUser(userId, eventId);
   if (!event) return [];
   const roster = await listRosterForUser(userId, eventId);
@@ -606,7 +589,7 @@ export async function previewConnectAttendees(
   eventId: string,
   attendeeIds: string[]
 ): Promise<ConnectPreviewRow[]> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const event = await getEventForUser(userId, eventId);
   if (!event) throw new Error("That event no longer exists.");
   return previewConnect(userId, event, attendeeIds);
@@ -616,7 +599,7 @@ export async function addSpokenToConnections(
   eventId: string,
   attendeeIds: string[]
 ): Promise<ConnectSummary & { remaining: number }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const event = await getEventForUser(userId, eventId);
   if (!event) throw new Error("That event no longer exists.");
 
@@ -632,7 +615,7 @@ export async function removeSpokenToConnection(
   eventId: string,
   attendeeId: string
 ): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   // Deliberately does not delete the contact — see the confirmation copy in the roster.
   await unlinkAttendeeForUser(userId, attendeeId);
   revalidateEvents(eventId);
@@ -650,7 +633,7 @@ export async function removeSpokenToConnection(
 export async function getWhoToTalkTo(
   eventId: string
 ): Promise<(WhoToTalkTo & { aiAvailable: boolean }) | null> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const event = await getEventForUser(userId, eventId);
   if (!event) return null;
   const [result, aiAvailable] = await Promise.all([
@@ -674,11 +657,11 @@ export async function explainAttendee(
   eventId: string,
   attendeeId: string
 ): Promise<{ ok: boolean; why?: string; opener?: string; error?: string }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const ai = await getAiAccessStatus(userId);
   if (!ai.ready) {
     // The gate's own words: "add a key", "this month's included AI is used", "still clearing".
-    return { ok: false, error: AI_ACCESS_COPY[ai.reason ?? "key_required"] };
+    return { ok: false, error: refusalCopyFor(ai.reason, ai.plan) };
   }
 
   try {
@@ -699,7 +682,7 @@ export async function explainAttendee(
 
 /** Who was there as an organisation, and who you already know at each. */
 export async function getEventCompanies(eventId: string): Promise<EventCompanyRow[]> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   return loadEventCompanyPanel(userId, eventId);
 }
 
@@ -714,7 +697,7 @@ export async function importEventCompanies(
   text: string,
   role: "exhibitor" | "sponsor" | "host" | "employer" = "employer"
 ): Promise<{ added: number; skipped: number; deduped: number }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const parsed = parseCompanyList(text);
   const added = await upsertEventCompanies(
     userId,
@@ -730,7 +713,7 @@ export async function dismissEventCompanyRow(
   eventId: string,
   id: string
 ): Promise<void> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   await dismissEventCompany(userId, id);
   revalidateEvents(eventId);
 }
@@ -741,7 +724,7 @@ export async function addTargetCompanyFromEvent(
   name: string,
   priority: 1 | 2 | 3 = 2
 ): Promise<{ ok: boolean; error?: string }> {
-  const userId = await requireUserForSurface(SURFACE);
+  const userId = await requireUserForReleasedSurface(SURFACE);
   const result = await addTargetCompany(userId, name, priority);
   revalidateEvents(eventId);
   return result;
@@ -759,11 +742,22 @@ export async function getEventConnections(): Promise<{
   /** That connection may read the calendar — meetings sync. */
   googleCalendarGranted: boolean;
 }> {
-  const userId = await requireUserForSurface(SURFACE);
-  const [connections, grant] = await Promise.all([
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const [connections, grant, demo] = await Promise.all([
     listEventConnections(userId),
     findGmailGrant(userId),
+    isDemoWorkspace(userId),
   ]);
+  // The demo workspace stores no OAuth grant but reads as connected everywhere else.
+  if (demo) {
+    return {
+      connections,
+      eventbriteConfigured: eventbriteOAuthConfig().configured,
+      googleConnected: true,
+      googleMailGranted: true,
+      googleCalendarGranted: true,
+    };
+  }
   return {
     connections,
     eventbriteConfigured: eventbriteOAuthConfig().configured,
@@ -782,6 +776,7 @@ export async function getEventConnections(): Promise<{
  */
 export async function connectLuma(apiKey: string): Promise<{ ok: boolean; error?: string }> {
   const userId = await requireSyncUser();
+  await requireReleasedSurface(userId, SURFACE);
   const key = apiKey.trim();
   if (!key) return { ok: false, error: "Paste your Luma API key first" };
 
@@ -828,6 +823,7 @@ export async function connectEventFeed(
   feedUrl: string
 ): Promise<{ ok: boolean; error?: string; found?: number }> {
   const userId = await requireSyncUser();
+  await requireReleasedSurface(userId, SURFACE);
   const raw = feedUrl.trim();
   if (!raw) return { ok: false, error: "Paste your calendar link first" };
 
@@ -878,6 +874,7 @@ export async function setGmailEventScan(
   enabled: boolean
 ): Promise<{ ok: boolean; error?: string; needsMailScope?: boolean }> {
   const userId = await requireSyncUser();
+  await requireReleasedSurface(userId, SURFACE);
 
   if (!enabled) {
     await deleteEventConnection(userId, "gmail");
@@ -910,6 +907,7 @@ export async function setGmailEventScan(
 
 export async function startEventbriteOAuth(): Promise<{ url: string }> {
   const userId = await requireSyncUser();
+  await requireReleasedSurface(userId, SURFACE);
   const config = eventbriteOAuthConfig();
   if (!config.configured) {
     throw new Error(

@@ -1,3 +1,4 @@
+import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -8,11 +9,16 @@ import { captureSourceKinds } from "@/lib/note-batches";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Capture results" };
+
 export default async function NoteBatchPage({
   params,
 }: {
   params: Promise<{ batchId: string }>;
 }) {
+  const gate = await pageVisibilityGate("page.capture");
+  if (gate) return gate;
+
   const { batchId } = await params;
   const batch = await getNoteBatch(batchId);
   if (!batch) notFound();
@@ -34,8 +40,9 @@ export default async function NoteBatchPage({
           {fromMeeting ? "What your meeting produced" : "What your notes produced"}
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Everything below was created from this {fromMeeting ? "meeting" : "paste"}. Dismiss
-          anything that is wrong, or undo the whole batch.
+          Here is everything Orbit made from this {fromMeeting ? "meeting" : "capture"}: the
+          people, the things to do, and the reminders. Dismiss anything that looks wrong, or
+          undo the whole batch.
         </p>
       </div>
       <CaptureSourceCard

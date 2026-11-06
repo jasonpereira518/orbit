@@ -77,7 +77,9 @@ function contactScans(statements: string[]) {
 
 /** True when the column is selected as a bare value (not merely referenced inside an expression). */
 function selectsBare(statement: string, column: string) {
-  return new RegExp(`"${column}"\\s*(,|\\bfrom\\b)`, "i").test(statement);
+  // A comma followed by a number is a function argument (`substr("profile_image_url", 1, 11)`
+  // reads an 11-character prefix), not the next item of a projection.
+  return new RegExp(`"${column}"\\s*(,(?!\\s*\\d)|\\bfrom\\b)`, "i").test(statement);
 }
 
 type SpecialRow = {
@@ -266,7 +268,8 @@ async function main() {
   // posts read (recent `contact_signals` posts, one windowed read, LIMIT 200). The nightly
   // post check itself runs on `schedule` runs only and is not counted here.
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
-  check("radar run issues ≤ 26 statements", radarRunCount <= 26, `got ${radarRunCount}`);
+  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`).
+  check("radar run issues ≤ 27 statements", radarRunCount <= 27, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),
@@ -576,7 +579,7 @@ async function main() {
       persistRemote: async () => null,
       resolveConnectedAccount: async () => {
         calls.push("connected");
-        return "https://connected.example.com/photo.jpg";
+        return { url: "https://connected.example.com/photo.jpg", source: "google" as const };
       },
       resolveLinkedIn: async () => {
         calls.push("linkedin");
@@ -834,25 +837,21 @@ async function main() {
   //
   // Phase B flips both together: the contacts scan gets an ORDER BY … LIMIT, this check
   // inverts, and the surfaces above get real bounds.
-  // The network scan still reads one row per contact — clustering and constellation
-  // eligibility are whole-network questions that a sample cannot answer — but it is now
-  // NARROW, and that is the property worth pinning. A display column reappearing here would
-  // be selected for the entire account in order to render a few hundred rows, which is the
-  // mistake this whole section exists to catch.
-  //
-  // Identified by `constellation_pin`: the hydration queries below also select from
-  // `contacts`, so the scan has to be named by something only it asks for.
-  const networkScan = dashboardScans.find((q) => selectsBare(q, "constellation_pin"));
-  check("the dashboard's network scan is identifiable", Boolean(networkScan));
-  for (const column of [
-    "full_name", "ai_summary", "email", "title", "last_interaction_at", "created_at",
-  ]) {
-    check(
-      `the network scan does not select ${column}`,
-      Boolean(networkScan) && !selectsBare(networkScan!, column),
-      networkScan?.slice(0, 220)
-    );
-  }
+  // There is no network scan any more. Who the constellation may draw, the cluster counts,
+  // the metrics sample and the histogram are asked of Postgres (src/lib/dashboard-network.ts,
+  // held to the in-memory answers by smoke-dashboard-parity.ts), so no statement brings one
+  // row per contact into memory. Pinned two ways: the old scan's shape is absent, and the
+  // closeness map the page holds covers what it renders, not the account.
+  check(
+    "the dashboard runs no whole-network contact scan",
+    !dashboardScans.some((q) => selectsBare(q, "constellation_pin")),
+    dashboardScans.find((q) => selectsBare(q, "constellation_pin"))?.slice(0, 220)
+  );
+  check(
+    "the dashboard holds closeness only for the contacts it names",
+    dashboard.closenessById.size < N,
+    `${dashboard.closenessById.size} entries for a ${N + SPECIAL_ROWS}-contact account`
+  );
 
   // The dashboard's real size.
   //

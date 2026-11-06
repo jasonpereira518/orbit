@@ -27,12 +27,13 @@ passes ships by editing those values.
 
 ## The research task
 
-`research` scores whole answers to questions one retrieval cannot answer — the job of chat's
-research step (`src/lib/chat-gather.ts`). It runs the production path in order: retrieval,
-the depth decision, the research loop, the answer, the recommendation filter.
+`research` scores whole answers to questions one retrieval cannot answer. It runs the production
+path in order: retrieval, the answer loop with its lookups (`src/lib/chat-agent-loop.ts`), the
+recommendation filter. Until Phase 7 a separate research step (`chat-gather.ts`, since removed)
+looked things up before the answer; the baselines below predate that.
 
 Every fact a case requires lives **only in a note**, never on a contact card, so a case passes
-only if the research step found the note and the answer used it. It gates on `mentionRecall`,
+only if a lookup found the note and the answer used it. It gates on `mentionRecall`,
 `factRecall`, `routingAccuracy` (the rule-based router may not drop at all),
 `forbiddenHits` and `inventedContactIds` (never). `meanLookups`, `meanRounds` and
 `filteredRecommendations` are reported for cost and are not gated.
@@ -62,6 +63,26 @@ npx tsx scripts/eval-ai-report.ts docs/ai-evals/2026-09-21-gemini-research-basel
 ```
 
 Its plumbing is also checked without a key by `scripts/smoke-eval-research-task.ts`.
+
+## The large network (`--network large`)
+
+The 16-person network in `contact-search-eval.json` is small enough that retrieval returns
+nearly everyone, so a change to retrieval or grounding cannot show in `chat` or `research`.
+`--network large` (opt-in) adds 300 deterministic look-alikes and three people whose only
+distinguishing fact lives in a note (`scripts/eval-fixtures/chat-large-network-eval.json`),
+plus six chat cases: note-only facts asked as profile questions, follow-ups that name nobody,
+and the network's size. Compare large runs only with large runs.
+
+Gemini 3.8 Flash, `--task chat,research --runs 3`, Oct 14 2026:
+
+| | chat mentionRecall | chat factRecall | research mentionRecall | research routing |
+|---|---|---|---|---|
+| before the Oct 14 chat work (`2026-10-14-chat-large-network-before.json`) | 76.9% | 50.0% | 93.8% | 92.9% |
+| after it, plus the location fix (`2026-10-14-chat-large-network-after.json`) | 100% | 100% | 100% | 100% |
+
+Before, six chat cases missed on all three runs: chat-13 ("Who do I know in Canada?"), the
+three note-only facts, the "his company" follow-up and the network size. The small network
+on the same code is `2026-10-14-chat-canada-fix.json` (chat 100%, chat-13 3/3).
 
 ## What is recorded here
 
@@ -212,3 +233,58 @@ detail, handles, connections and promises. It adds six metrics the older baselin
 `promiseRecall`. Every existing capture metric held at 100% against `2026-09-19-gemini-baseline`
 (`GATE: PASS`); promise recall was 92.9% (13/14). Compare capture changes against this one.
 
+
+## Abstention (`chat`, Oct 19 2026)
+
+`chat` now asks about facts that live only in a contact's details, the reminders, or the
+commitments taken from notes (`ai-chat-eval.json` cases 21–29, seeded from its `records`), and
+about four things the records do not hold (cases 30–33, `mustAbstain`). Every answer is
+labelled by `labelAnswer` (`src/lib/chat-abstention.ts`), the same rule the product stores on
+each chat answer:
+
+- `abstainAccuracy`: share of `mustAbstain` cases that said they did not know and placed no
+  people. Gated: may not drop.
+- `falseAbstentions`: cases with an answer in the records that came back labelled
+  `abstained`. Gated: may not rise.
+
+The cases were added with the Phase 0 chat changes (richer contact rows, reminders across
+views, commitments and events in every prompt, the "look before you abstain" rule). The
+before/after baseline for them has not been recorded yet: run `chat` (and `--network large`)
+on `main` and on the branch with a key, and save both here.
+
+## The answer loop (Phase 1; the only path since Phase 7)
+
+Chat answers through `answerWithLookups` (`src/lib/chat-agent-loop.ts`): one streamed answer that
+can call Orbit's read tools mid-answer, with no separate research step. Until Phase 7 it ran only
+with `CHAT_LOOP_V2=1`; the flag, the one-pass answer and the research step are gone, and `chat`
+and `research` run the loop:
+
+```bash
+for t in chat research; do
+  npx tsx scripts/eval-ai.ts --keys-from .env.local --provider gemini \
+    --task "$t" --runs 3 --out "runs/loop/$t.json" &
+done; wait
+npx tsx scripts/eval-ai-report.ts docs/ai-evals/<phase-0-after> runs/loop
+```
+
+`research`'s `routingAccuracy` means "a research case made at least one lookup", and
+`meanLookups`/`meanRounds` count the loop's own lookups and rounds.
+
+The plan's gate for making the loop the default, against the Phase 0 after-run: every gated
+metric holds; `meanLookups` ≤ 3.5; p50 latency is within +3 s; cost per case is within +60%; run
+`--network large` too. **Phase 7 made it the default before that run** (no key was available
+where it was built). Run it before that PR merges, and save it here as the loop's first row.
+
+## Changes chat makes itself (`EVAL_CHAT_AUTO_APPLY`, Phase 3)
+
+Chat cases 34–39 and 40–45 (Phase 2b: goals, opportunities, a recruiter, an email draft) are change requests: each must propose the right change
+(`proposalAccuracy`) and a plain question must propose none. With `EVAL_CHAT_AUTO_APPLY=1` as
+well, the eval account has "Let chat make small changes for you" switched on, and
+`autoApplyAccuracy` scores every card: an auto-tier change must come back applied, a
+confirm-tier one must stay a card. Each applied change is undone right after it is scored, so
+later cases see the fixture as seeded.
+
+```bash
+EVAL_CHAT_AUTO_APPLY=1 npx tsx scripts/eval-ai.ts --keys-from .env.local \
+  --provider gemini --task chat --runs 3 --out runs/auto-apply/chat.json
+```

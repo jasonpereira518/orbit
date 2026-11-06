@@ -23,6 +23,12 @@ export const interestListSchema = z.object({
   elapsedMs: z.number().int().nonnegative(),
   /** Who sent them: a referral slug (`/waitlist/<slug>`) or, on older links, a share token. */
   ref: z.string().max(SHARE_TOKEN_MAX).optional(),
+  /**
+   * The visitor's per-tab analytics session id (`pv_sid`), when the page could read it. Not
+   * validated here: a bad one must never turn a real join into an error, so the core drops
+   * anything that is not a uuid.
+   */
+  sessionId: z.string().max(64).nullish(),
 });
 
 export type InterestListInput = z.input<typeof interestListSchema>;

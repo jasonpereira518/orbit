@@ -129,6 +129,12 @@ export type ImportQueueSnapshot = {
 export const TARGET_LABEL: Record<Exclude<ImportTarget, "unknown">, string> = {
   linkedin_connections: "LinkedIn connections",
   linkedin_messages: "LinkedIn messages",
+  linkedin_profile: "LinkedIn profile",
+  linkedin_positions: "LinkedIn current role",
+  linkedin_skills: "LinkedIn skills",
+  linkedin_alerts: "LinkedIn job alerts",
+  linkedin_education: "LinkedIn education",
+  linkedin_export: "LinkedIn export files",
   contacts_file: "Contacts",
   calendar_ics: "Calendar",
   calendar_csv: "Calendar",
@@ -146,12 +152,30 @@ export const TARGET_LABEL_INLINE: Record<
 > = {
   linkedin_connections: "LinkedIn connections",
   linkedin_messages: "LinkedIn messages",
+  linkedin_profile: "LinkedIn profile",
+  linkedin_positions: "current role",
+  linkedin_skills: "skills",
+  linkedin_alerts: "job alerts",
+  linkedin_education: "schools",
+  linkedin_export: "LinkedIn export files",
   contacts_file: "contacts",
   calendar_ics: "calendar",
   calendar_csv: "calendar",
 };
 
 const TERMINAL: readonly QueuedImportStatus[] = ["done", "failed", "skipped"];
+
+export type QueuePhase = "idle" | "previewing" | "review" | "running" | "done";
+
+/**
+ * Whether a new drop may replace the queue. Never while previews or the run are in flight:
+ * both write into the queue by id, and ids repeat across drops (`q0-linkedin_connections`),
+ * so the old loops would preview, advance and import the new drop's rows. A queue in review
+ * has nothing in flight — and re-dropping is the only way out of review — so it stays open.
+ */
+export function acceptsNewDrop(phase: QueuePhase): boolean {
+  return phase !== "previewing" && phase !== "running";
+}
 
 export function isTerminal(status: QueuedImportStatus): boolean {
   return TERMINAL.includes(status);

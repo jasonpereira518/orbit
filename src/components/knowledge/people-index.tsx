@@ -127,7 +127,7 @@ export function PeopleIndex({
                       <span className="truncate text-sm font-medium text-ink">{r.fullName}</span>
                       {r.fitCount > 0 ? (
                         <span
-                          className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+                          className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary"
                           title={`Bears on ${r.fitCount} of your goals`}
                         >
                           <Target className="h-3 w-3" aria-hidden />

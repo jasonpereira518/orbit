@@ -14,6 +14,7 @@ import {
   getComingSoonKeys,
   getHiddenSurfaceKeys,
   getNavOrder,
+  getTierRules,
   isPreviewingUnreleased,
   isViewingAsUser,
 } from "@/lib/surface-visibility";
@@ -37,11 +38,12 @@ export const metadata = { title: "Admin · Product" };
  */
 export default async function AdminProductPage() {
   const adminUserId = await requireAdminPage();
-  const [hidden, comingSoon, navOrder, viewingAsUser, previewingUnreleased, constellation] =
+  const [hidden, comingSoon, navOrder, tierRules, viewingAsUser, previewingUnreleased, constellation] =
     await Promise.all([
       getHiddenSurfaceKeys(),
       getComingSoonKeys(),
       getNavOrder(),
+      getTierRules(),
       isViewingAsUser(adminUserId),
       isPreviewingUnreleased(adminUserId),
       getConstellationConfig(),
@@ -59,6 +61,7 @@ export default async function AdminProductPage() {
   const summary = [
     count > 0 && `${count} hidden`,
     soonCount > 0 && `${soonCount} coming soon`,
+    tierRules.size > 0 && `${tierRules.size} limited to some plans`,
   ].filter(Boolean);
 
   return (
@@ -115,14 +118,15 @@ export default async function AdminProductPage() {
                   order={navOrder}
                   hidden={hiddenKeys}
                   comingSoon={[...comingSoon]}
+                  tierRules={Object.fromEntries(tierRules)}
                 />
               </AdminPanel>
             ),
           },
           {
             id: "dashboard",
-            label: "Dashboard & widgets",
-            flagged: hiddenIn(["dashboard", "widget"]),
+            label: "Dashboard, widgets & features",
+            flagged: hiddenIn(["dashboard", "widget", "feature"]),
             content: (
               <div className="space-y-6">
                 <AdminPanel title="Dashboard cards">
@@ -130,6 +134,9 @@ export default async function AdminProductPage() {
                 </AdminPanel>
                 <AdminPanel title="Widgets">
                   <SurfaceToggles surfaces={surfacesOfKind("widget")} hidden={hiddenKeys} />
+                </AdminPanel>
+                <AdminPanel title="Features">
+                  <SurfaceToggles surfaces={surfacesOfKind("feature")} hidden={hiddenKeys} />
                 </AdminPanel>
               </div>
             ),

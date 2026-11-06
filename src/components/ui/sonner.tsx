@@ -275,10 +275,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
             "text-secondary-foreground transition-colors duration-fast hover:bg-secondary/80",
           // Revealed on hover, but always reachable by keyboard — an error toast
           // runs for ten seconds and hover now pauses that timer, so one parked
-          // under a resting cursor never leaves on its own.
+          // under a resting cursor never leaves on its own. Hidden only for a fine
+          // pointer: `group-hover` never fires on touch, so a bare `opacity-0` left
+          // the button invisible yet tappable there.
           closeButton:
             "absolute top-1.5 right-1.5 grid size-6 place-items-center rounded-md " +
-            "text-muted-foreground opacity-0 transition-opacity duration-fast " +
+            "text-muted-foreground pointer-fine:opacity-0 transition-opacity duration-fast " +
             "hover:bg-accent hover:text-accent-foreground " +
             "focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring " +
             "group-hover/toast:opacity-100",

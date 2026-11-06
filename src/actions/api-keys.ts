@@ -25,6 +25,7 @@ import { requireUserId } from "@/lib/auth";
 import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 import { generateApiKey, type ApiKeyKind, type ApiKeyScope } from "@/lib/api/keys";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { trackMcpConnected } from "@/lib/mcp/events";
 
 export type ApiKeySummary = {
   id: string;
@@ -94,7 +95,7 @@ export async function createApiKey(
 ): Promise<CreatedApiKey | ApiKeyRefusal> {
   const userId = await requireUserId();
   try {
-    await requireEntitlement(userId, "api");
+    await requireEntitlement(userId, "api", { route: "action.api-keys.create" });
   } catch (err) {
     if (isPaywallError(err)) {
       return { ok: false, reason: "payment_required", message: err.message };
@@ -122,6 +123,8 @@ export async function createApiKey(
     .returning();
 
   revalidatePath("/settings");
+  if (kind === "mcp_url") trackMcpConnected({ userId, client: "other", via: "api_key" });
+
   return {
     ok: true,
     summary: {

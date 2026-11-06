@@ -71,3 +71,37 @@ export const MEETING_CHUNK_MAX_BYTES = 4 * 1024 * 1024;
 export function formatUploadSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/**
+ * The most import text one Server Action call can carry: 90% of the platform cap.
+ *
+ * Import text travels as a JSON-serialised action argument, and quotes, newlines and
+ * non-ASCII escape to more bytes than the raw text, so the cap itself is not the limit.
+ * Vercel refuses a bigger request before any of our code runs (a plain-text 413), which the
+ * browser reports as an unreadable file; this check says so first, in words.
+ *
+ * ponytail: no chunked upload for import text yet. If real users hit this, generalise the
+ * staged-rows upload in `src/lib/chat-import-preview.ts` (beginStaging / appendStagedRows /
+ * startStaged) instead of raising the number.
+ */
+export const IMPORT_TEXT_MAX_BYTES = Math.floor(PLATFORM_REQUEST_BODY_MAX_BYTES * 0.9);
+
+/** True when `text` (measured as UTF-8 bytes, what is actually sent) fits one request. */
+export function fitsInOneRequest(text: string) {
+  // Characters never outnumber bytes, so a long string is over before it is encoded.
+  return text.length <= IMPORT_TEXT_MAX_BYTES && new TextEncoder().encode(text).length <= IMPORT_TEXT_MAX_BYTES;
+}
+
+/**
+ * True when an import's whole confirm call fits one request: its text AND the `ids` that
+ * travel beside it in the same action argument (`text` alone can fit while `text + ids` is
+ * a 413). Not exact (field names and fileName are not counted), which the 10% headroom in
+ * `IMPORT_TEXT_MAX_BYTES` absorbs.
+ */
+export function importPayloadFits(text: string | null, ids: readonly string[] = []) {
+  return fitsInOneRequest((text ?? "") + JSON.stringify(ids));
+}
+
+export function formatImportSize(bytes: number) {
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}

@@ -13,13 +13,18 @@ import {
   apiKeys,
   chatMessages,
   chatThreads,
+  contactBriefs,
+  contactCareerMoves,
   contactOpportunities,
+  contactSignals,
+  duplicateSuggestions,
   imports,
   interactionMentions,
   interactions,
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
+  userGoals,
   userSettings,
   type NoteBatchResult,
 } from "@/db/schema";
@@ -35,6 +40,7 @@ import {
   DEMO_OPPORTUNITIES,
   EXTRA_TOUCHES,
   type DemoCapture,
+  type DemoOpportunity,
 } from "@/lib/demo-data/network-extra";
 import { assignDemoPhotos } from "@/lib/demo-data/photos";
 
@@ -46,6 +52,69 @@ export type ExtendedCast = {
   people: DemoPerson[];
   photos: Map<string, string | null>;
   contactSource: Map<string, LongTailSource>;
+  captures: DemoCapture[];
+  opportunities: DemoOpportunity[];
+  groundedChat: DemoGroundedChat;
+  /** Gillings only. Job moves for Radar and the profile's work-history tracking. */
+  careerMoves?: DemoCareerMove[];
+  /** Gillings only. Recent posts, inside Radar's "this week". */
+  signals?: DemoSignal[];
+  /** Gillings only. Why a person matters to a goal (the goal's exact seeded text). */
+  goalFit?: { person: string; goal: string; why: string }[];
+  /** Gillings only. Pairs waiting on /contacts/duplicates — keep confidence under the auto-merge line. */
+  duplicates?: { a: string; b: string; reason: string; confidence: number }[];
+};
+
+/** One chat thread answered with research steps and citations. */
+export type DemoGroundedChat = {
+  title: string;
+  question: string;
+  understandDetail: string;
+  /** [person, a phrase from one of their notes] — becomes evidence e1, e2, … */
+  citations: [string, string][];
+  answer: string;
+  recommendations: { person: string; reason: string; action: string; draft: string | null }[];
+};
+
+export type DemoCareerMove = {
+  person: string;
+  kind: "joined" | "title_change";
+  fromOrg?: string;
+  fromTitle?: string;
+  toOrg: string;
+  toTitle: string;
+  daysAgo: number;
+};
+
+export type DemoSignal = { person: string; daysAgo: number; excerpt: string };
+
+const FOUNDER_GROUNDED_CHAT: DemoGroundedChat = {
+  title: "Who can help me hire a founding engineer?",
+  question: "Who can help me hire a founding engineer?",
+  understandDetail: "Hiring · founding engineer",
+  citations: [
+    ["Nina Petrova", "first-engineer scorecard"],
+    ["Daniel Osei", "talked me out of a bad first hire"],
+    ["Victor Reyes", "prompting"],
+    ["Amara Diallo", "candidate list"],
+  ],
+  answer:
+    "Start with Nina Petrova — she already sent you her first-engineer scorecard [e1] and is sending her offer template. Daniel Osei is the gut check: he talked you out of a bad first hire [e2] and offered to sit in on the final round. For candidates, Victor Reyes knows the UNC alumni pool and has seen how you work [e3], and Amara Diallo can open Bellwether's portfolio candidate list once they invest [e4].",
+  recommendations: [
+    {
+      person: "Victor Reyes",
+      reason: "Knows the UNC alumni pool and reviewed Orbit's prompting.",
+      action: "Ask for two founding-engineer candidates",
+      draft:
+        "Hi Victor — we're hiring our founding engineer and I'd trust your read on anyone from the UNC alumni pool. Anyone come to mind?",
+    },
+    {
+      person: "Daniel Osei",
+      reason: "Offered to sit in on a final round.",
+      action: "Book him for the final interview",
+      draft: null,
+    },
+  ],
 };
 
 export function buildExtendedCast(): ExtendedCast {
@@ -68,6 +137,9 @@ export function buildExtendedCast(): ExtendedCast {
     people: [...cast, ...longTail],
     photos: assignDemoPhotos(cast, longTail),
     contactSource,
+    captures: DEMO_CAPTURES,
+    opportunities: DEMO_OPPORTUNITIES,
+    groundedChat: FOUNDER_GROUNDED_CHAT,
   };
 }
 
@@ -80,16 +152,20 @@ export async function seedExtendedSurfaces(
 ): Promise<void> {
   const ago = (days: number) => new Date(now - days * DAY);
   const surfaces: Array<[string, () => Promise<void>]> = [
-    ["captures", () => seedCaptures(userId, contactIdByName, ago, summary)],
+    ["captures", () => seedCaptures(userId, cast.captures, contactIdByName, ago, summary)],
     // After captures, so the notes they logged are linked too.
     ["mentions", () => seedMentions(userId, cast, contactIdByName, summary)],
-    ["opportunities", () => seedOpportunities(userId, contactIdByName, now, summary)],
+    ["opportunities", () => seedOpportunities(userId, cast.opportunities, contactIdByName, now, summary)],
     ["imports", () => seedMoreImports(userId, cast, ago, summary)],
     ["connections", () => seedConnectionArtifacts(userId, now, summary)],
-    ["chat", () => seedGroundedChat(userId, contactIdByName, ago, summary)],
+    ["chat", () => seedGroundedChat(userId, cast, contactIdByName, ago, summary)],
     ["first-run", () => settleFirstRun(userId, now)],
     ["timelines", () => settleInteractionStamps(userId)],
   ];
+  if (cast.careerMoves) surfaces.push(["career moves", () => seedCareerMoves(userId, cast.careerMoves!, contactIdByName, ago, summary)]);
+  if (cast.signals) surfaces.push(["signals", () => seedSignals(userId, cast.signals!, contactIdByName, ago, summary)]);
+  if (cast.goalFit) surfaces.push(["goal fit", () => seedGoalFit(userId, cast.goalFit!, contactIdByName)]);
+  if (cast.duplicates) surfaces.push(["duplicates", () => seedDuplicates(userId, cast.duplicates!, contactIdByName)]);
   for (const [name, run] of surfaces) {
     try {
       await run();
@@ -109,6 +185,7 @@ export async function seedExtendedSurfaces(
  */
 async function seedCaptures(
   userId: string,
+  captures: DemoCapture[],
   contactIdByName: Map<string, string>,
   ago: (d: number) => Date,
   summary: Record<string, number>
@@ -116,7 +193,7 @@ async function seedCaptures(
   const db = await getDb();
   let batches = 0;
   let meetings = 0;
-  for (const [index, c] of DEMO_CAPTURES.entries()) {
+  for (const [index, c] of captures.entries()) {
     const participants = c.participants
       .map((name) => ({ name, contactId: contactIdByName.get(name) }))
       .filter((p): p is { name: string; contactId: string } => Boolean(p.contactId));
@@ -313,12 +390,13 @@ async function seedMentions(
 
 async function seedOpportunities(
   userId: string,
+  opportunities: DemoOpportunity[],
   contactIdByName: Map<string, string>,
   now: number,
   summary: Record<string, number>
 ) {
   const db = await getDb();
-  const rows = DEMO_OPPORTUNITIES.flatMap((o) => {
+  const rows = opportunities.flatMap((o) => {
     const contactId = contactIdByName.get(o.person);
     if (!contactId) return [];
     return [
@@ -463,11 +541,13 @@ async function seedConnectionArtifacts(userId: string, now: number, summary: Rec
  */
 async function seedGroundedChat(
   userId: string,
+  cast: ExtendedCast,
   contactIdByName: Map<string, string>,
   ago: (d: number) => Date,
   summary: Record<string, number>
 ) {
   const db = await getDb();
+  const chat = cast.groundedChat;
   const cite = async (person: string, match: string): Promise<EvidenceSource | null> => {
     const contactId = contactIdByName.get(person);
     if (!contactId) return null;
@@ -481,12 +561,8 @@ async function seedGroundedChat(
       : { kind: "contact", contactId };
   };
 
-  const sources = [
-    await cite("Nina Petrova", "first-engineer scorecard"),
-    await cite("Daniel Osei", "talked me out of a bad first hire"),
-    await cite("Victor Reyes", "prompting"),
-    await cite("Amara Diallo", "candidate list"),
-  ];
+  const sources: (EvidenceSource | null)[] = [];
+  for (const [person, match] of chat.citations) sources.push(await cite(person, match));
   const evidence: Record<string, EvidenceSource> = {};
   sources.forEach((s, i) => {
     if (s) evidence[`e${i + 1}`] = s;
@@ -494,15 +570,15 @@ async function seedGroundedChat(
 
   const ref = (name: string) => ({ id: contactIdByName.get(name) ?? name, name, kind: "contact" as const });
   const activity: ChatStep[] = [
-    { id: "understand", kind: "understand", label: "Understanding the question", detail: "Hiring · founding engineer", status: "done", ms: 410 },
-    { id: "search", kind: "search", label: "Searching 85 contacts", detail: "Keyword, semantic and notes", status: "done", ms: 920 },
+    { id: "understand", kind: "understand", label: "Understanding the question", detail: chat.understandDetail, status: "done", ms: 410 },
+    { id: "search", kind: "search", label: `Searching ${cast.people.length} contacts`, detail: "Keyword, semantic and notes", status: "done", ms: 920 },
     {
       id: "rank",
       kind: "rank",
-      label: "Ranking 4 people",
+      label: `Ranking ${chat.citations.length} people`,
       status: "done",
       ms: 380,
-      refs: [ref("Nina Petrova"), ref("Daniel Osei"), ref("Victor Reyes"), ref("Amara Diallo")],
+      refs: chat.citations.map(([person]) => ref(person)),
     },
     { id: "answer", kind: "answer", label: "Writing the answer", status: "done", ms: 3100 },
   ];
@@ -510,39 +586,129 @@ async function seedGroundedChat(
   const at = ago(0.3);
   const [thread] = await db
     .insert(chatThreads)
-    .values({ userId, title: "Who can help me hire a founding engineer?", createdAt: at, updatedAt: at })
+    .values({ userId, title: chat.title, createdAt: at, updatedAt: at })
     .returning();
   await db.insert(chatMessages).values([
-    { threadId: thread.id, userId, role: "user", content: "Who can help me hire a founding engineer?", createdAt: at },
+    { threadId: thread.id, userId, role: "user", content: chat.question, createdAt: at },
     {
       threadId: thread.id,
       userId,
       role: "assistant",
-      content:
-        "Start with Nina Petrova — she already sent you her first-engineer scorecard [e1] and is sending her offer template. Daniel Osei is the gut check: he talked you out of a bad first hire [e2] and offered to sit in on the final round. For candidates, Victor Reyes knows the UNC alumni pool and has seen how you work [e3], and Amara Diallo can open Bellwether's portfolio candidate list once they invest [e4].",
+      content: chat.answer,
       activity,
       evidence,
-      recommendations: [
-        {
-          contact_id: contactIdByName.get("Victor Reyes") ?? null,
-          name: "Victor Reyes",
-          reason: "Knows the UNC alumni pool and reviewed Orbit's prompting.",
-          suggested_action: "Ask for two founding-engineer candidates",
-          draft_message:
-            "Hi Victor — we're hiring our founding engineer and I'd trust your read on anyone from the UNC alumni pool. Anyone come to mind?",
-        },
-        {
-          contact_id: contactIdByName.get("Daniel Osei") ?? null,
-          name: "Daniel Osei",
-          reason: "Offered to sit in on a final round.",
-          suggested_action: "Book him for the final interview",
-          draft_message: null,
-        },
-      ],
+      recommendations: chat.recommendations.map((r) => ({
+        contact_id: contactIdByName.get(r.person) ?? null,
+        name: r.person,
+        reason: r.reason,
+        suggested_action: r.action,
+        draft_message: r.draft,
+      })),
       createdAt: new Date(at.getTime() + 9000),
     },
   ]);
   summary.chatThreads = (summary.chatThreads ?? 0) + 1;
+}
+
+/* ------------------------------------------------------------- career moves, signals, fit */
+
+async function seedCareerMoves(
+  userId: string,
+  moves: DemoCareerMove[],
+  contactIdByName: Map<string, string>,
+  ago: (d: number) => Date,
+  summary: Record<string, number>
+) {
+  const db = await getDb();
+  const rows = moves.flatMap((m) => {
+    const contactId = contactIdByName.get(m.person);
+    if (!contactId) return [];
+    const at = ago(m.daysAgo);
+    return [
+      {
+        userId,
+        contactId,
+        kind: m.kind,
+        fromOrg: m.fromOrg ?? null,
+        fromTitle: m.fromTitle ?? null,
+        toOrg: m.toOrg,
+        toTitle: m.toTitle,
+        startedYear: at.getUTCFullYear(),
+        startedMonth: at.getUTCMonth() + 1,
+        source: "web" as const,
+        dedupeKey: sha256(`demo-move:${m.person}:${m.toOrg}:${m.toTitle}`),
+        detectedAt: at,
+      },
+    ];
+  });
+  if (rows.length) await db.insert(contactCareerMoves).values(rows).onConflictDoNothing();
+  summary.careerMoves = rows.length;
+}
+
+async function seedSignals(
+  userId: string,
+  signals: DemoSignal[],
+  contactIdByName: Map<string, string>,
+  ago: (d: number) => Date,
+  summary: Record<string, number>
+) {
+  const db = await getDb();
+  const rows = signals.flatMap((s) => {
+    const contactId = contactIdByName.get(s.person);
+    if (!contactId) return [];
+    return [
+      {
+        userId,
+        contactId,
+        kind: "linkedin_activity" as const,
+        occurredAt: ago(s.daysAgo),
+        source: "extension",
+        payload: { excerpt: s.excerpt, network: "linkedin" as const, url: null, sourceLabel: "LinkedIn" },
+        dedupeHash: sha256(`demo-signal:${s.person}:${s.excerpt}`),
+      },
+    ];
+  });
+  if (rows.length) await db.insert(contactSignals).values(rows).onConflictDoNothing();
+  summary.signals = rows.length;
+}
+
+async function seedDuplicates(
+  userId: string,
+  pairs: { a: string; b: string; reason: string; confidence: number }[],
+  contactIdByName: Map<string, string>
+) {
+  const db = await getDb();
+  const rows = pairs.flatMap((p) => {
+    const a = contactIdByName.get(p.a);
+    const b = contactIdByName.get(p.b);
+    if (!a || !b) return [];
+    // The lower uuid first: the pair's one canonical spelling.
+    const [contactAId, contactBId] = a < b ? [a, b] : [b, a];
+    return [{ userId, contactAId, contactBId, reason: p.reason, confidence: p.confidence }];
+  });
+  if (rows.length) await db.insert(duplicateSuggestions).values(rows).onConflictDoNothing();
+}
+
+/** Ties key people to the seeded goals, so the knowledge view can say why they matter. */
+async function seedGoalFit(userId: string, fit: { person: string; goal: string; why: string }[], contactIdByName: Map<string, string>) {
+  const db = await getDb();
+  const goals = await db.select({ id: userGoals.id, text: userGoals.text }).from(userGoals).where(eq(userGoals.userId, userId));
+  const goalIds = goals.map((g) => g.id);
+  const idByText = new Map(goals.map((g) => [g.text, g.id]));
+  const byPerson = new Map<string, { goalId: string; why: string }[]>();
+  for (const f of fit) {
+    const goalId = idByText.get(f.goal);
+    if (!goalId) continue;
+    byPerson.set(f.person, [...(byPerson.get(f.person) ?? []), { goalId, why: f.why }]);
+  }
+  for (const [person, items] of byPerson) {
+    const contactId = contactIdByName.get(person);
+    if (!contactId) continue;
+    await db
+      .update(contactBriefs)
+      .set({ goalFit: { judged: goalIds, items } })
+      .where(and(eq(contactBriefs.userId, userId), eq(contactBriefs.contactId, contactId)));
+  }
 }
 
 /* ---------------------------------------------------------------------- first run + stamps */
@@ -559,6 +725,11 @@ async function settleFirstRun(userId: string, now: number) {
     .update(userSettings)
     .set({ termsAcceptedAt: long, termsVersion: TERMS_VERSION })
     .where(and(eq(userSettings.userId, userId), isNull(userSettings.termsAcceptedAt)));
+  // A finished tour: no coach rail, and no "Take the guided tour" item on the setup card.
+  await db
+    .update(userSettings)
+    .set({ tourStartedAt: long, tourCompletedAt: long })
+    .where(and(eq(userSettings.userId, userId), isNull(userSettings.tourStartedAt)));
 }
 
 /**

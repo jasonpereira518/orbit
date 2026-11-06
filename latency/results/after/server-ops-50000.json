@@ -1,0 +1,895 @@
+{
+  "tier": "50000",
+  "latencyMs": 25,
+  "at": "2026-10-17T23:02:40.746Z",
+  "rows": [
+    {
+      "op": "app layout reads (cold instance)",
+      "group": "page",
+      "statements": 5,
+      "kb": 0.9,
+      "cpu_ms": 266.8,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        " WITH orgs AS ( SELECT c.name AS name, 'company'::text AS kind, c.name_normalized AS name_",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt"
+      ],
+      "sim_ms": 347,
+      "depth": 3.2,
+      "est_ms_rtt8": 292,
+      "est_ms_rtt40": 395
+    },
+    {
+      "op": "app layout reads (warm instance)",
+      "group": "page",
+      "statements": 4,
+      "kb": 0.9,
+      "cpu_ms": 20.8,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt"
+      ],
+      "sim_ms": 97,
+      "depth": 3,
+      "est_ms_rtt8": 45,
+      "est_ms_rtt40": 141
+    },
+    {
+      "op": "dashboard bundle (getDashboardData)",
+      "group": "page",
+      "statements": 15,
+      "kb": 8600.3,
+      "cpu_ms": 5151,
+      "sql": [
+        "select \"id\", \"company\", \"school\", \"industry\", \"relationship_score\", \"stated_closeness\", \"p",
+        "select \"id\", \"user_id\", \"text\", \"active\", \"created_at\" from \"user_goals\" \"userGoals\" where",
+        "select \"contact_tags\".\"contact_id\", count(*)::int from \"contact_tags\" inner join \"contacts",
+        "select \"id\", \"user_id\", \"contact_id\", \"list_id\", \"title\", \"description\", \"due_date\", \"stat",
+        "select \"id\", \"user_id\", \"suggestion_type\", \"title\", \"description\", \"related_contact_ids\", ",
+        " select id, jsonb_build_object( 'raw', closeness_breakdown->'raw', 'closeness', closeness_",
+        "select \"text\" from \"user_goals\" \"userGoals\" where (\"userGoals\".\"user_id\" = $1 and \"userGoa",
+        "select \"contact_id\", count(*) filter (where \"interaction_date\" >= $1)::int, count(*)::int,",
+        "select \"user_id\", \"snapshot\", \"contact_count\", \"computed_at\", \"dirty_at\" from \"closeness_c",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"clos",
+        " select count(*)::int as total, count(*) filter ( where last_interaction_at is not null an",
+        " select 'company' as kind, btrim(company) as name from contacts where user_id = $1 and btr",
+        " select id, (closeness_breakdown->>'goalRelevance')::float8 as goal_relevance from contact",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"t",
+        "select \"id\", \"full_name\", \"preferred_name\", \"company\", \"title\", \"school\", \"email\", \"linked"
+      ],
+      "sim_ms": 5344,
+      "depth": 7.7,
+      "est_ms_rtt8": 5213,
+      "est_ms_rtt40": 5459
+    },
+    {
+      "op": "dashboard network stats",
+      "group": "page",
+      "statements": 1,
+      "kb": 0.1,
+      "cpu_ms": 146.3,
+      "sql": [
+        " select count(*)::int as total, count(*) filter ( where last_interaction_at is not null an"
+      ],
+      "sim_ms": 179,
+      "depth": 1.3,
+      "est_ms_rtt8": 157,
+      "est_ms_rtt40": 198
+    },
+    {
+      "op": "graph (default scope)",
+      "group": "page",
+      "statements": 8,
+      "kb": 34685.6,
+      "cpu_ms": 5612.5,
+      "sql": [
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c",
+        "select \"id\", \"user_id\", \"text\", \"active\", \"created_at\" from \"user_goals\" \"userGoals\" where",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        " select id, closeness_breakdown as breakdown from contacts where user_id = $1 and closenes",
+        "select \"text\" from \"user_goals\" \"userGoals\" where (\"userGoals\".\"user_id\" = $1 and \"userGoa",
+        "select \"contact_id\", count(*) filter (where \"interaction_date\" >= $1)::int, count(*)::int,",
+        "select \"user_id\", \"snapshot\", \"contact_count\", \"computed_at\", \"dirty_at\" from \"closeness_c",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"clos"
+      ],
+      "sim_ms": 5274,
+      "depth": 0,
+      "est_ms_rtt8": 5613,
+      "est_ms_rtt40": 5613
+    },
+    {
+      "op": "graph action (getGraphData)",
+      "group": "page",
+      "statements": 10,
+      "kb": 34685.6,
+      "cpu_ms": 5641.8,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c",
+        "select \"id\", \"user_id\", \"text\", \"active\", \"created_at\" from \"user_goals\" \"userGoals\" where",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        " select id, closeness_breakdown as breakdown from contacts where user_id = $1 and closenes",
+        "select \"text\" from \"user_goals\" \"userGoals\" where (\"userGoals\".\"user_id\" = $1 and \"userGoa",
+        "select \"contact_id\", count(*) filter (where \"interaction_date\" >= $1)::int, count(*)::int,",
+        "select \"user_id\", \"snapshot\", \"contact_count\", \"computed_at\", \"dirty_at\" from \"closeness_c",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"clos"
+      ],
+      "sim_ms": 5374,
+      "depth": 0,
+      "est_ms_rtt8": 5642,
+      "est_ms_rtt40": 5642
+    },
+    {
+      "op": "contacts first page",
+      "group": "page",
+      "statements": 3,
+      "kb": 26.4,
+      "cpu_ms": 144.1,
+      "sql": [
+        "select \"id\", \"full_name\", \"first_name\", \"last_name\", \"preferred_name\", \"title\", \"company\",",
+        "select count(*)::int from \"contacts\" where \"contacts\".\"user_id\" = $1",
+        "select \"contact_tags\".\"contact_id\", \"tags\".\"name\" from \"contact_tags\" inner join \"tags\" on"
+      ],
+      "sim_ms": 162,
+      "depth": 0.7,
+      "est_ms_rtt8": 150,
+      "est_ms_rtt40": 172
+    },
+    {
+      "op": "contacts page 2 (cursor)",
+      "group": "page",
+      "statements": 5,
+      "kb": 26.2,
+      "cpu_ms": 126.5,
+      "sql": [
+        "select \"id\", \"full_name\", \"first_name\", \"last_name\", \"preferred_name\", \"title\", \"company\",",
+        "select count(*)::int from \"contacts\" where \"contacts\".\"user_id\" = $1",
+        "select \"contact_tags\".\"contact_id\", \"tags\".\"name\" from \"contact_tags\" inner join \"tags\" on",
+        "select \"id\", \"full_name\", \"first_name\", \"last_name\", \"preferred_name\", \"title\", \"company\",",
+        "select \"contact_tags\".\"contact_id\", \"tags\".\"name\" from \"contact_tags\" inner join \"tags\" on"
+      ],
+      "sim_ms": 220,
+      "depth": 3.7,
+      "est_ms_rtt8": 156,
+      "est_ms_rtt40": 275
+    },
+    {
+      "op": "contacts sort=recent",
+      "group": "page",
+      "statements": 3,
+      "kb": 26.7,
+      "cpu_ms": 125.5,
+      "sql": [
+        "select \"id\", \"full_name\", \"first_name\", \"last_name\", \"preferred_name\", \"title\", \"company\",",
+        "select count(*)::int from \"contacts\" where \"contacts\".\"user_id\" = $1",
+        "select \"contact_tags\".\"contact_id\", \"tags\".\"name\" from \"contact_tags\" inner join \"tags\" on"
+      ],
+      "sim_ms": 172,
+      "depth": 1.9,
+      "est_ms_rtt8": 141,
+      "est_ms_rtt40": 202
+    },
+    {
+      "op": "contacts filter company",
+      "group": "page",
+      "statements": 3,
+      "kb": 26.1,
+      "cpu_ms": 17.3,
+      "sql": [
+        "select \"id\", \"full_name\", \"first_name\", \"last_name\", \"preferred_name\", \"title\", \"company\",",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and lower(trim(\"cont",
+        "select \"contact_tags\".\"contact_id\", \"tags\".\"name\" from \"contact_tags\" inner join \"tags\" on"
+      ],
+      "sim_ms": 66,
+      "depth": 1.9,
+      "est_ms_rtt8": 33,
+      "est_ms_rtt40": 93
+    },
+    {
+      "op": "contacts filter due",
+      "group": "page",
+      "statements": 3,
+      "kb": 27.3,
+      "cpu_ms": 27.2,
+      "sql": [
+        "select \"id\", \"full_name\", \"first_name\", \"last_name\", \"preferred_name\", \"title\", \"company\",",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"next",
+        "select \"contact_tags\".\"contact_id\", \"tags\".\"name\" from \"contact_tags\" inner join \"tags\" on"
+      ],
+      "sim_ms": 74,
+      "depth": 1.9,
+      "est_ms_rtt8": 42,
+      "est_ms_rtt40": 103
+    },
+    {
+      "op": "contacts letters",
+      "group": "page",
+      "statements": 2,
+      "kb": 0.1,
+      "cpu_ms": 161.3,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select coalesce(nullif(upper(left(\"sort_key\", 1)), ''), '#') from \"contacts\" where \"contac"
+      ],
+      "sim_ms": 223,
+      "depth": 2.5,
+      "est_ms_rtt8": 181,
+      "est_ms_rtt40": 261
+    },
+    {
+      "op": "contacts plan overview",
+      "group": "page",
+      "statements": 4,
+      "kb": 0.4,
+      "cpu_ms": 139.8,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select count(*) from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"source\" I"
+      ],
+      "sim_ms": 225,
+      "depth": 3.4,
+      "est_ms_rtt8": 167,
+      "est_ms_rtt40": 276
+    },
+    {
+      "op": "contacts duplicates count",
+      "group": "page",
+      "statements": 3,
+      "kb": 0,
+      "cpu_ms": 227,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"contact_a_id\", \"contact_b_id\", \"reason\", \"confidence\", \"status\", ",
+        " WITH named AS ( SELECT id, lower(btrim(full_name)) AS name_key, company, title FROM conta"
+      ],
+      "sim_ms": 321,
+      "depth": 3.8,
+      "est_ms_rtt8": 257,
+      "est_ms_rtt40": 379
+    },
+    {
+      "op": "profile: getContactForProfile",
+      "group": "page",
+      "statements": 2,
+      "kb": 5.5,
+      "cpu_ms": 11.1,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"contacts\".\"id\", \"contacts\".\"user_id\", \"contacts\".\"full_name\", \"contacts\".\"first_na"
+      ],
+      "sim_ms": 64,
+      "depth": 2.1,
+      "est_ms_rtt8": 28,
+      "est_ms_rtt40": 95
+    },
+    {
+      "op": "profile: timeline",
+      "group": "page",
+      "statements": 2,
+      "kb": 1.7,
+      "cpu_ms": 7.5,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"contacts\".\"id\", \"contacts_interactions\".\"data\" as \"interactions\" from \"contacts\" \""
+      ],
+      "sim_ms": 63,
+      "depth": 2.2,
+      "est_ms_rtt8": 25,
+      "est_ms_rtt40": 96
+    },
+    {
+      "op": "profile: related contacts",
+      "group": "page",
+      "statements": 8,
+      "kb": 1.1,
+      "cpu_ms": 2283,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"full_name\", \"preferred_name\", \"company\", \"company_id\", \"school\", \"how_met\", ",
+        "select \"notes\", \"ai_summary\", \"key_facts\" from \"contacts\" \"contacts\" where (\"contacts\".\"id",
+        "select \"contact_tags\".\"tag_id\" from \"contact_tags\" inner join \"contacts\" on \"contacts\".\"id",
+        "select \"contact_id\", count(*) from \"contact_tags\" where (\"contact_tags\".\"tag_id\" in ( sele",
+        "select \"text\" from \"user_goals\" \"userGoals\" where (\"userGoals\".\"user_id\" = $1 and \"userGoa",
+        "select \"id\", \"notes\", \"ai_summary\", \"key_facts\" from \"contacts\" where (\"contacts\".\"user_id",
+        "select \"id\", \"first_name\", \"title\", \"location\", \"linkedin_url\", \"email\", \"phone\", \"ai_summ"
+      ],
+      "sim_ms": 2408,
+      "depth": 5,
+      "est_ms_rtt8": 2323,
+      "est_ms_rtt40": 2483
+    },
+    {
+      "op": "profile: tail contact (no demo data)",
+      "group": "page",
+      "statements": 2,
+      "kb": 35.1,
+      "cpu_ms": 9.5,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"contacts\".\"id\", \"contacts\".\"user_id\", \"contacts\".\"full_name\", \"contacts\".\"first_na"
+      ],
+      "sim_ms": 65,
+      "depth": 2.2,
+      "est_ms_rtt8": 27,
+      "est_ms_rtt40": 98
+    },
+    {
+      "op": "reminders rail counts",
+      "group": "page",
+      "statements": 3,
+      "kb": 0.2,
+      "cpu_ms": 4.5,
+      "sql": [
+        "select count(*) filter (where \"reminders\".\"status\" = 'pending' and (case when \"reminders\".",
+        "select \"list_id\", count(*)::int from \"reminders\" where (\"reminders\".\"user_id\" = $1 and \"re",
+        "select count(*)::int from \"suggested_reminders\" where (\"suggested_reminders\".\"user_id\" = $"
+      ],
+      "sim_ms": 31,
+      "depth": 1.1,
+      "est_ms_rtt8": 13,
+      "est_ms_rtt40": 49
+    },
+    {
+      "op": "reminders page today",
+      "group": "page",
+      "statements": 2,
+      "kb": 28.2,
+      "cpu_ms": 9.9,
+      "sql": [
+        "select count(*)::int from \"reminders\" left join \"contacts\" on (\"contacts\".\"id\" = \"reminder",
+        "select \"reminders\".\"id\", \"reminders\".\"title\", \"reminders\".\"description\", \"reminders\".\"due_"
+      ],
+      "sim_ms": 37,
+      "depth": 1.1,
+      "est_ms_rtt8": 19,
+      "est_ms_rtt40": 54
+    },
+    {
+      "op": "reminders page upcoming",
+      "group": "page",
+      "statements": 2,
+      "kb": 28.4,
+      "cpu_ms": 9.7,
+      "sql": [
+        "select count(*)::int from \"reminders\" left join \"contacts\" on (\"contacts\".\"id\" = \"reminder",
+        "select \"reminders\".\"id\", \"reminders\".\"title\", \"reminders\".\"description\", \"reminders\".\"due_"
+      ],
+      "sim_ms": 37,
+      "depth": 1.1,
+      "est_ms_rtt8": 19,
+      "est_ms_rtt40": 54
+    },
+    {
+      "op": "knowledge base",
+      "group": "page",
+      "statements": 5,
+      "kb": 155.6,
+      "cpu_ms": 670.9,
+      "sql": [
+        " SELECT count(*) filter (where \"interactions\".\"interaction_type\" in ($1, $2, $3, $4, $5)):",
+        " SELECT count(*)::int AS people, (count(*) FILTER (WHERE btrim(coalesce(ai_summary, '')) <",
+        "select \"id\", \"full_name\", \"preferred_name\", \"company\", \"title\", \"source\", \"updated_at\", \"k",
+        "select \"id\", \"contact_id\", \"interaction_type\", \"source\", \"interaction_date\", left(\"ai_summ",
+        "select \"id\", \"full_name\", \"preferred_name\", \"company\", \"title\" from \"contacts\" where (\"con"
+      ],
+      "sim_ms": 758,
+      "depth": 3.5,
+      "est_ms_rtt8": 699,
+      "est_ms_rtt40": 811
+    },
+    {
+      "op": "knowledge people",
+      "group": "page",
+      "statements": 2,
+      "kb": 77.2,
+      "cpu_ms": 146.7,
+      "sql": [
+        " SELECT (SELECT count(*)::int FROM contacts WHERE user_id = $1) AS total, (SELECT count(*)",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"first_name\", \"contacts\".\"title"
+      ],
+      "sim_ms": 178,
+      "depth": 1.3,
+      "est_ms_rtt8": 157,
+      "est_ms_rtt40": 199
+    },
+    {
+      "op": "chat threads list",
+      "group": "page",
+      "statements": 3,
+      "kb": 0.4,
+      "cpu_ms": 10.3,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"title\", \"created_at\", \"updated_at\", \"updated_at\"::text from \"chat_threads\" w"
+      ],
+      "sim_ms": 93,
+      "depth": 3.3,
+      "est_ms_rtt8": 37,
+      "est_ms_rtt40": 142
+    },
+    {
+      "op": "chat suggestions",
+      "group": "page",
+      "statements": 13,
+      "kb": 1.7,
+      "cpu_ms": 171.9,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"interactions\".\"contact_id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"",
+        "select \"id\", \"full_name\", \"preferred_name\", \"company\", \"title\", \"industry\", \"ai_summary\", ",
+        "select \"suggested_reminders\".\"contact_id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_n",
+        "select \"interaction_mentions\".\"contact_id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_",
+        "select \"text\" from \"user_goals\" where (\"user_goals\".\"user_id\" = $1 and \"user_goals\".\"activ",
+        "select \"company\", count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"cont",
+        "select \"content\", \"created_at\" from \"chat_messages\" where (\"chat_messages\".\"user_id\" = $1 ",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"full_name\", \"preferred_name\", \"title\", \"company\", \"next_follow_up_at\", \"last",
+        "select \"id\", \"user_id\", \"suggestion_type\", \"title\", \"description\", \"related_contact_ids\", ",
+        "select \"id\", \"full_name\", \"preferred_name\", \"title\", \"company\" from \"contacts\" \"contacts\" ",
+        "select \"contact_id\", \"recent_discussions\" from \"contact_briefs\" where (\"contact_briefs\".\"u"
+      ],
+      "sim_ms": 293,
+      "depth": 4.8,
+      "est_ms_rtt8": 210,
+      "est_ms_rtt40": 364
+    },
+    {
+      "op": "avatar backfill probe (candidates + count)",
+      "group": "poll",
+      "statements": 2,
+      "kb": 0.8,
+      "cpu_ms": 325.2,
+      "sql": [
+        "select \"id\", \"linkedin_url\", \"email\", CASE WHEN CASE WHEN \"contacts\".\"profile_image_url\" I",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and ((\"contacts\".\"li"
+      ],
+      "sim_ms": 375,
+      "depth": 2,
+      "est_ms_rtt8": 341,
+      "est_ms_rtt40": 405
+    },
+    {
+      "op": "notification panel",
+      "group": "poll",
+      "statements": 11,
+      "kb": 68.3,
+      "cpu_ms": 33.3,
+      "sql": [
+        "select \"id\", \"user_id\", \"contact_id\", \"list_id\", \"title\", \"description\", \"due_date\", \"stat",
+        "select \"id\", \"full_name\", \"preferred_name\", \"next_follow_up_at\", \"company\", \"title\" from \"",
+        "select \"id\", \"user_id\", \"suggestion_type\", \"title\", \"description\", \"related_contact_ids\", ",
+        "select \"id\", \"user_id\", \"contact_id\", \"capture_batch_id\", \"title\", \"description\", \"raw_dat",
+        "select \"id\", \"status\", \"result\", \"error\", \"updated_at\" from \"capture_jobs\" \"captureJobs\" w",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select ( SELECT \"status\" FROM \"gmail_connections\" WHERE \"user_id\" = $1 LIMIT 1), ( SELECT ",
+        "select \"id\", \"user_id\", \"kind\", \"grant_key\", \"plan\", \"micros_granted\", \"micros_remaining\",",
+        "select coalesce(sum(\"micros\"), 0) from \"credit_holds\" where (\"credit_holds\".\"user_id\" = $1",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt"
+      ],
+      "sim_ms": 133,
+      "depth": 4,
+      "est_ms_rtt8": 65,
+      "est_ms_rtt40": 193
+    },
+    {
+      "op": "app pulse (90s/tab)",
+      "group": "poll",
+      "statements": 13,
+      "kb": 70.7,
+      "cpu_ms": 52.4,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"title\", \"start_at\", \"attendees\" from \"calendar_events\" where (\"calendar_even",
+        "select \"id\", \"provider_event_id\", \"title\", \"start_at\", \"end_at\", \"attendees\", \"attendee_co",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"user_id\", \"contact_id\", \"list_id\", \"title\", \"description\", \"due_date\", \"stat",
+        "select \"id\", \"full_name\", \"preferred_name\", \"next_follow_up_at\", \"company\", \"title\" from \"",
+        "select \"id\", \"user_id\", \"suggestion_type\", \"title\", \"description\", \"related_contact_ids\", ",
+        "select \"id\", \"user_id\", \"contact_id\", \"capture_batch_id\", \"title\", \"description\", \"raw_dat",
+        "select \"id\", \"status\", \"result\", \"error\", \"updated_at\" from \"capture_jobs\" \"captureJobs\" w",
+        "select ( SELECT \"status\" FROM \"gmail_connections\" WHERE \"user_id\" = $1 LIMIT 1), ( SELECT ",
+        "select \"id\", \"user_id\", \"kind\", \"grant_key\", \"plan\", \"micros_granted\", \"micros_remaining\",",
+        "select coalesce(sum(\"micros\"), 0) from \"credit_holds\" where (\"credit_holds\".\"user_id\" = $1",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt"
+      ],
+      "sim_ms": 171,
+      "depth": 4.7,
+      "est_ms_rtt8": 90,
+      "est_ms_rtt40": 240
+    },
+    {
+      "op": "contacts search 'hop' (prefix, no embedding)",
+      "group": "search",
+      "statements": 3,
+      "kb": 26.4,
+      "cpu_ms": 571.3,
+      "sql": [
+        "select \"id\", \"full_name\", \"first_name\", \"last_name\", \"preferred_name\", \"title\", \"company\",",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and ( contacts.searc",
+        "select \"contact_tags\".\"contact_id\", \"tags\".\"name\" from \"contact_tags\" inner join \"tags\" on"
+      ],
+      "sim_ms": 598,
+      "depth": 1.1,
+      "est_ms_rtt8": 580,
+      "est_ms_rtt40": 615
+    },
+    {
+      "op": "contacts search 'hopper' (hybrid)",
+      "group": "search",
+      "statements": 7,
+      "kb": 26.8,
+      "cpu_ms": 1202.2,
+      "sql": [
+        " select contacts.id from contacts where contacts.user_id = $1 and contacts.search_tsv @@ w",
+        " select contacts.id from contacts where contacts.user_id = $1 and (lower(contacts.full_nam",
+        " select contacts.id, max(case when ce.organization_normalized = $1 then 3 when ce.organiza",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c",
+        "select \"id\", \"full_name\", \"first_name\", \"last_name\", \"preferred_name\", \"title\", \"company\",",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and (( contacts.sear",
+        "select \"contact_tags\".\"contact_id\", \"tags\".\"name\" from \"contact_tags\" inner join \"tags\" on"
+      ],
+      "sim_ms": 1286,
+      "depth": 3.4,
+      "est_ms_rtt8": 1229,
+      "est_ms_rtt40": 1338
+    },
+    {
+      "op": "contacts search 'engineer at acme' (hybrid)",
+      "group": "search",
+      "statements": 8,
+      "kb": 26.1,
+      "cpu_ms": 1927.1,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        " select contacts.id from contacts where contacts.user_id = $1 and contacts.search_tsv @@ w",
+        " select contacts.id from contacts where contacts.user_id = $1 and (lower(contacts.full_nam",
+        " select contacts.id, max(case when ce.organization_normalized = $1 then 3 when ce.organiza",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c",
+        "select \"id\", \"full_name\", \"first_name\", \"last_name\", \"preferred_name\", \"title\", \"company\",",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and (( contacts.sear",
+        "select \"contact_tags\".\"contact_id\", \"tags\".\"name\" from \"contact_tags\" inner join \"tags\" on"
+      ],
+      "sim_ms": 2525,
+      "depth": 23.9,
+      "est_ms_rtt8": 2118,
+      "est_ms_rtt40": 2883
+    },
+    {
+      "op": "hybrid keyword only",
+      "group": "search",
+      "statements": 4,
+      "kb": 20.9,
+      "cpu_ms": 91.7,
+      "sql": [
+        " select contacts.id from contacts where contacts.user_id = $1 and contacts.search_tsv @@ w",
+        " select contacts.id from contacts where contacts.user_id = $1 and (lower(contacts.full_nam",
+        " select contacts.id, max(case when ce.organization_normalized = $1 then 3 when ce.organiza",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c"
+      ],
+      "sim_ms": 149,
+      "depth": 2.3,
+      "est_ms_rtt8": 110,
+      "est_ms_rtt40": 184
+    },
+    {
+      "op": "hybrid keyword+semantic",
+      "group": "search",
+      "statements": 5,
+      "kb": 20.9,
+      "cpu_ms": 611.3,
+      "sql": [
+        " select contacts.id from contacts where contacts.user_id = $1 and contacts.search_tsv @@ w",
+        " select contacts.id from contacts where contacts.user_id = $1 and (lower(contacts.full_nam",
+        " select contacts.id, max(case when ce.organization_normalized = $1 then 3 when ce.organiza",
+        "select \"contact_id\", \"embedding\" from \"contact_embeddings\" \"contactEmbeddings\" where \"cont",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c"
+      ],
+      "sim_ms": 682,
+      "depth": 2.8,
+      "est_ms_rtt8": 634,
+      "est_ms_rtt40": 723
+    },
+    {
+      "op": "hybrid semantic-heavy (nonsense keyword)",
+      "group": "search",
+      "statements": 4,
+      "kb": 0,
+      "cpu_ms": 526.6,
+      "sql": [
+        " select contacts.id from contacts where contacts.user_id = $1 and contacts.search_tsv @@ w",
+        " select contacts.id from contacts where contacts.user_id = $1 and (lower(contacts.full_nam",
+        " select contacts.id, max(case when ce.organization_normalized = $1 then 3 when ce.organiza",
+        "select \"contact_id\", \"embedding\" from \"contact_embeddings\" \"contactEmbeddings\" where \"cont"
+      ],
+      "sim_ms": 615,
+      "depth": 3.5,
+      "est_ms_rtt8": 555,
+      "est_ms_rtt40": 667
+    },
+    {
+      "op": "hybrid filtered (recall guard)",
+      "group": "search",
+      "statements": 9,
+      "kb": 9.9,
+      "cpu_ms": 1469.7,
+      "sql": [
+        " select contacts.id from contacts where contacts.user_id = $1 and contacts.search_tsv @@ w",
+        " select contacts.id from contacts where contacts.user_id = $1 and (lower(contacts.full_nam",
+        " select contacts.id, max(case when ce.organization_normalized = $1 then 3 when ce.organiza",
+        "select \"contact_id\", \"embedding\" from \"contact_embeddings\" \"contactEmbeddings\" where \"cont",
+        " select contacts.id from contacts where contacts.user_id = $1 and contacts.search_tsv @@ w",
+        " select contacts.id from contacts where contacts.user_id = $1 and (lower(contacts.full_nam",
+        " select contacts.id, max(case when ce.organization_normalized = $1 then 3 when ce.organiza",
+        "select \"contact_id\", \"embedding\" from \"contact_embeddings\" \"contactEmbeddings\" where \"cont",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c"
+      ],
+      "sim_ms": 1646,
+      "depth": 7.1,
+      "est_ms_rtt8": 1527,
+      "est_ms_rtt40": 1754
+    },
+    {
+      "op": "memory search lexical",
+      "group": "search",
+      "statements": 2,
+      "kb": 4.7,
+      "cpu_ms": 653.6,
+      "sql": [
+        " select id, ts_headline('simple', content, (websearch_to_tsquery('simple', $1) || to_tsque",
+        "select \"id\", \"source_kind\", \"source_id\", \"chunk_index\", \"contact_id\", \"contact_ids\", \"occu"
+      ],
+      "sim_ms": 760,
+      "depth": 4.3,
+      "est_ms_rtt8": 688,
+      "est_ms_rtt40": 826
+    },
+    {
+      "op": "memory search hybrid",
+      "group": "search",
+      "statements": 3,
+      "kb": 4.7,
+      "cpu_ms": 1595.8,
+      "sql": [
+        " select id, ts_headline('simple', content, (websearch_to_tsquery('simple', $1) || to_tsque",
+        " select id, embedding from memory_chunks where memory_chunks.user_id = $1 and embedding is",
+        "select \"id\", \"source_kind\", \"source_id\", \"chunk_index\", \"contact_id\", \"contact_ids\", \"occu"
+      ],
+      "sim_ms": 1356,
+      "depth": 0,
+      "est_ms_rtt8": 1596,
+      "est_ms_rtt40": 1596
+    },
+    {
+      "op": "picker search",
+      "group": "search",
+      "statements": 2,
+      "kb": 0,
+      "cpu_ms": 293.2,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "select \"id\", \"full_name\", \"preferred_name\", \"company\", \"first_name\", coalesce((CASE WHEN \""
+      ],
+      "sim_ms": 340,
+      "depth": 1.9,
+      "est_ms_rtt8": 308,
+      "est_ms_rtt40": 369
+    },
+    {
+      "op": "mcp search_contacts",
+      "group": "mcp",
+      "statements": 8,
+      "kb": 4.5,
+      "cpu_ms": 119.5,
+      "sql": [
+        "select \"id\", \"user_id\", \"prefix\", \"scopes\", \"revoked_at\", \"kind\" from \"api_keys\" \"apiKeys\"",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"rate_limit_buckets\" (\"bucket\", \"window_started_at\", \"count\") values ($1, $2, ",
+        " UPDATE api_keys SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_",
+        " select contacts.id from contacts where contacts.user_id = $1 and contacts.search_tsv @@ w",
+        " select contacts.id from contacts where contacts.user_id = $1 and (lower(contacts.full_nam",
+        " select contacts.id, max(case when ce.organization_normalized = $1 then 3 when ce.organiza",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c"
+      ],
+      "sim_ms": 240,
+      "depth": 4.8,
+      "est_ms_rtt8": 158,
+      "est_ms_rtt40": 312
+    },
+    {
+      "op": "mcp get_contact",
+      "group": "mcp",
+      "statements": 6,
+      "kb": 3.5,
+      "cpu_ms": 25.6,
+      "sql": [
+        "select \"id\", \"user_id\", \"prefix\", \"scopes\", \"revoked_at\", \"kind\" from \"api_keys\" \"apiKeys\"",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"rate_limit_buckets\" (\"bucket\", \"window_started_at\", \"count\") values ($1, $2, ",
+        " UPDATE api_keys SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_",
+        "select \"id\", \"full_name\", \"company\", \"title\", \"school\", \"email\", \"location\", \"linkedin_url",
+        "select \"interaction_type\", \"interaction_date\", \"source\", \"ai_summary\", \"raw_notes\" from \"i"
+      ],
+      "sim_ms": 128,
+      "depth": 4.1,
+      "est_ms_rtt8": 58,
+      "est_ms_rtt40": 190
+    },
+    {
+      "op": "mcp who_do_i_know_at",
+      "group": "mcp",
+      "statements": 7,
+      "kb": 2.4,
+      "cpu_ms": 319.4,
+      "sql": [
+        "select \"id\", \"user_id\", \"prefix\", \"scopes\", \"revoked_at\", \"kind\" from \"api_keys\" \"apiKeys\"",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"rate_limit_buckets\" (\"bucket\", \"window_started_at\", \"count\") values ($1, $2, ",
+        " UPDATE api_keys SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_",
+        "select \"company\", $1, count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $2 and \"",
+        "select \"school\", $1, count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $2 and \"c",
+        "select \"id\", \"full_name\", \"preferred_name\", \"title\", \"closeness\" from \"contacts\" \"contacts"
+      ],
+      "sim_ms": 476,
+      "depth": 6.3,
+      "est_ms_rtt8": 370,
+      "est_ms_rtt40": 571
+    },
+    {
+      "op": "mcp due_followups",
+      "group": "mcp",
+      "statements": 11,
+      "kb": 3.9,
+      "cpu_ms": 1656.7,
+      "sql": [
+        "select \"id\", \"user_id\", \"prefix\", \"scopes\", \"revoked_at\", \"kind\" from \"api_keys\" \"apiKeys\"",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"rate_limit_buckets\" (\"bucket\", \"window_started_at\", \"count\") values ($1, $2, ",
+        " UPDATE api_keys SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_",
+        "select \"id\", \"company\", \"priority_level\", \"next_follow_up_at\" from \"contacts\" \"contacts\" w",
+        " select id, jsonb_build_object( 'raw', closeness_breakdown->'raw', 'closeness', closeness_",
+        "select \"text\" from \"user_goals\" \"userGoals\" where (\"userGoals\".\"user_id\" = $1 and \"userGoa",
+        "select \"contact_id\", count(*) filter (where \"interaction_date\" >= $1)::int, count(*)::int,",
+        "select \"user_id\", \"snapshot\", \"contact_count\", \"computed_at\", \"dirty_at\" from \"closeness_c",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"clos",
+        "select \"id\", \"full_name\", \"title\", \"email\", \"last_interaction_at\" from \"contacts\" \"contact"
+      ],
+      "sim_ms": 1834,
+      "depth": 7.1,
+      "est_ms_rtt8": 1714,
+      "est_ms_rtt40": 1941
+    },
+    {
+      "op": "mcp get_network_overview",
+      "group": "mcp",
+      "statements": 14,
+      "kb": 1.9,
+      "cpu_ms": 1958.1,
+      "sql": [
+        "select \"id\", \"user_id\", \"prefix\", \"scopes\", \"revoked_at\", \"kind\" from \"api_keys\" \"apiKeys\"",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"rate_limit_buckets\" (\"bucket\", \"window_started_at\", \"count\") values ($1, $2, ",
+        " UPDATE api_keys SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_",
+        " select id, jsonb_build_object( 'raw', closeness_breakdown->'raw', 'closeness', closeness_",
+        "select \"text\" from \"user_goals\" \"userGoals\" where (\"userGoals\".\"user_id\" = $1 and \"userGoa",
+        "select \"contact_id\", count(*) filter (where \"interaction_date\" >= $1)::int, count(*)::int,",
+        "select \"user_id\", \"snapshot\", \"contact_count\", \"computed_at\", \"dirty_at\" from \"closeness_c",
+        "select count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"clos",
+        "select count(*) from \"interactions\" where \"interactions\".\"user_id\" = $1",
+        "select count(*) from \"companies\" where \"companies\".\"user_id\" = $1",
+        "select \"id\", \"company\", \"priority_level\", \"next_follow_up_at\" from \"contacts\" \"contacts\" w",
+        " select count(*)::int as total, count(*) filter ( where last_interaction_at is not null an",
+        "select \"id\", \"full_name\", \"title\", \"email\", \"last_interaction_at\" from \"contacts\" \"contact"
+      ],
+      "sim_ms": 2077,
+      "depth": 4.8,
+      "est_ms_rtt8": 1997,
+      "est_ms_rtt40": 2150
+    },
+    {
+      "op": "mcp get_timeline",
+      "group": "mcp",
+      "statements": 7,
+      "kb": 1.6,
+      "cpu_ms": 28.3,
+      "sql": [
+        "select \"id\", \"user_id\", \"prefix\", \"scopes\", \"revoked_at\", \"kind\" from \"api_keys\" \"apiKeys\"",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"rate_limit_buckets\" (\"bucket\", \"window_started_at\", \"count\") values ($1, $2, ",
+        " UPDATE api_keys SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_",
+        "select \"interaction_type\", \"interaction_date\", \"source\", \"ai_summary\", \"raw_notes\" from \"i",
+        "select count(*)::int from \"interactions\" where (\"interactions\".\"user_id\" = $1 and \"interac",
+        "select \"id\", \"full_name\", \"email\" from \"contacts\" \"contacts\" where (\"contacts\".\"id\" = $1 a"
+      ],
+      "sim_ms": 124,
+      "depth": 3.8,
+      "est_ms_rtt8": 59,
+      "est_ms_rtt40": 180
+    },
+    {
+      "op": "mcp find_path_to",
+      "group": "mcp",
+      "statements": 12,
+      "kb": 3.5,
+      "cpu_ms": 626.4,
+      "sql": [
+        "select \"id\", \"user_id\", \"prefix\", \"scopes\", \"revoked_at\", \"kind\" from \"api_keys\" \"apiKeys\"",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"rate_limit_buckets\" (\"bucket\", \"window_started_at\", \"count\") values ($1, $2, ",
+        " UPDATE api_keys SET last_used_at = now() WHERE id = $1 AND (last_used_at IS NULL OR last_",
+        "select \"company\", $1, count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $2 and \"",
+        "select \"school\", $1, count(*)::int from \"contacts\" where (\"contacts\".\"user_id\" = $2 and \"c",
+        " select contacts.id from contacts where contacts.user_id = $1 and contacts.search_tsv @@ w",
+        " select contacts.id from contacts where contacts.user_id = $1 and (lower(contacts.full_nam",
+        " select contacts.id, max(case when ce.organization_normalized = $1 then 3 when ce.organiza",
+        "select \"id\", \"full_name\", \"preferred_name\", \"title\", \"closeness\" from \"contacts\" \"contacts",
+        "select \"contacts\".\"id\", \"contacts\".\"full_name\", \"contacts\".\"preferred_name\", \"contacts\".\"c",
+        "select \"id\", \"full_name\", \"company\", \"title\", \"closeness_tier\", \"relationship_score\", \"las"
+      ],
+      "sim_ms": 777,
+      "depth": 6,
+      "est_ms_rtt8": 674,
+      "est_ms_rtt40": 866
+    },
+    {
+      "op": "ext me",
+      "group": "ext",
+      "statements": 5,
+      "kb": 0.4,
+      "cpu_ms": 152.3,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"extension_usage\" (\"user_id\", \"window_started_at\", \"request_count\", \"ai_window",
+        "select count(*) from \"contacts\" where \"contacts\".\"user_id\" = $1",
+        "select count(*) from \"contacts\" where (\"contacts\".\"user_id\" = $1 and \"contacts\".\"next_foll",
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt"
+      ],
+      "sim_ms": 230,
+      "depth": 3.1,
+      "est_ms_rtt8": 177,
+      "est_ms_rtt40": 276
+    },
+    {
+      "op": "ext search",
+      "group": "ext",
+      "statements": 3,
+      "kb": 1.5,
+      "cpu_ms": 15.8,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"extension_usage\" (\"user_id\", \"window_started_at\", \"request_count\", \"ai_window",
+        "select \"id\", \"full_name\", \"company\", \"title\", coalesce((CASE WHEN \"contacts\".\"profile_imag"
+      ],
+      "sim_ms": 114,
+      "depth": 3.9,
+      "est_ms_rtt8": 47,
+      "est_ms_rtt40": 172
+    },
+    {
+      "op": "ext resolve",
+      "group": "ext",
+      "statements": 5,
+      "kb": 4,
+      "cpu_ms": 262.4,
+      "sql": [
+        "select \"id\", \"user_id\", \"ai_provider\", \"gemini_api_key_encrypted\", \"openai_api_key_encrypt",
+        "insert into \"extension_usage\" (\"user_id\", \"window_started_at\", \"request_count\", \"ai_window",
+        "select \"id\", \"full_name\", \"email\", \"linkedin_url\", \"x_handle\", \"company\", \"title\", \"locati",
+        "select \"text\" from \"user_goals\" \"userGoals\" where (\"userGoals\".\"user_id\" = $1 and \"userGoa",
+        "select \"contacts\".\"id\", \"contacts\".\"user_id\", \"contacts\".\"full_name\", \"contacts\".\"first_na"
+      ],
+      "sim_ms": 359,
+      "depth": 3.9,
+      "est_ms_rtt8": 294,
+      "est_ms_rtt40": 418
+    }
+  ]
+}

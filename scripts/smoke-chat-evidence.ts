@@ -63,6 +63,21 @@ console.log("stripping what the model was not shown");
   check("stripping is idempotent against citedIds — nothing left resolves outside validIds", citedIds(stripUnresolvedMarkers("[e1][e9]", valid).text).every((id) => valid.has(id)));
 }
 
+console.log("meetings");
+{
+  const ledger = createEvidenceLedger();
+  const line = ledger.mint({ kind: "meeting", sourceId: "mtg-1", date: "2026-10-01", startMs: 120_000 });
+  const sameMeetingOtherLine = ledger.mint({ kind: "meeting", sourceId: "mtg-1", date: "2026-10-01", startMs: 300_000 });
+  const summary = ledger.mint({ kind: "meeting", sourceId: "mtg-1", date: "2026-10-01", startMs: null });
+  check("a meeting is one source, whichever of its lines (or its summary) was cited", line === sameMeetingOtherLine && line === summary);
+  const other = ledger.mint({ kind: "meeting", sourceId: "mtg-2", date: "2026-10-02", startMs: null });
+  check("a different meeting is a different source", other !== line);
+  const interaction = ledger.mint({ kind: "interaction", sourceId: "mtg-1", contactId: null, date: null });
+  const contact = ledger.mint({ kind: "contact", contactId: "mtg-1" });
+  check("and never collides with an interaction or a contact that happens to share an id", new Set([line, interaction, contact]).size === 3);
+  check("it resolves back to what was minted", ledger.resolve(line)?.kind === "meeting");
+}
+
 if (failures) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);
