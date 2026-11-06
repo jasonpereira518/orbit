@@ -578,6 +578,11 @@ export const userSettings = pgTable("user_settings", {
   emailIntelCursorAt: timestamp("email_intel_cursor_at", { withTimezone: true }),
   emailIntelNextAt: timestamp("email_intel_next_at", { withTimezone: true }),
   /**
+   * Days between "refresh your LinkedIn export" nudges. Null = the default (30, monthly); 0 = off.
+   * Read by `linkedInRefreshLevel`; set on the LinkedIn integration page.
+   */
+  linkedinRefreshIntervalDays: integer("linkedin_refresh_interval_days"),
+  /**
    * 1 = chat may make its small, reversible changes itself (a note, a tag, a reminder, a
    * snooze, ticking something off) instead of asking first; each one lands as a done card
    * with Undo. Off by default. The gate is `shouldAutoApply` (`@/lib/chat-auto-apply`).

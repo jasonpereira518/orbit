@@ -37,7 +37,7 @@ import {
 } from "@/lib/outlook";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
-import { LINKEDIN_IMPORT_TYPE, LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
+import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-import-types";
 
 /**
  * The server half of account alerts: loads the facts, hands them to the pure predicates in
@@ -332,7 +332,7 @@ export async function loadAccountHealthInput(
       lastLinkedInImportAt: sql<string | null>`(
         SELECT max(${imports.createdAt}) FROM ${imports}
         WHERE ${imports.userId} = ${userId}
-          AND ${imports.importType} IN (${LINKEDIN_IMPORT_TYPE}, ${LINKEDIN_MESSAGES_IMPORT_TYPE})
+          AND ${imports.importType} IN (${sql.join(LINKEDIN_UPLOAD_IMPORT_TYPES.map((t) => sql`${t}`), sql`, `)})
           AND ${imports.status} = 'completed'
           AND ${imports.revertedAt} IS NULL)`,
 
@@ -406,6 +406,7 @@ export async function loadAccountHealthInput(
     importStalledTotal: row.importStalledTotal == null ? null : num(row.importStalledTotal),
     emailSendFailedCount: num(row.emailSendFailedCount),
     lastLinkedInImportAt: row.lastLinkedInImportAt ? new Date(row.lastLinkedInImportAt) : null,
+    linkedInRefreshIntervalDays: settings.linkedinRefreshIntervalDays ?? null,
 
     plan: entitlements.plan,
     planSource: entitlements.source,
