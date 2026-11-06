@@ -18,7 +18,12 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // 2026-10-19: product measurement — the product events Orbit records, the one-tap questions, the
 // retention of operational logs, the waitlist entry's lifetime and the tab id saved with it, and
 // naming Vercel BotID and the Slack feedback excerpt, all of which were true and unsaid.
-export const TERMS_VERSION = "2026-10-19";
+// 2026-11-05: reviewing the people a capture found looks each NEW one up on the web, by
+// name with the company, role, place met and city the note gives — never an email or phone.
+// Same day: page-load timings, a last-touch attribution cookie, the kind of error screen
+// shown, search and notification counts (never query text), and Resend delivery/open/click
+// for outreach Orbit sends.
+export const TERMS_VERSION = "2026-11-05";
 export const LEGAL_LAST_UPDATED = "November 5, 2026";
 
 /**

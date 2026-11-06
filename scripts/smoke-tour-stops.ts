@@ -21,6 +21,7 @@ import {
   resolveTourStops,
   resumeTourStop,
   stopMatchesPath,
+  stopPath,
 } from "../src/lib/tour/tour-stops";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -55,7 +56,7 @@ function main() {
     if (stop.chipAnchor) check(`${stop.id}'s chip anchor is registered`, anchorIds.has(stop.chipAnchor), stop.chipAnchor);
     if (stop.surfaceKey) check(`${stop.id}'s surface exists`, surfaceKeys.has(stop.surfaceKey), stop.surfaceKey);
     if (!stop.route.includes(":")) {
-      const loading = join("src/app/(clerk)/(app)/(main)", stop.route, "loading.tsx");
+      const loading = join("src/app/(clerk)/(app)/(main)", stopPath(stop), "loading.tsx");
       check(`${stop.id}'s page has a loading shell`, existsSync(loading), loading);
     }
   }

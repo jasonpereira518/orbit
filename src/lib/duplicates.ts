@@ -489,3 +489,91 @@ export function daysAgo(date: Date | string | null | undefined) {
   const d = typeof date === "string" ? new Date(date) : date;
   return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
+
+// ── Loose name candidates (review cards) ──────────────────────────────────────────────
+
+/**
+ * Common English nickname ↔ given-name pairs. Both directions are looked up.
+ * ponytail: a short table, not a nickname database; add pairs as misses show up.
+ */
+const NICKNAMES: Record<string, string[]> = {
+  alex: ["alexander", "alexandra", "alexis"], andy: ["andrew"], drew: ["andrew"],
+  ben: ["benjamin"], bill: ["william"], will: ["william"], liam: ["william"],
+  bob: ["robert"], rob: ["robert"], bobby: ["robert"], chris: ["christopher", "christina", "christine"],
+  dan: ["daniel"], danny: ["daniel"], dave: ["david"], ed: ["edward"], eddie: ["edward"],
+  jim: ["james"], jimmy: ["james"], jamie: ["james"], joe: ["joseph"], joey: ["joseph"],
+  jon: ["jonathan"], john: ["jonathan"], kate: ["katherine", "kathryn", "catherine"],
+  katie: ["katherine", "kathryn", "catherine"], liz: ["elizabeth"], beth: ["elizabeth"],
+  matt: ["matthew"], mike: ["michael"], mick: ["michael"], nick: ["nicholas"],
+  pat: ["patrick", "patricia"], pete: ["peter"], rich: ["richard"], rick: ["richard"],
+  sam: ["samuel", "samantha"], steve: ["steven", "stephen"], sue: ["susan"],
+  tom: ["thomas"], tony: ["anthony"], vic: ["victor", "victoria"], zach: ["zachary"],
+  jen: ["jennifer"], jenny: ["jennifer"], meg: ["megan", "margaret"], greg: ["gregory"],
+  jeff: ["jeffrey"], josh: ["joshua"], nate: ["nathan", "nathaniel"], tim: ["timothy"],
+  ken: ["kenneth"], larry: ["lawrence"], abby: ["abigail"], becky: ["rebecca"],
+};
+
+function sameGivenName(a: string, b: string): boolean {
+  if (a === b) return true;
+  return Boolean(NICKNAMES[a]?.includes(b) || NICKNAMES[b]?.includes(a));
+}
+
+export type LooseNameSubject = DuplicateSubject & {
+  preferredName?: string | null;
+  lastInteractionAt?: Date | string | null;
+};
+
+/**
+ * Candidates the exact matcher cannot see, for a review card to OFFER (never to merge on):
+ * "Mike" or "Mike Torres" for Michael Torres, "Jose Ruiz" for José Ruiz, a first name the
+ * user only ever wrote alone. Every score stays below `DUPLICATE_MERGE_CONFIDENCE` except
+ * an accent-only difference with the same company, which is the exact tier spelled twice.
+ */
+export function findLooseNameCandidates<T extends LooseNameSubject>(
+  existing: readonly T[],
+  incoming: { fullName?: string | null; company?: string | null },
+): DuplicateMatch<T>[] {
+  const tokens = normalizeName(incoming.fullName).split(" ").filter(Boolean);
+  if (!tokens.length) return [];
+  const folded = tokens.join(" ");
+  const company = normalizeName(incoming.company);
+  const first = tokens[0];
+  const last = tokens.length > 1 ? tokens[tokens.length - 1] : null;
+
+  const out: DuplicateMatch<T>[] = [];
+  const firstOnly: T[] = [];
+  for (const c of existing) {
+    const theirTokens = normalizeName(c.fullName).split(" ").filter(Boolean);
+    if (!theirTokens.length) continue;
+    const theirs = theirTokens.join(" ");
+    const sameCompany = Boolean(company) && company === normalizeName(c.company);
+    if (theirs === folded) {
+      out.push({ contact: c, reason: sameCompany ? "Same name + company" : "Same name", confidence: sameCompany ? 0.9 : 0.6, strong: false });
+      continue;
+    }
+    const theirFirst = theirTokens[0];
+    const preferred = normalizeName(c.preferredName);
+    const givenMatches = sameGivenName(first, theirFirst) || (preferred && sameGivenName(first, preferred));
+    if (!givenMatches) continue;
+    if (last) {
+      if (theirTokens.length > 1 && theirTokens[theirTokens.length - 1] === last) {
+        out.push({ contact: c, reason: "Same surname, nickname of their first name", confidence: sameCompany ? 0.8 : 0.7, strong: false });
+      }
+    } else {
+      firstOnly.push(c);
+    }
+  }
+
+  // A first name alone: one contact by that name is a good guess, several are a short list.
+  if (firstOnly.length === 1) {
+    out.push({ contact: firstOnly[0], reason: "Only contact with this first name", confidence: 0.7, strong: false });
+  } else if (firstOnly.length > 1) {
+    const recency = (c: T) => (c.lastInteractionAt ? new Date(c.lastInteractionAt).getTime() : 0);
+    const sameCo = (c: T) => (company && company === normalizeName(c.company) ? 1 : 0);
+    firstOnly
+      .sort((a, b) => sameCo(b) - sameCo(a) || recency(b) - recency(a))
+      .slice(0, 5)
+      .forEach((c) => out.push({ contact: c, reason: "Same first name", confidence: sameCo(c) ? 0.7 : 0.6, strong: false }));
+  }
+  return out.sort((a, b) => b.confidence - a.confidence);
+}

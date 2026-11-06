@@ -104,7 +104,7 @@ export async function addCalendarSubscription(input: {
         where: eq(calendarSubscriptions.id, row.id),
       })) || row;
 
-    revalidatePath("/imports");
+    revalidatePath("/capture");
     revalidatePath("/");
     revalidatePath("/contacts");
 
@@ -145,7 +145,7 @@ export async function updateCalendarSubscription(
     )
     .returning();
 
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   return row ? forClient(row) : row;
 }
 
@@ -160,13 +160,13 @@ export async function removeCalendarSubscription(id: string) {
         eq(calendarSubscriptions.userId, userId)
       )
     );
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 }
 
 export async function syncCalendarSubscriptionNow(id: string) {
   const userId = await requireSyncUser();
   const stats = await syncCalendarSubscription(userId, id);
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   revalidatePath("/");
   revalidatePath("/contacts");
   return stats;
@@ -176,7 +176,7 @@ export async function syncStaleCalendarSubscriptions() {
   const userId = await requireSyncUser();
   const results = await syncDueCalendarSubscriptions(userId);
   if (results.length) {
-    revalidatePath("/imports");
+    revalidatePath("/capture");
     revalidatePath("/");
     revalidatePath("/contacts");
   }
