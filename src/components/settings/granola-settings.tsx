@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowUpRight, FolderOpen, History, MoreHorizontal, RefreshCw } from "lucide-react";
+import { ArrowUpRight, FolderOpen, History, MoreHorizontal, RefreshCw, Sparkles } from "lucide-react";
 import {
   disconnectGranola,
   getGranolaFolders,
   getGranolaPanel,
+  setGranolaAutoExtract,
   setGranolaFolders,
   startGranolaConnect,
   syncGranolaNow,
@@ -194,6 +195,24 @@ export function GranolaSettings() {
 
       {/* `inert` while signed out: nothing below can do anything until the grant is back. */}
       <ul inert={signedOut} className={cn(signedOut && "opacity-60")}>
+        <FeatureRow
+          icon={<Sparkles className="size-4" />}
+          title="Automatic extraction"
+          description={
+            panel.autoExtract
+              ? "New notes update the people in them on their own."
+              : "Off: pick notes yourself from Capture → Notes library → From Granola."
+          }
+          control={{ kind: "switch", on: panel.autoExtract }}
+          disabled={pending || signedOut}
+          onAction={() =>
+            run(
+              () => setGranolaAutoExtract(!panel.autoExtract),
+              "Couldn’t change that — try again?",
+              panel.autoExtract ? "Granola notes now come in only when you pick them" : "New Granola notes will be extracted automatically",
+            )
+          }
+        />
         {/* Keyed on the saved ids: a save remounts it from the new choice, while a reload
             that changed nothing (Sync now) leaves unsaved ticks alone. */}
         <FoldersRow

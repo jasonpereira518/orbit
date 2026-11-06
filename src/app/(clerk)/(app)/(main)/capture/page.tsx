@@ -69,7 +69,7 @@ export default async function CapturePage({
   // `structured` was the form tab Drive & OneDrive replaced; old links land on the notes box,
   // which takes the same contact.
   const modeParam: CaptureMode | null =
-    params.mode === "messy" || params.mode === "voice" || params.mode === "cloud"
+    params.mode === "messy" || params.mode === "voice" || params.mode === "cloud" || params.mode === "library"
       ? params.mode
       : params.mode === "structured"
         ? "messy"
