@@ -329,6 +329,14 @@ console.log("\nThe question, as the steps say it");
   check("filter values stay on one line", !hostile.subject.includes("\n"), hostile.subject);
 }
 
+console.log("\nA follow-up never repeats the question");
+{
+  const same = deriveFollowUps({ question: "Tell me about Maya Thompson", topContactName: "Maya Thompson" });
+  check("no 'tell me more' about the person already asked about", same.length === 0, JSON.stringify(same));
+  const other = deriveFollowUps({ question: "Who works in VC?", topContactName: "Maya Thompson" });
+  check("still offered for someone the question did not name", other[0] === "Tell me more about Maya Thompson");
+}
+
 console.log("\nCounts that hit their limit");
 {
   check("a full page reads as at least that many", countFound(60, 60, "possible match", "possible matches") === "60+ possible matches");

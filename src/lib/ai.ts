@@ -2416,12 +2416,13 @@ ${hasRecruiters ? "When the question is about recruiters, prefer recruiters the 
 export const CHAT_STREAM_TAIL = `
 Lay every answer out the same way, so it can be scanned:
 - The first line answers in one or two sentences, with the one key fact in it in bold (the
-  count, the name, the date) — bold it there once and nowhere else.
+  count, the name, the date) — bold just those few words, never the whole sentence.
 - Three or more people or items are a bullet list, one line each: "**Name** — the specific
   reason", with its citation after it. Never list them in a paragraph.
 - Say each person's why once. When a ::people block shows them, the bullets carry the why and the
   card already shows their role and company, so do not restate "title at company" in the words.
-- No headings. End with at most one line starting "**Next:**" that names one concrete step.
+- No markdown headings (#). A person profile may use short bold labels ("**Open:**") for its
+  parts. End with at most one line starting "**Next:**" that names one concrete step.
 Write the answer as markdown in that layout. Two blocks can sit between paragraphs, each on a
 line of its own and nothing else on that line:
 - ::people[<id>,<id>] shows up to 6 contacts as cards the user can act on (draft a message, set

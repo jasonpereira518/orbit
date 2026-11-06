@@ -319,7 +319,9 @@ export async function POST(request: Request) {
         // Once, for both the row and the `done` event, so a reload shows the chips this did.
         const followUps = deriveFollowUps({
           question: ctx.q,
-          topRosterCompany: ctx.orgRosters[0]?.name ?? null,
+          // A company or school only: a filter roster is named "People in fintech", which
+          // reads as nonsense after "Who else do I know at".
+          topRosterCompany: ctx.orgRosters.find((r) => r.kind !== "filter")?.name ?? null,
           firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
           // Never for prep: the search's top hit is not the meeting's person. Never a handle
           // ("calvintwong25").

@@ -807,7 +807,8 @@ console.log("\nOne layout for every answer");
   check("three or more become bullets", CHAT_STREAM_TAIL.includes("Three or more people or items are a bullet list"));
   check("a bullet is name then reason", CHAT_STREAM_TAIL.includes('"**Name** — the specific\n  reason"'));
   check("a carded person's role is not restated", CHAT_STREAM_TAIL.includes('do not restate "title at company"'));
-  check("no headings, one Next line at most", CHAT_STREAM_TAIL.includes("No headings") && CHAT_STREAM_TAIL.includes('at most one line starting "**Next:**"'));
+  check("only the fact is bold, not the sentence", CHAT_STREAM_TAIL.includes("never the whole sentence"));
+  check("no headings, one Next line at most", CHAT_STREAM_TAIL.includes("No markdown headings") && CHAT_STREAM_TAIL.includes('at most one line starting "**Next:**"'));
   check("the blocks are still described", CHAT_STREAM_TAIL.includes("::people[<id>,<id>]") && CHAT_STREAM_TAIL.includes("::list[r1]"));
   check("a change gets one clause, the card the details", WRITE_RULES.includes("give it one clause"));
 }

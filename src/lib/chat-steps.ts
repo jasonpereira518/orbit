@@ -168,20 +168,24 @@ const TIER_WORDS: Record<string, string> = {
  * parse, a timeout. Its fallback is exactly the question with no filters, so that is what is
  * checked; the steps then say the words were used as written instead of claiming a reading.
  */
+/** The parser's filters as words a person would say: "at Stripe", "from Duke", "in your inner circle". */
+export function filterWords(f: ParsedQuery["filters"] | null | undefined): string[] {
+  const out: string[] = [];
+  if (!f) return out;
+  if (f.companies?.length) out.push(`at ${either(f.companies)}`);
+  if (f.industries?.length) out.push(`in ${either(f.industries)}`);
+  if (f.schools?.length) out.push(`from ${either(f.schools)}`);
+  if (f.locations?.length) out.push(`in ${either(f.locations)}`);
+  if (f.tags?.length) out.push(`tagged ${either(f.tags)}`);
+  if (f.closenessTiers?.length) out.push(`in your ${either(f.closenessTiers.map((t) => TIER_WORDS[t] ?? t))}`);
+  return out;
+}
+
 export function describeQuestion(
   parsed: Pick<ParsedQuery, "semanticQuery" | "filters" | "expansionTerms">,
   question: string
 ): { subject: string; interpreted: boolean; detail?: string } {
-  const f = parsed.filters ?? {};
-  const filters: string[] = [];
-  if (f.companies?.length) filters.push(`at ${either(f.companies)}`);
-  if (f.industries?.length) filters.push(`in ${either(f.industries)}`);
-  if (f.schools?.length) filters.push(`from ${either(f.schools)}`);
-  if (f.locations?.length) filters.push(`in ${either(f.locations)}`);
-  if (f.tags?.length) filters.push(`tagged ${either(f.tags)}`);
-  if (f.closenessTiers?.length) {
-    filters.push(`in your ${either(f.closenessTiers.map((t) => TIER_WORDS[t] ?? t))}`);
-  }
+  const filters = filterWords(parsed.filters);
   const expansions = parsed.expansionTerms ?? [];
   const rewritten = parsed.semanticQuery.trim() !== question.trim();
   const interpreted = rewritten || filters.length > 0 || expansions.length > 0;
@@ -254,7 +258,11 @@ export function deriveFollowUps(source: FollowUpSource, limit = 3): string[] {
 
   if (source.topRosterCompany) add(`Who else do I know at ${source.topRosterCompany}?`);
   if (source.firstOverdueName) add(`Draft a note to ${source.firstOverdueName}`);
-  if (source.topContactName) add(`Tell me more about ${source.topContactName}`);
+  // Not when the question already asks about them: "tell me about Maya" must not offer
+  // "Tell me more about Maya".
+  if (source.topContactName && !asked.includes(source.topContactName.trim().toLowerCase())) {
+    add(`Tell me more about ${source.topContactName}`);
+  }
 
   return out.slice(0, limit);
 }
