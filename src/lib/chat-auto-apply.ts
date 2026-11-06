@@ -40,7 +40,7 @@ export const EXPLICIT_WRITES: ReadonlySet<string> = new Set(["create_reminder", 
  * the model's text; "what's on my schedule" is not an ask.
  */
 export const EXPLICIT_ASK_RE =
-  /\b(?:remind me|(?:set|add|create|make)(?: up)? (?:a |an )?reminder|schedule (?:a|an|the|it|this|that|time|coffee|lunch|dinner|call|meeting|chat)\b|book (?:a|an|the|it|time|coffee|lunch|dinner|call|meeting)\b|set up (?:a |an )?(?:call|meeting|coffee|lunch|dinner|chat|time)|(?:put|add) .{1,80} (?:on|to) my calendar)/i;
+  /\b(?:remind me|(?:set|add|create|make|schedule)(?: up)? (?:a |an )?(?:reminder|follow[- ]?up)|schedule (?:a|an|the|it|this|that|time|coffee|lunch|dinner|call|meeting|chat)\b|book (?:a|an|the|it|time|coffee|lunch|dinner|call|meeting)\b|set up (?:a |an )?(?:call|meeting|coffee|lunch|dinner|chat|time)|(?:put|add) .{1,80} (?:on|to) my calendar)/i;
 
 export async function saveChatAutoApplyFor(userId: string, enabled: boolean): Promise<void> {
   const db = await getDb();

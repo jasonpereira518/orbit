@@ -174,6 +174,18 @@ async function main() {
     check("…undo takes it off the list", after?.status !== "pending", String(after?.status));
   }
   {
+    // The card opens Reminders on the view the reminder is listed in (outside a request the
+    // zone is UTC). An undated follow-up is under Anytime, never on Today where it is not.
+    const write = CHAT_WRITES.find((w) => w.name === "create_reminder")!;
+    const hrefFor = async (due_date?: string) =>
+      (await write.commit(USER, { title: "Follow up with Ada about the summit", due_date }, { messageId: "m", actionId: "a" })).href;
+    const today = new Date().toISOString().slice(0, 10);
+    const later = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+    check("create_reminder: no date links to Anytime", (await hrefFor()) === "/reminders?view=anytime");
+    check("…due today links to Today", (await hrefFor(today)) === "/reminders");
+    check("…due later links to Upcoming", (await hrefFor(later)) === "/reminders?view=upcoming");
+  }
+  {
     const c = byTool("snooze_reminder");
     const before = rem.dueDate!.getTime();
     await commitProposedAction(message.id, c.id);
