@@ -172,7 +172,8 @@ export async function saveAboutYouForUser(userId: string, input: AboutConfirm): 
   // 1–3: profile/role, aim, roleKeywords, read once and written once so they agree.
   const patch: CareerProfile = {};
   const profile = { ...career.profile };
-  const headline = input.headline ?? prefill?.headline ?? null;
+  // An edited row is the person's word, even when they cleared it: never fall back to the lookup.
+  const headline = input.edited.headline ? input.headline : (input.headline ?? prefill?.headline ?? null);
   if (headline && (input.edited.headline || !profile.headline)) profile.headline = headline;
   if (prefill?.location && !profile.location) profile.location = prefill.location;
   if (prefill?.summary && !profile.summary) profile.summary = prefill.summary;

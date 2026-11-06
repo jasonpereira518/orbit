@@ -166,6 +166,19 @@ async function main() {
   check("the role fills", cur.career?.role?.company === "UNC");
   check("an empty bio takes the self-intro", cur.senderBio === "X");
 
+  console.log("\na cleared headline row is not refilled from the lookup");
+  await reset();
+  await saveAboutYouForUser(
+    USER,
+    confirm({
+      headline: null,
+      edited: { headline: true, selfIntro: false },
+      prefill: { headline: "Lookup", role: null, location: null, summary: null, schools: [] },
+    }),
+  );
+  cur = await loadYouCurrent(USER);
+  check("the removed lookup headline is not saved", cur.career?.profile?.headline === undefined, JSON.stringify(cur.career?.profile));
+
   console.log("\naims that are not job-hunting");
   await reset();
   await saveAboutYouForUser(USER, confirm({ aim: "grow" }));
