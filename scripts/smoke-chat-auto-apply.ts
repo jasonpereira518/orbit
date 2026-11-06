@@ -23,7 +23,16 @@ import { chatMessages, chatThreads, contacts, interactions, reminders, userSetti
 import { undoProposedAction } from "../src/actions/chat-actions";
 import { setAiSecuritySinkForTests, type AiSecurityEvent } from "../src/lib/ai-security";
 import type { ToolCall, ToolDriver, ToolStep } from "../src/lib/ai-tools";
-import { AUTO_APPLY_PER_TURN, createAutoApplyGate, saveChatAutoApplyFor, shouldAutoApply, type AutoApplyFacts } from "../src/lib/chat-auto-apply";
+import {
+  AUTO_APPLY_PER_TURN,
+  createAutoApplyGate,
+  EXPLICIT_ASK_RE,
+  EXPLICIT_PER_TURN,
+  saveChatAutoApplyFor,
+  shouldAutoApply,
+  type AutoApplyFacts,
+} from "../src/lib/chat-auto-apply";
+import { wallTimeToUtc } from "../src/lib/reminder-due-bucket";
 import { answerWithLookups, WRITE_RULES } from "../src/lib/chat-agent-loop";
 import { prepareChatContext } from "../src/lib/chat-context";
 
@@ -92,6 +101,22 @@ async function main() {
     ] as Array<[string, Partial<AutoApplyFacts>]>) {
       check(`…but not with ${label}`, !shouldAutoApply({ ...base, ...change }));
     }
+    const explicit: AutoApplyFacts = { ...base, enabled: false, explicit: true };
+    check("setting off, but asked for in so many words → apply", shouldAutoApply(explicit));
+    for (const [label, change] of [
+      [`past ${EXPLICIT_PER_TURN} a turn`, { explicitAppliedThisTurn: EXPLICIT_PER_TURN }],
+      ["a turn that read an injection", { taintedBy: "injection_signal:prompt" }],
+      ["a confirm-tier write", { tier: "confirm" as const }],
+    ] as Array<[string, Partial<AutoApplyFacts>]>) {
+      check(`…but not ${label}`, !shouldAutoApply({ ...explicit, ...change }));
+    }
+    check("an unasked suggestion is a card even with the setting on", !shouldAutoApply({ ...base, unasked: true }));
+    for (const ask of ["Remind me Friday to text Maya", "set up coffee with Maya tomorrow at 3", "Put lunch with Ada on my calendar", "schedule a call with Ada"]) {
+      check(`"${ask}" is an ask`, EXPLICIT_ASK_RE.test(ask));
+    }
+    for (const q of ["What's on my schedule today?", "How is Maya doing?", "Who should I meet at the conference?"]) {
+      check(`"${q}" is not`, !EXPLICIT_ASK_RE.test(q));
+    }
     check("the prompt tells the model what applied and proposed mean", /"applied" means/.test(WRITE_RULES) && /"proposed" means/.test(WRITE_RULES));
   }
 
@@ -101,8 +126,8 @@ async function main() {
   const [thread] = await db.insert(chatThreads).values({ userId: USER }).returning();
   const question = "Remind me to send Maya Chen the deck, and log that we spoke about payments.";
 
-  async function turn(rounds: ToolStep[], gateOn: boolean | null, q = question) {
-    const ctx = await prepareChatContext(USER, q, {});
+  async function turn(rounds: ToolStep[], gateOn: boolean | null, q = question, timeZone?: string) {
+    const ctx = await prepareChatContext(USER, q, { timeZone });
     const s = scripted(rounds);
     const result = await answerWithLookups(USER, ctx, {
       onDelta: () => {},
@@ -226,6 +251,57 @@ async function main() {
     await saveChatAutoApplyFor(USER, false);
     const { result: off } = await turn([{ calls: [remind("Setting off again")], text: "" }, { calls: [], text: "x" }], null);
     check("…and switched off, it asks again", off.proposals[0]?.status === "proposed");
+  }
+
+  console.log("\nTimes in the user's zone");
+  {
+    check("15:00 in New York before DST ends is 19:00Z", wallTimeToUtc("2026-10-30T15:00", "America/New_York")?.toISOString() === "2026-10-30T19:00:00.000Z");
+    check("…and after, 20:00Z", wallTimeToUtc("2026-11-02T15:00", "America/New_York")?.toISOString() === "2026-11-02T20:00:00.000Z");
+    check("a time that lands on UTC noon stays timed (one second on)", wallTimeToUtc("2026-11-02T12:00", "UTC")?.toISOString() === "2026-11-02T12:00:01.000Z");
+    check("a date with no time is not a wall time", wallTimeToUtc("2026-11-02", "UTC") === null);
+  }
+
+  console.log("\nAsked for, setting off");
+  {
+    await saveChatAutoApplyFor(USER, false);
+    const day = new Date(Date.now() + 4 * 86_400_000).toISOString().slice(0, 10);
+    const count = (await reminderRows()).length;
+    const meet = call("create_meeting", { title: "Coffee with Maya", contactId: maya.id, starts_at: `${day}T15:00`, asked_for: true });
+    const { result, ctx } = await turn(
+      [{ calls: [meet], text: "" }, { calls: [], text: "Done." }],
+      null,
+      "Set up coffee with Maya Chen on that day at 3pm",
+      "America/New_York"
+    );
+    const row = (await reminderRows()).find((r) => r.title === "Coffee with Maya");
+    check("the meeting is applied without the setting", result.proposals[0]?.status === "done" && (await reminderRows()).length === count + 1);
+    check("…as a meet reminder at 3pm New York time", row?.actionKind === "meet" && row.dueDate?.getTime() === wallTimeToUtc(`${day}T15:00`, "America/New_York")?.getTime());
+    check("…and the card reads the user's own time", /3:00 PM/.test(result.proposals[0]?.preview ?? ""));
+    check("the prompt carries the zone", ctx.scopedQuestion.includes("America/New_York"));
+
+    const { result: notAsked } = await turn(
+      [{ calls: [call("create_reminder", { title: "Ping Maya", asked_for: true })], text: "" }, { calls: [], text: "x" }],
+      null,
+      "How is Maya Chen doing?"
+    );
+    check("a question that asks for nothing stays a card, whatever the model claims", notAsked.proposals[0]?.status === "proposed");
+
+    const { result: twoUnasked, sentBack } = await turn(
+      [
+        {
+          calls: [
+            call("create_reminder", { title: "Check in with Maya", asked_for: false }),
+            call("create_reminder", { title: "And another", asked_for: false }),
+          ],
+          text: "",
+        },
+        { calls: [], text: "x" },
+      ],
+      null,
+      "Remind me to call Maya Chen"
+    );
+    check("one unasked suggestion per answer; the second is refused", twoUnasked.proposals.length === 1 && sentBack.some((r) => /nobody asked for/.test(r.content)));
+    check("…and the suggestion is a card even on an ask turn", twoUnasked.proposals[0]?.status === "proposed");
   }
 
   await clear();

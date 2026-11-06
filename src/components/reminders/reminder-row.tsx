@@ -234,6 +234,7 @@ export const ReminderRow = memo(function ReminderRow({
                   )}
                 >
                   {due.text}
+                  {item.dueTime && `, ${item.dueTime}`}
                 </span>
               )}
               {item.contactName && (

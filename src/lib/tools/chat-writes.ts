@@ -51,6 +51,7 @@ import {
 } from "@/lib/tools/chat-write-kit";
 import { FEATURE_UNDO, FEATURE_WRITES } from "@/lib/tools/chat-writes-features";
 import { createEventForUser, deleteEventForUser, getEventForUser, setSpokeToForUser } from "@/lib/events/store";
+import { wallTimeToUtc } from "@/lib/reminder-due-bucket";
 import { createReminderForUser, scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import {
   completeReminder,
@@ -76,6 +77,31 @@ function dueWithinYear(raw: unknown): string | null {
   if (d.getTime() < now - 86_400_000 || d.getTime() > now + 365 * 86_400_000) return null;
   return d.toISOString();
 }
+
+/** "Fri, Oct 30, 3:00 PM" for a wall-clock "YYYY-MM-DDTHH:mm", read as written (no zone). */
+function wallLabel(raw: unknown): string | null {
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})$/.exec(s(raw).trim());
+  if (!m) return null;
+  const d = new Date(`${m[1]}T${m[2]}:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+/** A wall-clock field as the instant it names in `tz`; a date or an ISO with an offset is kept. */
+function atInstant(raw: unknown, tz: string): unknown {
+  const d = typeof raw === "string" ? wallTimeToUtc(raw, tz) : null;
+  return d ? d.toISOString() : raw;
+}
+
+/**
+ * Whether the user asked for this change in so many words. Only ever lowers trust: `false`
+ * keeps a card from being applied (`@/lib/chat-auto-apply`) and marks the turn's one
+ * unasked suggestion (`@/lib/tools/chat-proposals`).
+ */
+const askedFor = z
+  .boolean()
+  .optional()
+  .describe("true only when the user asked for this in their message; false when you are suggesting it unasked.");
 
 async function ownedContact(userId: string, contactId: string) {
   const db = await getDb();
@@ -315,21 +341,24 @@ const CORE_WRITES: readonly ChatWrite[] = [
     name: "create_reminder",
     title: "Set a reminder",
     description:
-      "Propose a reminder, optionally about a contact and with a due date (ISO). The user " +
-      "confirms it first.",
+      "Propose a reminder, optionally about a contact and with a due date: YYYY-MM-DD, or " +
+      "YYYY-MM-DDTHH:mm in the user's own time when they named a time.",
     inputSchema: {
       title: z.string().min(1).max(200),
       contactId: uuid.optional(),
       description: z.string().max(2000).optional(),
-      due_date: z.string().max(40).optional().describe("ISO date or date-time, within a year."),
+      due_date: z.string().max(40).optional().describe("YYYY-MM-DD, or YYYY-MM-DDTHH:mm in the user's time zone; within a year."),
+      asked_for: askedFor,
     },
     tier: "auto",
     refs: (i) => ({ contacts: i.contactId ? [s(i.contactId)] : [] }),
     contactOf: (i) => (i.contactId ? s(i.contactId) : null),
+    normalize: (i, { timeZone }) => (i.due_date ? { ...i, due_date: atInstant(i.due_date, timeZone) } : i),
     preview(i, sc) {
-      const due = dueWithinYear(i.due_date);
+      const at = wallLabel(i.due_date);
+      const due = at ? null : dueWithinYear(i.due_date);
       const who = i.contactId ? ` — ${name(sc.contacts, i.contactId, "this contact")}` : "";
-      return `Remind you: ${text(i.title, 200)}${who}${due ? ` by ${due.slice(0, 10)}` : ""}`;
+      return `Remind you: ${text(i.title, 200)}${who}${at ? `, ${at}` : due ? ` by ${due.slice(0, 10)}` : ""}`;
     },
     async commit(userId, i) {
       const row = await createReminderForUser(userId, {
@@ -342,6 +371,55 @@ const CORE_WRITES: readonly ChatWrite[] = [
       }, { origin: "suggestion" });
       if (!row) throw new UserFacingError("Couldn’t set that reminder");
       return { resultId: row.id, href: "/reminders", undo: { tool: "dismiss_created_reminder", input: { reminderId: row.id } } };
+    },
+  },
+  {
+    // A meeting Orbit keeps itself: a `meet` reminder at the meeting's time, so it shows in
+    // Reminders and on the dashboard's Today's meetings. Nothing is sent and no calendar is
+    // written — that needs a calendar write scope Orbit does not ask for yet.
+    name: "create_meeting",
+    title: "Add a meeting",
+    description:
+      "Propose a meeting, call or coffee at a set time, optionally with a contact: a title, " +
+      "starts_at as YYYY-MM-DDTHH:mm in the user's own time, and where. Nobody is invited.",
+    inputSchema: {
+      title: z.string().min(1).max(200),
+      contactId: uuid.optional(),
+      starts_at: z.string().max(40).regex(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/, "Use YYYY-MM-DDTHH:mm."),
+      duration_min: z.number().int().min(5).max(480).optional(),
+      location: z.string().max(200).optional(),
+      asked_for: askedFor,
+    },
+    tier: "auto",
+    refs: (i) => ({ contacts: i.contactId ? [s(i.contactId)] : [] }),
+    contactOf: (i) => (i.contactId ? s(i.contactId) : null),
+    normalize: (i, { timeZone }) => ({ ...i, starts_at: atInstant(i.starts_at, timeZone) }),
+    preview(i, sc) {
+      const who = i.contactId ? ` with ${name(sc.contacts, i.contactId, "this contact")}` : "";
+      const at = wallLabel(i.starts_at) ?? s(i.starts_at).slice(0, 10);
+      const where = i.location ? ` at ${text(i.location, 200)}` : "";
+      return `Add “${text(i.title, 200)}”${who}, ${at}${where}`;
+    },
+    async commit(userId, i) {
+      const startsAt = dueWithinYear(i.starts_at);
+      if (!startsAt) throw new UserFacingError("That time is outside the next year");
+      const details = [
+        i.location ? `Where: ${text(i.location, 200)}` : null,
+        i.duration_min ? `${Number(i.duration_min)} min` : null,
+      ].filter(Boolean).join(" · ");
+      const row = await createReminderForUser(userId, {
+        title: text(i.title, 200),
+        contactId: i.contactId ? s(i.contactId) : undefined,
+        description: details || undefined,
+        dueDate: startsAt,
+        reminderType: "manual",
+        actionKind: "meet",
+      }, { origin: "suggestion" });
+      if (!row) throw new UserFacingError("Couldn’t add that meeting");
+      // Reminders opens on Today; a meeting further out is under Upcoming. The zone is not
+      // known here, so "today" is the next 24 hours.
+      const href = Date.parse(startsAt) - Date.now() < 86_400_000 ? "/reminders" : "/reminders?view=upcoming";
+      return { resultId: row.id, href, undo: { tool: "dismiss_created_reminder", input: { reminderId: row.id } } };
     },
   },
   {
