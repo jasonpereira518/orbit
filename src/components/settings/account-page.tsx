@@ -191,7 +191,7 @@ export function AccountPageShell({
 }
 
 /** Google's bar of four, Microsoft's square panes, or one solid bar. Decorative. */
-function BrandStrip({ theme }: { theme: ProviderTheme }) {
+export function BrandStrip({ theme }: { theme: ProviderTheme }) {
   if (theme.stripeVariant === "tiles") {
     return (
       <div aria-hidden className="flex gap-[3px]">
@@ -399,7 +399,7 @@ function RowControlButton({
   }
 }
 
-function AccountHeader({
+export function AccountHeader({
   name,
   mark,
   accountLine,

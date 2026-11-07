@@ -12,9 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
-import { DecisionModelSettings } from "@/components/settings/decision-model-settings";
-import { AiUsageCard } from "@/components/settings/ai-usage-card";
-import { SpeechUsageCard, type SpeechAllowances } from "@/components/settings/speech-usage-card";
+import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 import { ApiSettings } from "@/components/settings/api-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
@@ -652,14 +650,7 @@ function Panel({
     case "granola":
       return <GranolaSettings />;
     case "ai":
-      return (
-        <div className="space-y-5">
-          <AiSettings initialSettings={initialSettings} />
-          <DecisionModelSettings initialSettings={initialSettings} />
-          <AiUsageCard />
-          <SpeechUsageCard speech={speechAllowances} />
-        </div>
-      );
+      return <AiSettings initialSettings={initialSettings} speech={speechAllowances} />;
     case "assistants":
       return <AssistantsSettings />;
     case "reminders":

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { LayoutGroup, motion, useReducedMotion } from "motion/react";
+import { LayoutGroup, motion } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 
 /**
@@ -34,7 +35,7 @@ const BUBBLE_SPRING = {
  */
 export function DocSwitcher() {
   const pathname = usePathname();
-  const reduced = useReducedMotion();
+  const reduced = useReducedMotionPreference();
   const [hovered, setHovered] = useState<string | null>(null);
 
   return (

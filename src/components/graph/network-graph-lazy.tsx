@@ -15,6 +15,7 @@ import {
   useNetworkGraphModule,
   useSkyLayoutReady,
 } from "@/components/graph/constellation-modules";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
 
@@ -42,7 +43,7 @@ function decideFromPayload(contactCount: number | null) {
 
   const reduced =
     typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    prefersReducedMotion();
   const { warp, reason } = predictSlowIntro({
     reduced,
     chunkLoaded: true,

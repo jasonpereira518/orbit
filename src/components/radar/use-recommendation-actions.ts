@@ -11,6 +11,7 @@ import {
 } from "@/actions/radar";
 import { friendlyError } from "@/lib/errors";
 import { runToastAction, toast } from "@/lib/toast";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /**
  * Cards brought back by Undo, so the card that remounts after the refresh grows back into
@@ -20,10 +21,6 @@ const restored = new Set<string>();
 
 /** How long a resolved card takes to fold away before the list is refreshed around it. */
 const COLLAPSE_MS = 260;
-
-function prefersReducedMotion() {
-  return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-}
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, prefersReducedMotion() ? 0 : COLLAPSE_MS));
 
