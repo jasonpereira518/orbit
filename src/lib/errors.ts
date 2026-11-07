@@ -449,6 +449,9 @@ export function friendlyError(err: unknown, fallback: string): string {
   // the one server-thrown message worth showing verbatim. Matched by name, not `instanceof`:
   // a second module instance would break the class check, and this file imports nothing.
   if (err instanceof Error && err.name === "PaywallError" && err.message) return err.message;
+  // The limiter writes its message for the person ("Try again in 40 minutes"), and it is the
+  // same in every environment, so it is worth showing verbatim rather than falling back.
+  if (err instanceof Error && err.name === "RateLimitedError" && err.message) return err.message;
 
   if (raw && OWN_WORDS.has(raw)) return raw;
   if (raw && isMissingAiApiKeyError(raw)) return MISSING_AI_API_KEY_MESSAGE;

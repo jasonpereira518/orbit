@@ -2947,11 +2947,14 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // a database stamped 194 would never run a 193. NOT 195: claude/gallant-ramanujan-hh5j0s claims it (it reached main
 // first, on Nov 7 2026, and keeps 195 above).
 //
-// 197 (built as 184) = capture_jobs.event_id: the Event a capture debriefs ("log who you met"),
-// so the save can mark those people as met on the event. Renumbered 184 → 197 on Nov 7 2026 when
-// merging main at 196: a database stamped 196 would never run a 184. Rescanned every remote ref
-// and worktree on Nov 7 2026: 196 (main) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 197;
+// 197 = main's security fixes (#529, the 2026-11 audit findings); bumped without an entry here.
+//
+// 199 (built as 184, then 197) = capture_jobs.event_id: the Event a capture debriefs ("log who
+// you met"), so the save can mark those people as met on the event. Renumbered 197 → 199 on
+// Nov 7 2026 when main took 197: a database stamped 197 would never run this branch's DDL. NOT
+// 198: claude/duplicates-view-merge-training-7c9a92 claims it. Rescanned every remote ref and
+// worktree on Nov 7 2026: 198 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 199;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4817,7 +4820,7 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS career_profile jsonb`,
-  // Schema v197: the Event a capture debriefs. Bare uuid like meeting_session_id; the save
+  // Schema v199: the Event a capture debriefs. Bare uuid like meeting_session_id; the save
   // re-reads the event, so a deleted one only means nobody gets marked as met.
   `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS event_id uuid`,
   // Schema v161: the calendar event a reminder or a recording belongs to — the provider's
@@ -5080,9 +5083,19 @@ const alters = [
   // Launch Phase 4: calendar feed tokens are stored as their SHA-256, hex, matching
   // hashCalendarFeedToken in src/lib/calendar-feed.ts. Idempotent: live tokens are
   // 43-character base64url, so a stored 64-hex value is already a hash and is left alone.
+  // Dating the token here is what lets `findUserByFeedToken` enforce its 365-day ceiling:
+  // a legacy token has no recorded mint time, so its clock starts at this migration rather
+  // than never. Both halves are idempotent — the WHERE clauses match a row once.
   `UPDATE user_settings
-      SET calendar_feed_token = encode(sha256(convert_to(calendar_feed_token, 'UTF8')), 'hex')
+      SET calendar_feed_token = encode(sha256(convert_to(calendar_feed_token, 'UTF8')), 'hex'),
+          calendar_feed_token_created_at = COALESCE(calendar_feed_token_created_at, now())
     WHERE calendar_feed_token IS NOT NULL AND calendar_feed_token !~ '^[0-9a-f]{64}$'`,
+  // A token hashed by an earlier deploy (before `calendar_feed_token_created_at` was
+  // written) is already a 64-hex digest and skipped by the statement above. Date it now so
+  // it is not an immortal credential; once dated it can never match this again.
+  `UPDATE user_settings
+      SET calendar_feed_token_created_at = now()
+    WHERE calendar_feed_token IS NOT NULL AND calendar_feed_token_created_at IS NULL`,
   // Launch Phase 4: LinkedIn timeline events a model inferred are tagged ai_derived, so
   // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
   `UPDATE interactions SET source = 'ai_derived'

@@ -114,12 +114,13 @@ export type AiKeyPreference = "included" | "own" | null;
 /**
  * The order Orbit spends its own keys in, whatever provider the account picked: the expiring
  * monthly Anthropic credit first (Claude Haiku 5.5 is also the cheapest capable model), then
- * the prepaid OpenAI balance. Gemini last, for a developer's `.env.local` — production holds
- * no managed Gemini key. A provider whose pool is spent is skipped (`MANAGED_AI_POOLS`).
+ * the prepaid OpenAI balance. Orbit NEVER pays for Gemini (Jason, Nov 7 2026): it is not in
+ * this order and `managedKey` refuses it. A provider whose pool is spent is skipped
+ * (`MANAGED_AI_POOLS`); with both spent the account is told to add its own key.
  */
 // OpenRouter is deliberately absent: Orbit holds no OpenRouter key, so it is never a managed
 // provider, and this order is exactly the set of providers Orbit will ever pay for.
-export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["anthropic", "openai", "gemini"];
+export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["anthropic", "openai"];
 
 /**
  * Models the managed key will run. A user can type any model id into Settings, and
@@ -344,11 +345,8 @@ export function chooseEmbeddingKey(facts: KeyFacts): KeyChoice<EmbeddingBackend>
   const personal = order.find((p) => facts.personal[p]);
   if (personal) return { ok: true, provider: personal, source: "personal", model: "" };
   if (!facts.eligibility) return { ok: false, reason: "key_required" };
-  // Gemini's managed key embeds too, and is the cheaper of the two.
-  const managedOrder: EmbeddingBackend[] =
-    selected === "openai" ? ["openai", "gemini"] : ["gemini", "openai"];
-  const managed = managedOrder.find((p) => facts.managed[p]);
-  if (managed) return { ok: true, provider: managed, source: "managed", model: "" };
+  // Orbit never pays for Gemini, so OpenAI is the only managed embedding backend.
+  if (facts.managed.openai) return { ok: true, provider: "openai", source: "managed", model: "" };
   return denied(facts);
 }
 
