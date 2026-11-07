@@ -6,7 +6,7 @@
  *
  * Run: npx tsx scripts/smoke-org-suggest.ts
  */
-import { forgetOrgSuggestCache, suggestOrgs, type SuggestOpts } from "../src/lib/org-suggest";
+import { forgetOrgSuggestCache, isProduct, suggestOrgs, type SuggestOpts } from "../src/lib/org-suggest";
 import { isBareDomain } from "../src/lib/wikidata";
 
 let failures = 0;
@@ -127,6 +127,13 @@ async function main() {
     const one = await suggestOrgs("u", "G", { fetch: throwing, loadYours: async () => ((loaded = true), []) });
     check("under 2 characters -> nothing, nothing read", one.length === 0 && !loaded);
     check("'  ' -> nothing", (await suggestOrgs("u", "  ", { fetch: throwing, loadYours: noYours })).length === 0);
+    // Real Wikidata descriptions for "Goo": the products drop, the company stays.
+    check("a mapping service is a product", isProduct("Google's web mapping service (launched 2005)"));
+    check("a distribution platform is a product", isProduct("digital software distribution platform from Google"));
+    check("a knowledge base is a product", isProduct("knowledge base used by Google to enhance its search engine's results"));
+    check("a multinational company is not", !isProduct("American multinational technology company, a subsidiary of Alphabet Inc."));
+    check("a software company is not", !isProduct("American software company"));
+    check("a university is not", !isProduct("private research university in Cambridge, Massachusetts"));
     check("bare domains pass the logo route's check", ["google.com", "ox.ac.uk", "aws.amazon.com"].every(isBareDomain));
     check(
       "anything else fails it",

@@ -17,6 +17,23 @@ import { KIND_DESCRIPTION, NOT_AN_ORG, officialDomain, wikidataClaims, wikidataS
 
 type Fetch = typeof fetch;
 
+/**
+ * A product or service rather than somewhere a person works or studies: "Google Maps" is a "web
+ * mapping service", "Google Play" a "software distribution platform". An organization word wins,
+ * so "American software company" stays.
+ *
+ * ponytail: description keywords, not Wikidata's P31 classes; upgrade to a P31 check if products
+ * still slip through.
+ */
+const PRODUCT_DESCRIPTION =
+  /\b(services?|platforms?|programs?|programmes?|software|applications?|apps?|knowledge base|search engines?|products?|operating systems?|web browsers?|dumps?|websites?|databases?|journals?|magazines?|periodicals?|newspapers?|sequences?|genes?|proteins?|compounds?)\b/i;
+const ORG_DESCRIPTION =
+  /\b(company|corporation|organi[sz]ation|university|college|school|institute|foundation|agency|association|society|nonprofit|non-profit|charity|firm|bank|business|enterprise|group|movement|committee|conglomerate|subsidiary)\b/i;
+
+export function isProduct(description: string): boolean {
+  return PRODUCT_DESCRIPTION.test(description) && !ORG_DESCRIPTION.test(description);
+}
+
 export type OrgKind = "company" | "school" | "org";
 export type OrgSuggestion = {
   name: string;
@@ -77,7 +94,9 @@ export async function wikidataSuggestions(query: string, fetchImpl: Fetch = fetc
   const opts = { fetch: fetchImpl, timeoutMs: WIKIDATA_BUDGET_MS };
   const hits = await wikidataSearch(query, WIKIDATA_SEARCH_LIMIT, opts);
   if (!hits) return null;
-  const candidates = hits.filter((h) => (h.label || h.match?.text) && !NOT_AN_ORG.test(h.description ?? ""));
+  const candidates = hits.filter(
+    (h) => (h.label || h.match?.text) && !NOT_AN_ORG.test(h.description ?? "") && !isProduct(h.description ?? ""),
+  );
   if (!candidates.length) return [];
   const remaining = WIKIDATA_BUDGET_MS - (Date.now() - started);
   if (remaining <= 0) return null;
@@ -122,6 +141,8 @@ export async function suggestOrgs(userId: string, rawQuery: string, opts: Sugges
       if (seen.source === "yours" && s.kind !== "company") seen.kind = s.kind;
       return;
     }
+    // "Apple Inc." under "Apple": a Wikidata hit at a domain already listed is the same place.
+    if (s.source === "wikidata" && s.domain && found.some((f) => f.domain === s.domain)) return;
     byKey.set(k, s);
     found.push(s);
   };
