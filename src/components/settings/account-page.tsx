@@ -1,43 +1,31 @@
 "use client";
 
 /**
- * The frame every account page (Google, Microsoft) is drawn in, and the row it is made of.
- *
- * The page is "connect once, then a row per feature", replacing the stack of cards each
- * account used to have — one for contacts, one for the inbox scan — where every card repeated
- * the same account line, the same Connect button and the same Disconnect. The account is
- * stated once, at the top; below it each feature answers for itself.
+ * The frame every account page (Google, Microsoft, LinkedIn, Granola) is drawn in, and the row
+ * it is made of: the account stated once at the top — logo, name, account, a status line, one
+ * main action, a ··· menu — then a row per feature. Each page passes its own pieces; the frame
+ * draws them the same way, in its brand theme (`provider-themes.ts`).
  *
  * ## What the shell renders, in order
  *
- * 1. `loading` — a skeleton. The cards this replaces rendered NOTHING at all until the status
- *    landed (`if (!status) return null`), so opening the page showed an empty panel that
- *    suddenly filled.
- * 2. `failed` AND no status yet — "Couldn't check your {Provider} connection." and **Try
- *    again**. Also nothing, before: a status fetch that rejected left the same empty panel
- *    forever. The order of those two conditions is load-bearing: `useConnection` raises
- *    `failed` on ANY rejected read, including the re-read after the Meetings switch or after
- *    the sign-in return, and leaves the `status` it already has alone. Testing `failed` on its
- *    own would replace the header, the address and every row with an error page the moment a
- *    refresh blipped — right after a success toast. A status in hand outranks a failed refresh.
- * 3. `not_configured` — this deployment has no credentials for the provider. Nothing to
- *    connect, so no button.
+ * 1. `loading` — a skeleton shaped like the header and three rows.
+ * 2. `failed` AND no status yet — "Couldn't check your {name} connection." and **Try again**.
+ *    The order is load-bearing: a re-read that fails after a good one leaves `account` in place,
+ *    and a status in hand outranks a failed refresh (it would otherwise swap a working page for
+ *    an error right after a success toast).
+ * 3. `not_configured` — this deployment has no credentials for the provider.
  * 4. `not_connected` — the connect prompt: what Orbit will ask for, and what it will never do.
- * 5. `needs_reauth` — the account signed Orbit out. The header still names it (so Switch
- *    account and Disconnect stay reachable), the notice says what happened, and the rows below
- *    render dimmed and `inert`: their capabilities are empty in this state, so every control
- *    would be a no-op anyway, and making that visible is better than letting them look live.
- * 6. otherwise — the header, then the rows.
+ * 5. `needs_reauth` — the header still names the account (so the menu stays reachable), a notice
+ *    says what happened, and the rows render dimmed and `inert`.
+ * 6. otherwise — the header, the strip, then the rows.
  *
- * The shell owns no data. `useGoogleConnection` / `useMicrosoftConnection` own the status and
- * the sign-in return for the page; this takes the four things it needs as props so that a page
- * has exactly one owner of the OAuth return (`use-provider-connection.ts` explains why two
- * would race each other's `history.replaceState`).
+ * The shell owns no data: each page's connection hook owns the status and the sign-in return,
+ * so a page has exactly one owner of the OAuth return (`use-provider-connection.ts`).
  */
 
 import { useId, useState } from "react";
+import { formatDistance } from "date-fns";
 import { Check, Lock, MoreHorizontal } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -48,79 +36,101 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DisconnectAccountDialog } from "@/components/settings/disconnect-account-dialog";
-import type { AccountProvider, AccountStatus, RowControl } from "@/lib/integration-status";
+import type { ProviderTheme } from "@/components/settings/provider-themes";
+import type { AccountStatus, PageStatus, RowControl } from "@/lib/integration-status";
 import type { DisconnectProvider } from "@/lib/data-categories";
 import { cn } from "@/lib/utils";
 
-const PROVIDER_NAME: Record<AccountProvider, string> = {
-  google: "Google",
-  microsoft: "Microsoft",
+/** The line under the account: a dot and a few words ("Synced 5 minutes ago"). */
+export type HeaderStatus = {
+  state: Exclude<PageStatus["state"], "none">;
+  detail: string;
+  /** Pulses the dot: a sync is running. */
+  busy?: boolean;
+  /** Hover text, e.g. the last error. */
+  title?: string;
 };
 
-/** The disconnect dialog is keyed by the connection it deletes, which predates these pages. */
-const DISCONNECT_PROVIDER: Record<AccountProvider, DisconnectProvider> = {
-  google: "gmail",
-  microsoft: "outlook",
+export type HeaderAction = { label: string; icon?: React.ReactNode; onClick: () => void; disabled?: boolean };
+export type HeaderMenuItem = { label: string; onSelect: () => void };
+
+/** What the not-connected state says before the Connect button. */
+export type ConnectCopy = {
+  intro: string;
+  asksTitle: string;
+  asks: readonly string[];
+  note: string;
 };
+
+const DEFAULT_CONNECT = (name: string): ConnectCopy => ({
+  intro: `Bring in your contacts and log your meetings from your ${name} account.`,
+  asksTitle: "Orbit will ask to",
+  asks: ["See your contacts", "See your calendar"],
+  note: `It never changes, sends or deletes anything in your ${name} account. Mail features ask separately, only if you turn them on.`,
+});
 
 export function AccountPageShell({
-  provider,
+  name,
+  mark,
+  theme,
   account,
   loading,
   failed,
   onRetry,
   onConnect,
-  onDisconnect,
-  hasDeletableData,
-  mark,
-  stripe,
+  connectCopy,
+  connectError,
+  connectBusy,
+  status,
+  primaryAction,
+  menuItems = [],
+  disconnect,
+  signedOutText,
   children,
 }: {
-  provider: AccountProvider;
-  /** The provider's logo, shown in place of the initials avatar. Optional: Microsoft passes none. */
-  mark?: React.ReactNode;
-  /** Brand colors for a thin strip under the header, in order. Exact published values only. */
-  stripe?: readonly string[];
+  name: string;
+  /** The provider's logo, drawn in the header's white tile. */
+  mark: React.ReactNode;
+  theme: ProviderTheme;
   /** Null while the status is still loading, or if it never arrived. */
   account: AccountStatus | null;
   loading: boolean;
   failed: boolean;
   onRetry: () => void;
-  /** Both Connect and Switch account: switching accounts is connecting again. */
+  /** Connect, and the signed-out notice's Sign in again. */
   onConnect: () => void;
-  onDisconnect: (opts: { alsoDelete: boolean }) => void;
-  /**
-   * Whether this account has produced any of the data the disconnect dialog offers to
-   * delete. Straight through to `DisconnectAccountDialog`: `undefined` is "not known",
-   * which keeps the offer.
-   */
-  hasDeletableData?: boolean;
+  connectCopy?: ConnectCopy;
+  /** Shown under the Connect button, e.g. after a sign-in that came back refused. */
+  connectError?: string | null;
+  connectBusy?: boolean;
+  status?: HeaderStatus;
+  /** The one button beside the name: Sync now, Upload export. Hidden while signed out. */
+  primaryAction?: HeaderAction;
+  /** The ··· menu's items, before Disconnect. */
+  menuItems?: readonly HeaderMenuItem[];
+  /** Adds "Disconnect…" to the menu, confirmed through `DisconnectAccountDialog`. */
+  disconnect?: {
+    provider: DisconnectProvider;
+    onConfirm: (opts: { alsoDelete: boolean }) => void;
+    /** `undefined` is "not known", which keeps the dialog's delete offer. */
+    hasDeletableData?: boolean;
+  };
+  signedOutText?: string;
   /** The feature rows. */
   children: React.ReactNode;
 }) {
-  const name = PROVIDER_NAME[provider];
+  const frame = (body: React.ReactNode) => <div className={theme.className}>{body}</div>;
 
-  if (loading) return <AccountSkeleton name={name} />;
+  if (loading) return frame(<AccountSkeleton name={name} />);
 
-  // `&& !account`: a refresh that failed leaves the last good status in place, and keeping the
-  // page is better than an error where a working account just was. See the doc comment above.
-  if (failed && !account) {
-    return (
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">Couldn’t check your {name} connection.</p>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          Try again
-        </Button>
-      </div>
-    );
-  }
+  // `&& !account`: a refresh that failed leaves the last good status in place. See above.
+  if (failed && !account) return frame(<LoadError what={`${name} connection`} verb="check" onRetry={onRetry} />);
 
-  // Settled without an error but with nothing to show: keep the placeholder rather than an
-  // empty page, which is what the cards this replaces did here.
-  if (!account) return <AccountSkeleton name={name} />;
+  // Settled without an error but with nothing to show: keep the placeholder.
+  if (!account) return frame(<AccountSkeleton name={name} />);
 
   if (account.state === "not_configured") {
-    return (
+    return frame(
       <section className="space-y-2 rounded-2xl border border-dashed border-border/70 bg-card/50 p-5">
         <h2 className="text-lg font-medium text-ink">{name}</h2>
         <p className="text-sm text-muted-foreground">
@@ -132,34 +142,38 @@ export function AccountPageShell({
   }
 
   if (account.state === "not_connected") {
-    return <ConnectPrompt name={name} onConnect={onConnect} />;
+    return frame(
+      <ConnectPrompt
+        name={name}
+        mark={mark}
+        theme={theme}
+        copy={connectCopy ?? DEFAULT_CONNECT(name)}
+        error={connectError}
+        busy={connectBusy}
+        onConnect={onConnect}
+      />
+    );
   }
 
   const signedOut = account.state === "needs_reauth";
 
-  return (
+  return frame(
     <div className="space-y-4">
       <AccountHeader
-        provider={provider}
         name={name}
-        email={account.email}
         mark={mark}
-        onConnect={onConnect}
-        onDisconnect={onDisconnect}
-        hasDeletableData={hasDeletableData}
+        accountLine={account.email}
+        status={status}
+        primaryAction={signedOut ? undefined : primaryAction}
+        menuItems={menuItems}
+        disconnect={disconnect}
       />
-      {stripe?.length ? (
-        <div aria-hidden className="flex h-1 overflow-hidden rounded-full">
-          {stripe.map((color) => (
-            <span key={color} className="flex-1" style={{ backgroundColor: color }} />
-          ))}
-        </div>
-      ) : null}
+      <BrandStrip theme={theme} />
 
       {signedOut ? (
         <div className="flex flex-wrap items-center gap-3 rounded-xl bg-warning/10 p-4 text-sm text-warning">
           <p className="min-w-0 flex-1">
-            {name} signed Orbit out. Sign in again to keep things up to date.
+            {signedOutText ?? `${name} signed Orbit out. Sign in again to keep things up to date.`}
           </p>
           <Button size="sm" onClick={onConnect}>
             Sign in again
@@ -167,14 +181,92 @@ export function AccountPageShell({
         </div>
       ) : null}
 
-      {/* `inert` rather than `disabled` on each control: in this state the account has no
-          capabilities at all, so every row's control is already a no-op, and one attribute
-          keeps them out of the tab order without each row needing to know why. */}
+      {/* `inert` rather than `disabled` on each control: in this state every row's control is
+          already a no-op, and one attribute keeps them out of the tab order. */}
       <ul inert={signedOut} className={cn("-my-1", signedOut && "opacity-60")}>
         {children}
       </ul>
     </div>
   );
+}
+
+/** Google's bar of four, Microsoft's square panes, or one solid bar. Decorative. */
+function BrandStrip({ theme }: { theme: ProviderTheme }) {
+  if (theme.stripeVariant === "tiles") {
+    return (
+      <div aria-hidden className="flex gap-[3px]">
+        {theme.stripe.map((color) => (
+          <span key={color} className="size-2.5" style={{ backgroundColor: color }} />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div aria-hidden className="flex h-1 overflow-hidden rounded-full">
+      {theme.stripe.map((color) => (
+        <span key={color} className="flex-1" style={{ backgroundColor: color }} />
+      ))}
+    </div>
+  );
+}
+
+/** The status line for an account that syncs: Google, Microsoft, Granola. */
+export function syncStatusLine({
+  signedOut,
+  syncing,
+  lastSyncedAt,
+  error,
+}: {
+  signedOut: boolean;
+  syncing: boolean;
+  lastSyncedAt: string | Date | null | undefined;
+  /** Never shown verbatim (it can be a raw provider body) — only as hover text. */
+  error?: string | null;
+}): HeaderStatus {
+  if (signedOut) return { state: "partial", detail: "Signed out — sign in again" };
+  if (syncing) return { state: "on", detail: "Syncing…", busy: true };
+  if (error) return { state: "partial", detail: "Last sync hit a problem", title: error };
+  if (lastSyncedAt) return { state: "on", detail: `Synced ${whenLine(lastSyncedAt)}` };
+  return { state: "on", detail: "First sync is running", busy: true };
+}
+
+/**
+ * A read that failed, with the way back. One wording everywhere: "Couldn't load your API keys."
+ * (`verb="check"` for a connection, which is checked rather than loaded).
+ */
+export function LoadError({
+  what,
+  verb = "load",
+  onRetry,
+}: {
+  what: string;
+  verb?: "load" | "check";
+  onRetry: () => void;
+}) {
+  return (
+    <div className="space-y-3" role="alert">
+      <p className="text-sm text-muted-foreground">
+        Couldn’t {verb} your {what}.
+      </p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * When something happened, for a status or history line: "5 minutes ago" inside a week, then
+ * the date ("Nov 6", with the year once it isn't this one).
+ */
+export function whenLine(at: Date | string | number, now: Date = new Date()): string {
+  const date = new Date(at);
+  if (now.getTime() - date.getTime() < 7 * 24 * 60 * 60 * 1000) return formatDistance(date, now, { addSuffix: true });
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
 }
 
 /**
@@ -308,95 +400,149 @@ function RowControlButton({
 }
 
 function AccountHeader({
-  provider,
   name,
-  email,
   mark,
-  onConnect,
-  onDisconnect,
-  hasDeletableData,
+  accountLine,
+  status,
+  primaryAction,
+  menuItems,
+  disconnect,
 }: {
-  provider: AccountProvider;
   name: string;
-  email: string | null;
-  mark?: React.ReactNode;
-  onConnect: () => void;
-  onDisconnect: (opts: { alsoDelete: boolean }) => void;
-  hasDeletableData?: boolean;
+  mark: React.ReactNode;
+  accountLine: string | null;
+  status?: HeaderStatus;
+  primaryAction?: HeaderAction;
+  menuItems: readonly HeaderMenuItem[];
+  disconnect?: React.ComponentProps<typeof AccountPageShell>["disconnect"];
 }) {
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  const hasMenu = menuItems.length > 0 || disconnect;
 
   return (
-    <div className="flex items-center gap-3">
-      {mark ? (
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-border/60">
-          {mark}
-        </span>
-      ) : (
-        <Avatar>
-          <AvatarFallback className="text-xs font-medium">{initials(email, name)}</AvatarFallback>
-        </Avatar>
-      )}
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-ink">{name}</p>
-        <p className="truncate text-sm text-muted-foreground">{email ?? "Connected"}</p>
+    // Wraps on a phone: the actions drop to their own line rather than squeezing the name.
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <MarkTile mark={mark} />
+      <div className="min-w-0 flex-1 basis-40">
+        <h2 className="text-sm font-medium text-ink">{name}</h2>
+        {accountLine ? <p className="truncate text-sm text-muted-foreground">{accountLine}</p> : null}
+        {status ? (
+          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground" title={status.title}>
+            <span
+              aria-hidden
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                status.state === "on" && "bg-primary",
+                status.state === "partial" && "bg-warning",
+                status.state === "off" && "bg-muted-foreground/35",
+                status.busy && "animate-pulse"
+              )}
+            />
+            {status.detail}
+          </p>
+        ) : null}
       </div>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`${name} account options`}
-              className="tap-target relative"
-            >
-              <MoreHorizontal aria-hidden />
-            </Button>
-          }
+      <div className="flex shrink-0 items-center gap-1">
+        {primaryAction ? (
+          <Button variant="outline" size="sm" disabled={primaryAction.disabled} onClick={primaryAction.onClick}>
+            {primaryAction.icon}
+            {primaryAction.label}
+          </Button>
+        ) : null}
+        {hasMenu ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="ghost" size="icon-sm" aria-label={`${name} options`} className="tap-target relative">
+                  <MoreHorizontal aria-hidden />
+                </Button>
+              }
+            />
+            {/* The popup is as wide as its anchor by default, and the anchor here is one icon. */}
+            <DropdownMenuContent align="end" className="w-auto min-w-40">
+              {menuItems.map((item) => (
+                <DropdownMenuItem key={item.label} onClick={item.onSelect}>
+                  {item.label}
+                </DropdownMenuItem>
+              ))}
+              {disconnect ? (
+                <>
+                  {menuItems.length ? <DropdownMenuSeparator /> : null}
+                  <DropdownMenuItem variant="destructive" onClick={() => setConfirmingDisconnect(true)}>
+                    Disconnect…
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </div>
+      {disconnect ? (
+        // Controlled: the menu item above is the trigger, so the dialog renders none itself.
+        <DisconnectAccountDialog
+          provider={disconnect.provider}
+          open={confirmingDisconnect}
+          onOpenChange={setConfirmingDisconnect}
+          onConfirm={disconnect.onConfirm}
+          hasDeletableData={disconnect.hasDeletableData}
         />
-        {/* The popup is as wide as its anchor by default, and the anchor here is one icon. */}
-        <DropdownMenuContent align="end" className="w-auto min-w-40">
-          <DropdownMenuItem onClick={onConnect}>Switch account</DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onClick={() => setConfirmingDisconnect(true)}>
-            Disconnect
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {/* Controlled: the menu item above is the trigger, so the dialog renders none itself. */}
-      <DisconnectAccountDialog
-        provider={DISCONNECT_PROVIDER[provider]}
-        open={confirmingDisconnect}
-        onOpenChange={setConfirmingDisconnect}
-        onConfirm={onDisconnect}
-        hasDeletableData={hasDeletableData}
-      />
+      ) : null}
     </div>
   );
 }
 
-function ConnectPrompt({ name, onConnect }: { name: string; onConnect: () => void }) {
+/** The logo in a white rounded tile, the same size on every account page. */
+function MarkTile({ mark }: { mark: React.ReactNode }) {
+  return (
+    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-border/60 [&>*]:size-6">
+      {mark}
+    </span>
+  );
+}
+
+function ConnectPrompt({
+  name,
+  mark,
+  theme,
+  copy,
+  error,
+  busy,
+  onConnect,
+}: {
+  name: string;
+  mark: React.ReactNode;
+  theme: ProviderTheme;
+  copy: ConnectCopy;
+  error?: string | null;
+  busy?: boolean;
+  onConnect: () => void;
+}) {
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Bring in your contacts and log your meetings from your {name} account.
-      </p>
-      <Button onClick={onConnect}>Connect {name}</Button>
+      <div className="flex items-center gap-3">
+        <MarkTile mark={mark} />
+        <div className="min-w-0">
+          <h2 className="text-sm font-medium text-ink">{name}</h2>
+          <p className="text-sm text-muted-foreground">{copy.intro}</p>
+        </div>
+      </div>
+      <BrandStrip theme={theme} />
       <div className="space-y-2 rounded-xl bg-muted/40 p-4">
-        <p className="text-sm font-medium text-ink">Orbit will ask to</p>
+        <p className="text-sm font-medium text-ink">{copy.asksTitle}</p>
         <ul className="space-y-1.5">
-          {["See your contacts", "See your calendar"].map((line) => (
+          {copy.asks.map((line) => (
             <li key={line} className="flex items-center gap-2 text-sm text-muted-foreground">
               <Check aria-hidden className="size-4 shrink-0 text-primary" />
               {line}
             </li>
           ))}
         </ul>
-        <p className="text-xs leading-snug text-muted-foreground">
-          It never changes, sends or deletes anything in your {name} account. Mail features ask
-          separately, only if you turn them on.
-        </p>
+        <p className="text-xs leading-snug text-muted-foreground">{copy.note}</p>
       </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <Button disabled={busy} onClick={onConnect}>
+        Connect {name}
+      </Button>
     </div>
   );
 }
@@ -405,7 +551,7 @@ function AccountSkeleton({ name }: { name: string }) {
   return (
     <div className="space-y-4" aria-busy="true" aria-label={`Loading your ${name} connection`}>
       <div className="flex items-center gap-3">
-        <Skeleton className="size-8 rounded-full" />
+        <Skeleton className="size-10 rounded-xl" />
         <div className="flex-1 space-y-1.5">
           <Skeleton className="h-3.5 w-20" />
           <Skeleton className="h-3.5 w-44" />
@@ -423,11 +569,4 @@ function AccountSkeleton({ name }: { name: string }) {
       ))}
     </div>
   );
-}
-
-/** Two letters for the header's avatar — from the address, or the provider when there is none. */
-function initials(email: string | null, name: string): string {
-  const local = (email ?? "").split("@")[0] ?? "";
-  const letters = local.replace(/[^a-zA-Z0-9]/g, "");
-  return (letters.slice(0, 2) || name.slice(0, 1)).toUpperCase();
 }

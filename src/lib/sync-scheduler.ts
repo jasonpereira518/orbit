@@ -32,7 +32,7 @@ import {
 } from "@/lib/connectors/google-calendar";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { gmailConnections, userSettings } from "@/db/schema";
+import { gmailConnections, outlookConnections, userSettings } from "@/db/schema";
 import {
   emailActivitySince,
   syncEmailActivity,
@@ -41,6 +41,7 @@ import {
   advanceCursor as advanceMicrosoftCalendarCursor,
   fetchCalendarPage as fetchMicrosoftCalendarPage,
   fetchCalendarWindow as fetchMicrosoftCalendarWindow,
+  MICROSOFT_DEFAULT_CALENDAR_ID,
   storedEventsOf as storedMicrosoftEventsOf,
 } from "@/lib/connectors/microsoft-calendar";
 import {
@@ -618,14 +619,19 @@ async function syncGoogleContacts(
  * Calendar runs first because meetings are the stronger signal and the budget is shared: if
  * a first sync of a huge address book exhausts it, the user still got their meetings.
  */
-/** The Google page's Meetings and contacts switches (`gmail_connections`), on unless turned off. */
-async function googleLaneSwitches(connectionId: string): Promise<{ calendar: boolean; contacts: boolean }> {
+/** The account page's Meetings and contacts switches (Google v192, Microsoft v194), on unless turned off. */
+async function laneSwitches(
+  provider: "google" | "microsoft",
+  connectionId: string
+): Promise<{ calendar: boolean; contacts: boolean }> {
   const db = await getDb();
-  const row = await db.query.gmailConnections.findFirst({
-    where: eq(gmailConnections.id, connectionId),
-    columns: { calendarSyncEnabled: true, contactsSyncEnabled: true },
-  });
-  return { calendar: (row?.calendarSyncEnabled ?? 1) !== 0, contacts: (row?.contactsSyncEnabled ?? 1) !== 0 };
+  const table = provider === "google" ? gmailConnections : outlookConnections;
+  const [row] = await db
+    .select({ calendar: table.calendarSyncEnabled, contacts: table.contactsSyncEnabled })
+    .from(table)
+    .where(eq(table.id, connectionId))
+    .limit(1);
+  return { calendar: (row?.calendar ?? 1) !== 0, contacts: (row?.contacts ?? 1) !== 0 };
 }
 
 async function syncGoogleConnection(
@@ -678,25 +684,28 @@ async function syncMicrosoftCalendar(
   deadline: number
 ): Promise<{ exhausted: boolean }> {
   await seedCalendarSources(conn.userId);
-  const source = (await enabledSourcesFor(conn.id))[0];
-  // No calendar enabled: nothing to do here, and not an error. The caller records the result.
-  if (!source) return { exhausted: false };
+  // Every calendar the person ticked on the Microsoft page — just the default one unless they
+  // picked more. None enabled: nothing to do here, and not an error.
+  const sources = await enabledSourcesFor(conn.id);
+  if (sources.length === 0) return { exhausted: false };
 
   const accessToken = await (deps.getMicrosoftAccessToken ?? getValidOutlookAccessToken)(conn.userId);
 
-  // The near-calendar mirror, best-effort — the same block as Google's.
+  // The near-calendar mirror, best-effort — the same block as Google's, one read per calendar.
   if (deps.fetchMicrosoftWindow) {
-    try {
-      const { from, to } = eventsWindow(now);
-      const read = await deps.fetchMicrosoftWindow({ accessToken, from, to, maxPages: 4 });
-      await refreshCalendarWindow(
-        conn.userId,
-        source.id,
-        { events: storedMicrosoftEventsOf(read.items, conn.emailAddress), complete: read.complete },
-        now
-      );
-    } catch (err) {
-      reportError(err, { where: "job.sync.outlook-window", userId: conn.userId, level: "warning" });
+    const { from, to } = eventsWindow(now);
+    for (const source of sources) {
+      try {
+        const read = await deps.fetchMicrosoftWindow({ accessToken, calendarId: source.calendarId, from, to, maxPages: 4 });
+        await refreshCalendarWindow(
+          conn.userId,
+          source.id,
+          { events: storedMicrosoftEventsOf(read.items, conn.emailAddress), complete: read.complete },
+          now
+        );
+      } catch (err) {
+        reportError(err, { where: "job.sync.outlook-window", userId: conn.userId, level: "warning" });
+      }
     }
   }
 
@@ -706,55 +715,65 @@ async function syncMicrosoftCalendar(
     createsContacts: true,
   });
 
-  let cursor = source.syncCursor ?? conn.syncCursor?.calendar ?? null;
+  for (const source of sources) {
+    // The connection's pre-migration cursor only ever belonged to the default calendar.
+    let cursor =
+      source.syncCursor ?? (source.calendarId === MICROSOFT_DEFAULT_CALENDAR_ID ? conn.syncCursor?.calendar ?? null : null);
 
-  for (;;) {
-    let page;
-    try {
-      page = await (deps.fetchMicrosoftPage ?? fetchMicrosoftCalendarPage)({
-        accessToken,
-        cursor,
-        ownerEmail: conn.emailAddress,
-        now,
-      });
-    } catch (err) {
-      if (err instanceof CalendarSyncTokenExpiredError) {
-        // Expected lifecycle event, not a fault — see failure mode 3 in
-        // `microsoft-calendar.ts`'s header comment.
-        cursor = null;
-        continue;
+    for (;;) {
+      let page;
+      try {
+        page = await (deps.fetchMicrosoftPage ?? fetchMicrosoftCalendarPage)({
+          accessToken,
+          cursor,
+          ownerEmail: conn.emailAddress,
+          now,
+          calendarId: source.calendarId,
+        });
+      } catch (err) {
+        if (err instanceof CalendarSyncTokenExpiredError) {
+          // Expected lifecycle event, not a fault — see failure mode 3 in
+          // `microsoft-calendar.ts`'s header comment.
+          cursor = null;
+          continue;
+        }
+        throw err;
       }
-      throw err;
+
+      const decided = await toNetworkEventsDecided(ctx.engines, page.events, page.selfEmails);
+      const events = decided.events;
+      stats.calendarSkippedByDecision += decided.skippedByDecision;
+      stats.calendarKeptByDecision += decided.keptByDecision;
+      if (events.length > 0) {
+        const ingested = await ingestEvents(ctx, events);
+        stats.eventsIngested += ingested.eventsSeen;
+        stats.contactsCreated += ingested.contactsCreated;
+        stats.interactionsLogged += ingested.interactionsLogged;
+      }
+
+      // Same discovery pass Google's calendar gets — see `recordCalendarEventDiscovery`'s own
+      // header comment for why a platform invite sitting in Outlook is found this way too.
+      await recordCalendarEventDiscovery(conn, stats, page, "job.sync.outlook-discovery");
+
+      cursor = advanceMicrosoftCalendarCursor(cursor, page);
+
+      if (!page.nextPageToken) break;
+
+      if (deadlineReached(deadline)) {
+        await finalizeIngest(ctx);
+        await saveSourceCursor(source.id, cursor, now);
+        return { exhausted: true };
+      }
     }
-
-    const decided = await toNetworkEventsDecided(ctx.engines, page.events, page.selfEmails);
-    const events = decided.events;
-    stats.calendarSkippedByDecision += decided.skippedByDecision;
-    stats.calendarKeptByDecision += decided.keptByDecision;
-    if (events.length > 0) {
-      const ingested = await ingestEvents(ctx, events);
-      stats.eventsIngested += ingested.eventsSeen;
-      stats.contactsCreated += ingested.contactsCreated;
-      stats.interactionsLogged += ingested.interactionsLogged;
-    }
-
-    // Same discovery pass Google's calendar gets — see `recordCalendarEventDiscovery`'s own
-    // header comment for why a platform invite sitting in Outlook is found this way too.
-    await recordCalendarEventDiscovery(conn, stats, page, "job.sync.outlook-discovery");
-
-    cursor = advanceMicrosoftCalendarCursor(cursor, page);
-
-    if (!page.nextPageToken) break;
-
-    if (deadlineReached(deadline)) {
+    await saveSourceCursor(source.id, cursor, now);
+    // Out of time between calendars: the next run starts over the list.
+    if (deadlineReached(deadline) && source !== sources[sources.length - 1]) {
       await finalizeIngest(ctx);
-      await saveSourceCursor(source.id, cursor, now);
       return { exhausted: true };
     }
   }
 
   await finalizeIngest(ctx);
-  await saveSourceCursor(source.id, cursor, now);
   return { exhausted: false };
 }
 
@@ -863,6 +882,7 @@ async function syncMicrosoftConnection(
       const result = await syncMicrosoftContacts(conn, stats, now, deps, cursor.contacts ?? null, deadline);
       cursor = { ...cursor, contacts: result.cursor };
       exhausted = result.exhausted;
+      if (!exhausted) cursor = { ...cursor, contactsSyncedAt: now.toISOString() };
     } catch (err) {
       if (err instanceof ReauthRequiredError) throw err;
       reportError(err, {
@@ -1158,6 +1178,116 @@ async function syncMailboxActivity(
   stats.emailInteractionsLogged += result.interactionsLogged;
 }
 
+/** One claimed Google connection, start to finish: the cron pool and Sync now both run this. */
+async function runGoogleClaimed(conn: ClaimedConnection, stats: SyncRunStats, now: Date, deps: SyncDeps): Promise<void> {
+  if (await skipExtraConnection(conn, now, stats)) return;
+
+  // A token minted before a scope shipped keeps working for the scopes it does hold, but
+  // every call needing the missing one returns 403. Disarm only when the connection can do
+  // NOTHING for us: a contacts-only grant is still a working connection, and disarming it
+  // for lacking calendar would silently stop a sync that was fine.
+  const wantsCalendar = hasGoogleCalendarScope(conn.scopes);
+  const wantsContacts = hasGoogleContactsScope(conn.scopes);
+  if (!wantsCalendar && !wantsContacts) {
+    stats.skippedNoScope++;
+    await disarmSync(
+      conn.provider,
+      conn.id,
+      "Calendar and contacts access not granted — reconnect Google to enable sync",
+      now
+    ).catch(() => null);
+    return;
+  }
+
+  // The Google page's per-feature switches gate each lane on its own; the connection stays
+  // armed with both off, so the mailbox pass below (its own setting) keeps running.
+  const lanes = await laneSwitches("google", conn.id);
+
+  try {
+    await syncGoogleConnection(conn, stats, now, deps, {
+      wantsCalendar: wantsCalendar && lanes.calendar,
+      wantsContacts: wantsContacts && lanes.contacts,
+    });
+    stats.synced++;
+    // Best-effort and deliberately after the calendar: a mailbox pass that throws must not
+    // cost the connection its calendar sync, and the two answer different questions.
+    await syncMailboxActivity(conn, stats).catch(() => {
+      stats.mailboxesSkipped++;
+    });
+  } catch (err) {
+    stats.failed++;
+    // A dead grant is permanent until the user reconnects; anything else is worth retrying.
+    // `getValidAccessToken` has already written `needs_reauth` (and nulled `next_sync_at`)
+    // in the ReauthRequiredError case, so this only records the reason.
+    const retryable = !(err instanceof ReauthRequiredError);
+    // A dead grant is the person's to fix and the bell already tells them; anything else is
+    // a fault worth seeing across users, which a per-row `sync_error` never is.
+    if (retryable) {
+      reportError(err, { where: "job.sync.gcal", userId: conn.userId, level: "warning", extra: { connectionId: conn.id } });
+    }
+    await markSyncResult(conn.provider, conn.id, {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      retryable,
+    }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
+    trackSyncGaveUp(conn, err, retryable, now);
+  }
+}
+
+/** One claimed Microsoft connection, start to finish: the cron pool and Sync now both run this. */
+async function runMicrosoftClaimed(conn: ClaimedConnection, stats: SyncRunStats, now: Date, deps: SyncDeps): Promise<void> {
+  if (await skipExtraConnection(conn, now, stats)) return;
+
+  // Same reasoning as the Google branch: a token minted before the calendar scope
+  // shipped is still valid for Outlook Contacts and will keep working, but every
+  // Calendar call it makes returns 403. Disarm only when the connection can do NOTHING
+  // for us — a contacts-only grant is still a working connection.
+  const wantsCalendar = hasMicrosoftCalendarScope(conn.scopes);
+  const wantsContacts = hasMicrosoftContactsScope(conn.scopes);
+  if (!wantsCalendar && !wantsContacts) {
+    stats.skippedNoScope++;
+    await disarmSync(
+      conn.provider,
+      conn.id,
+      "Calendar and contacts access not granted — reconnect Outlook to enable sync",
+      now
+    ).catch(() => null);
+    return;
+  }
+
+  try {
+    const lanes = await laneSwitches("microsoft", conn.id);
+    await syncMicrosoftConnection(conn, stats, now, deps, {
+      wantsCalendar: wantsCalendar && lanes.calendar,
+      wantsContacts: wantsContacts && lanes.contacts,
+    });
+    stats.synced++;
+  } catch (err) {
+    stats.failed++;
+    const retryable = !(err instanceof ReauthRequiredError);
+    if (retryable) {
+      reportError(err, { where: "job.sync.outlook-calendar", userId: conn.userId, level: "warning", extra: { connectionId: conn.id } });
+    }
+    await markSyncResult(conn.provider, conn.id, {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      retryable,
+    }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
+    trackSyncGaveUp(conn, err, retryable, now);
+  }
+}
+
+/**
+ * Sync now, from the account page: run one connection the person just claimed with
+ * `claimConnectionNow`, in the same body the cron runs it in.
+ */
+export async function runClaimedConnectionNow(conn: ClaimedConnection, deps: SyncDeps = DEFAULT_DEPS): Promise<void> {
+  const stats = emptyRunStats();
+  const now = new Date();
+  if (conn.provider === "google") await runGoogleClaimed(conn, stats, now, deps);
+  else if (conn.provider === "microsoft") await runMicrosoftClaimed(conn, stats, now, deps);
+}
+
 /**
  * One scheduler pass.
  *
@@ -1210,58 +1340,7 @@ export async function runSyncPass(
       return;
     }
 
-    if (await skipExtraConnection(conn, now, stats)) return;
-
-    // A token minted before a scope shipped keeps working for the scopes it does hold, but
-    // every call needing the missing one returns 403. Disarm only when the connection can do
-    // NOTHING for us: a contacts-only grant is still a working connection, and disarming it
-    // for lacking calendar would silently stop a sync that was fine.
-    const wantsCalendar = hasGoogleCalendarScope(conn.scopes);
-    const wantsContacts = hasGoogleContactsScope(conn.scopes);
-    if (!wantsCalendar && !wantsContacts) {
-      stats.skippedNoScope++;
-      await disarmSync(
-        conn.provider,
-        conn.id,
-        "Calendar and contacts access not granted — reconnect Google to enable sync",
-        now
-      ).catch(() => null);
-      return;
-    }
-
-    // The Google page's per-feature switches gate each lane on its own; the connection stays
-    // armed with both off, so the mailbox pass below (its own setting) keeps running.
-    const lanes = await googleLaneSwitches(conn.id);
-
-    try {
-      await syncGoogleConnection(conn, stats, now, deps, {
-        wantsCalendar: wantsCalendar && lanes.calendar,
-        wantsContacts: wantsContacts && lanes.contacts,
-      });
-      stats.synced++;
-      // Best-effort and deliberately after the calendar: a mailbox pass that throws must not
-      // cost the connection its calendar sync, and the two answer different questions.
-      await syncMailboxActivity(conn, stats).catch(() => {
-        stats.mailboxesSkipped++;
-      });
-    } catch (err) {
-      stats.failed++;
-      // A dead grant is permanent until the user reconnects; anything else is worth retrying.
-      // `getValidAccessToken` has already written `needs_reauth` (and nulled `next_sync_at`)
-      // in the ReauthRequiredError case, so this only records the reason.
-      const retryable = !(err instanceof ReauthRequiredError);
-      // A dead grant is the person's to fix and the bell already tells them; anything else is
-      // a fault worth seeing across users, which a per-row `sync_error` never is.
-      if (retryable) {
-        reportError(err, { where: "job.sync.gcal", userId: conn.userId, level: "warning", extra: { connectionId: conn.id } });
-      }
-      await markSyncResult(conn.provider, conn.id, {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        retryable,
-      }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
-      trackSyncGaveUp(conn, err, retryable, now);
-    }
+    await runGoogleClaimed(conn, stats, now, deps);
   });
 
   // Microsoft: the same lane as Google above — same pool, same start cutoff, same reporting.
@@ -1282,41 +1361,7 @@ export async function runSyncPass(
       return;
     }
 
-    if (await skipExtraConnection(conn, now, stats)) return;
-
-    // Same reasoning as the Google branch: a token minted before the calendar scope
-    // shipped is still valid for Outlook Contacts and will keep working, but every
-    // Calendar call it makes returns 403. Disarm only when the connection can do NOTHING
-    // for us — a contacts-only grant is still a working connection.
-    const wantsCalendar = hasMicrosoftCalendarScope(conn.scopes);
-    const wantsContacts = hasMicrosoftContactsScope(conn.scopes);
-    if (!wantsCalendar && !wantsContacts) {
-      stats.skippedNoScope++;
-      await disarmSync(
-        conn.provider,
-        conn.id,
-        "Calendar and contacts access not granted — reconnect Outlook to enable sync",
-        now
-      ).catch(() => null);
-      return;
-    }
-
-    try {
-      await syncMicrosoftConnection(conn, stats, now, deps, { wantsCalendar, wantsContacts });
-      stats.synced++;
-    } catch (err) {
-      stats.failed++;
-      const retryable = !(err instanceof ReauthRequiredError);
-      if (retryable) {
-        reportError(err, { where: "job.sync.outlook-calendar", userId: conn.userId, level: "warning", extra: { connectionId: conn.id } });
-      }
-      await markSyncResult(conn.provider, conn.id, {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        retryable,
-      }).catch(reportAndContinue({ where: "job.sync.mark-result", userId: conn.userId }, null));
-      trackSyncGaveUp(conn, err, retryable, now);
-    }
+    await runMicrosoftClaimed(conn, stats, now, deps);
   });
 
   // Apple: the same lane shape as Google and Microsoft above, with no scope check — Apple

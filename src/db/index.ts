@@ -982,6 +982,8 @@ CREATE TABLE IF NOT EXISTS outlook_connections (
   sync_started_at timestamptz,
   sync_error text,
   sync_failures integer NOT NULL DEFAULT 0,
+  calendar_sync_enabled integer NOT NULL DEFAULT 1,
+  contacts_sync_enabled integer NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2928,11 +2930,15 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // rows are converted to both-off and re-armed). Rescanned every remote ref and worktree on
 // Nov 6 2026: 191 (main) was the highest claimed anywhere.
 //
-// 193 (built as 190) = chat_messages.follow_ups: the rule-derived next questions an answer
-// offered, stored with it so the chips survive a reload and a regenerate instead of living only
-// on the stream's `done` event. Renumbered 190 → 193 on Nov 6 2026 when merging main at 192: a
-// database stamped 192 would never run a 190.
-export const SCHEMA_VERSION = 193;
+// 194 = outlook_connections.calendar_sync_enabled + contacts_sync_enabled: the same per-feature
+// switches for the Microsoft page (paused rows converted the same way). Rescanned every remote
+// ref on Nov 6 2026: 193 is claimed by claude/chat-loading-updates-pane (unmerged), so 194.
+//
+// 196 (built as 190, then 193) = chat_messages.follow_ups: the rule-derived next questions an
+// answer offered, stored with it so the chips survive a reload and a regenerate instead of living
+// only on the stream's `done` event. Renumbered 193 → 196 on Nov 6 2026 when merging main at 194:
+// a database stamped 194 would never run a 193. NOT 195: claude/gallant-ramanujan-hh5j0s claims it.
+export const SCHEMA_VERSION = 196;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4830,7 +4836,7 @@ const alters = [
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS feedback_note text`,
   // Schema v182: whether a chat answer answered (`@/lib/chat-abstention`).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS answer_outcome text`,
-  // Schema v193: an answer's follow-up chips, so they survive a reload (`deriveFollowUps`).
+  // Schema v196: an answer's follow-up chips, so they survive a reload (`deriveFollowUps`).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS follow_ups jsonb DEFAULT '[]'`,
   // Schema v183: chat may apply its small, reversible changes itself (`@/lib/chat-auto-apply`).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_auto_apply integer NOT NULL DEFAULT 0`,
@@ -4956,6 +4962,10 @@ const alters = [
   `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS calendar_sync_enabled integer NOT NULL DEFAULT 1`,
   `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS contacts_sync_enabled integer NOT NULL DEFAULT 1`,
   `UPDATE gmail_connections SET calendar_sync_enabled = 0, contacts_sync_enabled = 0, sync_status = 'idle', next_sync_at = now() WHERE sync_status = 'paused'`,
+  // v194: the same split for Microsoft. Its Meetings switch paused the whole Outlook row too.
+  `ALTER TABLE outlook_connections ADD COLUMN IF NOT EXISTS calendar_sync_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE outlook_connections ADD COLUMN IF NOT EXISTS contacts_sync_enabled integer NOT NULL DEFAULT 1`,
+  `UPDATE outlook_connections SET calendar_sync_enabled = 0, contacts_sync_enabled = 0, sync_status = 'idle', next_sync_at = now() WHERE sync_status = 'paused'`,
   // Arm the connections that already exist.
   //
   // `sync_status IS NULL` is the load-bearing half of this predicate, not decoration.

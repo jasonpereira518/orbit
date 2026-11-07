@@ -3512,6 +3512,9 @@ export const outlookConnections = pgTable(
     /** Last time this connection produced a usable access token. */
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     ...syncStateColumns(),
+    /** The Microsoft page's per-feature switches, as on `gmailConnections` (v194). */
+    calendarSyncEnabled: integer("calendar_sync_enabled").default(1).notNull(),
+    contactsSyncEnabled: integer("contacts_sync_enabled").default(1).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -3727,7 +3730,7 @@ export const chatMessages = pgTable(
     answerOutcome: text("answer_outcome").$type<"answered" | "partial" | "abstained">(),
     /**
      * The next questions this answer offered — rule-derived by `deriveFollowUps`, never
-     * model-written. Stored so the chips survive a reload; empty on rows from before v193.
+     * model-written. Stored so the chips survive a reload; empty on rows from before v196.
      */
     followUps: jsonb("follow_ups").$type<string[]>().default([]),
     /**

@@ -26,6 +26,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsSection } from "@/components/settings/settings-section";
+import { LoadError } from "@/components/settings/account-page";
+import { StatusDot } from "@/components/settings/integration-ui";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -150,7 +152,7 @@ export function WebhookSettings() {
       description="Have Orbit POST to your own endpoint — or a Zapier or Make hook — when something happens."
     >
       {revealedSecret ? (
-        <div className="space-y-2 rounded-lg border p-3">
+        <div className="space-y-2 rounded-xl border p-4">
           <p className="text-sm font-medium">Signing secret</p>
           <p className="text-muted-foreground text-xs">
             Shown once. Your receiver needs it to verify the{" "}
@@ -213,12 +215,7 @@ export function WebhookSettings() {
 
       <div className="space-y-2">
         {error ? (
-          <div className="text-sm">
-            <p className="text-destructive">{error}</p>
-            <Button size="sm" variant="ghost" onClick={load}>
-              Retry
-            </Button>
-          </div>
+          <LoadError what="webhooks" onRetry={load} />
         ) : endpoints === null ? (
           <div className="space-y-2" aria-busy="true" aria-label="Loading your webhooks">
             <Skeleton className="h-14 w-full rounded-lg" />
@@ -230,32 +227,20 @@ export function WebhookSettings() {
           endpoints.map((endpoint) => (
             <div
               key={endpoint.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
             >
               <div className="min-w-0">
                 <p className="truncate font-mono text-sm">{endpoint.url}</p>
                 <p className="text-muted-foreground text-xs">
                   {endpoint.eventTypes.join(", ") || "no events"}
                 </p>
-                <p className="text-xs">
-                  {endpoint.status === "active" ? (
-                    <span className="text-muted-foreground">Active</span>
-                  ) : endpoint.status === "pending" ? (
-                    <span className="text-destructive">
-                      Not verified — Orbit could not reach it
-                    </span>
-                  ) : (
-                    <span className="text-destructive">
-                      Disabled{endpoint.disabledReason ? ` — ${endpoint.disabledReason}` : ""}
-                    </span>
-                  )}
-                </p>
+                <EndpointStatus status={endpoint.status} reason={endpoint.disabledReason} />
               </div>
               <div className="flex items-center gap-2">
                 {endpoint.status === "active" ? null : (
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     disabled={pending}
                     onClick={() => onRetry(endpoint.id)}
                   >
@@ -295,5 +280,21 @@ export function WebhookSettings() {
         )}
       </div>
     </SettingsSection>
+  );
+}
+
+/** The same dot-and-words status line the account pages use. */
+function EndpointStatus({ status, reason }: { status: string; reason?: string | null }) {
+  const [state, detail] =
+    status === "active"
+      ? (["on", "Active"] as const)
+      : status === "pending"
+        ? (["partial", "Not verified — Orbit couldn’t reach it"] as const)
+        : (["partial", `Off${reason ? ` — ${reason}` : ""}`] as const);
+  return (
+    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <StatusDot status={{ state, detail }} />
+      {detail}
+    </p>
   );
 }

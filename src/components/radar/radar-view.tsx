@@ -22,6 +22,7 @@ import { KIND_SECTION_TITLES, RECOMMENDATION_KINDS, type RecommendationKind } fr
 import { toast } from "@/lib/toast";
 import { syncTimeZoneCookie } from "@/lib/tz-cookie";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 export type RadarAutopilotItem = {
   id: string;
@@ -66,10 +67,6 @@ function arrivalMode(linked: boolean): Mode {
   if (linked) return "focus";
   const phone = window.matchMedia?.("(max-width: 639px)").matches === true;
   return storedMode() ?? (phone ? "focus" : "list");
-}
-
-function prefersReducedMotion() {
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
 export function RadarView(props: RadarViewProps) {
