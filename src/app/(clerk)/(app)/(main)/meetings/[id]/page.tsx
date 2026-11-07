@@ -210,6 +210,7 @@ export default async function MeetingDetailPage({
           reminderStatus={batch.reminderStatus}
           reminderDetails={batch.reminderDetails}
           contactNames={batch.contactNames}
+          contactAvatars={batch.contactAvatars}
         />
       )}
 

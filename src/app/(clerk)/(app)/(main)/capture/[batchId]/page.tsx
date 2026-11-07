@@ -1,11 +1,11 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, BellRing, CalendarDays, Users } from "lucide-react";
+import { ArrowLeft, BellRing, Users } from "lucide-react";
 import { getNoteBatch } from "@/actions/note-batches";
 import { CaptureSourceCard, CapturedAt } from "@/components/capture/capture-source-card";
 import { CAPTURE_METHOD_META } from "@/components/capture/capture-source-meta";
-import { NoteBatchActions, NoteBatchResultView } from "@/components/capture/note-batch-result";
+import { NoteBatchResultView } from "@/components/capture/note-batch-result";
 import { Badge } from "@/components/ui/badge";
 import { requireUserId } from "@/lib/auth";
 import { captureMethodFor } from "@/lib/capture-history";
@@ -57,42 +57,7 @@ export default async function NoteBatchPage({
         <ArrowLeft className="size-3.5" aria-hidden /> Capture
       </Link>
 
-      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-        <div className="min-w-0 flex-1 space-y-2">
-          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">{title}</h1>
-          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <CalendarDays className="size-4" aria-hidden />
-              <CapturedAt iso={new Date(batch.createdAt).toISOString()} />
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <MethodIcon className="size-4" aria-hidden /> {method.label}
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Users className="size-4" aria-hidden /> {plural(names.length, "person", "people")}
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <BellRing className="size-4" aria-hidden /> {plural(batch.result.reminders.length, "reminder", "reminders")}
-            </span>
-            {batch.status === "undone" && <Badge variant="secondary">Undone</Badge>}
-          </p>
-        </div>
-        <NoteBatchActions batchId={batch.id} status={batch.status} />
-      </div>
-
-      <CaptureSourceCard
-        kinds={kinds}
-        sourceText={batch.sourceText}
-        photos={batch.photos.map((p) => ({
-          id: p.id,
-          fileName: p.fileName,
-          width: p.width,
-          height: p.height,
-        }))}
-      />
-      {/* Keyed on the status so an undo from the header menu re-seeds the reminder states. */}
       <NoteBatchResultView
-        key={batch.status}
         batchId={batch.id}
         status={batch.status}
         anchorIso={isoDay(new Date(batch.anchorDate))}
@@ -101,7 +66,37 @@ export default async function NoteBatchPage({
         reminderStatus={batch.reminderStatus}
         reminderDetails={batch.reminderDetails}
         contactNames={batch.contactNames}
-      />
+        contactAvatars={batch.contactAvatars}
+        heading={
+          <div className="space-y-2">
+            <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">{title}</h1>
+            <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <CapturedAt iso={new Date(batch.createdAt).toISOString()} />
+              <span className="inline-flex items-center gap-1.5">
+                <MethodIcon className="size-4" aria-hidden /> {method.label}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <Users className="size-4" aria-hidden /> {plural(names.length, "person", "people")}
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <BellRing className="size-4" aria-hidden /> {plural(batch.result.reminders.length, "reminder", "reminders")}
+              </span>
+              {batch.status === "undone" && <Badge variant="secondary">Undone</Badge>}
+            </p>
+          </div>
+        }
+      >
+        <CaptureSourceCard
+          kinds={kinds}
+          sourceText={batch.sourceText}
+          photos={batch.photos.map((p) => ({
+            id: p.id,
+            fileName: p.fileName,
+            width: p.width,
+            height: p.height,
+          }))}
+        />
+      </NoteBatchResultView>
     </div>
   );
 }

@@ -76,18 +76,22 @@ function ResultSection({
  * menu opens an inline confirm on its own line beside the trigger (so the parent should be a
  * wrapping flex row), and focus moves to it and back, as every two-step delete in the app does.
  */
-export function NoteBatchActions({
+function NoteBatchActions({
   batchId,
   status,
+  pending,
+  start,
   onUndone,
 }: {
   batchId: string;
   status: "saved" | "undone";
+  /** The view's transition, so an undo or delete in flight also holds the rows' buttons. */
+  pending: boolean;
+  start: React.TransitionStartFunction;
   /** After a successful undo, before the refresh lands. */
-  onUndone?: () => void;
+  onUndone: () => void;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const deleteFocus = useConfirmFocus(confirmingDelete ? "delete" : null);
   // The menu hands focus back to its trigger as it closes; when Delete opened the confirm,
@@ -98,7 +102,7 @@ export function NoteBatchActions({
     start(async () => {
       try {
         const out = await undoNoteBatch(batchId);
-        onUndone?.();
+        onUndone();
         toast.success(`Undone: ${out.remindersDismissed} reminders dismissed`);
         router.refresh();
       } catch (err) {
@@ -180,13 +184,20 @@ export function NoteBatchResultView({
   reminderStatus,
   reminderDetails,
   contactNames,
+  contactAvatars,
   embedded = false,
+  heading,
+  children,
 }: {
   /**
    * Inside a meeting's page: that page already shows the summary and its own way back, but
    * no capture header, so the view brings its own heading with the Undo/Delete menu.
    */
   embedded?: boolean;
+  /** The page's own title block, beside the ⋯ menu. Embedded views default to theirs. */
+  heading?: React.ReactNode;
+  /** Shown between the heading and the results: the capture's source card. */
+  children?: React.ReactNode;
   batchId: string;
   status: "saved" | "undone";
   anchorIso: string;
@@ -195,6 +206,7 @@ export function NoteBatchResultView({
   reminderStatus: Record<string, string>;
   reminderDetails: Record<string, NoteBatchReminderDetail>;
   contactNames: Record<string, string>;
+  contactAvatars: Record<string, string | null>;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -236,17 +248,23 @@ export function NoteBatchResultView({
   const editing = editingId ? result.reminders.find((r) => r.id === editingId) ?? null : null;
 
   return (
-    <div className="space-y-4">
-      {/* Inside a meeting's page, which has no capture header: the ⋯ sits on this heading. */}
-      {embedded && (
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <h2 className="font-[family-name:var(--font-display)] text-xl text-ink">Saved to your network</h2>
-            {status === "undone" && <Badge variant="secondary">Undone</Badge>}
-          </div>
-          <NoteBatchActions batchId={batchId} status={status} onUndone={markUndone} />
+    <div className={embedded ? "space-y-4" : "space-y-6"}>
+      {/* The heading row owns the ⋯ so Undo and Delete share this view's transition. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0 flex-1">
+          {heading ?? (
+            <div className="flex items-center gap-2">
+              <h2 className="font-[family-name:var(--font-display)] text-xl text-ink">Saved to your network</h2>
+              {status === "undone" && <Badge variant="secondary">Undone</Badge>}
+            </div>
+          )}
         </div>
-      )}
+        <NoteBatchActions batchId={batchId} status={status} pending={pending} start={start} onUndone={markUndone} />
+      </div>
+
+      {children}
+
+      <div className="space-y-4">
 
       {result.meeting && !embedded && (
         <MeetingSummaryCard meeting={result.meeting} sessionId={result.meeting.sessionId} />
@@ -258,7 +276,7 @@ export function NoteBatchResultView({
         count={result.participants.length}
       >
         {result.participants.length === 0 ? (
-          <EmptyState headingLevel={3} title="No one was saved as a contact from this batch." className="py-4" />
+          <EmptyState description="No one was saved as a contact from this batch." className="py-4" />
         ) : (
           <ul className="space-y-2">
             {result.participants.map((p) => (
@@ -267,7 +285,13 @@ export function NoteBatchResultView({
                 className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-border/60 px-3 py-2 text-sm"
               >
                 <span className="flex min-w-0 items-center gap-3">
-                  <ContactAvatar contactId={p.contactId} fullName={p.name} size="sm" className="size-8 shrink-0" />
+                  <ContactAvatar
+                    contactId={p.contactId}
+                    fullName={p.name}
+                    profileImageUrl={contactAvatars[p.contactId]}
+                    size="sm"
+                    className="size-8 shrink-0"
+                  />
                   <IntentLink href={`/contacts/${p.contactId}`} className="truncate font-medium text-primary hover:underline">
                     {p.name}
                   </IntentLink>
@@ -393,7 +417,7 @@ export function NoteBatchResultView({
         count={result.reminders.length}
       >
         {result.reminders.length === 0 ? (
-          <EmptyState headingLevel={3} title="No reminders came out of these notes." className="py-4" />
+          <EmptyState description="No reminders came out of these notes." className="py-4" />
         ) : (
           <ul className="space-y-2">
             {result.reminders.map((r) => {
@@ -456,6 +480,8 @@ export function NoteBatchResultView({
           }}
         />
       )}
+
+      </div>
 
       {!embedded && (
         <div className="flex gap-2">

@@ -4,7 +4,7 @@ import { useCallback, useState, useSyncExternalStore } from "react";
 import { format } from "date-fns";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronLeft, ChevronRight, Copy, Download, ExternalLink } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Copy, Download, ExternalLink } from "lucide-react";
 import type { CaptureSourceKind } from "@/lib/note-batches";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -68,13 +68,18 @@ function useHydrated() {
 }
 
 /**
- * When a capture was saved, in the reader's own timezone. Nothing until hydrated: the
+ * When a capture was saved, in the reader's own timezone, with its meta-row icon. Nothing until hydrated: the
  * server does not know that timezone, and a server-rendered time would be wrong or mismatch.
  */
 export function CapturedAt({ iso }: { iso: string }) {
   const hydrated = useHydrated();
   if (!hydrated) return null;
-  return <time dateTime={iso}>{format(new Date(iso), "EEE, MMM d, yyyy 'at' h:mm a")}</time>;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <CalendarDays className="size-4" aria-hidden />
+      <time dateTime={iso}>{format(new Date(iso), "EEE, MMM d, yyyy 'at' h:mm a")}</time>
+    </span>
+  );
 }
 
 /**

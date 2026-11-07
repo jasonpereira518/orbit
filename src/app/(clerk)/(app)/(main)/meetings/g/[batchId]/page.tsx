@@ -104,6 +104,7 @@ export default async function GranolaMeetingPage({
           reminderStatus={batch.reminderStatus}
           reminderDetails={batch.reminderDetails}
           contactNames={batch.contactNames}
+          contactAvatars={batch.contactAvatars}
         />
       )}
     </div>
