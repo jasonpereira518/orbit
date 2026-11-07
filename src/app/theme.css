@@ -925,11 +925,12 @@
   will-change: scale, opacity;
 }
 
-/* Exit accelerates into the button instead of easing out of the gesture. Duration stays on
- * the shared `slow`: the tier note calls exits `fast`, but that is meant for dismissals —
- * this one is a journey back to a specific point, and has to be readable to mean anything. */
+/* Exit accelerates into the button instead of easing out of the gesture. 220ms, between
+ * `base` and `slow`: still a readable journey back to the button, but at the full `slow`
+ * the ease-in's quiet first half made closing feel like it lagged the click. */
 .liquid-glass.liquid-glass-panel[data-ending-style] {
   transition-timing-function: var(--ease-panel-exit);
+  transition-duration: 220ms;
 }
 
 /* `.liquid-glass > *` forces `position: relative` on every direct child so they stack

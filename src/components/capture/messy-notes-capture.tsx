@@ -369,7 +369,7 @@ export function MessyNotesCapture({
             field box — anchors to the notes box rather than to the whole card. Below it
             rather than above: this box is most of a screen tall and you type at the bottom
             of it, so a menu above the box would open a long way from the caret. */}
-        <div className="relative mt-2">
+        <div className="group/notes relative mt-2">
           <MentionComposer
             className={FIELD_SHELL}
             textareaRef={notesRef}
@@ -395,7 +395,8 @@ export function MessyNotesCapture({
           {!ingest.notes && (
             <p
               aria-hidden
-              className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center px-10 text-center text-sm text-muted-foreground"
+              // Gone the moment the box is focused, not only once text arrives.
+              className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center px-10 text-center text-sm text-muted-foreground transition-opacity duration-fast group-has-[textarea:focus]/notes:opacity-0"
             >
               Who did you meet? Jot it down messy.
             </p>
@@ -407,7 +408,14 @@ export function MessyNotesCapture({
             >
               <Info className="size-4" />
             </PopoverTrigger>
-            <PopoverContent side="bottom" align="end" className="w-80 space-y-2 text-xs leading-relaxed">
+            <PopoverContent
+              side="bottom"
+              align="end"
+              // Below the button, or above it when there's no room: never beside it, and
+              // shifted rather than flipped along the edge, so scrolling only ever moves it
+              // between two spots.
+              collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
+              className="w-80 space-y-2 text-xs leading-relaxed">
               <p className="text-sm font-medium text-foreground">Tips</p>
               <p className="text-muted-foreground">
                 Type <span className="font-medium text-foreground">@</span> to name someone already

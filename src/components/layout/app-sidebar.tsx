@@ -275,7 +275,10 @@ export function AppSidebar({
       </div>
       )}
 
-      <nav aria-label="Main" className="relative flex min-h-0 flex-1 flex-col gap-0.5 -my-1 overflow-y-auto overscroll-contain px-1.5 py-1 [scrollbar-width:thin] lg:px-2">
+      <nav aria-label="Main" className="flex min-h-0 flex-1 flex-col">
+        {/* Only the page list scrolls; Settings stays pinned below it, so a short window
+            never clips it. `-mt-1 pt-1` leaves room for the active pill's ring at the top. */}
+        <div className="relative flex min-h-0 flex-1 flex-col gap-0.5 -mt-1 overflow-y-auto overscroll-contain px-1.5 pb-1 pt-1 [scrollbar-width:thin] lg:px-2">
         {core.map((item) => (
           <SidebarNavLink
             soon={comingSoon}
@@ -309,10 +312,9 @@ export function AppSidebar({
           />
         ))}
 
-        {/* `mt-auto` drops Settings to the foot of the nav, clear of the Coming soon group.
-            `py-2` keeps it off the account divider below and holds the same gap
-            above when a short viewport leaves no slack for `mt-auto` to eat. */}
-        <div className="mt-auto py-2">
+        </div>
+
+        <div className="shrink-0 px-1.5 py-2 lg:px-2">
           <SidebarNavLink
             soon={comingSoon}
             item={APP_NAV_SETTINGS}

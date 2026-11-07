@@ -516,10 +516,11 @@ export function MentionComposer({
             "relative z-[1]",
             boxClassName,
             textareaClassName,
-            // The layer paints the glyphs while live. The caret stays the field's, and a
-            // selection repaints its own text so selected words never vanish (chat's mirror
-            // does the same).
-            liveMarkdown && "text-transparent caret-ink selection:text-foreground",
+            // The layer paints the glyphs while live; the caret stays the field's. A selection
+            // keeps its text transparent and only tints the background: repainting the glyphs
+            // drew them twice (plain over faux-bold/italic), which smudged selected words. The
+            // tint is translucent, so the layer's styled text shows through it.
+            liveMarkdown && "text-transparent caret-ink selection:bg-primary/20 selection:text-transparent",
           )}
           {...field}
           // The layer always reserves a scrollbar gutter; the field must too, or a classic
