@@ -22,9 +22,11 @@
  * Scripts run SEQUENTIALLY: PGlite is single-writer, and the pglite tier shares one
  * throwaway directory per run so the DDL bootstraps once, not fifty times.
  *
- * `--shard i/n` runs every n-th script (1-based i) so CI can split the suite across
+ * `--shard i/n` runs one share of the suite (1-based i) so CI can split it across
  * machines. Each shard is its own process with its own PGlite directory, so the
  * single-writer rule still holds, and the shards together cover every script exactly once.
+ * The shares are balanced by how long each script took last time (scripts/smoke-timings.json,
+ * see `shardOf`): a plain every-n-th split left the slowest shard ~70% over the fastest.
  * `--list` prints the selection and exits, for checking a partition without running it.
  *
  * Run: npx tsx scripts/run-smoke.ts [--ci | --bugs] [--check] [--shard i/n] [--list] [--only <name>...]
@@ -761,6 +763,37 @@ function check(): string[] {
   return problems;
 }
 
+/**
+ * Seconds each script took on a CI runner, from one whole-suite run's summary table. Only the
+ * shard split reads it, so a stale or missing entry costs balance, never coverage. Refresh it
+ * when the split drifts: run the suite in CI and copy each `ok  smoke-x  12.3s` row.
+ */
+const TIMINGS: Record<string, number> = existsSync(join("scripts", "smoke-timings.json"))
+  ? JSON.parse(readFileSync(join("scripts", "smoke-timings.json"), "utf8"))
+  : {};
+const UNTIMED_SECONDS = 1; // a new script, until the table is refreshed
+
+/**
+ * This shard's scripts, in manifest order. Longest script first, each onto the shard with the
+ * least time so far (the classic greedy split), so the slowest shard ends within one script of
+ * the average. Every shard runs this on the same inputs and so agrees on the whole partition,
+ * which is what makes the shards cover each script exactly once. With no timings at all every
+ * script weighs the same and it falls back to an even count.
+ */
+function shardOf(names: string[], total: number, index: number): string[] {
+  const load = Array<number>(total).fill(0);
+  const mine = new Set<string>();
+  const byWeight = names
+    .map((name, i) => ({ name, i, seconds: TIMINGS[name] ?? UNTIMED_SECONDS }))
+    .sort((a, b) => b.seconds - a.seconds || a.i - b.i);
+  for (const { name, seconds } of byWeight) {
+    const lightest = load.indexOf(Math.min(...load));
+    load[lightest] += seconds;
+    if (lightest === index - 1) mine.add(name);
+  }
+  return names.filter((name) => mine.has(name));
+}
+
 function main() {
   const args = process.argv.slice(2);
   const ci = args.includes("--ci");
@@ -791,14 +824,12 @@ function main() {
   console.log(`run-smoke: manifest covers ${Object.keys(MANIFEST).length} scripts; structure ok.`);
   if (checkOnly) process.exit(0);
 
-  const selected = Object.entries(MANIFEST)
+  const everyScript = Object.entries(MANIFEST)
     .filter(([name, tier]) =>
       only ? only.includes(name) : bugs ? tier === "bug" : ci ? tier !== "manual" && tier !== "bug" : tier !== "bug"
     )
-    .map(([name]) => name)
-    // Round-robin over manifest order, so the few long scripts (see TIMEOUT_MS) land in
-    // different shards rather than one shard inheriting a whole block of them.
-    .filter((_, i) => !shard || i % shard.total === shard.index - 1);
+    .map(([name]) => name);
+  const selected = shard ? shardOf(everyScript, shard.total, shard.index) : everyScript;
   if (shard) console.log(`run-smoke: shard ${shard.index}/${shard.total} — ${selected.length} scripts.`);
   if (listOnly) {
     console.log(selected.join("\n"));
