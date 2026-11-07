@@ -2,13 +2,96 @@
 
 /** Rows the Google and Microsoft account pages share: a one-setting switch and the calendar picker. */
 
-import { useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FeatureRow } from "@/components/settings/account-page";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { cn } from "@/lib/utils";
+
+/**
+ * Sync now for an account page: run `start` (an action that answers), then re-read with
+ * `refresh` every two seconds until the last-synced time moves past the click, or a minute
+ * has gone by. `syncing` covers both the call and the wait.
+ */
+export function useSyncNow(
+  start: () => Promise<{ ok: true } | { ok: false; error: string }>,
+  lastSyncedAt: string | Date | null | undefined,
+  refresh: () => void
+) {
+  const [pending, run] = useTransition();
+  const [since, setSince] = useState<number | null>(null);
+  const last = lastSyncedAt ? new Date(lastSyncedAt).getTime() : 0;
+  const waiting = since !== null && last < since;
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => {
+      if (Date.now() - since > 60_000) setSince(null);
+      else refresh();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [waiting, since, refresh]);
+  return {
+    syncing: pending || waiting,
+    sync: () =>
+      run(async () => {
+        try {
+          const result = await start();
+          if (!result.ok) {
+            toast.error(result.error);
+            return;
+          }
+          setSince(Date.now());
+        } catch (err) {
+          toast.error(friendlyError(err, "Couldn’t start a sync — try again?"));
+        }
+      }),
+  };
+}
+
+/**
+ * One choice of a few, side by side: LinkedIn's refresh interval, Granola's which-notes, the
+ * Assistants page's Claude or ChatGPT. A radiogroup, filled in the page's `--primary`.
+ */
+export function SegmentedControl<T extends string | number | boolean>({
+  label,
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  /** Names the group for screen readers. */
+  label: string;
+  options: readonly { value: T; label: React.ReactNode }[];
+  value: T;
+  onChange: (value: T) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div role="radiogroup" aria-label={label} className="inline-flex flex-wrap gap-1 rounded-xl bg-muted/60 p-1">
+      {options.map((o) => (
+        <button
+          key={String(o.value)}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          disabled={disabled}
+          onClick={() => value !== o.value && onChange(o.value)}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium outline-none transition-colors duration-fast ease-house focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50",
+            value === o.value
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /**
  * A row whose whole job is one setting. `save` answers like the actions here do (an
