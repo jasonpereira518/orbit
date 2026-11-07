@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { skipAboutStep, skipConnectIfShown, untilHydrated } from "./helpers";
 
 /**
- * Quick setup, end to end, on an empty account. The e2e account runs on the Gemini stub key
+ * Quick setup, end to end, on an empty account. The e2e account runs on the Anthropic stub key
  * (so the AI key step is skipped) with no Google or Microsoft client configured (so the
  * connect step is skipped too): the walk is welcome → about (skipped) → people → overview.
  * The LinkedIn export is a dashboard card now, not a step.

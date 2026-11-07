@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 /**
  * Browser flows against `next dev` in demo mode: no Clerk keys (every request is demo-user),
- * a throwaway PGlite, an empty account (ORBIT_DEMO_DATA=off) and a local Gemini stub.
+ * a throwaway PGlite, an empty account (ORBIT_DEMO_DATA=off) and a local Anthropic stub.
  * Stop any dev server in this worktree first — two `next dev`s sharing one `.next` wedge.
  */
 const PORT = Number(process.env.E2E_PORT ?? 3001);
@@ -51,10 +51,10 @@ export default defineConfig({
         CLERK_SECRET_KEY: "",
         ORBIT_DEMO_DATA: "off",
         ORBIT_PGLITE_DIR: PGLITE_DIR,
-        GEMINI_API_KEY: "e2e-stub-key",
+        GEMINI_API_KEY: "",
         OPENAI_API_KEY: "",
-        ANTHROPIC_API_KEY: "",
-        GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${AI_STUB_PORT}`,
+        ANTHROPIC_API_KEY: "e2e-stub-key",
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${AI_STUB_PORT}`,
         NEXT_TELEMETRY_DISABLED: "1",
         // From the shell only, never a checkout's .env.local, so a local run renders /upgrade
         // exactly as CI does. Export test-mode keys to run the Checkout flow.

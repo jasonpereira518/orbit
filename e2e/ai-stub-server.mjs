@@ -1,6 +1,7 @@
 /**
- * A stand-in for the Gemini REST API during Playwright runs. The dev server reaches it via
- * GOOGLE_GEMINI_BASE_URL (read by @google/genai), so the app's real provider code runs and
+ * A stand-in for Anthropic's Messages API during Playwright runs: Anthropic is the first
+ * managed provider, and Orbit never runs a managed Gemini key. The dev server reaches it via
+ * ANTHROPIC_BASE_URL (read by @anthropic-ai/sdk), so the app's real provider code runs and
  * only the network answer is canned. Dependency-free on purpose.
  */
 import { createServer } from "node:http";
@@ -11,14 +12,15 @@ const port = Number(process.env.AI_STUB_PORT ?? 3999);
 const personNameIn = (text) => text.match(/\b([A-Z][a-z]+ [A-Z][a-z]+)\b/)?.[1] ?? "Ada Lovelace";
 
 const userTextOf = (body) =>
-  (Array.isArray(body?.contents) ? body.contents : [])
-    .flatMap((c) => (Array.isArray(c?.parts) ? c.parts : []))
+  (Array.isArray(body?.messages) ? body.messages : [])
+    .filter((m) => m?.role === "user")
+    .flatMap((m) => (typeof m.content === "string" ? [{ text: m.content }] : Array.isArray(m.content) ? m.content : []))
     .map((p) => (typeof p?.text === "string" ? p.text : ""))
     .join("\n");
 
 function answerFor(body) {
   // Everything but the user's text, wherever the SDK put the system instruction.
-  const rest = JSON.stringify({ ...body, contents: undefined });
+  const rest = JSON.stringify({ ...body, messages: undefined });
   const user = userTextOf(body);
   if (rest.includes("You extract structured contact data")) {
     const name = personNameIn(user);
@@ -49,15 +51,16 @@ createServer((req, res) => {
   req.setEncoding("utf8");
   req.on("data", (chunk) => { raw += chunk; });
   req.on("end", () => {
-    if (req.method === "POST" && /:generateContent(?:\?|$)/.test(req.url ?? "")) {
+    if (req.method === "POST" && /^\/v1\/messages(?:\?|$)/.test(req.url ?? "")) {
       let body = {};
       try { body = JSON.parse(raw); } catch { /* an unreadable body gets the empty answer */ }
       return reply(res, 200, {
-        candidates: [{ index: 0, finishReason: "STOP",
-          content: { role: "model", parts: [{ text: JSON.stringify(answerFor(body)) }] } }],
-        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+        id: "msg_e2e_stub", type: "message", role: "assistant", model: body.model ?? "stub",
+        content: [{ type: "text", text: JSON.stringify(answerFor(body)) }],
+        stop_reason: "end_turn", stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
       });
     }
-    return reply(res, 404, { error: { code: 404, message: `Not stubbed: ${req.method} ${req.url}`, status: "NOT_FOUND" } });
+    return reply(res, 404, { type: "error", error: { type: "not_found_error", message: `Not stubbed: ${req.method} ${req.url}` } });
   });
 }).listen(port, "127.0.0.1", () => console.log(`[ai-stub] listening on http://127.0.0.1:${port}`));
