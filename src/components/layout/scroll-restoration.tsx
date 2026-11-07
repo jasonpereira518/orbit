@@ -2,23 +2,13 @@
 
 import { useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { shouldRestoreScroll } from "@/lib/scroll-restore";
+import { consumeTraversal, markTraversal, scrollKeySearch, shouldRestoreScroll } from "@/lib/scroll-restore";
 
 const MAIN_SCROLL_ID = "app-main-scroll";
 const RESTORE_KEY_PREFIX = "orbit:scroll:";
 
-// popstate fires before Next swaps the route, so the flag is set by the time the effect
-// runs. The timestamp expires it if the traversal changed nothing (e.g. hash-only).
-let traversedAt = 0;
 if (typeof window !== "undefined") {
-  window.addEventListener("popstate", () => {
-    traversedAt = Date.now();
-  });
-}
-function consumeTraversal() {
-  const was = Date.now() - traversedAt < 1000;
-  traversedAt = 0;
-  return was;
+  window.addEventListener("popstate", markTraversal);
 }
 
 /**
@@ -31,7 +21,7 @@ function consumeTraversal() {
 export function ScrollRestoration() {
   const pathname = usePathname();
   // Keyed too, so a query-only change on /contacts goes back to the top.
-  const search = useSearchParams().toString();
+  const searchKey = scrollKeySearch(pathname, useSearchParams().toString());
 
   useEffect(() => {
     const main = document.getElementById(MAIN_SCROLL_ID);
@@ -48,7 +38,7 @@ export function ScrollRestoration() {
     };
     main.addEventListener("scroll", handleScroll, { passive: true });
     return () => main.removeEventListener("scroll", handleScroll);
-  }, [pathname, search]);
+  }, [pathname, searchKey]);
 
   return null;
 }
