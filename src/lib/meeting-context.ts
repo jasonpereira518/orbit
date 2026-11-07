@@ -25,10 +25,10 @@ import { updateContactForUser } from "@/lib/contact-writes";
 import {
   loadResearchedPeople,
   personResearchKey,
-  lookupKeepingLate,
   researchPerson,
   type PersonResearcher,
 } from "@/lib/web-research";
+import { lookupKeepingLate } from "@/lib/web-research-late";
 import { extractEventLinks, platformOf } from "@/lib/events/platforms";
 import { canonicalEventKey } from "@/lib/events/discovery/keys";
 import { combineResolutions, resolveAliases } from "@/lib/events/discovery/aliases";
