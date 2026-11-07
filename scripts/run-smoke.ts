@@ -77,6 +77,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-openrouter-oauth": "pure",
   "smoke-report-error": "pure",
   "smoke-toast-actions": "pure",
+  "smoke-corner-clearance": "pure",
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
   "smoke-a11y-patterns": "pure",

@@ -395,6 +395,12 @@
      float above a reserved-but-empty band. */
   --orbit-job-stack-height: 0px;
 
+  /* Pushed left by an open right-anchored floating window (notifications, feedback) so
+     toasts and the job stack sit beside it — see `useCornerShift`. Only applied at `md`
+     (below), where there is room beside the window. */
+  --orbit-corner-shift: 0px;
+  --orbit-toast-right: var(--orbit-corner-right);
+
   /* Toasts stack ABOVE the job widget, never on it. */
   --orbit-toast-bottom: calc(
     var(--orbit-corner-bottom) + var(--orbit-job-stack-height)
@@ -429,6 +435,7 @@
   :root {
     --orbit-corner-bottom: calc(1.25rem + var(--orbit-corner-lift));
     --orbit-corner-right: 1.25rem;
+    --orbit-toast-right: calc(var(--orbit-corner-right) + var(--orbit-corner-shift));
     /* The nav is `md:hidden`, so there is no band to avoid. */
     --orbit-bottom-nav: 0px;
   }
