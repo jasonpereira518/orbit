@@ -50,9 +50,14 @@ import {
   type OutreachMessageStatus,
   type SequenceStep,
 } from "@/lib/outreach-types";
-import { asActionResult, UserFacingError } from "@/lib/errors";
+import { asActionResult, classifyAiError, UserFacingError } from "@/lib/errors";
+import { logMessageOutcomeForUser, updateOutreachDraftForUser } from "@/lib/outreach-writes";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { actionFailure } from "@/lib/action-failure";
+
+/** Due follow-ups one call drafts, and how long it keeps starting new ones. */
+const DUE_FOLLOWUPS_PER_CALL = 15;
+const DUE_FOLLOWUPS_BUDGET_MS = 40_000;
 
 async function requireCampaign(userId: string, campaignId: string) {
   const db = await getDb();
@@ -782,11 +787,12 @@ export async function generateOutreachDrafts(input: {
 
   const drafts = await generateOutreachDraftsBatch(userId, draftInputs);
 
+  // A prospect whose draft failed is simply not drafted; the rest still are.
   const generated = await upsertFirstStepMessages(
-    targetProspects.map((prospect, i) => ({
-      prospectId: prospect.id,
-      draft: drafts[i],
-    })),
+    targetProspects.flatMap((prospect, i) => {
+      const draft = drafts[i];
+      return draft ? [{ prospectId: prospect.id, draft }] : [];
+    }),
     channel
   );
 
@@ -867,33 +873,10 @@ export async function updateOutreachMessage(input: {
   body?: string;
 }) {
   const userId = await requireOutreachUser();
-  const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
-  }
-
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      subject: input.subject ?? message.subject,
-      body: input.body ?? message.body,
-      updatedAt: new Date(),
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
-
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
-  return updated;
+  const changed = await updateOutreachDraftForUser(userId, input);
+  if (!changed) throw new Error("Message not found");
+  revalidatePath(`/outreach/${changed.campaignId}`);
+  return changed.after;
 }
 
 async function maybeLogOutreachInteraction(
@@ -986,80 +969,18 @@ export async function logMessageOutcome(input: {
   notes?: string | null;
 }) {
   const userId = await requireOutreachUser();
-  const db = await getDb();
-
-  const message = await db.query.outreachMessages.findFirst({
-    where: eq(outreachMessages.id, input.messageId),
-    with: {
-      prospect: {
-        with: { campaign: true },
-      },
-    },
-  });
-
-  if (!message || message.prospect.campaign.userId !== userId) {
-    throw new Error("Message not found");
+  // The writes — message, prospect, skipped follow-ups, the contact's interaction — are in
+  // `logMessageOutcomeForUser`, shared with chat.
+  const logged = await logMessageOutcomeForUser(userId, input);
+  if (!logged) throw new Error("Message not found");
+  if (logged.contactId) {
+    revalidatePath(`/contacts/${logged.contactId}`);
+    revalidatePath("/graph");
   }
-
-  const now = new Date();
-  const [updated] = await db
-    .update(outreachMessages)
-    .set({
-      outcome: input.outcome,
-      outcomeNotes: input.notes?.trim() || null,
-      repliedAt: now,
-      lastActionAt: now,
-      updatedAt: now,
-    })
-    .where(eq(outreachMessages.id, input.messageId))
-    .returning();
-
-  let prospectStatus: string = message.prospect.status;
-  if (input.outcome === "positive_reply") {
-    prospectStatus = "interested";
-  } else if (
-    input.outcome === "negative_reply" ||
-    input.outcome === "unsubscribed"
-  ) {
-    prospectStatus = "not_interested";
-  } else if (input.outcome === "neutral_reply") {
-    prospectStatus = "replied";
-  } else if (input.outcome === "bounced") {
-    prospectStatus = message.prospect.status;
-  }
-
-  await db
-    .update(outreachProspects)
-    .set({ status: prospectStatus, updatedAt: now })
-    .where(eq(outreachProspects.id, message.prospectId));
-
-  // Cancel pending follow-ups once we have a reply or bounce/unsubscribe
-  if (input.outcome !== "bounced") {
-    await db
-      .update(outreachMessages)
-      .set({ status: "skipped", updatedAt: now })
-      .where(
-        and(
-          eq(outreachMessages.prospectId, message.prospectId),
-          eq(outreachMessages.status, "scheduled")
-        )
-      );
-  }
-
-  await maybeLogOutreachInteraction(
-    {
-      contactId: message.prospect.contactId,
-      campaignId: message.prospect.campaignId,
-    },
-    message.channel as OutreachChannel,
-    input.notes?.trim() || `Outcome: ${input.outcome}`,
-    input.outcome
-  );
-
-  revalidatePath(`/outreach/${message.prospect.campaignId}`);
+  revalidatePath(`/outreach/${logged.campaignId}`);
   revalidatePath("/outreach");
   revalidatePath("/dashboard");
-  return updated;
+  return logged.message;
 }
 
 async function scheduleNextFollowUpIfNeeded(input: {
@@ -1211,12 +1132,18 @@ export async function generateDueFollowUps(campaignId: string) {
       .where(inArray(outreachMessages.id, skippedIds));
   }
 
-  for (const message of toGenerate) {
+  // Bounded: this runs inside one server action, each draft up to a model deadline long. What
+  // is not reached stays due and is picked up by the next call.
+  const startedAt = Date.now();
+  for (const message of toGenerate.slice(0, DUE_FOLLOWUPS_PER_CALL)) {
+    if (Date.now() - startedAt > DUE_FOLLOWUPS_BUDGET_MS) break;
     const steps = (campaign.sequenceSteps ?? []) as SequenceStep[];
     const step = steps[(message.stepIndex ?? 1) - 1];
     const channel = message.channel as OutreachChannel;
 
-    const draft = await generateOutreachDraft(userId, {
+    let draft: Awaited<ReturnType<typeof generateOutreachDraft>>;
+    try {
+      draft = await generateOutreachDraft(userId, {
       channel,
       tone: campaign.tone || "professional",
       messageIntent:
@@ -1242,7 +1169,17 @@ export async function generateDueFollowUps(campaignId: string) {
         ? parentBodies.get(message.parentMessageId)
         : undefined,
       writingInstructions,
-    });
+      });
+    } catch (err) {
+      // A key-level failure repeats for every remaining message; stop, and say why if nothing
+      // was drafted. Anything else costs this one message its draft this time.
+      const kind = classifyAiError(err);
+      if (kind === "auth" || kind === "quota" || kind === "rate_limit") {
+        if (generated === 0) throw err;
+        break;
+      }
+      continue;
+    }
 
     await db
       .update(outreachMessages)

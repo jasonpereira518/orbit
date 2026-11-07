@@ -73,6 +73,18 @@ export function PersonCardBody({
                   Already in your network
                 </Badge>
               )}
+              {/* Filled from a web lookup: say what, and link the page so it can be checked. */}
+              {item.web?.filled.length ? (
+                <Badge variant="outline" className="max-w-full truncate text-3xs font-normal">
+                  {item.web.sourceUrl ? (
+                    <a href={item.web.sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                      From the web: {item.web.filled.join(", ")}
+                    </a>
+                  ) : (
+                    <>From the web: {item.web.filled.join(", ")}</>
+                  )}
+                </Badge>
+              ) : null}
               {/* A combined upload has a card per person per note — say which note. */}
               {item.noteLabel && (
                 <Badge variant="outline" className="max-w-full truncate text-3xs font-normal">

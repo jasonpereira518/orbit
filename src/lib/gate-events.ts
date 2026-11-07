@@ -1,7 +1,8 @@
 import { and, desc, eq, gt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gateEvents } from "@/db/schema";
-import { unlockPlanFor, type FeatureKey, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, unlockPlanFor, type FeatureKey, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { GATES } from "@/lib/product-event-schemas";
 
 /**
@@ -36,7 +37,8 @@ import { GATES } from "@/lib/product-event-schemas";
  * `from_gate` property admits (`GATES` in `product-event-schemas.ts`).
  */
 export type MeteredGate = "managedCredits" | "backgroundFloor" | "speechShortform" | "speechMeeting";
-export type GateFeature = FeatureKey | "contacts" | MeteredGate;
+/** `page`: an operator limited a whole page to some tiers (`setSurfaceTiers`). */
+export type GateFeature = FeatureKey | "contacts" | "page" | MeteredGate;
 
 /** Every gate key a checkout can be attributed to; the closed list `?gate=` is validated against. */
 export type KnownGate = (typeof GATES)[number];
@@ -56,8 +58,14 @@ const METERED_GATES: ReadonlySet<string> = new Set<MeteredGate>([
  * unlocked by a pack, not a plan). Without this a metered key fell through `unlockPlanFor`
  * to "max" for everyone.
  */
-export function unlockPlanForGate(feature: GateFeature, plan: Plan): "free" | "orbit" | "max" | null {
-  if (!METERED_GATES.has(feature)) return unlockPlanFor(feature as FeatureKey | "contacts");
+export function unlockPlanForGate(
+  feature: GateFeature,
+  plan: Plan,
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): "free" | "orbit" | "max" | null {
+  // A page lock's answer depends on the page's rule, so its caller passes `unlockPlan`.
+  if (feature === "page") return null;
+  if (!METERED_GATES.has(feature)) return unlockPlanFor(feature as FeatureKey | "contacts", config);
   if (plan === "free") return "orbit";
   if (plan === "orbit") return "max";
   return null;
@@ -68,6 +76,8 @@ export async function recordGateHit(input: {
   feature: GateFeature;
   plan: Plan;
   context?: Record<string, unknown>;
+  /** Overrides the computed unlock plan — for a page lock, whose answer is the page's rule. */
+  unlockPlan?: "free" | "orbit" | "max" | null;
 }): Promise<void> {
   try {
     const db = await getDb();
@@ -81,7 +91,11 @@ export async function recordGateHit(input: {
       // The cheapest plan someone could buy to get past this wall. Denormalised for the
       // same reason as `plan`: the demand screen reads "who wanted Max", and plan
       // boundaries move between pricing versions.
-      unlockPlan: unlockPlanForGate(input.feature, input.plan),
+      // Read from the effective plan table: an operator may have moved the feature.
+      unlockPlan:
+        input.unlockPlan !== undefined
+          ? input.unlockPlan
+          : unlockPlanForGate(input.feature, input.plan, await getEffectivePlanConfig()),
       context: input.context ?? {},
     });
   } catch {

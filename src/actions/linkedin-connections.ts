@@ -65,6 +65,6 @@ export async function startLinkedInConnections(importId: string): Promise<{ tota
     return failure(err, "Couldn’t start that import — try again", "linkedin-connections.start");
   }
   after(() => runLinkedInImportJob(importId).catch(() => {}));
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   return started;
 }

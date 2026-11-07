@@ -8,7 +8,7 @@
  * Client-safe: no DB, no env, no server imports.
  */
 import { MAX_MEETING_MS } from "@/lib/meeting-chunking";
-import { PLAN_CONFIG, PLANS, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, PLANS, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 
 export type SpeechKind = "meeting" | "shortform";
 
@@ -30,8 +30,9 @@ export const SPEECH_LIMITS: Record<SpeechKind, Record<Plan, number>> = {
   ) as Record<Plan, number>,
 };
 
-export function limitFor(kind: SpeechKind, plan: Plan): number {
-  return SPEECH_LIMITS[kind][plan];
+/** `config`: the effective plan table on the server (`getEffectivePlanConfig`); the code table by default. */
+export function limitFor(kind: SpeechKind, plan: Plan, config: Record<Plan, PlanConfig> = PLAN_CONFIG): number {
+  return kind === "meeting" ? config[plan].speech.meetingSeconds : config[plan].speech.shortformSeconds;
 }
 
 /**

@@ -11,7 +11,8 @@ import { useViewerPlan } from "@/components/viewer-plan";
 import { RecommendationCard, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { RadarSettingsSheet } from "@/components/radar/radar-settings-sheet";
 import { useRadarKeys } from "@/components/radar/use-radar-keys";
-import { refreshRadarNow, setRadarPaused, undoAutopilot } from "@/actions/radar";
+import { addInboxPerson, dismissInboxPerson, refreshRadarNow, setRadarPaused, undoAutopilot } from "@/actions/radar";
+import { InboxPeople, type InboxPersonView } from "@/components/radar/inbox-people";
 import { friendlyError } from "@/lib/errors";
 import type { ChangeLine } from "@/lib/radar/briefing";
 import { RADAR_SHORTCUTS } from "@/lib/radar/focus-keys";
@@ -21,6 +22,7 @@ import { KIND_SECTION_TITLES, RECOMMENDATION_KINDS, type RecommendationKind } fr
 import { toast } from "@/lib/toast";
 import { syncTimeZoneCookie } from "@/lib/tz-cookie";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 export type RadarAutopilotItem = {
   id: string;
@@ -40,6 +42,8 @@ export type RadarViewProps = {
   autopilot: RadarAutopilotItem[];
   changes: ChangeLine[];
   signalsThisWeek: number;
+  /** People the account's email names who are not in the network yet. Empty unless Email insights is on. */
+  inboxPeople: InboxPersonView[];
   /** A card to open on, from the Monday email or the dashboard (`/radar?focus=<id>`). */
   focusId: string | null;
 };
@@ -65,12 +69,8 @@ function arrivalMode(linked: boolean): Mode {
   return storedMode() ?? (phone ? "focus" : "list");
 }
 
-function prefersReducedMotion() {
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-}
-
 export function RadarView(props: RadarViewProps) {
-  const { recommendations, lastRunAt, nextRunAt, paused, aiAvailable, hasContacts, settings, autopilot, changes, signalsThisWeek, focusId } =
+  const { recommendations, lastRunAt, nextRunAt, paused, aiAvailable, hasContacts, settings, autopilot, changes, signalsThisWeek, inboxPeople, focusId } =
     props;
   const { aiReason } = useViewerPlan();
   const router = useRouter();
@@ -170,6 +170,7 @@ export function RadarView(props: RadarViewProps) {
 
       {changes.length > 0 && <WhatChanged changes={changes} onJump={jumpTo} />}
       {autopilot.length > 0 && <AutopilotDid items={autopilot} />}
+      <InboxPeople people={inboxPeople} onAdd={addInboxPerson} onDismiss={dismissInboxPerson} onChanged={() => router.refresh()} />
 
       {!aiAvailable && recommendations.length > 0 && <AiKeyNotice feature="draft" reason={aiReason ?? "key_required"} compact />}
 

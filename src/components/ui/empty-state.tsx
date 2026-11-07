@@ -15,7 +15,8 @@ export function EmptyState({
   className,
 }: {
   icon?: LucideIcon
-  title: React.ReactNode
+  /** Optional inside a card that already has its own heading: the description stands alone. */
+  title?: React.ReactNode
   description?: React.ReactNode
   action?: React.ReactNode
   /** The heading level that fits the page outline around it. */
@@ -36,7 +37,7 @@ export function EmptyState({
           <Icon className="size-5" aria-hidden />
         </span>
       ) : null}
-      <Heading className="font-heading text-base font-medium text-ink">{title}</Heading>
+      {title ? <Heading className="font-heading text-base font-medium text-ink">{title}</Heading> : null}
       {description ? (
         <p className="max-w-sm text-sm text-muted-foreground">{description}</p>
       ) : null}

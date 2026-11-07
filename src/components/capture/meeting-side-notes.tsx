@@ -6,7 +6,7 @@
  * note: it just goes with the recording, and is sent along with the transcript when the
  * meeting is finished (see `userNotes` in `meeting-digest.ts`).
  *
- * Two sizes over the same text: the big box on /capture, and a smaller one in the
+ * Two sizes over the same text: the big box on /meetings, and a smaller one in the
  * bottom-right widget (`compact`) for when the call is in another window.
  */
 
@@ -32,8 +32,8 @@ export function SideNotes({
             Your notes
           </label>
           <p className="text-xs text-muted-foreground">
-            Names, numbers, to-dos — anything. Only you see this. It&apos;s saved in this browser as you
-            type and goes with the recording when you finish the meeting.
+            Names, numbers, to-dos — anything. Only you see this. It&apos;s saved with the meeting as you
+            type, and the summary reads it too.
           </p>
         </div>
       )}

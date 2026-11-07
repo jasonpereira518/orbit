@@ -236,6 +236,7 @@ async function draftFromContext(input: {
 
   const content = await cachedCompleteJson(input.userId, {
     operation,
+    schema: { name: "follow_up_draft", zod: z.object({ body: z.string() }) },
     access: input.access,
     signal: input.signal,
     temperature: 0.5,

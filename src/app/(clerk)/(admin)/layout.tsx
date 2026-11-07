@@ -1,6 +1,5 @@
 import { AdminShell } from "@/components/admin/admin-shell";
 import { requireAdminPage } from "@/lib/admin";
-import { getCurrentUserProfile } from "@/lib/auth";
 import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
 import { unresolvedFeedbackCount } from "@/lib/admin-feedback";
 import { getDb } from "@/db";
@@ -27,8 +26,10 @@ export default async function AdminLayout({
 }) {
   const adminUserId = await requireAdminPage();
   const db = await getDb();
-  const [profile, hidden, settings, unresolvedFeedback] = await Promise.all([
-    getCurrentUserProfile(),
+  // The email comes from the admin's own `user_settings` mirror, which this layout reads
+  // anyway for YC mode. `getCurrentUserProfile()` here cost a Clerk API call plus two
+  // backfill UPDATEs on every admin navigation; the product shell still does that backfill.
+  const [hidden, settings, unresolvedFeedback] = await Promise.all([
     getHiddenSurfaceKeys(),
     db.query.userSettings.findFirst({ where: eq(userSettings.userId, adminUserId) }),
     unresolvedFeedbackCount(),
@@ -36,7 +37,7 @@ export default async function AdminLayout({
 
   return (
     <AdminShell
-      adminEmail={profile?.email}
+      adminEmail={settings?.email}
       hiddenSurfaceCount={hidden.size}
       unresolvedFeedbackCount={unresolvedFeedback}
       ycMode={settings?.ycModeEnabled ?? false}

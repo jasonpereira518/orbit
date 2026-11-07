@@ -139,6 +139,19 @@ export function toDomain(value: string | null | undefined): string | null {
   return DOMAIN_RE.test(host) ? host : null;
 }
 
+/**
+ * A domain the logo route may hand Google's favicon service: exactly what `toDomain` makes
+ * (lowercase host, a real TLD, so no IP literal, port, path or bare "localhost"), and not a
+ * reserved or internal name.
+ */
+export function isLogoDomain(value: string): boolean {
+  return (
+    value.length <= 253 &&
+    toDomain(value) === value &&
+    !/\.(?:local|localhost|internal|intranet|lan|home|corp|arpa|test|invalid|example)$/.test(value)
+  );
+}
+
 async function getJson(url: string, fetchImpl: Fetch): Promise<unknown | null> {
   try {
     const res = await fetchImpl(url, {

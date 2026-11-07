@@ -5,6 +5,7 @@ import type {
 import { followUpRequestSchema } from "@/lib/extension/contract.schema";
 import { extensionRoute, preflight } from "@/lib/extension/http";
 import { scheduleContactFollowUp } from "@/lib/extension/follow-ups";
+import { requirePlanForSurface } from "@/lib/surface-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,8 @@ export const POST = extensionRoute<FollowUpRequest, FollowUpResponse>({
   schema: followUpRequestSchema,
   action: "schedule_follow_up",
   handler: async ({ userId, input }) => {
+    // The Reminders page's tier lock, as its own schedule action applies it.
+    await requirePlanForSurface(userId, "page.reminders");
     const { contactId, reminderId, title, ...followUp } = input;
     const result = await scheduleContactFollowUp(userId, {
       contactId,

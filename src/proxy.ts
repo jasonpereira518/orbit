@@ -11,9 +11,11 @@ import { bareHost, isOwnOrRoundTrip } from "@/lib/round-trip-hosts";
 import {
   ATTRIBUTION_COOKIE,
   ATTRIBUTION_MAX_AGE_S,
+  LAST_TOUCH_COOKIE,
   attributionFromUrl,
   hasSignal,
   serializeAttribution,
+  serializeLastTouch,
 } from "@/lib/attribution-parse";
 
 // The list lives in `@/lib/public-routes` so a smoke test can assert it against the
@@ -61,28 +63,30 @@ function withPathname(req: Request, options: { noindex?: boolean } = {}) {
     request: { headers: requestHeaders },
   });
   if (options.noindex) res.headers.set("X-Robots-Tag", STEALTH_ROBOTS);
-  return withFirstTouch(req, url, res);
+  return withAttribution(req, url, res);
 }
 
 /**
- * Capture where this browser came from, once, on its very first request.
+ * Capture where this browser came from: once, on its very first channel-bearing request (first
+ * touch), and again on every later one (last touch).
  *
  * MIDDLEWARE RATHER THAN A PAGE, for a mundane reason: a server component cannot set a
  * cookie in Next, so the marketing pages physically cannot do this themselves. Middleware
  * runs before all of them and sees the external `referer` header that only exists on the
  * first hop — one request later it has already been replaced by Orbit's own URL.
  *
- * FIRST TOUCH WINS: if the cookie is already set, this does nothing. A visitor who arrives
- * from Reddit, reads for a week and signs up after a direct visit was acquired by Reddit,
- * and overwriting here would credit "direct" and erase the only channel that worked.
+ * FIRST TOUCH WINS: if `orbit_attr` is already set, it is never rewritten. A visitor who
+ * arrives from Reddit, reads for a week and signs up after a direct visit was acquired by
+ * Reddit, and overwriting it would credit "direct" and erase the only channel that worked.
+ * The LAST-touch cookie (`orbit_attr_last`) is the one that moves: rewritten on every landing
+ * that carries a channel, never on one that carries none. Both reach the account together, at
+ * signup (`captureAttribution`).
  *
  * Same-origin referrers are dropped before anything else. Without that, the second page
  * anyone views would attribute them to orbit itself, and every internal navigation would
  * look like a channel.
  */
-function withFirstTouch(req: Request, url: URL, res: NextResponse) {
-  if (req.headers.get("cookie")?.includes(`${ATTRIBUTION_COOKIE}=`)) return res;
-
+function withAttribution(req: Request, url: URL, res: NextResponse) {
   const referer = req.headers.get("referer");
   // The Host header too, not only the request URL's: behind a proxy or on a second domain
   // (the waitlist's) the URL can carry the server's own host while the visitor's browser —
@@ -108,13 +112,20 @@ function withFirstTouch(req: Request, url: URL, res: NextResponse) {
       : parsed;
   if (!hasSignal(attribution)) return res;
 
-  res.cookies.set(ATTRIBUTION_COOKIE, serializeAttribution(attribution), {
+  const flags = {
     maxAge: ATTRIBUTION_MAX_AGE_S,
     sameSite: "lax",
     httpOnly: true,
     path: "/",
     secure: process.env.NODE_ENV === "production",
-  });
+  } as const;
+  // LAST TOUCH overwrites, every time a landing carries a channel. Only such a landing: a
+  // direct visit or an internal hop carries nothing and must not erase the last real one.
+  res.cookies.set(LAST_TOUCH_COOKIE, serializeLastTouch(attribution, Date.now()), flags);
+  // FIRST TOUCH stays write-once. (`orbit_attr_last=` does not contain `orbit_attr=`.)
+  if (!req.headers.get("cookie")?.includes(`${ATTRIBUTION_COOKIE}=`)) {
+    res.cookies.set(ATTRIBUTION_COOKIE, serializeAttribution(attribution), flags);
+  }
   return res;
 }
 

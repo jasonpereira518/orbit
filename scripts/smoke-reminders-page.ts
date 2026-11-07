@@ -264,7 +264,7 @@ async function main() {
   }
 
   const views: Array<{ label: string; f: Omit<RemindersPageFilters, "tz"> }> = [
-    ...(["today", "upcoming", "anytime", "done"] as ReminderView[]).map((view) => ({
+    ...(["all", "today", "upcoming", "anytime", "done"] as ReminderView[]).map((view) => ({
       label: `view=${view}`,
       f: { view, listId: null },
     })),
@@ -305,6 +305,7 @@ async function main() {
     const today = ymdInZone(NOW, tz);
     const pend = seeded.filter(isPending);
     const want = {
+      all: pend.length,
       today: pend.filter((s) => { const d = dueDayOf(s.dueDate, tz); return d !== null && d <= today; }).length,
       overdue: pend.filter((s) => { const d = dueDayOf(s.dueDate, tz); return d !== null && d < today; }).length,
       upcoming: pend.filter((s) => { const d = dueDayOf(s.dueDate, tz); return d !== null && d > today; }).length,
@@ -318,6 +319,13 @@ async function main() {
       `list counts (unfiled rows count as Inbox)`,
       pendingByList.get(inbox.id) === pend.filter((s) => s.listId === inbox.id || s.listId === null).length &&
         pendingByList.get(work.id) === pend.filter((s) => s.listId === work.id).length
+    );
+    const allIds = new Set(expected({ view: "all", listId: null, tz }));
+    const seededById = (pred: (s: Seeded) => boolean) => seeded.filter(pred).every((s) => allIds.has(s.id));
+    check(
+      "All includes overdue, today, upcoming and undated pending; excludes done",
+      seededById((s) => isPending(s)) && !seeded.some((s) => isDone(s) && allIds.has(s.id)) &&
+        want.overdue > 0 && want.today > want.overdue && want.upcoming > 0 && want.anytime > 0
     );
     check(
       "view totals partition every pending reminder",

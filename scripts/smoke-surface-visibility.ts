@@ -51,6 +51,7 @@ import {
   surfaceKeyForHref,
   surfaceKeyForSettingsId,
   surfacesOfKind,
+  SURFACE_FEATURE,
 } from "../src/lib/surfaces";
 import { SETTINGS_SECTIONS } from "../src/components/settings/sections";
 
@@ -346,7 +347,8 @@ async function main() {
     console.log("\ncoming-soon closes actions, not just pages");
     {
       const SOON = [...DEFAULT_COMING_SOON_KEYS].find(
-        (k) => getSurface(k)?.kind === "page" && k !== target.key
+        // No plan feature of its own (`SURFACE_FEATURE`): this checks the coming-soon rule alone.
+        (k) => getSurface(k)?.kind === "page" && k !== target.key && !SURFACE_FEATURE[k]
       )!;
       let thrown: unknown = null;
       try { await requireReleasedSurface(USER, SOON); } catch (err) { thrown = err; }

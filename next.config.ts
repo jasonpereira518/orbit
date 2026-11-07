@@ -11,6 +11,7 @@ import {
   waitlistRewrites,
 } from "./src/lib/waitlist-host";
 import { CAPTURE_BODY_SIZE_LIMIT } from "./src/lib/capture-limits";
+import { adminRedirects } from "./src/lib/admin-redirects";
 
 const nextConfig: NextConfig = {
   // No `X-Powered-By: Next.js`: the exact framework is no one's business but ours.
@@ -53,7 +54,14 @@ const nextConfig: NextConfig = {
   // and before public/ is served, which is why the allowlist lives here rather than in
   // src/proxy.ts. Stealth's redirects on the app host are the proxy's: they change at runtime.
   async redirects() {
-    return waitlistRedirects();
+    return [
+      ...adminRedirects(),
+      ...waitlistRedirects(),
+      // Imports is the Imports tab on /capture. Here rather than a redirect() in a page: this
+      // is a real 307, so the browser keeps an old link's `#import-panel-*` hash (a page's
+      // redirect lands after streaming starts and loses it). The query passes through.
+      { source: "/imports", destination: "/capture?mode=imports", permanent: false },
+    ];
   },
   async rewrites() {
     return { beforeFiles: [...waitlistRewrites(), ...waitlistReferralRewrites(), ...localWaitlistRewrites()], afterFiles: [], fallback: [] };

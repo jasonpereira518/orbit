@@ -13,7 +13,8 @@
  * `requireUserId()` wrapper around it.
  */
 
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, not, or, sql } from "drizzle-orm";
+import { nonPersonContactSql } from "@/lib/non-person-participant";
 import { getDb, rowsOf } from "@/db";
 import { contactTags, contacts, tags } from "@/db/schema";
 import { rankContacts } from "@/lib/contact-ranking";
@@ -27,6 +28,8 @@ import {
   encodeContactsCursor,
 } from "@/lib/contacts-page-cursor";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
+import { openNameGuess } from "@/lib/contact-name-guess";
+import { trackSearchPerformed } from "@/lib/search-events";
 import { schoolCondition, type RankedContact } from "@/lib/hybrid-search";
 import { listSchools } from "@/lib/events/target-companies";
 import {
@@ -62,7 +65,8 @@ export async function listContactsPage(
   // always returns its first (only) page.
   const cursor = sort === "relevance" ? null : decodeContactsCursor(filters?.cursor, sort, Boolean(filters?.q?.trim()));
 
-  const conditions = [eq(contacts.userId, userId)];
+  // Group calendars and rooms an older calendar sync saved as contacts stay out of the list.
+  const conditions = [eq(contacts.userId, userId), not(nonPersonContactSql())];
 
   const q = filters?.q?.trim();
   // Reused below by `contactsOrderBy` (relevance ranking) and by the match-reason map — one
@@ -190,6 +194,11 @@ export async function listContactsPage(
     addedByImports(userId, importIds, page.map((r) => r.id)),
   ]);
 
+  // The first page of a search is the search; "load more" (a cursor) is not another one.
+  if (q && !cursor) {
+    trackSearchPerformed({ userId, surface: "contacts_page", query: q, resultCount: total ?? page.length });
+  }
+
   return {
     items: page.map((row) => ({
       id: row.id,
@@ -197,6 +206,7 @@ export async function listContactsPage(
       firstName: row.firstName,
       lastName: row.lastName,
       preferredName: row.preferredName,
+      nameGuess: openNameGuess(row),
       title: row.title,
       company: row.company,
       school: row.school,

@@ -6,45 +6,27 @@ import { AlertTriangle, CircleAlert, Sparkles } from "lucide-react";
 import {
   AdminPanel,
   EmptyState,
-  MiniBars,
+  MetricTile,
   PlanBadge,
   RelativeTime,
 } from "@/components/admin/primitives";
 import { useLivePoll } from "@/components/admin/use-live-poll";
-import type { AdminAlert, FunnelStage, WindowCount } from "@/lib/admin-metrics";
-import type { Plan, PlanSource } from "@/lib/plan-limits";
+import type { OverviewLiveData } from "@/lib/admin-metrics";
 import { cn } from "@/lib/utils";
 
 /**
- * Live data for `/admin` — the "Needs attention", "Activation" and "Signed up recently"
- * panels, which can change from outside the operator's own actions (a signup, an ops
- * sweep, time passing). Polls `/api/admin/overview/live`; see `use-live-poll.ts` and
- * `presence.tsx` for why polling and not `router.refresh()`/SSE.
+ * Live data for `/admin` — "Needs attention", "Signed up recently", the two activity tiles
+ * and the open ops-alert chip, which can change from outside the operator's own actions (a
+ * signup, an ops sweep, time passing). Polls `/api/admin/overview/live`; see
+ * `use-live-poll.ts` and `presence.tsx` for why polling and not `router.refresh()`/SSE.
  *
- * The header subtitle and the Money panel are deliberately NOT live — they're either
- * cheap first-paint context or numbers that only ever change from an admin's own edit
- * elsewhere in the console, which already gets a full page refresh on save.
+ * MRR and the waitlist count are deliberately NOT live: they change on a webhook or a
+ * join, and a first-paint read is enough for a triage screen.
  */
 
-const POLL_INTERVAL_MS = 30 * 1000;
+const POLL_INTERVAL_MS = 60 * 1000;
 
-export type OverviewLiveRow = {
-  userId: string;
-  email: string | null;
-  signupAt: string;
-  plan: Plan;
-  planSource: PlanSource;
-  counts: { contacts: number; interactions: number };
-  hasProviderKey: boolean;
-};
-
-export type OverviewLiveData = {
-  alerts: AdminAlert[];
-  funnel: FunnelStage[];
-  recent: OverviewLiveRow[];
-  signups: WindowCount;
-  activeLast7d: number;
-};
+export type { OverviewLiveData };
 
 const OverviewLiveContext = createContext<OverviewLiveData | null>(null);
 
@@ -74,9 +56,26 @@ function useOverviewLive(): OverviewLiveData {
 }
 
 export function LiveAlertsPanel({ totalUsers }: { totalUsers: number }) {
-  const { alerts } = useOverviewLive();
+  const { alerts, opsAlerts } = useOverviewLive();
   return (
-    <AdminPanel title="Needs attention">
+    <AdminPanel
+      title="Needs attention"
+      action={
+        opsAlerts && opsAlerts.open > 0 ? (
+          <Link
+            href="/admin/health"
+            className={cn(
+              "rounded-full border px-2.5 py-0.5 text-xs tabular-nums transition-colors duration-fast hover:bg-muted/60",
+              opsAlerts.critical > 0
+                ? "border-destructive/40 text-destructive"
+                : "border-warning/40 text-amber-800 dark:text-warning"
+            )}
+          >
+            {opsAlerts.open} open ops alert{opsAlerts.open === 1 ? "" : "s"} → Ops
+          </Link>
+        ) : undefined
+      }
+    >
       {alerts.length === 0 ? (
         <EmptyState>
           Nothing needs you. {totalUsers} account
@@ -117,16 +116,65 @@ export function LiveAlertsPanel({ totalUsers }: { totalUsers: number }) {
   );
 }
 
-export function LiveActivationPanel() {
-  const { funnel, signups, activeLast7d } = useOverviewLive();
+function KpiLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <AdminPanel title="Activation">
-      <MiniBars rows={funnel.map((s) => ({ label: s.label, count: s.count }))} />
-      <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground tabular-nums">
-        {signups.current} new in the last 30 days ({signups.previous} in the 30
-        before) · {activeLast7d} active this week
-      </p>
-    </AdminPanel>
+    <Link
+      href={href}
+      className="block rounded-xl transition-colors duration-fast hover:[&>div]:border-primary/50"
+    >
+      {children}
+    </Link>
+  );
+}
+
+/**
+ * One row of four linked numbers. Each tile is the door to the section that owns it, not a
+ * summary of it — the detail lives there.
+ */
+export function LiveKpiTiles({
+  mrr,
+  waiting,
+  aiByok,
+  aiManaged,
+}: {
+  mrr: string;
+  waiting: number | null;
+  /** Formatted 30-day AI spend on users' own keys and on Orbit's; "—" when the read failed. */
+  aiByok: string;
+  aiManaged: string;
+}) {
+  const { activeLast7d, signupsLast7d } = useOverviewLive();
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <KpiLink href="/admin/billing">
+        <MetricTile label="MRR" value={mrr} hint="recurring, comps excluded" />
+      </KpiLink>
+      <KpiLink href="/admin/growth/retention">
+        <MetricTile label="Active 7d" value={activeLast7d} hint="seen or wrote this week" />
+      </KpiLink>
+      <KpiLink href="/admin/growth">
+        <MetricTile label="New signups 7d" value={signupsLast7d} hint="accounts created" />
+      </KpiLink>
+      <KpiLink href="/admin/access">
+        <MetricTile
+          label="Waiting"
+          value={waiting ?? "—"}
+          tone={waiting == null ? "muted" : "default"}
+          hint="on the waitlist"
+        />
+      </KpiLink>
+      <KpiLink href="/admin/billing/costs">
+        <MetricTile
+          label="AI spend on users' keys (BYOK)"
+          value={aiByok}
+          tone="muted"
+          hint="30 days · their bill, not Orbit's"
+        />
+      </KpiLink>
+      <KpiLink href="/admin/billing/costs">
+        <MetricTile label="AI spend on Orbit's keys (managed)" value={aiManaged} hint="30 days · Orbit pays" />
+      </KpiLink>
+    </div>
   );
 }
 

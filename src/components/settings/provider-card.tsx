@@ -142,13 +142,18 @@ export function ProviderCard({
   const showKeyField = !hasKey || replacing;
   const chosenIndex = tiers.findIndex((m) => active && model === m.value);
 
-  const base = hasKey
-    ? active
-      ? "Your key is saved, and Orbit is using it"
-      : "Your key is saved"
-    : status?.managedAvailable
-      ? "No key saved — AI is already covered for you"
-      : "No key yet — paste one to turn on AI features";
+  const base = active
+    ? hasKey
+      ? "In use · your key"
+      : status?.managedAvailable
+        ? "In use"
+        : "Selected · no key"
+    : hasKey
+      ? "Key saved"
+      : status?.managedAvailable
+        ? "Covered by Orbit"
+        : "No key";
+  const dot = active && usable ? "on" : hasKey || status?.managedAvailable ? "partial" : "off";
   /**
    * An active account can sit on an id no tier button carries — an untagged preset, a custom
    * id, or one this branch dropped from the presets — and then every button reads unselected
@@ -190,12 +195,18 @@ export function ProviderCard({
         <h4 id={`provider-card-name-${provider.id}`} className="text-sm font-medium text-ink">
           {provider.label}
         </h4>
-        {active ? (
-          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs text-ink">In use</span>
-        ) : null}
       </div>
 
-      <p className="text-sm text-muted-foreground">{stateLine}</p>
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span
+          aria-hidden
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            dot === "on" ? "bg-primary" : dot === "partial" ? "bg-primary/45" : "bg-muted-foreground/35"
+          )}
+        />
+        {stateLine}
+      </p>
 
       {usable && tiers.length > 0 ? (
         <div
@@ -260,7 +271,6 @@ export function ProviderCard({
             <Button
               type="button"
               disabled={pending || !apiKey.trim()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={() =>
                 start(async () => {
                   // Straight to `saveAiSettings`, which overwrites the stored key. Never via

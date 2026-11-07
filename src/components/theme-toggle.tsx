@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { Moon, Sun } from "lucide-react";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import { useTheme } from "next-themes";
 import { saveThemePreference } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ export function ThemeToggle({ className }: { className?: string }) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [, start] = useTransition();
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = useReducedMotionPreference();
 
   useEffect(() => {
     setMounted(true);

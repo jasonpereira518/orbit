@@ -14,6 +14,8 @@
  * sibling nothing client-side imports.
  */
 
+import type { NameGuess } from "@/lib/contact-name-guess";
+
 /**
  * How a contacts page is ordered. The cursor's shape follows from this, so a page fetched
  * under one sort cannot be continued under another.
@@ -125,6 +127,8 @@ export type ContactListRow = {
   firstName: string | null;
   lastName: string | null;
   preferredName: string | null;
+  /** Only an unsure guess (`openNameGuess`): the name gets a "?". */
+  nameGuess: NameGuess | null;
   title: string | null;
   company: string | null;
   school: string | null;

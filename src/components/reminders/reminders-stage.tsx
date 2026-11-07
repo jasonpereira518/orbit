@@ -63,6 +63,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 const INLINE_DETAIL_QUERY = "(min-width: 80rem)";
 
 const VIEW_TITLES: Record<string, string> = {
+  all: "All",
   today: "Today",
   upcoming: "Upcoming",
   anytime: "Anytime",
@@ -71,6 +72,7 @@ const VIEW_TITLES: Record<string, string> = {
 };
 
 const EMPTY_COPY: Record<string, { title: string; body: string }> = {
+  all: { title: "No open reminders", body: "Everything you still need to do shows up here." },
   today: { title: "Nothing due today", body: "You’re clear. Upcoming has what’s next." },
   upcoming: { title: "Nothing scheduled ahead", body: "Reminders with a future date land here." },
   anytime: { title: "No undated reminders", body: "Reminders without a due date collect here." },
@@ -764,7 +766,7 @@ export function RemindersStage({
                   </div>
                 ) : (
                   groups.map((group, groupIndex) => (
-                    <div key={group.bucket ?? "all"} role="group" aria-labelledby={group.bucket ? `bucket-${group.bucket}` : undefined}>
+                    <div key={group.bucket ?? "all"}>
                       {group.bucket && (
                         <h3
                           id={`bucket-${group.bucket}`}
@@ -782,7 +784,14 @@ export function RemindersStage({
                           </span>
                         </h3>
                       )}
+                      {/* A one-column grid, not a plain list: each row is focusable and
+                          selectable, and a screen reader needs to hear both ("row, selected").
+                          Not a listbox, whose options may not hold the row's own menu buttons. */}
                       <ul
+                        role="grid"
+                        aria-multiselectable="true"
+                        aria-labelledby={group.bucket ? `bucket-${group.bucket}` : undefined}
+                        aria-label={group.bucket ? undefined : "Reminders"}
                         aria-keyshortcuts="j k ArrowDown ArrowUp x e s m # Delete Enter Escape"
                         className="divide-y divide-border/40"
                       >

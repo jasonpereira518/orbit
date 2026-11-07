@@ -6,7 +6,7 @@ import { internalAccountSql } from "@/lib/analytics-internal";
 import { ACTIVATION_WINDOW_DAYS, activatedSql, intentionalActionsSince } from "@/lib/activity";
 
 /**
- * Time-bucketed growth and activation, for `/admin/growth`.
+ * Time-bucketed growth and activation, for the Growth tabs (`/admin/growth/*`).
  *
  * WHY THIS IS NOT ON `/admin`. The overview's rule — "absolute integers only: no
  * percentages, no rates, no trend sparklines" — is right, and stays. It is really three
@@ -15,8 +15,8 @@ import { ACTIVATION_WINDOW_DAYS, activatedSql, intentionalActionsSince } from "@
  *   No percentages or rates. Kept, with one bounded exception. Axes, labels and tiles are
  *   counts — retention reads "9 of 14", never 64%. A percentage appears only in a chart's
  *   hover readout, beside its fraction, and only once the denominator reaches
- *   `MIN_RATE_DENOMINATOR` (`format-rate.ts`) — the same compromise the Conversion page
- *   made. Below that, a percentage is two people wearing a confidence interval.
+ *   `MIN_RATE_DENOMINATOR` (`format-rate.ts`) — the same compromise Acquisition's funnel
+ *   makes. Below that, a percentage is two people wearing a confidence interval.
  *
  *   No vanity totals. Kept. Contacts-across-all-accounts changes no decision and is absent.
  *   Total accounts is not a vanity total: it is the one line the page exists to draw.
@@ -94,15 +94,6 @@ export type DepthPoint = {
   imports: number;
 };
 
-export type WorkflowStagePoint = {
-  bucketStart: Date;
-  signedUp: number;
-  onboarded: number;
-  hasContacts: number;
-  loggedActivity: number;
-  cameBack: number;
-};
-
 export type ConsistencyPoint = {
   bucketStart: Date;
   active: number;
@@ -129,7 +120,7 @@ export type AiOperationCostRow = {
   orbitMicros: number;
 };
 
-/** One row of the Growth page's "Accounts that have used each feature" bars. */
+/** One row of Growth › Features' "Accounts that have used each feature" bars. */
 export type FeatureAdoptionRow = { key: FeatureKey; label: string; count: number };
 
 /**
@@ -276,7 +267,8 @@ export async function userTotalsTrend(
 }
 
 /**
- * Signed-in accounts that opened Orbit, per period — the "looked" half of engagement.
+ * Signed-in accounts that opened Orbit, per period — the "looked" half of engagement. No
+ * Growth tab charts it any more (Nov 2026); `analytics/checks/` still reads it.
  *
  * Read from `page_views`, which records `user_id` on signed-in views. This is the measure
  * that sees the person who opens their network every morning and edits nothing, who is
@@ -334,20 +326,24 @@ export async function rollingActiveTrend(
   const result = await db.execute(sql`
     WITH spine AS (${series(grain, buckets)}),
     points AS (
+      -- The bucket's end in UTC, like the spine: timestamptz + '1 day' / '1 month' follows the
+      -- SESSION's time zone, so a DST change there moved the close by an hour.
       SELECT bucket_start,
-             least(bucket_start + ${sql.raw(`interval '${step}'`)}, now()) AS as_of
+             least(((bucket_start AT TIME ZONE 'UTC') + ${sql.raw(`interval '${step}'`)}) AT TIME ZONE 'UTC', now()) AS as_of
       FROM spine
     ),
     w AS (${writesSince(sql`${SPINE_START} - interval '30 days'`)})
+    -- Trailing windows are durations, in hours: '7 days' subtracted from a timestamptz is
+    -- 167 or 169 hours across a DST change in the session's zone (the LA smoke caught it).
     SELECT p.bucket_start,
            count(DISTINCT w.user_id)
-             FILTER (WHERE w.created_at >= p.as_of - interval '1 day')::int AS dau,
+             FILTER (WHERE w.created_at >= p.as_of - interval '24 hours')::int AS dau,
            count(DISTINCT w.user_id)
-             FILTER (WHERE w.created_at >= p.as_of - interval '7 days')::int AS wau,
+             FILTER (WHERE w.created_at >= p.as_of - interval '168 hours')::int AS wau,
            count(DISTINCT w.user_id)::int AS mau
     FROM points p
     LEFT JOIN w
-      ON w.created_at >= p.as_of - interval '30 days'
+      ON w.created_at >= p.as_of - interval '720 hours'
      AND w.created_at < p.as_of
     GROUP BY p.bucket_start
     ORDER BY p.bucket_start
@@ -560,70 +556,6 @@ export async function depthTrend(
     notes: num(r.notes),
     chats: num(r.chats),
     imports: num(r.imports),
-  }));
-}
-
-/**
- * Where each week's signups are in the workflow now: the furthest stage every account has
- * reached, as mutually exclusive counts so a week's bar stacks to its signups.
- *
- *   Signed up        nothing past account creation
- *   Onboarded        finished the tour or wizard, or imported (mirrors `needsOnboarding`)
- *   Has contacts     at least one contact — typed or imported
- *   Logged activity  a saved capture, a hand-logged note or a chat message: the loop the
- *                    product exists for, done at least once
- *   Came back        wrote anything seven or more days after signing up
- *
- * "Now", not "at the time": a week from March shows where March's signups stand today. So
- * the newest week always looks least advanced — its accounts cannot have "come back" yet.
- */
-export async function workflowStagesTrend(
-  grain: Grain = "week",
-  buckets = 12
-): Promise<WorkflowStagePoint[]> {
-  const db = await getDb();
-  const result = await db.execute(sql`
-    WITH spine AS (${series(grain, buckets)}),
-    per_user AS (
-      SELECT ${bucketOf(grain, sql`s.created_at`)} AS b,
-             CASE
-               WHEN EXISTS (
-                 SELECT 1 FROM (${writesSince(sql`s.created_at + interval '7 days'`)}) w
-                 WHERE w.user_id = s.user_id
-               ) THEN 5
-               WHEN EXISTS (SELECT 1 FROM capture_jobs j WHERE j.user_id = s.user_id AND j.status = 'saved')
-                 OR EXISTS (SELECT 1 FROM interactions x WHERE x.user_id = s.user_id
-                              AND x.note_batch_id IS NULL AND x.external_id IS NULL AND x.import_id IS NULL
-                              AND x.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE})
-                 OR EXISTS (SELECT 1 FROM chat_messages m WHERE m.user_id = s.user_id AND m.role = 'user')
-                 THEN 4
-               WHEN EXISTS (SELECT 1 FROM contacts c WHERE c.user_id = s.user_id AND c.source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE}) THEN 3
-               WHEN s.onboarding_completed_at IS NOT NULL
-                 OR EXISTS (SELECT 1 FROM imports i WHERE i.user_id = s.user_id) THEN 2
-               ELSE 1
-             END AS stage
-      FROM user_settings s
-      WHERE s.created_at >= ${SPINE_START}
-        AND NOT ${internalAccountSql(sql`s.user_id`)}
-    )
-    SELECT spine.bucket_start,
-           count(p.b) FILTER (WHERE p.stage = 1)::int AS signed_up,
-           count(p.b) FILTER (WHERE p.stage = 2)::int AS onboarded,
-           count(p.b) FILTER (WHERE p.stage = 3)::int AS has_contacts,
-           count(p.b) FILTER (WHERE p.stage = 4)::int AS logged,
-           count(p.b) FILTER (WHERE p.stage = 5)::int AS came_back
-    FROM spine
-    LEFT JOIN per_user p ON p.b = spine.bucket_start
-    GROUP BY spine.bucket_start
-    ORDER BY spine.bucket_start
-  `);
-  return rowsOf<Record<string, string | number>>(result).map((r) => ({
-    bucketStart: toDate(r.bucket_start as string),
-    signedUp: num(r.signed_up),
-    onboarded: num(r.onboarded),
-    hasContacts: num(r.has_contacts),
-    loggedActivity: num(r.logged),
-    cameBack: num(r.came_back),
   }));
 }
 
