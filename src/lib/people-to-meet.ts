@@ -13,11 +13,19 @@ import { isSurfaceReleased } from "@/lib/surface-visibility";
 import {
   discoverPeople,
   loadCachedDiscovery,
+  loadLatestCachedDiscovery,
   type Candidate,
   type DiscoveryResearcher,
 } from "@/lib/web-research";
 
-export type PersonToMeet = { name: string; headline: string | null; whyMatches: string; url: string };
+export type PersonToMeet = {
+  name: string;
+  headline: string | null;
+  /** The candidate's organization, for the Brief anchor. */
+  company: string | null;
+  whyMatches: string;
+  url: string;
+};
 
 const SHOWN = 2;
 const WEEK_MS = 7 * 86_400_000;
@@ -42,7 +50,7 @@ const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase().re
  * `page.find` is released, and one paid search per account per 7 days (`peopleToMeet` bucket;
  * the search also counts against `webResearch`). A run younger than a week is served from
  * `discoverPeople`'s cache; an older one is refreshed only if the week's bucket has room, else
- * the old run is served. Every expected outcome — a gate, nothing to search, no room — is `[]`.
+ * the old run is served — or, when the query changed since, the newest run for any query. Every expected outcome — a gate, nothing to search, no room — is `[]`.
  */
 export async function loadPeopleToMeet(
   userId: string,
@@ -66,9 +74,15 @@ export async function loadPeopleToMeet(
     const cached = await loadCachedDiscovery(userId, query);
     let candidates = cached?.candidates ?? [];
     const stale = !cached || now().getTime() - new Date(cached.researchedAt).getTime() > WEEK_MS;
-    if (stale && (await claimWeeklyRun(userId))) {
-      const run = await discoverPeople(userId, query, { fresh: true, now, researcher: opts.researcher });
-      if (run.ok) candidates = run.result.candidates;
+    if (stale) {
+      if (await claimWeeklyRun(userId)) {
+        const run = await discoverPeople(userId, query, { fresh: true, now, researcher: opts.researcher });
+        if (run.ok) candidates = run.result.candidates;
+      } else if (!cached) {
+        // The query changed mid-week (an edited aim or target company) after the week's run was
+        // spent: keep showing that run rather than an empty card until next week.
+        candidates = (await loadLatestCachedDiscovery(userId))?.candidates ?? [];
+      }
     }
     return (await dropKnownPeople(userId, candidates)).slice(0, SHOWN).map(toPersonToMeet);
   } catch (err) {
@@ -122,5 +136,5 @@ async function dropKnownPeople(userId: string, candidates: Candidate[]): Promise
 
 function toPersonToMeet(c: Candidate): PersonToMeet {
   const headline = [c.title, c.company].filter(Boolean).join(" at ") || null;
-  return { name: c.fullName, headline, whyMatches: c.whyMatches, url: c.url };
+  return { name: c.fullName, headline, company: c.company, whyMatches: c.whyMatches, url: c.url };
 }

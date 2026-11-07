@@ -852,6 +852,22 @@ export async function loadCachedDiscovery(userId: string, input: unknown): Promi
   return brief?.kind === "discover" ? brief : null;
 }
 
+/** The account's newest cached discovery run (any query), while still within `RESEARCH_CACHE_DAYS`. */
+export async function loadLatestCachedDiscovery(userId: string): Promise<DiscoveryResult | null> {
+  const db = await getDb();
+  const row = await db.query.aiResultCache.findFirst({
+    where: and(
+      eq(aiResultCache.userId, userId),
+      eq(aiResultCache.operation, DISCOVER_OPERATION),
+      gt(aiResultCache.createdAt, freshSince()),
+    ),
+    orderBy: desc(aiResultCache.createdAt),
+    columns: { result: true },
+  });
+  const brief = row ? asBrief(row.result) : null;
+  return brief?.kind === "discover" ? brief : null;
+}
+
 /**
  * People who match a description ("product managers at Stripe who went to Michigan"),
  * found on the public web. Honest about its limits: a handful of cited candidates, never a

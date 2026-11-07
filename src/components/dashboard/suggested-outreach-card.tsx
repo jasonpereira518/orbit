@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { getPeopleToMeet, saveResearchedPerson } from "@/actions/web-research";
+import { saveResearchedPerson } from "@/actions/web-research";
 import { SuggestionRow } from "@/components/dashboard/suggestion-row";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,13 +31,18 @@ export type SuggestedOutreachItem = {
   tier?: "inner" | "mid" | "outer";
 };
 
-/** Loads after paint (a weekly web search can be slow) and renders nothing until there are rows. */
+/**
+ * Loads after paint (a weekly web search can be slow) and renders nothing until there are rows.
+ * A route, not a server action: Next runs a client's actions one at a time, so an action here
+ * would hold every other dashboard action behind the search.
+ */
 function PeopleToMeet() {
   const [result, setResult] = useState<{ people: PersonToMeet[]; canResearch: boolean } | null>(null);
   useEffect(() => {
     let live = true;
-    getPeopleToMeet()
-      .then((r) => live && setResult(r))
+    fetch("/api/people-to-meet", { method: "POST", headers: { "x-orbit-research": "1" } })
+      .then((r) => (r.ok ? (r.json() as Promise<{ people: PersonToMeet[]; canResearch: boolean }>) : null))
+      .then((r) => live && r && setResult(r))
       .catch(() => {}); // a failed load is the same as nothing to show
     return () => {
       live = false;
@@ -59,6 +64,7 @@ function PeopleToMeet() {
 function PersonToMeetRow({ person, canResearch }: { person: PersonToMeet; canResearch: boolean }) {
   const [briefKey, setBriefKey] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -66,15 +72,15 @@ function PersonToMeetRow({ person, canResearch }: { person: PersonToMeet; canRes
   const brief = async () => {
     if (briefKey) return briefKey;
     const url = person.url.replace(/[?#].*$/, "");
-    const [, company = ""] = (person.headline ?? "").split(" at ");
     const b = await requestBrief({
       kind: "person",
       fullName: person.name,
-      company,
+      company: person.company ?? "",
       linkedinUrl: LINKEDIN_PROFILE.test(url) ? url : "",
     });
     setBriefKey(b.key);
     if (b.dossier.kind === "person" && b.dossier.match === "confident") setSummary(b.dossier.summary ?? null);
+    else setUnconfirmed(true);
     return b.key;
   };
   const run = (then: (key: string) => Promise<void>) =>
@@ -105,6 +111,7 @@ function PersonToMeetRow({ person, canResearch }: { person: PersonToMeet; canRes
       {person.headline && <p className="mt-0.5 text-xs text-muted-foreground">{person.headline}</p>}
       <p className="mt-1.5 text-sm text-ink/80">{person.whyMatches}</p>
       {summary && <p className="mt-1.5 text-xs text-muted-foreground">{summary}</p>}
+      {unconfirmed && <p role="status" className="mt-1.5 text-xs text-muted-foreground">Couldn’t confirm a match.</p>}
       {canResearch && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {saved ? (
@@ -116,7 +123,7 @@ function PersonToMeetRow({ person, canResearch }: { person: PersonToMeet; canRes
               <Button type="button" size="sm" disabled={pending} onClick={save}>
                 Save
               </Button>
-              {!summary && (
+              {!summary && !unconfirmed && (
                 <Button
                   type="button"
                   variant="outline"

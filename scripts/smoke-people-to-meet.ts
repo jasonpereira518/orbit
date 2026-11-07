@@ -105,7 +105,7 @@ async function main() {
     first.map((p) => p.name).join(",") === "Alan Turing,Barbara Liskov",
     JSON.stringify(first.map((p) => p.name)),
   );
-  check("…shaped for the card", first[0]?.headline === "Staff PM at Stripe" && first[0]?.whyMatches === "UNC alum, PM at Stripe" && first[0]?.url === "https://stripe.com/team/alan" && first[1]?.headline === "Figma");
+  check("…shaped for the card", first[0]?.headline === "Staff PM at Stripe" && first[0]?.whyMatches === "UNC alum, PM at Stripe" && first[0]?.url === "https://stripe.com/team/alan" && first[1]?.headline === "Figma" && first[0]?.company === "Stripe" && first[1]?.company === "Figma");
   check("…one search, for the built query", f.calls.length === 1 && f.calls[0].user.includes("UNC alumni"));
 
   const again = await loadPeopleToMeet(USER, { researcher: f.researcher, gates: OPEN, now: at(3) });
@@ -117,6 +117,17 @@ async function main() {
 
   const exhausted = await loadPeopleToMeet(USER, { researcher: f.researcher, gates: OPEN, now: at(16) });
   check("stale cache + bucket exhausted: the cached results, no search", f.calls.length === 2 && exhausted.length === 2);
+
+  console.log("\nquery changed mid-week");
+  await reset();
+  {
+    await loadPeopleToMeet(USER, { researcher: fake().researcher, gates: OPEN, now: at(0) });
+    const db = await getDb();
+    await db.update(userSettings).set({ schools: ["Duke"] }).where(eq(userSettings.userId, USER));
+    const g = fake();
+    const out = await loadPeopleToMeet(USER, { researcher: g.researcher, gates: OPEN, now: at(2) });
+    check("edited query, week's run spent: the newest cached run, no search", out.length === 2 && g.calls.length === 0, JSON.stringify(out.map((p) => p.name)));
+  }
 
   console.log("\nfirst run with no room");
   await reset();
