@@ -220,7 +220,7 @@ async function main() {
   const feedToken = "smoke-actions-feed-token-0123456789abcdef";
   await db
     .update(userSettings)
-    .set({ calendarFeedToken: hashCalendarFeedToken(feedToken) })
+    .set({ calendarFeedToken: hashCalendarFeedToken(feedToken), calendarFeedTokenCreatedAt: new Date() })
     .where(eq(userSettings.userId, TARGET));
   check(
     "the ICS feed goes quiet for a suspended account",
