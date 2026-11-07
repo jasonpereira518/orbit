@@ -184,8 +184,7 @@ scrolling**. He then asked for the same treatment across the whole onboarding fl
    - The self-intro uses the raw strings: "{majors joined with ' and '} student at {school},
      aiming for …". It falls back to today's headline wording when there are no majors.
    - **Non-students** (aims full_time, switch_roles, grow): the row is labelled "What you do
-     now" and keeps writing the headline exactly as today. *This was Claude's suggestion to
-     Jason; built as suggested, flagged in the hand-off.*
+     now" and keeps writing the headline exactly as today. *Confirmed by Jason, Nov 7.*
 7. **Timeline relabel** applies everywhere `TIMELINE_LABELS` is used, drafts included (same
    meaning, new words). Re-record the draft-prompt goldens.
 8. **Mark animation.** CSS only: rotate an inner group placed inside a squashed, tilted outer
