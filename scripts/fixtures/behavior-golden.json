@@ -4750,6 +4750,10 @@
         "state": "none",
         "detail": "Works on every plan"
       },
+      "connectors": {
+        "state": "none",
+        "detail": "Everything Orbit connects to"
+      },
       "granola": {
         "state": "off",
         "detail": "Not connected"
@@ -4807,6 +4811,18 @@
       "zapier": {
         "state": "on",
         "detail": "1 key"
+      },
+      "contacts_file": {
+        "state": "none",
+        "detail": "Upload a file any time"
+      },
+      "chat_exports": {
+        "state": "none",
+        "detail": "Upload an export any time"
+      },
+      "google_drive": {
+        "state": "off",
+        "detail": "Unavailable"
       },
       "granola": {
         "state": "off",
