@@ -42,6 +42,10 @@ const BUCKET_LABELS: Record<string, string> = {
   apiRead: "API read",
   apiWrite: "API write",
   apiIngest: "event import",
+  importPreview: "import preview",
+  importStart: "import",
+  importAppend: "import upload",
+  importUndo: "import undo",
   mcp: "MCP tool call",
   mcpWrite: "MCP write",
   providerSync: "sync",
@@ -283,6 +287,27 @@ export const RATE_LIMITS = {
   apiWrite: { limit: 60, windowSec: 60 },
   /** Event ingestion. Fewer, because each request carries a batch of up to 500 events. */
   apiIngest: { limit: 30, windowSec: 60 },
+  /**
+   * Import previews: parse a file, load every contact and build a duplicate index over it.
+   * An unbounded loop here is a CPU and memory amplifier in a server action, not just a
+   * repeated query, so even a legitimate "try a few files" session has a ceiling.
+   */
+  importPreview: { limit: 20, windowSec: 3600 },
+  /**
+   * Starting a server-owned import. Each one snapshots rows and drives a background job, so
+   * the limit is per import rather than per chunk; ten an hour is several re-uploads' worth.
+   */
+  importStart: { limit: 10, windowSec: 3600 },
+  /**
+   * Staged uploads of a chunked import (`begin`/`append` on LinkedIn connections). Fifty
+   * chunks of 2,000 rows is a 100k-row file; 600 leaves ample room for retries inside that.
+   */
+  importAppend: { limit: 600, windowSec: 3600 },
+  /**
+   * Undo re-walks an import's rows and can take two minutes. Six an hour is far above normal
+   * use and bounds a client that retries a slow undo without waiting.
+   */
+  importUndo: { limit: 6, windowSec: 3600 },
   /**
    * MCP tool calls on a paid plan. An agent can loop far faster than a person can click, and
    * a single chat turn now fans out over several tools — search, then a contact, then a

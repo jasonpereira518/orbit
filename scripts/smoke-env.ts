@@ -20,6 +20,7 @@ function check(label: string, cond: boolean, detail?: string) {
 /** A complete, valid production environment. Each case below breaks one thing. */
 const GOOD: Record<string, string> = {
   DATABASE_URL: "postgresql://user:pass@ep-x.us-east-1.aws.neon.tech/neondb?sslmode=require",
+  PRODUCTION_DB_HOST: "ep-prod.us-east-1.aws.neon.tech",
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_abc",
   CLERK_SECRET_KEY: "sk_live_abc",
   CLERK_WEBHOOK_SIGNING_SECRET: "whsec_abc",
@@ -144,10 +145,16 @@ function main() {
   }
 
   const preview = validateEnv(
-    { DATABASE_URL: GOOD.DATABASE_URL, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x", CLERK_SECRET_KEY: "sk_test_x", ENCRYPTION_SECRET: GOOD.ENCRYPTION_SECRET },
+    {
+      DATABASE_URL: GOOD.DATABASE_URL,
+      PRODUCTION_DB_HOST: GOOD.PRODUCTION_DB_HOST,
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x",
+      CLERK_SECRET_KEY: "sk_test_x",
+      ENCRYPTION_SECRET: GOOD.ENCRYPTION_SECRET,
+    },
     { vercelEnv: "preview" }
   );
-  check("preview needs only DB, Clerk and encryption", preview.errors.length === 0, preview.errors.join("; "));
+  check("preview needs only DB, Clerk, encryption and the migration guard", preview.errors.length === 0, preview.errors.join("; "));
   check("preview accepts test-mode keys", !preview.errors.some((e) => e.includes("pk_test")));
 
   const dev = validateEnv({}, { vercelEnv: undefined });

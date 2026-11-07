@@ -9,6 +9,13 @@ export const CONNECTIONS_MATCH_MAX_ROWS = 5_000;
 /** Rows per staged upload: ~0.5 MB up. */
 export const CONNECTIONS_APPEND_MAX_ROWS = 2_000;
 
+/**
+ * Rows one chunked connections import will accept in total. LinkedIn's own export tops out
+ * around 30,000; 50,000 leaves room for a merged export while keeping the staged table and
+ * the job that follows bounded.
+ */
+export const CONNECTIONS_TOTAL_MAX_ROWS = 50_000;
+
 /** What a duplicate check is asked about one row. */
 export type ConnectionMatchRow = {
   index: number;

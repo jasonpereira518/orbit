@@ -7,6 +7,8 @@ import { requireUserId } from "@/lib/auth";
 
 type Params = { params: Promise<{ shotId: string }> };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Serve one feedback screenshot.
  *
@@ -34,6 +36,10 @@ export async function GET(_req: Request, { params }: Params) {
   }
 
   const { shotId } = await params;
+  // A malformed id would reach Postgres as a failed uuid cast — a 500 for what is plainly
+  // "no such screenshot". Same guard as `/api/capture/photos/[photoId]`.
+  if (!UUID.test(shotId)) return new NextResponse(null, { status: 404 });
+
   const db = await getDb();
 
   const shot = await db.query.feedbackScreenshots.findFirst({

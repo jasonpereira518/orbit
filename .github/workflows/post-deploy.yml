@@ -38,16 +38,27 @@ jobs:
       (github.event.deployment_status.state == 'success' &&
        github.event.deployment.environment == 'Production')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # A cold `npm ci` on this package is ~30s-2min on a runner; the old 5-minute budget left
+    # little room for a slow registry or a deployment that answers each probe near its 20s
+    # timeout. 10 minutes still fails fast for a genuinely broken deploy.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      # The script has no dependencies beyond Node itself; tsx is fetched on its own rather
-      # than restoring the whole node_modules.
+      # `tsx` is already a pinned devDependency, so install from the lockfile rather than
+      # fetching an unpinned tool from the network at deploy time. Reuse CI's node_modules
+      # cache (same key) so the usual post-deploy path skips the install entirely.
+      - id: deps
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
       - name: Smoke the deployment
-        run: npx --yes tsx@4.23.1 scripts/post-deploy-smoke.ts
+        run: npx tsx scripts/post-deploy-smoke.ts
         env:
           # The production DOMAIN, not the deployment's own `*.vercel.app` URL from the event:
           # Vercel's standard deployment protection covers generated URLs even in production,
