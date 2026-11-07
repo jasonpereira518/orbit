@@ -52,10 +52,12 @@ Measured the same way as the audit: `next dev`, a fresh PGlite, `ORBIT_DEMO_DATA
 - **Onboarding events** (`onboarding_step_completed`) were written for the old quick path (people → connect → overview). They now count by stage: any step inside "Your first person" (notes, by hand, other ways, LinkedIn import, triage) completes `capture` when the person reaches the first win. Going back, or moving within a stage, records nothing. `smoke-activation-events` checks the new path.
 - **Kept from `main` as is:** the contacts empty state, the imports page (now a tab on /capture), the dashboard's meetings and briefing row, and the provider cards' new short status lines.
 
-**Checks run:**
+**Checks run (after the merge with `main`):**
 - Typecheck is clean, and ESLint finds no errors in the changed files.
-- 527 of 541 smokes pass. The other 14 fetch over the network (avatars, CalDAV, feeds, URL guards) and fail the same way on the base commit in this sandbox.
-- Playwright: 10 pass, and 2 Stripe checkout specs are skipped without keys. The rewritten onboarding spec caught a race in which the first-win buttons stayed disabled in about 40% of runs. It is fixed: the step keeps its own flag, because AnimatePresence can hold a stale `pending` prop. The spec then passed 10 of 10 runs.
+- Smokes: 662 of 663 pass. `smoke-radar-run` failed once under full-suite load and passed alone, twice each, on this branch and on `main`.
+- Playwright: 77 pass, and 2 Stripe checkout specs are skipped without keys. That includes `main`'s new accessibility suite. It caught one problem from this batch: with AI unavailable, the disabled suggestion cards on /chat left a scroller with nothing to focus, so the cards are now hidden while AI cannot run.
+- `main` itself had gone red on 02-capture and 06-guided-tour when managed AI stopped using Gemini (8f7912cb), because the e2e stub only spoke Gemini. The fix from `security/audit-2026-11` (cb5ab7f2: the stub also answers Anthropic, and Playwright sets `ORBIT_MANAGED_ANTHROPIC_API_KEY`) is ported here. It becomes a no-op once that branch lands.
+- Earlier, before the merge: the rewritten onboarding spec caught a race in which the first-win buttons stayed disabled in about 40% of runs. The step now keeps its own flag, because AnimatePresence can hold a stale `pending` prop; the spec then passed 10 of 10 runs.
 
 **Not verified:** a real Clerk sign-up, Neon, and production's actual pause flag. As in the audit, the walks ran in demo mode.
 

@@ -1804,14 +1804,17 @@ export function ChatPanel({
               {/* Only while the thread is empty. The footer is `shrink-0` above a message
                   list with no floor, so a permanent row would take that height out of the
                   answers for the whole conversation. The skeleton is the same size as the
-                  cards, so nothing moves when they land. */}
+                  cards, so nothing moves when they land. Not at all while AI cannot run: every
+                  card would be a question that cannot be sent, and a row of disabled cards is
+                  a scroller with nothing in it to focus. */}
               {showSuggestions &&
+                !aiBlocked &&
                 (suggestions === null ? (
                   <SuggestionCardsSkeleton />
                 ) : (
                   <SuggestionCards
                     items={suggestions}
-                    disabled={busy || loadingThread || aiBlocked}
+                    disabled={busy || loadingThread}
                     onPick={(s) =>
                       sendQuestion(s.question, {
                         // A mention card carries two people; everything else nought or one.
