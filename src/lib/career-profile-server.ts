@@ -66,8 +66,8 @@ export async function clearCareerProfile(userId: string): Promise<void> {
   const db = await getDb();
   await db.execute(sql`
     UPDATE user_settings SET
-      career_profile = CASE WHEN career_profile ? 'aim'
-        THEN jsonb_build_object('aim', career_profile->'aim') ELSE NULL END,
+      career_profile = NULLIF(jsonb_strip_nulls(jsonb_build_object(
+        'aim', career_profile->'aim', 'majors', career_profile->'majors')), '{}'::jsonb),
       updated_at = now()
     WHERE user_id = ${userId}
   `);

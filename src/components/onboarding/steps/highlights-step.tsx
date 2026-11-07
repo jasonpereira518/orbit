@@ -129,7 +129,7 @@ export function HighlightsStep({
       onBack={onBack}
       eyebrow="You’re set up"
       title="Here’s what Orbit can do"
-      description="Everything here is one click from the sidebar. The tags show what uses AI credits, waits on an import or comes with Pro."
+      description="Tags show what uses AI credits, needs an import or comes with Pro."
       className="max-w-5xl"
       footer={
         <StepFooter
@@ -195,7 +195,7 @@ export function HighlightsStep({
               aria-roledescription="slide"
               aria-label={`${index + 1} of ${chapters.length}: ${chapter.title}`}
             >
-              <div className="relative h-[19rem] overflow-hidden border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent md:h-auto md:min-h-[19rem] md:border-r md:border-b-0">
+              <div className="relative h-[19rem] overflow-hidden border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent md:h-auto md:min-h-[18rem] md:border-r md:border-b-0">
                 <AnimatePresence initial={false}>
                   <motion.div
                     key={chapter.id}

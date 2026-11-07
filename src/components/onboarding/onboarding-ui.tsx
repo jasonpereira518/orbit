@@ -147,7 +147,7 @@ export function StepLayout({
         </StepHeading>
       </div>
       {/* -mx/px and py keep focus rings clear of the scroll clip. */}
-      <div className="-mx-1 mt-3 min-h-0 flex-1 px-1 pt-1 pb-4 md:overflow-y-auto">{children}</div>
+      <div className="-mx-1 mt-3 min-h-0 flex-1 px-1 pt-1 pb-1 md:overflow-y-auto">{children}</div>
       {footer}
     </Stagger>
   );

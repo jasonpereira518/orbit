@@ -235,6 +235,12 @@ async function main() {
   check("profile is dropped", cur.career?.profile === undefined);
 
   await reset();
+  await saveAboutYouForUser(USER, confirm({ aim: "internship", majors: ["Computer Science"] }));
+  await clearCareerProfile(USER);
+  cur = await loadYouCurrent(USER);
+  check("majors are kept too", cur.career?.majors?.[0] === "Computer Science", JSON.stringify(cur.career));
+
+  await reset();
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   console.log(failures ? `\n${failures} check(s) failed` : "\nsmoke-about-you-save: all checks passed");
   if (failures) process.exit(1);
