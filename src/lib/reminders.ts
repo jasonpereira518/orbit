@@ -1180,6 +1180,7 @@ export async function getDashboardData(
     preferredName: string | null;
     title: string | null;
     company: string | null;
+    avatarUrl?: string | null;
     lastInteractionAt?: Date | null;
   }>();
   const contactNameById = new Map<string, string>();
@@ -1190,6 +1191,7 @@ export async function getDashboardData(
       preferredName: d.preferredName,
       title: d.title,
       company: lightById.get(id)?.company ?? null,
+      avatarUrl: d.profileImageUrl ?? null,
       lastInteractionAt: d.lastInteractionAt ?? null,
     });
     contactNameById.set(id, d.preferredName || d.fullName);
@@ -1201,6 +1203,7 @@ export async function getDashboardData(
       preferredName: c.preferredName ?? null,
       title: c.title ?? null,
       company: c.company ?? null,
+      avatarUrl: c.avatarUrl ?? null,
     });
     contactNameById.set(c.id, c.preferredName || c.fullName);
   }

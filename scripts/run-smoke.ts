@@ -45,6 +45,10 @@ const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-test-harness": "pure", // the fixtures, fetch mock and known-bug exit codes themselves
   "smoke-friendly-error": "pure",
+  "smoke-scroll-restore": "pure",
+  "smoke-plain-text": "pure",
+  "smoke-markdown-shortcuts": "pure",
+  "smoke-meeting-row-details": "pure",
   "smoke-ai-notice-copy": "pure",
   "smoke-interaction-edit": "pure",
   "smoke-inbox-search": "pure",
@@ -53,6 +57,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-granola-activity": "pglite",
   "smoke-granola-pick": "pglite",
   "smoke-contact-name-sweep": "pglite",
+  "smoke-non-person-participant": "pglite",
   "smoke-onboarding-steps": "pure",
   "smoke-onboarding-examples-cast": "pure",
   "smoke-onboarding-gate": "pure",
@@ -76,6 +81,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-openrouter-oauth": "pure",
   "smoke-report-error": "pure",
   "smoke-toast-actions": "pure",
+  "smoke-corner-clearance": "pure",
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
   "smoke-a11y-patterns": "pure",

@@ -12,6 +12,8 @@ const FILES: Record<string, number> = {
   "src/components/capture/capture-summary.tsx": 1,
   "src/components/capture/capture-source-card.tsx": 2,
   "src/components/capture/ignored-people-section.tsx": 1,
+  // The notes box's formatting row: one mapped Button, five on screen.
+  "src/components/composer/markdown-toolbar.tsx": 1,
   "src/components/reminders/reminder-card.tsx": 1,
   "src/components/reminders/reminder-done-snooze.tsx": 2,
   "src/components/reminders/suggested-reminders-panel.tsx": 3,
@@ -26,6 +28,7 @@ const FILES: Record<string, number> = {
 };
 const CLUSTER_GAPS: Array<[string, string]> = [
   ["src/components/contacts/contacts-list.tsx", "pointer-coarse:gap-4"],
+  ["src/components/composer/markdown-toolbar.tsx", "pointer-coarse:gap-4"],
   ["src/components/reminders/reminder-card.tsx", "pointer-coarse:gap-4"],
   ["src/components/reminders/reminder-done-snooze.tsx", "pointer-coarse:gap-4"],
   // 28px (icon-sm) since the reminders redesign, so the wider gap.

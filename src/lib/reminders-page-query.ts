@@ -122,6 +122,9 @@ function filterConditions(
     );
   } else {
     switch (filters.view ?? "today") {
+      case "all":
+        conds.push(eq(reminders.status, "pending"));
+        break;
       case "today":
         conds.push(eq(reminders.status, "pending"));
         conds.push(sql`${dueDay} <= ${today}::date`);
@@ -306,6 +309,7 @@ export async function queryReminderRailCounts(
   const [viewRows, listRows, suggestedRows] = await Promise.all([
     db
       .select({
+        all: sql<number>`count(*) filter (where ${pending})::int`,
         today: sql<number>`count(*) filter (where ${pending} and ${dueDay} <= ${today}::date)::int`,
         overdue: sql<number>`count(*) filter (where ${pending} and ${dueDay} < ${today}::date)::int`,
         upcoming: sql<number>`count(*) filter (where ${pending} and ${dueDay} > ${today}::date)::int`,
@@ -337,6 +341,7 @@ export async function queryReminderRailCounts(
   const v = viewRows[0];
   return {
     counts: {
+      all: Number(v?.all ?? 0),
       today: Number(v?.today ?? 0),
       overdue: Number(v?.overdue ?? 0),
       upcoming: Number(v?.upcoming ?? 0),

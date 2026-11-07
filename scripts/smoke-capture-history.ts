@@ -27,7 +27,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-capture-history";
 import sharp from "sharp";
 import { eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { capturePhotos, noteBatches, reminders, userSettings } from "../src/db/schema";
+import { captureJobs, capturePhotos, contacts, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
 import {
   CAPTURE_PHOTO_MAX_EDGE,
   attachCapturePhotos,
@@ -38,12 +38,16 @@ import {
   purgeCapturePhotosForUser,
   storeCapturePhotos,
 } from "../src/lib/capture-photos";
-import { isCaptureBatchFor, listCaptureHistoryFor } from "../src/lib/capture-history";
+import { captureMethodFor, isCaptureBatchFor, listCaptureHistoryFor } from "../src/lib/capture-history";
 import { deleteNoteBatchForUser, saveNoteBatch } from "../src/lib/note-batch-save";
 import {
+  captureAttendeeNames,
   captureExcerpt,
   captureHistoryTitle,
+  captureMethod,
+  captureNextStep,
   captureSourceKinds,
+  captureSummary,
   emptyNoteBatchResult,
 } from "../src/lib/note-batches";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
@@ -62,6 +66,9 @@ async function reset() {
   for (const user of [USER, OTHER]) {
     await purgeCapturePhotosForUser(user);
     await db.delete(reminders).where(eq(reminders.userId, user));
+    await db.delete(captureJobs).where(eq(captureJobs.userId, user));
+    await db.delete(interactions).where(eq(interactions.userId, user));
+    await db.delete(contacts).where(eq(contacts.userId, user));
     await db.delete(noteBatches).where(eq(noteBatches.userId, user));
     await db.delete(userSettings).where(eq(userSettings.userId, user));
   }
@@ -95,18 +102,56 @@ function pureChecks() {
   );
 
   const result = emptyNoteBatchResult();
-  result.participants = ["Sarah Chen", "Marcus Lee", "Priya Nair", "Sarah Chen"].map((name, i) => ({
+  result.participants = ["Sarah Chen", "Marcus Lee", " Priya Nair ", "Sarah Chen"].map((name, i) => ({
     contactId: `c${i}`,
     interactionId: null,
     name,
     created: true,
     duplicate: false,
   }));
-  check("title names two people and counts the rest", captureHistoryTitle(result) === "Sarah Chen, Marcus Lee +1 more", String(captureHistoryTitle(result)));
-  const datesOnly = emptyNoteBatchResult();
-  datesOnly.reminders = [{ id: "r", contactId: null, title: "Board review", dueIso: "2026-10-15", dateBasis: "absolute", rawDatePhrase: null, sourceExcerpt: null }];
-  check("a dates-only capture is titled by its first reminder", captureHistoryTitle(datesOnly) === "Board review");
-  check("nothing to title → null", captureHistoryTitle(emptyNoteBatchResult()) === null);
+  const names = captureAttendeeNames(result.participants);
+  check("attendees are listed once each, trimmed, in order", names.join() === "Sarah Chen,Marcus Lee,Priya Nair", names.join());
+  const title = (over: Partial<Parameters<typeof captureHistoryTitle>[0]>) =>
+    captureHistoryTitle({ head: "", names: [], reminders: [], ...over });
+  check("a meeting's own title wins", title({ meetingTitle: "Q3 webinar", head: "Notes from “Other”", names }) === "Q3 webinar");
+  check(
+    "then a calendar-seeded first line",
+    title({ head: "Notes from “Design crit” with Sarah Chen, Marcus Lee:\nwent well", names }) === "Design crit"
+  );
+  check("  or a Granola header", title({ head: "Meeting: Investor update\n\nWhen: today", names }) === "Investor update");
+  check("  but not the seed's untitled stand-in", title({ head: "Notes from “the meeting”:\n", names: ["Ana"] }) === "Chat with Ana");
+  check("then who it was with, two named and the rest counted", title({ names }) === "Chat with Sarah Chen / Marcus Lee +1 more", String(title({ names })));
+  check("  two people, no count", title({ names: ["A", "B"] }) === "Chat with A / B");
+  check("a dates-only capture is titled by its first reminder", title({ reminders: [{ title: " Board review " }] }) === "Board review");
+  check("nothing to title → null", title({}) === null);
+
+  check(
+    "every method resolves in evidence order",
+    [
+      captureMethod({ meeting: true, granola: true, jobSource: "voice", kinds: ["voice"] }),
+      captureMethod({ meeting: false, granola: true, jobSource: "messy", kinds: ["text"] }),
+      captureMethod({ meeting: false, granola: false, jobSource: "phone", kinds: ["text"] }),
+      captureMethod({ meeting: false, granola: false, jobSource: "messy", kinds: ["photo", "text"] }),
+      captureMethod({ meeting: false, granola: false, jobSource: undefined, kinds: ["calendar"] }),
+      captureMethod({ meeting: false, granola: false, jobSource: null, kinds: [] }),
+    ].join() === "meeting,granola,phone,scan,calendar,notes"
+  );
+
+  check("summary prefers the meeting's, as plain text", captureSummary("**Big** call", ["person"]) === "Big call.");
+  check("  else the first person summary that has words", captureSummary(null, [null, "  ", "- Talked _roadmap_"]) === "Talked roadmap.");
+  check("  read like /meetings: headings dropped, lines end as sentences", captureSummary("### Overview\n- Met Ana\n- Next: deck", []) === "Met Ana. Next: deck.");
+  check("  else nothing", captureSummary("", []) === null);
+
+  const steps = emptyNoteBatchResult();
+  steps.reminders = [{ id: "r", contactId: null, title: "Send deck", dueIso: "2026-10-15", dateBasis: "absolute", rawDatePhrase: null, sourceExcerpt: null }];
+  check("next step falls back to the first reminder", captureNextStep(steps) === "Send deck");
+  steps.actionItems = [{ id: "a", contactId: "c", text: "Intro to **Ana**", reminderId: null }];
+  check("  a note's action item beats it", captureNextStep(steps) === "Intro to Ana");
+  check(
+    "  a meeting's action item beats both",
+    captureNextStep({ ...steps, meeting: { actionItems: [{ text: "Ship v2", owner: null }] } as never }) === "Ship v2"
+  );
+  check("  an old snapshot with no keys is fine", captureNextStep({} as never) === null);
 
   check("short notes pass through, whitespace collapsed", captureExcerpt("  Met   Sarah\n\nat AWS  ") === "Met Sarah at AWS");
   const long = captureExcerpt("word ".repeat(100), 40);
@@ -235,6 +280,52 @@ async function main() {
   check("  and is not a capture batch", !(await isCaptureBatchFor(USER, runBatch!.id)));
   check("a real capture is a capture batch", await isCaptureBatchFor(USER, otherBatch.id));
   check("  but not someone else's", !(await isCaptureBatchFor(OTHER, otherBatch.id)));
+
+  console.log("\nHistory row details");
+  const [ana] = await db.insert(contacts).values({ userId: USER, fullName: "Ana Ruiz" }).returning();
+  const [granolaNote] = await db
+    .insert(interactions)
+    .values({ userId: USER, contactId: ana!.id, source: "granola", aiSummary: "## Recap\n- Talked **pricing**" })
+    .returning();
+  const granolaResult = emptyNoteBatchResult();
+  granolaResult.participants = [{ contactId: ana!.id, interactionId: granolaNote!.id, name: "Ana Ruiz", created: false, duplicate: false }];
+  const phoneResult = emptyNoteBatchResult();
+  // The same person twice: the count must agree with the deduped name line.
+  phoneResult.participants = [1, 2].map(() => ({ contactId: ana!.id, interactionId: null, name: "Ana Ruiz", created: false, duplicate: false }));
+  const later = new Date(Date.now() + 60_000);
+  const [granolaBatch, phoneBatch] = await db
+    .insert(noteBatches)
+    .values([
+      { userId: USER, sourceHash: "h-granola", sourceText: "Meeting: Pricing sync\n\nbody", anchorDate: later, result: granolaResult, createdAt: later },
+      { userId: USER, sourceHash: "h-phone", sourceText: "met ana", anchorDate: later, result: phoneResult, createdAt: later },
+    ])
+    .returning();
+  await db.insert(captureJobs).values({ userId: USER, sourceKind: "phone", noteBatchId: phoneBatch!.id });
+  const details = await listCaptureHistoryFor(USER, { limit: 50 });
+  const g = details.items.find((i) => i.id === granolaBatch!.id)!;
+  check("a batch whose interactions came from Granola reads as Granola", g.method === "granola", g.method);
+  check("  titled by its Granola header", g.title === "Pricing sync", String(g.title));
+  check("  summarised from the person's interaction, markdown stripped", g.summary === "Talked pricing.", String(g.summary));
+  check("  with its attendees", g.names.join() === "Ana Ruiz");
+  const ph = details.items.find((i) => i.id === phoneBatch!.id)!;
+  check("a batch saved by a phone job reads as phone", ph.method === "phone", ph.method);
+  check("  titled by who it was with", ph.title === "Chat with Ana Ruiz", String(ph.title));
+  check("  no summary to show, so none", ph.summary === null);
+  check("  a person listed twice counts once", ph.peopleCount === 1, String(ph.peopleCount));
+  check(
+    "the results page names a capture the way its row does",
+    [
+      await captureMethodFor(USER, { id: granolaBatch!.id, result: granolaResult, kinds: ["text"] }),
+      await captureMethodFor(USER, { id: phoneBatch!.id, result: phoneResult, kinds: ["text"] }),
+      await captureMethodFor(USER, { id: otherBatch.id, result: emptyNoteBatchResult(), kinds: ["text"] }),
+    ].join() === "granola,phone,notes"
+  );
+  check("a typed capture with no job reads as typed notes", details.items.find((i) => i.id === otherBatch.id)!.method === "notes");
+  check(
+    "a dates-only capture does not repeat its title as the next step",
+    details.items.find((i) => i.id === saved.batchId)!.nextSteps === null
+  );
+  await db.delete(noteBatches).where(inArray(noteBatches.id, [granolaBatch!.id, phoneBatch!.id]));
 
   console.log("\nDiscard and prune");
   const [abandoned, fresh] = await storeCapturePhotos(USER, [
