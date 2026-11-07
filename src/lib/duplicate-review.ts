@@ -18,10 +18,28 @@
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { rememberedDuplicateCount } from "@/lib/duplicate-count-memo";
-import { contacts, duplicateSuggestions, interactions } from "@/db/schema";
+import {
+  contactIdentities,
+  contactTags,
+  contacts,
+  duplicateSuggestions,
+  eventAttendees,
+  interactions,
+  tags,
+} from "@/db/schema";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { NO_ENGINES, type Engines } from "@/lib/decisions/engine";
 import { rankDuplicatePairs } from "@/lib/decisions/duplicates";
+import {
+  activeDuplicateModel,
+  compareSignals,
+  describeSignals,
+  scoreWithModel,
+  type DuplicateSignals,
+  type SignalNote,
+} from "@/lib/duplicate-model";
+
+export type RecentTouch = { type: string; date: Date | null; summary: string | null };
 
 export type DuplicateCandidate = {
   id: string;
@@ -33,6 +51,23 @@ export type DuplicateCandidate = {
   profileImageUrl: string | null;
   createdAt: Date | null;
   interactionCount: number;
+  phone: string | null;
+  location: string | null;
+  school: string | null;
+  source: string | null;
+  howMet: string | null;
+  lastInteractionAt: Date | null;
+  aiSummary: string | null;
+  /**
+   * Filled by `enrichCandidates`, which only the review page runs. Empty on the cheap path
+   * (`countDuplicatesAwaitingReview` loads candidates too and must not pay for these).
+   */
+  emails: string[];
+  phones: string[];
+  interactionsByType: Record<string, number>;
+  recent: RecentTouch[];
+  tags: string[];
+  eventIds: string[];
 };
 
 export type DuplicatePair = {
@@ -50,6 +85,12 @@ export type DuplicatePair = {
    * A hint and an order only — nothing on this list merges without the person's click.
    */
   decision?: { engine: "jev" | "llm"; sameProbability: number };
+  /** How the two records compare, as numbers: exactly what a decision on this pair stores. */
+  signals?: DuplicateSignals;
+  /** The same comparison in words: what matches, what differs. */
+  notes?: SignalNote[];
+  /** What the model learned from everyone's past decisions makes of it: P(same person). */
+  learned?: { probability: number };
 };
 
 const CANDIDATE_COLUMNS = {
@@ -61,6 +102,13 @@ const CANDIDATE_COLUMNS = {
   linkedinUrl: contacts.linkedinUrl,
   profileImageUrl: contacts.profileImageUrl,
   createdAt: contacts.createdAt,
+  phone: contacts.phone,
+  location: contacts.location,
+  school: contacts.school,
+  source: contacts.source,
+  howMet: contacts.howMet,
+  lastInteractionAt: contacts.lastInteractionAt,
+  aiSummary: contacts.aiSummary,
 };
 
 async function loadCandidates(
@@ -92,8 +140,132 @@ async function loadCandidates(
   const countById = new Map(counts.map((c) => [c.contactId, Number(c.n)]));
 
   return new Map(
-    rows.map((r) => [r.id, { ...r, interactionCount: countById.get(r.id) ?? 0 }])
+    rows.map((r) => [
+      r.id,
+      {
+        ...r,
+        interactionCount: countById.get(r.id) ?? 0,
+        emails: [],
+        phones: [],
+        interactionsByType: {},
+        recent: [],
+        tags: [],
+        eventIds: [],
+      },
+    ])
   );
+}
+
+/**
+ * The extra evidence a person needs to decide: every email and phone the contact carries, what
+ * kinds of interactions they have and the latest couple, their tags, the events they attended.
+ *
+ * Batched, one query per kind over all the candidates at once, and every one qualified with its
+ * own table: see the note in `loadCandidates` on why a correlated subquery returns 0 here.
+ * Mutates and returns the same objects, so a candidate shared by two pairs is enriched once.
+ */
+export async function enrichCandidates(
+  userId: string,
+  candidates: DuplicateCandidate[]
+): Promise<void> {
+  const unique = [...new Map(candidates.map((c) => [c.id, c])).values()];
+  if (!unique.length) return;
+  const ids = unique.map((c) => c.id);
+  const byId = new Map(unique.map((c) => [c.id, c]));
+  const db = await getDb();
+
+  const [identityRows, typeRows, recentRows, tagRows, eventRows] = await Promise.all([
+    db
+      .select({
+        contactId: contactIdentities.contactId,
+        kind: contactIdentities.kind,
+        value: contactIdentities.value,
+      })
+      .from(contactIdentities)
+      .where(and(eq(contactIdentities.userId, userId), inArray(contactIdentities.contactId, ids))),
+    db
+      .select({
+        contactId: interactions.contactId,
+        type: interactions.interactionType,
+        n: sql<number>`count(*)::int`,
+      })
+      .from(interactions)
+      .where(and(eq(interactions.userId, userId), inArray(interactions.contactId, ids)))
+      .groupBy(interactions.contactId, interactions.interactionType),
+    // The two latest per contact, by window function so a contact with thousands of
+    // interactions still returns two rows.
+    db.execute(sql`
+      SELECT t.contact_id::text AS contact_id, t.interaction_type AS type,
+             t.interaction_date AS date, t.ai_summary AS summary
+        FROM (
+          SELECT i.contact_id, i.interaction_type, i.interaction_date, i.ai_summary,
+                 row_number() OVER (PARTITION BY i.contact_id ORDER BY i.interaction_date DESC) AS rn
+            FROM interactions i
+           WHERE i.user_id = ${userId}
+             AND i.contact_id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+        ) t
+       WHERE t.rn <= 2
+       ORDER BY t.contact_id, t.rn
+    `),
+    db
+      .select({ contactId: contactTags.contactId, name: tags.name })
+      .from(contactTags)
+      .innerJoin(tags, eq(tags.id, contactTags.tagId))
+      .where(and(eq(tags.userId, userId), inArray(contactTags.contactId, ids))),
+    db
+      .select({ contactId: eventAttendees.contactId, eventId: eventAttendees.eventId })
+      .from(eventAttendees)
+      .where(and(eq(eventAttendees.userId, userId), inArray(eventAttendees.contactId, ids))),
+  ]);
+
+  for (const r of identityRows) {
+    const c = byId.get(r.contactId);
+    if (!c) continue;
+    if (r.kind === "email") c.emails.push(r.value);
+    else if (r.kind === "phone_e164") c.phones.push(r.value);
+  }
+  for (const r of typeRows) {
+    const c = r.contactId ? byId.get(r.contactId) : null;
+    if (c) c.interactionsByType[r.type] = Number(r.n);
+  }
+  const recent = (Array.isArray(recentRows) ? recentRows : recentRows.rows) as {
+    contact_id: string;
+    type: string;
+    date: string | Date | null;
+    summary: string | null;
+  }[];
+  for (const r of recent) {
+    byId.get(r.contact_id)?.recent.push({
+      type: r.type,
+      date: r.date ? new Date(r.date) : null,
+      summary: r.summary,
+    });
+  }
+  for (const r of tagRows) byId.get(r.contactId)?.tags.push(r.name);
+  for (const r of eventRows) if (r.contactId) byId.get(r.contactId)?.eventIds.push(r.eventId);
+  // The primary email is also an identity; show each address once.
+  for (const c of unique) {
+    c.emails = [...new Set([...(c.email ? [c.email.toLowerCase()] : []), ...c.emails])];
+  }
+}
+
+/**
+ * The numbers a decision on this pair is stored as. Computed on the server from the two
+ * contacts, never taken from the client, so a decision cannot carry anything but what the
+ * records really looked like. Null when either contact is gone.
+ */
+export async function signalsForPair(
+  userId: string,
+  contactIdA: string,
+  contactIdB: string,
+  engineScore: number
+): Promise<DuplicateSignals | null> {
+  const loaded = await loadCandidates(userId, [contactIdA, contactIdB]);
+  const a = loaded.get(contactIdA);
+  const b = loaded.get(contactIdB);
+  if (!a || !b) return null;
+  await enrichCandidates(userId, [a, b]);
+  return compareSignals(a, b, engineScore);
 }
 
 /** Older contact first — the default survivor, matching the resolver's own merge direction. */
@@ -271,6 +443,20 @@ export async function getDuplicateReview(
   // — either way the pair is dismissible, because dismissal is keyed on the two contact ids.
   const proposed = dedupePairs([...recorded, ...scanned]);
 
+  // The extra evidence, for the pairs on the page only (the count path above never pays it).
+  await enrichCandidates(
+    userId,
+    proposed.flatMap((p) => [p.keep, p.merge])
+  ).catch((err) => console.error("[duplicate-review] enrichment failed", err));
+
+  // What everyone's past decisions teach: how the pair compares, and the learned model's read.
+  const model = await activeDuplicateModel();
+  for (const pair of proposed) {
+    pair.signals = compareSignals(pair.keep, pair.merge, pair.confidence);
+    pair.notes = describeSignals(pair.signals);
+    if (model) pair.learned = { probability: scoreWithModel(model, pair.signals) };
+  }
+
   // Every name-only pair scores 0.6, so without a model the queue has no real order. With
   // one, the pairs it thinks are the same person come first, and each carries its read.
   const decisions = await rankDuplicatePairs(
@@ -285,9 +471,17 @@ export async function getDuplicateReview(
   return {
     proposed: proposed
       .map((pair, i) => ({ pair, i }))
-      .sort((x, y) => (y.pair.decision?.sameProbability ?? -1) - (x.pair.decision?.sameProbability ?? -1) || x.i - y.i)
+      .sort((x, y) => rank(y.pair) - rank(x.pair) || x.i - y.i)
       .map((x) => x.pair),
   };
+}
+
+/** P(same person) for ordering: the decision model and the learned model, averaged when both answer. */
+function rank(pair: DuplicatePair): number {
+  const reads = [pair.decision?.sameProbability, pair.learned?.probability].filter(
+    (p): p is number => typeof p === "number"
+  );
+  return reads.length ? reads.reduce((a, b) => a + b, 0) / reads.length : -1;
 }
 
 /**
