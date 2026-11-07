@@ -81,7 +81,10 @@ run(async () => {
       [24, true],
     ] as const) {
       const token = "s".repeat(len);
-      await db.update(userSettings).set({ calendarFeedToken: hashCalendarFeedToken(token) }).where(eq(userSettings.userId, SHORT));
+      await db
+        .update(userSettings)
+        .set({ calendarFeedToken: hashCalendarFeedToken(token), calendarFeedTokenCreatedAt: new Date() })
+        .where(eq(userSettings.userId, SHORT));
       const found = await findUserByFeedToken(token);
       t.check(
         `a stored ${len}-char token ${expect ? "resolves" : "is refused by the length floor"}`,
