@@ -2695,6 +2695,9 @@ export function anthropicWebSearchToolType(model: string): "web_search_20260209"
     : "web_search_20250305";
 }
 
+/** Pages one call may read on a subject's own site (`fetchDomains`): the homepage and one more. */
+const WEB_FETCH_MAX_USES = 2;
+
 /** A searched answer runs several fetches before it writes a word — more than a plain call. */
 const WEB_SEARCH_TIMEOUT_MS = 120_000;
 
@@ -2728,6 +2731,13 @@ export async function webSearchJson(
     operation: AiOperationId;
     /** Upper bound on searches per call where the provider has one (Anthropic max_uses; OpenRouter results). */
     maxSearches?: number;
+    /**
+     * Sites the subject is already known to own (a company's domain). On Anthropic the model may
+     * also READ pages there with the web fetch tool, which bills tokens only, no per-search fee —
+     * so a known homepage answers what a search would have. Never LinkedIn: it is login-walled.
+     * Other providers ignore it.
+     */
+    fetchDomains?: string[];
     maxOutputTokens?: number;
     signal?: AbortSignal;
     access?: AiAccess;
@@ -2871,7 +2881,23 @@ export async function webSearchJson(
             ...anthropicEffort(model),
             system,
             messages,
-            tools: [{ type: anthropicWebSearchToolType(model), name: "web_search", max_uses: resumeMaxUses(maxSearches, searches) }],
+            tools: [
+              { type: anthropicWebSearchToolType(model), name: "web_search", max_uses: resumeMaxUses(maxSearches, searches) },
+              ...(input.fetchDomains?.length
+                ? [
+                    {
+                      // The dynamic-filtering fetch pairs with the dynamic-filtering search.
+                      type:
+                        anthropicWebSearchToolType(model) === "web_search_20260209"
+                          ? ("web_fetch_20260209" as const)
+                          : ("web_fetch_20250910" as const),
+                      name: "web_fetch" as const,
+                      allowed_domains: input.fetchDomains,
+                      max_uses: WEB_FETCH_MAX_USES,
+                    },
+                  ]
+                : []),
+            ],
           }, { signal: callSignal() });
           const t = tokensFromAnthropic(response);
           totals.input += t.inputTokens ?? 0;
@@ -2899,6 +2925,10 @@ export async function webSearchJson(
         if (!text.trim()) throw new Error("Empty AI response");
         const sources: WebSource[] = [];
         for (const block of response.content) {
+          if (block.type === "web_fetch_tool_result" && block.content.type === "web_fetch_result") {
+            sources.push({ url: block.content.url, title: null });
+            continue;
+          }
           if (block.type !== "web_search_tool_result" || !Array.isArray(block.content)) continue;
           for (const r of block.content) sources.push({ url: r.url, title: r.title || null });
         }

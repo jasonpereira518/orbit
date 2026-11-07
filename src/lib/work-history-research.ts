@@ -27,6 +27,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactProfiles, contacts } from "@/db/schema";
 import { userCanUseAi, webSearchJson, parseAiJson, type WebSource } from "@/lib/ai";
+import { legacyWebSearch, searchOnceThenVerify } from "@/lib/web-research";
 import { auditUntrustedWrite, cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import {
   sanitizeIncomingExperiences,
@@ -198,15 +199,23 @@ export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, 
   };
 };
 
-/** The production researcher: one web-grounded call on the account's own provider. */
+/**
+ * The production researcher, on the account's own provider: one search, and a second only
+ * when the first is unsure (`searchOnceThenVerify`) — most profiles resolve on the LinkedIn
+ * URL alone.
+ */
 export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subject) => {
-  const { json, sources } = await webSearchJson(userId, {
-    system: SYSTEM,
-    user: subjectPrompt(subject),
-    operation: "contact.work_history",
-    maxSearches: MAX_SEARCHES_PER_PERSON,
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
-  });
+  const call = (user: string, maxSearches: number) =>
+    webSearchJson(userId, {
+      system: SYSTEM,
+      user,
+      operation: "contact.work_history",
+      maxSearches,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+    });
+  const { json, sources } = legacyWebSearch()
+    ? await call(subjectPrompt(subject), MAX_SEARCHES_PER_PERSON)
+    : await searchOnceThenVerify(call, subjectPrompt(subject));
   const raw = parseAiJson<RawAnswer>(json);
   // Tripwire, never a block: the answer was read off pages anyone can publish.
   auditUntrustedWrite(userId, "work_history.research", "answer", json);

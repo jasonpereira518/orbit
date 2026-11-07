@@ -43,7 +43,44 @@ const COMPANY_OPERATION = "research.company" as const;
 const DISCOVER_OPERATION = "research.discover" as const;
 
 /** Every search is billed on its own; the anchor usually finds them in one. */
+/** Total searches for one person: one first, a second only when the first came back unsure. */
 const MAX_SEARCHES_PER_PERSON = 2;
+
+/**
+ * Eval only: `ORBIT_WEB_SEARCH_LEGACY=1` runs the budgets from before round 2 (one call allowed
+ * every search up front, no page fetch, discovery 4, company 3), so `eval-ai --task web-search`
+ * can measure both arms on one commit. Production never sets it.
+ */
+export function legacyWebSearch(): boolean {
+  return process.env.ORBIT_WEB_SEARCH_LEGACY === "1";
+}
+
+/** The model's verdict in a raw answer, or null when the answer does not parse. */
+export function answerMatch(json: string): "confident" | "unsure" | "none" | null {
+  try {
+    const match = parseAiJson<{ match?: unknown }>(json).match;
+    return match === "confident" || match === "unsure" || match === "none" ? match : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Search once; only an UNSURE first answer earns a second search, told what the first found so
+ * it confirms or rules out that candidate instead of starting over. A confident answer and a
+ * "none" both stop at one: a second look rarely turns nobody into somebody. The two calls'
+ * sources are merged, so the answer still cites what the first search read.
+ */
+export async function searchOnceThenVerify(
+  call: (user: string, maxSearches: number) => Promise<{ json: string; sources: WebSource[] }>,
+  prompt: string,
+): Promise<{ json: string; sources: WebSource[] }> {
+  const first = await call(prompt, 1);
+  if (answerMatch(first.json) !== "unsure") return first;
+  const hint = `A first search found a possible match but was not sure it is this person. Its answer:\n\n${fenceUntrusted("first_answer", first.json.slice(0, 2_000))}\n\nSearch once more to confirm or rule out that candidate.`;
+  const second = await call(`${prompt}\n\n${hint}`, 1);
+  return { json: second.json, sources: [...first.sources, ...second.sources] };
+}
 const MAX_OUTPUT_TOKENS = 1800;
 
 const MAX_NAME = 100;
@@ -265,15 +302,22 @@ export function toPersonDossier(
 }
 
 /** The production researcher: one web-grounded call on the account's own provider. */
-export const researchPersonWithWebSearch: PersonResearcher = (userId, subject, signal) =>
-  webSearchJson(userId, {
-    system: SYSTEM,
-    user: subjectPrompt(subject),
-    operation: PERSON_OPERATION,
-    maxSearches: MAX_SEARCHES_PER_PERSON,
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
-    signal,
-  });
+export const researchPersonWithWebSearch: PersonResearcher = (userId, subject, signal) => {
+  const legacy = legacyWebSearch();
+  const call = (user: string, maxSearches: number) =>
+    webSearchJson(userId, {
+      system: SYSTEM,
+      user,
+      operation: PERSON_OPERATION,
+      maxSearches,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      signal,
+      fetchDomains: subject.domain && !legacy ? [subject.domain] : undefined,
+    });
+  return legacy
+    ? call(subjectPrompt(subject), MAX_SEARCHES_PER_PERSON)
+    : searchOnceThenVerify(call, subjectPrompt(subject));
+};
 
 class NoAiError extends Error {}
 
@@ -558,7 +602,9 @@ async function writeDossierProfile(userId: string, contactId: string, dossier: P
 
 /* ------------------------------------------------------------------ companies ----- */
 
-const MAX_SEARCHES_PER_COMPANY = 3;
+/** With a known website the pages are read for free, so one search is plenty; without, two. */
+const MAX_SEARCHES_PER_COMPANY = 2;
+const MAX_SEARCHES_PER_COMPANY_WITH_SITE = 1;
 const MAX_COMPANY_OUTPUT_TOKENS = 2000;
 const MAX_NEWS = 4;
 const MAX_PEOPLE = 8;
@@ -761,7 +807,9 @@ export async function researchCompany(
         system: COMPANY_SYSTEM,
         user: prompt,
         operation: COMPANY_OPERATION,
-        maxSearches: MAX_SEARCHES_PER_COMPANY,
+        maxSearches: legacyWebSearch() ? 3 : website ? MAX_SEARCHES_PER_COMPANY_WITH_SITE : MAX_SEARCHES_PER_COMPANY,
+        // The company's own site is read with the free page fetch rather than searched for.
+        fetchDomains: website && !legacyWebSearch() ? [new URL(website).hostname] : undefined,
         maxOutputTokens: MAX_COMPANY_OUTPUT_TOKENS,
         signal,
       }));
@@ -790,7 +838,7 @@ export async function researchCompany(
 
 /* ------------------------------------------------------------------ discovery ----- */
 
-const MAX_SEARCHES_PER_DISCOVERY = 4;
+const MAX_SEARCHES_PER_DISCOVERY = 2;
 const MAX_DISCOVERY_OUTPUT_TOKENS = 2000;
 const MAX_CANDIDATES = 10;
 const MIN_QUERY = 3;
@@ -906,7 +954,7 @@ export async function discoverPeople(
         system: DISCOVER_SYSTEM,
         user: prompt,
         operation: DISCOVER_OPERATION,
-        maxSearches: MAX_SEARCHES_PER_DISCOVERY,
+        maxSearches: legacyWebSearch() ? 4 : MAX_SEARCHES_PER_DISCOVERY,
         maxOutputTokens: MAX_DISCOVERY_OUTPUT_TOKENS,
         signal,
       }));
