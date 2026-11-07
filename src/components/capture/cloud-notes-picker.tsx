@@ -533,7 +533,7 @@ function DocIcon({ item, className }: { item: Pick<Item, "provider" | "name">; c
   }
   if (item.name.toLowerCase().endsWith(".docx")) {
     return (
-      <span aria-hidden className={cn(base, "bg-[#185ABD] text-[11px] font-bold leading-none", className)}>
+      <span aria-hidden className={cn(base, "bg-[#185ABD] text-2xs font-bold leading-none", className)}>
         W
       </span>
     );
@@ -591,7 +591,7 @@ function PeekButton({ f, onPeek, className }: { f: Item; onPeek: SectionProps["o
       aria-label={`Preview ${f.name}`}
       onClick={() => onPeek(f)}
       className={cn(
-        "pointer-events-auto relative z-10 grid size-7 shrink-0 place-items-center rounded-full text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100",
+        "pointer-events-auto relative z-10 grid size-7 shrink-0 place-items-center rounded-full text-muted-foreground pointer-fine:opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100",
         className,
       )}
     >
