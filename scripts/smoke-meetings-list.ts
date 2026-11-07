@@ -21,6 +21,7 @@ import {
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
+  userSettings,
   type MeetingDigest,
   type MeetingSessionStatus,
 } from "../src/db/schema";
@@ -71,6 +72,7 @@ async function reset() {
     await db.delete(contacts).where(eq(contacts.userId, user));
     await db.delete(calendarEvents).where(eq(calendarEvents.userId, user));
     await db.delete(calendarSources).where(eq(calendarSources.userId, user));
+    await db.delete(userSettings).where(eq(userSettings.userId, user));
   }
 }
 
@@ -327,6 +329,28 @@ async function main() {
   check("a guest's work email gives the company logo, in the brand's own spelling", JSON.stringify(nvRow?.companies) === JSON.stringify([{ name: "NVIDIA", domain: "nvidia.com" }]), JSON.stringify(nvRow?.companies));
   check("its summary is plain sentences, no markdown", nvRow?.summary === "Pricing is per seat. Follow up Friday.", nvRow?.summary ?? "");
   check("a recording with no calendar call has no call kind", nvRow?.call === null && nvRow.sharedScreen === false);
+  const [bare] = await db
+    .insert(meetingSessions)
+    .values({ userId: OTHER, title: "NVIDIA sync", status: "analyzed", startedAt: new Date(NOW - 0.5 * DAY), durationMs: 1 })
+    .returning();
+  const bareRow = (await listMeetingsFor(OTHER)).items.find((m) => m.id === bare.id);
+  check("a title naming NVIDIA gets its logo with no contacts or companies", JSON.stringify(bareRow?.companies) === JSON.stringify([{ name: "NVIDIA", domain: "nvidia.com" }]), JSON.stringify(bareRow?.companies));
+
+  await db.insert(userSettings).values({ userId: USER, email: "me@acme.io" });
+  const [colleagues] = await db
+    .insert(meetingSessions)
+    .values({
+      userId: USER,
+      title: "Team sync",
+      status: "analyzed",
+      startedAt: new Date(NOW - 0.45 * DAY),
+      attendees: [{ name: "Bo Lee", email: "bo@acme.io" }, { name: "Jen Hsu", email: "jen@nvidia.com" }],
+      durationMs: 1,
+    })
+    .returning();
+  const colleaguesRow = (await listMeetingsFor(USER)).items.find((m) => m.id === colleagues.id);
+  check("a guest at the user's own email domain is not badged as a company", colleaguesRow?.companies.map((c) => c.domain).join() === "nvidia.com", JSON.stringify(colleaguesRow?.companies));
+
   const [src] = await db
     .insert(calendarSources)
     .values({ userId: USER, provider: "google", connectionId: crypto.randomUUID(), calendarId: "primary" })

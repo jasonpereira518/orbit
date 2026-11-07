@@ -17,7 +17,7 @@
  * text is the upgrade if it ever is not.
  */
 import { and, desc, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, rowsOf } from "@/db";
 import {
   calendarEvents,
   companies,
@@ -29,7 +29,7 @@ import {
   orgBrandColors,
   type MeetingSessionStatus,
 } from "@/db/schema";
-import { brandKey, lookupCuratedBrandByName } from "@/lib/brand-colors";
+import { brandKey, CURATED_COMPANIES, type CuratedCompany } from "@/lib/brand-colors";
 import { companyFromEmail } from "@/lib/guest-profiles";
 import { toDomain } from "@/lib/org-brand-learn";
 import { stripMarkdown } from "@/lib/plain-text";
@@ -327,57 +327,78 @@ export function listSummary(text: string | null | undefined, max = 300): string 
 }
 
 export type MeetingCompany = { name: string; domain: string };
-
-/**
- * A company's website for its logo: what `org_brand_colors` learned, else — for the curated
- * brands that table never stores (`learnOrgBrandColors` skips them) — the brand's name as a
- * .com, so a NVIDIA mention finds nvidia.com.
- * ponytail: the .com guess is a heuristic; store curated domains in brand-colors.ts if one misses.
- */
-function companyDomain(name: string, learned: string | null | undefined): string | null {
-  if (learned) return toDomain(learned);
-  const curated = curatedCompany(name);
-  return curated ? toDomain(`${brandKey(curated).replace(/\s+/g, "")}.com`) : null;
-}
+/** A company that may be named in free text: by any alias, some only when capitalised. */
+type NamedOrg = MeetingCompany & { aliases?: readonly string[]; capitalisedOnly?: readonly string[] };
 
 /** The curated company this name IS (not one it merely contains: "Apple Bank" is not Apple). */
-function curatedCompany(name: string): string | null {
-  const brand = lookupCuratedBrandByName(name, "company");
-  return brand?.kind === "company" && brandKey(brand.name) === brandKey(name) ? brand.name : null;
+function curatedCompany(name: string): CuratedCompany | null {
+  const key = brandKey(name);
+  return key ? (CURATED_COMPANIES.find((c) => c.aliases.some((a) => brandKey(a) === key)) ?? null) : null;
 }
 
 /**
- * The companies a meeting involved, at most `max`: its people's first, then the user's
- * organizations its title or summary names as a whole word (case-insensitive; names under
- * three characters never match), in the order they are mentioned. One logo per domain.
+ * Curated companies for free-text matching. Zoom is left out, and "Google Meet" / "Microsoft
+ * Teams" are blanked before matching (`withoutCallTools`): a call tool named in a summary is
+ * how the meeting was held, which the row's left tile already shows, not who it was with.
+ */
+const CURATED_ORGS: NamedOrg[] = CURATED_COMPANIES.filter((c) => c.name !== "Zoom");
+function withoutCallTools(text: string): string {
+  return text.replace(/\b(?:Google Meet|Microsoft Teams|MS Teams)\b/gi, " ");
+}
+
+/** Where `org` is first named in `text` as a whole word, or -1. `hay` is ` ${brandKey(text)} `. */
+function mentionAt(org: NamedOrg, text: string, hay: string): number {
+  let best = -1;
+  for (const alias of org.aliases ?? [org.name]) {
+    const key = brandKey(alias);
+    if (key.length < 3) continue;
+    const at = hay.indexOf(` ${key} `);
+    if (at < 0) continue;
+    if (org.capitalisedOnly?.includes(alias)) {
+      const exact = new RegExp(`(?<![\\p{L}\\p{N}])${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u");
+      if (!exact.test(text)) continue;
+    }
+    if (best < 0 || at < best) best = at;
+  }
+  return best;
+}
+
+/**
+ * The companies a meeting involved, at most `max`, one per domain: its people's first, then
+ * the user's own companies its title or summary names, then curated companies it names — each
+ * group in the order mentioned. Names match as whole words, case-insensitively (an everyday-
+ * word brand like Apple only when capitalised); names under three characters never match.
  */
 export function meetingCompanies(
   people: MeetingCompany[],
   text: string,
-  orgs: MeetingCompany[],
+  orgs: NamedOrg[],
+  curated: NamedOrg[] = CURATED_ORGS,
   max = 2
 ): MeetingCompany[] {
   const out: MeetingCompany[] = [];
   const add = (c: MeetingCompany) => {
-    if (out.length < max && !out.some((o) => o.domain === c.domain)) out.push(c);
+    if (out.length < max && !out.some((o) => o.domain === c.domain)) out.push({ name: c.name, domain: c.domain });
   };
   people.forEach(add);
-  const hay = ` ${brandKey(text)} `;
-  orgs
-    .map((o) => {
-      const key = brandKey(o.name);
-      return { o, at: key.length >= 3 ? hay.indexOf(` ${key} `) : -1 };
-    })
-    .filter((h) => h.at >= 0)
-    .sort((a, b) => a.at - b.at)
-    .forEach((h) => add(h.o));
+  const plain = withoutCallTools(text);
+  const hay = ` ${brandKey(plain)} `;
+  for (const group of [orgs, curated]) {
+    if (out.length >= max) break;
+    group
+      .map((o) => ({ o, at: mentionAt(o, plain, hay) }))
+      .filter((h) => h.at >= 0)
+      .sort((a, b) => a.at - b.at)
+      .forEach((h) => add(h.o));
+  }
   return out;
 }
 
 /**
- * Fills each kept row's `call` and `companies`, in three batched reads for the whole page:
- * the calendar events it was recorded from, its Granola people's contacts, and the user's
- * companies whose names appear in any title or summary on it.
+ * Fills each kept row's `call` and `companies`, in four batched reads for the whole page:
+ * the calendar events it was recorded from, its Granola people's contacts, the user's
+ * companies whose names appear in any title or summary on it, and the user's own addresses
+ * (their domains are the user's own company, which would otherwise badge every row).
  */
 async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<void> {
   if (!page.length) return;
@@ -389,7 +410,7 @@ async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<voi
   // to a whole-word one by `meetingCompanies`.
   const hay = [...texts.values()].join(" \n ").toLowerCase().replace(/\s+/g, " ");
 
-  const [events, people, mentioned] = await Promise.all([
+  const [events, people, mentioned, selfRows] = await Promise.all([
     eventKeys.length
       ? db
           .selectDistinctOn([calendarEvents.providerEventId], {
@@ -432,8 +453,16 @@ async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<voi
         )
       )
       .limit(200),
+    db.execute(sql`
+      SELECT email FROM user_settings WHERE user_id = ${userId}
+      UNION SELECT email_address FROM gmail_connections WHERE user_id = ${userId}
+      UNION SELECT email_address FROM outlook_connections WHERE user_id = ${userId}
+      UNION SELECT email_address FROM apple_connections WHERE user_id = ${userId}
+    `),
   ]);
 
+  const selfDomains = new Set(rowsOf<{ email: string | null }>(selfRows).flatMap((r) => toDomain(r.email) ?? []));
+  const notSelf = (c: MeetingCompany) => !selfDomains.has(c.domain);
   const callByKey = new Map(events.map((e) => [e.key, e.kind]));
   const personCompany = new Map<string, MeetingCompany>();
   for (const p of people) {
@@ -456,12 +485,17 @@ async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<voi
       ...r.hints.emails.flatMap((email) => {
         const name = companyFromEmail(email);
         const domain = name ? toDomain(email) : null;
-        return name && domain ? [{ name: curatedCompany(name) ?? name, domain }] : [];
+        return name && domain ? [{ name: curatedCompany(name)?.name ?? name, domain }] : [];
       }),
-    ];
+    ].filter(notSelf);
     r.item.call = r.hints.eventKey ? (callByKey.get(r.hints.eventKey) ?? null) : null;
     r.item.companies = meetingCompanies(fromPeople, texts.get(r.item.id) ?? "", orgs);
   }
+}
+
+/** A company's website for its logo: what `org_brand_colors` learned, else a curated entry's own. */
+function companyDomain(name: string, learned: string | null | undefined): string | null {
+  return learned ? toDomain(learned) : (curatedCompany(name)?.domain ?? null);
 }
 
 export type GranolaNote = { title: string | null; attendees: string | null; body: string; myNotes: string | null };

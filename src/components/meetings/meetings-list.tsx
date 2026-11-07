@@ -69,6 +69,10 @@ function MeetingKind({ m }: { m: MeetingListItem }) {
   );
 }
 
+function hideIfBlank(img: HTMLImageElement | null) {
+  if (img?.complete && img.naturalWidth <= 1) img.hidden = true;
+}
+
 function meetingHref(m: MeetingListItem, q: string): string {
   const base = m.source === "granola" ? `/meetings/g/${m.id}` : `/meetings/${m.id}`;
   return q ? `${base}?q=${encodeURIComponent(q)}` : base;
@@ -145,6 +149,10 @@ export function MeetingsList({
                       height={16}
                       loading="lazy"
                       className="size-4 shrink-0 rounded-sm"
+                      // A miss is the route's 1×1 blank (or an error): drop it rather than keep an
+                      // empty 16px slot. The ref catches one that settled before hydration.
+                      ref={hideIfBlank}
+                      onLoad={(e) => hideIfBlank(e.currentTarget)}
                       onError={(e) => {
                         e.currentTarget.hidden = true;
                       }}
