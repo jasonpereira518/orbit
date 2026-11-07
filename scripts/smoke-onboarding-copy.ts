@@ -60,8 +60,26 @@ check("the step imports no lookup server action",
 check("Field chips wait for an aim (a field with no aim is not saved)",
   /label="Field"[\s\S]{0,200}disabled=\{!aim\}/.test(about) && /if \(!next\) setField\(null\)/.test(about));
 check("only a confident lookup becomes the prefill", /status === "confident" \? lookup\.prefill : null/.test(about));
-check("chips are toggle buttons", /<button[\s\S]{0,120}aria-pressed=/.test(about));
+const kit = readFileSync("src/components/onboarding/onboarding-ui.tsx", "utf8");
+check("chips are toggle buttons", /<button[\s\S]{0,120}aria-pressed=/.test(kit) && /<ToggleGroup\s+label="Your aim"/.test(about));
+check("the confirm row is majors for students, the headline for people already working",
+  /majorsRow \? \([\s\S]{0,120}Your major\(s\)[\s\S]{0,600}What you do now/.test(about) && about.includes("asksForMajors(aim)"));
+check("'When' is a segmented switch", /label="When"\s+look="segment"/.test(about));
 check("the URL field has a visible label", /<Field[^>]*label="Your LinkedIn profile"/.test(about));
+
+// The visual revision: path cards say how long each path takes, the mark replaces the app
+// logo inside onboarding only, and it moves by CSS (stopped by the reduced-motion clamp).
+const welcome = readFileSync("src/components/onboarding/steps/welcome-step.tsx", "utf8");
+check("the tour card says About 5 minutes", /title="Guided tour"[\s\S]{0,200}time="About 5 minutes\."/.test(welcome));
+check("quick setup says About 2 minutes", /title="Quick setup"[\s\S]{0,200}time="About 2 minutes\."/.test(welcome));
+check("the old 'about a minute' line is gone", !/About a minute/i.test(welcome));
+const launch = readFileSync("src/components/onboarding/steps/launch-step.tsx", "utf8");
+check("onboarding uses OnboardingMark, not OrbitLogo",
+  [flow, welcome, launch].every((src) => src.includes("<OnboardingMark") && !src.includes("OrbitLogo")));
+const mark = readFileSync("src/components/onboarding/onboarding-mark.tsx", "utf8");
+check("the mark's moon is a CSS rotation, not SMIL", !/<animate/.test(mark) && /animate-\[spin_5s_linear_infinite\]/.test(mark));
+check("the mark is decorative", /aria-hidden/.test(mark));
+check("the goals chapter comes first", /HIGHLIGHT_CHAPTERS: HighlightChapter\[\] = \[[\s\S]{0,300}id: "goals"/.test(chapters));
 const dashboard = readFileSync("src/components/dashboard/dashboard-sections.tsx", "utf8");
 check("the setup checklist asks for a goal when none is set", /id: "about",\s*label: "Tell Orbit what you’re going for"/.test(dashboard));
 
