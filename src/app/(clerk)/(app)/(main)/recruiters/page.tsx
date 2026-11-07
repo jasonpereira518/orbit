@@ -11,6 +11,7 @@ import { getOutlookConnectionStatus, getOutlookScanStatus } from "@/actions/outl
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { RecruitersLocked } from "@/components/locked-feature";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import {
   RecruiterList,
@@ -37,7 +38,7 @@ export default async function RecruitersPage({
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
 
   if (!canUseRecruiters) {
-    return <RecruitersLocked />;
+    return <RecruitersLocked config={await getEffectivePlanConfig()} />;
   }
 
   // "Discover" replaced the old "Directory" tab. Directory used to mean "every recruiter

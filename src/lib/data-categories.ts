@@ -204,7 +204,7 @@ export function planPurgeSteps(
   return steps;
 }
 
-export type DisconnectProvider = "gmail" | "outlook";
+export type DisconnectProvider = "gmail" | "outlook" | "granola";
 
 /**
  * What "Also delete what Orbit imported from this account" deletes, as whole categories
@@ -218,6 +218,8 @@ export const DISCONNECT_DELETE_CATEGORIES: Readonly<
 > = {
   gmail: ["recruiters"],
   outlook: ["recruiters"],
+  // Granola only adds to contacts and meetings, which stay: nothing of its own to offer.
+  granola: [],
 };
 
 /** Where a user removes Orbit's Outlook access themselves (no app-side revoke exists). */

@@ -1,5 +1,6 @@
 "use server";
 
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
@@ -7,7 +8,7 @@ import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { getCreditBalance, type CreditBalance } from "@/lib/credits/ledger";
 import { equivalentsFor, measuredActionCosts, type ActionKey } from "@/lib/credits/equivalents";
-import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import type { Plan } from "@/lib/plans/plan-config";
 import { claimCreditsIntroFor } from "@/lib/credits-intro";
 import type { CreditsIntroNumbers } from "@/lib/credits-intro-scene";
 
@@ -33,7 +34,7 @@ export async function getCreditsOverview(): Promise<CreditsOverview | null> {
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) });
   const balance = await getCreditBalance(userId, plan, row);
-  const monthlyCredits = PLAN_CONFIG[plan].monthlyCredits ?? 0;
+  const monthlyCredits = (await getEffectivePlanConfig())[plan].monthlyCredits ?? 0;
   if (!monthlyCredits && balance.packRemaining === 0) return null;
   const equivalents = monthlyCredits ? equivalentsFor(balance.spendable, await measuredActionCosts()) : [];
   return {

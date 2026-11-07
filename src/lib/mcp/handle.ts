@@ -30,6 +30,7 @@ import type { Entitlements } from "@/lib/entitlements";
 import { PLAN_CONFIG } from "@/lib/plans/plan-config";
 import type { ApiKeyScope } from "@/lib/api/keys";
 import { buildOrbitMcpServer } from "@/lib/mcp/server";
+import { releaseCheckFor } from "@/lib/tools/released";
 import { resourceMetadataUrl, verifyOAuthCaller } from "@/lib/mcp/oauth";
 import { RATE_LIMITS, RateLimitedError, consumeBucket } from "@/lib/rate-limit";
 import { recordAiSecurityEvent } from "@/lib/ai-security";
@@ -219,7 +220,13 @@ export async function handleMcpRequest(
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
   });
-  const server = buildOrbitMcpServer(caller.userId, { scopes: caller.scopes, client });
+  // Page-gated tools (events, radar, outreach…) are offered only once their page is released
+  // to this user, exactly as in chat.
+  const server = buildOrbitMcpServer(caller.userId, {
+    scopes: caller.scopes,
+    client,
+    isReleased: await releaseCheckFor(caller.userId),
+  });
   await server.connect(transport);
   try {
     return await transport.handleRequest(request);

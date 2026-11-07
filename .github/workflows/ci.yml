@@ -270,11 +270,29 @@ jobs:
           echo "scanning $range"
           /tmp/gitleaks git --no-banner --redact --log-opts="$range" .
 
+  # Playwright's own image ships Chromium and its OS libraries, so there is no browser
+  # download or apt step (`playwright install --with-deps` took 17s to 12 minutes on a bare
+  # runner, depending on the apt mirror). Keep the tag equal to @playwright/test in
+  # package.json: the image's browser build must match the library. `--ipc=host` is
+  # Playwright's own advice for Chromium in a container.
+  #
+  # Three runners each take a third of the spec files (`--shard`), with their own `next dev`
+  # and throwaway PGlite from playwright.config.ts, so the single-writer rule holds. Every
+  # spec calls `ensureOnboarded`, so none depends on another's data. `fail-fast: false`
+  # so one shard failing still reports the rest. Branch protection requires the single check
+  # name `browser flows (Playwright)`, which the `e2e-gate` job below keeps alive.
   e2e:
-    name: browser flows (Playwright)
+    name: e2e shard ${{ matrix.shard }}/3
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -287,16 +305,28 @@ jobs:
           key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
       - if: steps.deps.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - run: npm run test:e2e -- --shard ${{ matrix.shard }}/3
         env:
           SENTRY_AUTH_TOKEN: ""
       - name: Keep the report when a flow breaks
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
           retention-days: 7
+
+  # One stable check name for branch protection: the shards come and go (rename, resize), and
+  # a required check that no job reports leaves a PR "waiting for status" forever. Runs even
+  # when a shard fails (`always()`), and fails unless every shard succeeded. Skipped with
+  # the shards on a draft PR, which GitHub counts as passing.
+  e2e-gate:
+    name: browser flows (Playwright)
+    needs: e2e
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: test "${{ needs.e2e.result }}" = success

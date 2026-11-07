@@ -6,6 +6,7 @@ import { getDb } from "@/db";
 import { contacts, noteBatches, reminders } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { CAPTURE_BATCH_SQL, isCaptureBatchFor } from "@/lib/capture-history";
+import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
 import { deleteNoteBatchForUser, dismissNoteReminderForUser, undoNoteBatchForUser } from "@/lib/note-batch-save";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
@@ -37,7 +38,7 @@ export async function getNoteBatch(batchId: string) {
           .where(and(eq(reminders.userId, userId), inArray(reminders.id, reminderIds)))
       : Promise.resolve([]),
     contactIds.length
-      ? db.select({ id: contacts.id, fullName: contacts.fullName }).from(contacts).where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)))
+      ? db.select({ id: contacts.id, fullName: contacts.fullName, avatarUrl: clientAvatarUrlSql.as("avatar_url") }).from(contacts).where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)))
       : Promise.resolve([]),
     // Metadata only; the page renders each through `/api/capture/photos/[id]`.
     listCapturePhotosForBatches(userId, [batch.id]),
@@ -50,6 +51,7 @@ export async function getNoteBatch(batchId: string) {
       reminderRows.map((r) => [r.id, { description: r.description, actionKind: r.actionKind, listId: r.listId }])
     ),
     contactNames: Object.fromEntries(contactRows.map((c) => [c.id, c.fullName])),
+    contactAvatars: Object.fromEntries(contactRows.map((c) => [c.id, c.avatarUrl])) as Record<string, string | null>,
   };
 }
 

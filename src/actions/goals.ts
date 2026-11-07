@@ -1,12 +1,18 @@
 "use server";
 
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userGoals } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { listActiveGoalTextsForUser } from "@/lib/user-goals";
+import {
+  addGoalForUser,
+  deleteGoalForUser,
+  listActiveGoalTextsForUser,
+  restoreGoalForUser,
+  type GoalSnapshot,
+} from "@/lib/user-goals";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
-import { asActionResult, UserFacingError } from "@/lib/errors";
+import { asActionResult } from "@/lib/errors";
 
 export async function listGoals() {
   const userId = await requireUserId();
@@ -24,23 +30,7 @@ export async function listActiveGoalTexts() {
 /** Validation comes back as data — see `asActionResult` in lib/errors.ts. */
 export async function addGoal(text: string) {
   return asActionResult(async () => {
-    const userId = await requireUserId();
-    const trimmed = text.trim();
-    if (!trimmed) throw new UserFacingError("Write the goal first");
-    if (trimmed.length > 200) {
-      throw new UserFacingError("Keep the goal under 200 characters");
-    }
-
-    const db = await getDb();
-    const [row] = await db
-      .insert(userGoals)
-      .values({
-        userId,
-        text: trimmed,
-        active: 1,
-      })
-      .returning();
-
+    const row = await addGoalForUser(await requireUserId(), text);
     revalidateGoalPaths();
     return row;
   });
@@ -62,22 +52,9 @@ function revalidateGoalPaths() {
  * `createdAt` is an exact restore that asks nothing of any reader.
  */
 export async function deleteGoal(id: string) {
-  const userId = await requireUserId();
-  const db = await getDb();
-  const [deleted] = await db
-    .delete(userGoals)
-    .where(and(eq(userGoals.id, id), eq(userGoals.userId, userId)))
-    .returning();
-
+  const snapshot = await deleteGoalForUser(await requireUserId(), id);
   revalidateGoalPaths();
-  return deleted
-    ? {
-        id: deleted.id,
-        text: deleted.text,
-        active: deleted.active,
-        createdAt: deleted.createdAt.toISOString(),
-      }
-    : null;
+  return snapshot;
 }
 
 /**
@@ -86,37 +63,8 @@ export async function deleteGoal(id: string) {
  * is always the signed-in user, the text is re-validated as `addGoal` would, and an id
  * that already exists is left alone rather than overwritten.
  */
-export async function restoreGoal(snapshot: {
-  id: string;
-  text: string;
-  active: number;
-  createdAt: string;
-}) {
-  const userId = await requireUserId();
-  const text = typeof snapshot?.text === "string" ? snapshot.text.trim() : "";
-  const createdAt = new Date(snapshot?.createdAt);
-  if (
-    typeof snapshot?.id !== "string" ||
-    !text ||
-    text.length > 200 ||
-    Number.isNaN(createdAt.getTime())
-  ) {
-    return { restored: false };
-  }
-
-  const db = await getDb();
-  const inserted = await db
-    .insert(userGoals)
-    .values({
-      id: snapshot.id,
-      userId,
-      text,
-      active: snapshot.active === 0 ? 0 : 1,
-      createdAt,
-    })
-    .onConflictDoNothing()
-    .returning();
-
+export async function restoreGoal(snapshot: GoalSnapshot) {
+  const result = await restoreGoalForUser(await requireUserId(), snapshot);
   revalidateGoalPaths();
-  return { restored: inserted.length > 0 };
+  return result;
 }

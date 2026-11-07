@@ -33,7 +33,7 @@ type LayoutModule = typeof import("@/lib/graph/sky-layout");
 type Slot<M> = {
   module: M | null;
   promise: Promise<M> | null;
-  /** A failed load. Sticky for the document, as a rejected `React.lazy` is. */
+  /** A failed load. Held until `resetConstellationModules()` (the route's retry) clears it. */
   error: unknown;
   load: () => Promise<M>;
 };
@@ -76,16 +76,77 @@ function subscribe(listener: () => void) {
   };
 }
 
+/**
+ * Whether `err` is the browser failing to fetch a code chunk (a dropped connection, or a tab
+ * left open across a deploy so its chunk URLs no longer exist) rather than the chunk itself
+ * throwing. Only the former is worth retrying or reloading for.
+ */
+export function isChunkLoadError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const { name, message } = err as { name?: unknown; message?: unknown };
+  if (name === "ChunkLoadError") return true;
+  return (
+    typeof message === "string" &&
+    /Loading chunk|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed/i.test(
+      message
+    )
+  );
+}
+
+/** Pauses between re-attempts of a chunk that failed to download. */
+const CHUNK_RETRY_DELAYS_MS = [400, 1500];
+
+async function importWithRetry<M>(slot: Slot<M>): Promise<M> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await slot.load();
+    } catch (err) {
+      const delay = CHUNK_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !isChunkLoadError(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+const STALE_RELOAD_KEY = "orbit:constellation-chunk-reload";
+/** One reload per this window: past it, a still-failing chunk is a real error, not a stale tab. */
+const STALE_RELOAD_WINDOW_MS = 60_000;
+
+/**
+ * A chunk that will not download even after retries is, most often, a tab that outlived a deploy:
+ * the HTML in memory names chunk URLs the server no longer has, and nothing short of a reload
+ * fetches the new ones. Reload once, guarded so a chunk that is genuinely broken cannot loop.
+ * Skipped offline, where a reload would only trade the error screen for the browser's.
+ */
+function reloadForStaleChunk(): boolean {
+  if (typeof window === "undefined") return false;
+  if (navigator.onLine === false) return false;
+  try {
+    const last = Number(window.sessionStorage.getItem(STALE_RELOAD_KEY));
+    if (last && Date.now() - last < STALE_RELOAD_WINDOW_MS) return false;
+    window.sessionStorage.setItem(STALE_RELOAD_KEY, String(Date.now()));
+  } catch {
+    // Storage blocked: with no guard to stop a loop, do not reload.
+    return false;
+  }
+  window.location.reload();
+  return true;
+}
+
 function load<K extends SlotName>(name: K) {
   const slot = slots[name] as Slot<unknown>;
   if (!slot.promise) {
-    slot.promise = slot.load().then(
+    slot.promise = importWithRetry(slot).then(
       (m) => {
         slot.module = m;
         for (const l of listeners) l();
         return m;
       },
       (err) => {
+        if (isChunkLoadError(err) && reloadForStaleChunk()) {
+          // The page is going away; keep the loading panel up rather than flash the error.
+          return new Promise<never>(() => {});
+        }
         // Surfaced the way `next/dynamic` did: thrown from render, to the error boundary.
         slot.error = err;
         for (const l of listeners) l();
@@ -95,6 +156,25 @@ function load<K extends SlotName>(name: K) {
   }
   return slot.promise;
 }
+
+/**
+ * Forget every failed load so the next render asks for the chunk again. A failure is otherwise
+ * sticky for the document, which left the error screen's "Try again" re-throwing the stored error
+ * on every attempt: only a full reload could recover. Called by the route's retry.
+ */
+export function resetConstellationModules() {
+  let changed = false;
+  for (const slot of Object.values(slots) as Slot<unknown>[]) {
+    if (slot.error === null) continue;
+    slot.error = null;
+    slot.promise = null;
+    changed = true;
+  }
+  if (changed) for (const l of listeners) l();
+}
+
+/** Internals for `scripts/smoke-constellation-modules.ts`; nothing in the app reads these. */
+export const __testing = { slots, load };
 
 /** Which renderer this viewport draws the sky with — see `use-small-sky.ts`. */
 function rendererFor(smallSky: boolean): "flow" | "mobile" {

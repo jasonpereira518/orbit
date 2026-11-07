@@ -1,7 +1,7 @@
 import { and, eq, isNull, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 
 /**
  * The one-time "your AI credits are here" screen — who is owed it, and taking its single
@@ -29,11 +29,13 @@ export function isCreditsIntroDue(input: {
   shownAt: Date | null;
   plan: Plan;
   includedAiAvailable: boolean;
+  /** The effective plan table (`getEffectivePlanConfig`); the code table by default. */
+  config?: Record<Plan, PlanConfig>;
 }): boolean {
   return (
     input.shownAt == null &&
     input.createdAt < CREDITS_INTRO_LAUNCHED_AT &&
-    PLAN_CONFIG[input.plan].features.hostedAi &&
+    (input.config ?? PLAN_CONFIG)[input.plan].features.hostedAi &&
     input.includedAiAvailable
   );
 }

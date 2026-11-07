@@ -98,6 +98,46 @@ export function isDateOnlyDue(d: Date): boolean {
   return h === 0 || h === 12;
 }
 
+/** How far `tz`'s wall clock is ahead of UTC at instant `t`, in ms. */
+function zoneOffsetMs(t: number, tz: string): number {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+      .formatToParts(new Date(t))
+      .map((p) => [p.type, Number(p.value)])
+  );
+  const wall = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  return wall - Math.floor(t / 1000) * 1000;
+}
+
+/**
+ * A wall-clock time in `tz` ("YYYY-MM-DDTHH:mm[:ss]", no offset) as the instant it names, or
+ * null when `local` is not that shape. Checked again at the result so a time across a DST
+ * change still lands right. Never exactly UTC midnight or noon: those read as date-only
+ * (`isDateOnlyDue`), and a timed value must stay timed — so it moves by one second.
+ */
+export function wallTimeToUtc(local: string, tz: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(local.trim());
+  if (!m) return null;
+  const [y, mo, d, h, mi, sec] = m.slice(1).map((v) => Number(v ?? 0));
+  const guess = Date.UTC(y, mo - 1, d, h, mi, sec);
+  if (Number.isNaN(guess)) return null;
+  let t = guess - zoneOffsetMs(guess, tz);
+  const recheck = zoneOffsetMs(t, tz);
+  if (guess - recheck !== t) t = guess - recheck;
+  const out = new Date(t);
+  if (isDateOnlyDue(out)) out.setUTCSeconds(1);
+  return out;
+}
+
 /** The calendar day a reminder is due, as the viewer in `tz` would read it. */
 export function dueDayOf(
   due: Date | string | null | undefined,

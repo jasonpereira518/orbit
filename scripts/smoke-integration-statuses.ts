@@ -74,6 +74,7 @@ run(async () => {
       "event_provider_connections",
       "gmail_connections",
       "outlook_connections",
+      "connector_connections",
     ]) {
       await db.execute(sql.raw(`DELETE FROM ${table} WHERE user_id = '${USER}'`));
     }
@@ -119,6 +120,11 @@ run(async () => {
     VALUES (${USER}, 'demo@example.com', 'active', ${encrypt("access")}, ${encrypt("refresh")})
   `);
 
+  await db.execute(sql`
+    INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, access_token_encrypted)
+    VALUES (${USER}, 'granola', 'oauth2', 'active', ${encrypt("access")})
+  `);
+
   const statuses = await getIntegrationStatuses();
 
   const EXPECTED: Record<string, string> = {
@@ -130,6 +136,7 @@ run(async () => {
     eventbrite: "Connected",
     apollo: "Key saved",
     zapier: "1 key",
+    granola: "Connected",
   };
   for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {
     const status = statuses.connectors[id];

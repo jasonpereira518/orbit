@@ -4,7 +4,7 @@
  *
  * Every failure here is silent in the UI. A second beacon overwriting the first, a NULL
  * counted as a fast load, or a full load pooled with in-app clicks all still render a
- * plausible-looking number on /admin/analytics — just a wrong one.
+ * plausible-looking number on the admin page-load table (Ops › Systems) — just a wrong one.
  *
  * Run: npx tsx scripts/smoke-page-load-timing.ts
  */

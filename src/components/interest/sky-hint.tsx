@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { STARFIELD_FIGURE_EVENT, type StarfieldFigureDetail } from "@/lib/starfield-events";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 const SEEN_KEY = "waitlist-sky-hint-seen";
 /** Time on the page, after the pointer first moves, before the hint appears. */
@@ -57,7 +58,7 @@ export function SkyHint() {
   useEffect(() => {
     const capable =
       window.matchMedia("(hover: hover) and (pointer: fine)").matches &&
-      !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      !prefersReducedMotion();
     if (!capable || seen()) return;
 
     let showTimer = 0;

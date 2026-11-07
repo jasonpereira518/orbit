@@ -22,6 +22,7 @@ import {
   resumeTourStop,
   stopMatchesPath,
   stopPageLabel,
+  stopPath,
   type TourStop,
   type TourStopId,
 } from "@/lib/tour/tour-stops";
@@ -32,6 +33,7 @@ import { examplePerson } from "@/lib/onboarding-examples/cast";
 
 const TOUR_LEAD_NAME = examplePerson("priya").fullName;
 import { useMediaQuery } from "@/lib/use-media-query";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 export type TourSeed = {
   stop: string | null;
@@ -329,7 +331,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
     if (partlyOff && getComputedStyle(el).position !== "fixed") {
       el.scrollIntoView({
         block: VIEWPORT_LOCKED.has(pathname) ? "nearest" : "center",
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
       });
     }
     if (stop.focusAnchor) {
@@ -457,7 +459,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
   // Off the stop's page it points at the way there — the nav link for that page, in the
   // sidebar or the phone tab bar, whichever is showing — and only demonstrates the click.
   const [navLink, setNavLink] = useState<CursorPoint | null>(null);
-  const navRoute = stop.route.includes(":") ? "/contacts" : stop.route;
+  const navRoute = stop.route.includes(":") ? "/contacts" : stopPath(stop);
   useEffect(() => {
     if (!offRoute || isFinish) return;
     const t = window.setTimeout(() => {

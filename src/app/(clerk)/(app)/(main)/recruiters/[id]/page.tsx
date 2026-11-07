@@ -9,6 +9,7 @@ import { RecruiterLogForm } from "@/components/recruiters/recruiter-log-form";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { RecruitersLocked } from "@/components/locked-feature";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { RecruiterLinkEditor } from "@/components/recruiters/recruiter-link-editor";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -43,7 +44,7 @@ export default async function RecruiterDetailPage({
 
   const { id } = await params;
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
-  if (!canUseRecruiters) return <RecruitersLocked />;
+  if (!canUseRecruiters) return <RecruitersLocked config={await getEffectivePlanConfig()} />;
 
   const [recruiter, { enabled: sharingEnabled }] = await Promise.all([
     loadRecruiter(id),

@@ -6,7 +6,8 @@ import { userSettings } from "@/db/schema";
 import { getCurrentUserProfile, requireUserId } from "@/lib/auth";
 import { getShowcaseAccountId } from "@/lib/demo-account";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
-import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
+import { featureDenial, getEntitlements } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import {
   CREDIT_PACK_CREDITS,
   CREDIT_PACK_METADATA_VALUE,
@@ -47,7 +48,6 @@ const CHECKOUT_COPY = {
   notOpen: "Checkout isn’t open yet. Check back shortly.",
   onLifetime: "You have Orbit Lifetime — it already includes everything Orbit sells.",
   switchInSettings: "You already have a plan — switch between Pro and Max from Settings.",
-  packsNeedPlan: FEATURE_DENIAL.creditPacks,
   failed: "Couldn’t start checkout — try again",
 } as const;
 
@@ -159,7 +159,7 @@ export async function startCreditPackCheckout(gate?: string | null): Promise<Che
   const userId = await requireUserId();
   if (!isCheckoutConfigured()) return { error: CHECKOUT_COPY.notOpen };
   const entitlements = await getEntitlements(userId);
-  if (!entitlements.canBuyCreditPacks) return { error: CHECKOUT_COPY.packsNeedPlan };
+  if (!entitlements.canBuyCreditPacks) return { error: featureDenial("creditPacks", await getEffectivePlanConfig()) };
 
   const row = await billingRow(userId);
   const baseUrl = getAppBaseUrl();

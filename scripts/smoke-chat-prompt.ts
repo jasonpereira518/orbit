@@ -19,7 +19,8 @@
  *
  * Pure: no network, no database. Run: npx tsx scripts/smoke-chat-prompt.ts
  */
-import { buildChatPrompt } from "../src/lib/ai";
+import { buildChatPrompt, CHAT_STREAM_TAIL } from "../src/lib/ai";
+import { WRITE_RULES } from "../src/lib/chat-agent-loop";
 import { renderAttachedPeople } from "../src/lib/chat-attached";
 import { renderFocusProfile } from "../src/lib/chat-context";
 import type { StoredProfile } from "../src/lib/contact-profile";
@@ -715,7 +716,7 @@ check(
   withReminders.user.includes("about Grace Hopper [id=c9]: Hiring SREs in Paris."),
   withReminders.user
 );
-check("no reminders, no reminder block or rule", !buildChatPrompt({ ...baseChatPromptArgs(), question: "x", focusProfile: null, contactsContext: [] }).systemCore.includes("Open reminders"));
+check("no reminders, no reminder block or rule", !buildChatPrompt({ ...baseChatPromptArgs(), question: "x", focusProfile: null, contactsContext: [] }).systemCore.includes("\"Reminders\" section"));
 // --- the shape lanes: a filtered roster, and a passage that says who it is about ---------
 
 const laned = buildChatPrompt({
@@ -754,6 +755,63 @@ check(
   /\[e1\] 2026-09-02, about Ada Park \[id=d1\]: Raising a seed round/.test(laned.user),
   laned.user
 );
+
+console.log("\nContact details reach the model");
+{
+  const row = (id: string, details: string | null) => ({
+    id,
+    fullName: `Person ${id}`,
+    company: null,
+    title: null,
+    relationshipScore: 50,
+    aiSummary: null,
+    notes: null,
+    keyFacts: [],
+    timeline: [],
+    tags: [],
+    relevance: 0.9,
+    details,
+  });
+  const built = buildChatPrompt({
+    ...baseChatPromptArgs(),
+    question: "what's Maya's email?",
+    contactsContext: [row("m1", "email maya@stripe.example | met AWS Summit, 2026-03-02"), row("m2", null)],
+    focusProfile: null,
+  });
+  check(
+    "a contact with details gets a Details line inside the contacts fence",
+    /\[id=m1\][^\n]*\nDetails: email maya@stripe\.example \| met AWS Summit, 2026-03-02\n/.test(built.user),
+    built.user
+  );
+  check("a contact without details gets no Details line", !/\[id=m2\][^\n]*\nDetails:/.test(built.user));
+  const fenceStart = built.user.indexOf("<<<CONTACTS_");
+  const fenceEnd = built.user.lastIndexOf("CONTACTS_");
+  const detailsAt = built.user.indexOf("Details: email");
+  check("the Details line sits inside the CONTACTS fence", detailsAt > fenceStart && detailsAt < fenceEnd);
+}
+
+console.log("\nLook before you say you don't know");
+{
+  const { systemCore } = buildChatPrompt({ ...baseChatPromptArgs(), question: "x", focusProfile: null, contactsContext: [] });
+  check("the old abstain-first rule is gone", !systemCore.includes("you do not know it"));
+  check("every section is read before abstaining", systemCore.includes("Read every section before you decide you don't know"));
+  check("grounding still forbids invented contact details", systemCore.includes("Never invent people, companies, dates, contact details or message content"));
+  check("a partial answer names the section it checked", systemCore.includes("which section you checked and what it did not show"));
+  check("length follows the question", systemCore.includes("a single detail (an email, a date, a count) is one line"));
+  check("still never counts from the relevance slice", systemCore.includes("never count from it"));
+}
+
+console.log("\nOne layout for every answer");
+{
+  check("the first line carries the bolded key fact", CHAT_STREAM_TAIL.includes("the one key fact in it in bold"));
+  check("three or more become bullets", CHAT_STREAM_TAIL.includes("Three or more people or items are a bullet list"));
+  check("a bullet is name then reason", CHAT_STREAM_TAIL.includes('"**Name** — the specific\n  reason"'));
+  check("a carded person's role is not restated", CHAT_STREAM_TAIL.includes('do not restate "title at company"'));
+  check("only the fact is bold, not the sentence", CHAT_STREAM_TAIL.includes("never the whole sentence"));
+  check("no headings, one Next line at most", CHAT_STREAM_TAIL.includes("No markdown headings") && CHAT_STREAM_TAIL.includes('at most one line starting "**Next:**"'));
+  check("the blocks are still described", CHAT_STREAM_TAIL.includes("::people[<id>,<id>]") && CHAT_STREAM_TAIL.includes("::list[r1]"));
+  check("a change gets one clause, the card the details", WRITE_RULES.includes("give it one clause"));
+}
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

@@ -3,17 +3,11 @@ import {
   Activity,
   DoorOpen,
   Flame,
-  FlaskConical,
   Gauge,
-  Globe,
   HandCoins,
-  ImageOff,
   LayoutTemplate,
   MessageSquareText,
-  Repeat2,
-  Rocket,
   Scale,
-  ScrollText,
   TrendingUp,
   Users,
   Wallet,
@@ -33,33 +27,23 @@ export type AdminNavItem = {
  * the real boundary, but advertising the console's existence buys nothing.
  */
 export const ADMIN_NAV: AdminNavItem[] = [
+  // Triage only: what needs a human today. Everything else has a home below.
   { href: "/admin", label: "Overview", icon: Gauge },
+  // The roster, each account's inspector, and the audit log of what operators did to them.
   { href: "/admin/users", label: "Users", icon: Users },
-  // "What is broken across everyone, right now" — the cross-account view of signals the
-  // inspector only ever showed one account at a time.
-  { href: "/admin/health", label: "Health", icon: Activity },
-  // The only screen in the console that changes the product rather than reporting on it:
-  // which pages, dashboard cards, and settings sections every user can see.
-  { href: "/admin/product", label: "Product", icon: LayoutTemplate },
-  // Trends live here rather than on the overview, which stays triage-only by design.
   { href: "/admin/feedback", label: "Feedback", icon: MessageSquareText },
-  // Upstream of Growth, and deliberately before it: everything on that screen starts at
-  // "Signed up", and this is the only place the console can see what happened before that.
-  { href: "/admin/analytics", label: "Traffic", icon: Globe },
+  // Before signup (acquisition) through to staying (retention), plus what people use.
+  // Traffic, Beta, Launch and Retain each answered one slice of this; they are tabs now.
   { href: "/admin/growth", label: "Growth", icon: TrendingUp },
-  // One screen per phase of the launch, each answering one question: is the next wave safe to
-  // send (Beta), is acquisition working (Launch), do people stay and does it pay (Retain).
-  { href: "/admin/beta", label: "Beta", icon: FlaskConical },
-  { href: "/admin/launch", label: "Launch", icon: Rocket },
-  { href: "/admin/retain", label: "Retain", icon: Repeat2 },
-  // Stealth on/off and the invitations that get new people past it.
-  { href: "/admin/access", label: "Access", icon: DoorOpen },
-  // Route is /admin/billing, but the screen covers money in AND money out — "Billing"
-  // alone reads as revenue-only.
+  // Route is /admin/billing, but the screen covers money in AND money out.
   { href: "/admin/billing", label: "Money", icon: Wallet },
-  // Takedown of a shared LinkedIn photo starts from a contact page; this lists what is blocked.
-  { href: "/admin/avatars", label: "Photos", icon: ImageOff },
-  { href: "/admin/audit", label: "Audit", icon: ScrollText },
+  // Who gets in: the waitlist, invitations past stealth, and broadcasts to the list.
+  { href: "/admin/access", label: "Access", icon: DoorOpen },
+  // The only section that changes the product rather than reporting on it.
+  { href: "/admin/product", label: "Product", icon: LayoutTemplate },
+  // Route is /admin/health (Slack alerts link to it): what is broken, across accounts and
+  // in Orbit's own systems.
+  { href: "/admin/health", label: "Ops", icon: Activity },
 ];
 
 /**

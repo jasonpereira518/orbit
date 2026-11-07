@@ -13,10 +13,12 @@ import {
   StepHeading,
 } from "@/components/onboarding/onboarding-ui";
 import {
+  unlockTagPlan,
   visibleChapters,
   type HighlightChapter,
   type PlanFlag,
 } from "@/components/onboarding/highlights/chapters";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { DUR, EASE_HOUSE, SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -271,6 +273,7 @@ function ChapterRail({
   onSelect: (i: number) => void;
 }) {
   const railRef = useRef<HTMLOListElement>(null);
+  const { planConfig } = useViewerPlan();
   // On a phone the rail is a horizontal strip; keep the current chapter in view as the
   // user swipes. Scrolls the strip only — `scrollIntoView` would also nudge the page.
   useEffect(() => {
@@ -291,6 +294,7 @@ function ChapterRail({
         const active = i === index;
         const seen = i < index;
         const locked = c.entitlement && !planFlags[c.entitlement];
+        const tagPlan = unlockTagPlan(c.entitlement, planConfig);
         const soon = chapterSoon(c, comingSoon);
         return (
           <li key={c.id} className="shrink-0 snap-start">
@@ -322,7 +326,7 @@ function ChapterRail({
               <span className="relative whitespace-nowrap font-medium">{c.label}</span>
               {/* Coming-soon chapters still say which plan they will unlock on. */}
               {soon && <SoonTag className="relative ml-auto" />}
-              {(soon || locked) && <ProTag className={cn("relative", !soon && "ml-auto")} />}
+              {(soon || locked) && <ProTag plan={tagPlan} className={cn("relative", !soon && "ml-auto")} />}
             </button>
           </li>
         );
@@ -355,6 +359,7 @@ function ChapterCopy({
   const Icon = chapter.icon;
   const chapterLocked = chapter.entitlement && !planFlags[chapter.entitlement];
   const soon = chapterSoon(chapter, comingSoon);
+  const { planConfig } = useViewerPlan();
   return (
     <Stagger className="flex flex-col gap-3 p-5">
       <StaggerItem className="flex flex-wrap items-center gap-2">
@@ -362,7 +367,7 @@ function ChapterCopy({
           <Icon className="size-4.5" aria-hidden />
         </span>
         {soon && <SoonTag />}
-        {(soon || chapterLocked) && <ProTag />}
+        {(soon || chapterLocked) && <ProTag plan={unlockTagPlan(chapter.entitlement, planConfig)} />}
         <NeedTag chapter={chapter} facts={facts} />
       </StaggerItem>
       <StaggerItem>
@@ -376,11 +381,11 @@ function ChapterCopy({
           <StaggerItem as="li" key={b.label} className="flex items-start gap-2 text-sm text-foreground">
             <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
             <span className="min-w-0">
-              {b.label}
+              {b.labelFor?.(planConfig) ?? b.label}
               {b.soon && <SoonTag className="ml-1.5 align-[1px]" />}
               {(b.soon && !soon && !chapterLocked) ||
               (!b.soon && b.entitlement && !chapterLocked && !planFlags[b.entitlement]) ? (
-                <ProTag className="ml-1.5 align-[1px]" />
+                <ProTag plan={unlockTagPlan(b.soon ? undefined : b.entitlement, planConfig)} className="ml-1.5 align-[1px]" />
               ) : null}
             </span>
           </StaggerItem>

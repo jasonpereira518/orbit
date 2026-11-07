@@ -73,7 +73,7 @@ export default async function RunwayPage() {
                 </span>
               )}
             </DefinitionRow>
-            <DefinitionRow label="Included AI (Pro and Max)">
+            <DefinitionRow label="Included AI (every plan)">
               {usd(managedAiMonthlyUsd)} · model cost on Orbit&apos;s keys, trailing 30 days
             </DefinitionRow>
             <DefinitionRow label="Deepgram (voice)">
