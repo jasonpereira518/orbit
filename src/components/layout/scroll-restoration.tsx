@@ -1,15 +1,24 @@
 "use client";
 
 import { useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { shouldRestoreScroll } from "@/lib/scroll-restore";
 
 const MAIN_SCROLL_ID = "app-main-scroll";
 const RESTORE_KEY_PREFIX = "orbit:scroll:";
 
-// Only the contacts list resumes where you left off — every other route
-// (including /contacts/[id] and /contacts/new) starts at the top like normal.
-function isRestorablePath(pathname: string) {
-  return pathname === "/contacts";
+// popstate fires before Next swaps the route, so the flag is set by the time the effect
+// runs. The timestamp expires it if the traversal changed nothing (e.g. hash-only).
+let traversedAt = 0;
+if (typeof window !== "undefined") {
+  window.addEventListener("popstate", () => {
+    traversedAt = Date.now();
+  });
+}
+function consumeTraversal() {
+  const was = Date.now() - traversedAt < 1000;
+  traversedAt = 0;
+  return was;
 }
 
 /**
@@ -21,24 +30,25 @@ function isRestorablePath(pathname: string) {
  */
 export function ScrollRestoration() {
   const pathname = usePathname();
+  // Keyed too, so a query-only change on /contacts goes back to the top.
+  const search = useSearchParams().toString();
 
   useEffect(() => {
     const main = document.getElementById(MAIN_SCROLL_ID);
     if (!main) return;
 
-    if (isRestorablePath(pathname)) {
-      const saved = sessionStorage.getItem(RESTORE_KEY_PREFIX + pathname);
-      main.scrollTop = saved ? Number(saved) || 0 : 0;
+    const restore = shouldRestoreScroll(pathname, consumeTraversal());
+    const saved = restore ? sessionStorage.getItem(RESTORE_KEY_PREFIX + pathname) : null;
+    main.scrollTop = saved ? Number(saved) || 0 : 0;
 
-      const handleScroll = () => {
-        sessionStorage.setItem(RESTORE_KEY_PREFIX + pathname, String(main.scrollTop));
-      };
-      main.addEventListener("scroll", handleScroll, { passive: true });
-      return () => main.removeEventListener("scroll", handleScroll);
-    }
-
-    main.scrollTop = 0;
-  }, [pathname]);
+    // Always record on /contacts, so a later back/forward has an offset to resume.
+    if (pathname !== "/contacts") return;
+    const handleScroll = () => {
+      sessionStorage.setItem(RESTORE_KEY_PREFIX + pathname, String(main.scrollTop));
+    };
+    main.addEventListener("scroll", handleScroll, { passive: true });
+    return () => main.removeEventListener("scroll", handleScroll);
+  }, [pathname, search]);
 
   return null;
 }

@@ -275,7 +275,7 @@ export function AppSidebar({
       </div>
       )}
 
-      <nav aria-label="Main" className="relative flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1.5 [scrollbar-width:thin] lg:px-2">
+      <nav aria-label="Main" className="relative flex min-h-0 flex-1 flex-col gap-0.5 -my-1 overflow-y-auto overscroll-contain px-1.5 py-1 [scrollbar-width:thin] lg:px-2">
         {core.map((item) => (
           <SidebarNavLink
             soon={comingSoon}

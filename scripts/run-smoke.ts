@@ -43,6 +43,7 @@ const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-test-harness": "pure", // the fixtures, fetch mock and known-bug exit codes themselves
   "smoke-friendly-error": "pure",
+  "smoke-scroll-restore": "pure",
   "smoke-plain-text": "pure",
   "smoke-meeting-row-details": "pure",
   "smoke-ai-notice-copy": "pure",

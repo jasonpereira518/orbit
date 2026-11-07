@@ -207,7 +207,7 @@ function CaptureHistoryRow({
               {hydrated && (
                 <>
                   <time dateTime={item.createdAt} title={format(created, "PPpp")}>
-                    {timelineDayLabel(created)}, {format(created, "h:mm a")}
+                    {format(created, "EEE, MMM d, h:mm a")} · {timelineDayLabel(created)}
                   </time>
                   <span aria-hidden>·</span>
                 </>

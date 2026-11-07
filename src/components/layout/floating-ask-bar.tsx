@@ -281,12 +281,12 @@ export function FloatingAskBar() {
       ) {
         return window.scrollY;
       }
-      if (t instanceof HTMLElement) {
-        // Ignore tiny nested scroll areas (e.g. the ask panel results list)
-        if (wrapRef.current?.contains(t)) return null;
+      // Only the page itself (the app scrolls #app-main-scroll). Any other scroller —
+      // sidebar nav, dialogs, lists, chat threads, the bar's own panel — is not page scroll.
+      if (t instanceof HTMLElement && t.id === "app-main-scroll") {
         return t.scrollTop;
       }
-      return window.scrollY;
+      return null;
     }
 
     function onScroll(e: Event) {
