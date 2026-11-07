@@ -2934,10 +2934,17 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // switches for the Microsoft page (paused rows converted the same way). Rescanned every remote
 // ref on Nov 6 2026: 193 is claimed by claude/chat-loading-updates-pane (unmerged), so 194.
 //
+// 195 = embedding_model on contact_embeddings and memory_chunks (AI audit P0-3): which model made
+// each stored vector, so a vector another model made is recognised and re-embedded instead of
+// being compared. Additive and nullable, no backfill. (Built as 171, then 182; renumbered when
+// merging main at 194. usage_events.web_searches, which this branch also added, is main's and
+// was dropped here.) Rescanned origin/main on Nov 7 2026: 194 was the highest claimed anywhere.
+//
 // 196 (built as 190, then 193) = chat_messages.follow_ups: the rule-derived next questions an
 // answer offered, stored with it so the chips survive a reload and a regenerate instead of living
 // only on the stream's `done` event. Renumbered 193 → 196 on Nov 6 2026 when merging main at 194:
-// a database stamped 194 would never run a 193. NOT 195: claude/gallant-ramanujan-hh5j0s claims it.
+// a database stamped 194 would never run a 193. NOT 195: claude/gallant-ramanujan-hh5j0s claims it (it reached main
+// first, on Nov 7 2026, and keeps 195 above).
 export const SCHEMA_VERSION = 196;
 
 /**
@@ -4369,6 +4376,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "email_signature_text", "text");
   await ensureColumn(client, "user_settings", "email_signature_html", "text");
   await ensureColumn(client, "user_settings", "default_send_provider", "text");
+  // v182: which model made a stored vector.
+  await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
+  await ensureColumn(client, "memory_chunks", "embedding_model", "text");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -4561,6 +4571,11 @@ const alters = [
   // by that pass: syncMemoryChunks carries vectors across by content_hash, which unchanged
   // text does not move.
   `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS source_hash text`,
+  // Schema v182: which embedding model made each stored vector. Vectors from two models cannot
+  // be compared, and until now nothing recorded which one a row held (a key change cleared
+  // contact_embeddings but not memory_chunks).
+  `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS embedding_model text`,
+  `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS embedding_model text`,
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
   // The events feature landed whole at v32, so these are its first incremental columns.
