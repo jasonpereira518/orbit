@@ -171,6 +171,15 @@ async function dbChecks() {
     contactId: string,
     rows: { type: string; direction: "in" | "out" | null; days: number }[]
   ) {
+    // Alerts are only for people the user has met or talked with (`met-contact.ts`): every
+    // contact here has had a meeting long ago, so what each case asserts is its own reason.
+    await db.insert(interactions).values({
+      userId: USER,
+      contactId,
+      interactionType: "meeting",
+      interactionDate: realDaysAgo(60),
+      rawNotes: "x",
+    });
     for (const r of rows) {
       await db.insert(interactions).values({
         userId: USER,

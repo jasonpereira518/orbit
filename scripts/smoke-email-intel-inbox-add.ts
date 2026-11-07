@@ -14,6 +14,7 @@ import {
   emailEvents,
   emailThreads,
   ignoredPeople,
+  interactions,
   radarRuns,
   recommendations,
   userSettings,
@@ -88,7 +89,9 @@ async function main() {
   await db.update(userSettings).set({ emailIntelEnabled: 1 }).where(inArray(userSettings.userId, ALL));
 
   // A first Radar run, so the account has a list and refreshing it later means something.
-  await db.insert(contacts).values({ userId: U, fullName: "Eli Park", company: "Northwind", title: "Payments Engineer", closenessTier: "inner" });
+  const [eliRow] = await db.insert(contacts).values({ userId: U, fullName: "Eli Park", company: "Northwind", title: "Payments Engineer", closenessTier: "inner" }).returning();
+  // Radar only reads people the user has met or talked with (`met-contact.ts`).
+  await db.insert(interactions).values({ userId: U, contactId: eliRow!.id, interactionType: "meeting", interactionDate: new Date(Date.now() - 100 * 86_400_000) });
   await claimRadarLease(U);
   await runRadarForUser(U, { trigger: "manual", ai: false });
 
@@ -134,8 +137,15 @@ async function main() {
   check("refreshing Radar works", await refreshRadarForNewContact(U));
   const cards = await db.select().from(recommendations).where(and(eq(recommendations.userId, U), eq(recommendations.status, "pending")));
   const danaCard = cards.find((c) => c.contactId === contact!.id);
-  check("and their card is there at once", Boolean(danaCard), cards.map((c) => c.kind).join(","));
-  check("the card is the one you owe", danaCard?.kind === "follow_up", danaCard?.kind);
+  // Radar only reads people the user has met or talked with (`met-contact.ts`): someone just
+  // added from an email, with no meeting or two-way exchange yet, gets a card once there is one.
+  check("a contact added from an email, with no shared history yet, has no card", !danaCard, cards.map((c) => c.kind).join(","));
+  await db.insert(interactions).values({ userId: U, contactId: contact!.id, interactionType: "meeting", interactionDate: new Date(Date.now() - 86_400_000) });
+  check("refreshing Radar after they have met works", await refreshRadarForNewContact(U));
+  const cardsAfterMeeting = await db.select().from(recommendations).where(and(eq(recommendations.userId, U), eq(recommendations.status, "pending")));
+  const danaCardAfter = cardsAfterMeeting.find((c) => c.contactId === contact!.id);
+  check("and their card is there", Boolean(danaCardAfter), cardsAfterMeeting.map((c) => c.kind).join(","));
+  check("the card is the one you owe", danaCardAfter?.kind === "follow_up", danaCardAfter?.kind);
 
   console.log("\nRefreshing Radar after an add is polite");
   await db.update(userSettings).set({ radarPaused: 1 }).where(eq(userSettings.userId, U));
