@@ -62,7 +62,7 @@ async function main() {
   const pickedRes = await generateContactFollowUpDraft(CASE_USER, contactId, [], { intent: "Say hi" });
   check("system prompt asks for { purpose, body }", picked.system.includes('{ "purpose": string, "body": string }'));
   check("system prompt has the pick-one-purpose rule", picked.system.includes("Pick ONE purpose"));
-  check("goals block carries the aim line", picked.user.includes("Going for: internship, this year"), picked.user);
+  check("goals block carries the aim line", picked.user.includes("Going for: internship, in the next year"), picked.user);
   check("intent is a hint, no verbatim override", !picked.system.includes("Use it as given") && /hint/.test(picked.system));
   check("purpose comes from the model when only intent is set", pickedRes.purpose === "Ask about the seed round", pickedRes.purpose);
   const given = "Ask about the APM program";

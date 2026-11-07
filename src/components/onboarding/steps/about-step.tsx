@@ -1,13 +1,49 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
-import { ArrowRight, X } from "lucide-react";
+import {
+  ArrowRight,
+  Backpack,
+  BookOpen,
+  Briefcase,
+  Building2,
+  CalendarDays,
+  Check,
+  ChartLine,
+  Code,
+  Compass,
+  FlaskConical,
+  GraduationCap,
+  Info,
+  Landmark,
+  LayoutGrid,
+  Link as LinkIcon,
+  LoaderCircle,
+  MessageSquareQuote,
+  Palette,
+  Pencil,
+  Presentation,
+  Rocket,
+  Search,
+  Shuffle,
+  Sparkles,
+  Sprout,
+  Target,
+  Telescope,
+  X,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
 import { saveAboutYou } from "@/actions/about-you";
 import {
-  BackButton,
-  Stagger,
+  CARD,
+  ChoiceRow,
+  GroupLabel,
+  Note,
   StaggerItem,
-  StepHeading,
+  StepFooter,
+  StepLayout,
+  ToggleGroup,
 } from "@/components/onboarding/onboarding-ui";
 import { Button } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
@@ -19,6 +55,7 @@ import {
   FIELD_LABELS,
   TIMELINES,
   TIMELINE_LABELS,
+  asksForMajors,
   composeGoalSentence,
   composeSelfIntro,
   parseOwnLinkedInUrl,
@@ -32,10 +69,35 @@ import { cn } from "@/lib/utils";
 
 const MAX_COMPANIES = 5;
 
+const AIM_ICONS: Record<AimKind, LucideIcon> = {
+  internship: Backpack,
+  full_time: Briefcase,
+  switch_roles: Shuffle,
+  grow: Sprout,
+  grad_school: GraduationCap,
+  explore: Compass,
+  build: Rocket,
+};
+const FIELD_ICONS: Record<FieldKind, LucideIcon> = {
+  product: LayoutGrid,
+  software: Code,
+  finance: ChartLine,
+  consulting: Presentation,
+  design: Palette,
+  research: FlaskConical,
+};
+const TIMELINE_ICONS: Record<Timeline, LucideIcon> = {
+  this_term: Zap,
+  this_year: CalendarDays,
+  no_rush: Telescope,
+};
+
 type Screen = "link" | "taps" | "confirm";
 /** null: no LinkedIn given, so no lookup and no "couldn't confirm" line. */
 type LookupState = null | "pending" | AboutLookup;
-type Row = "headline" | "schools" | "goal" | "intro";
+type Row = "headline" | "majors" | "schools" | "goal" | "intro";
+
+const splitList = (text: string) => text.split(",").map((s) => s.trim()).filter(Boolean);
 
 /**
  * "About you": a LinkedIn URL, three tap groups, then one card of what Orbit understood. The
@@ -89,15 +151,21 @@ export function AboutStep({
   }, [screen]);
 
   const prefill = lookup && lookup !== "pending" && lookup.status === "confident" ? lookup.prefill : null;
+  // The first row is "Your major(s)" for students and "What you do now" for people already
+  // working. Only the row on screen is sent; the hidden one's lookup value still fills an
+  // empty profile through the save's fill-only-empty rule, as the headline always did.
+  const majorsRow = asksForMajors(aim);
   const headline = edits.headline ?? prefill?.headline ?? "";
+  const majorsText = edits.majors ?? prefill?.majors.join(", ") ?? "";
   const schools = edits.schools ?? prefill?.schools.join(", ") ?? "";
   const answers = {
     aim,
     timeline,
     field,
     companies,
-    schools: schools.split(",").map((s) => s.trim()).filter(Boolean),
-    headline: headline.trim() || null,
+    schools: splitList(schools),
+    majors: majorsRow ? splitList(majorsText) : [],
+    headline: majorsRow ? (prefill?.headline ?? null) : headline.trim() || null,
   };
   const goal = edits.goal ?? composeGoalSentence(answers) ?? "";
   const intro = edits.intro ?? composeSelfIntro(answers) ?? "";
@@ -146,7 +214,11 @@ export function AboutStep({
         ...answers,
         goalSentence: goal.trim() || null,
         selfIntro: intro.trim() || null,
-        edited: { headline: edits.headline !== undefined, selfIntro: edits.intro !== undefined },
+        edited: {
+          headline: !majorsRow && edits.headline !== undefined,
+          majors: majorsRow && edits.majors !== undefined,
+          selfIntro: edits.intro !== undefined,
+        },
         prefill,
       }).catch((err: unknown) => ({ ok: false as const, error: friendlyError(err, "We couldn’t save that. Try again.") }));
       if (!res.ok) {
@@ -160,28 +232,29 @@ export function AboutStep({
   }
 
   const footer = (primary: ReactNode) => (
-    <StaggerItem className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
-      <Button type="button" variant="ghost" className="text-muted-foreground" disabled={busy} onClick={onSkip}>
-        Skip for now
-      </Button>
-      {primary}
-    </StaggerItem>
+    <StepFooter
+      left={
+        <Button type="button" variant="ghost" className="h-10 text-muted-foreground" disabled={busy} onClick={onSkip}>
+          Skip for now
+        </Button>
+      }
+      right={primary}
+    />
   );
 
   return (
-    <div ref={rootRef} tabIndex={-1} className="outline-none">
+    <div ref={rootRef} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
       {screen === "link" && (
-        <Stagger key="link" className="mx-auto max-w-2xl space-y-6">
-          <div className="space-y-4">
-            <StaggerItem>
-              <BackButton onClick={onBack} disabled={busy} />
-            </StaggerItem>
-            <StepHeading eyebrow="About you" title="Where can Orbit find you?">
-              Your LinkedIn profile helps Orbit fill in what you do now. It looks you up while you
-              answer the next three questions.
-            </StepHeading>
-          </div>
-          <StaggerItem>
+        <StepLayout
+          key="link"
+          onBack={onBack}
+          backDisabled={busy}
+          eyebrow="About you · 1 of 3"
+          title="Where can Orbit find you?"
+          description="Paste your LinkedIn profile. Orbit looks you up in the background while you answer the next questions."
+          footer={footer(null)}
+        >
+          <StaggerItem className={cn(CARD, "p-4 sm:p-5")}>
             <form
               noValidate
               className="space-y-4"
@@ -190,18 +263,22 @@ export function AboutStep({
                 submitUrl();
               }}
             >
-              <Field label="Your LinkedIn profile" error={urlError}>
-                <Input
-                  type="url"
-                  inputMode="url"
-                  autoComplete="url"
-                  value={url}
-                  placeholder="linkedin.com/in/your-name"
-                  onChange={(e) => {
-                    setUrl(e.target.value);
-                    if (urlError) setUrlError(null);
-                  }}
-                />
+              <Field label="Your LinkedIn profile" error={urlError} description="Only your public profile. Nothing is posted or connected.">
+                <div className="relative">
+                  <LinkIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-primary" aria-hidden />
+                  <Input
+                    type="url"
+                    inputMode="url"
+                    autoComplete="url"
+                    value={url}
+                    placeholder="linkedin.com/in/your-name"
+                    className="h-10 pl-9"
+                    onChange={(e) => {
+                      setUrl(e.target.value);
+                      if (urlError) setUrlError(null);
+                    }}
+                  />
+                </div>
               </Field>
               <div className="flex flex-wrap items-center gap-3">
                 <Button type="submit" size="lg" className="h-10 px-4" disabled={busy || !url.trim()}>
@@ -214,54 +291,77 @@ export function AboutStep({
               </div>
             </form>
           </StaggerItem>
-          {footer(null)}
-        </Stagger>
+          <StaggerItem as="div" className="mt-5 space-y-3">
+            <ChoiceRow icon={Search} title="What Orbit reads">
+              Your headline, where you study or work, and your field.
+            </ChoiceRow>
+            <ChoiceRow icon={Pencil} tone="gold" title="You approve it">
+              You’ll see what Orbit understood and can change anything before it’s saved.
+            </ChoiceRow>
+          </StaggerItem>
+        </StepLayout>
       )}
 
       {screen === "taps" && (
-        <Stagger key="taps" className="mx-auto max-w-2xl space-y-6">
+        <StepLayout
+          key="taps"
+          onBack={() => setScreen("link")}
+          backDisabled={busy}
+          eyebrow="About you · 2 of 3"
+          title="What are you going for?"
+          description="Three quick taps, all optional. Orbit uses them to pick who to suggest and what your drafts ask."
+          footer={footer(
+            <Button type="button" size="lg" className="h-10 px-4" disabled={busy} onClick={() => setScreen("confirm")}>
+              Continue
+              <ArrowRight className="size-4" aria-hidden />
+            </Button>,
+          )}
+        >
           <div className="space-y-4">
             <StaggerItem>
-              <BackButton onClick={() => setScreen("link")} disabled={busy} />
+              <ToggleGroup
+                label="Your aim"
+                look="tile"
+                options={AIM_KINDS}
+                labels={AIM_LABELS}
+                icons={AIM_ICONS}
+                value={aim}
+                onChange={(next) => {
+                  setAim(next);
+                  // A field is saved only with an aim: clear it rather than drop it silently.
+                  if (!next) setField(null);
+                }}
+              />
             </StaggerItem>
-            <StepHeading eyebrow="About you" title="What are you going for?">
-              Three taps, all optional. Orbit uses them to pick who to suggest and what your
-              drafts ask for.
-            </StepHeading>
-          </div>
 
-          <StaggerItem>
-            <ChipGroup
-              label="What you’re going for"
-              options={AIM_KINDS}
-              labels={AIM_LABELS}
-              value={aim}
-              onChange={(next) => {
-                setAim(next);
-                // A field is saved only with an aim: clear it rather than drop it silently.
-                if (!next) setField(null);
-              }}
-            />
-          </StaggerItem>
+            <StaggerItem>
+              <ToggleGroup
+                label="Field"
+                disabled={!aim}
+                hint={aim ? undefined : "Pick your aim first."}
+                look="chip"
+                options={FIELDS}
+                labels={FIELD_LABELS}
+                icons={FIELD_ICONS}
+                value={field}
+                onChange={setField}
+              />
+            </StaggerItem>
 
-          <StaggerItem className="space-y-3">
-            <ChipGroup
-              label="Field"
-              options={FIELDS}
-              labels={FIELD_LABELS}
-              value={field}
-              onChange={setField}
-              disabled={!aim}
-              hint={aim ? undefined : "Pick what you’re going for first."}
-            />
-            <div className="min-w-0 space-y-2">
-              <Field label="Companies you’d like to work at" description={`Up to ${MAX_COMPANIES}.`}>
-                <div className="flex min-w-0 gap-2">
-                  <Input
+            <StaggerItem className="min-w-0">
+              <label htmlFor="about-company" className="block">
+                <GroupLabel aside={`up to ${MAX_COMPANIES}`}>Dream companies</GroupLabel>
+              </label>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <div className="flex h-10 min-w-[12rem] flex-1 items-center gap-2 rounded-full border border-input bg-card pr-1 pl-3 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 sm:max-w-xs">
+                  <Building2 className="size-4 shrink-0 text-primary" aria-hidden />
+                  <input
+                    id="about-company"
                     value={company}
-                    placeholder="Company name"
-                    className="min-w-0 flex-1 sm:max-w-xs"
+                    placeholder={companies.length >= MAX_COMPANIES ? "That’s five" : "Add a company…"}
+                    className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
                     disabled={companies.length >= MAX_COMPANIES}
+                    enterKeyHint="done"
                     onChange={(e) => setCompany(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
@@ -272,167 +372,153 @@ export function AboutStep({
                   />
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 rounded-full px-3"
                     disabled={!company.trim() || companies.length >= MAX_COMPANIES}
                     onClick={addCompany}
                   >
                     Add
                   </Button>
                 </div>
-              </Field>
-              {companies.length > 0 && (
-                <ul className="flex min-w-0 flex-wrap gap-2">
-                  {companies.map((name) => (
-                    <li
-                      key={name}
-                      className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-full border border-border/60 bg-card py-0.5 pr-1 pl-3 text-sm"
+                {companies.map((name) => (
+                  <span
+                    key={name}
+                    className="inline-flex h-9 max-w-full min-w-0 items-center gap-1 rounded-full border border-gold/30 bg-gold/10 pr-1 pl-3 text-[0.8125rem]"
+                  >
+                    <span className="min-w-0 truncate">{name}</span>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${name}`}
+                      onClick={() => setCompanies(companies.filter((c) => c !== name))}
+                      className="relative grid size-7 shrink-0 tap-target place-items-center rounded-full text-muted-foreground hover:text-foreground"
                     >
-                      <span className="min-w-0 truncate">{name}</span>
-                      <button
-                        type="button"
-                        aria-label={`Remove ${name}`}
-                        onClick={() => setCompanies(companies.filter((c) => c !== name))}
-                        className="relative grid size-6 shrink-0 tap-target place-items-center rounded-full text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="size-3.5" aria-hidden />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </StaggerItem>
+                      <X className="size-3.5" aria-hidden />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </StaggerItem>
 
-          <StaggerItem>
-            <ChipGroup label="When" options={TIMELINES} labels={TIMELINE_LABELS} value={timeline} onChange={setTimeline} />
-          </StaggerItem>
-
-          {footer(
-            <Button type="button" size="lg" className="h-10 px-4" disabled={busy} onClick={() => setScreen("confirm")}>
-              Continue
-              <ArrowRight className="size-4" aria-hidden />
-            </Button>,
-          )}
-        </Stagger>
+            <StaggerItem>
+              <ToggleGroup
+                label="When"
+                look="segment"
+                options={TIMELINES}
+                labels={TIMELINE_LABELS}
+                icons={TIMELINE_ICONS}
+                value={timeline}
+                onChange={setTimeline}
+              />
+            </StaggerItem>
+          </div>
+        </StepLayout>
       )}
 
       {screen === "confirm" && (
-        <Stagger key="confirm" className="mx-auto max-w-2xl space-y-6">
-          <div className="space-y-4">
-            <StaggerItem>
-              <BackButton onClick={() => setScreen("taps")} disabled={busy} />
-            </StaggerItem>
-            <StepHeading eyebrow="About you" title="Here’s what Orbit understood">
-              Change anything that’s off. Orbit only fills what’s empty in your profile.
-            </StepHeading>
-          </div>
-
-          <StaggerItem className="space-y-4 rounded-2xl border border-border/70 bg-card p-4 sm:p-5">
+        <StepLayout
+          key="confirm"
+          onBack={() => setScreen("taps")}
+          backDisabled={busy}
+          eyebrow="About you · 3 of 3"
+          title="Here’s what Orbit understood"
+          description="Change anything that’s off. Orbit only fills what’s empty in your profile."
+          footer={footer(
+            <Button type="button" size="lg" className="h-10 px-4" disabled={busy} onClick={confirm}>
+              {saving ? "Saving…" : "Looks right"}
+              <Check className="size-4" aria-hidden />
+            </Button>,
+          )}
+        >
+          <StaggerItem>
             <LookupLine lookup={lookup} />
-            <Field label="What you do now">
-              <Input
-                value={headline}
-                placeholder="CS junior at UNC"
-                onChange={(e) => setEdits({ ...edits, headline: e.target.value })}
-              />
-            </Field>
-            <Field label="School(s)" description="Separate more than one with commas.">
-              <Input
-                value={schools}
-                placeholder="University of North Carolina"
-                onChange={(e) => setEdits({ ...edits, schools: e.target.value })}
-              />
-            </Field>
-            <Field label="Your goal">
+          </StaggerItem>
+          <StaggerItem className={cn(CARD, "mt-3 space-y-3 p-4 sm:p-5")}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {majorsRow ? (
+                <Field label={<RowLabel icon={BookOpen}>Your major(s)</RowLabel>}>
+                  <Input
+                    value={majorsText}
+                    placeholder="Computer Science, Economics"
+                    className="h-10"
+                    onChange={(e) => setEdits({ ...edits, majors: e.target.value })}
+                  />
+                </Field>
+              ) : (
+                <Field label={<RowLabel icon={Briefcase}>What you do now</RowLabel>}>
+                  <Input
+                    value={headline}
+                    placeholder="Product manager at Stripe"
+                    className="h-10"
+                    onChange={(e) => setEdits({ ...edits, headline: e.target.value })}
+                  />
+                </Field>
+              )}
+              <Field label={<RowLabel icon={Landmark}>School</RowLabel>}>
+                <Input
+                  value={schools}
+                  placeholder="University of North Carolina"
+                  className="h-10"
+                  onChange={(e) => setEdits({ ...edits, schools: e.target.value })}
+                />
+              </Field>
+            </div>
+            <Field label={<RowLabel icon={Target}>Your goal</RowLabel>}>
               <Input
                 value={goal}
-                placeholder="Land a product internship this year."
+                placeholder="Land a product internship in the next year."
+                className="h-10"
                 onChange={(e) => setEdits({ ...edits, goal: e.target.value })}
               />
             </Field>
-            <Field label="How Orbit introduces you" description="The opening line Orbit uses in your drafts.">
+            <Field
+              label={<RowLabel icon={MessageSquareQuote}>How Orbit introduces you</RowLabel>}
+              description="The opening line Orbit uses in your drafts."
+            >
               <Input
                 value={intro}
-                placeholder="CS junior at UNC aiming for product internships."
+                placeholder="Computer Science student at UNC, aiming for product internships."
+                className="h-10"
                 onChange={(e) => setEdits({ ...edits, intro: e.target.value })}
               />
             </Field>
             <FormError>{saveError}</FormError>
           </StaggerItem>
-
-          {footer(
-            <Button type="button" size="lg" className="h-10 px-4" disabled={busy} onClick={confirm}>
-              {saving ? "Saving…" : "Looks right"}
-              <ArrowRight className="size-4" aria-hidden />
-            </Button>,
-          )}
-        </Stagger>
+        </StepLayout>
       )}
     </div>
   );
 }
 
-function LookupLine({ lookup }: { lookup: LookupState }) {
-  if (lookup === null) return null;
-  const text =
-    lookup === "pending"
-      ? "Looking you up on LinkedIn… these fill in when it’s done."
-      : lookup.status === "confident"
-        ? "Filled in from your LinkedIn profile."
-        : "We couldn’t confirm this is you, so nothing was filled in from LinkedIn.";
+function RowLabel({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
   return (
-    <p role="status" className={cn("text-sm", lookup === "pending" ? "text-muted-foreground" : "text-foreground")}>
-      {text}
-    </p>
+    <span className="flex items-center gap-1.5 text-[0.8125rem] font-semibold text-ink">
+      <Icon className="size-3.5 text-gold" aria-hidden />
+      {children}
+    </span>
   );
 }
 
-/** One-of chips: real toggle buttons, and pressing the chosen one clears it. */
-function ChipGroup<T extends string>({
-  label,
-  options,
-  labels,
-  value,
-  onChange,
-  disabled = false,
-  hint,
-}: {
-  label: string;
-  options: readonly T[];
-  labels: Record<T, string>;
-  value: T | null;
-  onChange: (next: T | null) => void;
-  disabled?: boolean;
-  hint?: string;
-}) {
+/** The lookup's state, in the note style: gold when it found the person, muted otherwise. */
+function LookupLine({ lookup }: { lookup: LookupState }) {
+  if (lookup === null) return null;
+  if (lookup === "pending") {
+    return (
+      <Note icon={LoaderCircle} tone="muted" role="status">
+        Looking you up on LinkedIn… these fill in when it’s done.
+      </Note>
+    );
+  }
+  if (lookup.status === "confident") {
+    return (
+      <Note icon={Sparkles} role="status">
+        Found you on LinkedIn: filled in from your public profile.
+      </Note>
+    );
+  }
   return (
-    <div role="group" aria-label={label} className="min-w-0 space-y-2">
-      <p className="text-sm font-medium text-ink">{label}</p>
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-      <div className="flex min-w-0 flex-wrap gap-2">
-        {options.map((option) => {
-          const on = value === option;
-          return (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={on}
-              disabled={disabled}
-              onClick={() => onChange(on ? null : option)}
-              className={cn(
-                "rounded-full border px-3 py-1.5 text-sm transition-[border-color,background-color,color,transform] duration-200 active:scale-[0.97]",
-                "disabled:pointer-events-none disabled:opacity-50",
-                "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
-                on
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border/70 bg-card text-foreground hover:border-primary/40",
-              )}
-            >
-              {labels[option]}
-            </button>
-          );
-        })}
-      </div>
-    </div>
+    <Note icon={Info} tone="muted" role="status">
+      We couldn’t confirm this is you, so nothing was filled in from LinkedIn.
+    </Note>
   );
 }

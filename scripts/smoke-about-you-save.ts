@@ -13,7 +13,7 @@ import "./smoke/_env";
 import { and, eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { aiResultCache, rateLimitBuckets, targetCompanies, userGoals, userSettings } from "../src/db/schema";
-import { lookUpSelfForUser, saveAboutYouForUser, type AboutConfirm } from "../src/lib/about-you-server";
+import { lookUpSelfForUser, parseAboutConfirm, saveAboutYouForUser, type AboutConfirm } from "../src/lib/about-you-server";
 import { clearCareerProfile, loadYouCurrent } from "../src/lib/career-profile-server";
 import { addTargetCompany, listTargetCompanies } from "../src/lib/events/target-companies";
 import { listRecentResearch, researchPerson, type PersonResearcher } from "../src/lib/web-research";
@@ -42,7 +42,10 @@ const CONFIDENT = {
   location: "Chapel Hill",
   summary: "Studies computer science.",
   talkingPoints: [],
-  experiences: [{ kind: "education", organization: "UNC Chapel Hill", title: null, isCurrent: true }],
+  experiences: [
+    { kind: "education", organization: "UNC Chapel Hill", title: null, fieldOfStudy: "Computer Science, Economics", isCurrent: true },
+    { kind: "education", organization: "Old High", title: null, fieldOfStudy: "Band", isCurrent: false },
+  ],
 };
 
 async function reset() {
@@ -62,10 +65,11 @@ function confirm(over: Partial<AboutConfirm> = {}): AboutConfirm {
     field: "product",
     companies: ["Stripe", "Figma"],
     schools: ["UNC"],
+    majors: [],
     headline: "New",
     goalSentence: "Land a product internship at Stripe or Figma this year.",
     selfIntro: "X",
-    edited: { headline: false, selfIntro: false },
+    edited: { headline: false, majors: false, selfIntro: false },
     prefill: null,
     ...over,
   };
@@ -82,7 +86,13 @@ async function main() {
     "it prefills the role and schools",
     confident.status === "confident" &&
       confident.prefill.role?.company === "UNC" &&
-      confident.prefill.schools.join() === "UNC Chapel Hill",
+      confident.prefill.schools.join() === "UNC Chapel Hill,Old High",
+    JSON.stringify(confident),
+  );
+  check(
+    "majors come from the most recent school's field of study, split on commas",
+    confident.status === "confident" && confident.prefill.majors.join("|") === "Computer Science|Economics",
+    JSON.stringify(confident),
   );
   let row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, USER) });
   check("social_links.linkedin is saved normalized", row?.socialLinks?.linkedin === "https://www.linkedin.com/in/ada-tester", row?.socialLinks?.linkedin);
@@ -147,7 +157,7 @@ async function main() {
   check("saving twice leaves exactly one goal", goals.length === 1, String(goals.length));
   check("and the title once", cur.career?.roleKeywords?.join() === "Product Manager", cur.career?.roleKeywords?.join());
 
-  await saveAboutYouForUser(USER, confirm({ edited: { headline: true, selfIntro: true } }));
+  await saveAboutYouForUser(USER, confirm({ edited: { headline: true, majors: false, selfIntro: true } }));
   cur = await loadYouCurrent(USER);
   check("an edited headline replaces the imported one", cur.career?.profile?.headline === "New");
   check("an edited self-intro replaces the bio", cur.senderBio === "X");
@@ -158,13 +168,46 @@ async function main() {
     USER,
     confirm({
       headline: "CS junior at UNC",
-      prefill: { headline: "CS junior at UNC", role: { title: "Student", company: "UNC" }, location: "Chapel Hill", summary: "Studies.", schools: [] },
+      prefill: { headline: "CS junior at UNC", role: { title: "Student", company: "UNC" }, location: "Chapel Hill", summary: "Studies.", schools: [], majors: ["Math"] },
     }),
   );
   cur = await loadYouCurrent(USER);
   check("headline, location and summary fill", cur.career?.profile?.headline === "CS junior at UNC" && cur.career.profile.location === "Chapel Hill" && cur.career.profile.summary === "Studies.");
   check("the role fills", cur.career?.role?.company === "UNC");
   check("an empty bio takes the self-intro", cur.senderBio === "X");
+  check("empty majors fill from the lookup", cur.career?.majors?.join() === "Math", JSON.stringify(cur.career?.majors));
+
+  console.log("\nmajors: fill only empty, an edit replaces");
+  await saveAboutYouForUser(USER, confirm({ majors: ["History"] }));
+  cur = await loadYouCurrent(USER);
+  check("saved majors are kept against an unedited row", cur.career?.majors?.join() === "Math", JSON.stringify(cur.career?.majors));
+  await saveAboutYouForUser(USER, confirm({ majors: ["History"], edited: { headline: false, majors: true, selfIntro: false } }));
+  cur = await loadYouCurrent(USER);
+  check("an edited majors row replaces them", cur.career?.majors?.join() === "History", JSON.stringify(cur.career?.majors));
+  await saveAboutYouForUser(
+    USER,
+    confirm({
+      majors: [],
+      edited: { headline: false, majors: true, selfIntro: false },
+      prefill: { headline: null, role: null, location: null, summary: null, schools: [], majors: ["Lookup"] },
+    }),
+  );
+  cur = await loadYouCurrent(USER);
+  check("a cleared majors row is not refilled from the lookup", cur.career?.majors?.join() === "History", JSON.stringify(cur.career?.majors));
+
+  console.log("\nparseAboutConfirm");
+  const parsed = parseAboutConfirm({
+    ...confirm(),
+    majors: ["A", "  ", "B", "C", "D", "x".repeat(500)],
+    edited: { majors: true },
+    prefill: { majors: ["P1", "P2", "P3", "P4"], schools: [] },
+  });
+  check("majors are capped at 3, blanks dropped", parsed?.majors.join() === "A,B,C", JSON.stringify(parsed?.majors));
+  check("edited.majors is read", parsed?.edited.majors === true && parsed.edited.headline === false);
+  check("prefill majors are capped at 3", parsed?.prefill?.majors.join() === "P1,P2,P3", JSON.stringify(parsed?.prefill));
+  const long = parseAboutConfirm({ ...confirm(), majors: ["y".repeat(500)] });
+  check("each major is length-capped like a school", long?.majors[0]?.length === 120, String(long?.majors[0]?.length));
+  check("a non-array majors is empty", parseAboutConfirm({ ...confirm(), majors: "CS" })?.majors.length === 0);
 
   console.log("\na cleared headline row is not refilled from the lookup");
   await reset();
@@ -172,8 +215,8 @@ async function main() {
     USER,
     confirm({
       headline: null,
-      edited: { headline: true, selfIntro: false },
-      prefill: { headline: "Lookup", role: null, location: null, summary: null, schools: [] },
+      edited: { headline: true, majors: false, selfIntro: false },
+      prefill: { headline: "Lookup", role: null, location: null, summary: null, schools: [], majors: [] },
     }),
   );
   cur = await loadYouCurrent(USER);

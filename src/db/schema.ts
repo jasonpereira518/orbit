@@ -1929,6 +1929,8 @@ export type CareerProfile = {
     field: Field | null;
     setAt: string;
   };
+  /** The confirm screen's "Your major(s)", at most 3. A jsonb key, so no DDL. */
+  majors?: string[];
   importedAt?: string;
 };
 

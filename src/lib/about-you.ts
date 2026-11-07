@@ -34,10 +34,14 @@ export const AIM_LABELS: Record<AimKind, string> = {
   build: "Build something",
 };
 
+/**
+ * The stored ids predate this wording (they were "This term · This year · No rush"); only the
+ * words changed, so saved `career_profile.aim.timeline` values stay valid without a migration.
+ */
 export const TIMELINE_LABELS: Record<Timeline, string> = {
-  this_term: "This term",
-  this_year: "This year",
-  no_rush: "No rush",
+  this_term: "As soon as possible",
+  this_year: "In the next year",
+  no_rush: "In the future",
 };
 
 export const FIELD_LABELS: Record<Field, string> = {
@@ -62,12 +66,22 @@ export function isJobHuntingAim(kind: AimKind): boolean {
   return kind === "internship" || kind === "full_time" || kind === "switch_roles";
 }
 
+/**
+ * Whether the confirm screen's first row is "Your major(s)" (true) or "What you do now"
+ * (false). People already working (a full-time job, switching, growing) get the headline row.
+ */
+export function asksForMajors(kind: AimKind | null): boolean {
+  return kind !== "full_time" && kind !== "switch_roles" && kind !== "grow";
+}
+
 export type AboutAnswers = {
   aim: AimKind | null;
   timeline: Timeline | null;
   field: Field | null;
   companies: string[];
   schools: string[];
+  /** From the confirm screen's "Your major(s)" row; at most 3. */
+  majors: string[];
   headline: string | null;
 };
 
@@ -94,7 +108,11 @@ function atCompanies(companies: string[]): string {
   return ` at ${c.slice(0, -1).join(", ")}, or ${c[c.length - 1]}`;
 }
 
-const WHEN: Record<Timeline, string> = { this_term: " this term", this_year: " this year", no_rush: "" };
+const WHEN: Record<Timeline, string> = {
+  this_term: " as soon as possible",
+  this_year: " in the next year",
+  no_rush: "",
+};
 
 const GOAL: Record<AimKind, (f: string | null, at: string, when: string) => string> = {
   internship: (f, at, when) => `Land ${f ? `a ${f}` : "an"} internship${at}${when}`,
@@ -123,8 +141,17 @@ const INTRO: Record<AimKind, (f: string | null) => string> = {
   build: (f) => `building something${f ? ` in ${f}` : ""}`,
 };
 
+/**
+ * "Computer Science and Economics student at UNC, aiming for software internships." Majors win
+ * over the headline when there are any; the step sends none for aims where the row is "What you
+ * do now", so those keep today's headline wording.
+ */
 export function composeSelfIntro(a: AboutAnswers): string | null {
-  const headline = a.headline?.trim() || null;
+  const majors = a.majors.map((m) => m.trim()).filter(Boolean);
+  const school = a.schools.map((s) => s.trim()).find(Boolean);
+  const headline = majors.length
+    ? `${majors.join(" and ")} student${school ? ` at ${school}` : ""}`
+    : a.headline?.trim() || null;
   const field = a.field ? FIELD_LABELS[a.field].toLowerCase() : null;
   const aim = a.aim ? INTRO[a.aim](field) : null;
   if (headline && aim) return `${headline}, ${aim}.`;

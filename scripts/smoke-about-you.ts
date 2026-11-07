@@ -5,6 +5,8 @@
  * Run: npx tsx scripts/smoke-about-you.ts
  */
 import {
+  TIMELINE_LABELS,
+  asksForMajors,
   composeGoalSentence,
   buildDiscoveryQuery,
   composeSelfIntro,
@@ -26,6 +28,7 @@ const empty: AboutAnswers = {
   field: null,
   companies: [],
   schools: [],
+  majors: [],
   headline: null,
 };
 
@@ -49,7 +52,11 @@ console.log("\ncomposeGoalSentence");
     companies: ["Stripe", "Figma"],
     timeline: "this_year",
   });
-  check("internship example", s === "Land a product internship at Stripe or Figma this year.", String(s));
+  check("internship example", s === "Land a product internship at Stripe or Figma in the next year.", String(s));
+  const soon = composeGoalSentence({ ...empty, aim: "internship", field: "software", timeline: "this_term" });
+  check("this_term reads as soon as possible", soon === "Land a software internship as soon as possible.", String(soon));
+  const later = composeGoalSentence({ ...empty, aim: "build", timeline: "no_rush" });
+  check("no_rush adds no time clause", later === "Build something.", String(later));
   const e = composeGoalSentence({ ...empty, aim: "explore", timeline: "no_rush" });
   check("explore has no dangling at / this", !!e && !/\bat\b|this /.test(e) && e.endsWith("."), String(e));
   check("null aim -> null", composeGoalSentence(empty) === null);
@@ -60,7 +67,31 @@ console.log("\ncomposeSelfIntro");
   const s = composeSelfIntro({ ...empty, headline: "CS junior at UNC", aim: "internship", field: "product" });
   check("headline + aim", s === "CS junior at UNC, aiming for product internships.", String(s));
   check("all empty -> null", composeSelfIntro(empty) === null);
+  const m = composeSelfIntro({
+    ...empty,
+    majors: ["Computer Science", "Economics"],
+    schools: ["UNC", "Duke"],
+    headline: "Ignored headline",
+    aim: "internship",
+    field: "software",
+  });
+  check("majors + school win over the headline", m === "Computer Science and Economics student at UNC, aiming for software internships.", String(m));
+  const noSchool = composeSelfIntro({ ...empty, majors: [" Math "], aim: null });
+  check("majors without a school", noSchool === "Math student.", String(noSchool));
+  const blank = composeSelfIntro({ ...empty, majors: ["  "], headline: "PM at Stripe", aim: "grow" });
+  check("blank majors fall back to the headline", blank === "PM at Stripe, growing where they are.", String(blank));
 }
+
+console.log("\nTIMELINE_LABELS");
+check("this_term", TIMELINE_LABELS.this_term === "As soon as possible");
+check("this_year", TIMELINE_LABELS.this_year === "In the next year");
+check("no_rush", TIMELINE_LABELS.no_rush === "In the future");
+
+console.log("\nasksForMajors");
+check("internship asks for majors", asksForMajors("internship"));
+check("no aim asks for majors", asksForMajors(null));
+check("full_time / switch_roles / grow keep the headline row",
+  !asksForMajors("full_time") && !asksForMajors("switch_roles") && !asksForMajors("grow"));
 
 console.log("\nisJobHuntingAim");
 check("grow false", isJobHuntingAim("grow") === false);

@@ -34,6 +34,8 @@ export type AboutPrefill = {
   location: string | null;
   summary: string | null;
   schools: string[];
+  /** The most recent school's field of study, split on commas; at most `MAX_MAJORS`. */
+  majors: string[];
 };
 
 export type AboutLookup = { status: "confident"; prefill: AboutPrefill } | { status: "unsure" | "none" | "unavailable" };
@@ -41,7 +43,7 @@ export type AboutLookup = { status: "confident"; prefill: AboutPrefill } | { sta
 export type AboutConfirm = AboutAnswers & {
   goalSentence: string | null;
   selfIntro: string | null;
-  edited: { headline: boolean; selfIntro: boolean };
+  edited: { headline: boolean; majors: boolean; selfIntro: boolean };
   prefill: AboutPrefill | null;
 };
 
@@ -50,6 +52,7 @@ const NAME_MAX = 100;
 const LINE_MAX = 200;
 const SUMMARY_MAX = 600;
 const SCHOOL_MAX = 120;
+const MAX_MAJORS = 3;
 
 /** One line of text, whitespace collapsed and capped; null when empty or not a string. */
 function line(value: unknown, max: number): string | null {
@@ -80,6 +83,7 @@ function parsePrefill(raw: unknown): AboutPrefill | null {
     location: line(p.location, NAME_MAX),
     summary: line(p.summary, SUMMARY_MAX),
     schools: lines(p.schools, SCHOOL_MAX, MAX_SCHOOLS),
+    majors: lines(p.majors, SCHOOL_MAX, MAX_MAJORS),
   };
 }
 
@@ -98,10 +102,15 @@ export function parseAboutConfirm(raw: unknown): AboutConfirm | null {
     field,
     companies: lines(r.companies, NAME_MAX, MAX_COMPANIES),
     schools: lines(r.schools, SCHOOL_MAX, MAX_SCHOOLS),
+    majors: lines(r.majors, SCHOOL_MAX, MAX_MAJORS),
     headline: line(r.headline, LINE_MAX),
     goalSentence: line(r.goalSentence, MAX_GOAL_CHARS),
     selfIntro: normalizeSenderBio(r.selfIntro),
-    edited: { headline: edited.headline === true, selfIntro: edited.selfIntro === true },
+    edited: {
+      headline: edited.headline === true,
+      majors: edited.majors === true,
+      selfIntro: edited.selfIntro === true,
+    },
     prefill: parsePrefill(r.prefill),
   };
 }
@@ -144,6 +153,9 @@ export async function lookUpSelfForUser(
     if (d.match !== "confident") return { status: d.match };
     const title = line(d.current?.title, NAME_MAX);
     const company = line(d.current?.organization, NAME_MAX);
+    const education = d.experiences.filter((e) => e.kind === "education");
+    // Experiences come most recent first, so the first school is the current or latest one.
+    const field = education[0]?.fieldOfStudy;
     return {
       status: "confident",
       prefill: {
@@ -152,10 +164,11 @@ export async function lookUpSelfForUser(
         location: line(d.location, NAME_MAX),
         summary: line(d.summary, SUMMARY_MAX),
         schools: lines(
-          d.experiences.filter((e) => e.kind === "education").map((e) => e.organization),
+          education.map((e) => e.organization),
           SCHOOL_MAX,
           MAX_SCHOOLS,
         ),
+        majors: lines(field ? field.split(/[,;]/) : [], SCHOOL_MAX, MAX_MAJORS),
       },
     };
   } catch {
@@ -179,6 +192,9 @@ export async function saveAboutYouForUser(userId: string, input: AboutConfirm): 
   if (prefill?.summary && !profile.summary) profile.summary = prefill.summary;
   if (JSON.stringify(profile) !== JSON.stringify(career.profile ?? {})) patch.profile = profile;
   if (prefill?.role && !career.role) patch.role = prefill.role;
+  // Majors follow the headline's rule: an edit is the person's word, else fill only an empty list.
+  const majors = input.edited.majors ? input.majors : input.majors.length ? input.majors : (prefill?.majors ?? []);
+  if (majors.length && (input.edited.majors || !career.majors?.length)) patch.majors = majors;
   if (input.aim) {
     patch.aim = { kind: input.aim, timeline: input.timeline, field: input.field, setAt: new Date().toISOString() };
     if (input.field && isJobHuntingAim(input.aim)) {
