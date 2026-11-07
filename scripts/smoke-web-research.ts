@@ -19,8 +19,6 @@ import { getContactProfile } from "../src/lib/contact-profile";
 import {
   discoverPeople,
   listRecentResearch,
-  LookupStillRunning,
-  lookupKeepingLate,
   personResearchKey,
   researchCompany,
   researchPerson,
@@ -28,6 +26,7 @@ import {
   type PersonResearcher,
   type PersonSubject,
 } from "../src/lib/web-research";
+import { LookupStillRunning, lookupKeepingLate } from "../src/lib/web-research-late";
 
 const USER = "smoke-web-research-user";
 const OPTS = { skipRevalidate: true, skipEmbedding: true, skipSummary: true, skipCloseness: true } as const;

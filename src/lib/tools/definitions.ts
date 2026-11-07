@@ -60,7 +60,8 @@ import { addDaysYmd, ymdInZone } from "@/lib/reminder-due-bucket";
 import { freeSlots } from "@/lib/calendar-free";
 import { isPaywallError } from "@/lib/entitlements";
 import { requirePlanForSurface, requireReleasedSurface } from "@/lib/surface-visibility";
-import { discoverPeople, LookupStillRunning, lookupKeepingLate, researchCompany, researchPerson } from "@/lib/web-research";
+import { discoverPeople, researchCompany, researchPerson } from "@/lib/web-research";
+import { LookupStillRunning, lookupKeepingLate } from "@/lib/web-research-late";
 
 const BOTH = ["mcp", "chat"] as const;
 const MCP_ONLY = ["mcp"] as const;
