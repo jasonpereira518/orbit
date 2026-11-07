@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { listDuplicates, listRecentMerges } from "@/actions/duplicates";
+import { listDuplicates, listRecentDismissals, listRecentMerges } from "@/actions/duplicates";
 import { requireUserId } from "@/lib/auth";
 import { mergeConfidentDuplicates } from "@/lib/duplicate-sweep";
 import { openEngines } from "@/lib/decisions/engine";
@@ -49,12 +49,6 @@ export default async function DuplicatesPage() {
           Contacts
         </Link>
         <h1 className="font-heading text-2xl">Duplicates</h1>
-        <p className="text-sm text-muted-foreground">
-          Orbit merges duplicates for you whenever it can tell they are the same person.
-          These are the ones it wasn&rsquo;t sure about. Merging keeps everything: notes,
-          interactions, reminders and tags all move to the record you keep, and the other one
-          is hidden rather than deleted. Every merge can be undone.
-        </p>
       </div>
 
       {/* The header is static; only the list waits on the sweep and the reads. */}
@@ -72,10 +66,17 @@ async function DuplicatesList({ userId }: { userId: string }) {
   // waits on a chat model; see duplicate-sweep.ts).
   await mergeConfidentDuplicates(userId, { engines: await openEngines(userId) });
 
-  const [{ proposed }, recentMerges] = await Promise.all([
+  const [{ proposed }, recentMerges, recentDismissals] = await Promise.all([
     listDuplicates(),
     listRecentMerges(),
+    listRecentDismissals(),
   ]);
 
-  return <DuplicateReviewList proposed={proposed} recentMerges={recentMerges} />;
+  return (
+    <DuplicateReviewList
+      proposed={proposed}
+      recentMerges={recentMerges}
+      recentDismissals={recentDismissals}
+    />
+  );
 }

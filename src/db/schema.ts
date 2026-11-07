@@ -1074,6 +1074,68 @@ export const duplicateSuggestions = pgTable(
 );
 
 /**
+ * Every merge-or-not-the-same-person call a human made on the duplicates page, as a labelled
+ * example for `duplicate-model.ts`.
+ *
+ * `features` is NUMBERS ONLY (`DuplicateSignals`: same company = 1, differs = -1, unknown = 0,
+ * and so on). No name, email, company or note text is ever stored here, because the model that
+ * learns from these rows is trained on every account's decisions together. `user_id` exists to
+ * delete a person's rows with their account, and is never a training input.
+ *
+ * Not keyed to the contacts: a merge deletes the loser, and the example must outlive that.
+ */
+export const duplicateDecisions = pgTable(
+  "duplicate_decisions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** `same` = the person merged them (or undid a dismissal); `different` = they did not. */
+    label: text("label").$type<"same" | "different">().notNull(),
+    source: text("source")
+      .$type<
+        | "review_merge"
+        | "review_dismiss"
+        | "undo_merge"
+        | "undo_dismiss"
+        | "backfill_merge"
+        | "backfill_dismiss"
+      >()
+      .notNull(),
+    /** The rule score the pair carried when it was shown. */
+    engineScore: real("engine_score"),
+    /** The decision model's P(same person) at that time, when one answered. */
+    modelProbability: real("model_probability"),
+    features: jsonb("features").$type<Record<string, number>>().notNull(),
+    /**
+     * What an undo finds this example by: the `contact_merges` id for a merge, `a:b` (the
+     * ordered contact ids) for a dismissal. Opaque ids, not person data.
+     */
+    refId: text("ref_id"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("duplicate_decisions_user_idx").on(t.userId, t.decidedAt.desc()),
+    index("duplicate_decisions_ref_idx").on(t.userId, t.refId),
+  ]
+);
+
+/**
+ * The one trained duplicate model (`id = 1`): logistic-regression weights fitted to the pooled
+ * `duplicate_decisions`. Holds numbers, nothing about any person. `active` only when it beat
+ * the no-model baseline on held-out examples.
+ */
+export const duplicateModel = pgTable("duplicate_model", {
+  id: integer("id").primaryKey(),
+  weights: jsonb("weights").$type<Record<string, number>>().notNull(),
+  bias: real("bias").default(0).notNull(),
+  sampleCount: integer("sample_count").default(0).notNull(),
+  accuracy: real("accuracy"),
+  baselineAccuracy: real("baseline_accuracy"),
+  active: boolean("active").default(false).notNull(),
+  trainedAt: timestamp("trained_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
  * The per-user closeness distribution that `contacts.closeness*` was applied against.
  *
  * `snapshot` holds a fixed-size quantile sketch rather than the full sorted score array, so

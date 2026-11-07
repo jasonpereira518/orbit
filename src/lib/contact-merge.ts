@@ -1141,3 +1141,32 @@ export async function dismissDuplicatePair(
       set: { status: "dismissed", resolvedAt: now },
     });
 }
+
+/**
+ * Take a hand dismissal back, so the pair is proposed again.
+ *
+ * Only a row the person dismissed themselves ("Dismissed by hand") is deleted. A "Merge undone"
+ * dismissal is a different statement (these two were merged and that was wrong), and removing
+ * it would let the sweep merge them again on the next page render. A pair that really is a
+ * bare-name duplicate comes straight back from the name scan; no row is needed for that.
+ */
+export async function undismissDuplicatePair(
+  userId: string,
+  contactIdA: string,
+  contactIdB: string
+) {
+  forgetDuplicateCount(userId);
+  const [a, b] = contactIdA < contactIdB ? [contactIdA, contactIdB] : [contactIdB, contactIdA];
+  const db = await getDb();
+  await db
+    .delete(duplicateSuggestions)
+    .where(
+      and(
+        eq(duplicateSuggestions.userId, userId),
+        eq(duplicateSuggestions.contactAId, a),
+        eq(duplicateSuggestions.contactBId, b),
+        eq(duplicateSuggestions.status, "dismissed"),
+        eq(duplicateSuggestions.reason, "Dismissed by hand")
+      )
+    );
+}

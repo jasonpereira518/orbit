@@ -51,6 +51,7 @@ import {
   contacts,
   contactTags,
   dataPurgeRuns,
+  duplicateDecisions,
   duplicateSuggestions,
   embeddingFailures,
   errorEvents,
@@ -672,6 +673,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(contactMerges),
       own(contactIdentities),
       own(duplicateSuggestions),
+      own(duplicateDecisions),
       own(targetCompanies),
       own(contactBriefs, "contact_id"),
       own(relationshipDigests, "contact_id"),
@@ -710,6 +712,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // field of a person the user knew, surviving the deletion of the contact it came from.
       await db.delete(contactIdentities).where(eq(contactIdentities.userId, userId));
       await db.delete(duplicateSuggestions).where(eq(duplicateSuggestions.userId, userId));
+      // The merge / not-the-same-person examples this account contributed to the pooled
+      // duplicate model. Numbers only, but the person's to withdraw. (Weights already fitted
+      // from them are an aggregate and stay.)
+      await db.delete(duplicateDecisions).where(eq(duplicateDecisions.userId, userId));
       forgetDuplicateCount(userId);
       await db.delete(contactMerges).where(eq(contactMerges.userId, userId));
       // `contact_tags` has no `user_id` of its own, so it is deleted through its contacts.

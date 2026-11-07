@@ -1940,6 +1940,29 @@ CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS duplicate_decisions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  label text NOT NULL,
+  source text NOT NULL,
+  engine_score real,
+  model_probability real,
+  features jsonb NOT NULL,
+  ref_id text,
+  decided_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS duplicate_decisions_user_idx ON duplicate_decisions(user_id, decided_at DESC);
+CREATE INDEX IF NOT EXISTS duplicate_decisions_ref_idx ON duplicate_decisions(user_id, ref_id);
+CREATE TABLE IF NOT EXISTS duplicate_model (
+  id integer PRIMARY KEY,
+  weights jsonb NOT NULL,
+  bias real NOT NULL DEFAULT 0,
+  sample_count integer NOT NULL DEFAULT 0,
+  accuracy real,
+  baseline_accuracy real,
+  active boolean NOT NULL DEFAULT false,
+  trained_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS meeting_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2945,7 +2968,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // only on the stream's `done` event. Renumbered 193 → 196 on Nov 6 2026 when merging main at 194:
 // a database stamped 194 would never run a 193. NOT 195: claude/gallant-ramanujan-hh5j0s claims it (it reached main
 // first, on Nov 7 2026, and keeps 195 above).
-export const SCHEMA_VERSION = 196;
+//
+// 198 = duplicate_decisions + duplicate_model: every merge / "not the same person" call on the
+// duplicates page kept as a labelled, number-only example, and the pooled model fitted to them.
+// Rescanned every local and remote ref on Nov 7 2026: 197 was the highest claimed (six refs), so 198.
+export const SCHEMA_VERSION = 198;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
