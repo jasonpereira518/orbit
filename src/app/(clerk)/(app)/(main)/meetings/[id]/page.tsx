@@ -200,20 +200,18 @@ export default async function MeetingDetailPage({
       <MeetingNotesEditor sessionId={session.id} initial={session.userNotes ?? ""} />
 
       {batch && (
-        <section className="space-y-3">
-          <h2 className="font-[family-name:var(--font-display)] text-xl text-ink">Saved to your network</h2>
-          <NoteBatchResultView
-            embedded
-            batchId={batch.id}
-            status={batch.status}
-            anchorIso={isoDay(new Date(batch.anchorDate))}
-            anchorBasis={batch.anchorBasis}
-            result={batch.result}
-            reminderStatus={batch.reminderStatus}
-            reminderDetails={batch.reminderDetails}
-            contactNames={batch.contactNames}
-          />
-        </section>
+        <NoteBatchResultView
+          embedded
+          batchId={batch.id}
+          status={batch.status}
+          anchorIso={isoDay(new Date(batch.anchorDate))}
+          anchorBasis={batch.anchorBasis}
+          result={batch.result}
+          reminderStatus={batch.reminderStatus}
+          reminderDetails={batch.reminderDetails}
+          contactNames={batch.contactNames}
+          contactAvatars={batch.contactAvatars}
+        />
       )}
 
       {/* Folded away unless a search brought you here: then the matching line is the point. */}

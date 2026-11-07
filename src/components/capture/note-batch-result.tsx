@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { ArrowRight, AtSign, BellRing, CalendarDays, Check, ListChecks, Users, type LucideIcon } from "lucide-react";
+import { useRef, useState, useTransition } from "react";
+import { ArrowRight, BellRing, CalendarDays, Check, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
@@ -13,13 +13,20 @@ import type { NoteBatchResult } from "@/lib/note-batches";
 import type { ReminderActionKind } from "@/db/schema";
 import { ReminderFormDialog } from "@/components/reminders/reminder-form-dialog";
 import { MeetingSummaryCard } from "@/components/capture/meeting-summary-card";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { EmptyState } from "@/components/ui/empty-state";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
-import { firstInitial } from "@/lib/initials";
 
 export type NoteBatchReminderDetail = {
   description: string | null;
@@ -39,130 +46,70 @@ const ANCHOR_LABEL: Record<string, string> = {
   upload: "when you pasted",
 };
 
-/**
- * One colour and one symbol per kind of thing a capture makes, so a section is recognisable
- * before its title is read: people you met are green, people only named are blue, things to do
- * are violet, dates are amber. Every tone is a translucent tint plus a text colour that
- * clears contrast on both themes, the pairing the dashboard's reason pills already use.
- */
-const TONE = {
-  people: {
-    Icon: Users,
-    chip: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-    bar: "border-l-emerald-500",
-    tile: "border-emerald-500/30 bg-emerald-500/[0.07] hover:bg-emerald-500/[0.12]",
-    ink: "text-emerald-700 dark:text-emerald-300",
-  },
-  mentions: {
-    Icon: AtSign,
-    chip: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-    bar: "border-l-sky-500",
-    tile: "border-sky-500/30 bg-sky-500/[0.07] hover:bg-sky-500/[0.12]",
-    ink: "text-sky-700 dark:text-sky-300",
-  },
-  actions: {
-    Icon: ListChecks,
-    chip: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
-    bar: "border-l-violet-500",
-    tile: "border-violet-500/30 bg-violet-500/[0.07] hover:bg-violet-500/[0.12]",
-    ink: "text-violet-700 dark:text-violet-300",
-  },
-  reminders: {
-    Icon: BellRing,
-    chip: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-    bar: "border-l-amber-500",
-    tile: "border-amber-500/30 bg-amber-500/[0.07] hover:bg-amber-500/[0.12]",
-    ink: "text-amber-700 dark:text-amber-300",
-  },
-} as const satisfies Record<string, { Icon: LucideIcon; chip: string; bar: string; tile: string; ink: string }>;
-
-type ToneKey = keyof typeof TONE;
-
-/** A coloured card: icon, plain-language title, one line saying what the section is, a count. */
+/** A plain card: the house heading with its count, then one line saying what the section is. */
 function ResultSection({
-  id,
-  tone,
   title,
   hint,
   count,
   children,
 }: {
-  id: string;
-  tone: ToneKey;
   title: string;
-  hint: string;
+  hint: React.ReactNode;
   count: number;
   children: React.ReactNode;
 }) {
-  const t = TONE[tone];
   return (
-    <section
-      id={id}
-      className={cn(
-        "scroll-mt-8 rounded-2xl border border-l-4 border-border/70 bg-card p-5",
-        t.bar
-      )}
-    >
-      <header className="mb-4 flex items-start gap-3">
-        <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", t.chip)}>
-          <t.Icon className="size-5" aria-hidden />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="font-medium text-ink">{title}</h2>
-          <p className="text-sm text-muted-foreground">{hint}</p>
-        </div>
-        <span className={cn("rounded-full px-2.5 py-0.5 text-sm font-semibold tabular-nums", t.chip)}>
-          {count}
-        </span>
+    <section className="rounded-2xl border border-border/70 bg-card p-5">
+      <header className="mb-4 space-y-1">
+        <h2 className="text-sm font-medium text-ink">
+          {title} <span className="font-normal tabular-nums text-muted-foreground">· {count}</span>
+        </h2>
+        <div className="text-sm text-muted-foreground">{hint}</div>
       </header>
       {children}
     </section>
   );
 }
 
-function Initial({ name, tone }: { name: string; tone: ToneKey }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
-        TONE[tone].chip
-      )}
-    >
-      {firstInitial(name)}
-    </span>
-  );
-}
-
-export function NoteBatchResultView({
+/**
+ * Undo and Delete for a whole capture, behind a ⋯. Delete still takes a second step: the
+ * menu opens an inline confirm on its own line beside the trigger (so the parent should be a
+ * wrapping flex row), and focus moves to it and back, as every two-step delete in the app does.
+ */
+function NoteBatchActions({
   batchId,
   status,
-  anchorIso,
-  anchorBasis,
-  result,
-  reminderStatus,
-  reminderDetails,
-  contactNames,
-  embedded = false,
+  pending,
+  start,
+  onUndone,
 }: {
-  /** Inside a meeting's page: that page already shows the summary and its own way back. */
-  embedded?: boolean;
   batchId: string;
   status: "saved" | "undone";
-  anchorIso: string;
-  anchorBasis: "note" | "hint" | "upload";
-  result: NoteBatchResult;
-  reminderStatus: Record<string, string>;
-  reminderDetails: Record<string, NoteBatchReminderDetail>;
-  contactNames: Record<string, string>;
+  /** The view's transition, so an undo or delete in flight also holds the rows' buttons. */
+  pending: boolean;
+  start: React.TransitionStartFunction;
+  /** After a successful undo, before the refresh lands. */
+  onUndone: () => void;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
-  const [local, setLocal] = useState(reminderStatus);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const undone = status === "undone";
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const deleteFocus = useConfirmFocus(confirmingDelete ? "delete" : null);
+  // The menu hands focus back to its trigger as it closes; when Delete opened the confirm,
+  // focus belongs on the confirm instead.
+  const askedDelete = useRef(false);
+
+  function undo() {
+    start(async () => {
+      try {
+        const out = await undoNoteBatch(batchId);
+        onUndone();
+        toast.success(`Undone: ${out.remindersDismissed} reminders dismissed`);
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.undoFailed));
+      }
+    });
+  }
 
   function deleteCapture() {
     start(async () => {
@@ -176,6 +123,98 @@ export function NoteBatchResultView({
     });
   }
 
+  function cancelDelete() {
+    askedDelete.current = false;
+    setConfirmingDelete(false);
+  }
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          ref={deleteFocus.triggerRef("delete")}
+          disabled={pending}
+          render={
+            <Button variant="ghost" size="icon-sm" aria-label="Capture options" className="tap-target relative shrink-0">
+              <MoreHorizontal aria-hidden />
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="end" className="w-auto min-w-44" finalFocus={() => !askedDelete.current}>
+          {status === "saved" && (
+            <>
+              <DropdownMenuItem onClick={undo}>Undo this batch</DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={() => {
+              askedDelete.current = true;
+              setConfirmingDelete(true);
+            }}
+          >
+            Delete capture
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {confirmingDelete && (
+        <div className="flex basis-full flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-2">
+          <span role="status" className="mr-auto text-sm text-muted-foreground">
+            Delete this capture and its photos? The people and notes it saved stay.
+          </span>
+          <Button ref={deleteFocus.confirmRef("delete")} variant="destructive" size="sm" disabled={pending} onClick={deleteCapture}>
+            {pending ? "Deleting…" : "Delete"}
+          </Button>
+          <Button variant="ghost" size="sm" disabled={pending} onClick={cancelDelete}>
+            Cancel
+          </Button>
+        </div>
+      )}
+    </>
+  );
+}
+
+export function NoteBatchResultView({
+  batchId,
+  status,
+  anchorIso,
+  anchorBasis,
+  result,
+  reminderStatus,
+  reminderDetails,
+  contactNames,
+  contactAvatars,
+  embedded = false,
+  heading,
+  children,
+}: {
+  /**
+   * Inside a meeting's page: that page already shows the summary and its own way back, but
+   * no capture header, so the view brings its own heading with the Undo/Delete menu.
+   */
+  embedded?: boolean;
+  /** The page's own title block, beside the ⋯ menu. Embedded views default to theirs. */
+  heading?: React.ReactNode;
+  /** Shown between the heading and the results: the capture's source card. */
+  children?: React.ReactNode;
+  batchId: string;
+  status: "saved" | "undone";
+  anchorIso: string;
+  anchorBasis: "note" | "hint" | "upload";
+  result: NoteBatchResult;
+  reminderStatus: Record<string, string>;
+  reminderDetails: Record<string, NoteBatchReminderDetail>;
+  contactNames: Record<string, string>;
+  contactAvatars: Record<string, string | null>;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [local, setLocal] = useState(reminderStatus);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmingContact, setConfirmingContact] = useState<string | null>(null);
+  const contactFocus = useConfirmFocus(confirmingContact);
+
   function dismiss(id: string) {
     start(async () => {
       try {
@@ -187,31 +226,15 @@ export function NoteBatchResultView({
     });
   }
 
-  function undo() {
-    start(async () => {
-      try {
-        const out = await undoNoteBatch(batchId);
-        setLocal((s) =>
-          Object.fromEntries(
-            Object.entries(s).map(([id, st]) => [
-              id,
-              st === "pending" ? "dismissed" : st,
-            ])
-          )
-        );
-        toast.success(`Undone: ${out.remindersDismissed} reminders dismissed`);
-        router.refresh();
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.undoFailed));
-      }
-    });
-  }
+  // The undo only dismisses reminders still pending; the refresh brings the rest.
+  const markUndone = () =>
+    setLocal((s) => Object.fromEntries(Object.entries(s).map(([id, st]) => [id, st === "pending" ? "dismissed" : st])));
 
   function removeContact(contactId: string) {
-    if (!confirm(`Delete this contact? ${CONTACT_DELETE_EXPLAINER}`)) return;
     start(async () => {
       try {
         await deleteContact(contactId);
+        setConfirmingContact(null);
         toast.success("Contact deleted");
         router.refresh();
       } catch (err) {
@@ -221,123 +244,98 @@ export function NoteBatchResultView({
   }
 
   const mentionCount = result.mentions.length + result.unresolvedMentions.length;
-  const summaryTiles: { id: string; tone: ToneKey; label: string; count: number }[] = [
-    { id: "batch-people", tone: "people", label: "People", count: result.participants.length },
-    { id: "batch-mentions", tone: "mentions", label: "Mentioned", count: mentionCount },
-    { id: "batch-actions", tone: "actions", label: "Action items", count: result.actionItems.length },
-    { id: "batch-reminders", tone: "reminders", label: "Reminders", count: result.reminders.length },
-  ];
   const name = (id: string | null) => (id ? contactNames[id] ?? "Unknown" : "No one");
   const editing = editingId ? result.reminders.find((r) => r.id === editingId) ?? null : null;
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3 text-sm">
-        <span className="text-muted-foreground">
-          Relative dates counted from <strong className="text-ink">{anchorIso}</strong> ({ANCHOR_LABEL[anchorBasis]}).
-        </span>
-        {confirmingDelete ? (
-          <span className="flex flex-wrap items-center gap-2">
-            <span role="status" className="text-xs text-muted-foreground">
-              Delete this capture and its photos? The people and notes it saved stay.
-            </span>
-            <Button ref={deleteFocus.confirmRef("delete")} variant="destructive" size="sm" disabled={pending} onClick={deleteCapture}>
-              {pending ? "Deleting…" : "Delete"}
-            </Button>
-            <Button variant="ghost" size="sm" disabled={pending} onClick={() => setConfirmingDelete(false)}>
-              Cancel
-            </Button>
-          </span>
-        ) : (
-          <span className="flex flex-wrap items-center gap-2">
-            {undone ? (
-              <Badge variant="secondary">Undone</Badge>
-            ) : (
-              <Button variant="outline" size="sm" disabled={pending} onClick={undo}>Undo this batch</Button>
-            )}
-            <Button
-              ref={deleteFocus.triggerRef("delete")}
-              variant="ghost"
-              size="sm"
-              disabled={pending}
-              className="text-muted-foreground hover:text-destructive"
-              onClick={() => setConfirmingDelete(true)}
-            >
-              Delete capture
-            </Button>
-          </span>
-        )}
+    <div className={embedded ? "space-y-4" : "space-y-6"}>
+      {/* The heading row owns the ⋯ so Undo and Delete share this view's transition. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0 flex-1">
+          {heading ?? (
+            <div className="flex items-center gap-2">
+              <h2 className="font-[family-name:var(--font-display)] text-xl text-ink">Saved to your network</h2>
+              {status === "undone" && <Badge variant="secondary">Undone</Badge>}
+            </div>
+          )}
+        </div>
+        <NoteBatchActions batchId={batchId} status={status} pending={pending} start={start} onUndone={markUndone} />
       </div>
+
+      {children}
+
+      <div className="space-y-4">
 
       {result.meeting && !embedded && (
         <MeetingSummaryCard meeting={result.meeting} sessionId={result.meeting.sessionId} />
       )}
 
-      {/* The whole capture in four numbers. Each tile jumps to its section. */}
-      <nav aria-label="What was created" className="grid grid-cols-2 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(9rem,1fr))]">
-        {summaryTiles.filter((tile) => tile.count > 0 || tile.id === "batch-people" || tile.id === "batch-reminders").map((tile) => {
-          const t = TONE[tile.tone];
-          return (
-            <a
-              key={tile.id}
-              href={`#${tile.id}`}
-              className={cn(
-                "flex flex-col gap-1 rounded-2xl border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                t.tile
-              )}
-            >
-              <span className={cn("flex items-center gap-1.5 text-xs font-medium", t.ink)}>
-                <t.Icon className="size-3.5" aria-hidden />
-                {tile.label}
-              </span>
-              <span className="font-[family-name:var(--font-display)] text-3xl leading-none text-ink tabular-nums">
-                {tile.count}
-              </span>
-            </a>
-          );
-        })}
-      </nav>
-
       <ResultSection
-        id="batch-people"
-        tone="people"
         title="People you spoke to"
         hint="Saved to your contacts, with this conversation logged on each."
         count={result.participants.length}
       >
-        {result.participants.length === 0 && (
-          <p className="text-sm text-muted-foreground">No one was saved as a contact from this batch.</p>
-        )}
-        <ul className="space-y-2">
-          {result.participants.map((p) => (
-            <li
-              key={p.contactId}
-              className="flex items-center justify-between gap-3 rounded-xl border border-border/60 px-3 py-2 text-sm"
-            >
-              <span className="flex min-w-0 items-center gap-3">
-                <Initial name={p.name} tone="people" />
-                <IntentLink href={`/contacts/${p.contactId}`} className="truncate font-medium text-primary hover:underline">
-                  {p.name}
-                </IntentLink>
+        {result.participants.length === 0 ? (
+          <EmptyState description="No one was saved as a contact from this batch." className="py-4" />
+        ) : (
+          <ul className="space-y-2">
+            {result.participants.map((p) => (
+              <li
+                key={p.contactId}
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-border/60 px-3 py-2 text-sm"
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <ContactAvatar
+                    contactId={p.contactId}
+                    fullName={p.name}
+                    profileImageUrl={contactAvatars[p.contactId]}
+                    size="sm"
+                    className="size-8 shrink-0"
+                  />
+                  <IntentLink href={`/contacts/${p.contactId}`} className="truncate font-medium text-primary hover:underline">
+                    {p.name}
+                  </IntentLink>
+                  {p.created && <Badge variant="secondary" className="text-3xs">New contact</Badge>}
+                  {p.duplicate && <Badge variant="outline" className="text-3xs">Already logged</Badge>}
+                </span>
                 {p.created && (
-                  <Badge className="bg-emerald-500/15 text-3xs text-emerald-700 dark:text-emerald-300">New contact</Badge>
+                  <Button
+                    ref={contactFocus.triggerRef(p.contactId)}
+                    variant="ghost"
+                    size="sm"
+                    disabled={pending}
+                    onClick={() => setConfirmingContact(p.contactId)}
+                  >
+                    Delete contact
+                  </Button>
                 )}
-                {p.duplicate && <Badge variant="secondary" className="text-3xs">Already logged</Badge>}
-              </span>
-              {p.created && (
-                <Button variant="ghost" size="sm" disabled={pending} onClick={() => removeContact(p.contactId)}>
-                  Delete contact
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
+                {confirmingContact === p.contactId && (
+                  <div className="flex basis-full flex-wrap items-center gap-2 border-t border-border/60 pt-2">
+                    <span role="status" className="mr-auto text-xs text-muted-foreground">
+                      Delete this contact? {CONTACT_DELETE_EXPLAINER}
+                    </span>
+                    <Button
+                      ref={contactFocus.confirmRef(p.contactId)}
+                      variant="destructive"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() => removeContact(p.contactId)}
+                    >
+                      {pending ? "Deleting…" : "Delete"}
+                    </Button>
+                    <Button variant="ghost" size="sm" disabled={pending} onClick={() => setConfirmingContact(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </ResultSection>
 
       {mentionCount > 0 && (
         <ResultSection
-          id="batch-mentions"
-          tone="mentions"
           title="People mentioned"
           hint="Named in your notes but not part of the conversation. Matched to people you already know where possible."
           count={mentionCount}
@@ -349,11 +347,11 @@ export function NoteBatchResultView({
                 className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border/60 px-3 py-2"
               >
                 <span className="text-muted-foreground">&ldquo;{m.text}&rdquo;</span>
-                <ArrowRight className="size-3.5 text-sky-600 dark:text-sky-300" aria-hidden />
+                <ArrowRight className="size-3.5 text-muted-foreground" aria-hidden />
                 <IntentLink href={`/contacts/${m.contactId}`} className="font-medium text-primary hover:underline">
                   {name(m.contactId)}
                 </IntentLink>
-                <Badge className="bg-sky-500/15 text-3xs text-sky-700 dark:text-sky-300">
+                <Badge variant="outline" className="text-3xs">
                   {Math.round(m.confidence * 100)}% sure
                 </Badge>
               </li>
@@ -379,8 +377,6 @@ export function NoteBatchResultView({
 
       {result.actionItems.length > 0 && (
         <ResultSection
-          id="batch-actions"
-          tone="actions"
           title="Action items"
           hint="Things someone said they would do. Ones with a date became reminders."
           count={result.actionItems.length}
@@ -389,18 +385,18 @@ export function NoteBatchResultView({
             {result.actionItems.map((a) => (
               <li key={a.id} className="flex items-start justify-between gap-3 rounded-xl border border-border/60 px-3 py-2 text-sm">
                 <span className="flex min-w-0 items-start gap-2.5">
-                  <Check className="mt-0.5 size-4 shrink-0 text-violet-600 dark:text-violet-300" aria-hidden />
+                  <Check className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
                   <span>
                     <span className="block">{a.text}</span>
                     <span className="text-xs text-muted-foreground">For {name(a.contactId)}</span>
                   </span>
                 </span>
                 {a.reminderId ? (
-                  <Badge className="shrink-0 gap-1 bg-emerald-500/15 text-3xs text-emerald-700 dark:text-emerald-300">
-                    <BellRing className="size-3" aria-hidden /> Reminder set
+                  <Badge variant="secondary" className="shrink-0 text-3xs">
+                    <BellRing aria-hidden /> Reminder set
                   </Badge>
                 ) : (
-                  <Badge variant="secondary" className="shrink-0 text-3xs">No reminder</Badge>
+                  <Badge variant="outline" className="shrink-0 text-3xs">No reminder</Badge>
                 )}
               </li>
             ))}
@@ -409,14 +405,19 @@ export function NoteBatchResultView({
       )}
 
       <ResultSection
-        id="batch-reminders"
-        tone="reminders"
         title="Reminders created"
-        hint="Follow-ups Orbit set for you, with the date it picked. Edit or dismiss any that look off."
+        hint={
+          <>
+            <p>Follow-ups Orbit set for you, with the date it picked. Edit or dismiss any that look off.</p>
+            <p className="text-xs">
+              Relative dates counted from <span className="font-medium text-ink">{anchorIso}</span> ({ANCHOR_LABEL[anchorBasis]}).
+            </p>
+          </>
+        }
         count={result.reminders.length}
       >
         {result.reminders.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No reminders came out of these notes.</p>
+          <EmptyState description="No reminders came out of these notes." className="py-4" />
         ) : (
           <ul className="space-y-2">
             {result.reminders.map((r) => {
@@ -426,9 +427,9 @@ export function NoteBatchResultView({
                   <div className="min-w-0">
                     <p className={st !== "pending" ? "line-through text-muted-foreground" : "font-medium"}>{r.title}</p>
                     <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300">
-                        <CalendarDays className="size-3" aria-hidden /> {r.dueIso}
-                      </span>
+                      <Badge variant="outline">
+                        <CalendarDays aria-hidden /> {r.dueIso}
+                      </Badge>
                       <span>{name(r.contactId)}</span>
                       {r.dateBasis !== "absolute" && <span>· {BASIS_LABEL[r.dateBasis]} {anchorIso}</span>}
                       {r.rawDatePhrase && <span>· &ldquo;{r.rawDatePhrase}&rdquo;</span>}
@@ -480,12 +481,18 @@ export function NoteBatchResultView({
         />
       )}
 
-      {!embedded && <div className="flex gap-2">
-        <Link href={result.meeting ? "/meetings" : "/capture"}>
-          <Button variant="outline" size="sm">{result.meeting ? "Record another meeting" : "Paste more notes"}</Button>
-        </Link>
-        <Link href="/reminders"><Button variant="ghost" size="sm">Open reminders</Button></Link>
-      </div>}
+      </div>
+
+      {!embedded && (
+        <div className="flex gap-2">
+          <Link href={result.meeting ? "/meetings" : "/capture"} className={buttonVariants({ variant: "outline", size: "sm" })}>
+            {result.meeting ? "Record another meeting" : "Paste more notes"}
+          </Link>
+          <Link href="/reminders" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+            Open reminders
+          </Link>
+        </div>
+      )}
     </div>
   );
 }
