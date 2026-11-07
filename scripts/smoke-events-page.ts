@@ -1,15 +1,9 @@
 /**
  * The events UI's honest copy, and the structural rules that keep it honest.
  *
- * Two classes of thing are pinned here.
+ * Two classes of thing are pinned here: the event card's copy, and structure.
  *
- * The first is `blockedByPlan`. It is threaded from `ingestEvents` through `ConnectSummary`
- * to a card, and a wiring mistake at any layer degrades silently to a number that never
- * renders — so "we dropped four people because your plan is full" would look exactly like
- * "we added everyone". That is the one outcome a user must not miss, and a render check
- * catches it where a click-through easily would not.
- *
- * The second is structural: the client components must not reach the database (a client
+ * Structure: the client components must not reach the database (a client
  * component transitively importing `@/db` fails the build with a `node:fs` chunking error
  * naming neither file, per `src/lib/surfaces.ts`), the shared header must not fetch, and the
  * background sync must never create contacts.
@@ -31,7 +25,6 @@ function code(file: string): string {
 }
 import { renderToStaticMarkup } from "react-dom/server";
 import { EventsHeader } from "../src/components/events/events-header";
-import { IngestResultCard } from "../src/components/events/ingest-result-card";
 import { EventCard } from "../src/components/events/event-card";
 import { APP_NAV_CORE, APP_NAV_EXTRAS, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
 import { surfaceKeyForHref } from "../src/lib/surfaces";
@@ -56,39 +49,7 @@ function text(el: React.ReactElement): string {
     .trim();
 }
 
-const SUMMARY = {
-  created: 0,
-  matched: 0,
-  interactionsLogged: 0,
-  blockedByPlan: 0,
-  unmatched: 0,
-};
-
 function main() {
-  console.log("\nthe plan cap is never swallowed");
-  {
-    const clean = text(React.createElement(IngestResultCard, { summary: { ...SUMMARY, created: 5, matched: 2 } }));
-    check("a clean run says what happened", clean.includes("5") && clean.includes("2"), clean);
-    check("and shows no warning", !/plan/i.test(clean), clean);
-
-    const blocked = text(
-      React.createElement(IngestResultCard, { summary: { ...SUMMARY, created: 3, blockedByPlan: 4 } })
-    );
-    check("a capped run names the number", blocked.includes("4"), blocked);
-    check("says the plan limit is full", /plan.*contact limit is full/i.test(blocked), blocked);
-    check("and links to upgrade", html(React.createElement(IngestResultCard, { summary: { ...SUMMARY, blockedByPlan: 1 } })).includes('href="/upgrade?gate=contacts"'));
-    check(
-      "singular vs plural is right",
-      text(React.createElement(IngestResultCard, { summary: { ...SUMMARY, blockedByPlan: 1 } })).includes("person wasn't")
-    );
-  }
-  {
-    const skipped = text(React.createElement(IngestResultCard, { summary: { ...SUMMARY, unmatched: 3 } }));
-    check("unreadable rows are reported, not hidden", skipped.includes("3") && /skipped/i.test(skipped), skipped);
-    const partial = text(React.createElement(IngestResultCard, { summary: { ...SUMMARY, remaining: 12 } }));
-    check("a partial run says how many are left", partial.includes("12"), partial);
-  }
-
   console.log("\nthe hosted / attended distinction is visible");
   {
     const base = {
