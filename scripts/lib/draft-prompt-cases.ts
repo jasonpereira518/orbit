@@ -26,6 +26,7 @@ export type CaseResults = Record<string, SentPrompt>;
 
 /** What the stubbed model answers, valid for every one of the four operations. */
 const REPLY = JSON.stringify({
+  purpose: "Ask about the seed round",
   subject: "A subject",
   body: "A body.",
   starters: [{ text: "Ask about the launch.", kind: "recent", basis: "Their last note" }],
@@ -58,7 +59,7 @@ export function installPromptCapture() {
   }) as typeof fetch;
 }
 
-async function only(run: () => Promise<unknown>): Promise<SentPrompt> {
+export async function only(run: () => Promise<unknown>): Promise<SentPrompt> {
   captured = [];
   await run();
   if (captured.length !== 1) throw new Error(`expected one model call, saw ${captured.length}`);

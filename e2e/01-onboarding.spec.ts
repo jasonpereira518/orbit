@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { skipConnectIfShown, untilHydrated } from "./helpers";
+import { skipAboutStep, skipConnectIfShown, untilHydrated } from "./helpers";
 
 /**
  * Quick setup, end to end, on an empty account. The e2e account runs on the Gemini stub key
  * (so the AI key step is skipped) with no Google or Microsoft client configured (so the
- * connect step is skipped too): the walk is welcome → people → overview. The LinkedIn export
- * is a dashboard card now, not a step.
+ * connect step is skipped too): the walk is welcome → about (skipped) → people → overview.
+ * The LinkedIn export is a dashboard card now, not a step.
  */
 test("an empty account goes through quick setup and lands on the empty dashboard", async ({ page }) => {
   await page.goto("/dashboard");
@@ -22,6 +22,7 @@ test("an empty account goes through quick setup and lands on the empty dashboard
   );
   await quick.click();
 
+  await skipAboutStep(page);
   await expect(page.getByRole("heading", { name: "Add your first people" })).toBeVisible();
   await page.getByRole("button", { name: "I’ll add people later" }).click();
 
@@ -30,6 +31,9 @@ test("an empty account goes through quick setup and lands on the empty dashboard
   await expect(overview).toBeVisible();
   // The overview lists Capture (which needs a key) and the dashboard; the account has a key
   // via the stub, so no "Needs AI key" tag anywhere.
+  // The tour opens on the goals chapter; Capture is one rail click away.
+  await expect(page.getByRole("heading", { name: "People who fit your goals" })).toBeVisible();
+  await page.getByRole("button", { name: "Capture", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Capture people in seconds" })).toBeVisible();
   await expect(page.getByText("Needs AI key")).toHaveCount(0);
   await page.getByRole("button", { name: "Skip to the dashboard" }).click();
