@@ -71,6 +71,12 @@ eq("Tab under a numbered item indents 3", apply("1. a\n2. b", indentList("1. a\n
 eq("a bullet under a numbered item indents 3", apply("1. a\n- b", indentList("1. a\n- b", 8, 8, false))?.next, "1. a\n   - b");
 eq("bullets under bullets keep 2", apply("- a\n- b", indentList("- a\n- b", 7, 7, false))?.next, "- a\n  - b");
 eq("Shift+Tab under a numbered item comes back to its parent", apply("1. a\n   2. b", indentList("1. a\n   2. b", 12, 12, true))?.next, "1. a\n2. b");
+// A blank first line once hung the walk up the document (lineStartOf(…, 0) answered 1).
+// run-smoke's per-script timeout is the bound if that regresses: a sync loop can't be timed out in-process.
+eq("Tab under a blank first line", apply("\n- a", indentList("\n- a", 4, 4, false))?.next, "\n  - a");
+eq("Shift+Tab under a blank first line", apply("\n  - a", indentList("\n  - a", 6, 6, true))?.next, "\n- a");
+eq("Tab under several blank lines", apply("\n\n\n1. a\n2. b", indentList("\n\n\n1. a\n2. b", 12, 12, false))?.next, "\n\n\n1. a\n   2. b");
+eq("Enter at the start of a document that opens blank", continueList("\n- a", 0), null);
 t.check("Tab on prose is not claimed (focus can leave)", indentList("prose", 2, 2, false) === null);
 t.check("outdent at column 0 is a no-op", indentList("- a", 3, 3, true) === null);
 

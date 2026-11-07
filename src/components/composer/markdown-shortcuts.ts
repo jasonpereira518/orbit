@@ -78,6 +78,9 @@ const LIST_ITEM = /^(\s*)([-*+]|(\d+)([.)]))(\s+)/;
 const HEADING = /^(#{1,6})(\s+)/;
 
 function lineStartOf(value: string, at: number) {
+  // lastIndexOf clamps a negative fromIndex to 0, so at 0 it would find a leading "\n" and
+  // answer 1 — past `at`, which hung the walk up from a list line under a blank first line.
+  if (at <= 0) return 0;
   return value.lastIndexOf("\n", at - 1) + 1;
 }
 

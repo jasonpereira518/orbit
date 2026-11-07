@@ -2,9 +2,19 @@
 
 import { useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { consumeTraversal, markTraversal, scrollKeySearch, scrollStorageKey, shouldRestoreScroll } from "@/lib/scroll-restore";
+import {
+  consumeTraversal,
+  markTraversal,
+  scrollKeySearch,
+  scrollStorageKey,
+  scrollTargetFits,
+  shouldRestoreScroll,
+} from "@/lib/scroll-restore";
 
 const MAIN_SCROLL_ID = "app-main-scroll";
+/** How long a back/forward restore waits for the list to grow tall enough. */
+const RESTORE_WAIT_MS = 1500;
+const USER_SCROLL_EVENTS = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
 
 if (typeof window !== "undefined") {
   window.addEventListener("popstate", markTraversal);
@@ -31,15 +41,39 @@ export function ScrollRestoration() {
     const key = scrollStorageKey(pathname, searchKey);
     const restore = shouldRestoreScroll(pathname, consumeTraversal());
     const saved = restore ? sessionStorage.getItem(key) : null;
-    main.scrollTop = saved ? Number(saved) || 0 : 0;
+    const target = saved ? Number(saved) || 0 : 0;
+    main.scrollTop = target;
 
     // Always record on /contacts, so a later back/forward has an offset to resume.
     if (pathname !== "/contacts") return;
+
+    // On back/forward the list hasn't rendered yet, so the set above clamps (often to 0).
+    // Re-apply each frame until it fits, the wait runs out, or the person scrolls. Saving is
+    // off meanwhile, or the clamped offset would overwrite the one being restored.
+    let settling = !scrollTargetFits(target, main.scrollHeight, main.clientHeight);
+    let raf = 0;
+    const deadline = performance.now() + RESTORE_WAIT_MS;
+    const stopSettling = () => {
+      settling = false;
+      cancelAnimationFrame(raf);
+    };
+    const tick = () => {
+      main.scrollTop = target;
+      if (scrollTargetFits(target, main.scrollHeight, main.clientHeight) || performance.now() > deadline) stopSettling();
+      else raf = requestAnimationFrame(tick);
+    };
+    if (settling) raf = requestAnimationFrame(tick);
+
     const handleScroll = () => {
-      sessionStorage.setItem(key, String(main.scrollTop));
+      if (!settling) sessionStorage.setItem(key, String(main.scrollTop));
     };
     main.addEventListener("scroll", handleScroll, { passive: true });
-    return () => main.removeEventListener("scroll", handleScroll);
+    for (const type of USER_SCROLL_EVENTS) main.addEventListener(type, stopSettling, { passive: true });
+    return () => {
+      stopSettling();
+      main.removeEventListener("scroll", handleScroll);
+      for (const type of USER_SCROLL_EVENTS) main.removeEventListener(type, stopSettling);
+    };
   }, [pathname, searchKey]);
 
   return null;

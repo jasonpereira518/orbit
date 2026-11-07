@@ -24,6 +24,12 @@ export function scrollKeySearch(pathname: string, search: string) {
 
 // One saved offset per URL, not per pathname: arriving at /contacts?followUp=due resets to 0,
 // and that reset's scroll event must land on the filtered list's key, not erase the plain list's.
+// Whether `target` can be scrolled to yet. On back/forward the list renders after the effect
+// runs, so the first set clamps; the restore retries until this holds.
+export function scrollTargetFits(target: number, scrollHeight: number, clientHeight: number) {
+  return target <= Math.max(0, scrollHeight - clientHeight);
+}
+
 export function scrollStorageKey(pathname: string, searchKey: string) {
   return `orbit:scroll:${pathname}?${searchKey}`;
 }
