@@ -5071,9 +5071,19 @@ const alters = [
   // Launch Phase 4: calendar feed tokens are stored as their SHA-256, hex, matching
   // hashCalendarFeedToken in src/lib/calendar-feed.ts. Idempotent: live tokens are
   // 43-character base64url, so a stored 64-hex value is already a hash and is left alone.
+  // Dating the token here is what lets `findUserByFeedToken` enforce its 365-day ceiling:
+  // a legacy token has no recorded mint time, so its clock starts at this migration rather
+  // than never. Both halves are idempotent — the WHERE clauses match a row once.
   `UPDATE user_settings
-      SET calendar_feed_token = encode(sha256(convert_to(calendar_feed_token, 'UTF8')), 'hex')
+      SET calendar_feed_token = encode(sha256(convert_to(calendar_feed_token, 'UTF8')), 'hex'),
+          calendar_feed_token_created_at = COALESCE(calendar_feed_token_created_at, now())
     WHERE calendar_feed_token IS NOT NULL AND calendar_feed_token !~ '^[0-9a-f]{64}$'`,
+  // A token hashed by an earlier deploy (before `calendar_feed_token_created_at` was
+  // written) is already a 64-hex digest and skipped by the statement above. Date it now so
+  // it is not an immortal credential; once dated it can never match this again.
+  `UPDATE user_settings
+      SET calendar_feed_token_created_at = now()
+    WHERE calendar_feed_token IS NOT NULL AND calendar_feed_token_created_at IS NULL`,
   // Launch Phase 4: LinkedIn timeline events a model inferred are tagged ai_derived, so
   // closeness and last touch skip them (src/lib/interaction-provenance.ts). Idempotent.
   `UPDATE interactions SET source = 'ai_derived'

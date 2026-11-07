@@ -211,7 +211,7 @@ async function assertNoImportInFlight(userId: string): Promise<void> {
   });
   if (active) {
     throw new UserFacingError(
-      "An import is already running. Wait for it to finish before starting another.",
+      "An import is already running — wait for it to finish before starting another",
     );
   }
 }

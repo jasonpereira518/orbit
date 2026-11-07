@@ -119,7 +119,7 @@ export async function appendConnectionsRows(
   if (!isImportId(importId) || !Number.isInteger(startIndex) || startIndex < 0) throw new UserFacingError(OUT_OF_STEP);
   if (startIndex + parsed.data.length > CONNECTIONS_TOTAL_MAX_ROWS) {
     throw new UserFacingError(
-      `That file has more rows than one import can take (${CONNECTIONS_TOTAL_MAX_ROWS.toLocaleString()}). Split it and import the parts separately.`,
+      `That file has more rows than one import can take (${CONNECTIONS_TOTAL_MAX_ROWS.toLocaleString()}) — split it and import the parts separately`,
     );
   }
   const payloads = parsed.data;
@@ -166,7 +166,7 @@ export async function startConnectionsStaged(userId: string, importId: string): 
   if (totalRows === 0) throw new UserFacingError("Pick at least one person to import");
   if (totalRows > CONNECTIONS_TOTAL_MAX_ROWS) {
     throw new UserFacingError(
-      `That file has more rows than one import can take (${CONNECTIONS_TOTAL_MAX_ROWS.toLocaleString()}).`,
+      `That file has more rows than one import can take (${CONNECTIONS_TOTAL_MAX_ROWS.toLocaleString()})`,
     );
   }
   // One job at a time per account — the same guard the one-shot import actions apply. A job
@@ -181,7 +181,7 @@ export async function startConnectionsStaged(userId: string, importId: string): 
     columns: { id: true },
   });
   if (active) {
-    throw new UserFacingError("An import is already running. Wait for it to finish before starting another.");
+    throw new UserFacingError("An import is already running — wait for it to finish before starting another");
   }
   const updated = await db
     .update(imports)
