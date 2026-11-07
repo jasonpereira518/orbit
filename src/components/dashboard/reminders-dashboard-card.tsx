@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 // Four, not five: this card shares a stretched row with Due follow-ups, whose rows are
 // about a third the height of these. Five reminders left that card with a quarter of its
 // height empty; four keeps the pair close, and "See more" opens the full page for the rest.
-const PREVIEW_COUNT = 4;
+const PREVIEW_COUNT = 3;
 
 export type DashboardReminderItem = {
   id: string;
