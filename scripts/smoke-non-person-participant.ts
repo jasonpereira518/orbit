@@ -9,7 +9,7 @@ import { run } from "./smoke/_env";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions } from "../src/db/schema";
+import { contacts, interactions, reminders } from "../src/db/schema";
 import { listContactsPage } from "../src/lib/contacts-page-query";
 import { calendarExternalIdBase } from "../src/lib/ingest/external-id";
 import { ingestEvents, openIngestContext } from "../src/lib/ingest/events";
@@ -30,8 +30,15 @@ const CASES: [string, string | null, boolean][] = [
   ["Acme", "noreply@acme.com", true],
   ["Acme", "no-reply+abc@acme.com", true],
   ["Acme Notifications", "notifications@acme.com", true],
-  ["Acme Support", "support@acme.com", true],
   ["Recruiting", "invites@lu.ma", true],
+  ["Acme", "calendar@acme.com", true],
+  ["Acme", "updates@acme.com", true],
+  // Role-looking mailboxes on a person's own domain are often one person.
+  ["Maya Chen", "hello@mayachen.com", false],
+  ["Maya Chen", "hi@mayachen.com", false],
+  ["Founders", "team@tinyco.io", false],
+  ["Raj Patel", "sales@patelco.com", false],
+  ["Raj Patel", "info@patelco.com", false],
   ["Calvin Dar", "calvin.dar@gmail.com", false],
   ["Ann Calendar", "ann@gmail.com", false],
   ["Calendula Smith", null, false],
@@ -83,27 +90,37 @@ run(async () => {
   const created = await db.select({ fullName: contacts.fullName }).from(contacts).where(eq(contacts.userId, INGEST));
   t.check("ingest creates the person and skips the calendar", created.length === 1 && created[0]!.fullName === "Ada Lovelace" && stats.unmatched === 1, JSON.stringify({ created, stats }));
 
-  // Cleanup: calendar-only and interaction-free matches go; one with a logged note stays.
+  // Cleanup: only an untouched, calendar-made match goes; everything else is kept with a reason.
   const CLEAN = `smoke-nonperson-clean-${randomUUID()}`;
-  const add = async (fullName: string, email: string | null, sources: string[]) => {
-    const [c] = await db.insert(contacts).values({ userId: CLEAN, fullName, email }).returning();
-    for (const source of sources) await db.insert(interactions).values({ userId: CLEAN, contactId: c!.id, interactionType: "meeting", source });
+  const add = async (fullName: string, email: string | null, sources: string[], source = "google_calendar") => {
+    const [c] = await db.insert(contacts).values({ userId: CLEAN, fullName, email, source }).returning();
+    for (const s of sources) await db.insert(interactions).values({ userId: CLEAN, contactId: c!.id, interactionType: "meeting", source: s });
     return c!.id;
   };
   const calOnly = await add("Interview Calendar 2", "c_1@group.calendar.google.com", ["google_calendar", "google_calendar"]);
   const bare = await add("Board Room", "c_2@resource.calendar.google.com", []);
-  const noted = await add("Acme Support", "support@acme.com", ["google_calendar", "capture"]);
+  const noted = await add("Acme Notifications", "notifications@acme.com", ["google_calendar", "capture"]);
+  const reminded = await add("Team Offsite Calendar", "c_3@group.calendar.google.com", ["google_calendar"]);
+  await db.insert(reminders).values({ userId: CLEAN, contactId: reminded, title: "Follow up", dueDate: new Date() });
+  const handMade = await add("Conference Room 4B", "room4b@acme.com", [], "manual");
   const person = await add("Calvin Dar", "calvin.dar@gmail.com", ["google_calendar"]);
 
   const matches = (await findNonPersonContacts()).filter((m) => m.userId === CLEAN);
   const byId = new Map(matches.map((m) => [m.id, m]));
-  t.check("cleanup finds the three non-people, not the person", matches.length === 3 && !byId.has(person));
+  t.check("cleanup finds the five non-people, not the person", matches.length === 5 && !byId.has(person));
   t.check("interaction counts by source are reported", byId.get(calOnly)?.sources.google_calendar === 2 && byId.get(noted)?.sources.capture === 1);
-  t.check("only calendar-only or bare matches are deletable", byId.get(calOnly)?.deletable === true && byId.get(bare)?.deletable === true && byId.get(noted)?.deletable === false);
+  t.check("calendar-only and bare calendar matches are deletable", byId.get(calOnly)?.deletable === true && byId.get(bare)?.deletable === true);
+  t.check("a match with a non-calendar interaction is kept", byId.get(noted)?.deletable === false && byId.get(noted)!.keepReasons.includes("non-calendar interactions"));
+  t.check("a calendar-only match with a reminder is kept", byId.get(reminded)?.deletable === false && byId.get(reminded)!.keepReasons.includes("has reminders"), JSON.stringify(byId.get(reminded)?.keepReasons));
+  t.check("a match not made by a calendar is kept", byId.get(handMade)?.deletable === false && byId.get(handMade)!.keepReasons.includes("source manual"));
 
   const deleted = await deleteNonPersonContacts(matches);
   const left = new Set((await db.select({ id: contacts.id }).from(contacts).where(eq(contacts.userId, CLEAN))).map((r) => r.id));
-  t.check("--apply deletes the deletable ones and keeps the rest", deleted.length === 2 && left.size === 2 && left.has(noted) && left.has(person), `${deleted.length} deleted`);
+  t.check(
+    "--apply deletes the deletable ones and keeps the rest",
+    deleted.length === 2 && left.size === 4 && [noted, reminded, handMade, person].every((id) => left.has(id)),
+    `${deleted.length} deleted`
+  );
 
   t.done("non-person participant smoke");
 });

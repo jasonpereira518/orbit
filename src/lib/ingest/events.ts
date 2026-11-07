@@ -458,17 +458,18 @@ export async function ingestEvents(
       continue;
     }
 
-    if (ctx.headroom !== null && ctx.headroom - toCreate.length <= 0) {
-      stats.blockedByPlan++;
-      continue;
-    }
     const input = toContactInput(pair.participant, ctx.options.source, {
       metContext: ctx.options.metContext,
       howMet: ctx.options.howMet?.(pair.event) ?? null,
     });
     // A group calendar, room or mailbox on the invite is not someone to keep in touch with.
-    if (!input.fullName || isNonPersonParticipant(input.fullName, input.email ?? pair.participant.email)) {
+    // Checked before the cap so it never counts as a contact the plan blocked.
+    if (!input.fullName || isNonPersonParticipant(input.fullName, input.email)) {
       stats.unmatched++;
+      continue;
+    }
+    if (ctx.headroom !== null && ctx.headroom - toCreate.length <= 0) {
+      stats.blockedByPlan++;
       continue;
     }
     if (key !== null) createIndexByKey.set(key, toCreate.length);

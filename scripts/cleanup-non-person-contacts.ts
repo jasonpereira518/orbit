@@ -5,9 +5,13 @@
  * the People list hides the rest, so this only clears what is already stored.
  *
  * Dry run by default: prints every match with its id, name, email and interaction counts by
- * source. `--apply` deletes only the matches whose interactions all came from a calendar (or
- * that have none), through `deleteContactsForUser`. A match with a note, an email or anything
- * else a person might have logged is printed as kept, for a human to look at.
+ * source. `--apply` deletes, through `deleteContactsForUser`, only a match that a calendar made
+ * and nobody touched since: `contacts.source` is a calendar source, every interaction (if any)
+ * is calendar-sourced, and it has no tags, reminders, LinkedIn URL or key facts. Every other
+ * match is printed as "keep" with the reason, for a human to look at.
+ *
+ * Scans the whole `contacts` table (every user) with the predicate; there is no index on it,
+ * which is fine for a one-off.
  *
  * TARGETS `DATABASE_URL`, and refuses to run without one (see `requireRealDatabase`).
  *
@@ -15,7 +19,7 @@
  */
 import { inArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions } from "../src/db/schema";
+import { contactTags, contacts, interactions, reminders } from "../src/db/schema";
 import { deleteContactsForUser } from "../src/lib/contact-delete";
 import { nonPersonContactSql } from "../src/lib/non-person-participant";
 
@@ -30,32 +34,70 @@ export type NonPersonMatch = {
   email: string | null;
   /** Interaction counts keyed by `interactions.source` ("(none)" for NULL). */
   sources: Record<string, number>;
+  /** Why a match is kept; empty when it is deletable. */
+  keepReasons: string[];
   deletable: boolean;
 };
+
+const countBy = (rows: { contactId: string | null; n: number }[]) =>
+  new Map(rows.map((r) => [r.contactId ?? "", Number(r.n)]));
 
 export async function findNonPersonContacts(): Promise<NonPersonMatch[]> {
   const db = await getDb();
   const rows = await db
-    .select({ id: contacts.id, userId: contacts.userId, fullName: contacts.fullName, email: contacts.email })
+    .select({
+      id: contacts.id,
+      userId: contacts.userId,
+      fullName: contacts.fullName,
+      email: contacts.email,
+      source: contacts.source,
+      linkedinUrl: contacts.linkedinUrl,
+      keyFacts: contacts.keyFacts,
+    })
     .from(contacts)
     .where(nonPersonContactSql());
   const sources = new Map<string, Record<string, number>>();
+  const tags = new Map<string, number>();
+  const reminderCounts = new Map<string, number>();
   for (let i = 0; i < rows.length; i += CHUNK) {
     const ids = rows.slice(i, i + CHUNK).map((r) => r.id);
-    const counts = await db
-      .select({ contactId: interactions.contactId, source: interactions.source, n: sql<number>`count(*)::int` })
-      .from(interactions)
-      .where(inArray(interactions.contactId, ids))
-      .groupBy(interactions.contactId, interactions.source);
+    const n = sql<number>`count(*)::int`;
+    const [counts, tagRows, reminderRows] = await Promise.all([
+      db
+        .select({ contactId: interactions.contactId, source: interactions.source, n })
+        .from(interactions)
+        .where(inArray(interactions.contactId, ids))
+        .groupBy(interactions.contactId, interactions.source),
+      db.select({ contactId: contactTags.contactId, n }).from(contactTags).where(inArray(contactTags.contactId, ids)).groupBy(contactTags.contactId),
+      db.select({ contactId: reminders.contactId, n }).from(reminders).where(inArray(reminders.contactId, ids)).groupBy(reminders.contactId),
+    ]);
     for (const c of counts) {
       const bySource = sources.get(c.contactId) ?? {};
       bySource[c.source ?? "(none)"] = Number(c.n);
       sources.set(c.contactId, bySource);
     }
+    for (const [id, k] of countBy(tagRows)) tags.set(id, k);
+    for (const [id, k] of countBy(reminderRows)) reminderCounts.set(id, k);
   }
   return rows.map((r) => {
     const bySource = sources.get(r.id) ?? {};
-    return { ...r, sources: bySource, deletable: Object.keys(bySource).every((s) => CALENDAR_SOURCES.has(s)) };
+    const keepReasons = [
+      !CALENDAR_SOURCES.has(r.source ?? "") && `source ${r.source ?? "(none)"}`,
+      Object.keys(bySource).some((s) => !CALENDAR_SOURCES.has(s)) && "non-calendar interactions",
+      tags.has(r.id) && "tagged",
+      reminderCounts.has(r.id) && "has reminders",
+      r.linkedinUrl && "has LinkedIn URL",
+      r.keyFacts?.length && "has key facts",
+    ].filter((x): x is string => typeof x === "string");
+    return {
+      id: r.id,
+      userId: r.userId,
+      fullName: r.fullName,
+      email: r.email,
+      sources: bySource,
+      keepReasons,
+      deletable: keepReasons.length === 0,
+    };
   });
 }
 
@@ -82,7 +124,8 @@ async function main() {
   const matches = await findNonPersonContacts();
   for (const m of matches) {
     const counts = Object.entries(m.sources).map(([s, n]) => `${s}=${n}`).join(" ") || "no interactions";
-    console.log(`${m.deletable ? (apply ? "delete" : "would delete") : "keep"} ${m.id} user=${m.userId} "${m.fullName}" <${m.email ?? ""}> ${counts}`);
+    const verdict = m.deletable ? (apply ? "delete" : "would delete") : `keep (${m.keepReasons.join(", ")})`;
+    console.log(`${verdict} ${m.id} user=${m.userId} "${m.fullName}" <${m.email ?? ""}> ${counts}`);
   }
   const deletable = matches.filter((m) => m.deletable).length;
   if (!apply) {

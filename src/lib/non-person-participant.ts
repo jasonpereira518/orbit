@@ -1,6 +1,6 @@
 /**
  * Calendar participants that are not people: Google group and resource calendars ("External
- * Stripe Interview Calendar 2"), meeting rooms, mailers and shared inboxes. Calendar sync used
+ * Stripe Interview Calendar 2"), meeting rooms and machine mailboxes. Calendar sync used
  * to save them as contacts.
  *
  * `isNonPersonParticipant` blocks them at ingest; `nonPersonContactSql` is its twin over the
@@ -13,8 +13,21 @@
  */
 import { sql } from "drizzle-orm";
 import { contacts } from "@/db/schema";
-import { AUTOMATED_LOCAL_PARTS, isAutomatedAddress } from "@/lib/email-activity";
-import { ROLE_LOCALPART, isRoleEmail } from "@/lib/events/discovery/from-calendar";
+import { AUTOMATED_LOCAL_PARTS } from "@/lib/email-activity";
+
+/**
+ * Mailboxes only a machine sends from: `isAutomatedAddress`'s list plus calendar and invite
+ * senders. Deliberately not the wider role list (`isRoleEmail`): hello@, team@ and sales@ on
+ * a founder's own domain are often one person.
+ */
+const MACHINE_LOCAL_PARTS = [
+  ...new Set([
+    ...AUTOMATED_LOCAL_PARTS,
+    ...["noreply", "no-reply", "donotreply", "do-not-reply", "calendar", "invite", "invites", "event", "events"],
+    ...["notification", "notifications", "mailer", "mailer-daemon", "bounce", "bounces", "postmaster", "updates"],
+  ]),
+];
+const MACHINE_SET = new Set(MACHINE_LOCAL_PARTS);
 
 /** group.calendar.google.com, resource.calendar.google.com, import.calendar.google.com. */
 const CALENDAR_DOMAIN = "@(.+\\.)?calendar\\.google\\.com$";
@@ -34,7 +47,9 @@ const jsRe = (pattern: string) => new RegExp(pattern.replaceAll("[:space:]", "\\
 /** Whether a participant (as calendar sync sees it) is a calendar, room or mailbox, not a person. */
 export function isNonPersonParticipant(name: string | null | undefined, email: string | null | undefined): boolean {
   const e = (email ?? "").trim().toLowerCase();
-  if (e && (jsRe(CALENDAR_DOMAIN).test(e) || isAutomatedAddress(e) || isRoleEmail(e))) return true;
+  // `ada+github@x.com` is still Ada, so the tag is dropped before the lookup.
+  const base = e.split("@")[0]!.split("+")[0]!;
+  if (e && (jsRe(CALENDAR_DOMAIN).test(e) || MACHINE_SET.has(base))) return true;
   const n = (name ?? "").trim();
   if (jsRe(ROOM_PHRASE).test(n)) return true;
   return jsRe(CALENDAR_WORD).test(n) && jsRe(CALENDAR_CONTEXT).test(n);
@@ -45,11 +60,10 @@ export function nonPersonContactSql() {
   const email = sql`lower(trim(coalesce(${contacts.email}, '')))`;
   const local = sql`split_part(${email}, '@', 1)`;
   const name = sql`trim(${contacts.fullName})`;
-  const automated = sql.join([...AUTOMATED_LOCAL_PARTS].map((p) => sql`${p}`), sql`, `);
+  const machine = sql.join(MACHINE_LOCAL_PARTS.map((p) => sql`${p}`), sql`, `);
   return sql`((${email} <> '' AND (
       ${email} ~ ${CALENDAR_DOMAIN}
-      OR split_part(${local}, '+', 1) IN (${automated})
-      OR ${local} ~* ${ROLE_LOCALPART.source}))
+      OR split_part(${local}, '+', 1) IN (${machine})))
     OR ${name} ~* ${ROOM_PHRASE}
     OR (${name} ~* ${CALENDAR_WORD} AND ${name} ~ ${CALENDAR_CONTEXT}))`;
 }
