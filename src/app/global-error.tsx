@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { reportClientError } from "@/lib/sentry-lazy";
+import { reportErrorShown } from "@/lib/client-events";
 // Renders its own <html>, outside every route group, so it brings its own sheet.
 import "./site.css";
 
@@ -19,14 +20,20 @@ export default function GlobalError({
   useEffect(() => {
     // Through the lazy loader: the server render must not load the SDK (see `sentry-lazy.ts`).
     reportClientError(error);
+    reportErrorShown("boundary.global", error);
   }, [error]);
 
   return (
     <html lang="en">
+      <head>
+        <title>Something went wrong · Orbit</title>
+      </head>
       <body
         style={{
           margin: 0,
-          minHeight: "100vh",
+          // dvh, not vh: on mobile `100vh` is taller than the visible area, so the message sat
+          // below the fold behind the browser toolbar.
+          minHeight: "100dvh",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",

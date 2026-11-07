@@ -33,7 +33,9 @@ delete process.env.ORBIT_MANAGED_AI;
 delete process.env.ORBIT_DEMO_MANAGED_AI;
 delete process.env.STRIPE_SECRET_KEY;
 delete process.env.DEMO_ACCOUNT_USER_ID;
-process.env.ORBIT_MANAGED_GEMINI_API_KEY = "managed-gemini-key";
+// Orbit never pays for Gemini: the base managed keys are Anthropic (first) and OpenAI.
+process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY = "managed-anthropic-key";
+process.env.ORBIT_MANAGED_OPENAI_API_KEY = "managed-openai-key";
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -44,6 +46,7 @@ import {
   creditGrants,
   creditHolds,
   errorEvents,
+  gateEvents,
   rateLimitBuckets,
   siteSettings,
   usageEvents,
@@ -90,6 +93,7 @@ import {
   MANAGED_MODELS,
   MANAGED_PROVIDER_ORDER,
   chooseCompletionKey,
+  WEB_SEARCH_MANAGED_EXCLUDED,
   chooseEmbeddingKey,
   holdEstimateMicros,
   managedEligibility,
@@ -174,6 +178,12 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       choices: [{ index: 0, message: { role: "assistant", content: '{"ok":true,"text":"hello there"}' }, finish_reason: "stop" }],
       usage: { prompt_tokens: 1000, completion_tokens: 100 },
     });
+  }
+  if (/^https:\/\/api\.openai\.com\/v1\/embeddings/.test(url)) {
+    return Response.json({ object: "list", data: [{ object: "embedding", index: 0, embedding: [0.1, 0.2, 0.3] }], model: "stub", usage: { prompt_tokens: 3, total_tokens: 3 } });
+  }
+  if (/^https:\/\/api\.openai\.com\/v1\/audio\/transcriptions/.test(url)) {
+    return Response.json({ text: "hello there" });
   }
   if (/^https:\/\/openrouter\.ai\/api\/v1\/embeddings/.test(url)) {
     return Response.json({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
@@ -339,7 +349,7 @@ const facts = (over: Partial<KeyFacts>): KeyFacts => ({
   selectedProvider: "gemini",
   selectedModel: "gemini-3.5-flash",
   personal: { gemini: false, openai: false, anthropic: false, openrouter: false },
-  managed: { gemini: true, openai: false, anthropic: false, openrouter: false },
+  managed: { gemini: false, openai: false, anthropic: false, openrouter: false },
   ...over,
 });
 
@@ -375,8 +385,24 @@ function purePolicy() {
   const allManaged = { gemini: true, openai: true, anthropic: true, openrouter: false };
   check("Pro + own key + chose included → Orbit's key first, on Orbit's route",
     pick(facts({ eligibility: "plan", personal: own, preference: "included", managed: allManaged })) === "managed:anthropic:claude-haiku-5-5");
-  check("…and with Gemini as Orbit's only key, its managed default rather than the account's model",
-    pick(facts({ eligibility: "plan", personal: own, preference: "included" })) === `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}`);
+  const geminiOnly = { gemini: true, openai: false, anthropic: false, openrouter: false };
+  check("Orbit never pays for Gemini: a managed Gemini key alone is not a route",
+    pick(facts({ eligibility: "plan", managed: geminiOnly })) === "refused:managed_unavailable" &&
+    !(MANAGED_PROVIDER_ORDER as readonly string[]).includes("gemini"));
+  // Web search on Orbit's key never runs on its Gemini key.
+  const search = (f: KeyFacts) => {
+    const c = chooseCompletionKey(f, { skipManaged: WEB_SEARCH_MANAGED_EXCLUDED });
+    return c.ok ? `${c.source}:${c.provider}` : `refused:${c.reason}`;
+  };
+  check("search on Orbit's keys → Anthropic first", search(facts({ eligibility: "plan", managed: allManaged })) === "managed:anthropic");
+  check("…then OpenAI when Anthropic is spent", search(facts({ eligibility: "plan", managed: { ...allManaged, anthropic: false } })) === "managed:openai");
+  check("…and refuses rather than fall to Orbit's Gemini key",
+    search(facts({ eligibility: "plan", managed: { ...allManaged, anthropic: false, openai: false } })) === "refused:managed_unavailable");
+  check("their own Gemini key still searches", search(facts({ eligibility: "plan", personal: own, managed: allManaged })) === "personal:gemini");
+  check("…but chose-included with only Orbit's Gemini key left uses their own key, not Orbit's",
+    search(facts({ eligibility: "plan", personal: own, preference: "included" })) === "personal:gemini");
+  check("both Orbit pools spent: ordinary completions refuse (add your own key), never Gemini",
+    pick(facts({ eligibility: "plan", managed: { ...allManaged, anthropic: false, openai: false } })) === "refused:managed_unavailable");
   check("Pro + own key + chose own → their key", pick(facts({ eligibility: "plan", personal: own, preference: "own" })) === "personal:gemini:gemini-3.5-flash");
   check("Pro + no key → Orbit's key, on Orbit's route (Anthropic first, Haiku 5.5)",
     pick(facts({ eligibility: "plan", managed: allManaged })) === "managed:anthropic:claude-haiku-5-5");
@@ -394,11 +420,11 @@ function purePolicy() {
   // The allowlist protects Orbit's money; with managed AI off the only key behind that path
   // is the developer's own, so `next dev` runs the model Settings asks for.
   check("an expensive model on Orbit's key is downgraded",
-    pick(facts({ eligibility: "plan", selectedModel: "gemini-2.5-pro" })) === `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}`);
+    pick(facts({ eligibility: "plan", selectedModel: "gemini-2.5-pro", managed: allManaged })) === `managed:anthropic:${MANAGED_DEFAULT_MODELS.anthropic}`);
   check("…the same model on their own key is theirs to choose",
     pick(facts({ eligibility: "plan", selectedModel: "gemini-2.5-pro", personal: own })) === "personal:gemini:gemini-2.5-pro");
-  check("an Anthropic user on Pro with only a managed Gemini key runs on Gemini",
-    pick(facts({ eligibility: "plan", selectedProvider: "anthropic", selectedModel: "claude-opus-4" })) === `managed:gemini:${MANAGED_DEFAULT_MODELS.gemini}`);
+  check("an Anthropic user on Pro asking for Opus runs on Orbit's Haiku 5.5",
+    pick(facts({ eligibility: "plan", selectedProvider: "anthropic", selectedModel: "claude-opus-4", managed: allManaged })) === `managed:anthropic:${MANAGED_DEFAULT_MODELS.anthropic}`);
   check("every managed model is priced (an unpriced one would be metered at a stand-in, not its cost)",
     Object.values(MANAGED_MODELS).flat().every((m) => priceFor(m) !== null));
 
@@ -408,7 +434,8 @@ function purePolicy() {
     return c.ok ? `${c.source}:${c.provider}` : `refused:${c.reason}`;
   };
   check("Anthropic-only with no eligibility → refused", emb(facts({ selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true, openrouter: false } })) === "refused:key_required");
-  check("Anthropic-only on Pro → Orbit's Gemini", emb(facts({ eligibility: "plan", selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true, openrouter: false } })) === "managed:gemini");
+  check("Anthropic-only on Pro → Orbit's OpenAI", emb(facts({ eligibility: "plan", selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true, openrouter: false }, managed: { gemini: false, openai: true, anthropic: true, openrouter: false } })) === "managed:openai");
+  check("…and never Orbit's Gemini, even if one were present", emb(facts({ eligibility: "plan", selectedProvider: "anthropic", personal: { gemini: false, openai: false, anthropic: true, openrouter: false }, managed: geminiOnly })) === "refused:managed_unavailable");
   check("a personal OpenAI key beats a managed Gemini one", emb(facts({ eligibility: "plan", personal: { gemini: false, openai: true, anthropic: false, openrouter: false } })) === "personal:openai");
   check("…even when the account chose included AI (moving vectors means re-indexing)",
     emb(facts({ eligibility: "plan", preference: "included", personal: { gemini: false, openai: true, anthropic: false, openrouter: false } })) === "personal:openai");
@@ -483,7 +510,9 @@ function purePolicy() {
 /* ------------------------------------------------------------------- real gate ------- */
 
 const USER_KEY = "user-gemini-key";
-const MANAGED = "managed-gemini-key";
+const MANAGED = "managed-anthropic-key";
+const OPENAI_MANAGED = "managed-openai-key";
+const ANTHROPIC_MANAGED = MANAGED;
 const USER_OPENROUTER_KEY = "user-openrouter-key";
 const U = {
   proOwn: "smoke-aia-pro-own",
@@ -571,7 +600,7 @@ async function realGate() {
   check("Pro + no key: Orbit's managed key went on the wire", r.req?.key === MANAGED, r.req?.key ?? r.err);
   check(
     "…at the managed model, not the gemini-2.5-pro they picked",
-    (r.req?.url ?? "").includes(`models/${MANAGED_DEFAULT_MODELS.gemini}:`),
+    JSON.parse(r.req?.body ?? "{}").model === MANAGED_DEFAULT_MODELS.anthropic,
     r.req?.url
   );
   r = await lastSent(() => json(U.maxNone));
@@ -582,7 +611,7 @@ async function realGate() {
   check("Free + own key: their key went on the wire", r.req?.key === USER_KEY, r.req?.key ?? r.err);
   r = await lastSent(() => json(U.freeNone));
   check("Free + no key: Orbit's managed key went on the wire", r.req?.key === MANAGED, r.req?.key ?? r.err);
-  check("…at the managed model", (r.req?.url ?? "").includes(`models/${MANAGED_DEFAULT_MODELS.gemini}:`), r.req?.url);
+  check("…at the managed model", JSON.parse(r.req?.body ?? "{}").model === MANAGED_DEFAULT_MODELS.anthropic, r.req?.url);
   await settle();
   const freeBal = await getCreditBalance(U.freeNone, "free", null);
   check("…metered: the starter is granted and the allowance is charged first",
@@ -614,16 +643,16 @@ async function realGate() {
 
   console.log("\nEmbeddings and transcription use the same gate");
   r = await lastSent(() => createEmbedding(U.proNone, "a contact"));
-  check("Pro + no key: embedding on the managed key", r.req?.key === MANAGED, r.req?.key ?? r.err);
+  check("Pro + no key: embedding on Orbit's OpenAI key (never Gemini)", r.req?.key === OPENAI_MANAGED, r.req?.key ?? r.err);
   r = await lastSent(() => createEmbedding(U.freeNone, "a contact"));
-  check("Free + no key: embedding on the managed key", r.req?.key === MANAGED, r.req?.key ?? r.err);
+  check("Free + no key: embedding on Orbit's OpenAI key", r.req?.key === OPENAI_MANAGED, r.req?.key ?? r.err);
   const audio = { mimeType: "audio/webm", base64: Buffer.from("fake audio").toString("base64") };
   r = await lastSent(() => transcribeAudioWithAI(U.proNone, audio));
-  check("Pro + no key: transcription on Orbit's Gemini", r.req?.key === MANAGED && (r.result as { engine?: string })?.engine === "gemini", r.req?.key ?? r.err);
+  check("Pro + no key: transcription on Orbit's OpenAI Whisper (never Gemini)", r.req?.key === OPENAI_MANAGED && (r.result as { engine?: string })?.engine === "whisper", r.req?.key ?? r.err);
   r = await lastSent(() => transcribeAudioWithAI(U.freeOwn, audio));
   check("own Gemini key: transcription on their key", r.req?.key === USER_KEY, r.req?.key ?? r.err);
   r = await lastSent(() => transcribeAudioWithAI(U.freeNone, audio));
-  check("Free + no key: transcription on the managed key", r.req?.key === MANAGED, r.req?.key ?? r.err);
+  check("Free + no key: transcription on Orbit's OpenAI key", r.req?.key === OPENAI_MANAGED, r.req?.key ?? r.err);
   r = await lastSent(() => transcribeImagePages(U.freeNone, [{ mimeType: "image/jpeg", base64: "AAAA" }]));
   check("photo OCR with no key goes out on the managed key, not a key-missing page", r.req?.key === MANAGED, r.req?.key ?? r.err);
   r = await lastSent(() => transcribeImagePages(U.lifetimeNone, [{ mimeType: "image/jpeg", base64: "AAAA" }]));
@@ -684,6 +713,16 @@ async function realGate() {
   await settle();
   r = await lastSent(() => json(U.freeNone, "radar.why"));
   check("…while the nightly radar.why is refused", isAiAccessError(r.err) && r.count === 0, r.err);
+  {
+    // Audit D1: the refusal threw before anything was written, so the money moment left no trace.
+    const floor = await db.select().from(gateEvents).where(and(eq(gateEvents.userId, U.freeNone), eq(gateEvents.feature, "backgroundFloor")));
+    check("the background-floor refusal is recorded as a gate hit — one row though two operations were refused (throttled)",
+      floor.length === 1 && floor[0]!.plan === "free" && floor[0]!.unlockPlan === "orbit", floor);
+    check("…located by surface and operation",
+      (floor[0]!.context as { surface?: string; route?: string }).surface === "cron" && (floor[0]!.context as { route?: string }).route === "radar.rerank", floor[0]?.context);
+    check("…and a foreground request that ran fine recorded no wall",
+      (await db.select().from(gateEvents).where(and(eq(gateEvents.userId, U.freeNone), eq(gateEvents.feature, "managedCredits")))).length === 0);
+  }
 
   console.log("\nFree at zero");
   await db.update(creditGrants).set({ microsRemaining: 0 }).where(eq(creditGrants.userId, U.freeNone));
@@ -693,6 +732,15 @@ async function realGate() {
       (r.err as Error).message === FREE_LIMIT_MESSAGE && r.count === 0, r.err);
   check("…which the client reads back as managed_limit", aiDenialFromMessage(FREE_LIMIT_MESSAGE) === "managed_limit");
   check("…and the status agrees", (await status(U.freeNone)) === "false:managed_limit:managed");
+  {
+    const walls = async (u: string) => db.select().from(gateEvents).where(and(eq(gateEvents.userId, u), eq(gateEvents.feature, "managedCredits")));
+    const first = await walls(U.freeNone);
+    check("out-of-credits is recorded as a gate hit, with the operation that hit it",
+      first.length === 1 && first[0]!.plan === "free" && (first[0]!.context as { surface?: string; route?: string }).route === "chat.answer" &&
+        (first[0]!.context as { surface?: string }).surface === "web", first);
+    await lastSent(() => json(U.freeNone, "chat.answer"));
+    check("…a second refusal in the same hour is still one row, and the refusal text did not change", (await walls(U.freeNone)).length === 1);
+  }
 
   console.log("\nMax and Lifetime at zero: each hears only what its plan can do");
   for (const [user, plan] of [[U.maxNone, "max"], [U.lifetimeNone, "lifetime"]] as const) {
@@ -701,6 +749,10 @@ async function realGate() {
     check(`${plan}: refused with its own plan's out-of-credits words, nothing sent`,
       isAiAccessError(r.err) && (r.err as AiAccessError).reason === "managed_limit" &&
         (r.err as Error).message === MANAGED_LIMIT_MESSAGES[plan] && r.count === 0, r.err);
+  }
+  for (const [user, plan] of [[U.maxNone, "max"], [U.lifetimeNone, "lifetime"]] as const) {
+    const rows = await db.select().from(gateEvents).where(and(eq(gateEvents.userId, user), eq(gateEvents.feature, "managedCredits")));
+    check(`${plan}: out-of-credits is recorded on its own plan, with no plan above it to unlock`, rows.length === 1 && rows[0]!.plan === plan && rows[0]!.unlockPlan === null, rows);
   }
   check("…Max is offered a pack and never Max", /pack/.test(MANAGED_LIMIT_MESSAGES.max) && !/move to Max/.test(MANAGED_LIMIT_MESSAGES.max));
   check("…Lifetime is offered no pack", !/pack/i.test(MANAGED_LIMIT_MESSAGES.lifetime));
@@ -851,9 +903,9 @@ async function transitions() {
     const rowOf = async (u: string) => (await db.query.userSettings.findFirst({ where: eq(userSettings.userId, u) })) ?? null;
     check("the admin pause reads as a paused outage", outage?.kind === "paused", outage);
     check("…the layout's denial counts it for an account on Orbit's key",
-      aiDenialFromSettings(U.proNone, await rowOf(U.proNone), outage) === "managed_unavailable");
+      aiDenialFromSettings(U.proNone, await rowOf(U.proNone), undefined, outage) === "managed_unavailable");
     check("…and not for an account with its own key",
-      aiDenialFromSettings(U.proOwn, await rowOf(U.proOwn), outage) === null);
+      aiDenialFromSettings(U.proOwn, await rowOf(U.proOwn), undefined, outage) === null);
     check("…while presence alone still cannot see it (the notifications poll)",
       aiDenialFromSettings(U.proNone, await rowOf(U.proNone)) === null);
   }
@@ -865,11 +917,6 @@ async function transitions() {
 
   // The provider pools. Orbit spends Anthropic first, then OpenAI; a spent pool takes its
   // provider out, and with every key-holding provider spent included AI refuses.
-  const ANTHROPIC_MANAGED = "managed-anthropic-key";
-  const OPENAI_MANAGED = "managed-openai-key";
-  process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY = ANTHROPIC_MANAGED;
-  process.env.ORBIT_MANAGED_OPENAI_API_KEY = OPENAI_MANAGED;
-  delete process.env.ORBIT_MANAGED_GEMINI_API_KEY;
   const poolRows: string[] = [];
   const spend = async (provider: "anthropic" | "openai", micros: number, createdAt = new Date()) => {
     const [row] = await db.insert(usageEvents).values({
@@ -920,9 +967,6 @@ async function transitions() {
     check("…own keys are untouched by the pools", r.req?.key === USER_KEY);
   } finally {
     if (poolRows.length) await db.delete(usageEvents).where(inArray(usageEvents.id, poolRows));
-    delete process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY;
-    delete process.env.ORBIT_MANAGED_OPENAI_API_KEY;
-    process.env.ORBIT_MANAGED_GEMINI_API_KEY = MANAGED;
     forgetManagedAiPause();
   }
   r = await lastSent(() => json(U.proNone));
@@ -934,7 +978,7 @@ async function transitions() {
   check("a Pro user is not told to fix a key they never gave",
     r.err instanceof Error && r.err.message === MANAGED_PROVIDER_FAILURE_MESSAGE, r.err);
   const rows = await db.select().from(errorEvents).where(eq(errorEvents.source, "ai.managed"));
-  check("…and ops gets an error event for it", rows.some((e) => (e.context as { provider?: string })?.provider === "gemini"));
+  check("…and ops gets an error event for it", rows.some((e) => (e.context as { provider?: string })?.provider === "anthropic"));
   r = await lastSent(() => json(U.freeOwn));
   check("their own refused key still says check your key", r.err instanceof Error && /didn’t accept your API key/.test(r.err.message), r.err);
   respondWith = "ok";
@@ -944,16 +988,15 @@ async function transitions() {
   check("runOnGrant leaves personal-key failures alone", back === passthrough);
 
   console.log("\nOrbit's own provider balance runs dry");
-  process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY = ANTHROPIC_MANAGED;
-  process.env.ORBIT_MANAGED_OPENAI_API_KEY = OPENAI_MANAGED;
-  delete process.env.ORBIT_MANAGED_GEMINI_API_KEY;
   const quotaEvents = and(eq(errorEvents.source, "ai.managed"), eq(errorEvents.kind, "quota"));
   respondWith = "anthropic_out_of_credit";
   try {
     forgetManagedAiPause();
     r = await lastSent(() => json(U.proNone));
-    check("a Pro user is told Orbit's AI is down, not to top up a balance they don't hold",
-      r.req?.key === ANTHROPIC_MANAGED && r.err instanceof Error && r.err.message === MANAGED_PROVIDER_FAILURE_MESSAGE, r.err);
+    // The failing call is repeated once on the next provider (P1-3): the person gets an answer
+    // from Orbit's OpenAI key instead of an error, and the last request on the wire is that retry.
+    check("the call that found Anthropic dry is answered by Orbit's OpenAI key, not failed",
+      r.req?.key === OPENAI_MANAGED && !r.err, r.err);
     const quota = await db.select().from(errorEvents).where(quotaEvents);
     check("…and ops gets a quota error event naming the provider",
       quota.some((e) => (e.context as { provider?: string })?.provider === "anthropic"), JSON.stringify(quota));
@@ -983,9 +1026,6 @@ async function transitions() {
   } finally {
     respondWith = "ok";
     await db.delete(errorEvents).where(quotaEvents);
-    delete process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY;
-    delete process.env.ORBIT_MANAGED_OPENAI_API_KEY;
-    process.env.ORBIT_MANAGED_GEMINI_API_KEY = MANAGED;
     forgetManagedAiPause();
   }
 }
@@ -1013,7 +1053,7 @@ async function localDevAndByok() {
   };
   delete process.env.VERCEL;
   for (const p of ["GEMINI", "OPENAI", "ANTHROPIC"]) {
-    process.env[`ORBIT_MANAGED_${p}_API_KEY`] = MANAGED;
+    process.env[`ORBIT_MANAGED_${p}_API_KEY`] = p === "OPENAI" ? OPENAI_MANAGED : MANAGED;
     process.env[`${p}_API_KEY`] = DEV_KEY;
   }
   process.env.TYPESAFE_API_KEY = DEV_TYPESAFE_KEY;
@@ -1040,9 +1080,9 @@ async function localDevAndByok() {
       let r = await lastSent(() => json(u));
       check(`${u}: completion on Orbit's managed key`, r.req?.key === MANAGED, r.req?.key ?? r.err);
       r = await lastSent(() => createEmbedding(u, "a contact"));
-      check(`${u}: embedding on Orbit's managed key`, r.req?.key === MANAGED, r.req?.key ?? r.err);
+      check(`${u}: embedding on Orbit's managed key`, r.req?.key === OPENAI_MANAGED, r.req?.key ?? r.err);
       r = await lastSent(() => transcribeAudioWithAI(u, audio));
-      check(`${u}: transcription on Orbit's managed key`, r.req?.key === MANAGED, r.req?.key ?? r.err);
+      check(`${u}: transcription on Orbit's managed key`, r.req?.key === OPENAI_MANAGED, r.req?.key ?? r.err);
       const s = await getAiAccessStatus(u);
       check(`${u}: the UI is told it runs on Orbit's credits`,
         s.ready && s.source === "managed" && s.credits?.monthlyCredits === PLAN_CONFIG.lifetime.monthlyCredits, JSON.stringify(s));
@@ -1160,7 +1200,8 @@ async function localDevAndByok() {
     }
     delete process.env.TYPESAFE_API_KEY;
     delete process.env.ORBIT_JEV;
-    process.env.ORBIT_MANAGED_GEMINI_API_KEY = MANAGED;
+    process.env.ORBIT_MANAGED_ANTHROPIC_API_KEY = ANTHROPIC_MANAGED;
+    process.env.ORBIT_MANAGED_OPENAI_API_KEY = OPENAI_MANAGED;
     if (saved.VERCEL === undefined) delete process.env.VERCEL;
     else process.env.VERCEL = saved.VERCEL;
     if (saved.DEMO === undefined) delete process.env.DEMO_ACCOUNT_USER_ID;

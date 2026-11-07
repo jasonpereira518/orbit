@@ -1,9 +1,19 @@
 import Link from "next/link";
-import { PartyPopper, Radar, Send, Sparkles, UserSearch, type LucideIcon } from "lucide-react";
+import {
+  PartyPopper,
+  Pause,
+  Play,
+  Radar,
+  Send,
+  Sparkles,
+  UserSearch,
+  type LucideIcon,
+} from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { UnlocksWith } from "@/components/locked-feature";
-import { COMING_SOON_UNLOCK_PLAN } from "@/lib/surfaces";
+import { comingSoonUnlockPlans } from "@/lib/surfaces";
+import type { Plan, PlanConfig } from "@/lib/plans/plan-config";
 
 /**
  * What renders in place of a page that is announced but not released (`comingSoon` in
@@ -116,7 +126,7 @@ function HazardTape() {
     <div className="flex shrink-0 items-center" aria-hidden={hidden || undefined}>
       {TAPE_PHRASES.map((phrase, i) => (
         <span key={i} className="flex items-center">
-          <span className="px-5 text-[11px] font-semibold tracking-[0.22em] whitespace-nowrap uppercase">
+          <span className="px-5 text-2xs font-semibold tracking-[0.22em] whitespace-nowrap uppercase">
             {phrase}
           </span>
           <span className="h-7 w-14 bg-[repeating-linear-gradient(135deg,#1a1406_0_7px,transparent_7px_14px)]" />
@@ -136,11 +146,40 @@ function HazardTape() {
   );
 }
 
-export function ComingSoon({ surfaceKey, label }: { surfaceKey: string; label: string }) {
+/**
+ * SC 2.2.2: the tape, rings and crane loop for as long as the page is open, so anyone can
+ * stop them, reduced-motion setting or not. A native checkbox and `:has()` rather than
+ * state, so the scene stays server-rendered with no client JS; checking it pauses every
+ * animation in the card where it stands.
+ */
+function MotionPauseToggle() {
+  return (
+    <label
+      title="Pause animation"
+      className="group/pause absolute top-3 right-3 z-10 grid size-8 cursor-pointer place-items-center rounded-full border border-border/70 bg-card/80 text-muted-foreground transition-colors duration-fast hover:text-foreground has-focus-visible:ring-2 has-focus-visible:ring-ring"
+    >
+      <input type="checkbox" data-motion-pause className="sr-only" aria-label="Pause animation" />
+      <Pause className="size-3.5 group-has-checked/pause:hidden" aria-hidden />
+      <Play className="hidden size-3.5 group-has-checked/pause:block" aria-hidden />
+    </label>
+  );
+}
+
+export function ComingSoon({
+  surfaceKey,
+  label,
+  config,
+}: {
+  surfaceKey: string;
+  label: string;
+  /** The effective plan table (`getEffectivePlanConfig()`), so "Unlocks with" follows an admin's plan rules. */
+  config?: Record<Plan, PlanConfig>;
+}) {
   const feature = FEATURES[surfaceKey] ?? FALLBACK;
   return (
     <div className="flex min-h-[calc(100dvh-16.5rem)] min-w-0 flex-col justify-center md:min-h-[calc(100dvh-11rem)]">
-      <div className="relative overflow-hidden rounded-3xl border border-border/70 bg-card/50">
+      <div className="relative overflow-hidden rounded-3xl border border-border/70 bg-card/50 [&:has([data-motion-pause]:checked)_*]:[animation-play-state:paused]">
+        <MotionPauseToggle />
         <div className="flex min-w-0 flex-col items-center gap-2 px-6 pt-6 md:flex-row md:justify-center md:gap-10 md:px-10 md:pt-8">
           <div className="reveal-mount">
             <DryDock icon={feature.icon} />
@@ -156,7 +195,7 @@ export function ComingSoon({ surfaceKey, label }: { surfaceKey: string; label: s
               <span className="mt-1 block text-4xl md:text-5xl">Coming soon</span>
             </h1>
             <p className="text-sm leading-relaxed text-muted-foreground">{feature.teaser}</p>
-            <UnlocksWith plan={COMING_SOON_UNLOCK_PLAN} className="justify-center md:justify-start" />
+            <UnlocksWith plans={comingSoonUnlockPlans(surfaceKey, config)} className="justify-center md:justify-start" />
           </div>
         </div>
 

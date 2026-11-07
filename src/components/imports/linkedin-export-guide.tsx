@@ -104,7 +104,7 @@ export function LinkedInExportGuide({ variant }: { variant: GuideVariant }) {
         How to export
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[min(90vh,40rem)] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[min(90dvh,40rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>

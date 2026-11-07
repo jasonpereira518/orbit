@@ -2,7 +2,8 @@ import { IntentLink } from "@/components/ui/intent-link";
 import { formatDistanceToNow } from "date-fns";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { cn } from "@/lib/utils";
 
 function followUpDueLabel(nextFollowUpAt?: Date | string | null) {
@@ -40,6 +41,7 @@ export function DueFollowUpRow({
   fullName,
   title,
   company,
+  profileImageUrl,
   tier,
   nextFollowUpAt,
   lastInteractionAt,
@@ -48,13 +50,14 @@ export function DueFollowUpRow({
   fullName: string;
   title: string | null;
   company: string | null;
+  profileImageUrl?: string | null;
   tier?: "inner" | "mid" | "outer";
   nextFollowUpAt?: Date | string | null;
   lastInteractionAt?: Date | string | null;
 }) {
   const due = followUpDueLabel(nextFollowUpAt);
   const lastTouch = lastTouchLabel(lastInteractionAt);
-  const companyColor = companyBrandColor(company);
+  const companyBrand = companyBrandText(company);
   // The role line carries the company, tinted; it stays index 0 so the overdue styling
   // below (index 1) keeps pointing at the due label.
   const role: React.ReactNode =
@@ -64,8 +67,8 @@ export function DueFollowUpRow({
         {title && company ? " · " : ""}
         {company && (
           <span
-            className="font-medium"
-            style={companyColor ? { color: companyColor } : undefined}
+            className={cn("font-medium", companyBrand?.className)}
+            style={companyBrand?.style}
           >
             {company}
           </span>
@@ -77,7 +80,9 @@ export function DueFollowUpRow({
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start justify-between gap-3">
-        <IntentLink href={`/contacts/${id}`} className="min-w-0 hover:underline">
+        <IntentLink href={`/contacts/${id}`} className="flex min-w-0 items-start gap-2.5 hover:underline">
+          <ContactAvatar contactId={id} fullName={fullName} profileImageUrl={profileImageUrl} size="sm" className="mt-0.5" />
+          <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium text-ink">{fullName}</p>
             {tier && <ClosenessTierBadge tier={tier} />}
@@ -107,6 +112,7 @@ export function DueFollowUpRow({
               ))}
             </p>
           )}
+          </div>
         </IntentLink>
       </div>
       <EasyFollowUp

@@ -124,7 +124,7 @@ export async function searchRecipients(userId: string, q: string, limit = 8): Pr
     .where(
       and(
         eq(contacts.userId, userId),
-        or(contactSearchCondition(term), sql`lower(coalesce(${contacts.email}, '')) like ${like}`)
+        or(contactSearchCondition(term, userId), sql`lower(coalesce(${contacts.email}, '')) like ${like}`)
       )
     )
     .limit(limit);

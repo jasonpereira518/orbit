@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
 import { planCopy, unlimitedContactsLine } from "@/lib/plan-copy";
 import type { Plan } from "@/lib/plan-limits";
+import type { PlanConfig } from "@/lib/plans/plan-config";
 import type { DemoAccountReason } from "@/lib/demo-account";
 import type { Entitlements, PlanSource } from "@/lib/entitlements";
 
@@ -135,13 +136,16 @@ export function PlanSettings({
   entitlements,
   usage,
   demoAccount,
+  config,
 }: {
+  /** The effective plan table, so "What's included" follows an admin's plan rules. */
+  config?: Record<Plan, PlanConfig>;
   entitlements: Entitlements;
   usage: { used: number; limit: number | null; remaining: number | null };
   /** Set when plan limits are lifted because this is a demo account, not because of the plan. */
   demoAccount: DemoAccountReason | null;
 }) {
-  const copy = planCopy(entitlements.plan);
+  const copy = planCopy(entitlements.plan, config);
   const note = SOURCE_NOTE[entitlements.source];
   const isFree = entitlements.plan === "free";
   const accent = TIER_ACCENT[entitlements.plan];
@@ -183,10 +187,11 @@ export function PlanSettings({
               accent.badge
             )}
           >
+            {/* Two sweeps, then it rests off-frame: an endless loop needs a pause control (SC 2.2.2). */}
             {accent.glint && (
               <span
                 aria-hidden="true"
-                className="plan-badge-glint pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
+                className="plan-badge-glint pointer-events-none absolute [animation-iteration-count:2]! [animation-fill-mode:forwards]! inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
               />
             )}
             {/* Above the glint, which is positioned. */}

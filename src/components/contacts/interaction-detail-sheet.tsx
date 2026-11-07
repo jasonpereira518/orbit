@@ -329,8 +329,12 @@ export function InteractionDetailSheet({
         ) : editing ? (
           <div className="flex-1 space-y-4 overflow-y-auto px-4 pb-2">
             <div className="space-y-2">
-              <Label>Type</Label>
-              <div className="grid grid-cols-3 gap-1.5">
+              <Label id="interaction-edit-type-label">Type</Label>
+              <div
+                role="group"
+                aria-labelledby="interaction-edit-type-label"
+                className="grid grid-cols-3 gap-1.5"
+              >
                 {SELECTABLE_INTERACTION_TYPES.map((t) => {
                   const fam = interactionFamilySpec(t.value);
                   const on = t.value === formType;
@@ -407,7 +411,7 @@ export function InteractionDetailSheet({
             {detail.topics.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {detail.topics.map((topic) => (
-                  <Badge key={topic} variant="outline" className="text-[11px]">
+                  <Badge key={topic} variant="outline" className="text-2xs">
                     {topic}
                   </Badge>
                 ))}
@@ -448,7 +452,7 @@ export function InteractionDetailSheet({
                           {item.reminderId ? (
                             <Badge
                               variant="outline"
-                              className="mt-1 text-[10px]"
+                              className="mt-1 text-3xs"
                             >
                               reminder set
                             </Badge>

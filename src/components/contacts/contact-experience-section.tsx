@@ -128,7 +128,7 @@ function ChipRow({ label, items }: { label: string; items: string[] }) {
         {items.map((item, index) => (
           <span
             key={`${index}-${item}`}
-            className="rounded-full border border-border/70 px-2.5 py-1 text-[11px] text-muted-foreground"
+            className="rounded-full border border-border/70 px-2.5 py-1 text-2xs text-muted-foreground"
           >
             {item}
           </span>

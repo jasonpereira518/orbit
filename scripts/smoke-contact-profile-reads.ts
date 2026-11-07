@@ -120,7 +120,7 @@ async function legacyListRelatedContacts(contactId: string, limit = 6): Promise<
   if (ranked.length === 0) return ranked;
   const displayRows = await db.query.contacts.findMany({
     where: inArray(contacts.id, ranked.map((r) => r.id)),
-    columns: { id: true, firstName: true, title: true, location: true, linkedinUrl: true, email: true, phone: true },
+    columns: { id: true, firstName: true, title: true, location: true, linkedinUrl: true, email: true, phone: true, nameGuess: true },
     extras: { profileImageUrl: clientAvatarUrlSql.as("profile_image_url") },
   });
   const displayById = new Map(displayRows.map((r) => [r.id, r]));

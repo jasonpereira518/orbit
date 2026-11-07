@@ -86,6 +86,8 @@ above. Vercel Pro crons remove the rule entirely.
 | `radarfeeds.run_failed` | The last news sweep failed or was killed. Read its `cron_runs` row and the `job.radar.feeds` error. One feed being down marks the sweep `partial`, which is not an alert; `external_sources.consecutive_failures` says which feed and for how long. To turn a feed off, set its `enabled` to false. |
 | `radardigest.schedule_missed` | Radar's Monday email, which runs hourly through Sunday and Monday UTC, has not started for six days, so a whole Sunday passed without a run and nobody gets their weekly list. Check the ops workflow ran the `13 * * * 0,1` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/digest`. A run outside someone's Monday 06:00–09:00 sends them nothing, and the week claim means a repeated run never sends twice. |
 | `radardigest.run_failed` | The last Monday-email run failed or was killed. Read its `cron_runs` row and the `job.radar.digest` error. A send Resend refused marks the run `partial`, which is not an alert: that person's claim is released and the next hour retries; the `resend.rejected` error (kind `radar.digest`) carries Resend's reason, recorded once per run. `notConfigured` in the stats means `RESEND_API_KEY` or `RESEND_FROM_EMAIL` is unset. To stop the email for everyone, hide `page.radar`; for one person, set their `radar_digest_enabled` to 0. |
+| `emailintel.schedule_missed` | The email-insights sweep started once and then went quiet for over two hours (it runs every fifteen minutes), so new application updates are not being noticed. Check the ops workflow ran the `5,20,35,50 * * * *` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/email-intel/sweep`. Never having run is not an alert: the feature is opt-in. |
+| `emailintel.run_failed` | The last email-insights run failed or was killed. Read its `cron_runs` row (job `email-intel.sweep`) and the `email-intel.sweep` errors. One account failing, running out of its daily allowance, or out of time marks the run `partial`, which is not an alert. |
 | `backfill.failed` | `/admin/health` → error events, source `backfill.failed`: `kind` names the backfill, `message` says why. Two or more accounts means it is not one user's key — check the provider status panel and `ai.provider_outage`. |
 | `config.statement_timeout_unbounded` | Run `ALTER ROLE <app role> SET statement_timeout = '20s';` (Neon one-time settings below), then confirm `GET /api/health?token=$HEALTH_TOKEN` shows `config.statementTimeout: "20s"`. It clears on the next sweep. |
 | `embedding.backlog` | Check `backfill.failed`, `embedding.unembeddable` and `ai.provider_outage` first. One account: usually that user's key (they already see an account alert). Several: `/admin/health` → Nightly job stats — `embeddingsGenerated` 0 with `embeddingBackfillsKicked` > 0 means every kick is failing. |
@@ -95,6 +97,17 @@ above. Vercel Pro crons remove the rule entirely.
 | `calendar.disarmed` | `SELECT sync_error, count(*) FROM gmail_connections WHERE next_sync_at IS NULL AND sync_error IS NOT NULL GROUP BY 1 ORDER BY 2 DESC;` One error string across many accounts is Google's side (API change, consent-screen or scope change, project quota in Google Cloud Console). Users reconnect from the Integrations dialog once it is fixed. |
 | `avatar.source_exhausted` | Informational: that source's shared daily allowance (`RATE_LIMITS.avatarSourceShared`) is gone and photo lookups wait for tomorrow. Daily before noon means raising the budget or buying the source's paid plan (`MICROLINK_API_KEY` skips the shared Microlink budget). |
 | `apollo.hosted_cap_hits` | Informational: accounts used their daily hosted Apollo allowance (`RATE_LIMITS.apolloSearch` / `apolloEnrich`). Compare with the Apollo plan's credits before raising either. |
+| `billing.ledger_drift` | Live MRR and the revenue ledger disagree and nothing has landed for an hour. Likeliest causes, in order: a Stripe webhook was dropped (`/admin/health` → webhooks), an account was comped over a live subscription (the comp zeroes live MRR but the invoices keep booking), or an account was deleted before its cancellation arrived. `SELECT user_id, sum(mrr_delta_cents) FROM billing_events GROUP BY 1 HAVING sum(mrr_delta_cents) <> 0;` against `user_settings` names the account. `analytics/checks/reconciliation.sql` has the full set. |
+| `billing.stripe_drift` | Critical: Stripe and the database disagree about at least one live subscription (plan, amount, or whether it is live at all). The daily job (`POST /api/ops/billing-reconcile`) returns the accounts when run by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/ops/billing-reconcile`. `in_stripe_not_in_db`: someone is paying for something they do not have, so comp the plan and find the missed webhook. `in_db_not_in_stripe`: someone has a plan they do not pay for. |
+| `billing.reconcile_missed` / `billing.reconcile_failed` | The 06:23 UTC Stripe comparison has not run for 30 hours, or its last run failed. Check the ops workflow ran the step; `STRIPE_SECRET_KEY` must be set (a restricted read key is enough). Run it by hand with the `curl` above. |
+| `product.signups_drop` | Sign-ups in the last 7 days are under half of the 7 before, with at least 10 in the earlier week. Check `/admin/analytics` for a traffic drop first (the beacon, a renamed route), then the waitlist and invite flow. |
+| `product.activation_drop` | The week that just finished its first week activated at under 60% of the trailing rate, with at least 20 accounts in it. Read `/admin/beta` by onboarding path and wave; a change that shipped to that cohort is the usual cause. |
+| `product.funnel_break` | Critical: 10 or more accounts in two days and not one capture saved by anyone. Capture is probably broken: try one yourself, then `/admin/health` → AI failures and the capture job statuses. |
+| `product.checkout_break` | Critical: checkouts started in the last day and nothing paid. Stripe Dashboard → Developers → Logs, then `stripe.checkout_error` and the webhook streaks above. |
+| `quality.failure_rate:capture` / `:import` / `:email` | More than 5% of that flow's attempts failed in 24 hours, with at least 20 attempts. `/admin/beta` → Failures people saw names how many accounts it touched; the flow's own status column (`capture_jobs.status`, `imports.status`, `email_sends.status`) and its `error` text name the cause. |
+| `cost.heavy_user` | An account cost Orbit more in a day than its plan's ceiling (`DAILY_COST_CEILING_MICROS` in `src/lib/product-ops.ts`). `/admin/billing/costs` lists heavy accounts; for a voice-heavy free account check the speech cap, for a Lifetime or comped one decide whether to cap. |
+| `tracking.silence` / `tracking.events_silence` | Critical: no page view for two hours in the daytime after a busy day before, so every traffic number is going stale. Check `ANALYTICS_SALT` is set, `/api/p/v` (or `/api/track`) answers 204, and that the beacon is in the root layout. `tracking.events_silence` is the same for `product_events`: a deploy that broke `track()` (Sentry source `analytics.track`). |
+| `cron.silent:<job>` | A job that records runs (`email.drain`, `connectors.outbox`, `credits.notices`, `cloud-notes.run`) has not started for longer than its cadence allows. Check the ops workflow ran it, then run it by hand with the route's `curl`. A dead email drain means messages are queued and not sent. |
 | `deploy.drift` | A build is failing. Vercel → Deployments → open the red one → fix → push. |
 | `config.missing` | Vercel → Environment Variables. The alert names the variable. |
 | `config.alerts_undeliverable` | Slack → your app → Incoming Webhooks → copy the URL → Vercel → Environment Variables → `SLACK_OPS_WEBHOOK_URL` (Production) → Redeploy. Until then `/admin/health` is the only place alerts appear. |
@@ -132,6 +145,71 @@ Monday email. Every switch, smallest first:
   Monday email sends nothing. Once released, the pass claims every account active in the last
   60 days and the email goes to active accounts with a pending card. It was released on Sep 30
   2026 (#380) and put back behind coming soon the same day.
+
+## Email insights: switches
+
+Email insights (`src/lib/email-intel/`) checks opted-in accounts' Gmail every fifteen minutes
+for new job and hiring-process threads. Ingest reads sender, subject, participants and Gmail's
+short preview. For a thread that looks like a hiring conversation, extraction then sends the
+latest messages (up to four, 4,000 characters each) to the account's AI provider and keeps
+only the derived notes and one short quote: no message bodies are stored. Every switch,
+smallest first:
+
+- **One account:** `UPDATE user_settings SET email_intel_enabled = 0 WHERE user_id = '<id>';`
+  (the person can do it themselves in Settings). Disconnecting Gmail deletes what it recorded
+  and turns it off; an insights wipe in Settings also removes `email_threads` and `email_events`.
+- **Everyone:** delete the "Run the email-insights sweep" step from `.github/workflows/ops.yml`
+  and its `5,20,35,50 * * * *` schedule line. The route can stay; nothing calls it.
+- **Turning it on for someone** needs the recruiter plan (Pro or Lifetime) and Gmail's mail
+  scope (the `email_intel` purpose). `gmail.readonly` is a restricted scope, so until the CASA
+  assessment passes only listed Google test users can grant it.
+- **Where it shows:** the Settings switch renders wherever Radar is live (it was added after
+  Radar's release, so it is visible on merge). It is off by default per account, disabled with
+  "Available on Orbit Pro and Orbit Max" on other plans, and asks for Gmail's mail scope only
+  when someone presses it. To pull it from view, hide `page.radar` in `/admin/product` (which
+  also stands Radar down) or remove the `EmailIntelSetting` mount in the settings page.
+- **Model spend:** each extraction is one fast-tier call on the person's own key, capped at
+  `RATE_LIMITS.emailIntelExtractDaily` (40 per account per UTC day). A person whose key is
+  refused, out of credit, or whose model is gone has their waiting threads parked for six hours
+  with nothing counted against them.
+- **Where threads are:** `SELECT status, count(*) FROM email_threads GROUP BY 1;` —
+  `pending_ai` is waiting, `claimed` is being read (a claim older than ten minutes is taken
+  back on the next run), `failed` gave up after three counted attempts.
+- **Retry a failed thread:** `UPDATE email_threads SET status = 'pending_ai', stall_resumes = 0,
+  claimed_at = NULL, claim_token = NULL WHERE id = '<id>';`
+- **What the last run did:** `/admin/health` → the `email-intel.sweep` run's stats. `ingest_*`
+  is listing and triage; `extract_*` is model work (`keyProblems`, `budgetStops` and `released`
+  are ordinary; `failed` and `errors` are worth a look; `rejected_*` counts events the
+  validator dropped and is the way to tell an over-strict floor from a quiet mailbox).
+- **Radar cards from mail:** for an opted-in account, Radar's nightly pass reads the last 21 days
+  of `email_events`, asks `rankEventContacts` who in the network to reach for each (at most 20
+  events, three people each, inside an 8-second budget) and scores the result like any other
+  signal (`email_*` reason codes). Turning the account's switch off stops it; its email cards
+  leave the list on the next run (a manual Refresh in Radar does it at once). The Monday email
+  never carries text derived from mail (`digestLineFor`), and a draft's intent uses fixed words.
+- **"From your inbox" on Radar:** for an opted-in account, `/radar` also lists up to five people the
+  last 21 days of `email_events` name who are not contacts (by address or by name) and were not
+  dismissed (`loadInboxPeople`, four statements, one for an account that has not opted in). Add
+  creates a contact through `resolveOrCreateContact` (`source = 'email_intel'`; name, address,
+  title, nothing else) and refreshes Radar once, bounded; Dismiss writes an `ignored_people` row
+  with `context = 'Named in an email'`. Gmail disconnect and an insights wipe delete those rows
+  (`deleteInboxDismissals`). To stop it for everyone, remove the `InboxPeople` mount in
+  `radar-view.tsx`; the cards from mail are unaffected.
+- **Chat search over mail:** each `email_events` row of an opted-in account becomes one
+  `memory_chunks` row (`source_kind = 'email_event'`, `source_id` the event, summary + facts +
+  the one quote, never an address), so `search_notes` finds it and chat cites it as `[eN]`
+  "from your email". Indexing is no model call: the email sweep indexes what it just stored
+  (`index_*` in its `cron_runs` stats), and the daily embedding backfill does the same plus
+  re-checks who each chunk names; embeddings come from the existing passage phase.
+  Turning the switch off deletes the account's mail chunks at once (`deleteEmailEventChunks`);
+  a switch flipped in SQL is caught by the same prune on the next sweep (`pruneEmailEventChunks`).
+  Gmail disconnect and an insights wipe delete them with the events. To stop it for everyone,
+  drop the `indexEmailEventsForUser` call in `memory-backfill.ts` and the `runEmailEventIndexing`
+  step in the sweep route, then `DELETE FROM memory_chunks WHERE source_kind = 'email_event';`.
+  `SELECT count(*) FROM memory_chunks WHERE source_kind = 'email_event' GROUP BY user_id;`
+  shows who is indexed.
+  If a card built from mail looks wrong, `SELECT * FROM email_events WHERE id = '<id>'` (the id is
+  in the card's evidence `ref`) shows what was extracted and the quote it came from.
 
 ## Managed AI keys (included AI, every plan)
 
@@ -264,3 +342,37 @@ runner. The first real drill needs the secrets set.
   reports `config.statementTimeout`. `"0"` means unbounded — the ALTER ROLE never ran, or ran
   on the wrong role.
 - Verify the restore window under Project → Settings.
+- **JIT off for the app role.** With Postgres's default `jit = on`, a large sequential scan
+  compiles before it runs: the contacts search took 1.78 s with JIT and 0.67 s without at
+  100k contacts (`PERFORMANCE_AUDIT.md` §1.3). Check and set:
+  ```sql
+  SHOW jit;                                  -- as the app role
+  ALTER ROLE <app role> SET jit = off;       -- new connections pick it up
+  ```
+  The HTTP driver opens a connection per request, so this applies on the next one.
+
+## Database performance checks (Neon)
+
+Quarterly, or after a release that adds indexes (`SCALE_DDL` in `src/db/index.ts`).
+
+- **Indexes nobody reads.** Every index costs every write to its table. On the production
+  branch, after at least a week of traffic since the last stats reset:
+  ```sql
+  SELECT relname AS table, indexrelname AS index, idx_scan,
+         pg_size_pretty(pg_relation_size(indexrelid)) AS size
+    FROM pg_stat_user_indexes
+   WHERE schemaname = 'public' AND idx_scan = 0
+   ORDER BY pg_relation_size(indexrelid) DESC;
+  ```
+  An unused index is a candidate, not a verdict: check that it is not a unique constraint, a
+  foreign-key lookup a rare delete needs, or a path only a monthly job takes. Drop it in the
+  DDL (with a schema version bump), never by hand.
+- **Slowest statements.** With `pg_stat_statements` enabled on the project:
+  ```sql
+  SELECT calls, round(total_exec_time) AS total_ms, round(mean_exec_time) AS mean_ms,
+         rows, left(query, 120) AS query
+    FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20;
+  ```
+  Compare against the local profile (`scripts/dev/perf/`, see `docs/performance.md`); a
+  statement here that the seeded profile does not show is a plan that only production data
+  produces.

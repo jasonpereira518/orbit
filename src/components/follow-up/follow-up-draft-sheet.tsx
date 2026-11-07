@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { copyText } from "@/lib/clipboard";
 import {
   draftContactFollowUp,
   getContactFollowUpSendOptions,
@@ -226,19 +227,20 @@ export function FollowUpDraftSheet({
             pending={pending}
             sending={sending}
             marking={marking}
-            onCopy={() => {
+            onCopy={async () => {
               if (!draft.trim()) return;
-              void navigator.clipboard.writeText(draft);
-              toast.success(TOAST_COPY.copied);
+              if (await copyText(draft)) toast.success(TOAST_COPY.copied);
+              else toast.error(TOAST_COPY.copyFailed);
             }}
             onSendEmail={sendEmail}
             onMarkSent={markSent}
             onOpenLinkedIn={(url) => {
-              if (draft.trim()) {
-                void navigator.clipboard.writeText(draft);
-                toast.success(TOAST_COPY.copied);
-              }
+              // The tab opens inside the click (popup blockers); the toast waits on the copy.
+              const copied = draft.trim() ? copyText(draft) : null;
               window.open(url, "_blank", "noopener,noreferrer");
+              void copied?.then((ok) =>
+                ok ? toast.success(TOAST_COPY.copied) : toast.error(TOAST_COPY.copyFailed)
+              );
             }}
           />
         </div>

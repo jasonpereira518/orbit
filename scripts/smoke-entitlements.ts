@@ -12,7 +12,8 @@ import { getDb } from "../src/db";
 import { contacts, gateEvents, userSettings } from "../src/db/schema";
 import {
   entitlementsForPlan,
-  FEATURE_DENIAL,
+  FEATURE_KEYS,
+  featureDenial,
   FREE_CONTACT_LIMIT,
   getEntitlements,
   isPaywallError,
@@ -81,10 +82,10 @@ const SPEC: Record<
     extension: boolean;
   }
 > = {
-  free: { contactLimit: 500, credits: 50, packs: true, meeting: 0, shortform: 1 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: true, extension: true },
-  orbit: { contactLimit: null, credits: 300, packs: true, meeting: 5 * HOUR, shortform: 5 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
-  max: { contactLimit: null, credits: 650, packs: true, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
-  lifetime: { contactLimit: null, credits: 150, packs: false, meeting: 10 * HOUR, shortform: 10 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
+  free: { contactLimit: 500, credits: 50, packs: true, meeting: 0, shortform: 1.5 * HOUR, enrich: 0, connections: 1, recruiters: false, sync: false, api: false, meetings: false, hostedAi: true, extension: true },
+  orbit: { contactLimit: null, credits: 300, packs: true, meeting: 8 * HOUR, shortform: 8 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: false, meetings: true, hostedAi: true, extension: true },
+  max: { contactLimit: null, credits: 650, packs: true, meeting: 15 * HOUR, shortform: 15 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
+  lifetime: { contactLimit: null, credits: 150, packs: false, meeting: 15 * HOUR, shortform: 15 * HOUR, enrich: 0, connections: null, recruiters: true, sync: true, api: true, meetings: true, hostedAi: true, extension: true },
 };
 
 function matrix() {
@@ -125,7 +126,10 @@ function matrix() {
   check("the contact cap unlocks on Pro", unlockPlanFor("contacts") === "orbit");
   check("packs and hosted AI unlock on Free, which already has them", unlockPlanFor("creditPacks") === "free" && unlockPlanFor("hostedAi") === "free");
   check("the packs denial offers no pack and points at a key",
-    !/Orbit Pro|Orbit Max/.test(FEATURE_DENIAL.creditPacks) && /AI key/.test(FEATURE_DENIAL.creditPacks), FEATURE_DENIAL.creditPacks);
+    !/Orbit Pro|Orbit Max/.test(featureDenial("creditPacks")) && /AI key/.test(featureDenial("creditPacks")), featureDenial("creditPacks"));
+  const FEATURE_DENIAL = Object.fromEntries(
+    FEATURE_KEYS.filter((f) => f !== "hostedAi").map((f) => [f, featureDenial(f as Exclude<typeof f, "hostedAi">)])
+  ) as Record<Exclude<(typeof FEATURE_KEYS)[number], "hostedAi">, string>;
   check("hostedAi has no denial: every plan has it", !("hostedAi" in FEATURE_DENIAL));
   check("a feature every plan has reads \"every plan\", not Pro and Max", /every plan/.test(FEATURE_DENIAL.extension), FEATURE_DENIAL.extension);
   check("no denial names Lifetime", Object.values(FEATURE_DENIAL).every((m) => !/Lifetime/.test(m)));

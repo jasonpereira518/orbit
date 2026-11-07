@@ -38,15 +38,44 @@ import {
 import type { ExtractedOpportunity } from "@/lib/opportunity-extract";
 import { syncMemoryChunkMentions } from "@/lib/memory-chunks";
 import { enrichmentKeyFacts, takeawaysToSummary } from "@/lib/capture/person-enrichment";
+import { identityKeysFor } from "@/lib/duplicates";
+import { findIdentityOwners } from "@/lib/contact-identity";
+import { isHandle } from "@/lib/contact-name-guess";
+
+/**
+ * Whether a note's name for someone should replace the one on file. Only when it says more:
+ * "Sarah" must never shrink "Sarah Chen", and "Mike Torres" must not replace "Michael
+ * Torres". A handle or an empty name on file is always replaced.
+ */
+export function nameUpgrades(current: string | null | undefined, incoming: string | null | undefined): boolean {
+  const next = incoming?.trim();
+  if (!next) return false;
+  const now = current?.trim();
+  if (!now || isHandle(now)) return true;
+  return next.split(/\s+/).length > now.split(/\s+/).length;
+}
+
+/** "Ada King Lovelace" → first "Ada", last "Lovelace". One word is a first name only. */
+function splitName(name: string): { firstName?: string; lastName?: string } {
+  const parts = name.trim().split(/\s+/);
+  if (!parts[0]) return {};
+  return parts.length > 1 ? { firstName: parts[0], lastName: parts[parts.length - 1] } : { firstName: parts[0] };
+}
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
 import { reportAndContinue } from "@/lib/report-error";
 import { owedByFromDigest } from "@/lib/meeting-extras";
 import { deleteCapturePhotosForBatch } from "@/lib/capture-photos";
+import { trackFollowUpSet } from "@/lib/reminder-writes";
 
 export type NoteBatchParticipantInput = {
   notes: string;
+  /**
+   * The cached web brief this card was filled from (`capture/web-lookup.ts`). Not read
+   * here: the capture runner attaches the brief's work history after the save.
+   */
+  webResearchKey?: string | null;
   /**
    * The note this person came from, when the batch folds several (a combined upload). Keys
    * their interaction, so the same contact in two notes gets both conversations; and a
@@ -68,6 +97,9 @@ export type NoteBatchParticipantInput = {
   followUpDays?: number | null;
   interactionDate?: string | null;
   interactionType?: string | null;
+  /** This person's own `externalIdBase` / `interactionSource`, over the batch's (a Granola card). */
+  externalIdBase?: string;
+  interactionSource?: string;
   /**
    * Typed opportunities this person's card kept. Already validated and already filtered by
    * whatever the review UI left ticked — this module stores, it does not re-decide.
@@ -76,6 +108,12 @@ export type NoteBatchParticipantInput = {
   /** A cadence the notes stated for this person, resolved to days. */
   cadenceDays?: number | null;
   cadencePhrase?: string | null;
+  /**
+   * An unattended merge (a Drive import — no one reviews it). Fills the contact's EMPTY
+   * identity fields and leaves any value already there alone: a shared doc, or a model's
+   * misread of one, must not be able to rename a contact or change their email.
+   */
+  fillOnly?: boolean;
 };
 
 export type NoteBatchOpportunityInput = Pick<
@@ -137,6 +175,19 @@ export type SaveNoteBatchInput = {
    * meeting is saveable with no people and no dates — the summary is the point.
    */
   meeting?: { summary: NoteBatchMeeting; extraReminders: MeetingExtraReminderInput[] } | null;
+  /**
+   * Record `followup_set` (origin "capture") for each reminder this save creates. Opt-in:
+   * the review flow sets it because the person ticked those reminders; an unattended caller
+   * (the Drive importer) leaves it off, since a reminder nobody reviewed is not one they set.
+   */
+  trackFollowUps?: boolean;
+  /** `interactions.source` for the logged interactions. Defaults to `"capture"`. */
+  interactionSource?: string;
+  /**
+   * A connector's own stable id for the note (e.g. `granola:<noteId>`), used in place of the
+   * text hash so an edited note resolves to the same interaction instead of logging a second.
+   */
+  externalIdBase?: string;
 };
 
 const MEETING_REMINDER_PREFIX: Record<MeetingExtraReminderInput["kind"], string> = {
@@ -283,27 +334,54 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           : {}),
         ...(followUpDate ? { nextFollowUpAt: followUpDate.toISOString() } : {}),
       };
+      // A card headed for "new" whose email, LinkedIn, phone or X handle already belongs to
+      // one contact is that contact: update them rather than minting a duplicate that the
+      // identity claim would then leave orphaned.
+      if (!contactId) {
+        const keys = identityKeysFor(fields);
+        if (keys.length) {
+          const owners = new Set((await findIdentityOwners(userId, keys)).map((o) => o.contactId));
+          if (owners.size === 1) contactId = [...owners][0];
+        }
+      }
       if (contactId) {
         // Merge: never overwrite contacts.notes — the new material lives on the timeline.
         // Tags are ADDED to the contact's own, never a replacement list: `updateContactForUser`
         // sets the full list, and the note's tags alone would delete the rest (an empty list
         // deleted them all).
-        const { tagNames, phone, xHandle, website, school, industry, keyFacts: noteFacts, relationshipScore, statedCloseness, ...rest } = fields;
+        const { tagNames, phone, xHandle, website, school, industry, keyFacts: noteFacts, relationshipScore, statedCloseness, ...restAll } = fields;
+        let rest: typeof restAll = restAll;
         // Handles fill gaps and never overwrite: a phone the person typed on the contact
         // outranks one a note happened to mention. Key facts accumulate — writing the note's
         // list outright would delete everything earlier notes taught Orbit about them.
         const [current] = await db
           .select({
+            fullName: contacts.fullName,
             phone: contacts.phone,
             xHandle: contacts.xHandle,
             website: contacts.website,
             school: contacts.school,
             industry: contacts.industry,
             keyFacts: contacts.keyFacts,
+            company: contacts.company,
+            title: contacts.title,
+            location: contacts.location,
+            email: contacts.email,
+            linkedinUrl: contacts.linkedinUrl,
+            howMet: contacts.howMet,
+            aiSummary: contacts.aiSummary,
           })
           .from(contacts)
           .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)))
           .limit(1);
+        if (p.fillOnly && current) {
+          const IDENTITY = ["company", "title", "location", "email", "linkedinUrl", "howMet", "aiSummary"] as const;
+          const kept = { ...restAll } as Record<string, unknown>;
+          for (const key of IDENTITY) {
+            if (typeof current[key] === "string" && current[key]!.trim()) delete kept[key];
+          }
+          rest = kept as typeof restAll;
+        }
         const gaps = {
           ...(phone && !current?.phone ? { phone } : {}),
           ...(xHandle && !current?.xHandle ? { xHandle } : {}),
@@ -318,7 +396,12 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           userId,
           contactId,
           {
-            fullName: parsed.name || undefined,
+            // Unattended runs only fill a blank (or a bare handle) name; the rest may upgrade a partial one.
+            ...((p.fillOnly
+              ? !current?.fullName?.trim() || isHandle(current.fullName.trim())
+              : nameUpgrades(current?.fullName, parsed.name)) && parsed.name
+              ? { fullName: parsed.name }
+              : {}),
             ...rest,
             // updateContactForUser mirrors this into statedCloseness.
             ...(p.closenessChosen ? { relationshipScore } : {}),
@@ -333,7 +416,14 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         if (!parsed.name) throw new Error("A name is required to create a contact");
         const row = await createContactForUser(
           userId,
-          { fullName: parsed.name, ...fields, source: "ai_capture", notes: p.notes },
+          {
+            fullName: parsed.name,
+            ...splitName(parsed.name),
+            ...fields,
+            dateMet: p.interactionDate?.trim() || parsed.interaction_date?.trim() || input.anchorIso,
+            source: "ai_capture",
+            notes: p.notes,
+          },
           WRITE_OPTS
         );
         contactId = row.id;
@@ -353,9 +443,11 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
           topics: parsed.topics,
           actionItems: parsed.action_items,
           interactionType: p.interactionType || "meeting_note",
-          source: "capture",
+          source: p.interactionSource ?? input.interactionSource ?? "capture",
           interactionDate,
-          externalId: noteInteractionExternalId(p.sourceHash ?? input.sourceHash, contactId),
+          externalId: (p.externalIdBase ?? input.externalIdBase)
+            ? `${p.externalIdBase ?? input.externalIdBase}:${contactId}`
+            : noteInteractionExternalId(p.sourceHash ?? input.sourceHash, contactId),
           noteBatchId: batchId,
         },
         WRITE_OPTS
@@ -613,6 +705,10 @@ export async function saveNoteBatch(userId: string, input: SaveNoteBatchInput): 
         .onConflictDoNothing({ target: [reminders.userId, reminders.itemHash] })
         .returning();
       remindersCreated = inserted.length;
+      // Deterministic per (reminder, due day), so the resumed save of a crashed job is a no-op.
+      if (input.trackFollowUps) {
+        for (const r of inserted) trackFollowUpSet(userId, r, "capture");
+      }
       const reminderByActionItem = new Map<string, string>();
       for (const r of inserted) {
         result.reminders.push({

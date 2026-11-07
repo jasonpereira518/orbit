@@ -1,0 +1,681 @@
+{
+  "tier": "500",
+  "at": "2026-10-17T23:03:52.949Z",
+  "mock": {
+    "ok": true,
+    "delays": {
+      "ttft": 900,
+      "token": 12,
+      "tokens": 180,
+      "json": 900,
+      "jsonLarge": 4000,
+      "embed": 215,
+      "stt": 1500
+    }
+  },
+  "chat": {
+    "lookup": {
+      "question": "Who do I know at Acme?",
+      "first_token_p50": 3009,
+      "complete_p50": 5234,
+      "headers_p50": 20,
+      "statements_p50": 31,
+      "runs": [
+        {
+          "status": 200,
+          "headers_ms": 65,
+          "first_token_ms": 3304,
+          "complete_ms": 5590,
+          "answer_chars": 1226,
+          "statements": 36,
+          "steps": [
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Working out what you're asking f",
+              "at": 128
+            },
+            {
+              "step": "{\"id\":\"roster\",\"kind\":\"roster\",\"label\":\"You know 30 people at Acme\",\"status\":\"do",
+              "at": 154
+            },
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Worked out what you're asking fo",
+              "at": 1203
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searching your network\",\"status\":\"active",
+              "at": 1204
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 30 candidat",
+              "at": 1430
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Ranking 30 candidates\",\"status\":\"active\"}",
+              "at": 1430
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 30 candidat",
+              "at": 1440
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2353
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2353
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Reading notes on 12 people\",\"status\":\"active",
+              "at": 2354
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Read notes on 10 people\",\"status\":\"done\",\"ms",
+              "at": 2385
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Writing the answer\",\"status\":\"active\"}",
+              "at": 2388
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Wrote the answer\",\"status\":\"done\",\"ms\":3",
+              "at": 5589
+            }
+          ],
+          "marks": {
+            "headers": 65,
+            "blocks": 2388,
+            "evidence": 2388,
+            "recommendations": 5589
+          },
+          "error": null
+        },
+        {
+          "status": 200,
+          "headers_ms": 15,
+          "first_token_ms": 3009,
+          "complete_ms": 5234,
+          "answer_chars": 1226,
+          "statements": 31,
+          "steps": [
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Working out what you're asking f",
+              "at": 32
+            },
+            {
+              "step": "{\"id\":\"roster\",\"kind\":\"roster\",\"label\":\"You know 30 people at Acme\",\"status\":\"do",
+              "at": 50
+            },
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Worked out what you're asking fo",
+              "at": 964
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searching your network\",\"status\":\"active",
+              "at": 964
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 30 candidat",
+              "at": 1161
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Ranking 30 candidates\",\"status\":\"active\"}",
+              "at": 1161
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 30 candidat",
+              "at": 1169
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2082
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2082
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Reading notes on 12 people\",\"status\":\"active",
+              "at": 2082
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Read notes on 10 people\",\"status\":\"done\",\"ms",
+              "at": 2098
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Writing the answer\",\"status\":\"active\"}",
+              "at": 2099
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Wrote the answer\",\"status\":\"done\",\"ms\":3",
+              "at": 5233
+            }
+          ],
+          "marks": {
+            "headers": 15,
+            "blocks": 2099,
+            "evidence": 2099,
+            "recommendations": 5234
+          },
+          "error": null
+        },
+        {
+          "status": 200,
+          "headers_ms": 20,
+          "first_token_ms": 2968,
+          "complete_ms": 5204,
+          "answer_chars": 1226,
+          "statements": 31,
+          "steps": [
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Working out what you're asking f",
+              "at": 39
+            },
+            {
+              "step": "{\"id\":\"roster\",\"kind\":\"roster\",\"label\":\"You know 30 people at Acme\",\"status\":\"do",
+              "at": 49
+            },
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Worked out what you're asking fo",
+              "at": 960
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searching your network\",\"status\":\"active",
+              "at": 960
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 30 candidat",
+              "at": 1125
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Ranking 30 candidates\",\"status\":\"active\"}",
+              "at": 1125
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 30 candidat",
+              "at": 1131
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2042
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2043
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Reading notes on 12 people\",\"status\":\"active",
+              "at": 2043
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Read notes on 10 people\",\"status\":\"done\",\"ms",
+              "at": 2057
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Writing the answer\",\"status\":\"active\"}",
+              "at": 2058
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Wrote the answer\",\"status\":\"done\",\"ms\":3",
+              "at": 5204
+            }
+          ],
+          "marks": {
+            "headers": 20,
+            "blocks": 2058,
+            "evidence": 2058,
+            "recommendations": 5204
+          },
+          "error": null
+        }
+      ]
+    },
+    "open": {
+      "question": "Who should I talk to about hiring a staff engineer in Toronto?",
+      "first_token_p50": 3058,
+      "complete_p50": 5278,
+      "headers_p50": 17,
+      "statements_p50": 40,
+      "runs": [
+        {
+          "status": 200,
+          "headers_ms": 17,
+          "first_token_ms": 3060,
+          "complete_ms": 5298,
+          "answer_chars": 1226,
+          "statements": 45,
+          "steps": [
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Working out what you're asking f",
+              "at": 32
+            },
+            {
+              "step": "{\"id\":\"attention\",\"kind\":\"attention\",\"label\":\"Checking who is overdue\",\"status\":",
+              "at": 952
+            },
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Worked out what you're asking fo",
+              "at": 952
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searching your network\",\"status\":\"active",
+              "at": 953
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 60 candidat",
+              "at": 1201
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Ranking 60 candidates\",\"status\":\"active\"}",
+              "at": 1201
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 60 candidat",
+              "at": 1214
+            },
+            {
+              "step": "{\"id\":\"attention\",\"kind\":\"attention\",\"label\":\"Checked 12 overdue follow-ups\",\"st",
+              "at": 1216
+            },
+            {
+              "step": "{\"id\":\"attention\",\"kind\":\"attention\",\"label\":\"Checked 12 overdue follow-ups\",\"st",
+              "at": 1220
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2132
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2132
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Reading notes on 12 people\",\"status\":\"active",
+              "at": 2133
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Read notes on 10 people\",\"status\":\"done\",\"ms",
+              "at": 2148
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Writing the answer\",\"status\":\"active\"}",
+              "at": 2149
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Wrote the answer\",\"status\":\"done\",\"ms\":3",
+              "at": 5298
+            }
+          ],
+          "marks": {
+            "headers": 17,
+            "blocks": 2149,
+            "evidence": 2149,
+            "recommendations": 5298
+          },
+          "error": null
+        },
+        {
+          "status": 200,
+          "headers_ms": 20,
+          "first_token_ms": 3058,
+          "complete_ms": 5278,
+          "answer_chars": 1226,
+          "statements": 40,
+          "steps": [
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Working out what you're asking f",
+              "at": 36
+            },
+            {
+              "step": "{\"id\":\"attention\",\"kind\":\"attention\",\"label\":\"Checking who is overdue\",\"status\":",
+              "at": 957
+            },
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Worked out what you're asking fo",
+              "at": 957
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searching your network\",\"status\":\"active",
+              "at": 957
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 60 candidat",
+              "at": 1198
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Ranking 60 candidates\",\"status\":\"active\"}",
+              "at": 1198
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 60 candidat",
+              "at": 1207
+            },
+            {
+              "step": "{\"id\":\"attention\",\"kind\":\"attention\",\"label\":\"Checked 12 overdue follow-ups\",\"st",
+              "at": 1209
+            },
+            {
+              "step": "{\"id\":\"attention\",\"kind\":\"attention\",\"label\":\"Checked 12 overdue follow-ups\",\"st",
+              "at": 1214
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2126
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2126
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Reading notes on 12 people\",\"status\":\"active",
+              "at": 2126
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Read notes on 10 people\",\"status\":\"done\",\"ms",
+              "at": 2145
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Writing the answer\",\"status\":\"active\"}",
+              "at": 2146
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Wrote the answer\",\"status\":\"done\",\"ms\":3",
+              "at": 5277
+            }
+          ],
+          "marks": {
+            "headers": 20,
+            "blocks": 2146,
+            "evidence": 2147,
+            "recommendations": 5277
+          },
+          "error": null
+        },
+        {
+          "status": 200,
+          "headers_ms": 15,
+          "first_token_ms": 3044,
+          "complete_ms": 5274,
+          "answer_chars": 1226,
+          "statements": 40,
+          "steps": [
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Working out what you're asking f",
+              "at": 36
+            },
+            {
+              "step": "{\"id\":\"attention\",\"kind\":\"attention\",\"label\":\"Checking who is overdue\",\"status\":",
+              "at": 960
+            },
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Worked out what you're asking fo",
+              "at": 960
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searching your network\",\"status\":\"active",
+              "at": 960
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 60 candidat",
+              "at": 1196
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Ranking 60 candidates\",\"status\":\"active\"}",
+              "at": 1196
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 60 candidat",
+              "at": 1203
+            },
+            {
+              "step": "{\"id\":\"attention\",\"kind\":\"attention\",\"label\":\"Checked 12 overdue follow-ups\",\"st",
+              "at": 1205
+            },
+            {
+              "step": "{\"id\":\"attention\",\"kind\":\"attention\",\"label\":\"Checked 12 overdue follow-ups\",\"st",
+              "at": 1208
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2118
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 12 closest matches\",\"detail\":\"In se",
+              "at": 2118
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Reading notes on 12 people\",\"status\":\"active",
+              "at": 2118
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Read notes on 10 people\",\"status\":\"done\",\"ms",
+              "at": 2132
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Writing the answer\",\"status\":\"active\"}",
+              "at": 2134
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Wrote the answer\",\"status\":\"done\",\"ms\":3",
+              "at": 5273
+            }
+          ],
+          "marks": {
+            "headers": 15,
+            "blocks": 2134,
+            "evidence": 2134,
+            "recommendations": 5273
+          },
+          "error": null
+        }
+      ]
+    },
+    "person": {
+      "question": "What did I last discuss with Sarah Chen?",
+      "first_token_p50": 2065,
+      "complete_p50": 4304,
+      "headers_p50": 13,
+      "statements_p50": 27,
+      "runs": [
+        {
+          "status": 200,
+          "headers_ms": 17,
+          "first_token_ms": 2048,
+          "complete_ms": 4303,
+          "answer_chars": 1226,
+          "statements": 32,
+          "steps": [
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Working out what you're asking f",
+              "at": 32
+            },
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Worked out what you're asking fo",
+              "at": 949
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searching your network\",\"status\":\"active",
+              "at": 949
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 5 candidate",
+              "at": 1123
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Ranking 5 candidates\",\"status\":\"active\"}",
+              "at": 1123
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 5 closest matches\",\"status\":\"done\",",
+              "at": 1123
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Reading notes on 5 people\",\"status\":\"active\"",
+              "at": 1126
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Read notes on 5 people\",\"detail\":\"5 career h",
+              "at": 1140
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Writing the answer\",\"status\":\"active\"}",
+              "at": 1140
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Wrote the answer\",\"status\":\"done\",\"ms\":3",
+              "at": 4303
+            }
+          ],
+          "marks": {
+            "headers": 17,
+            "blocks": 1140,
+            "evidence": 1140,
+            "recommendations": 4303
+          },
+          "error": null
+        },
+        {
+          "status": 200,
+          "headers_ms": 13,
+          "first_token_ms": 2065,
+          "complete_ms": 4306,
+          "answer_chars": 1226,
+          "statements": 27,
+          "steps": [
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Working out what you're asking f",
+              "at": 28
+            },
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Worked out what you're asking fo",
+              "at": 948
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searching your network\",\"status\":\"active",
+              "at": 949
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 5 candidate",
+              "at": 1140
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Ranking 5 candidates\",\"status\":\"active\"}",
+              "at": 1140
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 5 closest matches\",\"status\":\"done\",",
+              "at": 1140
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Reading notes on 5 people\",\"status\":\"active\"",
+              "at": 1144
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Read notes on 5 people\",\"detail\":\"5 career h",
+              "at": 1156
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Writing the answer\",\"status\":\"active\"}",
+              "at": 1157
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Wrote the answer\",\"status\":\"done\",\"ms\":3",
+              "at": 4305
+            }
+          ],
+          "marks": {
+            "headers": 13,
+            "blocks": 1157,
+            "evidence": 1157,
+            "recommendations": 4305
+          },
+          "error": null
+        },
+        {
+          "status": 200,
+          "headers_ms": 12,
+          "first_token_ms": 2081,
+          "complete_ms": 4304,
+          "answer_chars": 1226,
+          "statements": 27,
+          "steps": [
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Working out what you're asking f",
+              "at": 30
+            },
+            {
+              "step": "{\"id\":\"understand\",\"kind\":\"understand\",\"label\":\"Worked out what you're asking fo",
+              "at": 956
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searching your network\",\"status\":\"active",
+              "at": 957
+            },
+            {
+              "step": "{\"id\":\"search\",\"kind\":\"search\",\"label\":\"Searched your network, found 5 candidate",
+              "at": 1148
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Ranking 5 candidates\",\"status\":\"active\"}",
+              "at": 1148
+            },
+            {
+              "step": "{\"id\":\"rank\",\"kind\":\"rank\",\"label\":\"Kept the 5 closest matches\",\"status\":\"done\",",
+              "at": 1148
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Reading notes on 5 people\",\"status\":\"active\"",
+              "at": 1152
+            },
+            {
+              "step": "{\"id\":\"read\",\"kind\":\"read\",\"label\":\"Read notes on 5 people\",\"detail\":\"5 career h",
+              "at": 1162
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Writing the answer\",\"status\":\"active\"}",
+              "at": 1163
+            },
+            {
+              "step": "{\"id\":\"answer\",\"kind\":\"answer\",\"label\":\"Wrote the answer\",\"status\":\"done\",\"ms\":3",
+              "at": 4303
+            }
+          ],
+          "marks": {
+            "headers": 12,
+            "blocks": 1163,
+            "evidence": 1163,
+            "recommendations": 4304
+          },
+          "error": null
+        }
+      ]
+    }
+  },
+  "capture": {
+    "notes_chars": 478,
+    "reviewed_p50": 8167,
+    "runs": [
+      {
+        "queued_ms": 17,
+        "reviewed_ms": 8204,
+        "status": "ready",
+        "people": 5,
+        "statements": 31
+      },
+      {
+        "queued_ms": 12,
+        "reviewed_ms": 8162,
+        "status": "ready",
+        "people": 5,
+        "statements": 31
+      },
+      {
+        "queued_ms": 16,
+        "reviewed_ms": 8167,
+        "status": "ready",
+        "people": 5,
+        "statements": 31
+      }
+    ]
+  }
+}

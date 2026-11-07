@@ -18,7 +18,7 @@ import { findScanHandoff } from "@/lib/scan-handoff";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Scan notes · Orbit",
+  title: "Scan notes",
   // A handoff link is single-use and short-lived; there is nothing here to index.
   robots: { index: false, follow: false },
 };
@@ -40,6 +40,7 @@ export default async function ScanHandoffPage({
 
   return (
     <main
+      id="main-content"
       className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-6 px-5 pt-5"
       style={{ paddingTop: "calc(1.25rem + env(safe-area-inset-top))" }}
     >

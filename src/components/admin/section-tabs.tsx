@@ -5,7 +5,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-export type SectionTab = { href: string; label: string };
+export type SectionTab = {
+  href: string;
+  label: string;
+  /** A small warning count beside the label, e.g. hidden surfaces or open problems. */
+  count?: number;
+  /** Tooltip for the count, e.g. "hidden". */
+  countTitle?: string;
+};
 
 /**
  * A section's secondary tab row.
@@ -45,7 +52,7 @@ export function SectionTabs({
       <span aria-hidden className="absolute inset-x-0 bottom-0 h-px bg-border/60" />
       <div
         ref={scroller}
-        className="relative flex gap-1 overflow-x-auto [scrollbar-width:none]"
+        className="relative flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {tabs.map((tab) => {
           const active =
@@ -58,13 +65,21 @@ export function SectionTabs({
               href={tab.href}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors",
+                "flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition-colors",
                 active
                   ? "border-primary text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground"
               )}
             >
               {tab.label}
+              {tab.count ? (
+                <span
+                  className="rounded-full bg-destructive/12 px-1.5 text-[0.6875rem] tabular-nums text-destructive"
+                  title={tab.countTitle ? `${tab.count} ${tab.countTitle}` : undefined}
+                >
+                  {tab.count}
+                </span>
+              ) : null}
             </Link>
           );
         })}

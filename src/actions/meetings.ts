@@ -5,21 +5,21 @@ import { getDb } from "@/db";
 import { calendarSources, gmailConnections, meetingSessions, type MeetingDigest } from "@/db/schema";
 import { completeJson, parseAiJson, type CaptureParseHints } from "@/lib/ai";
 import { requireUserId } from "@/lib/auth";
-import { deepgramEnabled } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
 import { ReauthRequiredError } from "@/lib/errors";
 import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
 import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
 import { meetingCandidatesFrom, meetingCandidatesFromRows, type MeetingCandidate } from "@/lib/meeting-calendar";
 import { findEventByKey, listUpcomingEvents, matchEventForSession } from "@/lib/calendar-events";
 import { buildMeetingRecap, type MeetingRecap } from "@/lib/meeting-recap";
-import { listMeetingsFor, type MeetingsPage } from "@/lib/meetings-list";
+import { listMeetingsFor, type MeetingSourceFilter, type MeetingsPage } from "@/lib/meetings-list";
 import {
   analyzeMeetingTranscript,
   buildMeetingCorpus,
   cleanUserNotes,
   formatTranscriptSegment,
   isSelf,
-  speakerNames,
+  speakerDisplayNames,
 } from "@/lib/meeting-digest";
 import { requireMeetingsUser } from "@/lib/plan-guards";
 import {
@@ -31,6 +31,7 @@ import {
   getMeetingTranscript,
   loadMeetingSelf,
   resumeMeetingSessionRow,
+  setMeetingUserNotes,
   storeMeetingDigest,
   updateMeetingDetails,
   type MeetingAttendee,
@@ -90,7 +91,10 @@ export async function createMeetingSession(input: {
     // and tell them their hours are gone when their hours are not what is stopping them. The
     // read is skipped entirely rather than taken and ignored, so no stale number can leak
     // into copy from here.
-    if (deepgramEnabled()) {
+    //
+    // The same holds once the Deepgram credit is spent (`deepgramOpenFor`): a NEW meeting then
+    // records on the account's own key, so the cap is not Orbit's to enforce.
+    if (await deepgramOpenFor(userId, "meeting")) {
       const allowance = await speechAllowance(userId, "meeting");
       if (allowance.exhausted) {
         return { ok: false, error: `You’ve used this month’s meeting hours — they reset on ${resetLabel(allowance.resetsAt)}` };
@@ -151,6 +155,21 @@ export async function saveMeetingDetails(
     return { ok: true };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t update the meeting", "meetings.save-meeting-details") };
+  }
+}
+
+/**
+ * The notes box, saved as the person types (debounced by the engine) and from the detail
+ * page. Not plan-gated: they are the user's own words about a meeting they already have.
+ */
+export async function saveMeetingNotes(id: string, notes: string): Promise<{ ok: true } | Fail> {
+  try {
+    const userId = await requireUserId();
+    const saved = await setMeetingUserNotes(userId, id, cleanUserNotes(notes));
+    if (!saved) return { ok: false, error: "That meeting no longer exists" };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t save your notes", "meetings.save-meeting-notes") };
   }
 }
 
@@ -237,7 +256,12 @@ export async function analyzeMeetingSession(
     if (!t) return { ok: false, error: "That meeting no longer exists" };
     if (t.session.status === "saved") return { ok: false, error: "That meeting was already saved" };
 
-    const notes = cleanUserNotes(opts.notes);
+    // Notes sent with the request are new: they mean a fresh digest, and they are kept with
+    // the meeting. Without any, the stored notes still feed a digest made for another reason
+    // (Try again, a first summary) — but never force one by themselves.
+    const typed = cleanUserNotes(opts.notes);
+    if (typed && typed !== (t.session.userNotes ?? "")) await setMeetingUserNotes(userId, t.session.id, typed);
+    const notes = typed || cleanUserNotes(t.session.userNotes);
 
     // The calendar event this was, when known — from the nudge, or matched now by time and guests.
     let event = t.session.calendarEventKey ? await findEventByKey(userId, t.session.calendarEventKey) : null;
@@ -258,7 +282,7 @@ export async function analyzeMeetingSession(
     const invited = event?.guestsHidden ? [] : (event?.attendees ?? []).map((a) => a.name).filter(Boolean);
 
     // A 1:1's other voice is the other person; the transcript then reads "Priya:" not "Speaker 1:".
-    const voices = speakerNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
+    const voices = speakerDisplayNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
     const paragraphs = t.segments
       .filter((s) => s.text.trim())
       .map((s) => formatTranscriptSegment(s, voices));
@@ -283,7 +307,7 @@ export async function analyzeMeetingSession(
       );
     };
 
-    let digest = !opts.force && !notes ? t.session.digest : null;
+    let digest = !opts.force && !typed ? t.session.digest : null;
     if (!digest) {
       try {
         digest = await analyzeMeetingTranscript(
@@ -497,11 +521,13 @@ export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
 /** One more page of past meetings, for the list's "Load more". */
 export async function listMeetingsPage(
   q: string | null,
-  cursor: string | null
+  cursor: string | null,
+  source: MeetingSourceFilter = "all"
 ): Promise<({ ok: true } & MeetingsPage) | Fail> {
   try {
-    const userId = await requireMeetingsUser();
-    return { ok: true, ...(await listMeetingsFor(userId, { q, cursor })) };
+    // A read of the user's own history, Granola rows included: not plan-gated.
+    const userId = await requireUserId();
+    return { ok: true, ...(await listMeetingsFor(userId, { q, cursor, source })) };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t load your meetings", "meetings.list-meetings-page") };
   }

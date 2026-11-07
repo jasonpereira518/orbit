@@ -20,6 +20,7 @@ import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-bu
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
+export const metadata = { title: "Contacts" };
 
 export default async function ContactsPage({
   searchParams,
@@ -152,7 +153,6 @@ export default async function ContactsPage({
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}
-            filtered={filtersActive || Boolean(params.letter) || Boolean(params.importId)}
             filters={filters}
             availableLetters={letters}
             activeLetter={params.letter ?? null}

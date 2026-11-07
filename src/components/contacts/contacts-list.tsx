@@ -18,7 +18,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { CalendarClock, Trash2 } from "lucide-react";
+import { CalendarClock, Trash2, Users } from "lucide-react";
 import { DUR_MS } from "@/lib/motion";
 import { toast } from "@/lib/toast";
 import { deleteContact, listContactsPage } from "@/actions/contacts";
@@ -28,6 +28,7 @@ import { CompanyRoleLine } from "@/components/contacts/company-role-line";
 import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { FollowUpDraftSheetLazy } from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import {
@@ -55,6 +56,8 @@ import {
 } from "@/lib/closeness";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { ExampleTag } from "@/components/onboarding/example-tag";
+import { ContactName } from "@/components/contacts/contact-name";
+import { openNameGuess } from "@/lib/contact-name-guess";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { cn } from "@/lib/utils";
 import { LIST_INTENT_DELAY_MS, useIntentPrefetchHandlers } from "@/lib/intent-prefetch";
@@ -174,15 +177,29 @@ export type ContactsListFilters = {
   sort?: ContactSort;
   letter?: string;
   tag?: string;
+  school?: string;
   /** Narrows the list to one import's people — see `/contacts/page.tsx`'s banner. */
   importId?: string;
 };
+
+/** Whether anything narrows the list. `letter` and `sort` don't: they only move or reorder it. */
+function hasActiveFilters(f: ContactsListFilters) {
+  return Boolean(
+    f.q?.trim() ||
+      f.company?.trim() ||
+      f.minScore ||
+      f.followUp ||
+      f.quiet ||
+      f.tag?.trim() ||
+      f.school?.trim() ||
+      f.importId?.trim()
+  );
+}
 
 export function ContactsList({
   initialItems,
   initialCursor,
   total,
-  filtered = true,
   filters,
   availableLetters: serverLetters,
   activeLetter: seekLetter,
@@ -190,8 +207,6 @@ export function ContactsList({
   initialItems: ContactListItem[];
   initialCursor: string | null;
   total: number | null;
-  /** A search, filter, letter or import narrows the list; false means this is everyone. */
-  filtered?: boolean;
   filters: ContactsListFilters;
   availableLetters: string[];
   activeLetter: string | null;
@@ -381,10 +396,6 @@ export function ContactsList({
 
   const confirmContact = contacts.find((c) => c.id === confirmId);
 
-  // Stable, so `ContactRow`'s memo holds across unrelated list state (the scrubber's letter,
-  // the delete dialog, the draft sheet, a page loading).
-  const openContactPage = useCallback((id: string) => router.push(`/contacts/${id}`), [router]);
-
   function confirmDelete() {
     if (!confirmId) return;
     const id = confirmId;
@@ -423,24 +434,26 @@ export function ContactsList({
     }, DUR_MS.slow);
   }
 
-  if (contacts.length === 0 && !filtered) {
-    // Nobody at all yet. The filtered wording below told a brand-new account to clear a search
-    // it never typed.
+  if (contacts.length === 0 && !hasActiveFilters(filters) && !(total && total > 0)) {
+    // A brand-new network, not a search that came up empty: telling someone with no
+    // contacts to "clear search" sent them looking for a filter that wasn't there. (`total`
+    // guards a letter seek past the last name, or a page whose rows were all just deleted.)
     return (
-      <div className="px-6 py-12 text-center">
-        <p className="font-[family-name:var(--font-display)] text-2xl text-ink">No one here yet</p>
-        <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-          Add someone you met recently and they’ll show up here with how you met and what’s next.
-        </p>
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-          <Link href="/capture" className={cn(buttonVariants(), "bg-primary text-primary-foreground")}>
-            Add someone
-          </Link>
-          <Link href="/imports" className={cn(buttonVariants({ variant: "outline" }))}>
-            Import LinkedIn
-          </Link>
-        </div>
-      </div>
+      <EmptyState
+        icon={Users}
+        title="No one here yet"
+        description="Capture notes about someone you met, or import your LinkedIn connections, and the people in them will show up here."
+        action={
+          <>
+            <Link href="/capture" className={buttonVariants({ variant: "default" })}>
+              Capture notes
+            </Link>
+            <Link href="/imports" className={buttonVariants({ variant: "outline" })}>
+              Import LinkedIn
+            </Link>
+          </>
+        }
+      />
     );
   }
 
@@ -486,7 +499,6 @@ export function ContactsList({
                     marked={Boolean(c.fromImport && !importSeen.has(c.id))}
                     importKey={importKey}
                     deleteDisabled={pending || exitingId === c.id}
-                    onOpen={openContactPage}
                     onOpenDraft={setDraftContact}
                     onRequestDelete={setConfirmId}
                   />
@@ -551,6 +563,12 @@ export function ContactsList({
             // Commit the jump once, on release. Firing it per scrub position would issue a
             // navigation for every letter the finger passes over.
             seekToLetter(activeLetter);
+            setActiveLetter(null);
+          }}
+          onKeyCommit={(letter) => {
+            // The keyboard's release: the rail waits for the arrow keys to settle, then
+            // hands over the letter it landed on (the closure's `activeLetter` would be stale).
+            seekToLetter(letter);
             setActiveLetter(null);
           }}
         />
@@ -649,7 +667,6 @@ const ContactRow = memo(function ContactRow({
   marked,
   importKey,
   deleteDisabled,
-  onOpen,
   onOpenDraft,
   onRequestDelete,
 }: {
@@ -660,7 +677,6 @@ const ContactRow = memo(function ContactRow({
   marked: boolean;
   importKey: string;
   deleteDisabled: boolean;
-  onOpen: (id: string) => void;
   onOpenDraft: (contact: { id: string; name: string }) => void;
   onRequestDelete: (id: string) => void;
 }) {
@@ -673,49 +689,44 @@ const ContactRow = memo(function ContactRow({
     if (marked) markImportPersonSeen(importKey, c.id);
   }
 
-  function openContact() {
-    if (exiting) return;
-    if (isTourLead) emitTourEvent("contacts.opened-example");
-    seeMarked();
-    onOpen(c.id);
-  }
-
-  // Rows are not <Link>s, so nothing prefetched the profile: every open started cold, behind
-  // a skeleton React holds for ≥300 ms. Resting on a row (or focusing it) fetches the whole
-  // profile, so the click usually renders straight from the router cache.
-  const intent = useIntentPrefetchHandlers(`/contacts/${c.id}`, LIST_INTENT_DELAY_MS);
-
-  function onRowKeyDown(e: KeyboardEvent<HTMLLIElement>) {
-    if (e.key === "Enter" || e.key === " ") {
+  function onOpenClick(e: MouseEvent<HTMLAnchorElement>) {
+    // Mid-delete: the row is collapsing and its record is about to go.
+    if (exiting) {
       e.preventDefault();
-      openContact();
+      return;
     }
+    seeMarked();
+    // A plain click opens it here; a modified one (new tab, new window) leaves the tour where it is.
+    const plain = e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
+    if (isTourLead && plain) emitTourEvent("contacts.opened-example");
   }
+
+  // The links opt out of `<Link>`'s viewport prefetch (a long list would prefetch every row
+  // in view). Resting on a row (or focusing it) fetches the whole profile instead, so the
+  // click usually renders straight from the router cache.
+  const href = `/contacts/${c.id}`;
+  const intent = useIntentPrefetchHandlers(href, LIST_INTENT_DELAY_MS);
+  const intentHandlers = {
+    onPointerEnter: intent.onPointerEnter,
+    onPointerLeave: intent.onPointerLeave,
+    onTouchStart: intent.onTouchStart,
+  };
 
   return (
     <li
-      role="link"
-      tabIndex={0}
       {...(isTourLead ? tourAnchor("contacts.row") : {})}
-      onClick={openContact}
-      onKeyDown={onRowKeyDown}
-      // Hover or keyboard focus counts as having seen them: the mark fades.
+      // Hover counts as having seen them: the mark fades (as does focusing the link).
       onMouseEnter={seeMarked}
-      onPointerEnter={intent.onPointerEnter}
-      onPointerLeave={intent.onPointerLeave}
-      onTouchStart={intent.onTouchStart}
-      onFocus={() => {
-        seeMarked();
-        intent.onFocus();
-      }}
       data-new-from-import={marked ? "" : undefined}
       className={cn(
         // content-visibility skips layout/paint for offscreen
         // rows — the browser remembers real heights after
         // first render (`auto` keyword), 74px is the estimate.
-        "contact-row grid cursor-pointer [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
+        "contact-row grid [contain-intrinsic-size:auto_74px] [content-visibility:auto]",
         "transition-[grid-template-rows,opacity] duration-slow ease-house",
-        "outline-none focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset",
+        // The row is a plain list item; its name is the link. Keyboard focus on that link
+        // lights the whole row, as focusing the row itself used to.
+        "has-[a[data-row-link]:focus-visible]:bg-muted/40 has-[a[data-row-link]:focus-visible]:ring-2 has-[a[data-row-link]:focus-visible]:ring-ring/40 has-[a[data-row-link]:focus-visible]:ring-inset",
         exiting
           ? "grid-rows-[0fr] opacity-0"
           : "grid-rows-[1fr] opacity-100"
@@ -724,32 +735,62 @@ const ContactRow = memo(function ContactRow({
       <div className="overflow-hidden">
         <div
           className={cn(
-            "flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
+            // `relative`: the name link's ::after stretches over this box, so a click
+            // anywhere on the row opens the person (and middle-click opens a tab).
+            "relative flex items-center gap-3 px-4 py-3.5 transition-[background-color,translate] duration-slow ease-house hover:bg-muted/40 sm:px-5",
             // New from the import the list was opened from: a light yellow
             // that fades out once the row is hovered, focused or opened.
             marked && "bg-amber-100/45 dark:bg-amber-300/10",
             exiting && "-translate-x-8"
           )}
         >
-          <ContactAvatarPreview contact={c}>
-            <ContactAvatar
-              contactId={c.id}
-              firstName={c.firstName}
-              fullName={c.fullName}
-              profileImageUrl={c.profileImageUrl}
-              size="lg"
-              // Rows you are actually looking at fill in first, instead of
-              // waiting for the background backfill to reach them in id
-              // order. `loading="lazy"` on the underlying <img> means only
-              // near-viewport rows ever issue a request, and the route
-              // caches its misses so scrolling back does not re-ask.
-              resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
-            />
-          </ContactAvatarPreview>
+          {/* Above the stretched link so its hover card still opens, and itself a link so a
+              click on the face opens the person too. Out of the tab order and hidden from
+              assistive tech: the name link right after it is the one stop for this row. */}
+          <Link
+            href={href}
+            prefetch={false}
+            tabIndex={-1}
+            aria-hidden
+            onClick={onOpenClick}
+            {...intentHandlers}
+            className="relative z-10 shrink-0"
+          >
+            <ContactAvatarPreview contact={c}>
+              <ContactAvatar
+                contactId={c.id}
+                firstName={c.firstName}
+                fullName={c.fullName}
+                profileImageUrl={c.profileImageUrl}
+                size="lg"
+                // Rows you are actually looking at fill in first, instead of
+                // waiting for the background backfill to reach them in id
+                // order. `loading="lazy"` on the underlying <img> means only
+                // near-viewport rows ever issue a request, and the route
+                // caches its misses so scrolling back does not re-ask.
+                resolveOnDemand={!c.profileImageUrl && c.canResolveAvatar}
+              />
+            </ContactAvatarPreview>
+          </Link>
 
           <div className="min-w-0 flex-1">
             <p className="truncate font-medium text-ink">
-              {c.preferredName || c.fullName}
+              <ContactName contactId={c.id} name={c.preferredName || c.fullName} guess={openNameGuess(c)}>
+              <Link
+                href={href}
+                prefetch={false}
+                data-row-link=""
+                onClick={onOpenClick}
+                {...intentHandlers}
+                onFocus={() => {
+                  seeMarked();
+                  intent.onFocus();
+                }}
+                className="outline-none after:absolute after:inset-0"
+              >
+                <bdi>{c.preferredName || c.fullName}</bdi>
+              </Link>
+              </ContactName>
               {isTourExampleSource(c.source) && (
                 <ExampleTag className="ml-1.5 align-[2px]" />
               )}
@@ -781,7 +822,7 @@ const ContactRow = memo(function ContactRow({
               )}
             </div>
             {details && (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground/80">
+              <p className="mt-0.5 truncate text-xs text-muted-foreground-subtle">
                 {overdueText ? (
                   <>
                     {detailLine(c.school, c.location) && (
@@ -809,13 +850,15 @@ const ContactRow = memo(function ContactRow({
               // Only set for the "non-obvious" hits — a past role, or a
               // semantic match with no literal keyword overlap — so this
               // line is rare, not a fixture of every search result.
-              <p className="mt-0.5 truncate text-[11px] font-medium text-primary/70">
+              <p className="mt-0.5 truncate text-2xs font-medium text-primary/70">
                 {c.matchReason}
               </p>
             )}
           </div>
 
-          <div className="flex shrink-0 items-center gap-1 pointer-coarse:gap-4">
+          {/* `relative z-10`: these sit above the stretched name link, so they take their
+              own clicks instead of opening the person. */}
+          <div className="relative z-10 flex shrink-0 items-center gap-1 pointer-coarse:gap-4">
             <ClosenessChip
               closeness={c.closeness}
               relationshipScore={c.relationshipScore}
@@ -892,19 +935,62 @@ function AlphabetScrubber({
   activeLetter,
   onSelect,
   onScrubEnd,
+  onKeyCommit,
 }: {
   available: Set<string>;
   activeLetter: string | null;
   onSelect: (letter: string) => void;
   onScrubEnd: () => void;
+  onKeyCommit: (letter: string) => void;
 }) {
   const railRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
   const [mounted, setMounted] = useState(false);
+  // The letter the keyboard is on. The rail is ONE tab stop (a slider), not 27 buttons:
+  // arrows move between the letters that have people, Home and End go to either end.
+  const [keyLetter, setKeyLetter] = useState<string | null>(null);
+  const keyCommitTimer = useRef<number | null>(null);
 
   useEffect(() => {
     setMounted(true);
+    return () => {
+      if (keyCommitTimer.current !== null) window.clearTimeout(keyCommitTimer.current);
+    };
   }, []);
+
+  const letters = ALPHABET.filter((l) => available.has(l));
+  const currentLetter = activeLetter ?? keyLetter ?? letters[0] ?? null;
+  const currentIdx = currentLetter
+    ? ALPHABET.indexOf(currentLetter as (typeof ALPHABET)[number])
+    : 0;
+
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (letters.length === 0) return;
+    const at = currentLetter ? ALPHABET.indexOf(currentLetter as (typeof ALPHABET)[number]) : -1;
+    let next: string | undefined;
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+      next = letters.find((l) => ALPHABET.indexOf(l) > at) ?? letters[letters.length - 1];
+    } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      next = [...letters].reverse().find((l) => ALPHABET.indexOf(l) < at) ?? letters[0];
+    } else if (e.key === "Home") {
+      next = letters[0];
+    } else if (e.key === "End") {
+      next = letters[letters.length - 1];
+    } else {
+      return;
+    }
+    e.preventDefault();
+    if (!next) return;
+    setKeyLetter(next);
+    onSelect(next);
+    // Held arrow keys run through letters like a scrub; navigate once they settle.
+    if (keyCommitTimer.current !== null) window.clearTimeout(keyCommitTimer.current);
+    const landed = next;
+    keyCommitTimer.current = window.setTimeout(() => {
+      keyCommitTimer.current = null;
+      onKeyCommit(landed);
+    }, 350);
+  }
 
   /**
    * Reserve the rail's width in the page, rather than floating over it.
@@ -980,7 +1066,9 @@ function AlphabetScrubber({
   if (!mounted) return null;
 
   return createPortal(
-    <div
+    // Portalled out of <main>, so it is its own navigation landmark.
+    <nav
+      aria-label="Contacts A to Z"
       className={cn(
         "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-4",
         // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
@@ -993,14 +1081,24 @@ function AlphabetScrubber({
     >
       <div
         ref={railRef}
-        role="navigation"
+        role="slider"
+        tabIndex={0}
         aria-label="Jump to letter"
+        aria-orientation="vertical"
+        aria-valuemin={0}
+        aria-valuemax={ALPHABET.length - 1}
+        aria-valuenow={Math.max(0, currentIdx)}
+        aria-valuetext={
+          currentLetter === "#" ? "# (numbers and symbols)" : (currentLetter ?? undefined)
+        }
+        onKeyDown={onKeyDown}
         className={cn(
-          "pointer-events-auto relative flex h-[min(70vh,32rem)] w-7 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
+          "pointer-events-auto relative flex h-[min(70dvh,32rem)] w-7 cursor-ns-resize select-none flex-col items-center justify-between rounded-full border border-border/70 bg-card/95 py-3 shadow-sm backdrop-blur",
           // Thinner on phones, where every pixel of width is the list's; the desktop rail
           // keeps its original size and card shape.
           "md:w-9 md:rounded-2xl md:py-2.5 md:shadow-md",
-          "touch-none ring-1 ring-foreground/5"
+          "touch-none ring-1 ring-foreground/5",
+          "outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         )}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -1011,16 +1109,13 @@ function AlphabetScrubber({
           const hasContacts = available.has(letter);
           const isActive = activeLetter === letter;
           return (
-            <button
+            // The rail itself is the control (a slider, with its own pointer and keyboard
+            // handling); its letters are only its face, so not buttons of their own.
+            <span
               key={letter}
-              type="button"
-              tabIndex={-1}
-              disabled={!hasContacts}
-              aria-label={
-                hasContacts ? `Jump to ${letter}` : `${letter} — no contacts`
-              }
+              aria-hidden
               className={cn(
-                "flex h-[1.1%] min-h-0 w-full items-center justify-center text-[9px] leading-none sm:text-[10px]",
+                "flex h-[1.1%] min-h-0 w-full items-center justify-center text-2xs leading-none",
                 hasContacts
                   ? "font-medium text-muted-foreground hover:text-primary"
                   : "text-muted-foreground/30",
@@ -1032,7 +1127,7 @@ function AlphabetScrubber({
               }}
             >
               {letter}
-            </button>
+            </span>
           );
         })}
 
@@ -1045,7 +1140,7 @@ function AlphabetScrubber({
           </div>
         )}
       </div>
-    </div>,
+    </nav>,
     document.body
   );
 }
@@ -1072,11 +1167,18 @@ function ClosenessChip({
         : "bg-muted text-muted-foreground";
 
   const tierHint = closenessTier ? ` (${TIER_TOOLTIP[closenessTier]})` : "";
+  // Spelled out, and starting with the visible text: the chip alone reads as a bare "62%",
+  // and a speech-input user says what they see.
+  const accessibleLabel =
+    typeof closeness === "number"
+      ? `${label} closeness${tierHint}. Show what this means.`
+      : `${label}, relationship strength${tierHint}. Show what this means.`;
 
   return (
     <Tooltip>
       <TooltipTrigger
         type="button"
+        aria-label={accessibleLabel}
         className={cn(
           "rounded-md px-1.5 py-0.5 text-sm font-medium tabular-nums outline-none",
           "focus-visible:ring-2 focus-visible:ring-ring/50",

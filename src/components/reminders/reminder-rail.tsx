@@ -11,6 +11,7 @@ import {
   Sparkles,
   Sun,
   Infinity as InfinityIcon,
+  ListTodo,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -53,6 +54,7 @@ const VIEWS: Array<{
   icon: ComponentType<{ className?: string }>;
   count: (c: ReminderRailCounts) => number;
 }> = [
+  { view: "all", label: "All", icon: ListTodo, count: (c) => c.all },
   { view: "today", label: "Today", icon: Sun, count: (c) => c.today },
   { view: "upcoming", label: "Upcoming", icon: CalendarClock, count: (c) => c.upcoming },
   { view: "anytime", label: "Anytime", icon: InfinityIcon, count: (c) => c.anytime },
@@ -174,7 +176,7 @@ export function ReminderRail({
               label="Suggested"
               className="text-amber-900 dark:text-amber-100"
               trailing={
-                <span className="rounded-full bg-amber-500/15 px-1.5 text-[11px] font-medium tabular-nums text-amber-800 dark:text-amber-200">
+                <span className="rounded-full bg-amber-500/15 px-1.5 text-2xs font-medium tabular-nums text-amber-800 dark:text-amber-200">
                   {counts.suggested}
                   <span className="sr-only"> to review</span>
                 </span>
@@ -185,7 +187,7 @@ export function ReminderRail({
       </ul>
 
       <div>
-        <h2 className="mb-1.5 px-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <h2 className="mb-1.5 px-2.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
           Lists
         </h2>
         <ul className="space-y-0.5">

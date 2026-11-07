@@ -247,13 +247,21 @@ async function main() {
   const meta = await mod.generateMetadata(sp({ me: TOKEN }));
   const og = meta.openGraph as { images?: unknown } | undefined;
   check("ticket metadata carries the image", JSON.stringify(og?.images ?? "").includes(`ticket-image?token=${TOKEN}`), JSON.stringify(og));
-  check("ticket metadata keeps the one title", meta.title === "Early access — the future of networking", String(meta.title));
+  // Absolute, so the root layout's "%s · Orbit" template never brands the waitlist's tab.
+  check(
+    "ticket metadata keeps the one title",
+    (meta.title as { absolute?: string } | null | undefined)?.absolute === "Early access — the future of networking",
+    JSON.stringify(meta.title)
+  );
   check("no metadata names the product", !/orbit/i.test(JSON.stringify(meta)), JSON.stringify(meta));
   check("the page swaps out the product's icon", JSON.stringify(meta.icons ?? "").includes("/waitlist/icon.png"));
   const refMeta = await mod.generateMetadata(sp({ ref: TOKEN }));
   check("ref metadata carries the image too", JSON.stringify(refMeta.openGraph ?? "").includes("ticket-image"));
   const plain = await mod.generateMetadata(sp({}));
-  check("plain metadata is the default", plain.title === "Early access — the future of networking");
+  check(
+    "plain metadata is the default",
+    (plain.title as { absolute?: string } | null | undefined)?.absolute === "Early access — the future of networking"
+  );
   check("plain metadata still previews with the generic card", JSON.stringify(plain.openGraph ?? "").includes("ticket-image"));
 
   // --- the admin's switch for the product demo

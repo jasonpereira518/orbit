@@ -10,6 +10,7 @@ import {
   startPlanSwitch,
   type SubscriptionOverview,
 } from "@/actions/billing";
+import { answerSurvey } from "@/actions/surveys";
 import { ManageBillingButton } from "@/components/settings/manage-billing-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,7 +23,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { friendlyError } from "@/lib/errors";
-import { FREE_CONTACT_LIMIT, PLAN_LABELS, type PurchasablePlan } from "@/lib/plans/plan-config";
+import { PLAN_LABELS, type PurchasablePlan } from "@/lib/plans/plan-config";
+import { useViewerPlan } from "@/components/viewer-plan";
+import { SURVEY_DEFINITIONS } from "@/lib/surveys";
 import type { SubscriptionDetails } from "@/lib/subscription-management";
 
 type Overview = Extract<SubscriptionOverview, { ok: true }>;
@@ -265,6 +268,26 @@ function CancelDialog({
 }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Optional, one tap, never in the way of cancelling: the answer is a closed choice recorded
+  // as a `survey_answered` event after the cancellation has gone through.
+  const [reason, setReason] = useState<string | null>(null);
+  const cancellation = SURVEY_DEFINITIONS.cancellation;
+  // What Free lacks that this plan has, under the effective plan table.
+  const { plan, planConfig } = useViewerPlan();
+  const freeLimit = planConfig.free.contactLimit;
+  const paused = [
+    "Included AI",
+    ...(
+      [
+        ["recruiters", "recruiter tracking"],
+        ["meetings", "meetings"],
+        ["extraConnections", "a second Google or Microsoft account"],
+      ] as const
+    )
+      .filter(([f]) => planConfig[plan].features[f] && !planConfig.free.features[f])
+      .map(([, label]) => label),
+  ];
+  const pausedText = paused.length > 1 ? `${paused.slice(0, -1).join(", ")} and ${paused.at(-1)}` : paused[0];
 
   return (
     <Dialog
@@ -286,12 +309,38 @@ function CancelDialog({
         <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
           <li>Every contact, note and reminder stays exactly where it is.</li>
           <li>
-            Free adds new contacts up to {FREE_CONTACT_LIMIT.toLocaleString("en-US")}. Included AI, recruiter
-            tracking, meetings and a second Google or Microsoft account pause until you upgrade again.
+            {freeLimit === null
+              ? "Free keeps adding new contacts."
+              : `Free adds new contacts up to ${freeLimit.toLocaleString("en-US")}.`}{" "}
+            {pausedText} {paused.length > 1 ? "pause" : "pauses"} until you upgrade again.
           </li>
           <li>Credits from packs you bought are kept, frozen, and come back when you resubscribe.</li>
           <li>You can change your mind any time before then.</li>
         </ul>
+        <fieldset className="space-y-1.5 border-t border-border/60 pt-3">
+          <legend className="text-sm font-medium">{cancellation.question}</legend>
+          <p className="text-xs text-muted-foreground">Optional. It tells us what to fix.</p>
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {cancellation.options.map((option) => (
+              <label
+                key={option.id}
+                className={`cursor-pointer rounded-lg border px-2.5 py-1 text-xs transition-colors duration-fast ${
+                  reason === option.id ? "border-primary bg-primary/10" : "border-border/70 hover:bg-muted"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="cancel-reason"
+                  value={option.id}
+                  checked={reason === option.id}
+                  onChange={() => setReason(option.id)}
+                  className="sr-only"
+                />
+                {option.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -314,6 +363,7 @@ function CancelDialog({
                     setError(result.error);
                     return;
                   }
+                  if (reason) void answerSurvey("cancellation", reason);
                   onCanceled(result.subscription);
                   onOpenChange(false);
                   toast.success(

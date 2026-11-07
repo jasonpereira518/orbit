@@ -31,8 +31,14 @@ export function LandingPageShell({
   return (
     <>
       <LandingHeader pastHero={pastHero} {...authProps} />
-      <HeroPin ref={setHeroPinNode} heroCopy={heroCopy} claim={claim} />
-      {children}
+      {/* One <main> for the whole page (it used to wrap the hero alone), and the skip
+          link's target. */}
+      {/* On phones the page ends a fade's height lower, so its last links can scroll clear of
+          the fixed waitlist pill and social icons (landing-page.tsx). */}
+      <main id="main-content" className="max-md:pb-[calc(5rem+env(safe-area-inset-bottom))]">
+        <HeroPin ref={setHeroPinNode} heroCopy={heroCopy} claim={claim} />
+        {children}
+      </main>
     </>
   );
 }

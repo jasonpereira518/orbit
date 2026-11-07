@@ -35,13 +35,8 @@ import type { AliasKey } from "@/lib/events/discovery/types";
 import { getEventForUser, listRosterForUser } from "@/lib/events/store";
 import { whoToTalkTo, type WhoToTalkToRow } from "@/lib/events/who-to-talk-to";
 
-/** A stored name that is really an address handle: "", "dmcraver" for dmcraver@…, "calvintwong25". */
-export function isHandle(name: string | null | undefined, email?: string | null): boolean {
-  const n = (name ?? "").trim();
-  if (!n) return true;
-  if (email && n.toLowerCase() === email.split("@")[0]?.toLowerCase()) return true;
-  return !/\s/.test(n) && /[\d._@]/.test(n);
-}
+import { isHandle } from "@/lib/contact-name-guess";
+export { isHandle };
 
 /** Capitalised words in an invite title that are not names. */
 const NOT_NAMES = new Set(
@@ -339,7 +334,7 @@ export async function getMeetingContext(
     : null;
   // With no contact on it the reads below are `false` queries: cheap, and research still runs.
   const db = await getDb();
-  const [people, briefs, todos, items, recent, notes] = await Promise.all([
+  const [unorderedPeople, briefs, todos, items, recent, notes] = await Promise.all([
     db.query.contacts.findMany({
       where: and(eq(contacts.userId, userId), inArray(contacts.id, ids)),
       columns: { id: true, fullName: true, preferredName: true, email: true, company: true, title: true, linkedinUrl: true },
@@ -399,6 +394,10 @@ export async function getMeetingContext(
       )
     ),
   ]);
+  // In the order the meeting names them (`ids`), not whatever order the scan returned: the
+  // research below takes the first few without a profile, so an unordered read made which
+  // contact got the last search slot depend on the query plan.
+  const people = [...unorderedPeople].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
   const notesBy = new Map(notes.map((rows, i) => [ids[i], rows]));
   const snippet = (text: string) => {
     const t = text.replace(/\s+/g, " ").trim();

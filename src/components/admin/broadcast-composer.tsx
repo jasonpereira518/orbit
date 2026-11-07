@@ -73,7 +73,7 @@ export function BroadcastComposer({ audienceSize }: { audienceSize: number }) {
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
           placeholder="What's new in Orbit"
-          className="w-full rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm outline-none focus:border-primary/50"
+          className="w-full rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
       </label>
 
@@ -96,7 +96,7 @@ export function BroadcastComposer({ audienceSize }: { audienceSize: number }) {
           placeholder={
             "Plain text. A blank line starts a new paragraph.\n\nThe first paragraph is set larger, as the opening line."
           }
-          className="w-full resize-y rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm leading-relaxed outline-none focus:border-primary/50"
+          className="w-full resize-y rounded-lg border border-border/70 bg-transparent px-3 py-2 text-sm leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         <span className="block text-xs text-muted-foreground">
           The Orbit header, sign-off and unsubscribe footer are added automatically.
@@ -106,17 +106,30 @@ export function BroadcastComposer({ audienceSize }: { audienceSize: number }) {
       <div className="flex flex-wrap items-center gap-2 border-t border-border/40 pt-4">
         <ConfirmActionDialog
           trigger={
-            <span
+            // A real button: the old <span> was unreachable from the keyboard, and its
+            // not-ready state was a 1.79:1 grey that announced nothing. `aria-disabled`
+            // (not `disabled`) keeps it focusable, so the reason it is unavailable can be found.
+            <button
+              type="button"
+              aria-disabled={!ready}
+              title={ready ? undefined : "Add a subject (3+ characters) and a body (20+) first"}
+              onClick={(e) => {
+                // The dialog opens from the wrapper's click; a not-ready button swallows it.
+                if (!ready) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg border border-border/70 px-3 py-1.5 text-sm transition-colors duration-fast",
+                "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors duration-fast outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                 ready
-                  ? "text-primary hover:border-primary/50"
-                  : "pointer-events-none text-muted-foreground/40"
+                  ? "border-border/70 text-primary hover:border-primary/50"
+                  : "cursor-not-allowed border-dashed border-border text-muted-foreground"
               )}
             >
               <Send className="size-3.5" aria-hidden />
               Save draft
-            </span>
+            </button>
           }
           title="Save this as a draft?"
           description={
@@ -139,7 +152,7 @@ export function BroadcastComposer({ audienceSize }: { audienceSize: number }) {
           onChange={(e) => setTestTo(e.target.value)}
           placeholder="you@example.com"
           aria-label="Send a test to"
-          className="w-48 rounded-lg border border-border/70 bg-transparent px-2.5 py-1.5 text-xs outline-none focus:border-primary/50"
+          className="w-48 rounded-lg border border-border/70 bg-transparent px-2.5 py-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         <button
           type="button"

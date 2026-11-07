@@ -28,13 +28,15 @@
  * request path go through `recordGateHitThrottled` instead (one row per user per hour); the
  * unthrottled version is correct in the key-issuance actions, which a human triggers.
  */
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { apiKeys } from "@/db/schema";
 import { bearerFrom, hashApiKey, looksLikeApiKey, type ApiKeyScope } from "@/lib/api/keys";
-import { entitlementsFromSettings, FEATURE_DENIAL, type Entitlements } from "@/lib/entitlements";
+import { entitlementsFromSettings, featureDenial, type Entitlements } from "@/lib/entitlements";
 import { recordGateHitThrottled } from "@/lib/gate-events";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { noteMachineSurfaceAccount } from "@/lib/attribution";
 import { isHeldByStealth } from "@/lib/site-access";
 
 export type ApiCaller = {
@@ -142,13 +144,18 @@ export async function assertAccountUsable(
   if (settings.suspendedAt) {
     throw new ApiAuthError("suspended", "This Orbit account is suspended.");
   }
+  // An account that only ever uses a key or an assistant never renders a web page, so nothing
+  // else would attribute it (audit U2). Idempotent, off the request path, and free: the row is
+  // already in hand.
+  noteMachineSurfaceAccount(userId, settings);
   // An account stealth is holding is not signed in anywhere else in the app; a key or an
   // OAuth grant must not be the way around that.
   if (await isHeldByStealth(userId, settings)) {
     throw new ApiAuthError("suspended", "This account is waiting for an invitation.");
   }
 
-  const entitlements = entitlementsFromSettings(userId, settings);
+  const planConfig = await getEffectivePlanConfig();
+  const entitlements = entitlementsFromSettings(userId, settings, planConfig);
   // The MCP server is free on every plan; the REST API and webhooks are not. Two flags
   // rather than one so that making the connector free cannot quietly open the paid surfaces
   // beside it — see `canUseMcp` in `entitlements.ts`.
@@ -160,7 +167,7 @@ export async function assertAccountUsable(
       plan: entitlements.plan,
       context: { surface: opts.surface ?? "api" },
     });
-    throw new ApiAuthError("payment_required", FEATURE_DENIAL.api);
+    throw new ApiAuthError("payment_required", featureDenial("api", planConfig));
   }
   return entitlements;
 }

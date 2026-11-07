@@ -13,7 +13,8 @@
  * `requireUserId()` wrapper around it.
  */
 
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, not, or, sql } from "drizzle-orm";
+import { nonPersonContactSql } from "@/lib/non-person-participant";
 import { getDb, rowsOf } from "@/db";
 import { contactTags, contacts, tags } from "@/db/schema";
 import { rankContacts } from "@/lib/contact-ranking";
@@ -27,6 +28,8 @@ import {
   encodeContactsCursor,
 } from "@/lib/contacts-page-cursor";
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
+import { openNameGuess } from "@/lib/contact-name-guess";
+import { trackSearchPerformed } from "@/lib/search-events";
 import { schoolCondition, type RankedContact } from "@/lib/hybrid-search";
 import { listSchools } from "@/lib/events/target-companies";
 import {
@@ -62,7 +65,8 @@ export async function listContactsPage(
   // always returns its first (only) page.
   const cursor = sort === "relevance" ? null : decodeContactsCursor(filters?.cursor, sort, Boolean(filters?.q?.trim()));
 
-  const conditions = [eq(contacts.userId, userId)];
+  // Group calendars and rooms an older calendar sync saved as contacts stay out of the list.
+  const conditions = [eq(contacts.userId, userId), not(nonPersonContactSql())];
 
   const q = filters?.q?.trim();
   // Reused below by `contactsOrderBy` (relevance ranking) and by the match-reason map — one
@@ -82,8 +86,8 @@ export async function listContactsPage(
     matchReasons = matchReasonsFor(ranked);
     conditions.push(
       semanticIds.length
-        ? or(contactSearchCondition(q), inArray(contacts.id, semanticIds))!
-        : contactSearchCondition(q)
+        ? or(contactSearchCondition(q, userId), inArray(contacts.id, semanticIds))!
+        : contactSearchCondition(q, userId)
     );
   }
   // Name matches first in every sort while searching; see `contacts-page-cursor.ts`.
@@ -164,6 +168,12 @@ export async function listContactsPage(
 
   if (cursor) conditions.push(contactsCursorCondition(cursor, tier));
 
+  // The total needs only the conditions, so it runs beside the page rather than after it:
+  // one round trip less on every first page and every search (LATENCY_PLAN DB-15).
+  const totalP = cursor ? Promise.resolve(null) : countContacts(and(...conditions));
+  // Still awaited below; this only keeps a failed count from going unhandled when the page
+  // query throws first.
+  totalP.catch(() => {});
   const rows = await db
     .select({ ...contactsListSelection, nameTier: tier ?? sql<number>`2` })
     .from(contacts)
@@ -180,9 +190,14 @@ export async function listContactsPage(
 
   const [tagsByContact, total, addedHere] = await Promise.all([
     tagsForContacts(page.map((r) => r.id)),
-    cursor ? Promise.resolve(null) : countContacts(and(...conditions)),
+    totalP,
     addedByImports(userId, importIds, page.map((r) => r.id)),
   ]);
+
+  // The first page of a search is the search; "load more" (a cursor) is not another one.
+  if (q && !cursor) {
+    trackSearchPerformed({ userId, surface: "contacts_page", query: q, resultCount: total ?? page.length });
+  }
 
   return {
     items: page.map((row) => ({
@@ -191,6 +206,7 @@ export async function listContactsPage(
       firstName: row.firstName,
       lastName: row.lastName,
       preferredName: row.preferredName,
+      nameGuess: openNameGuess(row),
       title: row.title,
       company: row.company,
       school: row.school,

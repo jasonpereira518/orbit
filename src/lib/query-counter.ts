@@ -13,11 +13,19 @@
  * asserts on which columns the scans select.
  */
 let active = false;
+let captureText = true;
 let count = 0;
 let captured: string[] = [];
 
-export function startQueryCount() {
+/**
+ * `captureText: false` counts without keeping statement text. The import engine counts in
+ * production, and while it does every statement the instance runs is noted — for a 40k-row
+ * LinkedIn import that was 24 MB of SQL text held until the next start. Smokes keep the
+ * default, since asserting on the text is what they are for.
+ */
+export function startQueryCount(options: { captureText?: boolean } = {}) {
   active = true;
+  captureText = options.captureText ?? true;
   count = 0;
   captured = [];
 }
@@ -36,5 +44,5 @@ export function capturedQueries(): string[] {
 export function noteQuery(query?: string) {
   if (!active) return;
   count += 1;
-  if (query) captured.push(query);
+  if (query && captureText) captured.push(query);
 }

@@ -448,7 +448,7 @@ function ReviewDialog({
             Orbit reads each one you keep ticked and pulls out the people in it. You review them before anything is saved.
           </DialogDescription>
         </DialogHeader>
-        <ul className="max-h-[50vh] divide-y overflow-y-auto rounded-xl border">
+        <ul className="max-h-[50dvh] divide-y overflow-y-auto rounded-xl border">
           {found.map((f) => (
             <li key={f.id}>
               <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/40">

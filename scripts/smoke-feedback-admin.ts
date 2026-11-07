@@ -18,10 +18,13 @@ import "./smoke/_env";
 import { eq, like } from "drizzle-orm";
 import AdminFeedbackDetailPage from "../src/app/(clerk)/(admin)/admin/feedback/[feedbackId]/page";
 import AdminFeedbackPage from "../src/app/(clerk)/(admin)/admin/feedback/page";
+import AdminChatRatingsPage from "../src/app/(clerk)/(admin)/admin/feedback/chat/page";
 import { getDb } from "../src/db";
 import { adminAuditLog, feedback, feedbackScreenshots, userSettings } from "../src/db/schema";
 import {
+  categorySentiment,
   getFeedbackSummary,
+  getFeedbackThemes,
   loadFeedbackDetail,
   loadFeedbackList,
   setFeedbackStatus,
@@ -133,7 +136,7 @@ async function main() {
       category: "bug",
       area: "graph",
       text: "the graph goes blank when I filter to one cohort",
-      context: { route: "/graph", plan: "free" },
+      context: { route: "/graph", plan: "free", contactOk: true },
     })
     .returning();
 
@@ -192,6 +195,20 @@ async function main() {
   const overshoot = await loadFeedbackList({ page: 999, filter: "all", q: "" });
   check("?page=999 clamps to the last page", overshoot.page === 1 && overshoot.rows.length === 2);
 
+  // The widget's two facets, which used to be captured and never filterable.
+  const bugs = await loadFeedbackList({ page: 1, filter: "all", q: "", category: "bug" });
+  check("the category facet narrows the list", bugs.total === 1 && bugs.rows[0].id === withShot.id);
+  const chatArea = await loadFeedbackList({ page: 1, filter: "all", q: "", area: "chat" });
+  check("the area facet narrows the list", chatArea.total === 1 && chatArea.rows[0].id === resolved.id);
+  const both = await loadFeedbackList({ page: 1, filter: "all", q: "", area: "chat", category: "bug" });
+  check("the two facets combine", both.total === 0);
+  check("a row says whether we may contact the person", all.rows.find((r) => r.id === withShot.id)?.contactOk === true && all.rows.find((r) => r.id === resolved.id)?.contactOk == null);
+  check("sentiment is derived from the category", categorySentiment("bug") === "negative" && categorySentiment("idea") === "neutral" && categorySentiment("praise") === "positive" && categorySentiment(null) === null);
+  const themes = await getFeedbackThemes(28);
+  check("themes count by kind", themes.byCategory.find((c) => c.category === "bug")?.count === 1 && themes.byCategory.find((c) => c.category === "idea")?.count === 1);
+  check("and by area, with the negatives", themes.byArea.find((a) => a.area === "graph")?.negative === 1 && themes.byArea.find((a) => a.area === "chat")?.negative === 0);
+  check("and count the open entries we may follow up on", themes.contactableOpen === 1, String(themes.contactableOpen));
+
   const detail = await loadFeedbackDetail(withShot.id);
   check("detail loads", detail !== null);
   check("detail carries the screenshot metadata", detail!.screenshots.length === 1);
@@ -212,6 +229,11 @@ async function main() {
   check("the list page renders the excerpt", listText.includes("goes blank when I filter"));
   check("the list page renders the area", listText.includes("graph"));
   check("the list page renders the status", listText.includes("resolved"));
+  check("Triaged is a filter chip, not a tile", listText.includes("Triaged") && !listText.includes("Nobody has looked at these yet Triaged"));
+
+  // Chat ratings moved to their own tab; it must render on its own loaders.
+  const chatText = textOf(await AdminChatRatingsPage({ searchParams: Promise.resolve({}) })).join(" ");
+  check("the chat ratings tab renders", chatText.includes("Thumbs up") && chatText.includes("Did chat answer?"));
 
   const detailTree = await AdminFeedbackDetailPage({
     params: Promise.resolve({ feedbackId: withShot.id }),

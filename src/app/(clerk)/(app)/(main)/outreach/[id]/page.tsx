@@ -1,10 +1,13 @@
 import Link from "next/link";
+import type { Metadata } from "next";
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { getCampaign } from "@/actions/outreach";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { CampaignEditor } from "@/components/outreach/campaign-editor";
 import { CampaignWorkspace } from "@/components/outreach/campaign-workspace";
 import { buttonVariants } from "@/components/ui/button";
@@ -12,6 +15,19 @@ import { Badge } from "@/components/ui/badge";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import type { SequenceStep } from "@/lib/outreach-types";
 import { RenderStamp } from "@/components/layout/render-stamp";
+
+/** Request-memoized so `generateMetadata` and the page share one read. */
+const loadCampaign = cache((id: string) => getCampaign(id));
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const campaign = await loadCampaign(id).catch(() => null);
+  return { title: campaign?.name || "Campaign" };
+}
 
 export default async function OutreachCampaignPage({
   params,
@@ -25,11 +41,11 @@ export default async function OutreachCampaignPage({
 
   const { id } = await params;
   const { canUseOutreach } = await getEntitlements(await requireUserId());
-  if (!canUseOutreach) return <OutreachLocked />;
+  if (!canUseOutreach) return <OutreachLocked config={await getEffectivePlanConfig()} />;
 
   let campaign;
   try {
-    campaign = await getCampaign(id);
+    campaign = await loadCampaign(id);
   } catch {
     notFound();
   }

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 type Snippet = Awaited<ReturnType<typeof getEvidenceSnippet>>;
 
 const CHIP =
-  "mx-0.5 inline-flex size-4 -translate-y-0.5 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground align-super";
+  "mx-0.5 inline-flex size-4 -translate-y-0.5 items-center justify-center rounded-full bg-muted text-3xs font-medium text-muted-foreground align-super";
 
 /**
  * A `[eN]` marker in an answer, rendered as a small numbered chip. Hovering or clicking it
@@ -75,52 +75,63 @@ function LiveSourceChip({ messageId, id, number }: { messageId: string; id: stri
         ) : !snippet.found ? (
           <p className="text-xs text-muted-foreground">That note has been removed.</p>
         ) : (
-          <div className="flex flex-col gap-1.5 text-xs">
-            {snippet.kind === "meeting" ? (
-              <p className="font-medium text-foreground">{snippet.title}</p>
-            ) : (
-            <div className="flex items-center gap-2">
-              {snippet.contactId && (
-                <ContactAvatar
-                  contactId={snippet.contactId}
-                  fullName={snippet.contactName ?? ""}
-                  profileImageUrl={null}
-                  size="sm"
-                  className="size-6 shrink-0"
-                />
-              )}
-              <span className={cn("min-w-0 flex-1 truncate font-medium text-foreground", !snippet.contactId && "text-muted-foreground")}>
-                {snippet.contactName ?? "Not tied to a contact"}
-              </span>
-            </div>
-            )}
-            {snippet.kind === "meeting" && <p className="text-muted-foreground">{snippet.date} · Recorded meeting</p>}
-            {snippet.kind === "interaction" && (
-              <p className="text-muted-foreground">
-                {snippet.date} · {interactionTypeLabel(snippet.interactionType)}
-              </p>
-            )}
-            {snippet.snippet && <p className="leading-relaxed text-foreground">{snippet.snippet}</p>}
-            {snippet.kind === "meeting" && (
-              <Link href={`/meetings/${snippet.meetingId}`} className="mt-0.5 text-primary underline underline-offset-2">
-                Open meeting
-              </Link>
-            )}
-            {snippet.contactId && (
-              <Link
-                href={
-                  snippet.kind === "interaction"
-                    ? `/contacts/${snippet.contactId}?interaction=${snippet.interactionId}`
-                    : `/contacts/${snippet.contactId}`
-                }
-                className="mt-0.5 text-primary underline underline-offset-2"
-              >
-                Open in profile
-              </Link>
-            )}
-          </div>
+          <EvidenceSnippetBody snippet={snippet} />
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** What a found citation shows: who or what, when, the words, and a way to the source. Pure, so it renders without a popover. */
+export function EvidenceSnippetBody({ snippet }: { snippet: Extract<Snippet, { found: true }> }) {
+  return (
+    <div className="flex flex-col gap-1.5 text-xs">
+      {snippet.kind === "meeting" ? (
+        <p className="font-medium text-foreground">{snippet.title}</p>
+      ) : (
+        <div className="flex items-center gap-2">
+          {snippet.contactId && (
+            <ContactAvatar
+              contactId={snippet.contactId}
+              fullName={snippet.contactName ?? ""}
+              profileImageUrl={null}
+              size="sm"
+              className="size-6 shrink-0"
+            />
+          )}
+          <span className={cn("min-w-0 flex-1 truncate font-medium text-foreground", !snippet.contactId && "text-muted-foreground")}>
+            {snippet.contactName ?? (snippet.kind === "email_event" ? "From your email" : "Not tied to a contact")}
+          </span>
+        </div>
+      )}
+      {snippet.kind === "meeting" && <p className="text-muted-foreground">{snippet.date} · Recorded meeting</p>}
+      {snippet.kind === "interaction" && (
+        <p className="text-muted-foreground">
+          {snippet.date} · {interactionTypeLabel(snippet.interactionType)}
+        </p>
+      )}
+      {snippet.kind === "email_event" && <p className="text-muted-foreground">{snippet.date} · Email</p>}
+      {snippet.snippet && <p className="leading-relaxed text-foreground">{snippet.snippet}</p>}
+      {snippet.kind === "email_event" && snippet.quote && (
+        <p className="border-l-2 border-border pl-2 leading-relaxed text-muted-foreground">In the email: “{snippet.quote}”</p>
+      )}
+      {snippet.kind === "meeting" && (
+        <Link href={`/meetings/${snippet.meetingId}`} className="mt-0.5 text-primary underline underline-offset-2">
+          Open meeting
+        </Link>
+      )}
+      {snippet.contactId && (
+        <Link
+          href={
+            snippet.kind === "interaction"
+              ? `/contacts/${snippet.contactId}?interaction=${snippet.interactionId}`
+              : `/contacts/${snippet.contactId}`
+          }
+          className="mt-0.5 text-primary underline underline-offset-2"
+        >
+          Open in profile
+        </Link>
+      )}
+    </div>
   );
 }

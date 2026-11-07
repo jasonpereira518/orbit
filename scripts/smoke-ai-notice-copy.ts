@@ -13,6 +13,7 @@ import {
   MANAGED_LIMIT_MESSAGES,
   MANAGED_PROVIDER_FAILURE_MESSAGE,
   hintCopyFor,
+  nextPlanFor,
   noticeCopyFor,
   refusalCopyFor,
   refusalWithRefill,
@@ -21,6 +22,8 @@ import {
   OWN_KEY_PROVIDERS,
 } from "../src/lib/ai-access-copy";
 import { isQuietFailureMessage } from "../src/lib/errors";
+import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
+import { applyPlanOverrides, featureRuleRow, limitRuleRow, parsePlanRules } from "../src/lib/plans/plan-overrides";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -97,10 +100,10 @@ for (const [label, c] of [["paused", paused], ["spent", spentDated], ["blip", bl
   check(`${label}: obeys the copy rules`, /\.$/.test(c.body) && (c.body.match(/ — /g) ?? []).length <= 1 && !c.body.includes("'") && !/  /.test(c.body), c.body);
   check(`${label}: links to the keys and sells nothing`, c.linkToKeys && c.offer === null);
 }
-check("noticeCopyFor picks the outage wording when it is told one", noticeCopyFor("managed_unavailable", "free", reset, { kind: "paused" }).title("x") === paused.title("x"));
-check("…the try-again wording when told Orbit's AI is running", noticeCopyFor("managed_unavailable", "free", reset, null).title("x") === blip.title("x"));
+check("noticeCopyFor picks the outage wording when it is told one", noticeCopyFor("managed_unavailable", "free", reset, undefined, { kind: "paused" }).title("x") === paused.title("x"));
+check("…the try-again wording when told Orbit's AI is running", noticeCopyFor("managed_unavailable", "free", reset, undefined, null).title("x") === blip.title("x"));
 check("…and the generic wording when it is told nothing", noticeCopyFor("managed_unavailable", "free", reset).title("x") === AI_NOTICE_COPY.managed_unavailable.title("x"));
-check("an outage never changes the out-of-credits wording", noticeCopyFor("managed_limit", "free", reset, { kind: "paused" }).offer === "credits");
+check("an outage never changes the out-of-credits wording", noticeCopyFor("managed_limit", "free", reset, undefined, { kind: "paused" }).offer === "credits");
 check("key_required names every provider too", AI_NOTICE_COPY.key_required.body.includes(OWN_KEY_PROVIDERS));
 
 // The one-line refusal and the field hint: Free at zero is told its credits are monthly, and offered a pack.
@@ -134,6 +137,12 @@ check("…and still points at a key", /api key/i.test(refill), refill);
 check("any other message passes through", refusalWithRefill("Something else broke", "free", null) === "Something else broke");
 check("Pro out of credits passes through", refusalWithRefill(FREE_LIMIT_MESSAGE, "orbit", null) === FREE_LIMIT_MESSAGE);
 check("Lifetime out of credits passes through", refusalWithRefill(MANAGED_LIMIT_MESSAGES.lifetime, "lifetime", null) === MANAGED_LIMIT_MESSAGES.lifetime);
+// The way out follows the EFFECTIVE plan table (an admin's plan rules), not the code defaults.
+check("the plan above: Free → Pro, Pro → Max, none above Max", nextPlanFor("free") === "orbit" && nextPlanFor("orbit") === "max" && nextPlanFor("max") === null && nextPlanFor("lifetime") === null);
+const flat = applyPlanOverrides(PLAN_CONFIG, parsePlanRules([limitRuleRow("max", "monthlyCredits", 300)]));
+check("Max with no more credits than Pro is not offered to Pro", !/move to/.test(noticeCopyFor("managed_limit", "orbit", reset, flat).body), noticeCopyFor("managed_limit", "orbit", reset, flat).body);
+const noPacks = applyPlanOverrides(PLAN_CONFIG, parsePlanRules([featureRuleRow("creditPacks", ["free"])]));
+check("a plan the admin took packs from gets the key-only notice", noticeCopyFor("managed_limit", "orbit", reset, noPacks).offer === null && !/pack/i.test(hintCopyFor("managed_limit", "orbit", noPacks)));
 const graph = readFileSync("src/components/graph/network-graph.tsx", "utf8");
 check("the constellation refresh words its refusal with the refill date", /error: refusalWithRefill\(result\.aiError/.test(graph));
 

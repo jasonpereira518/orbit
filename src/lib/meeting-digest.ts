@@ -216,17 +216,56 @@ export function groundDigest(digest: MeetingDigest, transcript: string): Meeting
   };
 }
 
+/** Who the user is, as far as telling them apart from the people in their own notes goes. */
+export type CaptureSelf = {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  linkedinUrl?: string | null;
+};
+
+function foldName(s: string): string {
+  return s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function linkedinSlugOf(url: string | null | undefined): string | null {
+  const m = url?.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]).toLowerCase();
+  } catch {
+    return m[1].toLowerCase();
+  }
+}
+
 /**
- * The user is on every call they record; they are never a contact to create. Matched on
- * the full name and on the first name alone, since the model often has only what was said.
+ * The user writes the notes and is on every call they record; they are never a contact to
+ * create. Matched on the full name and on the first name alone, since the model often has
+ * only what was said — unless the person carries an email or LinkedIn that is not the
+ * user's, which makes them someone else who happens to share a first name.
  */
-export function isSelf(name: string, self: { firstName?: string | null; lastName?: string | null }): boolean {
-  const n = name.replace(/\s+/g, " ").trim().toLowerCase();
+export function isSelf(
+  name: string,
+  self: CaptureSelf,
+  person?: { email?: string | null; linkedinUrl?: string | null; company?: string | null },
+): boolean {
+  const email = person?.email?.trim().toLowerCase() || null;
+  const slug = linkedinSlugOf(person?.linkedinUrl);
+  const selfEmail = self.email?.trim().toLowerCase() || null;
+  const selfSlug = linkedinSlugOf(self.linkedinUrl);
+  if (email && selfEmail && email === selfEmail) return true;
+  if (slug && selfSlug && slug === selfSlug) return true;
+  // A different identifier is a different person, whatever their name.
+  if ((email && email !== selfEmail) || (slug && slug !== selfSlug)) return false;
+
+  const n = foldName(name);
   if (n === "me" || n === "i" || n === "myself") return true;
-  const first = self.firstName?.trim().toLowerCase();
-  const last = self.lastName?.trim().toLowerCase();
+  const first = self.firstName ? foldName(self.firstName) : "";
+  const last = self.lastName ? foldName(self.lastName) : "";
   if (!n || !first) return false;
-  if (n === first) return true;
+  // A bare first name with a company attached ("Jason from Stripe") is someone else who
+  // shares the user's first name. Callers pass `company` only where that reading holds.
+  if (n === first) return !person?.company?.trim();
   return Boolean(last && n === `${first} ${last}`);
 }
 
@@ -392,23 +431,9 @@ export function formatTranscriptSegment(
   return label ? `${label}: ${text}` : text;
 }
 
-/**
- * Names for the anonymous voices, when the call itself settles who they are. Today that is the
- * one unambiguous case: a 1:1 — exactly one other person invited, and exactly one voice besides
- * the user's — where that voice can only be them. Any more people and the voices stay
- * "Speaker N": guessing who is who in a group call would put words in the wrong mouth.
- */
-export function speakerNames(
-  segments: ReadonlyArray<{ speaker: string | null }>,
-  otherAttendees: readonly string[]
-): Map<string, string> {
-  const names = new Map<string, string>();
-  const others = [...new Set(otherAttendees.map((n) => n.trim()).filter(Boolean))];
-  if (others.length !== 1) return names;
-  const voices = new Set(segments.map((s) => s.speaker).filter((s): s is string => !!s && s !== "you"));
-  if (voices.size === 1) names.set([...voices][0], others[0]);
-  return names;
-}
+// The display helpers live in a client-safe module (this one reaches `node:crypto` through
+// `ai-security`), re-exported so server callers keep importing them from here.
+export { speakerDisplayNames, speakerNames } from "@/lib/speaker-display";
 
 const SHAPE = `{
   "title": string,                 // short meeting title; reuse the given one if there is one

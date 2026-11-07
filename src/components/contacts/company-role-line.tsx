@@ -1,7 +1,14 @@
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 
-/** Role line with company name tinted to the company brand color. */
+/**
+ * Role line with company name tinted to the company brand color.
+ *
+ * The tint goes through `companyBrandText`, which keeps it at 4.5:1 or better in both themes
+ * (a monochrome brand renders as plain muted text). Title and company are each isolated in
+ * `<bdi>`, so an Arabic title beside a Latin company keeps its own direction instead of
+ * reordering the whole line, "at" and all.
+ */
 export function CompanyRoleLine({
   title,
   company,
@@ -13,7 +20,7 @@ export function CompanyRoleLine({
   className?: string;
   empty?: string | null;
 }) {
-  const color = companyBrandColor(company);
+  const brand = companyBrandText(company);
 
   if (!title && !company) {
     return empty ? (
@@ -24,29 +31,26 @@ export function CompanyRoleLine({
   if (title && company) {
     return (
       <span className={cn("text-muted-foreground", className)}>
-        {title} at{" "}
-        <span
-          className="font-medium"
-          style={color ? { color } : undefined}
-        >
+        <bdi>{title}</bdi> at{" "}
+        <bdi className={cn("font-medium", brand?.className)} style={brand?.style}>
           {company}
-        </span>
+        </bdi>
       </span>
     );
   }
 
   if (company) {
     return (
-      <span
-        className={cn("font-medium", className)}
-        style={color ? { color } : undefined}
+      <bdi
+        className={cn("font-medium", brand ? brand.className : "text-muted-foreground", className)}
+        style={brand?.style}
       >
         {company}
-      </span>
+      </bdi>
     );
   }
 
   return (
-    <span className={cn("text-muted-foreground", className)}>{title}</span>
+    <bdi className={cn("text-muted-foreground", className)}>{title}</bdi>
   );
 }

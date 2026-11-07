@@ -73,7 +73,8 @@ export async function generateMetadata({
   const params = await searchParams;
   const origin = getWaitlistOrigin();
   const base: Metadata = {
-    title: TITLE,
+    // Absolute: the waitlist is its own surface and does not carry the app's "· Orbit" suffix.
+    title: { absolute: TITLE },
     description: DESCRIPTION,
     metadataBase: new URL(origin),
     // Replaces the root layout's icon list, which names the product's logo file. The
@@ -301,7 +302,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 pt-6 md:px-10 md:pt-10">
+      <main id="main-content" className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 pt-6 md:px-10 md:pt-10">
         <div className="relative">
           <RingsBackdrop />
           <InterestHero
@@ -354,7 +355,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
           </Reveal>
         </section>
 
-        {/* An admin can hide the demo from /admin/growth/interest-list. */}
+        {/* An admin can hide the demo from /admin/access. */}
         {showDemo && (
           <>
             {/* Wide screens only (lg): the demo is a desktop-sized window, and narrower ones never fetch its chunk. */}

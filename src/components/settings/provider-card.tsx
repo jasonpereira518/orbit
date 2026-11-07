@@ -149,18 +149,20 @@ export function ProviderCard({
   const showKeyField = !hasKey || replacing;
   const chosenIndex = tiers.findIndex((m) => active && model === m.value);
 
-  const base = hasKey
-    ? active
-      ? "Your key is saved, and Orbit is using it"
-      : "Your key is saved"
-    : status?.managedAvailable
-      ? "No key saved — AI is already covered for you"
-      : includedCovers
-        ? "Optional — Orbit’s included AI covers you without a key"
-        : "No key yet — paste one to turn on AI features";
-  // "In use" only on a card whose key actually runs. On included AI with no key of its own,
-  // the selected card is not what runs (Orbit picks the model), so it does not say so.
-  const inUse = active && usable;
+  const base = active
+    ? hasKey
+      ? "In use · your key"
+      : status?.managedAvailable
+        ? "In use"
+        : "Selected · no key"
+    : hasKey
+      ? "Key saved"
+      : status?.managedAvailable
+        ? "Covered by Orbit"
+        : includedCovers
+          ? "Optional · Orbit’s AI covers you"
+          : "No key";
+  const dot = active && usable ? "on" : hasKey || status?.managedAvailable ? "partial" : "off";
   /**
    * An active account can sit on an id no tier button carries — an untagged preset, a custom
    * id, or one this branch dropped from the presets — and then every button reads unselected
@@ -202,16 +204,23 @@ export function ProviderCard({
         <h4 id={`provider-card-name-${provider.id}`} className="text-sm font-medium text-ink">
           {provider.label}
         </h4>
-        {inUse ? (
-          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs text-ink">In use</span>
-        ) : recommended && !hasKey ? (
+        {recommended && !hasKey ? (
           <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
             Recommended
           </span>
         ) : null}
       </div>
 
-      <p className="text-sm text-muted-foreground">{stateLine}</p>
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span
+          aria-hidden
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            dot === "on" ? "bg-primary" : dot === "partial" ? "bg-primary/45" : "bg-muted-foreground/35"
+          )}
+        />
+        {stateLine}
+      </p>
 
       {usable && tiers.length > 0 ? (
         <div
@@ -276,7 +285,6 @@ export function ProviderCard({
             <Button
               type="button"
               disabled={pending || !apiKey.trim()}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={() =>
                 start(async () => {
                   // Straight to `saveAiSettings`, which overwrites the stored key. Never via

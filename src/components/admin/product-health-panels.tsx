@@ -10,7 +10,6 @@ import {
 import { aiVolumeTrend } from "@/lib/admin-trends";
 import {
   getAiOperationAdoption,
-  getArtifacts,
   getDataQuality,
   getFunnelParking,
 } from "@/lib/admin-product-health";
@@ -72,7 +71,7 @@ export async function AiOperationsPanel() {
       ) : aiOps.adoption.length === 0 ? (
         <EmptyState>No AI operations recorded in the last 30 days.</EmptyState>
       ) : (
-        <AdminTable
+        <AdminTable label="AI operations used"
           minWidth="sm"
           head={
             <>
@@ -85,7 +84,14 @@ export async function AiOperationsPanel() {
         >
           {aiOps.adoption.map((row) => (
             <tr key={row.operation} className="border-b border-border/40 last:border-b-0">
-              <Td className="font-mono text-xs">{row.operation}</Td>
+              <Td className="font-mono text-xs">
+                {row.operation}
+                {row.background && (
+                  <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-sans text-3xs text-muted-foreground">
+                    runs in the background
+                  </span>
+                )}
+              </Td>
               <Td numeric>{row.users}</Td>
               <Td numeric className="text-muted-foreground">
                 {row.calls}
@@ -115,44 +121,6 @@ export async function AiOperationsPanel() {
 }
 
 /**
- * What usage_events structurally cannot show: reminders, tags and goals leave no AI call
- * behind, so a usage-only view reports them as unused.
- */
-export async function ArtifactsPanel() {
-  const artifacts = await getArtifacts().catch(() => null);
-  return (
-    <AdminPanel title="Durable artifacts">
-      {!artifacts ? (
-        <EmptyState>Row counts are unavailable.</EmptyState>
-      ) : (
-        <AdminTable
-          minWidth="none"
-          head={
-            <>
-              <Th>Table</Th>
-              <Th numeric>Rows</Th>
-              <Th numeric>Accounts</Th>
-            </>
-          }
-        >
-          {artifacts.map((a) => (
-            <tr key={a.label} className="border-b border-border/40 last:border-b-0">
-              <Td>{a.label}</Td>
-              <Td numeric className={a.rows === 0 ? "text-muted-foreground" : undefined}>
-                {a.rows}
-              </Td>
-              <Td numeric className="text-muted-foreground">
-                {a.users || "—"}
-              </Td>
-            </tr>
-          ))}
-        </AdminTable>
-      )}
-    </AdminPanel>
-  );
-}
-
-/**
  * A section rather than a screen: at this scale it is eight integers and most are zero.
  * Split it out when two rows stay non-zero for a week — at that point they have stopped
  * being checks and become work.
@@ -164,7 +132,7 @@ export async function DataQualityPanel() {
       {!quality ? (
         <EmptyState>Data-quality checks are unavailable.</EmptyState>
       ) : (
-        <AdminTable
+        <AdminTable label="Data quality"
           minWidth="none"
           head={
             <>

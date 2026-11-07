@@ -93,7 +93,7 @@ export function AdminShell({
             </span>
           </Link>
 
-          <nav className="hidden shrink-0 items-center gap-1 md:flex">
+          <nav aria-label="Admin" className="hidden shrink-0 items-center gap-1 md:flex">
             {navItems.map((item) => {
               const active = isAdminNavActive(pathname, item.href);
               return (
@@ -184,7 +184,7 @@ export function AdminShell({
                 <SheetHeader className="sr-only">
                   <SheetTitle>Admin navigation</SheetTitle>
                 </SheetHeader>
-                <nav className="flex flex-col gap-1 overflow-y-auto p-4 pt-10">
+                <nav aria-label="Admin" className="flex flex-col gap-1 overflow-y-auto p-4 pt-10">
                   {navItems.map((item) => {
                     const active = isAdminNavActive(pathname, item.href);
                     return (
@@ -244,7 +244,9 @@ export function AdminShell({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-6">{children}</main>
+      {/* pb-24: the toast column sits in the bottom-right corner; the padding keeps it off
+          the last actions on a page (e.g. /admin/feedback/[id]). */}
+      <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-24 outline-none md:px-6">{children}</main>
     </div>
   );
 }

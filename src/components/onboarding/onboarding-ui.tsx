@@ -1,5 +1,6 @@
 "use client";
 
+import { PLAN_SHORT_LABELS, type PurchasablePlan } from "@/lib/plans/plan-config";
 import type { ReactNode } from "react";
 import { motion, type Variants } from "motion/react";
 import { ChevronLeft } from "lucide-react";
@@ -123,7 +124,7 @@ export function SoonTag({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-warning",
+        "inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-1.5 py-px text-3xs font-semibold uppercase tracking-wide text-warning",
         className,
       )}
     >
@@ -132,15 +133,16 @@ export function SoonTag({ className }: { className?: string }) {
   );
 }
 
-export function ProTag({ className }: { className?: string }) {
+/** The plan a locked line unlocks on (`unlockTagPlan`); Pro unless told otherwise. */
+export function ProTag({ className, plan = "orbit" }: { className?: string; plan?: PurchasablePlan }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border border-brand-pro/35 bg-brand-pro/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-tier-pro",
+        "inline-flex items-center rounded-full border border-brand-pro/35 bg-brand-pro/10 px-1.5 py-px text-3xs font-semibold uppercase tracking-wide text-tier-pro",
         className,
       )}
     >
-      Pro
+      {PLAN_SHORT_LABELS[plan]}
     </span>
   );
 }

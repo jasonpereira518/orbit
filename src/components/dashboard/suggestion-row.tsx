@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { X } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { runToastAction, toast } from "@/lib/toast";
 import {
   acceptScoreBump,
@@ -15,6 +15,7 @@ import {
 } from "@/actions/reminders";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 
@@ -56,6 +57,7 @@ export function SuggestionRow({
   contactName,
   contactTitle,
   contactCompany,
+  contactAvatarUrl,
   lastInteractionAt,
   tier,
 }: {
@@ -66,6 +68,7 @@ export function SuggestionRow({
   contactName: string;
   contactTitle?: string | null;
   contactCompany?: string | null;
+  contactAvatarUrl?: string | null;
   lastInteractionAt?: Date | string | null;
   tier?: "inner" | "mid" | "outer";
 }) {
@@ -80,11 +83,18 @@ export function SuggestionRow({
     ? formatDistanceToNow(new Date(lastInteractionAt), { addSuffix: true })
     : null;
   const nextStep = NEXT_STEP[suggestionType];
-  const companyColor = companyBrandColor(contactCompany);
+  const companyBrand = companyBrandText(contactCompany);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start justify-between gap-3">
+        <ContactAvatar
+          contactId={contactId}
+          fullName={contactName}
+          profileImageUrl={contactAvatarUrl}
+          size="sm"
+          className="mt-0.5"
+        />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {contactId ? (
@@ -100,7 +110,7 @@ export function SuggestionRow({
             {tier && <ClosenessTierBadge tier={tier} />}
             <span
               className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
                 REASON_STYLES[suggestionType] ?? "bg-muted text-muted-foreground"
               )}
             >
@@ -111,8 +121,8 @@ export function SuggestionRow({
             <p className="mt-0.5 text-sm">
               {contactCompany && (
                 <span
-                  className="font-semibold"
-                  style={companyColor ? { color: companyColor } : undefined}
+                  className={cn("font-semibold", companyBrand?.className)}
+                  style={companyBrand?.style}
                 >
                   {contactCompany}
                 </span>

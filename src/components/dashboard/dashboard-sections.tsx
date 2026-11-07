@@ -1,4 +1,5 @@
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { Suspense } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
@@ -9,6 +10,7 @@ import type { fetchDashboard } from "@/actions/reminders";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
@@ -18,16 +20,12 @@ import { linkedinCardState } from "@/lib/linkedin-export-card";
 import { NetworkDepthChart } from "@/components/dashboard/network-depth-chart";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { PlanLaunchCard } from "@/components/dashboard/plan-launch-card";
-import { FREE_CONTACT_LIMIT } from "@/lib/plans/plan-config";
-
-/** A Free account sees its plan card from 80% of the contact limit. */
-const FREE_PLAN_CARD_FROM = Math.round(FREE_CONTACT_LIMIT * 0.8);
 import { RemindersDashboardCard } from "@/components/dashboard/reminders-dashboard-card";
 import { SuggestedOutreachCard } from "@/components/dashboard/suggested-outreach-card";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { buttonVariants } from "@/components/ui/button";
 import { CARD_HOVER, PRESS, ROW_HOVER_INSET } from "@/lib/interaction";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
@@ -71,6 +69,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
       name: "Unknown contact",
       title: null as string | null,
       company: null as string | null,
+      avatarUrl: null as string | null,
       lastInteractionAt: null as Date | null,
     };
   }
@@ -79,6 +78,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
     name: data.contactNameById.get(contactId) || c?.fullName || "Contact",
     title: c?.title ?? null,
     company: c?.company ?? null,
+    avatarUrl: c?.avatarUrl ?? null,
     lastInteractionAt: c?.lastInteractionAt ?? null,
   };
 }
@@ -109,13 +109,12 @@ const revealDelay = (ms: number) =>
  */
 export async function LinkedInExportNudgeSection() {
   const userId = await requireUserId();
-  const lastImportAt = await getLastLinkedInImportAt(userId);
+  const [lastImportAt, settings] = await Promise.all([getLastLinkedInImportAt(userId), ensureUserSettings(userId)]);
   if (lastImportAt) {
     const now = new Date();
-    if (linkedInRefreshLevel(lastImportAt, now) !== "urgent") return null;
+    if (linkedInRefreshLevel(lastImportAt, now, settings.linkedinRefreshIntervalDays) !== "urgent") return null;
     return <LinkedInRefreshNudge days={daysSince(lastImportAt, now)} />;
   }
-  const settings = await ensureUserSettings(userId);
   if (await getLinkedInNudgeVisible(userId, settings)) return <LinkedInExportNudge email={settings.email ?? null} />;
   const state = linkedinCardState({
     imported: await hasLinkedInImport(userId),
@@ -148,7 +147,7 @@ export async function SetupChecklistSection() {
   ]);
 
   const items: SetupChecklistItem[] = [];
-  const aiDenial = aiDenialFromSettings(userId, settings, outage);
+  const aiDenial = aiDenialFromSettings(userId, settings, await getEffectivePlanConfig(), outage);
   if (aiDenial) {
     items.push({
       id: "ai-key",
@@ -343,7 +342,7 @@ export async function MorningBriefingSection({ briefing }: { briefing: Promise<R
   const b = await briefing.catch(() => null);
   if (!b?.hasRun) return null;
   return (
-    <div className="reveal-mount min-w-0" style={revealDelay(0)}>
+    <div className="reveal-mount min-w-0 lg:flex-1 lg:basis-0" style={revealDelay(0)}>
       <MorningBriefing
         total={b.total}
         today={b.today}
@@ -415,6 +414,7 @@ export async function SuggestedOutreachSection({
             contactName: meta.name,
             contactTitle: meta.title,
             contactCompany: meta.company,
+            contactAvatarUrl: meta.avatarUrl,
             lastInteractionAt: meta.lastInteractionAt,
             tier: contactId ? tierForContact(data, contactId) : undefined,
           };
@@ -449,7 +449,7 @@ async function OutreachReplyRate({ summary }: { summary: OutreachSummary }) {
 }
 
 /** Rows shown in the Due follow-ups card; the rest sit behind "See more". */
-const DUE_FOLLOW_UPS_PREVIEW = 6;
+const DUE_FOLLOW_UPS_PREVIEW = 3;
 
 export async function RemindersAndFollowUpsSection({
   bundle,
@@ -512,6 +512,7 @@ export async function RemindersAndFollowUpsSection({
                   fullName={c.fullName}
                   title={c.title}
                   company={c.company}
+                  profileImageUrl={c.profileImageUrl}
                   tier={tierForContact(data, c.id)}
                   nextFollowUpAt={c.nextFollowUpAt}
                   lastInteractionAt={c.lastInteractionAt}
@@ -596,14 +597,20 @@ export async function RecentlyUpdatedSection({
                   )}
                 >
                   <div className="flex min-w-0 items-center gap-2">
+                    <ContactAvatar
+                      contactId={c.id}
+                      fullName={c.fullName}
+                      profileImageUrl={c.avatarUrl}
+                      size="sm"
+                    />
                     {tier && <ClosenessTierBadge tier={tier} dotOnly />}
                     <div className="min-w-0">
                       <p className="font-medium">{c.fullName}</p>
                       <p className="text-xs text-muted-foreground">
                         {c.company ? (
                           <span
-                            className="font-medium"
-                            style={{ color: companyBrandColor(c.company) ?? undefined }}
+                            className={cn("font-medium", companyBrandText(c.company)?.className)}
+                            style={companyBrandText(c.company)?.style}
                           >
                             {c.company}
                           </span>
@@ -657,6 +664,8 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
   // Both are request-cached (`cache()`), and the layout above has already
   // resolved them for the sidebar's tier ring — so this costs nothing extra.
   const { plan } = await getEntitlements(await requireUserId());
+  const planConfig = await getEffectivePlanConfig();
+  const freeContactLimit = planConfig.free.contactLimit;
   return (
     // space-y-6, not the page's space-y-8: these three are a group at the foot of
     // the dashboard, and giving them the same gap as the major section breaks made
@@ -678,9 +687,12 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
 
       {/* Foot of the dashboard on purpose: prominent enough to find, far
           enough down that it isn't the first thing between you and your
-          follow-ups. On Free it waits until the limit is in sight, so a new
-          account is not sold to before it has anyone in it. */}
-      {(plan !== "free" || data.stats.totalContacts >= FREE_PLAN_CARD_FROM) && <PlanLaunchCard plan={plan} />}
+          follow-ups. On Free it waits until the limit is in sight (80% of it), so a new
+          account is not sold to before it has anyone in it; with no Free limit, never. */}
+      {(plan !== "free" ||
+        (freeContactLimit !== null && data.stats.totalContacts >= Math.round(freeContactLimit * 0.8))) && (
+        <PlanLaunchCard plan={plan} freeContactLimit={freeContactLimit} proMonthlyCredits={planConfig.orbit.monthlyCredits} />
+      )}
     </div>
   );
 }

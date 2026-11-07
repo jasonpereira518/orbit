@@ -161,7 +161,7 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
                 transition={{ duration: 0.16 }}
               >
                 {current.label}
-                {current.detail && <span className="text-muted-foreground/80"> · {current.detail}</span>}
+                {current.detail && <span className="text-muted-foreground-subtle"> · {current.detail}</span>}
               </motion.span>
             </AnimatePresence>
           </span>
@@ -215,8 +215,8 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
             {steps.map((s) => (
               <li key={s.kind} className="text-xs text-muted-foreground">
                 <span className="text-ink/80">{s.kind === "answer" ? "Wrote the answer" : s.label}</span>
-                <span className="text-muted-foreground/70"> · {formatMs(s.kind === "answer" ? totalMs - steps.reduce((a, x) => a + x.ms, 0) : s.ms)}</span>
-                {s.detail && <span className="block text-muted-foreground/70">{s.detail}</span>}
+                <span className="text-muted-foreground-subtle"> · {formatMs(s.kind === "answer" ? totalMs - steps.reduce((a, x) => a + x.ms, 0) : s.ms)}</span>
+                {s.detail && <span className="block text-muted-foreground-subtle">{s.detail}</span>}
                 {s.kind === "read" && s.refs && (
                   <span className="mt-1 flex flex-wrap gap-1">
                     {s.refs.map((id) => (
@@ -224,7 +224,7 @@ function Activity({ steps, at, done, totalMs }: { steps: DemoStep[]; at: number;
                         key={id}
                         type="button"
                         onClick={() => dispatch({ type: "openProfile", id })}
-                        className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-ink/80 hover:bg-white/10"
+                        className="rounded-full bg-white/[0.06] px-2 py-0.5 text-2xs text-ink/80 hover:bg-white/10"
                       >
                         {personById(id)!.name}
                       </button>
@@ -337,7 +337,7 @@ function Answer({ turn, last }: { turn: AssistantTurn; last: boolean }) {
                       aria-label={`Source ${i + 1}: ${p.name}, ${s.label}`}
                       onClick={() => setOpenSrc(open ? null : i)}
                       className={cn(
-                        "inline-flex size-5 items-center justify-center rounded-full text-[11px] tabular-nums transition-colors",
+                        "inline-flex size-5 items-center justify-center rounded-full text-2xs tabular-nums transition-colors",
                         open ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-ink"
                       )}
                     >

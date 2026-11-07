@@ -34,7 +34,8 @@ import {
   type FeedbackArea,
   type FeedbackCategory,
 } from "@/lib/feedback-report";
-import type { PanelAnchor } from "@/lib/floating-panel";
+import { useCornerShift } from "@/lib/corner-clearance";
+import { PANEL_CORNER_SHIFT_PX, type PanelAnchor } from "@/lib/floating-panel";
 import { blobToDataUrl } from "@/lib/screenshot-capture";
 import { toast } from "@/lib/toast";
 
@@ -227,6 +228,11 @@ export function FeedbackPanel({
   // goes true, and the close is driven by `open` going false. A fresh mount starts the
   // sequence over, which is exactly what reopening should do.
   const sheetOpen = open && entered;
+
+  // Toasts (this panel's own error toasts included) and the job stack slide to the
+  // window's left while it is open, instead of landing on the Send row. Keyed to `open`,
+  // not mount: the panel stays mounted through its exit transition.
+  useCornerShift(PANEL_CORNER_SHIFT_PX, open);
 
 
   /**
@@ -632,7 +638,7 @@ export function FeedbackPanel({
                   aria-label={`Remove screenshot ${index + 1}`}
                   // Focus-within as well as hover: a hover-only control does not exist for
                   // anyone using a keyboard.
-                  className="absolute -right-1.5 -top-1.5 size-5 rounded-full bg-background opacity-0 shadow group-hover:opacity-100 group-focus-within:opacity-100"
+                  className="absolute -right-1.5 -top-1.5 size-5 rounded-full bg-background pointer-fine:opacity-0 shadow group-hover:opacity-100 group-focus-within:opacity-100"
                   onClick={() => onRemoveShot(shot.id)}
                 >
                   <X className="size-3" />

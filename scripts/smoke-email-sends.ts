@@ -182,6 +182,30 @@ async function main() {
     const rm = await row(m.id);
     check("marked ambiguous, provider never re-called", rm.failureKind === "ambiguous" && sent.length === before);
 
+    // --- email_send_failed: one event per row that reaches the terminal failed state
+    {
+      await new Promise((r) => setTimeout(r, 300)); // track() writes after the dispatch returns
+      const events = await db
+        .select()
+        .from(schema.productEvents)
+        .where(and(eq(schema.productEvents.userId, USER), eq(schema.productEvents.name, "email_send_failed")));
+      const failedRows = (await db.select().from(schema.emailSends).where(eq(schema.emailSends.userId, USER))).filter((r) => r.status === "failed");
+      check(
+        "every failed send (exhausted, permanent, auth, ambiguous) recorded exactly one email_send_failed",
+        failedRows.length === 4 && events.length === failedRows.length,
+        `${failedRows.length} failed rows, ${events.length} events`
+      );
+      check(
+        "…provider and kind only, never the error text",
+        events.every((e) => JSON.stringify(Object.keys(e.properties as object).sort()) === JSON.stringify(["kind", "provider"]) && (e.properties as { provider: string }).provider === "gmail" && (e.properties as { kind: string }).kind === "outreach" && e.actor === "system")
+      );
+      await dispatchEmailSend(p.id);
+      await dispatchEmailSend(m.id);
+      await new Promise((r) => setTimeout(r, 200));
+      const again = await db.select().from(schema.productEvents).where(and(eq(schema.productEvents.userId, USER), eq(schema.productEvents.name, "email_send_failed")));
+      check("…and dispatching an already-failed send again adds none", again.length === events.length);
+    }
+
     next = ["ambiguous"];
     const h = await must(enqueueEmail(USER, base));
     await dispatchEmailSend(h.id);

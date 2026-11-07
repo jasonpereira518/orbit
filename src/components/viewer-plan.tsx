@@ -2,7 +2,7 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import type { AiAccessDenial, ManagedOutage } from "@/lib/managed-ai-policy";
-import type { Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 
 /**
  * The signed-in account's plan, and whether this deployment can actually run included AI
@@ -24,6 +24,12 @@ export type ViewerPlan = {
   aiOutage: ManagedOutage | null;
   /** When this account's monthly credits refill (ISO), or null when the plan has none. */
   creditsResetAt: string | null;
+  /**
+   * The EFFECTIVE plan table (`getEffectivePlanConfig()`: code defaults plus the operator's
+   * plan rules), so client copy — "available on …", plan cards, upgrade pitches — says what
+   * the gates actually enforce. Not secret: it is what /pricing publishes.
+   */
+  planConfig: Record<Plan, PlanConfig>;
 };
 
 const ViewerPlanContext = createContext<ViewerPlan>({
@@ -32,6 +38,7 @@ const ViewerPlanContext = createContext<ViewerPlan>({
   aiReason: null,
   aiOutage: null,
   creditsResetAt: null,
+  planConfig: PLAN_CONFIG,
 });
 
 export function ViewerPlanProvider({ value, children }: { value: ViewerPlan; children: ReactNode }) {

@@ -5,7 +5,9 @@
  * Run: npx tsx scripts/smoke-onboarding-copy.ts
  */
 import { readFileSync } from "node:fs";
-import { FREE_AI_EXPLAINER } from "../src/lib/ai-access-copy";
+import { FREE_AI_EXPLAINER, freeAiExplainer } from "../src/lib/ai-access-copy";
+import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
+import { applyPlanOverrides, limitRuleRow, parsePlanRules } from "../src/lib/plans/plan-overrides";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -31,14 +33,17 @@ check("the onboarding page loads the open capture job", onboardingPage.includes(
 check("the onboarding capture step runs on CaptureFlow, not the job-less panel",
   /CaptureFlow/.test(captureStep) && /initialJob=/.test(captureStep) && !captureStep.includes("BulkNotesPanel"));
 const captureFlow = readFileSync("src/components/capture/capture-flow.tsx", "utf8");
-check("embedded capture never opens on the meeting tab (tabs hidden, no meetings)",
-  /onSaved && initial === "meeting" \? "messy" : initial/.test(captureFlow));
+check("capture never opens on the meeting tab (recording lives on /meetings)",
+  /const opened = initial === "meeting" \? "messy" : initial;/.test(captureFlow));
 check("embedded capture hands off only a save it saw happen, never a stale saved job",
   /seenUnsavedRef\.current !== job\.id\) \{\s*clearCaptureJob\(\);\s*return;/.test(captureFlow));
 const chapters = readFileSync("src/components/onboarding/highlights/chapters.ts", "utf8");
 check("the ask chapter no longer says it runs on your key", !chapters.includes("Runs on the AI key you bring"));
 check("the Settings explainer names both numbers",
   FREE_AI_EXPLAINER === "Free includes 50 AI credits a month and 25 to start. Add your own key to use AI with no limit", FREE_AI_EXPLAINER);
+const raised = applyPlanOverrides(PLAN_CONFIG, parsePlanRules([limitRuleRow("free", "monthlyCredits", 80)]));
+check("…and follows the effective plan table", freeAiExplainer(raised).startsWith("Free includes 80 AI credits a month"), freeAiExplainer(raised));
+check("the highlights name the plan a locked line unlocks on", highlights.includes("unlockTagPlan("));
 
 // Capture-first onboarding (R4, R2, R8): one thing to do on the welcome, a by-hand way in that
 // still sets a follow-up when AI cannot run, and the first win shown back after the save.
@@ -47,7 +52,7 @@ check("the welcome has one primary action: add someone you met", welcome.include
 check("the tour is still one click, as a secondary link", welcome.includes("Show me around with example people first") && /variant="link"[\s\S]{0,120}onClick=\{onTour\}/.test(welcome));
 check("the tour is no longer the recommended card", !/Recommended/.test(welcome));
 check("skipping is offered on the welcome itself", welcome.includes("Skip for now"));
-check("the credits line names both numbers from the plan table", /PLAN_CONFIG\.free\.monthlyCredits/.test(welcome) && /FREE_STARTER_CREDITS/.test(welcome));
+check("the credits line names both numbers from the live plan table", /planConfig\.free\.monthlyCredits/.test(welcome) && /FREE_STARTER_CREDITS/.test(welcome));
 check("the capture step leads with the by-hand form when AI cannot run",
   /!hasApiKey && !notesAnyway[\s\S]{0,400}<ContactForm[^>]*followUpChoice/.test(captureStep), captureStep.slice(0, 200));
 check("…and keeps a LinkedIn URL one click away", captureStep.includes("Paste the URL instead"));

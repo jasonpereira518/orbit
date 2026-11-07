@@ -1,5 +1,6 @@
 "use client";
 
+import { useViewerPlan } from "@/components/viewer-plan";
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import {
@@ -36,7 +37,6 @@ import { WritingInstructionsField } from "@/components/chat/writing-instructions
 import { clearSendResume, peekSendResumeFor } from "@/lib/chat-send-resume";
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import {
-  askNetwork,
   createChatThread,
   deleteChatThread,
   getChatThread,
@@ -84,7 +84,7 @@ import { createThreadPrefetcher } from "@/lib/chat-thread-prefetch";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
-import { ProposedActionsCard } from "@/components/chat/proposed-actions";
+import { ProposedActionsList } from "@/components/chat/proposed-actions";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
@@ -120,11 +120,6 @@ import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { draftContactFollowUp } from "@/actions/contacts";
 import { useDictation } from "@/lib/use-dictation";
-
-type ChatResult = Extract<
-  Awaited<ReturnType<typeof askNetwork>>,
-  { ok: true }
->;
 
 export type ThreadSummary = {
   id: string;
@@ -288,6 +283,7 @@ export function ChatPanel({
    */
   aiBlocked?: boolean;
 } = {}) {
+  const { planConfig } = useViewerPlan();
   const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads?.threads ?? []);
   /**
    * Whether the history list has been read at least once. Until then an empty list means
@@ -770,6 +766,8 @@ export function ChatPanel({
             steps: row.activity ?? undefined,
             evidence: row.evidence ?? undefined,
             proposedActions: row.proposedActions ?? undefined,
+            // Stored since v196; older answers have none and show no chips.
+            followUps: row.followUps?.length ? row.followUps : undefined,
             feedback: row.feedback ?? null,
             // It came out of the database, so by definition there is a row to rate.
             persisted: true,
@@ -864,7 +862,7 @@ export function ChatPanel({
     if (gmail === "connected") {
       toast.success("Gmail connected — you can send now");
     } else if (gmail === "error") {
-      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
+      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"), planConfig);
       if (oauth.cancelled) toast.message(oauth.message);
       else toast.error(oauth.message);
     }
@@ -1458,7 +1456,7 @@ export function ChatPanel({
               }
             >
               <History className="size-4" />
-              <span className="hidden sm:inline">History</span>
+              <span className="max-sm:sr-only">History</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-72">
               <DropdownMenuLabel>Recent chats</DropdownMenuLabel>
@@ -1502,7 +1500,7 @@ export function ChatPanel({
                     </div>
                     <button
                       type="button"
-                      className="mt-0.5 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 disabled:invisible"
+                      className="relative mt-0.5 grid size-6 shrink-0 place-items-center rounded tap-target text-muted-foreground pointer-fine:opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 disabled:invisible"
                       aria-label="Delete chat"
                       disabled={busy}
                       onClick={(e) => {
@@ -1548,7 +1546,7 @@ export function ChatPanel({
             disabled={busy}
           >
             <Plus className="size-4" />
-            <span className="hidden sm:inline">New chat</span>
+            <span className="max-sm:sr-only">New chat</span>
           </Button>
 
           <Button
@@ -1559,7 +1557,7 @@ export function ChatPanel({
             onClick={() => setContextOpen(true)}
           >
             <NotebookPen className="size-4" />
-            <span className="hidden sm:inline">Context</span>
+            <span className="max-sm:sr-only">Context</span>
           </Button>
         </div>
 
@@ -1591,7 +1589,7 @@ export function ChatPanel({
                   {messages.length === 0 && !busy && (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center sm:py-16">
                       <p className="font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
-                        Ask your <span className="gold-shimmer-text">network</span>
+                        Ask your <span className="gold-shimmer-text [animation-iteration-count:2]!">network</span>
                       </p>
                       <p className="max-w-md text-sm text-muted-foreground">
                         Who can help, who to follow up with, or who knows what —
@@ -1736,6 +1734,8 @@ export function ChatPanel({
                   rows={1}
                   maxLength={CHAT_QUESTION_MAX_CHARS}
                   placeholder={aiBlocked ? "Chat needs AI, which can’t run right now" : "Ask about your network…"}
+                  // The placeholder vanishes once there's text, so it can't be the name.
+                  aria-label="Message Orbit"
                   data-dictating={dictation.listening || undefined}
                   textareaClassName={cn(
                     // Bare field: the pill around it owns the border, background, focus
@@ -1844,9 +1844,12 @@ export function ChatPanel({
             </SheetDescription>
           </SheetHeader>
           <div className="flex flex-col gap-3 p-4">
-            <h3 className="text-sm font-medium text-foreground">This chat</h3>
+            <h3 id="chat-context-heading" className="text-sm font-medium text-foreground">
+              This chat
+            </h3>
             <Textarea
               ref={contextTextareaRef}
+              aria-labelledby="chat-context-heading"
               rows={8}
               placeholder="e.g. I'm prepping for a fundraise this quarter, so prioritize investor intros."
               value={contextIngest.notes}
@@ -2000,12 +2003,12 @@ const UserBubble = memo(function UserBubble({
           onClick={() => onStartEdit?.(msg.id)}
           aria-label="Edit this question"
           title="Edit"
-          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          className="relative flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground tap-target pointer-fine:opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
         >
           <Pencil className="size-3.5" />
         </button>
       )}
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm break-words text-primary-foreground">
         <MentionText text={msg.content} names={msg.mentionNames} />
       </div>
     </div>
@@ -2158,17 +2161,28 @@ const AssistantBubble = memo(function AssistantBubble({
           </p>
         )}
         {gridRecs.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{gridRecs.map(renderCard)}</div>}
-        {/* Only once persisted: committing needs a real row to address. */}
-        {msg.persisted && (msg.proposedActions?.length ?? 0) > 0 && (
-          <div className="flex flex-col gap-2">
-            {msg.proposedActions!.map((action) => (
-              <ProposedActionsCard
-                key={action.id}
-                messageId={msg.id}
-                action={action}
-                contactName={"contactId" in action.args && action.args.contactId ? nameById.get(action.args.contactId) : null}
-                onSettled={(next) => onActionSettled?.(msg.id, action.id, next)}
-              />
+        {/* As soon as they stream, beside the answer that proposed them; their controls wait
+            for the saved row, since committing needs its real id. */}
+        {(msg.proposedActions?.length ?? 0) > 0 && (
+          <ProposedActionsList
+            messageId={msg.id}
+            actions={msg.proposedActions!}
+            nameById={nameById}
+            pending={!msg.persisted}
+            onSettled={(actionId, next) => onActionSettled?.(msg.id, actionId, next)}
+          />
+        )}
+        {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {msg.followUps?.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => onFollowUp?.(q)}
+                className="rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                {q}
+              </button>
             ))}
           </div>
         )}
@@ -2183,20 +2197,6 @@ const AssistantBubble = memo(function AssistantBubble({
               retryLabel={retryLabel}
             />
             {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}
-          </div>
-        )}
-        {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {msg.followUps?.map((q) => (
-              <button
-                key={q}
-                type="button"
-                onClick={() => onFollowUp?.(q)}
-                className="rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                {q}
-              </button>
-            ))}
           </div>
         )}
       </div>
@@ -2224,7 +2224,7 @@ function VersionSwitcher({
         onClick={() => onSwitch?.(versions[index - 1]!.version)}
         disabled={index === 0}
         aria-label="Previous version"
-        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+        className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
       >
         <ChevronLeft className="size-3.5" />
       </button>
@@ -2236,7 +2236,7 @@ function VersionSwitcher({
         onClick={() => onSwitch?.(versions[index + 1]!.version)}
         disabled={index === versions.length - 1}
         aria-label="Next version"
-        className="flex size-5 items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+        className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
       >
         <ChevronRight className="size-3.5" />
       </button>
@@ -2253,7 +2253,7 @@ const RecommendationCard = memo(function RecommendationCard({
   messageId,
   sentAt,
 }: {
-  rec: ChatResult["recommendations"][number];
+  rec: ChatRecommendation;
   /** The question the answer was for — what a draft written on demand is about. */
   question?: string;
   /** Role and company from retrieval — absent on a reloaded thread, which is fine. */
@@ -2357,7 +2357,7 @@ const RecommendationCard = memo(function RecommendationCard({
           type="button"
           onClick={writeDraft}
           disabled={drafting}
-          className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-[11px] font-medium text-foreground/80 transition-colors hover:bg-muted disabled:opacity-60"
+          className="mt-2.5 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/70 px-2.5 py-1 text-2xs font-medium text-foreground/80 transition-colors hover:bg-muted disabled:opacity-60"
         >
           {drafting ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Mail className="size-3.5" aria-hidden />}
           {drafting ? "Drafting…" : "Draft message"}
@@ -2371,7 +2371,7 @@ const RecommendationCard = memo(function RecommendationCard({
             messageId && rec.contact_id
               ? (text) =>
                   sent ? (
-                    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <p className="flex items-center gap-1.5 text-2xs text-muted-foreground">
                       <Check className="size-3.5" aria-hidden />
                       {sent.maybe ? "May have been sent — check your Sent folder" : `Sent to ${rec.name}`}
                       {!sent.maybe && ` · ${formatSentAt(sent.at)}`}
@@ -2383,7 +2383,7 @@ const RecommendationCard = memo(function RecommendationCard({
                         setSendBody(text);
                         setSendOpen(true);
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-2xs font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                     >
                       <Mail className="size-3.5" aria-hidden /> Send email…
                     </button>

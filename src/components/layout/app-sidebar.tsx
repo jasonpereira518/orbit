@@ -16,15 +16,16 @@ import {
   type AppNavItem,
 } from "@/components/layout/app-nav";
 import {
-  COMING_SOON_UNLOCK_PLAN,
   isHrefComingSoon,
   isHrefHidden,
   orderNavItems,
   surfaceKeyForHref,
   tierTagPlan,
   tierTagTitle,
+  comingSoonUnlockPlans,
 } from "@/lib/surfaces";
-import { PLAN_LABELS, PLAN_SHORT_LABELS } from "@/lib/plans/plan-config";
+import { PLAN_SHORT_LABELS, planList } from "@/lib/plans/plan-config";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
@@ -38,6 +39,8 @@ import { useModKeyLabel } from "@/lib/use-mod-key";
 /** Nav destinations whose page leans on a lazy client chunk: warmed on hover or focus. */
 const CHUNK_WARMERS: Record<string, (() => void) | undefined> = {
   "/capture": preloadCaptureFlow,
+  // The recorder on /meetings is the same flow.
+  "/meetings": preloadCaptureFlow,
   "/chat": preloadChatPanel,
 };
 
@@ -63,6 +66,7 @@ function SidebarNavLink({
 }) {
   const active = isNavActive(pathname, item.href);
   const Icon = item.icon;
+  const { planConfig } = useViewerPlan();
   // Shown to operators too, who still reach the real page: the tag is how they know what
   // everyone else gets. "Hidden" outranks it, because a hidden page is not even announced.
   const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href, soon);
@@ -80,13 +84,14 @@ function SidebarNavLink({
   return (
     <NavLink
       href={item.href}
+      aria-current={active ? "page" : undefined}
       onPointerEnter={warm}
       onFocus={warm}
       title={
         hiddenFromUsers
           ? `${item.label} — hidden from users`
           : comingSoon
-            ? `${item.label} — coming soon · unlocks with ${PLAN_LABELS[COMING_SOON_UNLOCK_PLAN]}`
+            ? `${item.label} — coming soon · unlocks with ${planList(comingSoonUnlockPlans(surfaceKeyForHref(item.href) ?? "", planConfig))}`
             : tiers && tierPlan
               ? tierTagTitle(item.label, tiers)
               : item.label
@@ -109,15 +114,16 @@ function SidebarNavLink({
         />
       )}
       <Icon className="relative z-10 h-4 w-4 shrink-0" />
-      <span className="relative z-10 hidden lg:inline">{item.label}</span>
+      {/* Below lg the rail is icons only; the label stays in the accessibility tree. */}
+      <span className="relative z-10 max-lg:sr-only">{item.label}</span>
       {hiddenFromUsers && (
-        <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground lg:inline">
+        <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-3xs uppercase tracking-wide text-muted-foreground lg:inline">
           Hidden
         </span>
       )}
       {comingSoon && (
         <>
-          <span className="relative z-10 ml-auto hidden rounded-full border border-warning/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-warning lg:inline">
+          <span className="relative z-10 ml-auto hidden rounded-full border border-warning/40 px-1.5 py-px text-3xs uppercase tracking-wide text-warning lg:inline">
             Soon
           </span>
           {/* The icon rail has no room for a word, so the tag collapses to its colour. */}
@@ -131,7 +137,7 @@ function SidebarNavLink({
         <>
           <span
             data-plan={tierPlan}
-            className="relative z-10 ml-auto hidden items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-[10px] uppercase tracking-wide text-tier-accent lg:inline-flex"
+            className="relative z-10 ml-auto hidden items-center gap-1 rounded-full border border-tier-border px-1.5 py-px text-3xs uppercase tracking-wide text-tier-accent lg:inline-flex"
           >
             <Lock aria-hidden className="size-2.5" />
             {PLAN_SHORT_LABELS[tierPlan]}
@@ -195,7 +201,11 @@ export function AppSidebar({
   };
 
   return (
-    <aside className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
+    // The desktop banner: logo, the main action and the navigation. Not <aside> (it is not
+    // complementary content, and a second complementary landmark clashed with pages that
+    // have their own). Only one banner exists at a time: the phone header is display:none
+    // from md, where this appears.
+    <header className="liquid-glass flex h-full w-[4.5rem] flex-col text-sidebar-foreground lg:w-60">
       {/* Stacked on the icon rail, where logo and search cannot share a row; side by side
           once the panel is wide enough to carry the wordmark. */}
       <div className="flex flex-col items-center gap-3 px-3 py-5 lg:flex-row lg:justify-between lg:gap-2 lg:px-5 lg:py-6">
@@ -211,7 +221,7 @@ export function AppSidebar({
             <p className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-sidebar-primary">
               Orbit
             </p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
+            <p className="mt-0.5 text-2xs text-muted-foreground">
               Network tracker
             </p>
           </div>
@@ -235,7 +245,7 @@ export function AppSidebar({
           />
           <TooltipContent side="bottom">
             Search
-            <kbd className="ml-1.5 rounded border border-current/20 px-1 text-[10px] opacity-80">
+            <kbd className="ml-1.5 rounded border border-current/20 px-1 text-3xs opacity-80">
               {shortcut}
             </kbd>
           </TooltipContent>
@@ -260,12 +270,15 @@ export function AppSidebar({
           )}
         >
           <Plus className="h-4 w-4" />
-          <span className="hidden lg:inline">Log interaction</span>
+          <span className="max-lg:sr-only">Log interaction</span>
         </IntentLink>
       </div>
       )}
 
-      <nav className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
+      <nav aria-label="Main" className="flex min-h-0 flex-1 flex-col">
+        {/* Only the page list scrolls; Settings stays pinned below it, so a short window
+            never clips it. `-mt-1 pt-1` leaves room for the active pill's ring at the top. */}
+        <div className="relative flex min-h-0 flex-1 flex-col gap-0.5 -mt-1 overflow-y-auto overscroll-contain px-1.5 pb-1 pt-1 [scrollbar-width:thin] lg:px-2">
         {core.map((item) => (
           <SidebarNavLink
             soon={comingSoon}
@@ -281,7 +294,7 @@ export function AppSidebar({
         {extras.length > 0 && (
           <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
             <div className="h-px flex-1 bg-border/60" />
-            <span className="hidden text-[10px] font-medium uppercase tracking-wider text-muted-foreground/80 lg:inline">
+            <span className="hidden text-3xs font-medium uppercase tracking-wider text-muted-foreground-subtle lg:inline">
               Coming soon
             </span>
             <div className="hidden h-px flex-1 bg-border/60 lg:block" />
@@ -299,10 +312,9 @@ export function AppSidebar({
           />
         ))}
 
-        {/* `mt-auto` drops Settings to the foot of the nav, clear of the Coming soon group.
-            `py-2` keeps it off the account divider below and holds the same gap
-            above when a short viewport leaves no slack for `mt-auto` to eat. */}
-        <div className="mt-auto py-2">
+        </div>
+
+        <div className="shrink-0 px-1.5 py-2 lg:px-2">
           <SidebarNavLink
             soon={comingSoon}
             item={APP_NAV_SETTINGS}
@@ -329,6 +341,6 @@ export function AppSidebar({
           </p>
         )}
       </div>
-    </aside>
+    </header>
   );
 }

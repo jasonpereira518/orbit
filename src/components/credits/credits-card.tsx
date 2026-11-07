@@ -16,9 +16,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Skeleton } from "@/components/ui/skeleton";
+import { StatTile } from "@/components/settings/account-rows";
 import { formatAllowanceReset, allowancePercentUsed, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
-import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { toast } from "@/lib/toast";
 
@@ -36,19 +36,16 @@ function equivalentsLine(items: CreditsOverview["equivalents"]): string | null {
   if (items.length === 0) return null;
   const parts = items.map(({ action, count }) => `${fmt(count)} ${ACTION_LABEL[action][count === 1 ? 0 : 1]}`);
   const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} or ${parts[parts.length - 1]}`;
-  return `That’s roughly ${list}, at what they’ve actually cost across Orbit this month.`;
+  return `Roughly ${list} at this month’s prices`;
 }
 
 /**
- * The credits card on the AI settings page (every plan with included AI; also shown to anyone
- * holding frozen pack credits). Allowance left this cycle, pack credits, the reset date, and
- * what that buys in plain language. Two actions, both explicit: buy a $5 pack, or (on Pro)
- * move to Max. Nothing here — or anywhere — charges automatically.
- *
- * `paused`: Orbit's AI is paused or out of budget for everyone, so no credit can be spent. The
- * balance stays on show (it is kept), but nothing is sold against it.
+ * The credits on the AI settings page, read once and shown in three places: a tile in the
+ * stat row, a notice under it when they have run out, and the detail inside Advanced. The
+ * hook owns the load, the pack-checkout confirm on the way back from Stripe, and the one-time
+ * Max nudge. Nothing here — or anywhere — charges automatically.
  */
-export function CreditsCard({ paused = false }: { paused?: boolean } = {}) {
+export function useCreditsOverview() {
   const [overview, setOverview] = useState<CreditsOverview | null | undefined>(undefined);
   const [nudgeOpen, setNudgeOpen] = useState(false);
   const params = useSearchParams();
@@ -86,122 +83,134 @@ export function CreditsCard({ paused = false }: { paused?: boolean } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (overview === undefined) {
+  return { overview, nudge: <MaxNudgeDialog open={nudgeOpen} onOpenChange={setNudgeOpen} /> };
+}
+
+/**
+ * `held`: Orbit's AI is paused or out of budget for everyone (`aiOutage`), so no credit can be
+ * spent. The balance stays on show (it is kept), but nothing is sold against it.
+ */
+function facts(overview: CreditsOverview, { planConfig, aiOutage }: ReturnType<typeof useViewerPlan>) {
+  const { balance, monthlyCredits, plan } = overview;
+  const allowance = balance.allowance;
+  return {
+    plan,
+    monthlyCredits,
+    allowance,
+    packsSold: planConfig[plan].features.creditPacks,
+    spendableLeft: credits(balance.spendable),
+    starterLeft: credits(balance.starterRemaining),
+    packLeft: credits(balance.packRemaining),
+    packsFrozen: balance.packsFrozen,
+    used: allowance ? allowancePercentUsed(allowance) : 100,
+    out: monthlyCredits > 0 && balance.spendable <= 0,
+    resets: allowance ? formatAllowanceReset(allowance.periodEnd) : plan === "free" ? "the 1st" : "your plan renews",
+    held: aiOutage !== null,
+  };
+}
+
+/** Credits left, the month's bar, and the one action that adds more. */
+export function CreditsTile({ overview }: { overview: CreditsOverview | null | undefined }) {
+  const viewer = useViewerPlan();
+  if (!overview) return <StatTile label="Credits" value={overview} />;
+  const f = facts(overview, viewer);
+  return (
+    <StatTile
+      label="Credits"
+      value={fmt(f.spendableLeft)}
+      sub="left this month"
+      title={f.allowance ? `Monthly credits reset ${f.resets}` : undefined}
+    >
+      {f.allowance ? (
+        <div
+          className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+          role="meter"
+          aria-label="Monthly credits used"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={f.used}
+        >
+          <div className="h-full rounded-full bg-primary" style={{ width: `${f.used}%` }} />
+        </div>
+      ) : null}
+      {f.plan === "free" ? (
+        <Link href="/pricing" className="mt-2 inline-block text-xs font-medium text-primary underline-offset-2 hover:underline">
+          Compare plans
+        </Link>
+      ) : f.monthlyCredits > 0 && f.packsSold && !f.out && !f.held ? (
+        <div className="mt-2">
+          <BuyPackButton variant="outline" label="Add credits" />
+        </div>
+      ) : null}
+    </StatTile>
+  );
+}
+
+/** Only when something needs doing: AI on hold, out of credits, or a Free account nearly out. */
+export function CreditsNotice({ overview }: { overview: CreditsOverview | null | undefined }) {
+  const viewer = useViewerPlan();
+  if (!overview) return null;
+  const f = facts(overview, viewer);
+  if (f.held) {
     return (
-      <div className="space-y-2 rounded-xl border border-border/70 p-4" aria-busy="true" aria-label="Loading your credits">
-        <Skeleton className="h-4 w-40" />
-        <Skeleton className="h-2 w-full" />
-        <Skeleton className="h-4 w-64 max-w-full" />
+      <p role="status" className="rounded-xl border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
+        Orbit’s AI is paused right now, so these credits are on hold. They’re still yours when it’s back
+      </p>
+    );
+  }
+  if (f.out) {
+    return (
+      <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
+        <p className="min-w-0 flex-1">
+          {f.packsSold
+            ? `Out of credits — AI is paused until ${f.resets}`
+            : `Out of credits until ${f.resets} · add your own key for no limit`}
+        </p>
+        {f.packsSold ? (
+          <div className="flex flex-wrap gap-2">
+            <BuyPackButton />
+            {f.plan === "orbit" && <UpgradeToMaxButton />}
+          </div>
+        ) : null}
       </div>
     );
   }
-  if (overview === null) return null;
+  if (f.plan === "free" && f.spendableLeft <= FREE_LOW_CREDITS) {
+    return (
+      <p role="status" className="rounded-xl bg-muted/50 p-3 text-sm text-foreground">
+        {f.spendableLeft} AI {f.spendableLeft === 1 ? "credit" : "credits"} left this month
+      </p>
+    );
+  }
+  return null;
+}
 
-  const { balance, monthlyCredits, plan } = overview;
-  const packsSold = PLAN_CONFIG[plan].features.creditPacks;
-  const starterLeft = credits(balance.starterRemaining);
-  const spendableLeft = credits(balance.spendable);
-  const allowance = balance.allowance;
-  const allowanceLeft = allowance ? credits(allowance.remaining) : 0;
-  const packLeft = credits(balance.packRemaining);
-  const used = allowance ? allowancePercentUsed(allowance) : 100;
-  const out = monthlyCredits > 0 && balance.spendable <= 0;
+/** The rest, for Advanced: where the credits come from, what they buy, and the emails. */
+export function CreditsDetails({ overview }: { overview: CreditsOverview }) {
+  const viewer = useViewerPlan();
+  const f = facts(overview, viewer);
   const line = equivalentsLine(overview.equivalents);
-
   return (
-    <section
-      aria-labelledby="credits-heading"
-      className="space-y-3 rounded-xl border border-tier-border bg-tier-surface p-4"
-      data-plan={plan}
-    >
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 id="credits-heading" className="font-heading text-base text-ink">
-          AI credits
-        </h3>
-      </div>
-
-      {monthlyCredits > 0 && allowance && (
-        <div className="space-y-1.5">
-          <p className="text-sm text-ink">
-            <strong className="font-medium">{fmt(allowanceLeft)}</strong> of {fmt(monthlyCredits)} monthly credits left
-            <span className="text-muted-foreground"> · resets {formatAllowanceReset(allowance.periodEnd)}</span>
-          </p>
-          <div
-            className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
-            role="meter"
-            aria-label="Monthly credits used"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={used}
-          >
-            <div className="h-full rounded-full bg-tier-accent" style={{ width: `${used}%` }} />
-          </div>
-        </div>
-      )}
-
-      {starterLeft > 0 && (
-        <p className="text-sm text-muted-foreground">
-          <strong className="font-medium text-ink">{fmt(starterLeft)}</strong> starter credits left, used after your monthly credits
+    <div className="space-y-2 text-sm text-muted-foreground">
+      {f.monthlyCredits > 0 && f.allowance ? (
+        <p>
+          {fmt(credits(f.allowance.remaining))} of {fmt(f.monthlyCredits)} monthly · resets {f.resets}
         </p>
-      )}
-
-      {(packsSold || balance.packsFrozen) && (packLeft > 0 || (monthlyCredits > 0 && !paused)) && (
-        <p className="text-sm text-muted-foreground">
-          {balance.packsFrozen ? (
-            <>
-              <strong className="font-medium text-ink">{fmt(packLeft)}</strong> pack credits kept for you. They come back the
-              moment you’re on a plan that can use them again.
-            </>
-          ) : packLeft > 0 ? (
-            <>
-              <strong className="font-medium text-ink">{fmt(packLeft)}</strong> pack credits — used after your monthly
-              credits, and they roll over from month to month.
-            </>
-          ) : (
-            `No pack credits. A pack adds ${CREDIT_PACK_CREDITS} credits for ${CREDIT_PACK_PRICE_LABEL}, used after your monthly credits.`
-          )}
+      ) : null}
+      {f.starterLeft > 0 ? <p>{fmt(f.starterLeft)} starter credits · used after monthly</p> : null}
+      {(f.packsSold || f.packsFrozen) && (f.packLeft > 0 || (f.monthlyCredits > 0 && !f.held)) ? (
+        <p>
+          {f.packsFrozen
+            ? `${fmt(f.packLeft)} pack credits kept · back when your plan can use them`
+            : f.packLeft > 0
+              ? `${fmt(f.packLeft)} pack credits · roll over monthly`
+              : `No pack credits · ${CREDIT_PACK_CREDITS} for ${CREDIT_PACK_PRICE_LABEL}`}
         </p>
-      )}
-
-      {paused ? (
-        <p role="status" className="rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
-          Orbit’s AI is paused right now, so these credits are on hold. They’re still yours when it’s back
-        </p>
-      ) : out ? (
-        <p role="status" className="rounded-lg border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
-          {packsSold ? (
-            <>
-              You’ve used your credits, so Orbit’s AI is paused until {allowance ? formatAllowanceReset(allowance.periodEnd) : plan === "free" ? "the 1st" : "your plan renews"}.
-              Nothing is charged automatically — add a pack to keep going{plan === "orbit" ? `, or move to Max for ${PLAN_CONFIG.max.monthlyCredits} credits a month` : ""}.
-            </>
-          ) : (
-            <>You’ve used this month’s AI credits. They refill on {allowance ? formatAllowanceReset(allowance.periodEnd) : "the 1st"}. Add your own key below for no limit</>
-          )}
-        </p>
-      ) : plan === "free" && spendableLeft <= FREE_LOW_CREDITS ? (
-        <p className="text-sm text-foreground">{spendableLeft} AI {spendableLeft === 1 ? "credit" : "credits"} left this month</p>
-      ) : (
-        line && <p className="text-sm text-muted-foreground">{line}</p>
-      )}
-
-      {plan === "free" && (
-        <Link href="/pricing" className="text-sm font-medium text-primary underline-offset-2 hover:underline">
-          Compare plans
-        </Link>
-      )}
-
-      {monthlyCredits > 0 && packsSold && !paused && (
-        <div className="flex flex-wrap items-center gap-2">
-          <BuyPackButton variant={out ? "default" : "outline"} />
-          {plan === "orbit" && <UpgradeToMaxButton />}
-        </div>
-      )}
-
-      {/* Free never gets the 80% and 100% emails (`credits/notices.ts`), so it is not offered them. */}
-      {monthlyCredits > 0 && packsSold && plan !== "free" && <CreditEmailToggle initial={overview.creditEmailEnabled} />}
-
-      <MaxNudgeDialog open={nudgeOpen} onOpenChange={setNudgeOpen} />
-    </section>
+      ) : null}
+      {line ? <p>{line}</p> : null}
+      {f.monthlyCredits > 0 && f.packsSold && f.plan === "orbit" && !f.out && !f.held ? <UpgradeToMaxButton /> : null}
+      {f.monthlyCredits > 0 && f.packsSold ? <CreditEmailToggle initial={overview.creditEmailEnabled} /> : null}
+    </div>
   );
 }
 
@@ -213,7 +222,7 @@ function CreditEmailToggle({ initial }: { initial: boolean }) {
   const [enabled, setEnabled] = useState(initial);
   const [pending, start] = useTransition();
   return (
-    <label className="flex items-start gap-2 border-t border-tier-border pt-3 text-sm text-muted-foreground">
+    <label className="flex items-start gap-2 pt-1 text-sm text-muted-foreground">
       <input
         type="checkbox"
         className="mt-0.5 size-4 shrink-0 accent-tier-accent"
@@ -231,7 +240,7 @@ function CreditEmailToggle({ initial }: { initial: boolean }) {
           });
         }}
       />
-      <span>Email me when I’ve used 80% of my monthly credits, and when they run out.</span>
+      <span>Email me at 80% and when they run out</span>
     </label>
   );
 }
@@ -267,6 +276,7 @@ function UpgradeToMaxButton({ label = "Upgrade to Max" }: { label?: string }) {
  * arithmetic and leaves the choice with the person.
  */
 function MaxNudgeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { planConfig } = useViewerPlan();
   const close = (next: boolean) => onOpenChange(next);
   return (
     <Dialog open={open} onOpenChange={close}>
@@ -274,8 +284,8 @@ function MaxNudgeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         <DialogHeader>
           <DialogTitle>Worth a look: Orbit Max</DialogTitle>
           <DialogDescription>
-            Two packs plus Pro is about the price of Max, which includes {PLAN_CONFIG.max.monthlyCredits} credits a month plus more transcription and
-            the REST API.
+            Two packs plus Pro is about the price of Max, which includes {planConfig.max.monthlyCredits} credits a month plus more transcription
+            {planConfig.max.features.api && !planConfig.orbit.features.api ? " and the REST API" : ""}.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2 sm:gap-2">

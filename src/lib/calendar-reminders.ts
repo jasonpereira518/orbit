@@ -18,6 +18,7 @@
  */
 import { and, eq, inArray, isNotNull, isNull, lt, max, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { metContactIds } from "@/lib/met-contact";
 import { actionItems, interactions, meetingSessions, reminders, type CalendarEventAttendee } from "@/db/schema";
 
 const DAY = 86_400_000;
@@ -97,7 +98,17 @@ export async function syncCalendarReminders(
 ): Promise<void> {
   const db = await getDb();
   const nowMs = now.getTime();
-  const meetings = events.filter(isRealMeeting);
+  // A reminder is an alert, so it is only about people the user has met or talked with
+  // (`met-contact.ts`): an attendee who is merely in the address book is treated as unknown.
+  // That includes the first meeting with someone, which has no prep reminder; the meeting's
+  // own brief is unaffected. Once the meeting is past and logged, the follow-up applies.
+  const met = await metContactIds(
+    userId,
+    [...new Set(events.flatMap((e) => e.attendees.map((a) => a.contactId).filter((c): c is string => !!c)))]
+  );
+  const meetings = events
+    .map((e) => ({ ...e, attendees: e.attendees.map((a) => (a.contactId && !met.has(a.contactId) ? { ...a, contactId: null } : a)) }))
+    .filter(isRealMeeting);
 
   // One-off meetings only: a weekly 1:1 does not need a nudge after every occurrence.
   const past = meetings.filter((e) => (e.endAt ?? e.startAt).getTime() < nowMs && !e.seriesId);

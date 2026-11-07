@@ -91,21 +91,29 @@ export function isLinkedInNudgeVisible(input: {
 
 /**
  * Keeping LinkedIn fresh. The export is a snapshot, so connections made after it never reach
- * Orbit until the user requests another one. A month after the last upload the bell says so;
- * after three the dashboard leads with it.
+ * Orbit until the user requests another one. One interval after the last upload the bell says
+ * so; after three the dashboard leads with it. The interval is the person's choice on the
+ * LinkedIn integration page (`user_settings.linkedin_refresh_interval_days`): null keeps the
+ * default month, 0 turns the reminder off.
  */
-export const LINKEDIN_REFRESH_NOTIFY_MS = 30 * DAY_MS;
-export const LINKEDIN_REFRESH_URGENT_MS = 90 * DAY_MS;
+export const LINKEDIN_REFRESH_DEFAULT_DAYS = 30;
+/** The choices the LinkedIn page offers. 0 is "Off". */
+export const LINKEDIN_REFRESH_INTERVAL_OPTIONS = [0, 30, 60, 90] as const;
 
 export type LinkedInRefreshLevel = "notify" | "urgent" | null;
 
 /** null with no import at all: the first-import reminder above owns that account. */
-export function linkedInRefreshLevel(lastImportAt: Instant, now: Date): LinkedInRefreshLevel {
+export function linkedInRefreshLevel(
+  lastImportAt: Instant,
+  now: Date,
+  intervalDays?: number | null,
+): LinkedInRefreshLevel {
+  const days = intervalDays ?? LINKEDIN_REFRESH_DEFAULT_DAYS;
   const last = ms(lastImportAt);
-  if (last == null) return null;
+  if (last == null || days <= 0) return null;
   const age = now.getTime() - last;
-  if (age >= LINKEDIN_REFRESH_URGENT_MS) return "urgent";
-  if (age >= LINKEDIN_REFRESH_NOTIFY_MS) return "notify";
+  if (age >= 3 * days * DAY_MS) return "urgent";
+  if (age >= days * DAY_MS) return "notify";
   return null;
 }
 

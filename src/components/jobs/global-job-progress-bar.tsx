@@ -79,7 +79,7 @@ export function GlobalJobProgressBar() {
   return (
     <div
       ref={stackRef}
-      className="fixed bottom-(--orbit-corner-bottom) right-(--orbit-corner-right) z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2"
+      className="fixed bottom-(--orbit-corner-bottom) right-(--orbit-toast-right) z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2"
       role="status"
       aria-live="polite"
     >
@@ -165,6 +165,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
             <div
               className="h-2 overflow-hidden rounded-full bg-border/80"
               role="progressbar"
+              aria-label={`${job.label} progress`}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={determinate ? pct! : undefined}

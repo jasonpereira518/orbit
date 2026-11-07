@@ -1,6 +1,7 @@
 "use client";
 
-import type { ChatBlocks } from "@/lib/chat-directives";
+import { peopleIdsIn, type ChatBlocks } from "@/lib/chat-directives";
+import type { EvidenceSource } from "@/lib/chat-evidence";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import dynamic from "next/dynamic";
@@ -27,14 +28,15 @@ import { useViewerPlan } from "@/components/viewer-plan";
 import { aiDenialFromMessage, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { getFreeCreditsLeft } from "@/actions/credits";
-import { askNetwork, createChatThread } from "@/actions/chat";
+import { createChatThread } from "@/actions/chat";
 import { streamChat } from "@/lib/chat-stream-client";
 import {
   createStreamSmoother,
   prefersReducedMotionNow,
   type StreamSmoother,
 } from "@/lib/stream-smoother";
-import type { ChatStep } from "@/lib/chat-stream-protocol";
+import type { ChatStep, ChatStreamEvent } from "@/lib/chat-stream-protocol";
+import type { ChatRecommendation } from "@/db/schema";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
@@ -46,7 +48,7 @@ import { createReminder } from "@/actions/reminders";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
 import type { KeywordSearchHit } from "@/lib/keyword-search";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { cn } from "@/lib/utils";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -70,10 +72,7 @@ function preloadChatMarkdown() {
   void import("@/components/chat/chat-markdown");
 }
 
-type ChatResult = Extract<
-  Awaited<ReturnType<typeof askNetwork>>,
-  { ok: true }
->;
+type RetrievedContact = Extract<ChatStreamEvent, { type: "done" }>["retrieved"];
 
 type AskBarContact = NonNullable<Awaited<ReturnType<typeof getAskBarContact>>>;
 
@@ -87,14 +86,18 @@ type AssistantMessage = {
   id: string;
   role: "assistant";
   answer: string;
-  recommendations: ChatResult["recommendations"];
-  retrieved: ChatResult["retrieved"];
+  recommendations: ChatRecommendation[];
+  retrieved: RetrievedContact;
   /** True while the answer is still arriving from `/api/chat`. */
   streaming?: boolean;
   /** The stages the server reported, so this bar narrates the same work `/chat` does. */
   steps?: ChatStep[];
-  /** What the answer's `::list` blocks show; its `::people` show as the cards below. */
+  /** What the answer's `::list` and `::people` blocks show. */
   blocks?: ChatBlocks;
+  /** The answer's citations, so `[eN]` render as source chips rather than raw text. */
+  evidence?: Record<string, EvidenceSource>;
+  /** The saved row, once `done` names it — a source chip needs it to fetch its snippet. */
+  messageId?: string | null;
 };
 
 type ThreadMessage = UserMessage | AssistantMessage;
@@ -281,12 +284,12 @@ export function FloatingAskBar() {
       ) {
         return window.scrollY;
       }
-      if (t instanceof HTMLElement) {
-        // Ignore tiny nested scroll areas (e.g. the ask panel results list)
-        if (wrapRef.current?.contains(t)) return null;
+      // Only the page itself (the app scrolls #app-main-scroll). Any other scroller —
+      // sidebar nav, dialogs, lists, chat threads, the bar's own panel — is not page scroll.
+      if (t instanceof HTMLElement && t.id === "app-main-scroll") {
         return t.scrollTop;
       }
-      return window.scrollY;
+      return null;
     }
 
     function onScroll(e: Event) {
@@ -480,10 +483,14 @@ export function FloatingAskBar() {
               ensurePlaceholder();
               patch((m) => ({ ...m, blocks }));
             },
+            onEvidence: (items) => {
+              ensurePlaceholder();
+              patch((m) => ({ ...m, evidence: items }));
+            },
             onDone: (info) => {
               smoother.flush();
               ensurePlaceholder();
-              patch((m) => ({ ...m, retrieved: info.retrieved, streaming: false }));
+              patch((m) => ({ ...m, retrieved: info.retrieved, messageId: info.messageId, streaming: false }));
               if (info.notice) toast.message(info.notice);
             },
             onError: (message) => {
@@ -576,7 +583,12 @@ export function FloatingAskBar() {
         "bottom-[calc(6.875rem+env(safe-area-inset-bottom))] md:bottom-5",
         !visible && "pointer-events-none"
       )}
-      aria-hidden={!visible}
+      // `inert`, not `aria-hidden`: hidden on scroll, the bar's input and buttons stayed in
+      // the tab order while gone from the accessibility tree. Inert takes them out of both.
+      inert={!visible}
+      // A landmark of its own, outside <main>, so it is reachable from the landmarks list.
+      role="search"
+      aria-label="Ask your network"
     >
       {/* A slim pill at rest that opens out to full width once it is in use. A spring, not a
           CSS transition: it picks up from wherever it is when a click lands mid-animation. */}
@@ -667,7 +679,7 @@ export function FloatingAskBar() {
                 </div>
               )}
 
-              <div className="max-h-[min(56vh,30rem)] overflow-y-auto">
+              <div className="max-h-[min(56dvh,30rem)] overflow-y-auto">
                 {messages.length === 0 && !chatPending && hits.length === 0 && (
                   <div className="px-2 pb-2">
                     {query.trim() ? (
@@ -754,8 +766,11 @@ export function FloatingAskBar() {
                                   {hit.title}
                                   {hit.title && hit.company && ", "}
                                   {hit.company && (
-                                    <span style={{ color: companyBrandColor(hit.company) ?? undefined }}>
-                                      {hit.company}
+                                    <span
+                                      className={companyBrandText(hit.company)?.className}
+                                      style={companyBrandText(hit.company)?.style}
+                                    >
+                                      <bdi>{hit.company}</bdi>
                                     </span>
                                   )}
                                 </span>
@@ -849,7 +864,9 @@ export function FloatingAskBar() {
         <motion.div
           className={cn(
             "flex h-12 items-center gap-2 rounded-full border border-border/70 bg-card/95 pl-4 pr-1.5 shadow-lg backdrop-blur-md",
-            "focus-within:border-primary/40 focus-within:ring-[3px] focus-within:ring-primary/15",
+            // The same focus ring as every other field (ui/input); the old primary/15 wash was
+            // under the 3:1 a focus indicator needs.
+            "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50",
             personContextActive && "border-primary/25",
             open && "shadow-xl"
           )}
@@ -859,6 +876,7 @@ export function FloatingAskBar() {
             id={inputId}
             ref={inputRef}
             type="text"
+            aria-label="Ask your network"
             value={query}
             placeholder={placeholder}
             disabled={chatPending}
@@ -892,7 +910,7 @@ export function FloatingAskBar() {
             }}
           />
           {!open && !query && (
-            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-[11px] text-muted-foreground sm:inline-flex">
+            <kbd className="hidden h-5 shrink-0 items-center rounded-md border border-border/60 bg-background px-1.5 font-sans text-2xs text-muted-foreground sm:inline-flex">
               ⌘J
             </kbd>
           )}
@@ -950,7 +968,10 @@ function BrandedQuestion({ question, company }: { question: string; company?: st
   return (
     <>
       {question.slice(0, at)}
-      <span className="font-medium" style={{ color: companyBrandColor(company) ?? undefined }}>
+      <span
+        className={cn("font-medium", companyBrandText(company)?.className)}
+        style={companyBrandText(company)?.style}
+      >
         {company}
       </span>
       {question.slice(at + company.length)}
@@ -976,6 +997,23 @@ const AssistantBubble = memo(function AssistantBubble({
   onNavigate: (open: boolean) => void;
 }) {
   const steps = msg.steps ?? [];
+  // Same rule as the chat page: a person the answer placed inline is shown there, beside the
+  // sentence that says why, and not again in the list below.
+  const placed = useMemo(() => new Set(peopleIdsIn(msg.answer)), [msg.answer]);
+  const listed = msg.recommendations.filter((r) => !r.contact_id || !placed.has(r.contact_id));
+  const renderPeople = (ids: string[]) => (
+    <div className="space-y-2">
+      {ids.map((id) => {
+        const rec = msg.recommendations.find((r) => r.contact_id === id);
+        const person = msg.blocks?.people[id];
+        // While streaming the recommendations have not arrived yet; the block data names them.
+        const shown = rec ?? (person
+          ? { contact_id: id, recruiter_id: null, name: person.name, reason: person.subtitle ?? "", suggested_action: "", draft_message: null }
+          : null);
+        return shown ? <MiniRecommendation key={id} rec={shown} /> : null;
+      })}
+    </div>
+  );
   return (
     <div className="space-y-2">
       {steps.length > 0 && (
@@ -987,12 +1025,18 @@ const AssistantBubble = memo(function AssistantBubble({
       )}
       {msg.answer && (
         <div className="text-sm leading-relaxed text-foreground/90">
-          <ChatMarkdown blocks={msg.blocks} streaming={msg.streaming}>
+          <ChatMarkdown
+            blocks={msg.blocks}
+            streaming={msg.streaming}
+            evidence={msg.evidence}
+            messageId={msg.messageId ?? undefined}
+            renderPeople={renderPeople}
+          >
             {msg.answer}
           </ChatMarkdown>
         </div>
       )}
-      {msg.recommendations.map((r) => (
+      {listed.map((r) => (
         <MiniRecommendation
           key={r.recruiter_id || r.contact_id || r.name}
           rec={r}
@@ -1020,7 +1064,7 @@ const AssistantBubble = memo(function AssistantBubble({
 const MiniRecommendation = memo(function MiniRecommendation({
   rec,
 }: {
-  rec: ChatResult["recommendations"][number];
+  rec: ChatRecommendation;
 }) {
   const [pending, start] = useTransition();
   const href = rec.recruiter_id
@@ -1044,10 +1088,12 @@ const MiniRecommendation = memo(function MiniRecommendation({
             <span className="text-xs text-muted-foreground"> · Recruiter</span>
           )}
           <p className="mt-0.5 text-xs text-muted-foreground">{rec.reason}</p>
-          <p className="mt-1 text-xs">
-            <span className="text-muted-foreground">Next: </span>
-            {rec.suggested_action}
-          </p>
+          {rec.suggested_action && (
+            <p className="mt-1 text-xs">
+              <span className="text-muted-foreground">Next: </span>
+              {rec.suggested_action}
+            </p>
+          )}
         </div>
         {canRemind && (
           <Button

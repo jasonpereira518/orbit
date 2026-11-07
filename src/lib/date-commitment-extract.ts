@@ -519,7 +519,7 @@ CADENCES. Separately, extract any RECURRING rhythm the notes state for staying i
 export async function fetchRawCommitments(
   userId: string,
   notes: string,
-  options?: { today?: Date; knownPeople?: string[]; engines?: Engines | Promise<Engines> }
+  options?: { today?: Date; knownPeople?: string[]; engines?: Engines | Promise<Engines>; background?: boolean }
 ): Promise<{ commitments: RawCommitmentItem[]; cadences: RawCadenceItem[] }> {
   const trimmed = notes.trim();
   if (!trimmed) return { commitments: [], cadences: [] };
@@ -540,7 +540,7 @@ export async function fetchRawCommitments(
   // Today is repeated in the user turn because Gemini takes systemInstruction as a
   // separate config field, where it carries less weight than inline content.
   const content = await completeJson(userId, {
-    operation: "capture.dates",
+    operation: options?.background ? "capture.dates.bg" : "capture.dates",
     temperature: 0.1,
     maxOutputTokens: 2048,
     system: buildSystemPrompt(todayIso, todayWeekday),

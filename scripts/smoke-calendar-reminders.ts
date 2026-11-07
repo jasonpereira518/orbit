@@ -105,10 +105,13 @@ async function main() {
   let rows = await all();
   const byKey = (k: string) => rows.filter((r) => r.calendarEventKey === k);
 
-  const first = byKey("e-first")[0];
-  check("a first meeting gets a prep reminder", first?.reminderType === "pre_meeting" && first.contactId === ada.id, JSON.stringify(first));
-  check("…saying why, despite a future interaction logged for it", first?.description === "First meeting with ada", String(first?.description));
-  check("…due the day before", first?.dueDate?.getTime() === NOW.getTime() + 6 * H, String(first?.dueDate));
+  // Alerts are only for people the user has met or talked with (`met-contact.ts`). Ada has not:
+  // the upcoming meeting is logged as an interaction, but it is dated in the future.
+  check(
+    "a first meeting with someone not yet met gets no prep reminder, even with the upcoming meeting logged",
+    byKey("e-first").length === 0,
+    JSON.stringify(byKey("e-first")[0])
+  );
   check(
     "a 200-day gap gets one, due now (under a day away)",
     byKey("e-gap")[0]?.description === "Last spoke with bo 7 months ago" && byKey("e-gap")[0]?.dueDate?.getTime() === NOW.getTime(),
@@ -136,16 +139,16 @@ async function main() {
   rows = await all();
   check("a second pass creates nothing new", rows.length === count, `${count} -> ${rows.length}`);
 
-  // e-first moves out a day; e-gap is cancelled; then a partial read drops e-open.
+  // e-open moves out a day; e-gap is cancelled; then a partial read drops e-open.
   const moved = items
-    .map((e) => (e.id === "e-first" ? event("e-first", 54 * H, ["ada@x.example"]) : e))
+    .map((e) => (e.id === "e-open" ? event("e-open", 54 * H, ["cy@x.example"]) : e))
     .filter((e) => e.id !== "e-gap");
   await refreshCalendarWindow(USER, source.id, { events: storedEventsOf(moved), complete: true }, NOW);
   rows = await all();
   check(
     "a moved meeting's prep reminder follows it",
-    byKey("e-first")[0]?.dueDate?.getTime() === NOW.getTime() + 30 * H,
-    String(byKey("e-first")[0]?.dueDate)
+    byKey("e-open")[0]?.dueDate?.getTime() === NOW.getTime() + 30 * H,
+    String(byKey("e-open")[0]?.dueDate)
   );
   check("a cancelled meeting's prep reminder is dismissed", byKey("e-gap")[0]?.status === "dismissed");
 

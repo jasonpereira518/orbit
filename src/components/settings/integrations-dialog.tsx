@@ -12,13 +12,11 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
-import { Disclosure } from "@/components/settings/disclosure";
-import { DecisionModelSettings } from "@/components/settings/decision-model-settings";
-import { AiUsageCard } from "@/components/settings/ai-usage-card";
-import { SpeechUsageCard, type SpeechAllowances } from "@/components/settings/speech-usage-card";
+import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 import { ApiSettings } from "@/components/settings/api-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
+import { GranolaSettings } from "@/components/settings/granola-settings";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import { IntegrationsOverview } from "@/components/settings/integrations-overview";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
@@ -107,17 +105,10 @@ const MicrosoftAccountPage = dynamic(
     })),
   { loading: () => <PanelSkeleton /> }
 );
-const LinkedInConnectionsImport = dynamic(
+const LinkedInSettings = dynamic(
   () =>
-    import("@/components/imports/linkedin-connections-import").then((m) => ({
-      default: m.LinkedInConnectionsImport,
-    })),
-  { loading: () => <PanelSkeleton /> }
-);
-const LinkedInMessagesImport = dynamic(
-  () =>
-    import("@/components/imports/linkedin-messages-import").then((m) => ({
-      default: m.LinkedInMessagesImport,
+    import("@/components/settings/linkedin-settings").then((m) => ({
+      default: m.LinkedInSettings,
     })),
   { loading: () => <PanelSkeleton /> }
 );
@@ -511,7 +502,7 @@ function DialogBody({
               <div key={group.key}>
                 <p
                   aria-hidden
-                  className="px-2.5 pt-3 pb-1.5 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground/80 uppercase"
+                  className="px-2.5 pt-3 pb-1.5 text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground-subtle uppercase"
                 >
                   {group.label}
                 </p>
@@ -655,29 +646,11 @@ function Panel({
         />
       );
     case "linkedin":
-      return (
-        <div className="space-y-5">
-          <LinkedInConnectionsImport />
-          <LinkedInMessagesImport />
-        </div>
-      );
+      return <LinkedInSettings />;
+    case "granola":
+      return <GranolaSettings />;
     case "ai":
-      return (
-        <div className="space-y-5">
-          <AiSettings initialSettings={initialSettings} />
-          {/* The decision model is an optional second key most people never need: folded away
-              until one is saved, so a first visit here meets one choice, not two. */}
-          {initialSettings.decisionModel.keySaved ? (
-            <DecisionModelSettings initialSettings={initialSettings} />
-          ) : (
-            <Disclosure label="More AI options">
-              <DecisionModelSettings initialSettings={initialSettings} />
-            </Disclosure>
-          )}
-          <AiUsageCard />
-          <SpeechUsageCard speech={speechAllowances} />
-        </div>
-      );
+      return <AiSettings initialSettings={initialSettings} speech={speechAllowances} />;
     case "assistants":
       return <AssistantsSettings />;
     case "reminders":

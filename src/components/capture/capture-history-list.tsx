@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore, useTransition } from "react";
+import { Fragment, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { ChevronRight, History, Trash2 } from "lucide-react";
@@ -10,7 +10,7 @@ import type { CaptureHistoryItem, CaptureHistoryPage } from "@/lib/capture-histo
 import { timelineDayLabel } from "@/lib/timeline-date";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CAPTURE_SOURCE_META, capturePhotoSrc } from "@/components/capture/capture-source-meta";
+import { CAPTURE_METHOD_META, capturePhotoSrc } from "@/components/capture/capture-source-meta";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
@@ -136,14 +136,15 @@ function CaptureHistoryRow({
   confirmRef: (el: HTMLElement | null) => void;
 }) {
   const hydrated = useHydrated();
-  const primary = CAPTURE_SOURCE_META[item.kinds[0] ?? "text"];
+  const primary = CAPTURE_METHOD_META[item.method];
   const Icon = primary.icon;
   const created = new Date(item.createdAt);
   const counts = [
-    item.peopleCount ? plural(item.peopleCount, "person", "people") : null,
-    item.reminderCount ? plural(item.reminderCount, "reminder", "reminders") : null,
+    plural(item.peopleCount, "person", "people"),
+    plural(item.reminderCount, "reminder", "reminders"),
     item.photoCount ? plural(item.photoCount, "photo", "photos") : null,
   ].filter(Boolean);
+  const description = item.summary ?? item.excerpt;
 
   return (
     <li className="rounded-xl border border-border/60 bg-card transition-colors has-[a:hover]:border-primary/40 has-[a:focus-visible]:border-ring">
@@ -166,7 +167,7 @@ function CaptureHistoryRow({
                 className="size-full object-cover"
               />
               {item.photoCount > 1 && (
-                <span className="absolute right-0.5 bottom-0.5 rounded bg-black/60 px-1 text-[10px] leading-4 font-medium text-white">
+                <span className="absolute right-0.5 bottom-0.5 rounded bg-black/60 px-1 text-3xs leading-4 font-medium text-white">
                   +{item.photoCount - 1}
                 </span>
               )}
@@ -179,18 +180,24 @@ function CaptureHistoryRow({
 
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-medium text-ink">
+              <span className="line-clamp-2 font-medium text-ink">
                 {item.title ?? primary.label}
               </span>
               {item.status === "undone" && (
-                <Badge variant="secondary" className="shrink-0 text-[10px]">
+                <Badge variant="secondary" className="shrink-0 text-3xs">
                   Undone
                 </Badge>
               )}
             </span>
-            {item.excerpt && (
-              <span className="mt-0.5 line-clamp-2 block text-muted-foreground">
-                {item.excerpt}
+            {item.names.length > 0 && (
+              <span className="mt-0.5 block truncate text-xs text-ink/80">{item.names.join(", ")}</span>
+            )}
+            {description && (
+              <span className="mt-0.5 line-clamp-2 block text-muted-foreground">{description}</span>
+            )}
+            {item.nextSteps && (
+              <span className="mt-0.5 line-clamp-1 block text-muted-foreground">
+                <span className="font-medium text-ink/80">Next:</span> {item.nextSteps}
               </span>
             )}
             <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
@@ -200,18 +207,18 @@ function CaptureHistoryRow({
               {hydrated && (
                 <>
                   <time dateTime={item.createdAt} title={format(created, "PPpp")}>
-                    {timelineDayLabel(created)}, {format(created, "h:mm a")}
+                    {format(created, "EEE, MMM d, h:mm a")} · {timelineDayLabel(created)}
                   </time>
                   <span aria-hidden>·</span>
                 </>
               )}
-              <span>{item.kinds.map((k) => CAPTURE_SOURCE_META[k].label).join(" + ")}</span>
-              {counts.length > 0 && (
-                <>
+              <span>{primary.label}</span>
+              {counts.map((c) => (
+                <Fragment key={c}>
                   <span aria-hidden>·</span>
-                  <span>{counts.join(", ")}</span>
-                </>
-              )}
+                  <span>{c}</span>
+                </Fragment>
+              ))}
               {item.entryPoint === "profile" && (
                 <>
                   <span aria-hidden>·</span>

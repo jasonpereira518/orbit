@@ -2,6 +2,7 @@
 // reached by most server routes (the app layout, the app pulse, health), and evaluating three
 // provider SDKs — @google/genai pulls google-auth-library, protobufjs and ws — was part of
 // every cold start for routes that never make a model call.
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
@@ -14,7 +15,8 @@ import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { resolvePlan, type BillingColumns } from "@/lib/entitlements";
 import { classifyAiError } from "@/lib/errors";
 import { ERROR_SOURCES, recordErrorEvent, shouldRecordThrottled } from "@/lib/error-events";
-import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
+import { recordGateHitThrottled } from "@/lib/gate-events";
 import { AI_OPERATIONS } from "@/lib/ai-operations";
 import {
   creditPeriodFor,
@@ -39,7 +41,7 @@ import {
   refusalCopyFor,
 } from "@/lib/ai-access-copy";
 import { JEV_MODEL } from "@/lib/ai-models";
-import { deepgramEnabled } from "@/lib/deepgram";
+import { deepgramOpenFor } from "@/lib/speech-credit";
 import { speechAllowance } from "@/lib/speech-quota";
 import {
   systemOneRequest,
@@ -48,6 +50,7 @@ import {
 } from "@/lib/typesafe-api";
 import {
   chooseCompletionKey,
+  WEB_SEARCH_MANAGED_EXCLUDED,
   chooseEmbeddingKey,
   holdEstimateMicros,
   managedEligibility,
@@ -167,9 +170,10 @@ export function managedAiSwitchedOff(): boolean {
 
 /**
  * The admin console's runtime switch (`site_settings.managed_ai_paused`), cached for 30s per
- * server instance so it costs one read per instance, not per call. Unset reads as PAUSED on
- * production — managed AI must not run before the legal text describing it ships — and as
- * running everywhere else. A read failure keeps the last answer, or pauses if there is none.
+ * server instance so it costs one read per instance, not per call. Unset reads as RUNNING on
+ * every deployment: the legal text describing included AI has shipped (Terms → Included AI,
+ * Privacy → subprocessors), so it is on unless an admin pauses it. A read failure keeps the
+ * last answer, or pauses if there is none.
  *
  * Each provider whose pool (`MANAGED_AI_POOLS`) is spent drops out of the managed set, read
  * in the same cached pass — so the pools cost one aggregate per instance per 30s, not one per
@@ -182,11 +186,16 @@ const PAUSE_TTL_MS = 30_000;
  * cap (back when the pool's window turns over), as opposed to one that ran dry mid-window
  * (back within the 2-hour quota window, on no date anyone can promise).
  */
-type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider>; capped: ReadonlySet<AiProvider> };
+type PoolState = {
+  paused: boolean;
+  spent: ReadonlySet<AiProvider>;
+  capped: ReadonlySet<AiProvider>;
+  webSearchPaused: boolean;
+};
 let pauseCache: (PoolState & { at: number }) | null = null;
 
 export function managedAiPausedDefault(): boolean {
-  return process.env.VERCEL_ENV === "production";
+  return false;
 }
 
 /** Orbit-paid spend on one provider since its pool's window opened, in micros. */
@@ -243,21 +252,29 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
     const [result, spentMicros] = await Promise.all([
       db.execute(sql`
         SELECT (SELECT managed_ai_paused FROM site_settings WHERE id = 1) AS paused,
+               (SELECT web_search_paused FROM site_settings WHERE id = 1) AS web_search_paused,
                (SELECT array_agg(DISTINCT context->>'provider') FROM error_events
                  WHERE source = ${ERROR_SOURCES.managedAi} AND kind = 'quota'
                    AND created_at > now() - interval '2 hours') AS dry
       `),
       managedPoolsSpent(new Date(now)),
     ]);
-    const [row] = rowsOf<{ paused: boolean | null; dry: string[] | null }>(result);
+    const [row] = rowsOf<{ paused: boolean | null; web_search_paused: boolean | null; dry: string[] | null }>(result);
     const capped = new Set<AiProvider>(
       (Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros)
     );
     const spent = new Set<AiProvider>([...capped, ...((row?.dry ?? []) as AiProvider[])]);
-    pauseCache = { paused: row?.paused ?? managedAiPausedDefault(), spent, capped, at: now };
+    pauseCache = {
+      paused: row?.paused ?? managedAiPausedDefault(),
+      spent,
+      capped,
+      webSearchPaused: row?.web_search_paused ?? false,
+      at: now,
+    };
     return pauseCache;
   } catch {
-    return pauseCache ?? { paused: true, spent: new Set(), capped: new Set() };
+    // Web search stays up on a read failure: its budget buckets are writes that fail closed.
+    return pauseCache ?? { paused: true, spent: new Set(), capped: new Set(), webSearchPaused: false };
   }
 }
 
@@ -290,13 +307,22 @@ export async function managedAiPaused(now = Date.now()): Promise<boolean> {
   return held.length > 0 && held.every((p) => state.spent.has(p));
 }
 
+/**
+ * The admin console's web-search switch (`site_settings.web_search_paused`), read in the same
+ * cached pass as the managed-AI switch. Applies to every key, the account's own included.
+ */
+export async function webSearchPaused(now = Date.now()): Promise<boolean> {
+  return (await managedPoolState(now)).webSearchPaused;
+}
+
 /** For the admin switch: forget the cached answer so this instance sees the change at once. */
 export function forgetManagedAiPause() {
   pauseCache = null;
 }
 
 function managedKey(provider: AiProvider): string | null {
-  if (managedAiSwitchedOff()) return null;
+  // Orbit never spends its own Gemini key, in production or on a dev server.
+  if (managedAiSwitchedOff() || !MANAGED_PROVIDER_ORDER.includes(provider)) return null;
   const explicit = process.env[MANAGED_ENV[provider]]?.trim();
   if (explicit) return explicit;
   if (!process.env.VERCEL) return process.env[LOCAL_ENV[provider]]?.trim() || null;
@@ -389,7 +415,34 @@ function keyFor(grant: AiGrant<AiProvider>, provider: AiProvider): string {
 export async function geminiClient(grant: AiGrant<AiProvider>): Promise<GoogleGenAI> {
   const apiKey = keyFor(grant, "gemini");
   const { GoogleGenAI } = await import("@google/genai");
-  return new GoogleGenAI({ apiKey });
+  const client = new GoogleGenAI({ apiKey });
+  // The OpenAI and Anthropic SDKs retry a transient failure twice on their own; this one does
+  // not retry unless told to, and Gemini is the default provider. Its own `retryOptions` throws a
+  // bare "Retryable HTTP Error" once the attempts run out (no status, so a rate limit would read
+  // as an unknown failure), so the retry lives here instead: one try plus two retries on
+  // 408/429/5xx with a short backoff, and the SDK's error reaches the caller untouched.
+  // Only generation retries; embeddings have a backoff of their own.
+  const generate = client.models.generateContent.bind(client.models);
+  client.models.generateContent = (params) => retryTransientGemini(() => generate(params), params.config?.abortSignal);
+  return client;
+}
+
+const GEMINI_RETRY_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const GEMINI_RETRY_ATTEMPTS = 3;
+const GEMINI_RETRY_BASE_MS = 500;
+
+async function retryTransientGemini<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      const status = (err as { status?: unknown } | null)?.status;
+      if (attempt >= GEMINI_RETRY_ATTEMPTS || typeof status !== "number" || !GEMINI_RETRY_STATUSES.has(status)) throw err;
+      if (signal?.aborted) throw err;
+      await new Promise((resolve) => setTimeout(resolve, GEMINI_RETRY_BASE_MS * 2 ** (attempt - 1)));
+      if (signal?.aborted) throw err;
+    }
+  }
 }
 
 export async function openaiClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
@@ -610,7 +663,7 @@ export class AiAccess {
       if (key) personal[provider as AiProvider] = key;
     }
 
-    const eligibility = managedEligibility(plan, demoCountsAsManaged(userId));
+    const eligibility = managedEligibility(plan, demoCountsAsManaged(userId), await getEffectivePlanConfig());
     const managed: Partial<Record<AiProvider, string>> = {};
     // The admin pause stops Orbit-paid AI on every plan, and a spent pool takes its provider
     // out; a dev server's own keys are not Orbit's, so a localhost demo account is unaffected.
@@ -704,13 +757,14 @@ export class AiAccess {
   private async holdCredits(operation: string): Promise<void> {
     await ensureAllowance(this.userId, this.plan, creditPeriodFor(this.settings));
     const tier = (AI_OPERATIONS as Record<string, { tier?: string }>)[operation]?.tier;
-    const monthly = PLAN_CONFIG[this.plan].monthlyCredits ?? 0;
+    const planConfig = await getEffectivePlanConfig();
+    const monthly = planConfig[this.plan].monthlyCredits ?? 0;
     const background = BACKGROUND_OPERATIONS.has(operation);
     const hold = await placeHold({
       userId: this.userId,
       micros: holdEstimateMicros(tier),
       operation,
-      packs: packsUsable(this.plan),
+      packs: packsUsable(this.plan, planConfig),
       floorMicros: background ? creditsToMicros(monthly * BACKGROUND_FLOOR_SHARE) : 0,
       // Free's one-time starter credits are for things the person asks for, never background work.
       reserveStarter: background && this.plan === "free",
@@ -719,14 +773,38 @@ export class AiAccess {
     // Below the background floor with credits left is not "you've used your credits".
     if (background) {
       const balance = await getCreditBalance(this.userId, this.plan, this.settings, undefined, { ensure: false });
-      if (balance.spendable > 0) throw this.refusal("managed_unavailable", BACKGROUND_RESERVE_MESSAGE);
+      if (balance.spendable > 0) {
+        await this.recordCreditWall("backgroundFloor", operation, background);
+        throw this.refusal("managed_unavailable", BACKGROUND_RESERVE_MESSAGE);
+      }
     }
+    await this.recordCreditWall("managedCredits", operation, background);
     throw this.refusal("managed_limit", refusalCopyFor("managed_limit", this.plan));
   }
 
+  /**
+   * The pricing-v2 money moment, recorded as a gate hit: out of credits, or below the floor
+   * kept for what the person asks for. The refusal threw before anything was written, so
+   * neither `usage_events` nor `gate_events` saw it (audit D1). Throttled to one row per
+   * account, wall and hour, because a nightly job or a chat that makes several model calls
+   * would otherwise write one per attempt. Best effort and silent: the caller throws its own
+   * refusal, with its own text, whether or not this lands.
+   */
+  private async recordCreditWall(feature: "managedCredits" | "backgroundFloor", operation: string, background: boolean) {
+    await recordGateHitThrottled({
+      userId: this.userId,
+      feature,
+      plan: this.plan,
+      context: { surface: background ? "cron" : "web", route: operation },
+    });
+  }
+
   /** A grant for "the user's model": chat, capture, drafts, briefs, OCR. */
-  async completion(operation: string): Promise<AiGrant> {
-    const choice = chooseCompletionKey(this.facts());
+  async completion(operation: string, opts: { webSearch?: boolean } = {}): Promise<AiGrant> {
+    const choice = chooseCompletionKey(
+      this.facts(),
+      opts.webSearch ? { skipManaged: WEB_SEARCH_MANAGED_EXCLUDED } : {},
+    );
     if (!choice.ok) throw this.refusal(choice.reason);
     return this.grant(choice.provider, choice.source, choice.model, operation);
   }
@@ -860,10 +938,10 @@ export async function getAiAccessStatus(userId: string): Promise<AiAccessStatus>
   // Deepgram is per-account quota, not a key someone pasted, so it is resolved here rather
   // than inside `AiAccess.canTranscribe()` — that method stays the key-presence answer other
   // callers rely on.
-  const monthlyCredits = PLAN_CONFIG[access.plan].monthlyCredits;
+  const monthlyCredits = (await getEffectivePlanConfig())[access.plan].monthlyCredits;
   const [balance, speech, paused] = await Promise.all([
     monthlyCredits && access.eligibility === "plan" ? getCreditBalance(userId, access.plan, access.settings, now) : null,
-    deepgramEnabled() ? speechAllowance(userId, "shortform") : null,
+    deepgramOpenFor(userId, "shortform").then((open) => (open ? speechAllowance(userId, "shortform") : null)),
     access.eligibility === "plan" ? managedAiPaused() : Promise.resolve(false),
   ]);
 
@@ -919,11 +997,13 @@ const NO_MANAGED_KEYS: Record<AiProvider, boolean> = { gemini: false, openai: fa
 export function aiDenialFromSettings(
   userId: string,
   row: AiSettingsRow | null,
+  /** The effective plan table (`getEffectivePlanConfig`) where the caller has it; else the code table. */
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG,
   outage: ManagedOutage | null = null
 ): AiAccessDenial | null {
   const selectedProvider = resolveAiProvider(row?.aiProvider);
   const { plan } = resolvePlan(row);
-  const eligibility = managedEligibility(plan, demoCountsAsManaged(userId));
+  const eligibility = managedEligibility(plan, demoCountsAsManaged(userId), config);
   const facts = {
     eligibility,
     preference: (row?.aiKeyPreference ?? null) as AiKeyPreference,

@@ -16,11 +16,13 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
+import { isKnownGate } from "@/lib/gate-events";
 import { foundingAppliesToNewSubscription } from "@/lib/founding";
 import { CREDIT_PACK_PRICE_LABEL, isCheckoutConfigured } from "@/lib/stripe-config";
 
 export const metadata: Metadata = {
-  title: "Upgrade — Orbit",
+  title: "Upgrade",
   description: "Move to Orbit Pro or Orbit Max. AI included on both.",
 };
 
@@ -54,17 +56,28 @@ const TRUST = [
  * split across two files; `UpgradeTransition`'s `maxOrder` must stay in step with the
  * highest slot used anywhere in the tree (currently the trust row's 5).
  */
-export default async function UpgradePage() {
+export default async function UpgradePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   // Protected by proxy.ts, but resolved here too so the page never renders without a user
   // to attribute a purchase to.
   const userId = await requireUserId();
+  // `?gate=<feature>`: which paywall sent them. Used only to attribute the checkout that
+  // follows (`checkout_started.from_gate`); anything that is not a known gate key is dropped,
+  // so a hand-edited URL changes nothing on the page or in the event.
+  const rawGate = (await searchParams).gate;
+  const firstGate = Array.isArray(rawGate) ? rawGate[0] : rawGate;
+  const gate = isKnownGate(firstGate) ? firstGate : null;
   const db = await getDb();
-  const [entitlements, row] = await Promise.all([
+  const [entitlements, row, config] = await Promise.all([
     getEntitlements(userId),
     db.query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),
       columns: { foundingEligible: true, foundingRedeemedAt: true },
     }),
+    getEffectivePlanConfig(),
   ]);
   const onPaidPlan = entitlements.plan !== "free";
 
@@ -75,7 +88,7 @@ export default async function UpgradePage() {
     // and /upgrade stops being the one black page in the marketing world.
     // Twinkle and shooting stars are Starfield's own; nothing here moves near
     // the payment form itself.
-    <div className="landing-root relative min-h-screen overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
+    <div className="landing-root relative min-h-dvh overflow-x-clip bg-[#03050c] text-[#e8f3f1]">
       <LandingStarfield />
       {/* Ends the time warp's cruise hold. Until this mounts the stage keeps
           the exposure running, which is what covers this page's session
@@ -107,7 +120,7 @@ export default async function UpgradePage() {
             positioned z-auto element paints above non-positioned in-flow
             content whatever the DOM order. /pricing's <main> carries the same
             pair for the same reason. */}
-        <main className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
+        <main id="main-content" className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 md:px-8">
           {/* Fades rather than flies on the way home: everything else on this
               page is a card or a band, but this is a line of type, and type
               carried off sideways reads as an object being removed. Dissolving
@@ -122,6 +135,8 @@ export default async function UpgradePage() {
             currentPlan={entitlements.plan}
             founding={foundingAppliesToNewSubscription(row)}
             checkoutOpen={isCheckoutConfigured()}
+            gate={gate}
+            config={config}
           />
 
           {!onPaidPlan && (

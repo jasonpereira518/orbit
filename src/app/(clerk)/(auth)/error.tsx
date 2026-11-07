@@ -13,6 +13,7 @@ export default function GroupError({
     <ErrorFallback
       error={error}
       retry={unstable_retry}
+      where="boundary.auth"
       home={{ href: "/sign-in", label: "Back to sign in" }}
     />
   );

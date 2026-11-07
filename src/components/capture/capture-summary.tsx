@@ -179,7 +179,7 @@ export function CaptureSummary({
                         </ul>
                       )}
                     </div>
-                    <Badge variant={draft.mergeContactId ? "secondary" : "outline"} className="text-[10px]">
+                    <Badge variant={draft.mergeContactId ? "secondary" : "outline"} className="text-3xs">
                       {draft.mergeContactId ? "Update" : "New"}
                     </Badge>
                     <Button variant="outline" size="sm" onClick={() => setEditing(item.key)} disabled={saving}>

@@ -1,7 +1,10 @@
-import { and, eq, gt, gte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, lt, sql, type AnyColumn } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { billingEvents, creditGrants, usageEvents, userSettings } from "@/db/schema";
+import { managedCostSql } from "@/lib/ai-access";
+import { internalAccountSql } from "@/lib/analytics-internal";
 import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
+import { speechMicrosSql } from "@/lib/money-costs";
 import type { Plan } from "@/lib/plans/plan-config";
 
 /**
@@ -11,6 +14,9 @@ import type { Plan } from "@/lib/plans/plan-config";
  *
  * Read-only. Every figure here is derived from the grant rows and `usage_events`; nothing is
  * cached, because the screen is visited rarely and a stale liability is worse than a slow one.
+ *
+ * Internal / tester accounts (`internalAccountSql`) are left out of every total here: a pack
+ * the operator bought to test checkout is not revenue, a liability, or a top spender.
  */
 
 function num(value: string | number | null | undefined): number {
@@ -32,7 +38,7 @@ export type CreditsMoney = {
     /** Unused credits on live packs, and what the buyers paid for them, pro rata. */
     unusedCredits: number;
     cents: number;
-    /** The part of it held by accounts no longer on Pro or Max: frozen, not spendable. */
+    /** The part of it held by accounts on a plan where packs cannot be spent (Lifetime): frozen. */
     frozenCents: number;
   };
   allowance: {
@@ -42,10 +48,16 @@ export type CreditsMoney = {
     usedCredits: number;
   };
   managedAi: {
-    /** Real model cost on Orbit's keys in the window. */
+    /**
+     * Real model cost on Orbit's keys in the window: `managedCostSql()`, the one definition
+     * the credit cap, the ops sweep and the Runway burn all share. Deepgram is NOT in it.
+     */
     costMicros: number;
+    /** Deepgram dollars in the window, priced from `speech_usage` seconds (kept apart: it is not credit-settled). */
+    deepgramMicros: number;
     calls: number;
     accounts: number;
+    /** Ranked by model cost plus Deepgram, so voice-heavy accounts show up. */
     topSpenders: Array<{ userId: string; micros: number; calls: number }>;
   };
   reconciliation: {
@@ -73,7 +85,7 @@ export async function loadCreditsMoney(
   const db = await getDb();
   const since = new Date(now.getTime() - days * 86_400_000);
 
-  const [packLedger, livePacks, packCounts, allowance, managed, topSpenders] = await Promise.all([
+  const [packLedger, livePacks, packCounts, allowance, managed, topSpenders, speech] = await Promise.all([
     db
       .select({
         kind: billingEvents.kind,
@@ -82,7 +94,7 @@ export async function loadCreditsMoney(
         cashInWindow: sql<string>`coalesce(sum(${billingEvents.amountCents}) FILTER (WHERE ${billingEvents.effectiveAt} >= ${since}), 0)`,
       })
       .from(billingEvents)
-      .where(eq(billingEvents.kind, "credit_pack"))
+      .where(and(eq(billingEvents.kind, "credit_pack"), notInternal(billingEvents.userId)))
       .groupBy(billingEvents.kind),
     db
       .select({
@@ -92,14 +104,21 @@ export async function loadCreditsMoney(
         amountCents: creditGrants.amountCents,
       })
       .from(creditGrants)
-      .where(and(eq(creditGrants.kind, "pack"), eq(creditGrants.status, "active"), gt(creditGrants.microsRemaining, 0))),
+      .where(
+        and(
+          eq(creditGrants.kind, "pack"),
+          eq(creditGrants.status, "active"),
+          gt(creditGrants.microsRemaining, 0),
+          notInternal(creditGrants.userId)
+        )
+      ),
     db
       .select({
         total: sql<string>`count(*)`,
         revoked: sql<string>`count(*) FILTER (WHERE ${creditGrants.status} = 'revoked')`,
       })
       .from(creditGrants)
-      .where(eq(creditGrants.kind, "pack")),
+      .where(and(eq(creditGrants.kind, "pack"), notInternal(creditGrants.userId))),
     db
       .select({
         accounts: sql<string>`count(DISTINCT ${creditGrants.userId})`,
@@ -111,28 +130,30 @@ export async function loadCreditsMoney(
         and(
           eq(creditGrants.kind, "allowance"),
           sql`${creditGrants.periodStart} <= ${now}`,
-          sql`${creditGrants.periodEnd} > ${now}`
+          sql`${creditGrants.periodEnd} > ${now}`,
+          notInternal(creditGrants.userId)
         )
       ),
-    db
-      .select({
-        micros: sql<string>`coalesce(sum(${usageEvents.estimatedCostMicros}), 0)`,
-        calls: sql<string>`count(*)`,
-        accounts: sql<string>`count(DISTINCT ${usageEvents.userId})`,
-      })
-      .from(usageEvents)
-      .where(and(eq(usageEvents.keyOwner, "orbit"), gte(usageEvents.createdAt, since))),
-    db
-      .select({
-        userId: usageEvents.userId,
-        micros: sql<string>`coalesce(sum(${usageEvents.estimatedCostMicros}), 0)`,
-        calls: sql<string>`count(*)`,
-      })
-      .from(usageEvents)
-      .where(and(eq(usageEvents.keyOwner, "orbit"), gte(usageEvents.createdAt, since)))
-      .groupBy(usageEvents.userId)
-      .orderBy(sql`sum(${usageEvents.estimatedCostMicros}) DESC`)
-      .limit(10),
+    managedAiUsage(days, now),
+    // Model cost plus Deepgram per account in one ranking. `speech_usage` is unaliased because
+    // `speechMicrosSql()` qualifies its columns with the table name.
+    db.execute(sql`
+      SELECT t.user_id, sum(t.micros)::bigint AS micros, sum(t.calls)::int AS calls
+      FROM (
+        SELECT usage_events.user_id, ${managedCostSql()}::bigint AS micros, 1 AS calls
+        FROM usage_events
+        WHERE ${managedWindow(since, undefined, false)}
+        UNION ALL
+        SELECT speech_usage.user_id, round(${speechMicrosSql()})::bigint, 0
+        FROM speech_usage
+        WHERE speech_usage.created_at >= ${since}
+          AND NOT ${internalAccountSql(sql`speech_usage.user_id`)}
+      ) t
+      GROUP BY t.user_id
+      ORDER BY sum(t.micros) DESC, t.user_id
+      LIMIT 10
+    `),
+    deepgramCostMicros(days, now),
   ]);
 
   const booked = packLedger[0];
@@ -172,12 +193,15 @@ export async function loadCreditsMoney(
       usedCredits: Math.round((grantedMicros - num(allowance[0]?.remaining)) / MICROS_PER_CREDIT),
     },
     managedAi: {
-      costMicros: num(managed[0]?.micros),
-      calls: num(managed[0]?.calls),
-      accounts: num(managed[0]?.accounts),
-      topSpenders: topSpenders
-        .filter((r): r is typeof r & { userId: string } => r.userId != null)
-        .map((r) => ({ userId: r.userId, micros: num(r.micros), calls: num(r.calls) })),
+      costMicros: managed.costMicros,
+      deepgramMicros: speech,
+      calls: managed.calls,
+      accounts: managed.accounts,
+      topSpenders: rowsOf<{ user_id: string; micros: string; calls: number }>(topSpenders).map((r) => ({
+        userId: r.user_id,
+        micros: num(r.micros),
+        calls: num(r.calls),
+      })),
     },
     reconciliation: {
       packsBooked,
@@ -187,16 +211,113 @@ export async function loadCreditsMoney(
   };
 }
 
-/** Real model cost on Orbit's keys over the trailing window — the managed-AI line of burn. */
-export async function managedAiCostMicros(days = 30, now = new Date()): Promise<number> {
+/** `NOT internal` for a drizzle column (`user_id`), as a where-clause term. */
+function notInternal(column: AnyColumn) {
+  return sql`NOT ${internalAccountSql(sql`${column}`)}`;
+}
+
+/**
+ * The managed-AI window: Orbit's keys, Deepgram rows excluded (they are metered by
+ * `speech_usage` and never settled against credits), `created_at` in `[since, until)`.
+ * `includeInternal` keeps the operator's own accounts for the one caller that wants real
+ * spend rather than customer cost (the Runway burn).
+ */
+function managedWindow(
+  since: Date,
+  until: Date | undefined,
+  includeInternal: boolean,
+  keyOwner: "orbit" | "user" = "orbit"
+) {
+  return and(
+    eq(usageEvents.keyOwner, keyOwner),
+    sql`${usageEvents.provider} <> 'deepgram'`,
+    gte(usageEvents.createdAt, since),
+    until ? lt(usageEvents.createdAt, until) : undefined,
+    includeInternal ? undefined : notInternal(usageEvents.userId)
+  );
+}
+
+/**
+ * Model cost on Orbit's keys over the trailing window, in micros — THE managed-AI cost.
+ *
+ * One definition: `managedCostSql()` (a priced call at its price, an unpriced successful call
+ * at the pessimistic stand-in, a failed one at 0) on Orbit's keys with Deepgram excluded. The
+ * credit cap, the ops sweep's margin alert, the Costs and Money screens and the Runway burn
+ * all read this number; Deepgram is added beside it, never inside it (audit M5).
+ *
+ * By default it is what CUSTOMERS cost, so internal / tester accounts are left out. The
+ * Runway burn passes `includeInternal`: the operator's own dogfooding is real cash.
+ */
+export async function managedAiCostMicros(
+  days = 30,
+  now = new Date(),
+  opts: { includeInternal?: boolean } = {}
+): Promise<number> {
+  return (await managedAiUsage(days, now, opts)).costMicros;
+}
+
+/**
+ * `managedAiCostMicros` with the call and account counts beside it, from the same statement.
+ * The ONE reader of Orbit-key AI cost: the Money pages, the credits section and the YC
+ * Runway / Unit Economics pages all go through here.
+ */
+export async function managedAiUsage(
+  days = 30,
+  now = new Date(),
+  opts: { includeInternal?: boolean } = {}
+): Promise<{ costMicros: number; calls: number; accounts: number }> {
   const db = await getDb();
   const [row] = await db
-    .select({ micros: sql<string>`coalesce(sum(${usageEvents.estimatedCostMicros}), 0)` })
+    .select({
+      micros: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
+      calls: sql<string>`count(*)`,
+      accounts: sql<string>`count(DISTINCT ${usageEvents.userId})`,
+    })
+    .from(usageEvents)
+    .where(managedWindow(new Date(now.getTime() - days * 86_400_000), undefined, opts.includeInternal ?? false));
+  return { costMicros: num(row?.micros), calls: num(row?.calls), accounts: num(row?.accounts) };
+}
+
+/**
+ * The mirror image of `managedAiUsage`: the same rows, window, cost expression and internal
+ * rule, on users' own keys (`key_owner = 'user'`). The user pays their provider, so this is
+ * NOT Orbit's cost — it is shown for scale only. Together the two cover every non-Deepgram
+ * `usage_events` row in the window, with nothing counted twice.
+ */
+export async function byokAiUsage(
+  days = 30,
+  now = new Date(),
+  opts: { includeInternal?: boolean } = {}
+): Promise<{ costMicros: number; calls: number; accounts: number }> {
+  const db = await getDb();
+  const [row] = await db
+    .select({
+      micros: sql<string>`coalesce(sum(${managedCostSql()}), 0)::bigint`,
+      calls: sql<string>`count(*)`,
+      accounts: sql<string>`count(DISTINCT ${usageEvents.userId})`,
+    })
     .from(usageEvents)
     .where(
-      and(eq(usageEvents.keyOwner, "orbit"), gte(usageEvents.createdAt, new Date(now.getTime() - days * 86_400_000)))
+      managedWindow(new Date(now.getTime() - days * 86_400_000), undefined, opts.includeInternal ?? false, "user")
     );
-  return num(row?.micros);
+  return { costMicros: num(row?.micros), calls: num(row?.calls), accounts: num(row?.accounts) };
+}
+
+/** Deepgram spend over the trailing window, priced from `speech_usage`; same internal rule as above. */
+export async function deepgramCostMicros(
+  days = 30,
+  now = new Date(),
+  opts: { includeInternal?: boolean } = {}
+): Promise<number> {
+  const db = await getDb();
+  const since = new Date(now.getTime() - days * 86_400_000);
+  const result = await db.execute(sql`
+    SELECT round(coalesce(sum(${speechMicrosSql()}), 0))::bigint AS micros
+    FROM speech_usage
+    WHERE speech_usage.created_at >= ${since}
+      ${opts.includeInternal ? sql`` : sql`AND NOT ${internalAccountSql(sql`speech_usage.user_id`)}`}
+  `);
+  return num(rowsOf<{ micros: string }>(result)[0]?.micros);
 }
 
 export type PlanDistribution = Record<Exclude<Plan, "free">, { founding: number; standard: number }> & {

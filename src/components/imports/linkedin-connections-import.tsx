@@ -4,7 +4,7 @@ import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useState, useTransition } from "react";
 import { FileSpreadsheet } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { previewLinkedInCsv } from "@/actions/imports";
+import { previewConnections, type ConnectionPerson, type ConnectionsPreview } from "@/lib/imports/linkedin-connections-client";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { connectionToReviewPerson } from "@/lib/imports/review-people";
@@ -21,11 +21,12 @@ import { startImportJob, useImportJob } from "@/lib/import-job-runner";
 import { UserFacingError, friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-type PreviewResult = Awaited<ReturnType<typeof previewLinkedInCsv>>;
-type ConnectionsPreview = Exclude<PreviewResult, { error: string }>;
-type ConnectionPerson = ConnectionsPreview["people"][number];
 
-export function LinkedInConnectionsImport() {
+/**
+ * `bare`: no card and no header of its own — the LinkedIn integration page draws it inside a
+ * row that already names it.
+ */
+export function LinkedInConnectionsImport({ bare = false }: { bare?: boolean } = {}) {
   const job = useImportJob();
   const [pending, start] = useTransition();
 
@@ -66,7 +67,11 @@ export function LinkedInConnectionsImport() {
 
   return (
     <section
-      className="space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-connections/70 bg-card p-6"
+      className={
+        bare
+          ? "space-y-4"
+          : "space-y-4 rounded-2xl border border-border/70 border-t-2 border-t-import-connections/70 bg-card p-6"
+      }
       {...tourAnchor("imports.connections")}
     >
       {/*
@@ -74,24 +79,26 @@ export function LinkedInConnectionsImport() {
         text block it took ~120px from a column already sharing a phone with the icon, and
         the description ran four words to a line. Here the description spans the card.
       */}
-      <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-connections/10 text-import-connections">
-          <FileSpreadsheet className="h-4 w-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <h2 className="min-w-0 text-lg font-medium text-ink">
-              LinkedIn connections
-            </h2>
-            <LinkedInExportGuide variant="connections" />
+      {bare ? null : (
+        <div className="flex items-start gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-import-connections/10 text-import-connections">
+            <FileSpreadsheet className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="min-w-0 text-lg font-medium text-ink">
+                LinkedIn connections
+              </h2>
+              <LinkedInExportGuide variant="connections" />
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Upload LinkedIn&apos;s ZIP or the Connections.csv inside it, review
+              everyone, then import into your orbit. Imports keep running if you
+              leave this page.
+            </p>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload LinkedIn&apos;s ZIP or the Connections.csv inside it, review
-            everyone, then import into your orbit. Imports keep running if you
-            leave this page.
-          </p>
         </div>
-      </div>
+      )}
 
       <ImportFilePicker
         accept=".csv,.zip,text/csv,application/zip"
@@ -111,7 +118,7 @@ export function LinkedInConnectionsImport() {
               );
               setFileName(name);
               setCsvText(text);
-              const res = await previewLinkedInCsv(text);
+              const res = await previewConnections(text);
               // `UserFacingError`, not `Error`: these messages were written to be read
               // ("This looks like a Messages export…"), and `friendlyError` replaces any
               // plain Error with the generic fallback.
@@ -137,7 +144,7 @@ export function LinkedInConnectionsImport() {
           onClick={() =>
             start(async () => {
               try {
-                const res = await previewLinkedInCsv(csvText);
+                const res = await previewConnections(csvText);
                 if ("error" in res) throw new UserFacingError(res.error);
                 applyPreview(res);
                 toast.success(`Loaded ${res.totalRows} people`);

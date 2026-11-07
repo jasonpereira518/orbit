@@ -52,6 +52,7 @@ import {
   endMeetingSession,
   loadMeetingTranscript,
   resumeMeetingSession,
+  saveMeetingNotes,
 } from "@/actions/meetings";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
@@ -82,11 +83,12 @@ import {
 export const MAX_SIDE_NOTES_CHARS = 20_000;
 
 /**
- * The notes box is not stored on the server — it travels with the summarize request — so
- * this browser copy is what survives a crash, a reload, or coming back to an unfinished
- * meeting. Every access is guarded: storage can be absent or full, and notes that fail to
- * persist are still sent if the tab lives.
+ * The notes box is saved to the meeting as you type (`typeNotes`, debounced) and also sent
+ * with the summarize request. This browser copy is the offline fallback: it survives a
+ * crash, a reload, or a save that never landed. Every access is guarded: storage can be
+ * absent or full, and notes that fail to persist are still sent if the tab lives.
  */
+const NOTES_SAVE_MS = 2_000;
 const notesKey = (sessionId: string) => `orbit:meeting-notes:${sessionId}`;
 
 function readNotes(sessionId: string): string {
@@ -275,6 +277,21 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     [setSegment]
   );
 
+  /** The server relabels these sentences "you" when the claim lands; mirror it on screen. */
+  const handleLiveYou = useCallback((label: string, fromSeq: number) => {
+    setSegments((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const view of Object.values(prev)) {
+        if (view.seq >= fromSeq && view.speaker === label) {
+          next[view.seq] = { ...view, speaker: "you" };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
   /** The month's meeting minutes, and the day they come back. */
   const quotaResetLabel = useMemo(
     () =>
@@ -317,6 +334,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     loudness: () => recorderRef.current?.loudness ?? NO_LOUDNESS,
     recorderId: () => recorderIdRef.current,
     onSegment: handleLiveSegment,
+    onYou: handleLiveYou,
     onChunksNeeded: uploadChunks,
     onUnavailable: handleLiveUnavailable,
     onQuotaWarning: (remainingSeconds) => setQuotaWarnMinutes(Math.max(1, Math.round(remainingSeconds / 60))),
@@ -560,6 +578,24 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     phaseRef.current = phase;
     shareKeptRef.current = shareKept;
   });
+
+  // Typing, and only typing, saves to the server: a reload that fills the box from this
+  // browser (or leaves it empty in another one) must never write over the stored notes.
+  const notesTimer = useRef<number | null>(null);
+  const typeNotes = useCallback((v: string) => {
+    const next = v.slice(0, MAX_SIDE_NOTES_CHARS);
+    setSideNotes(next);
+    if (notesTimer.current) window.clearTimeout(notesTimer.current);
+    notesTimer.current = window.setTimeout(() => {
+      notesTimer.current = null;
+      const id = sessionIdRef.current;
+      // A failed save is fine: the browser copy and the summarize request both carry it.
+      if (id) void saveMeetingNotes(id, next).catch(() => null);
+    }, NOTES_SAVE_MS);
+  }, []);
+  useEffect(() => () => {
+    if (notesTimer.current) window.clearTimeout(notesTimer.current);
+  }, []);
 
   // Keep the browser copy current. Keyed by session, so notes typed before the session
   // exists (the first second or two) are written the moment it does.
@@ -847,7 +883,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
     quotaWarnMinutes,
     quotaResetLabel,
     sideNotes,
-    setSideNotes: (v: string) => setSideNotes(v.slice(0, MAX_SIDE_NOTES_CHARS)),
+    setSideNotes: typeNotes,
     startRecording,
     pause,
     resume,

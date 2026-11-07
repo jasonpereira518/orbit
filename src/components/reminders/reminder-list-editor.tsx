@@ -112,7 +112,7 @@ export function ReminderListEditor({
           )}
 
           <fieldset>
-            <legend className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <legend className="mb-1.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
               Icon
             </legend>
             <div className="grid grid-cols-6 gap-1">
@@ -142,7 +142,7 @@ export function ReminderListEditor({
           </fieldset>
 
           <fieldset>
-            <legend className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <legend className="mb-1.5 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
               Color
             </legend>
             <div className="flex flex-wrap gap-1.5">

@@ -125,10 +125,15 @@ export function EmailSettings({
           </div>
         )}
       </SettingsRow>
-      <SettingsRow title="Signature" description="Added under emails you write in Compose. Plain text.">
+      <SettingsRow
+        title="Signature"
+        labelFor="email-signature"
+        description="Added under emails you write in Compose. Plain text."
+      >
         <div className="flex w-full flex-col gap-2">
           <Textarea
-            aria-label="Email signature"
+            id="email-signature"
+            aria-describedby="email-signature-description"
             rows={4}
             value={text}
             maxLength={SIGNATURE_MAX}

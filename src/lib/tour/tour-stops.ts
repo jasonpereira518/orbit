@@ -292,7 +292,7 @@ export const TOUR_STOPS: readonly TourStop[] = [
   },
   {
     id: "imports.linkedin",
-    route: "/imports",
+    route: "/capture?mode=imports",
     anchor: "imports.dropzone",
     title: "When your LinkedIn export lands",
     body: "LinkedIn emails a ZIP, usually within a day. Drop it on this page as it arrived, no unzipping, and Orbit works out what it is and brings everyone in. Contacts files, calendars and profile links work the same way; Google and Outlook are in the list below.",
@@ -350,15 +350,21 @@ export function isContactDetailPath(pathname: string): boolean {
   return /^\/contacts\/(?!new$|duplicates$)[^/]+$/.test(pathname);
 }
 
+/** The stop's route without its query: the page's own path. */
+export function stopPath(stop: TourStop): string {
+  return stop.route.split("?")[0];
+}
+
 /** True when `pathname` is the page the stop lives on. */
 export function stopMatchesPath(stop: TourStop, pathname: string): boolean {
   if (stop.route === "/contacts/:id") return isContactDetailPath(pathname);
-  return pathname === stop.route;
+  // A route may pick a tab with a query (`/capture?mode=imports`); the page is its path.
+  return pathname === stopPath(stop);
 }
 
 /** The page's nav label for the off-route card. */
 export function stopPageLabel(stop: TourStop): string {
-  switch (stop.route) {
+  switch (stopPath(stop)) {
     case "/dashboard":
       return "Dashboard";
     case "/contacts":
@@ -373,8 +379,6 @@ export function stopPageLabel(stop: TourStop): string {
       return "Chat";
     case "/graph":
       return "Constellation";
-    case "/imports":
-      return "Imports";
     default:
       return stop.route;
   }

@@ -94,7 +94,7 @@ const W_TERM = (LABEL_W + LABEL_GAP + 16) / OUTER;
 const STAGE_CSS = `max(${STAGE_MIN}px, min(${STAGE_MAX}px, calc(50svh / ${OUTER} - ${Math.round(H_TERM)}px), calc(50vw / ${OUTER} - ${Math.round(W_TERM)}px)))`;
 const CENTRE_CSS = `calc(50% + ${HEADER_CLEARANCE / 2}px)`;
 
-const KICKER_CLASS = "text-[11px] uppercase tracking-[0.16em] text-[#6d807c]";
+const KICKER_CLASS = "text-2xs uppercase tracking-[0.16em] text-[#6d807c]";
 const TITLE_CLASS =
   "mt-1 font-[family-name:var(--font-display)] text-[19px] text-[#e8f3f1]";
 const BODY_CLASS = "mt-1 text-[13px] leading-[1.6] text-[#9aada8]";
@@ -186,7 +186,7 @@ function StepMarker({
  * on the first/last marker at the very ends of the range, where sub-pixel
  * scroll jitter would make it look stuck. */
 const DOT_RUN: [number, number] = [0.04, 0.96];
-/** How far ahead of the dot a step starts fading up, and how long the marker
+/** How far ahead of the dot a step starts sliding in, and how long the marker
  * takes to fill once the dot is on it. */
 const COPY_LEAD = 0.07;
 const MARK_FILL = 0.02;
@@ -236,9 +236,6 @@ function StepRow({
   arrival: number;
   reduced: boolean;
 }) {
-  const opacity = useTransform(p, (v) =>
-    scrub01(v, arrival - COPY_LEAD, arrival + MARK_FILL)
-  );
   const x = useTransform(p, (v) =>
     14 * (1 - scrub01(v, arrival - COPY_LEAD, arrival + MARK_FILL))
   );
@@ -249,7 +246,12 @@ function StepRow({
   return (
     <motion.li
       className="relative flex gap-4"
-      style={reduced ? undefined : { opacity, x }}
+      // The text is always fully opaque: it used to fade in on the same scroll as the dot, so
+      // steps the dot had not reached sat on screen invisible or dimmed (down to 1.5:1). The
+      // dot filling in and this small slide carry the progress. Resting values, not
+      // `undefined`, under reduced motion: the preference is learned after the first render,
+      // and dropping a style key leaves Motion's last inline value behind.
+      style={reduced ? { opacity: 1, x: 0 } : { opacity: 1, x }}
     >
       <span
         data-step-marker

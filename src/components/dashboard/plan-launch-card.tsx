@@ -39,7 +39,17 @@ const PAID_TIER = {
   },
 } as const;
 
-export function PlanLaunchCard({ plan }: { plan: Plan }) {
+export function PlanLaunchCard({
+  plan,
+  freeContactLimit = FREE_CONTACT_LIMIT,
+  proMonthlyCredits = PLAN_CONFIG.orbit.monthlyCredits,
+}: {
+  plan: Plan;
+  /** The Free Plan's contact limit under the effective plan table (null = none). */
+  freeContactLimit?: number | null;
+  /** Pro's monthly AI credits under the effective plan table (null = none). */
+  proMonthlyCredits?: number | null;
+}) {
   if (plan !== "free") {
     const tier = PAID_TIER[plan];
     const name = PLAN_LABELS[plan];
@@ -60,11 +70,12 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
         <div className="relative flex flex-wrap items-center justify-between gap-5">
           <div className="min-w-0 max-w-md space-y-2">
             <span
-              className={`relative inline-flex items-center gap-1.5 overflow-hidden rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-sm bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink`}
+              className={`relative inline-flex items-center gap-1.5 overflow-hidden rounded-full px-2.5 py-1 text-2xs font-semibold uppercase tracking-wide shadow-sm bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink`}
             >
+              {/* Two sweeps, then it rests off-frame: an endless loop needs a pause control (SC 2.2.2). */}
               <span
                 aria-hidden="true"
-                className="plan-badge-glint pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
+                className="plan-badge-glint pointer-events-none absolute [animation-iteration-count:2]! [animation-fill-mode:forwards]! inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/70 to-transparent"
               />
               <tier.Icon className="relative size-3" aria-hidden="true" />
               <span className="relative">{name}</span>
@@ -104,16 +115,18 @@ export function PlanLaunchCard({ plan }: { plan: Plan }) {
 
       <div className="relative flex flex-wrap items-center justify-between gap-5">
         <div className="min-w-0 max-w-md space-y-2">
-          <span className="inline-flex items-center gap-2 rounded-full border border-night-free/30 bg-night-free/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-night-free">
+          <span className="inline-flex items-center gap-2 rounded-full border border-night-free/30 bg-night-free/10 px-2.5 py-1 text-2xs font-medium uppercase tracking-wide text-night-free">
             <Rocket className="size-3" aria-hidden="true" />
             Free plan
           </span>
           <h2 className="font-[family-name:var(--font-display)] text-2xl leading-tight tracking-tight text-[#e8f3f1]">
-            Your first {FREE_CONTACT_LIMIT} contacts are on us.
+            {freeContactLimit === null
+              ? "Orbit is on us."
+              : `Your first ${freeContactLimit} contacts are on us.`}
           </h2>
           <p className="text-sm leading-relaxed text-[#9aada8]">
             Past that, Orbit Pro keeps every contact, follow-up, and warm intro
-            in one place, with {PLAN_CONFIG.orbit.monthlyCredits} AI credits a month.
+            in one place{proMonthlyCredits ? `, with ${proMonthlyCredits} AI credits a month` : ""}.
           </p>
         </div>
 

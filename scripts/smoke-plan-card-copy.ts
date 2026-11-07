@@ -4,7 +4,9 @@
  * Run: npx tsx scripts/smoke-plan-card-copy.ts
  */
 import { demoAccountReason, isDemoAccount } from "../src/lib/demo-account";
-import { unlimitedContactsLine } from "../src/lib/plan-copy";
+import { planCopy, unlimitedContactsLine } from "../src/lib/plan-copy";
+import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
+import { applyPlanOverrides, limitRuleRow, parsePlanRules } from "../src/lib/plans/plan-overrides";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -36,6 +38,10 @@ try {
 
 check("localhost wording", unlimitedContactsLine(12, "localhost") === "Demo account — plan limits lifted on localhost. 12 in your orbit.", unlimitedContactsLine(12, "localhost"));
 check("showcase wording", unlimitedContactsLine(3, "showcase") === "Showcase account — plan limits lifted. 3 in your orbit.");
+// The settings card reads the same copy under the EFFECTIVE plan table.
+const capped = applyPlanOverrides(PLAN_CONFIG, parsePlanRules([limitRuleRow("orbit", "contactLimit", 2000)]));
+const pro = planCopy("orbit", capped).features;
+check("a capped Pro card says its cap, never 'Unlimited' or 'uncapped'", pro.includes("Up to 2000 contacts") && !pro.some((f) => /Unlimited contacts|uncapped/.test(f)), JSON.stringify(pro));
 check("a real unlimited plan keeps its line", unlimitedContactsLine(40, null) === "Unlimited contacts — 40 in your orbit.");
 
 if (failures) {

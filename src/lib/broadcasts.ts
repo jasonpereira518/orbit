@@ -1,12 +1,12 @@
-import { and, desc, eq, isNull, notExists, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   broadcastRecipients,
   broadcasts,
   interestListSignups,
-  userSettings,
 } from "@/db/schema";
 import { BODY_MAX, BODY_MIN, SUBJECT_MAX, SUBJECT_MIN } from "@/lib/broadcast-limits";
+import { convertedSql } from "@/lib/interest-list-converted";
 import {
   ACCENT,
   SERIF_STACK,
@@ -140,7 +140,16 @@ export async function deleteDraftBroadcast(id: string) {
  * Exactly the audience the console calls "waiting": still on the list, and not already an
  * account. Mailing someone who left is the one unforgivable bug here, and mailing the
  * waitlist to an existing user reads as a product that does not know its own customers.
+ *
+ * "Converted" is the console's definition, one shared fragment (`convertedSql`): linked to an
+ * account by id, or the address matches an account's email. Its correlation is aliased and
+ * qualified on purpose (see that file), the failure mode being a NOT EXISTS that excludes
+ * everyone so a broadcast silently reaches nobody.
  */
+function audienceWhere() {
+  return and(isNull(interestListSignups.unsubscribedAt), sql`not ${convertedSql}`);
+}
+
 export async function audienceFor(): Promise<
   Array<{ id: string; email: string; unsubscribeToken: string }>
 > {
@@ -152,22 +161,17 @@ export async function audienceFor(): Promise<
       unsubscribeToken: interestListSignups.unsubscribeToken,
     })
     .from(interestListSignups)
-    .where(
-      and(
-        isNull(interestListSignups.unsubscribedAt),
-        // Drizzle's `notExists` with a query-builder subquery, NOT a raw `sql` template:
-        // interpolating the two columns by hand renders both as an unqualified `"email"`,
-        // which inside the subquery both bind to `user_settings.email`. That collapses the
-        // correlation to `lower(u.email) = u.email` — true for any lowercase address — so
-        // the NOT EXISTS excludes everyone and a broadcast silently reaches nobody.
-        notExists(
-          db
-            .select({ one: sql`1` })
-            .from(userSettings)
-            .where(eq(sql`lower(${userSettings.email})`, interestListSignups.email))
-        )
-      )
-    );
+    .where(audienceWhere());
+}
+
+/** The size of `audienceFor()`, for the console, without loading every row to count them. */
+export async function audienceCount(): Promise<number> {
+  const db = await getDb();
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(interestListSignups)
+    .where(audienceWhere());
+  return Number(rows[0]?.n ?? 0);
 }
 
 /** A single send, used by both the test-send and the real one. */

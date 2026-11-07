@@ -146,7 +146,7 @@ export function FolderTriageCard({
                               {r.detected.displayName}
                             </span>
                             {r.suggested ? (
-                              <Badge className="bg-emerald-500/15 text-[10px] text-emerald-700 dark:text-emerald-300">
+                              <Badge className="bg-emerald-500/15 text-3xs text-emerald-700 dark:text-emerald-300">
                                 Suggested
                               </Badge>
                             ) : null}

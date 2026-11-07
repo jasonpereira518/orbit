@@ -16,6 +16,7 @@ import { EVIDENCE_FLOOR } from "@/lib/closeness-evidence";
 import { attendedEventFilter } from "@/lib/events/store";
 import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { JOB_SIGNAL_SUGGESTION_TYPE } from "@/lib/jobs/matcher";
+import { metContactSql } from "@/lib/met-contact";
 import { jobChangeSentence } from "@/lib/contact-profile-format";
 import { isCongratsWorthy } from "@/lib/job-changes";
 import { OPEN_OPPORTUNITY_STATUSES } from "@/lib/opportunity-kinds";
@@ -255,10 +256,11 @@ export type RadarCandidateRow = {
 
 /**
  * The people worth scoring: everyone a signal names, plus everyone valuable enough that
- * silence alone might matter, plus everyone met in the last three weeks. One statement.
- * People a signal names sort first, so the cap can never drop a meeting for a dormant tie.
+ * silence alone might matter. Always and only people the user has met or talked with
+ * (`met-contact.ts`). One statement. People a signal names sort first, so the cap can never
+ * drop a meeting for a dormant tie.
  */
-export async function loadCandidates(userId: string, signalContactIds: readonly string[], now: Date): Promise<RadarCandidateRow[]> {
+export async function loadCandidates(userId: string, signalContactIds: readonly string[]): Promise<RadarCandidateRow[]> {
   const db = await getDb();
   const ids = [...new Set(signalContactIds)].filter((id) => /^[0-9a-f-]{36}$/i.test(id));
   const idArray = ids.length
@@ -293,13 +295,14 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
         FROM contacts
        WHERE user_id = ${userId}
          AND constellation_pin IS DISTINCT FROM 'out'
+         -- Only people the user has met or talked with (met-contact.ts): a card is an alert.
+         AND ${metContactSql(sql`contacts.id`, userId)}
          AND (
            id = ANY(${idArray})
            OR priority_level >= 2
            OR relationship_score >= 4
            OR stated_closeness >= 4
            OR (closeness_tier IN ('inner', 'mid') AND closeness_evidence >= ${EVIDENCE_FLOOR})
-           OR first_interaction_at >= ${daysBefore(now, RADAR_WINDOWS.recentIntroMax)}
            -- Someone whose posts the person asked Radar to follow.
            OR bluesky_handle IS NOT NULL
            OR mastodon_acct IS NOT NULL

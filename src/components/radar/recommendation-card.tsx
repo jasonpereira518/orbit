@@ -22,7 +22,7 @@ import {
 import { IntentLink } from "@/components/ui/intent-link";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { explainRecommendationAction } from "@/actions/radar";
-import { companyBrandColor } from "@/lib/company-brand";
+import { companyBrandText } from "@/lib/company-brand";
 import { safeHttpUrl } from "@/lib/safe-links";
 import { friendlyError } from "@/lib/errors";
 import { aiDenialFromMessage } from "@/lib/ai-access-copy";
@@ -107,7 +107,7 @@ export function RecommendationCard({
   const lead = facts[0];
   const evidence = rec.evidence[0];
   const evidenceUrl = safeHttpUrl(evidence?.url);
-  const companyColor = companyBrandColor(rec.company);
+  const companyBrand = companyBrandText(rec.company);
 
   const writeWhy = () =>
     start(async () => {
@@ -148,11 +148,11 @@ export function RecommendationCard({
                   {rec.contactName}
                 </IntentLink>
                 {rec.tier && <ClosenessTierBadge tier={rec.tier} />}
-                <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide", KIND_STYLES[rec.kind])}>
+                <span className={cn("rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide", KIND_STYLES[rec.kind])}>
                   {KIND_LABELS[rec.kind]}
                 </span>
                 {rec.draft && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-primary">
                     Draft ready
                   </span>
                 )}
@@ -162,7 +162,7 @@ export function RecommendationCard({
                   {rec.title}
                   {rec.title && rec.company ? " · " : ""}
                   {rec.company && (
-                    <span className="font-medium" style={companyColor ? { color: companyColor } : undefined}>
+                    <span className={cn("font-medium", companyBrand?.className)} style={companyBrand?.style}>
                       {rec.company}
                     </span>
                   )}

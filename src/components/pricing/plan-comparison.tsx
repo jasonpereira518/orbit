@@ -1,18 +1,13 @@
 import { Check, Minus } from "lucide-react";
+import { PLAN_CONFIG, PLAN_LABELS, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 import {
-  FREE_STARTER_CREDITS,
-  PLAN_CONFIG,
-  PLAN_LABELS,
-  type PurchasablePlan,
-} from "@/lib/plans/plan-config";
-import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
+  COMPARISON_COLUMNS as COLUMNS,
+  comparisonRows,
+  type ComparisonCell as Cell,
+  type ComparisonColumn as Column,
+} from "@/lib/plan-copy";
 import { cn } from "@/lib/utils";
-
-type Cell = boolean | string;
-type Column = "free" | PurchasablePlan;
-
-/** The plans on sale. Lifetime is granted, never sold, so it has no column. */
-const COLUMNS: Column[] = ["free", "orbit", "max"];
+import { ScrollRegion } from "@/components/ui/scroll-region";
 
 /** Mirrors the tier cards, so a column and its card read as the same thing. */
 const COLUMN_ACCENT: Record<Column, { heading: string; tick: string; tint?: string }> = {
@@ -24,54 +19,6 @@ const COLUMN_ACCENT: Record<Column, { heading: string; tick: string; tint?: stri
   },
   max: { heading: "text-night-max", tick: "text-night-max", tint: "bg-night-max/5" },
 };
-
-const hours = (seconds: number) =>
-  seconds === 0 ? false : `${seconds / 3600} hour${seconds === 3600 ? "" : "s"} a month`;
-const each = <T,>(fn: (plan: Column) => T): [T, T, T] => [fn("free"), fn("orbit"), fn("max")];
-const feature = (key: keyof (typeof PLAN_CONFIG)["free"]["features"]) =>
-  each((plan) => PLAN_CONFIG[plan].features[key]);
-
-/**
- * Every cell is read from `PLAN_CONFIG` — the same object the gates enforce — so the table
- * cannot promise what a gate refuses. Only SHIPPED features appear: Outreach, Events and the
- * Chrome extension stay behind their coming-soon gates and out of this table until they ship.
- *
- * The first block is ungated in code on every plan (capture, chat, the map, LinkedIn import,
- * reminders, the knowledge base, export, and the Claude/ChatGPT connector). On the Free Plan,
- * the AI parts of it run on the person's own key.
- */
-const ROWS: Array<{ label: string; cells: [Cell, Cell, Cell] }> = [
-  {
-    label: "Contacts",
-    cells: each((plan) => (PLAN_CONFIG[plan].contactLimit === null ? "Unlimited" : `Up to ${PLAN_CONFIG[plan].contactLimit}`)),
-  },
-  {
-    label: "AI for capture, chat and summaries",
-    cells: each((plan) => {
-      const credits = PLAN_CONFIG[plan].monthlyCredits;
-      return credits ? `Included: ${credits} credits a month${plan === "free" ? ` + ${FREE_STARTER_CREDITS} to start` : ""}` : "Your own key";
-    }),
-  },
-  { label: `Credit packs (${CREDIT_PACK_PRICE_LABEL} = ${CREDIT_PACK_CREDITS} credits)`, cells: feature("creditPacks") },
-  { label: "Capture with AI extraction", cells: [true, true, true] },
-  { label: "Chat with your network", cells: [true, true, true] },
-  { label: "Constellation map", cells: [true, true, true] },
-  { label: "LinkedIn import", cells: [true, true, true] },
-  { label: "Reminders and follow-up feed", cells: [true, true, true] },
-  { label: "Knowledge base", cells: [true, true, true] },
-  { label: "Export your data", cells: [true, true, true] },
-  // Free on every plan: it is how most people will first see what Orbit is for.
-  { label: "Use from Claude and ChatGPT", cells: [true, true, true] },
-  {
-    label: "Google and Microsoft accounts (mail, contacts, calendar)",
-    cells: each((plan) => (PLAN_CONFIG[plan].googleMicrosoftConnections === 1 ? "One" : "Both")),
-  },
-  { label: "Recruiter tracking", cells: feature("recruiters") },
-  { label: "Calendar subscriptions", cells: feature("sync") },
-  { label: "Meeting transcription", cells: each((plan) => hours(PLAN_CONFIG[plan].speech.meetingSeconds)) },
-  { label: "Voice notes and chat mic", cells: each((plan) => hours(PLAN_CONFIG[plan].speech.shortformSeconds)) },
-  { label: "REST API and webhooks", cells: feature("api") },
-];
 
 function CellValue({ value, plan }: { value: Cell; plan: Column }) {
   if (typeof value === "string") {
@@ -93,11 +40,28 @@ function CellValue({ value, plan }: { value: Cell; plan: Column }) {
   );
 }
 
-export function PlanComparison() {
+/**
+ * Every cell is read from the EFFECTIVE plan table and page tier rules (`comparisonRows`) —
+ * what the gates enforce — so the table cannot promise what a gate refuses. Only shipped
+ * features appear. The rows with no gate at all (export, the Claude/ChatGPT
+ * connector) are ticks on every plan.
+ */
+export function PlanComparison({
+  config = PLAN_CONFIG,
+  tierRules,
+}: {
+  config?: Record<Plan, PlanConfig>;
+  tierRules?: ReadonlyMap<string, readonly Plan[]>;
+}) {
+  const rows = comparisonRows(config, tierRules);
   return (
     // Wide content scrolls inside its own container so the page body never scrolls
-    // sideways on a phone.
-    <div className="overflow-x-auto rounded-3xl border border-[#e8f3f1]/[0.10] bg-[#05070f]/50 backdrop-blur-sm">
+    // sideways on a phone — and that container joins the tab order while it overflows, so a
+    // keyboard can reach the columns past the edge.
+    <ScrollRegion
+      label="Plan comparison"
+      className="rounded-3xl border border-[#e8f3f1]/[0.10] bg-[#05070f]/50 backdrop-blur-sm"
+    >
       <table className="w-full min-w-[34rem] border-collapse text-left">
         <caption className="sr-only">Feature comparison across Orbit plans</caption>
         <thead>
@@ -121,7 +85,7 @@ export function PlanComparison() {
           </tr>
         </thead>
         <tbody>
-          {ROWS.map((row) => (
+          {rows.map((row) => (
             <tr
               key={row.label}
               className="border-b border-[#e8f3f1]/[0.05] last:border-b-0"
@@ -147,6 +111,6 @@ export function PlanComparison() {
           ))}
         </tbody>
       </table>
-    </div>
+    </ScrollRegion>
   );
 }

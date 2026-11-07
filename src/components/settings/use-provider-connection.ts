@@ -62,6 +62,7 @@
  *    the account is still connected, so nothing local should look otherwise.
  */
 
+import { useViewerPlan } from "@/components/viewer-plan";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -198,6 +199,7 @@ function useConnection<Status extends { emailAddress: string | null }, Purpose e
   startOAuth: (input: { purposes: readonly Purpose[]; returnTo?: string }) => Promise<{ url: string }>;
   disconnectAction: (opts: { alsoDelete?: boolean }) => Promise<unknown>;
 }) {
+  const { planConfig } = useViewerPlan();
   const router = useRouter();
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(enabled);
@@ -254,7 +256,7 @@ function useConnection<Status extends { emailAddress: string | null }, Purpose e
       // Named once the re-read below resolves, so the toast can say who — never both.
       if (!switched) toast.success(`${label} connected`);
     } else {
-      const oauth = describeOAuthReason(reason, label, purpose);
+      const oauth = describeOAuthReason(reason, label, purpose, planConfig);
       if (oauth.cancelled) toast.message(oauth.message);
       else toast.error(oauth.message);
     }
@@ -295,7 +297,7 @@ function useConnection<Status extends { emailAddress: string | null }, Purpose e
     } else {
       void refreshStatus().catch(() => {});
     }
-  }, [router, refreshStatus, oauthParam, extraStripKeys, label]);
+  }, [router, refreshStatus, oauthParam, extraStripKeys, label, planConfig]);
 
   // 5. Disconnect. Returns a promise — see `ConnectionBase.disconnect` — so a caller only
   // clears its own local state (a review list, a scan card) once the action has actually

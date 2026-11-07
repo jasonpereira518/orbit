@@ -50,6 +50,7 @@ export function DueNotificationsWatcher() {
           if (cancelled) break;
           await showDesktopNotification({
             id: item.id,
+            kind: "due",
             title: item.title,
             body: item.body,
             url: item.url,

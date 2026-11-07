@@ -655,3 +655,18 @@ export async function pruneProviderSnapshots(
     .returning();
   return removed.length;
 }
+
+/**
+ * Providers down as of their last stored check, without running any check. For the Ops
+ * banner on tabs that do not show the provider panel: those must not call twelve
+ * third-party APIs just to colour one chip. The Systems tab runs the real (cached) checks.
+ */
+export async function lastProviderProblemCount(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.query.adminProviderSnapshots.findMany({
+    columns: { provider: true, status: true },
+  });
+  return rows.filter((r) =>
+    isProviderProblem({ provider: r.provider as ProviderName, status: r.status })
+  ).length;
+}

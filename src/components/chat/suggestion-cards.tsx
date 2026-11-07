@@ -214,7 +214,7 @@ export function SuggestionCards({
                   row is hardest to read. Shown inline only below `sm`, where it costs one
                   extra pill's width rather than the row's height. */}
               {s.basis && (
-                <span className="truncate text-[11px] text-muted-foreground sm:hidden">
+                <span className="truncate text-2xs text-muted-foreground sm:hidden">
                   · {s.basis}
                 </span>
               )}

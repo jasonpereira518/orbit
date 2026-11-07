@@ -13,8 +13,7 @@
  * rather than letting someone close the panel and lose it.
  */
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
-import { Copy, KeyRound, Trash2 } from "lucide-react";
+import { Copy, KeyRound, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   createApiKey,
@@ -23,10 +22,11 @@ import {
   type ApiKeySummary,
   type CreatedApiKey,
 } from "@/actions/api-keys";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { AccountHeader, FeatureRow, LoadError, whenLine } from "@/components/settings/account-page";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SettingsSection } from "@/components/settings/settings-section";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -64,6 +64,7 @@ export function ApiSettings() {
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [allowWrite, setAllowWrite] = useState(true);
+  const [adding, setAdding] = useState(false);
   const [created, setCreated] = useState<CreatedApiKey | null>(null);
   const [blocked, setBlocked] = useState<string | null>(null);
   const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null);
@@ -108,6 +109,7 @@ export function ApiSettings() {
         setBlocked(null);
         setCreated(result);
         setName("");
+        setAdding(false);
         load();
       } catch (err) {
         toast.error(
@@ -130,123 +132,114 @@ export function ApiSettings() {
     });
   }
 
+  const showForm = adding || keys?.length === 0;
+
   return (
-    <SettingsSection
-      title="API keys"
-      description="Connect Orbit to Zapier, Make, n8n or your own scripts. A key acts as you, so treat it like a password."
-    >
-      {/* A new key, shown once. */}
+    <div className="space-y-4">
+      <AccountHeader
+        name="API keys"
+        mark={<KeyRound className="text-ink" />}
+        accountLine={null}
+        status={
+          keys === null
+            ? { state: "off", detail: "Checking…", busy: true }
+            : keys.length > 0
+              ? { state: "on", detail: `${keys.length} ${keys.length === 1 ? "key" : "keys"} · each acts as you` }
+              : { state: "off", detail: "No keys yet" }
+        }
+        primaryAction={
+          showForm ? undefined : { label: "New key", icon: <Plus aria-hidden />, onClick: () => setAdding(true) }
+        }
+        menuItems={[]}
+      />
+      <div aria-hidden className="h-1 rounded-full bg-muted" />
+
+      {/* A new key, shown once: Orbit stores only its hash. */}
       {created ? (
-        <div className="border-primary/40 bg-primary/5 space-y-3 rounded-lg border p-4">
-          <p className="text-sm font-medium">
-            Copy this now — it will not be shown again.
-          </p>
-          <p className="text-muted-foreground text-xs">
-            Orbit stores only a hash of the key, so it cannot be recovered or re-displayed. If
-            you lose it, revoke it and create another.
-          </p>
+        <div className="space-y-2 rounded-xl border border-primary/40 bg-primary/5 p-4">
+          <p className="text-sm font-medium text-ink">Copy it now · it won’t be shown again</p>
           <div className="flex items-center gap-2">
-            <code className="bg-background flex-1 overflow-x-auto rounded border px-3 py-2 font-mono text-xs">
+            <code className="min-w-0 flex-1 overflow-x-auto rounded border bg-background px-3 py-2 font-mono text-xs">
               {created.mcpUrl ?? created.token}
             </code>
-            <Button
-              size="sm"
-              variant="secondary"
-              aria-label="Copy key"
-              onClick={() => copy(created.mcpUrl ?? created.token, "Key")}
-            >
-              <Copy className="size-4" />
+            <Button size="sm" variant="outline" onClick={() => copy(created.mcpUrl ?? created.token, "Key")}>
+              <Copy aria-hidden />
+              Copy
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setCreated(null)}>
+              Done
             </Button>
           </div>
-          <Button size="sm" variant="ghost" onClick={() => setCreated(null)}>
-            Done
-          </Button>
         </div>
       ) : null}
 
       {blocked ? (
-        <div className="bg-muted/40 space-y-2 rounded-lg border p-4">
-          <p className="text-sm">{blocked}</p>
-          <a
-            href="/upgrade"
-            className="bg-primary text-primary-foreground inline-flex h-8 items-center rounded-md px-3 text-sm font-medium"
-          >
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-muted/50 p-3 text-sm">
+          <p className="min-w-0 flex-1">{blocked}</p>
+          <a href="/upgrade?gate=api" className={buttonVariants({ size: "sm" })}>
             See plans
           </a>
         </div>
       ) : null}
 
-      {/* Create */}
-      <div className="space-y-3 rounded-lg border p-4">
-        <label className="text-sm font-medium" htmlFor="api-key-name">
-          Create a key
-        </label>
-        <Input
-          id="api-key-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="What is it for? e.g. Zapier"
-          maxLength={80}
-        />
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={allowWrite}
-            onChange={(e) => setAllowWrite(e.target.checked)}
+      {showForm ? (
+        <div className="space-y-3 rounded-xl border p-4">
+          <Input
+            id="api-key-name"
+            aria-label="What the key is for"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="What is it for? e.g. Zapier"
+            maxLength={80}
           />
-          Allow this key to add contacts and log interactions
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" disabled={pending} onClick={() => onCreate("api")}>
-            <KeyRound className="size-4" />
-            API key
-          </Button>
-        </div>
-        <p className="text-muted-foreground text-xs">
-          Use an API key for Zapier, Make, n8n or the command line. Claude and ChatGPT don’t
-          need one — set them up under Claude and ChatGPT.
-        </p>
-      </div>
-
-      {/* Existing */}
-      <div className="space-y-2">
-        {error ? (
-          <div className="text-sm">
-            <p className="text-destructive">{error}</p>
-            <Button size="sm" variant="ghost" onClick={load}>
-              Retry
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={allowWrite} onCheckedChange={(on) => setAllowWrite(on === true)} />
+            Can add contacts and log interactions
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" disabled={pending} onClick={() => onCreate("api")}>
+              Create key
             </Button>
+            {keys?.length ? (
+              <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
+                Cancel
+              </Button>
+            ) : null}
           </div>
-        ) : keys === null ? (
-          <div className="space-y-2" aria-busy="true" aria-label="Loading your keys">
-            <Skeleton className="h-16 w-full rounded-lg" />
-            <Skeleton className="h-16 w-full rounded-lg" />
-          </div>
-        ) : keys.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No keys yet.</p>
-        ) : (
-          keys.map((key) => (
-            <div
+          <p className="text-xs text-muted-foreground">
+            For Zapier, Make, n8n or scripts · Claude and ChatGPT don’t need one
+          </p>
+        </div>
+      ) : null}
+
+      {error ? (
+        <LoadError what="API keys" onRetry={load} />
+      ) : keys === null ? (
+        <div className="space-y-2" aria-busy="true" aria-label="Loading your keys">
+          <Skeleton className="h-12 w-full rounded-lg" />
+          <Skeleton className="h-12 w-full rounded-lg" />
+        </div>
+      ) : keys.length > 0 ? (
+        <ul className="-my-1">
+          {keys.map((key) => (
+            <FeatureRow
               key={key.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{key.name}</p>
-                <p className="text-muted-foreground font-mono text-xs">
-                  {key.prefix}…
+              icon={<KeyRound />}
+              title={key.name}
+              description={
+                <span className="tabular-nums">
+                  <span className="font-mono">{key.prefix}…</span>
                   {key.scopes.includes("write") ? " · read and write" : " · read only"}
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  {key.lastUsedAt
-                    ? `Last used ${formatDistanceToNow(new Date(key.lastUsedAt), { addSuffix: true })}`
-                    : "Never used"}
-                </p>
-              </div>
+                  {" · "}
+                  {key.lastUsedAt ? `used ${whenLine(key.lastUsedAt)}` : "never used"}
+                </span>
+              }
+              control={confirmingRevoke === key.id ? { kind: "none" } : { kind: "action", label: "Revoke" }}
+              onAction={() => setConfirmingRevoke(key.id)}
+            >
               {confirmingRevoke === key.id ? (
-                <div className="flex items-center gap-2">
-                  <span role="status" className="text-muted-foreground text-xs">
-                    Anything using it stops working.
-                  </span>
+                <div role="status" className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Anything using it stops working</span>
                   <Button
                     ref={revokeFocus.confirmRef(key.id)}
                     size="sm"
@@ -260,21 +253,11 @@ export function ApiSettings() {
                     Cancel
                   </Button>
                 </div>
-              ) : (
-                <Button
-                  ref={revokeFocus.triggerRef(key.id)}
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setConfirmingRevoke(key.id)}
-                  aria-label={`Revoke ${key.name}`}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-    </SettingsSection>
+              ) : null}
+            </FeatureRow>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }

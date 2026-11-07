@@ -34,6 +34,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { after } from "next/server";
 import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
+import { forgetDuplicateCount } from "@/lib/duplicate-count-memo";
 import { getDb, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
 import { contactMerges, contacts, duplicateSuggestions } from "@/db/schema";
 import { deleteAvatarBlobs, isAvatarBlobUrl } from "@/lib/avatar-blob";
@@ -90,6 +91,15 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   // Radar's outside-world facts (job changes, headlines, posts) are about the person, so they
   // follow the winner. Unique on (user_id, dedupe_hash), which a repoint does not change.
   { table: "contact_signals", column: "contact_id", scoped: true },
+  // Opportunities the user (or extraction) recorded about the person — "intro to Globex's
+  // recruiting lead". ON DELETE CASCADE, so leaving them off this list deleted them with the
+  // loser. Unique on (user_id, item_hash), which a repoint does not change. (The hash was
+  // built with the loser's id, so a re-extraction from the same source onto the winner can
+  // add a second copy rather than dedupe; a duplicate is recoverable, a deletion was not.)
+  { table: "contact_opportunities", column: "contact_id", scoped: true },
+  // Pending assistant send drafts. ON DELETE SET NULL, so leaving them off unlinked the draft
+  // from the person it was written to. No unique index.
+  { table: "agent_send_requests", column: "contact_id", scoped: true },
 ];
 
 /** Fold a statement's moved ids into the archive row, additively. */
@@ -147,6 +157,7 @@ export async function mergeContacts(
   loserId: string,
   options: MergeOptions = {}
 ): Promise<MergeResult> {
+  forgetDuplicateCount(userId);
   if (winnerId === loserId) throw new Error("mergeContacts: winner and loser are the same contact");
 
   const db = await getDb();
@@ -330,6 +341,36 @@ export async function mergeContacts(
       )
     );
 
+    // 4b''. job_posting_matches: unique on (user_id, posting_id, contact_id), so a posting
+    //       matched to both contacts collides. Same shape as contact_tags: move what does not
+    //       collide, archive-and-drop the duplicate (the winner's own match already says it).
+    //       ON DELETE CASCADE, so without this every match was deleted with the loser.
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "job_posting_matches",
+        sql`UPDATE job_posting_matches j SET contact_id = ${winnerId}::uuid
+             WHERE j.contact_id = ${loserId}::uuid AND j.user_id = ${userId}
+               AND NOT EXISTS (
+                 SELECT 1 FROM job_posting_matches w
+                  WHERE w.user_id = ${userId}
+                    AND w.contact_id = ${winnerId}::uuid
+                    AND w.posting_id = j.posting_id)
+         RETURNING id`
+      )
+    );
+    statements.push(
+      recordDeleted(
+        tx,
+        mergeId,
+        "job_posting_matches",
+        sql`DELETE FROM job_posting_matches
+             WHERE contact_id = ${loserId}::uuid AND user_id = ${userId}
+         RETURNING to_jsonb(job_posting_matches) AS row`
+      )
+    );
+
     // 4c. interaction_mentions: unique on (interaction_id, contact_id). The interactions
     //     repoint above may have just produced pairs that now collide.
     statements.push(
@@ -391,6 +432,46 @@ export async function mergeContacts(
                SET contact_ids = array_replace(contact_ids, ${loserId}::uuid, ${winnerId}::uuid)
              WHERE user_id = ${userId}
                AND ${loserId}::uuid = ANY(contact_ids)
+         RETURNING id`
+      )
+    );
+
+    // 4c-3. email_sends.contact_ids: everyone a send is addressed to, as a jsonb array of id
+    //     strings with no foreign key. Every reader is keyed by the contact (the contact
+    //     page's pending/failed sends, reply targets, the outbox's "Emailed: …" log), so a
+    //     merged-away id made a send in flight vanish from the survivor's page and lose its
+    //     timeline entry. Same two cases as memory_chunks above, in the same order, for the
+    //     same reason; element order is kept (WITH ORDINALITY) so the first recipient stays
+    //     first.
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "email_sends.contact_ids.collapsed",
+        sql`UPDATE email_sends
+               SET contact_ids = (
+                     SELECT coalesce(jsonb_agg(x.e ORDER BY x.i), '[]'::jsonb)
+                       FROM jsonb_array_elements_text(contact_ids) WITH ORDINALITY AS x(e, i)
+                      WHERE x.e <> ${loserId}::text)
+             WHERE user_id = ${userId}
+               AND jsonb_typeof(contact_ids) = 'array'
+               AND contact_ids @> to_jsonb(ARRAY[${loserId}]::text[])
+               AND contact_ids @> to_jsonb(ARRAY[${winnerId}]::text[])
+         RETURNING id`
+      )
+    );
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "email_sends.contact_ids.replaced",
+        sql`UPDATE email_sends
+               SET contact_ids = (
+                     SELECT jsonb_agg(CASE WHEN x.e = ${loserId}::text THEN ${winnerId}::text ELSE x.e END ORDER BY x.i)
+                       FROM jsonb_array_elements_text(contact_ids) WITH ORDINALITY AS x(e, i))
+             WHERE user_id = ${userId}
+               AND jsonb_typeof(contact_ids) = 'array'
+               AND contact_ids @> to_jsonb(ARRAY[${loserId}]::text[])
          RETURNING id`
       )
     );
@@ -692,6 +773,7 @@ async function releaseOrphanedLoserPhoto(
 }
 
 export async function unmergeContacts(userId: string, mergeId: string): Promise<MergeResult> {
+  forgetDuplicateCount(userId);
   const db = await getDb();
   const [merge] = await db
     .select()
@@ -802,6 +884,7 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
     for (const table of [
       "contact_tags",
       "contact_career_moves",
+      "job_posting_matches",
       "interaction_mentions",
       "contact_profiles",
       "contact_embeddings",
@@ -844,6 +927,42 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
                replacedChunks.map((id) => sql`${id}::uuid`),
                sql`, `
              )}]`})
+        `)
+      );
+    }
+
+    // 2c. email_sends.contact_ids, the same mirror. The collapsed sends get the loser back at
+    //     the end; the replaced ones swap the winner back for the loser.
+    const collapsedSends = repointed["email_sends.contact_ids.collapsed"] ?? [];
+    if (collapsedSends.length) {
+      statements.push(
+        tx.execute(sql`
+          UPDATE email_sends SET contact_ids = contact_ids || to_jsonb(ARRAY[${loserId}]::text[])
+           WHERE user_id = ${userId}
+             AND id = ANY(${sql`ARRAY[${sql.join(
+               collapsedSends.map((id) => sql`${id}::uuid`),
+               sql`, `
+             )}]`})
+             AND jsonb_typeof(contact_ids) = 'array'
+             AND NOT contact_ids @> to_jsonb(ARRAY[${loserId}]::text[])
+        `)
+      );
+    }
+    const replacedSends = repointed["email_sends.contact_ids.replaced"] ?? [];
+    if (replacedSends.length) {
+      statements.push(
+        tx.execute(sql`
+          UPDATE email_sends
+             SET contact_ids = (
+                   SELECT jsonb_agg(CASE WHEN x.e = ${winnerId}::text THEN ${loserId}::text ELSE x.e END ORDER BY x.i)
+                     FROM jsonb_array_elements_text(contact_ids) WITH ORDINALITY AS x(e, i))
+           WHERE user_id = ${userId}
+             AND id = ANY(${sql`ARRAY[${sql.join(
+               replacedSends.map((id) => sql`${id}::uuid`),
+               sql`, `
+             )}]`})
+             AND jsonb_typeof(contact_ids) = 'array'
+             AND contact_ids @> to_jsonb(ARRAY[${winnerId}]::text[])
         `)
       );
     }
@@ -915,6 +1034,7 @@ export async function recordDuplicateSuggestion(
   reason: string,
   confidence: number
 ) {
+  forgetDuplicateCount(userId);
   if (contactIdA === contactIdB) return;
   // Canonical ordering so "A and B" and "B and A" are the same row, not two.
   const [a, b] = contactIdA < contactIdB ? [contactIdA, contactIdB] : [contactIdB, contactIdA];
@@ -953,6 +1073,7 @@ export async function recordDuplicateSuggestions(
   userId: string,
   pairs: ReadonlyArray<DuplicateSuggestionPair>
 ) {
+  forgetDuplicateCount(userId);
   const rows = new Map<string, typeof duplicateSuggestions.$inferInsert>();
   for (const { contactIdA, contactIdB, reason, confidence } of pairs) {
     if (contactIdA === contactIdB) continue;
@@ -993,6 +1114,7 @@ export async function dismissDuplicatePair(
   contactIdB: string,
   reason = "Dismissed by hand"
 ) {
+  forgetDuplicateCount(userId);
   if (contactIdA === contactIdB) return;
   // Same canonical ordering as `recordDuplicateSuggestion`, so this writes the row a write
   // path would otherwise later try to create — and the conflict target matches.

@@ -6,6 +6,7 @@ import type {
 import { logInteractionRequestSchema } from "@/lib/extension/contract.schema";
 import { extensionRoute, preflight } from "@/lib/extension/http";
 import { logExtensionInteraction } from "@/lib/extension/writes";
+import { requirePlanForSurface } from "@/lib/surface-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,12 @@ export const dynamic = "force-dynamic";
  */
 export const POST = extensionRoute<LogInteractionRequest, LogInteractionResponse>({
   schema: logInteractionRequestSchema,
-  handler: ({ userId, input }) => logExtensionInteraction(userId, input, after),
+  action: "log_interaction",
+  // The Contacts page's tier lock, as its own log-interaction action applies it.
+  handler: async ({ userId, input }) => {
+    await requirePlanForSurface(userId, "page.contacts");
+    return logExtensionInteraction(userId, input, after);
+  },
 });
 
 export const OPTIONS = preflight;

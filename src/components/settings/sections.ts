@@ -57,7 +57,7 @@ export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"];
 
 export const INTEGRATION_TAB_GROUPS = [
   { key: "accounts", label: "Your accounts" },
-  { key: "ai", label: "AI and calendar" },
+  { key: "ai", label: "AI" },
   { key: "advanced", label: "Advanced" },
 ] as const;
 
@@ -79,12 +79,13 @@ export const INTEGRATION_TABS = [
   { id: "google", label: "Google", group: "accounts", surface: "page.imports" },
   { id: "microsoft", label: "Microsoft", group: "accounts", surface: "page.imports" },
   { id: "linkedin", label: "LinkedIn", group: "accounts", surface: "page.imports" },
+  { id: "granola", label: "Granola", group: "accounts", surface: "page.imports" },
   { id: "ai", label: "AI", group: "ai", section: "settings-ai" },
   { id: "assistants", label: "Claude and ChatGPT", group: "ai", section: "settings-api" },
-  { id: "reminders", label: "Reminders in calendar", group: "ai", section: "settings-calendar" },
   { id: "api", label: "API keys", group: "advanced", section: "settings-api" },
   { id: "webhooks", label: "Webhooks", group: "advanced", section: "settings-webhooks" },
   { id: "outreach", label: "Outreach keys", group: "advanced", section: "settings-outreach" },
+  { id: "reminders", label: "Reminders in calendar", group: "advanced", section: "settings-calendar" },
 ] as const satisfies ReadonlyArray<
   { id: string; label: string; group: IntegrationTabGroupKey } & (
     | { section: SettingsSectionId }

@@ -242,8 +242,9 @@ export function CompPlanButton(props: {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          aria-label={`Change plan for ${props.email ?? props.targetUserId}`}
-          className="rounded-md transition-opacity duration-fast hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          // `relative` keeps the sr-only suffix inside the table's scroll box; positioned
+          // against an ancestor outside it, it widened the whole page on a phone.
+          className="relative rounded-md transition-opacity duration-fast hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           <PlanBadge
             plan={props.currentPlan}
@@ -254,6 +255,9 @@ export function CompPlanButton(props: {
                 : "Click to change this plan"
             }
           />
+          {/* The name starts with what is visible (the plan), then says what it does: an
+              aria-label of "Change plan for …" hid the visible text from speech input. */}
+          <span className="sr-only">, change plan for {props.email ?? props.targetUserId}</span>
         </button>
       ) : props.variant === "menu" ? (
         <DropdownMenu>

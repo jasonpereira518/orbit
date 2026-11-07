@@ -55,10 +55,17 @@ export function OrbitLogo({
   className,
   priority,
   plan,
+  alt = "",
 }: {
   size?: keyof typeof SIZES;
   className?: string;
   priority?: boolean;
+  /**
+   * Decorative by default: every caller sets the mark beside visible "Orbit" text (or inside a
+   * link that names itself), so a second "Orbit" from the image would be read twice
+   * (axe `image-redundant-alt`). Pass `alt="Orbit"` where the mark stands alone.
+   */
+  alt?: string;
   /** Draws the tier ring. Omit (or pass "free") outside the signed-in app. */
   plan?: Plan | null;
 }) {
@@ -69,7 +76,7 @@ export function OrbitLogo({
     return (
       <Image
         src="/orbit-logo.png"
-        alt="Orbit"
+        alt={alt}
         width={px}
         height={px}
         priority={priority}
@@ -94,7 +101,7 @@ export function OrbitLogo({
     >
       <Image
         src="/orbit-logo.png"
-        alt="Orbit"
+        alt={alt}
         width={markPx}
         height={markPx}
         priority={priority}

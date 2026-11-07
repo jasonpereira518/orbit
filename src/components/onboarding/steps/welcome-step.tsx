@@ -7,7 +7,8 @@ import { OrbitLogo } from "@/components/orbit-logo";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Stagger, StaggerItem } from "@/components/onboarding/onboarding-ui";
-import { FREE_STARTER_CREDITS, PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { useViewerPlan } from "@/components/viewer-plan";
+import { FREE_STARTER_CREDITS } from "@/lib/plans/plan-config";
 
 /**
  * The first screen: the mark, one sentence, consent when Clerk did not record one, and one
@@ -35,6 +36,8 @@ export function WelcomeStep({
   onSkip: () => void;
 }) {
   const [agreed, setAgreed] = useState(false);
+  // The live plan table, so the line follows what Free gets on this deployment today.
+  const freeMonthly = useViewerPlan().planConfig.free.monthlyCredits;
   const blocked = pending || (needsTerms && !agreed);
 
   return (
@@ -101,12 +104,12 @@ export function WelcomeStep({
           Add someone you met
           <ArrowRight className="size-4" aria-hidden />
         </Button>
-        {showCredits && (
+        {showCredits && freeMonthly ? (
           <p className="mt-2 text-xs text-muted-foreground">
-            Free includes {PLAN_CONFIG.free.monthlyCredits} AI credits a month plus {FREE_STARTER_CREDITS} to start.
+            Free includes {freeMonthly} AI credits a month plus {FREE_STARTER_CREDITS} to start.
             Adding someone uses about one
           </p>
-        )}
+        ) : null}
       </StaggerItem>
 
       <StaggerItem className="mt-5 flex flex-col items-center gap-1 text-sm">

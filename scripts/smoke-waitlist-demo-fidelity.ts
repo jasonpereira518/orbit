@@ -221,6 +221,8 @@ async function mainAsync() {
   const ALLOWED_APP = new Set([
     "@/lib/utils",
     "@/lib/motion",
+    // The reduced-motion preference (system or in-app setting): no imports of its own.
+    "@/lib/motion-preference",
     "@/components/ui/button",
     "@/components/dashboard/closeness-tier-badge",
     "@/components/layout/app-nav",

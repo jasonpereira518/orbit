@@ -1,4 +1,5 @@
 import { drainCount, safeCut } from "@/lib/stream-drain";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /**
  * Reveals streamed text a frame at a time instead of a network chunk at a time.
@@ -28,13 +29,12 @@ const browserScheduler: FrameScheduler = {
 };
 
 /**
- * Whether the person has asked for reduced motion, read from the media query at the moment it
+ * Whether the person has asked for reduced motion (system or in-app setting), read at the moment it
  * is needed. Deliberately not the `usePrefersReducedMotion` hook: that reports "no preference"
  * for its first render, and this is called from inside a send handler, long after mount.
  */
 export function prefersReducedMotionNow(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return prefersReducedMotion();
 }
 
 export type StreamSmoother = {

@@ -98,7 +98,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
         <CalendarSync className="size-4 shrink-0" />
         <span className="min-w-0 flex-1">
           <span className="block truncate">Calendar sync</span>
-          <span className="block truncate text-[11px] text-muted-foreground">{statusText}</span>
+          <span className="block truncate text-2xs text-muted-foreground">{statusText}</span>
         </span>
         <span
           aria-hidden
@@ -142,7 +142,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
                 {copied ? "Copied" : "Copy link"}
               </button>
             </div>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-2xs text-muted-foreground">
               For Outlook, choose “Subscribe from web” and paste the link.
             </p>
           </div>

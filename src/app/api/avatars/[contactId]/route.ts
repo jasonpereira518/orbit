@@ -65,6 +65,18 @@ function retryLater(retryAfterSec: number) {
   });
 }
 
+/**
+ * A redirect to the photo. Cacheable for a day only when the caller versioned the URL
+ * (`avatarRouteUrl` adds `?v=`, a hash of the photo URL it can see): a changed photo is then
+ * a new URL, so a cached redirect can never point at an old one. `private` keeps it out of
+ * any shared cache: the route is per user. An unversioned request stays uncached as before.
+ */
+function photoRedirect(url: string, versioned: boolean) {
+  const res = NextResponse.redirect(url);
+  if (versioned) res.headers.set("Cache-Control", "private, max-age=86400");
+  return res;
+}
+
 /** `source` undefined = the stored photo was only made durable: keep its source. */
 async function persistProfileImage(
   contactId: string,
@@ -88,7 +100,7 @@ async function persistProfileImage(
  * (legacy data URL or Blob), proxy/persist a usable remote image into
  * Blob storage, or resolve their LinkedIn OG image on demand.
  */
-export async function GET(_req: Request, { params }: Params) {
+export async function GET(req: Request, { params }: Params) {
   let userId: string;
   try {
     userId = await requireUserId();
@@ -96,6 +108,7 @@ export async function GET(_req: Request, { params }: Params) {
     return new NextResponse(null, { status: 401 });
   }
   const { contactId } = await params;
+  const versioned = new URL(req.url).searchParams.has("v");
   const db = await getDb();
 
   const contact = await db.query.contacts.findFirst({
@@ -121,7 +134,7 @@ export async function GET(_req: Request, { params }: Params) {
   }
 
   // A shared LinkedIn photo (never an upload-sourced contact's) outranks the contact's own.
-  if (contact.sharedUrl) return NextResponse.redirect(contact.sharedUrl);
+  if (contact.sharedUrl) return photoRedirect(contact.sharedUrl, versioned);
 
   const stored = contact.profileImageUrl?.trim() || "";
 
@@ -132,7 +145,7 @@ export async function GET(_req: Request, { params }: Params) {
 
   // Already durably stored in Blob — send the browser straight there.
   if (isDurableAvatarUrl(stored)) {
-    return NextResponse.redirect(stored);
+    return photoRedirect(stored, versioned);
   }
 
   // Proxy / persist a usable remote URL (Apollo / LinkedIn CDN, etc.) into Blob.

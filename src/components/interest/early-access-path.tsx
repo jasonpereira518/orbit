@@ -213,11 +213,11 @@ export function EarlyAccessPath({
                     </span>
                   )}
                   {isHere ? (
-                    <span className="early-path-marker absolute bottom-full mb-2 hidden whitespace-nowrap rounded-full border border-[#f2c14e]/40 bg-[#0b1120]/95 px-2.5 py-1 text-[11px] font-medium text-[#f2c14e] md:block">
+                    <span className="early-path-marker absolute bottom-full mb-2 hidden whitespace-nowrap rounded-full border border-[#f2c14e]/40 bg-[#0b1120]/95 px-2.5 py-1 text-2xs font-medium text-[#f2c14e] md:block">
                       You&apos;re here{live.position ? ` · #${formatTicketNumber(live.position)}` : ""}
                     </span>
                   ) : start ? (
-                    <span className="absolute bottom-full mb-2 hidden whitespace-nowrap rounded-full border border-[#f2c14e]/40 bg-[#0b1120]/95 px-2.5 py-1 text-[11px] font-medium text-[#f2c14e] md:block">
+                    <span className="absolute bottom-full mb-2 hidden whitespace-nowrap rounded-full border border-[#f2c14e]/40 bg-[#0b1120]/95 px-2.5 py-1 text-2xs font-medium text-[#f2c14e] md:block">
                       Start here
                     </span>
                   ) : null}

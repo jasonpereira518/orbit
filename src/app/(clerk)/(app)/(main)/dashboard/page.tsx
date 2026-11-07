@@ -25,6 +25,8 @@ import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { fetchRadarBriefing } from "@/actions/radar";
 
+export const metadata = { title: "Dashboard" };
+
 async function AgentDraftsSection() {
   const drafts = await listPendingAgentSends(await requireUserId());
   return <AgentDraftsCard drafts={drafts} />;
@@ -67,16 +69,20 @@ export default async function DashboardPage() {
       <RenderStamp />
       <DashboardHeader />
 
-      {/* Today's meetings, when the calendar has any — nothing at all otherwise. */}
-      <Suspense fallback={null}>
-        <TodayMeetingsSection now={new Date()} />
-      </Suspense>
-
-      {radarBriefing && (
-        <Suspense fallback={<DashboardCardSkeleton className="h-48" />}>
-          <MorningBriefingSection briefing={radarBriefing} />
+      {/* Today's meetings (when the calendar has any) beside the morning briefing. Each child
+          carries its own `lg:flex-1`, so one alone fills the row, and `empty:hidden` drops the
+          row — and its share of the page gap — when neither renders. */}
+      <div className="flex flex-col gap-6 empty:hidden lg:flex-row">
+        <Suspense fallback={null}>
+          <TodayMeetingsSection now={new Date()} />
         </Suspense>
-      )}
+        {radarBriefing && (
+          <Suspense fallback={<DashboardCardSkeleton className="h-48 lg:flex-1 lg:basis-0" />}>
+            <MorningBriefingSection briefing={radarBriefing} />
+          </Suspense>
+        )}
+      </div>
+
 
       {/* Above every other card, and outside the surface-visibility switches: a message
           waiting to go out is the only thing on this page that needs a decision rather

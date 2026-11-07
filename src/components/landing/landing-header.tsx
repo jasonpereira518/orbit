@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { LandingSectionNav } from "@/components/landing/landing-section-nav";
 import { useActiveLandingSection } from "@/components/landing/use-active-landing-section";
@@ -51,7 +52,7 @@ export function LandingHeader({
   demoMode?: boolean;
   signedIn?: boolean;
 }) {
-  const reduced = useReducedMotion();
+  const reduced = useReducedMotionPreference();
   const isLgUp = useIsLgUp();
   const wasPastHero = useRef(pastHero);
   const enteringNav = pastHero && !wasPastHero.current;
@@ -123,7 +124,7 @@ export function LandingHeader({
           <Link
             href="/"
             className="flex shrink-0 items-center gap-2 sm:gap-2.5"
-            aria-label="Back to top"
+            aria-label="Orbit, back to top"
             onClick={(e) => {
               if (window.scrollY <= 0) return;
               e.preventDefault();

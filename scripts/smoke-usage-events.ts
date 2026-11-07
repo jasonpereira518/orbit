@@ -12,6 +12,7 @@
  * Run: npx tsx scripts/smoke-usage-events.ts
  */
 import "./smoke/_env";
+import { geminiSearchFeeMicros, openAiSearchInputTokens, WEB_SEARCH_FEE_MICROS } from "../src/lib/ai-pricing";
 
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -367,6 +368,30 @@ async function main() {
     await settle();
     const other = (await rowsFor(USER)).find((r) => r.operation === "smoke.not-cancelled");
     check("an unaborted signal keeps the real classification", other?.errorKind === "rate_limit", String(other?.errorKind));
+  }
+
+  console.log("\nWeb-search fees ride on top of tokens");
+  {
+    const tokensOnly = rowFor({ model: "claude-haiku-5-5", provider: "anthropic", inputTokens: 1_000, outputTokens: 200 });
+    const withSearches = rowFor({ model: "claude-haiku-5-5", provider: "anthropic", inputTokens: 1_000, outputTokens: 200, surchargeMicros: 3 * WEB_SEARCH_FEE_MICROS.anthropic });
+    check("three Anthropic searches add $0.03 to the token estimate",
+      (withSearches.estimatedCostMicros ?? 0) - (tokensOnly.estimatedCostMicros ?? 0) === 30_000,
+      `${tokensOnly.estimatedCostMicros} -> ${withSearches.estimatedCostMicros}`);
+    const reported = rowFor({ model: "openrouter/x", provider: "openrouter", reportedCostMicros: 1_234, surchargeMicros: 1_000 });
+    check("…and on top of a provider-reported figure too", reported.estimatedCostMicros === 2_234 && reported.costSource === "reported");
+    const unpriced = rowFor({ model: "no-such-model", surchargeMicros: WEB_SEARCH_FEE_MICROS.openai });
+    check("gpt-4o-mini search: floored at one 8,000-token block", openAiSearchInputTokens("gpt-4o-mini", 1_200, 1) === 8_000);
+    check("…per search", openAiSearchInputTokens("gpt-4.1-mini", 500, 3) === 24_000);
+    check("…never lowers a larger reported figure (no double count)", openAiSearchInputTokens("gpt-4o-mini", 9_500, 1) === 9_500);
+    check("…applies to dated snapshots", openAiSearchInputTokens("gpt-4o-mini-2024-07-18", null, 2) === 16_000);
+    check("…not to other models", openAiSearchInputTokens("gpt-4.1-nano", 1_200, 1) === 1_200 && openAiSearchInputTokens("gpt-5-mini", 1_200, 1) === 1_200);
+    check("…nor to a call that did not search", openAiSearchInputTokens("gpt-4o-mini", 1_200, 0) === 1_200);
+    check("gemini 3 bills each search query", geminiSearchFeeMicros("gemini-3.1-flash-lite", 3, true) === 3 * WEB_SEARCH_FEE_MICROS.gemini);
+    check("gemini 3 with no queries owes nothing", geminiSearchFeeMicros("gemini-3.8-flash", 0, true) === 0);
+    check("gemini 2.5 bills once per grounded prompt", geminiSearchFeeMicros("gemini-2.5-flash", 3, true) === 35_000);
+    check("gemini 2.5 ungrounded owes nothing", geminiSearchFeeMicros("gemini-2.5-flash", 0, false) === 0);
+    check("an unpriced model still carries its search fee", unpriced.estimatedCostMicros === WEB_SEARCH_FEE_MICROS.openai);
+    check("no surcharge leaves an unpriced model null, not zero", rowFor({ model: "no-such-model" }).estimatedCostMicros === null);
   }
 
   await cleanup();

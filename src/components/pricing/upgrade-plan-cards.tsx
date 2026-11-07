@@ -8,7 +8,7 @@ import { BillingToggle } from "@/components/pricing/billing-toggle";
 import { PlanPriceDisplay } from "@/components/pricing/plan-price";
 import { SubscriptionCheckoutButton } from "@/components/pricing/subscription-checkout-button";
 import { foundingPriceTerms, planCopy, type PlanCopy } from "@/lib/plan-copy";
-import type { BillingPeriod, Plan, PurchasablePlan } from "@/lib/plans/plan-config";
+import type { BillingPeriod, Plan, PlanConfig, PurchasablePlan } from "@/lib/plans/plan-config";
 import { cn } from "@/lib/utils";
 
 /**
@@ -113,7 +113,13 @@ export function UpgradePlanCards({
   currentPlan,
   founding,
   checkoutOpen,
+  gate,
+  config,
 }: {
+  /** The effective plan table (`getEffectivePlanConfig()`), so the cards follow an admin's plan rules. */
+  config?: Record<Plan, PlanConfig>;
+  /** The paywall that sent the buyer here, from `/upgrade?gate=`; validated by the page. */
+  gate?: string | null;
   currentPlan: Plan;
   /** Whether this account's first subscription gets founding pricing. */
   founding: boolean;
@@ -154,7 +160,7 @@ export function UpgradePlanCards({
         </p>
       );
     }
-    return <SubscriptionCheckoutButton plan={plan} period={period} />;
+    return <SubscriptionCheckoutButton plan={plan} period={period} gate={gate} />;
   };
 
   return (
@@ -166,7 +172,7 @@ export function UpgradePlanCards({
         {(["orbit", "max"] as const).map((plan, index) => (
           <Panel key={plan} order={3 + index} className="h-full">
             <PlanCard
-              plan={planCopy(plan)}
+              plan={planCopy(plan, config)}
               period={period}
               accent={ACCENT[plan]}
               founding={founding && currentPlan === "free" ? foundingPriceTerms(plan) : null}

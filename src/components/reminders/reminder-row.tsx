@@ -128,6 +128,10 @@ export const ReminderRow = memo(function ReminderRow({
     <li
       ref={rowRef}
       data-reminder-id={item.id}
+      // A row of the list's grid (reminders-stage.tsx): focus lands on the row, and whether
+      // it is in the bulk selection is announced with it.
+      role="row"
+      aria-selected={selected}
       tabIndex={focused ? 0 : -1}
       aria-current={active ? "true" : undefined}
       onFocus={(e) => {
@@ -152,7 +156,7 @@ export const ReminderRow = memo(function ReminderRow({
         exiting ? "pointer-events-none grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
       )}
     >
-      <div className="overflow-hidden">
+      <div role="gridcell" className="overflow-hidden">
         <div
           className={cn(
             // Coarse pointers: the checkbox's and the done circle's enlarged hit areas each reach
@@ -234,6 +238,7 @@ export const ReminderRow = memo(function ReminderRow({
                   )}
                 >
                   {due.text}
+                  {item.dueTime && `, ${item.dueTime}`}
                 </span>
               )}
               {item.contactName && (
@@ -251,7 +256,7 @@ export const ReminderRow = memo(function ReminderRow({
               {isNoteworthyType(item.reminderType, item.noteBatchId) && (
                 <span
                   className={cn(
-                    "rounded-full px-1.5 py-px text-[10px] font-medium uppercase tracking-wide",
+                    "rounded-full px-1.5 py-px text-3xs font-medium uppercase tracking-wide",
                     reminderTypeStyle(item.reminderType)
                   )}
                 >

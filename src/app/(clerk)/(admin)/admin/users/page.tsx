@@ -10,6 +10,7 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { Pager } from "@/components/admin/pager";
+import { UsersTabs } from "@/components/admin/admin-tabs";
 import { UsersFilterBar } from "@/components/admin/users-filter-bar";
 import { CompPlanButton } from "@/components/admin/comp-plan-dialog";
 import { CopyId } from "@/components/admin/copy-id";
@@ -142,6 +143,7 @@ export default async function AdminUsersPage({
           </a>
         }
       />
+      <UsersTabs />
 
       <div className="space-y-4">
         <UsersFilterBar q={q} plan={plan} state={state} sort={sort} dir={dir} />
@@ -152,6 +154,7 @@ export default async function AdminUsersPage({
           ) : (
             <>
               <AdminTable
+                label="Accounts"
                 head={
                   <>
                     <Th>{sortLink("email", "Account")}</Th>

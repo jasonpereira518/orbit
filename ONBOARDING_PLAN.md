@@ -1,6 +1,6 @@
 # Onboarding plan: first value in under two minutes
 
-**Date:** 2026-10-17 · **Status:** Approved. The first batch is built on this branch; see [Implementation status](#implementation-status-first-batch) for what shipped and what is still open.
+**Date:** 2026-10-17, brought up to date with `main` on 2026-11-07 · **Status:** Approved. The first batch is built on this branch; see [Implementation status](#implementation-status-first-batch) for what shipped, what `main` already covers, and what is still open.
 
 **Evidence:** [`ONBOARDING_AUDIT.md`](ONBOARDING_AUDIT.md). Finding IDs (F1–F19) and screenshot IDs (E01–E19) refer to it. Static mockups of the key screens are in [`onboarding/mockups.html`](onboarding/mockups.html).
 
@@ -12,18 +12,18 @@ Measured the same way as the audit: `next dev`, a fresh PGlite, `ORBIT_DEMO_DATA
 
 | # | Status | What shipped | Still open |
 |---|---|---|---|
-| R1 | Done | One `managedOutage()` read in the app layout, built on the 30-second cached pool state, tells paused apart from pools spent (with the refill date when a monthly cap is what ran out). Every notice now uses it: the paused copy no longer promises a return, and each names all four key providers. The checklist, ask bar, Settings and the tour's no-AI stops all read the same status. The Radar fallback names the right reason. The credits card puts credits "on hold" and hides "Buy a pack" while AI is paused. The credit-email toggle is hidden for Free. The Chat composer is disabled with a reason, the same way Capture disables Extract | – |
+| R1 | Done | One `managedOutage()` read in the app layout, built on the 30-second cached pool state, tells paused apart from pools spent (with the refill date when a monthly cap is what ran out). Every notice now uses it: the paused copy no longer promises a return, and each names every provider a person can bring a key for. The checklist, ask bar, Settings and the tour's no-AI stops all read the same status. The Radar fallback names the right reason. The credits card puts credits "on hold" and hides "Buy a pack" while AI is paused. The credit-email toggle is hidden for Free. The Chat composer is disabled with a reason, the same way Capture disables Extract | – |
 | R2 | Done | When AI can't run, the onboarding capture step opens a by-hand form with "Follow up in: 3 days / 1 week / 2 weeks / Not now", which creates the reminder. /capture links to the same form at `/contacts/new?quick=1` | – |
-| R3 | Done | A three-step "Use your own AI key" guide recommending Gemini (D2 default), with a note on free-tier data terms. Every card links to its provider's key page. A key pasted into the wrong card is routed by its prefix. OpenRouter moves under Advanced, and the decision model moves under "More AI options". Saved keys stay visible | – |
+| R3 | Done | A three-step "Use your own AI key" guide recommending Gemini (D2 default), with a note on free-tier data terms. Every card links to its provider's key page. A key pasted into the wrong card is routed by its prefix. Since the merge, `main`'s own redesign hides OpenRouter everywhere and puts the decision model in Advanced, so those two parts of my change were dropped in favour of it | – |
 | R4 | Done | Welcome leads with "Add someone you met". The tour is the "Show me around with example people first" link, and "Skip for now" is new. The primary button sits above the fold on a phone (A06). Stages: Welcome → Your first person → All set | On a phone the capture step's notes box starts above the fold, but "Extract people" sits below it |
 | R5 | Done | An account that reached onboarding and left counts as onboarded (`onboardingSeen`) for the checklist, LinkedIn card, imports and account health. Nothing is written on a read path. Checklist dismissal is stored per account | – |
 | R6 | Partial | Settings is in the phone More sheet. On /capture and onboarding, the "ready to review" toast no longer appears over the review it points to | The phone Capture button still opens Voice. The code chose that on purpose ("walking out of the building" in `mobile-capture-button.tsx`), so I left it for you to decide |
 | R7 | Partial | Welcome credit line for Free with hosted AI: "Free includes 50 AI credits a month plus 25 to start. Adding someone uses about one". The plan card's credit claim now quotes the paid plan's monthly credits | The first-win credit line |
 | R8 | Partial | A first-win screen replaces the overview carousel after the first save in onboarding: who was added, their follow-up date, a picker for someone saved without a date, then "Go to my dashboard" or "Add someone else". It has one quiet animation, held still under reduced motion | The /capture hand-off; "Remind me by email" (needs R9); "Draft the message now" |
 | R9 | Not started | – | Waits on D5 (emailing Free users) |
-| R10 | Not started | – | Next batch. It needs a table and a `SCHEMA_VERSION` bump, which I kept out of a UI-only batch |
+| R10 | Mostly done on `main` | `main` shipped `product_events` with an allowlisted `track()`, events for onboarding, capture, follow-ups, imports and chat, and an "Activated" stage in admin (`activatedSql`). The merge adapted its onboarding events to the new path (below). Follow-ups from the by-hand form and the first-win picker record `followup_set` through the shared helper | A first-win event, if you want the funnel to name that screen |
 | R11 | Partial | "Generate follow-ups" hidden at zero people. Free plan card hidden until 400 contacts (D8 default). LinkedIn nudge moved below the stats. The preview says "Your 2 people are on the full map" when there are no clusters. The tour item is marked optional and drops off at 3 people | The "Up next" card and first-run order, hiding Goals, the stats naming (F9), the ask-bar overlap |
-| R12 | Partial | Contacts zero vs. filtered, Reminders zero, the phone Constellation overlay | Chat zero-contact suggestions, "Re-engage" at zero, Cancel on contacts/new, an in-app 404, the "Pro" tag on Meetings |
+| R12 | Partial | Contacts zero vs. filtered (now `main`'s own version), Reminders zero, the phone Constellation overlay | Chat zero-contact suggestions, "Re-engage" at zero, Cancel on contacts/new, an in-app 404, the "Pro" tag on Meetings |
 | R13–R24 | Not started | – | – |
 
 **Before and after, on the same setup:**
@@ -43,7 +43,14 @@ Measured the same way as the audit: `next dev`, a fresh PGlite, `ORBIT_DEMO_DATA
 |---|---|---|
 | D2 | Gemini is the recommended key | `RECOMMENDED_KEY_PROVIDER` in `src/lib/ai-providers.ts` |
 | D4 | Capture first, tour optional | `PATH_STAGES` in `src/lib/onboarding-steps.ts` |
-| D8 | Free plan card hidden until 400 contacts | `FREE_PLAN_CARD_FROM` in `src/components/dashboard/dashboard-sections.tsx` |
+| D8 | Free plan card hidden until 80% of the live Free contact limit (400 of 500 today), and never when Free has no limit | `TailSection` in `src/components/dashboard/dashboard-sections.tsx` |
+
+**Brought up to date with `main` (2026-11-07).** `main` had moved 503 commits since the first batch. Merging it raised 19 conflicts. Where `main` had built the same thing, its version won; where it had changed the ground under this batch, the batch was adapted:
+- **Settings → AI** was rebuilt on `main` as stat tiles plus Advanced. The key guide, prefix routing, "Optional" state and "Recommended" badge were re-applied to the new layout. The credits card became a tile, a notice and an Advanced detail, and each part now reads the outage from the layout, so credits still show "on hold" and nothing is sold while AI is paused.
+- **Plan numbers are live on `main`** (`getEffectivePlanConfig`). The welcome credit line, the plan card's monthly-credit claim and its 80% threshold now read the live table instead of the code defaults. The settings-level AI check takes the live table and the outage together.
+- **Managed AI no longer runs on Gemini**, and OpenRouter is hidden from every surface. Notices now name "Gemini, OpenAI, or Anthropic". Gemini stays the recommended *own* key (D2): that choice is about a free key a student can make, not about Orbit's own provider.
+- **Onboarding events** (`onboarding_step_completed`) were written for the old quick path (people → connect → overview). They now count by stage: any step inside "Your first person" (notes, by hand, other ways, LinkedIn import, triage) completes `capture` when the person reaches the first win. Going back, or moving within a stage, records nothing. `smoke-activation-events` checks the new path.
+- **Kept from `main` as is:** the contacts empty state, the imports page (now a tab on /capture), the dashboard's meetings and briefing row, and the provider cards' new short status lines.
 
 **Checks run:**
 - Typecheck is clean, and ESLint finds no errors in the changed files.

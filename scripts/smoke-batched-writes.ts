@@ -19,6 +19,7 @@ import {
   chatMessages,
   chatThreads,
   contacts,
+  interactions,
   outreachCampaigns,
   outreachMessages,
   outreachProspects,
@@ -343,6 +344,15 @@ run(async () => {
     ])
     .returning();
   const [otherContact] = await db.insert(contacts).values({ userId: OTHER, fullName: "Not Yours", priorityLevel: 3 }).returning();
+  // "Generate more" only picks people the user has met or talked with (`met-contact.ts`).
+  await db.insert(interactions).values(
+    [c1, c2, c3].map((c) => ({
+      userId: REM_USER,
+      contactId: c.id,
+      interactionType: "meeting" as const,
+      interactionDate: new Date(Date.now() - 200 * 86_400_000),
+    }))
+  );
   // `createdBy: "system"` — the rows this batched UPDATE is allowed to touch. It used to be
   // seeded `"user"`, which made this check assert the data loss `reminders.ts`'s guard
   // exists to prevent: a hand-written title rewritten and relabelled `system`. The batching
@@ -409,6 +419,12 @@ run(async () => {
     .insert(contacts)
     .values({ userId: REM_USER, fullName: "Dora Dormant", priorityLevel: 3, lastInteractionAt: longAgo })
     .returning();
+  await db.insert(interactions).values({
+    userId: REM_USER,
+    contactId: dormant.id,
+    interactionType: "meeting",
+    interactionDate: new Date(Date.now() - 200 * 86_400_000),
+  });
   await db.insert(aiSuggestions).values([
     { userId: REM_USER, suggestionType: "dormant_high_value", title: "stale", status: "pending" },
     { userId: REM_USER, suggestionType: "job_posting_signal", title: "job signal", status: "pending" },

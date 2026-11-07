@@ -14,7 +14,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../src/db";
-import { chatMessages, chatThreads, contactTags, contacts, interactions, memoryChunks, tags } from "../../src/db/schema";
+import {
+  actionItems,
+  chatMessages,
+  chatThreads,
+  contactOpportunities,
+  contactTags,
+  contacts,
+  interactions,
+  memoryChunks,
+  reminders,
+  tags,
+  userGoals,
+} from "../../src/db/schema";
+import { labelAnswer } from "../../src/lib/chat-abstention";
+import { saveChatAutoApplyFor } from "../../src/lib/chat-auto-apply";
+import { chatWriteNamed, runUndo, type UndoStep } from "../../src/lib/tools/chat-writes";
+import { citedIds } from "../../src/lib/chat-evidence";
 import { runCaptureParse } from "../../src/lib/capture-parse";
 import { classifyRecruiterSender, RECRUITER_CONFIDENCE_FLOOR, RULED_OUT_VERDICT } from "../../src/lib/recruiter-scan";
 import { looksLikeRecruiter } from "../../src/lib/recruiter-detect";
@@ -40,8 +56,6 @@ import { resolveMentions } from "../../src/lib/mention-resolution";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
 import {
-  chatWithNetwork,
-  chatWithNetworkStream,
   completeJson,
   parseAiJson,
   transcribeAudioWithAI,
@@ -51,7 +65,7 @@ import { deepgramConfigured, transcribeFile as transcribeDeepgramFile } from "..
 import { loadNetworkVocabulary } from "../../src/lib/transcription-vocabulary";
 import { peopleIdsIn } from "../../src/lib/chat-directives";
 import { prepareChatContext } from "../../src/lib/chat-context";
-import { maybeGather } from "../../src/lib/chat-gather";
+import { answerWithLookups } from "../../src/lib/chat-agent-loop";
 import { runEmbeddingBackfill } from "../../src/lib/embedding-backfill";
 import { loadPassageFixture, seedPassageNotes } from "./eval-passage-notes";
 import { rebuildContactEmbeddingsBatch } from "../../src/lib/search";
@@ -1490,8 +1504,22 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       }))
     );
   }
+  if (chatFixture.records) await seedChatRecords(userId, network, chatFixture.records);
+  // EVAL_CHAT_AUTO_APPLY=1: the person's auto-apply setting on, so the write cases also score
+  // which changes chat made itself (`@/lib/chat-auto-apply`).
+  const autoApplyOn = process.env.EVAL_CHAT_AUTO_APPLY === "1";
+  await saveChatAutoApplyFor(userId, autoApplyOn);
   const answered = tally();
   const retrieved = tally();
+  const abstainedRight = tally();
+  /** Cases with an answer in the records that came back labelled `abstained`. */
+  let falseAbstentions = 0;
+  /** Write requests that proposed the right change, and questions that proposed none. */
+  const proposedRight = tally();
+  /** With auto-apply on: auto-tier changes applied, confirm-tier ones left as cards. */
+  const autoAppliedRight = tally();
+  /** Lookups per answer (read tools only — a proposed change is not a lookup). */
+  const lookupsPerCase: number[] = [];
   const listed = tally();
   const counted = tally();
   const resolved = tally();
@@ -1517,34 +1545,16 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       const { ctx, result } = await timed(latenciesMs, async () => {
         const requestStartedAt = Date.now();
         const ctx = await prepareChatContext(userId, c.question, { threadId });
-        // The research round runs here as it does in production (the route), so this task's
-        // cost and latency include it — and a routing change shows up in both.
-        const { evidence, notePassages, depth } = await maybeGather(userId, ctx, { requestStartedAt });
         let firstAt: number | null = null;
-        // The streaming call the route makes, so time to first token is measured on the real path.
-        const result = await chatWithNetworkStream(
-          userId,
-          ctx.scopedQuestion,
-          ctx.modelContacts,
-          ctx.priorTurns,
-          ctx.orgRosters,
-          ctx.attention,
-          ctx.modelRecruiters,
-          () => {
+        // The production path: the answer loop, lookups and all.
+        const result = await answerWithLookups(userId, ctx, {
+          onDelta: () => {
             firstAt ??= Date.now();
           },
-          ctx.focusProfile,
-          ctx.attachedContext,
-          {
-            goals: ctx.goals,
-            attentionLite: ctx.attentionLite,
-            evidence,
-            notePassages,
-            writingPreferences: ctx.writingInstructions,
-            openReminders: ctx.openReminders ?? null,
-          }
-        );
-        if (firstAt !== null && depth.depth === "single") firstTokenMs.push(firstAt - requestStartedAt);
+          requestStartedAt,
+        });
+        if (firstAt !== null && result.run.calls.length === 0) firstTokenMs.push(firstAt - requestStartedAt);
+        lookupsPerCase.push(result.run.calls.filter((c) => !chatWriteNamed(c.call.name)).length);
         return { ctx, result };
       });
       // People placed as `::people` cards count as named, exactly like the old JSON tail's
@@ -1557,6 +1567,35 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       ]);
       const shown = new Set(ctx.modelContacts.map((m) => m.id));
       const why: string[] = [];
+      const outcome = labelAnswer(result.answer ?? "", {
+        citedCount: citedIds(result.answer ?? "").length,
+        recommendedCount: recommended.size,
+      });
+      if (c.mustAbstain) {
+        // "I don't have Hana's phone, but her email is …" is the right answer too: what fails
+        // is an answer with no admission (it made something up) or one that names people.
+        const ok = outcome !== "answered" && recommended.size === 0;
+        count(abstainedRight, ok);
+        if (!ok) why.push(`should have said it did not know, was ${outcome}${recommended.size ? " and named people" : ""}`);
+      } else if (outcome === "abstained") {
+        falseAbstentions++;
+        why.push("said it did not know");
+      }
+      if (c.mustPropose?.length || c.mustNotPropose) {
+        const tools = result.proposals.map((p) => p.args.tool);
+        const ok = c.mustNotPropose ? tools.length === 0 : tools.some((t) => c.mustPropose!.includes(t));
+        count(proposedRight, ok);
+        if (!ok) why.push(c.mustNotPropose ? `proposed ${tools.join(", ")} for a question` : `proposed ${tools.join(", ") || "nothing"}, wanted ${c.mustPropose!.join(" or ")}`);
+        if (autoApplyOn) {
+          for (const card of result.proposals) {
+            const right = card.tier === "auto" ? card.status === "done" : card.status === "proposed";
+            count(autoAppliedRight, right);
+            if (!right) why.push(`${card.args.tool} (${card.tier}) was ${card.status}`);
+            // Put the records back, so a later case sees the fixture as seeded.
+            if (card.status === "done" && card.undo) await runUndo(userId, card.undo as UndoStep).catch(() => {});
+          }
+        }
+      }
       if (c.expectList) {
         const ok = ctx.orgRosters.some((r) => r.kind === "filter" && r.total === c.expectList!.total);
         count(listed, ok);
@@ -1596,6 +1635,8 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       if (c.expectList) count(listed, false);
       if (c.expectCount !== undefined) count(counted, false);
       if (c.expectPerson) count(resolved, false);
+      if (c.mustAbstain) count(abstainedRight, false);
+      if (c.mustPropose?.length || c.mustNotPropose) count(proposedRight, false);
       for (let i = 0; i < (c.mustSay?.length ?? 0); i++) count(said, false);
       log(`  FAIL chat/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1614,7 +1655,12 @@ export async function runChatTask({ userId, limit, log }: RunOpts): Promise<Task
       countAccuracy: rate(counted),
       personResolution: rate(resolved),
       inventedDirectiveIds,
+      falseAbstentions,
+      ...(cases.some((c) => c.mustAbstain) ? { abstainAccuracy: rate(abstainedRight) } : {}),
       ...(cases.some((c) => c.mustSay?.length) ? { factRecall: rate(said) } : {}),
+      ...(proposedRight.total ? { proposalAccuracy: rate(proposedRight) } : {}),
+      ...(autoAppliedRight.total ? { autoApplyAccuracy: rate(autoAppliedRight) } : {}),
+      ...(lookupsPerCase.length ? { meanLookups: mean(lookupsPerCase) } : {}),
     },
   };
 }
@@ -1628,16 +1674,79 @@ async function clearResearchUser(userId: string) {
   await db.delete(interactions).where(eq(interactions.userId, userId));
   await db.delete(chatMessages).where(eq(chatMessages.userId, userId));
   await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
+  await db.delete(reminders).where(eq(reminders.userId, userId));
+  await db.delete(actionItems).where(eq(actionItems.userId, userId));
+  await db.delete(userGoals).where(eq(userGoals.userId, userId));
   await db.delete(contacts).where(eq(contacts.userId, userId));
   await db.delete(tags).where(eq(tags.userId, userId));
 }
 
 /**
- * Whole answers to questions one retrieval cannot answer — the research step's job.
+ * `ChatEvalFixture.records`: the contact details, reminders and commitments the chat cases ask
+ * about, written beside the network. Dates are relative to the run so "next week" stays true.
+ */
+async function seedChatRecords(
+  userId: string,
+  network: Map<string, { id: string; fullName: string }>,
+  records: NonNullable<ChatEvalFixture["records"]>
+) {
+  const db = await getDb();
+  const idOf = (email: string) => {
+    const person = network.get(email);
+    if (!person) throw new Error(`fixture records name ${email}, which the seeded network does not have`);
+    return person.id;
+  };
+  const inDays = (n: number) => new Date(Date.now() + n * 86_400_000);
+  for (const d of records.details ?? []) {
+    await db
+      .update(contacts)
+      .set({
+        phone: d.phone ?? null,
+        linkedinUrl: d.linkedinUrl ?? null,
+        howMet: d.howMet ?? null,
+        dateMet: d.dateMet ? new Date(`${d.dateMet}T12:00:00Z`) : null,
+        nextFollowUpAt: d.nextFollowUpInDays !== undefined ? inDays(d.nextFollowUpInDays) : null,
+      })
+      .where(and(eq(contacts.userId, userId), eq(contacts.id, idOf(d.email))));
+  }
+  for (const r of records.reminders ?? []) {
+    await db.insert(reminders).values({
+      userId,
+      title: r.title,
+      contactId: r.email ? idOf(r.email) : null,
+      dueDate: r.dueInDays === null ? null : inDays(r.dueInDays),
+      status: "pending",
+      reminderType: "manual",
+    });
+  }
+  for (const text of records.goals ?? []) {
+    await db.insert(userGoals).values({ userId, text, active: 1 });
+  }
+  for (const o of records.opportunities ?? []) {
+    await db.insert(contactOpportunities).values({ userId, contactId: idOf(o.email), kind: o.kind as never, label: o.label, createdBy: "user" });
+  }
+  for (const [i, a] of (records.actionItems ?? []).entries()) {
+    const contactId = idOf(a.email);
+    const [note] = await db
+      .insert(interactions)
+      .values({ userId, contactId, interactionType: "note", rawNotes: a.text, interactionDate: inDays(-3) })
+      .returning();
+    await db.insert(actionItems).values({
+      userId,
+      contactId,
+      interactionId: note.id,
+      text: a.text,
+      itemHash: `eval-${i}`,
+      owedBy: a.owedBy,
+    });
+  }
+}
+
+/**
+ * Whole answers to questions one retrieval cannot answer: the answer must look things up.
  *
- * Runs the production path end to end, in order: retrieval, the depth decision, the research
- * loop, the answer, the recommendation filter. Routing is scored the moment it is decided,
- * so a case whose answer then fails still says whether it went to the right path.
+ * Runs the production path end to end, in order: retrieval, the answer loop with its lookups,
+ * the recommendation filter. "Routing" is whether a research case made a lookup.
  *
  * Clears its user before AND after: the chat task seeds the same network into the same user,
  * and neither may see the other's rows when both run in one invocation.
@@ -1651,7 +1760,7 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
     loadPassageFixture(FIXTURE_DIR),
     new Map([...network].map(([email, c]) => [email, c.id]))
   );
-  // Passages embedded through the real drain, so the research step's search_notes has its
+  // Passages embedded through the real drain, so the answer's search_notes has its
   // meaning arm. Without an embedding key it runs on words, and says so.
   await runEmbeddingBackfill(userId).catch((err) =>
     log(`  (passage embeddings unavailable: ${err instanceof Error ? err.message : String(err)})`)
@@ -1682,28 +1791,15 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
         }
       }
 
-      const { ctx, gathered, result } = await timed(latenciesMs, async () => {
+      const { ctx, run, result } = await timed(latenciesMs, async () => {
         const ctx = await prepareChatContext(userId, c.question, { threadId });
-        const gathered = await maybeGather(userId, ctx, { requestStartedAt: Date.now() });
-        routedOk = gathered.depth.depth === c.expectDepth;
-        const result = await chatWithNetwork(
-          userId,
-          ctx.scopedQuestion,
-          ctx.modelContacts,
-          ctx.priorTurns,
-          ctx.orgRosters,
-          ctx.attention,
-          ctx.modelRecruiters,
-          ctx.focusProfile,
-          ctx.attachedContext,
-          ctx.goals,
-          ctx.attentionLite,
-          gathered.evidence,
-          gathered.notePassages,
-          ctx.writingInstructions,
-          ctx.openReminders ?? null
-        );
-        return { ctx, gathered, result };
+        // The answer looks things up itself. A research case is routed right when it made at
+        // least one lookup; a one-pass case is never wrong for looking (the cost shows in
+        // meanLookups).
+        const result = await answerWithLookups(userId, ctx, { onDelta: () => {}, requestStartedAt: Date.now() });
+        const lookupsMade = result.run.calls.filter((call) => call.ok).length;
+        routedOk = c.expectDepth === "research" ? lookupsMade > 0 : true;
+        return { ctx, run: { ...result.run, lookups: lookupsMade }, result };
       });
 
       const raw = (result.recommendations ?? []) as Array<{ contact_id?: string | null } & Record<string, unknown>>;
@@ -1728,10 +1824,8 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
       forbiddenHits += score.forbiddenHits;
       inventedContactIds += score.inventedIds;
       filteredRecommendations += score.filteredOut;
-      if (gathered.research) {
-        lookups.push(gathered.research.lookups);
-        rounds.push(gathered.research.rounds);
-      }
+      lookups.push(run.lookups);
+      rounds.push(run.rounds);
 
       const missed =
         !routedOk ||
@@ -1740,15 +1834,14 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
         score.forbiddenHits > 0 ||
         score.inventedIds > 0;
       if (missed) misses.push(c.id);
-      const research = gathered.research
-        ? ` — ${gathered.research.lookups} lookup(s), ${gathered.research.rounds} round(s), stopped: ${gathered.research.stoppedBy}`
-        : "";
+      const research = ` — ${run.lookups} lookup(s), ${run.rounds} round(s), stopped: ${run.stoppedBy}`;
+      const depth = run.lookups > 0 ? "research" : "single";
       // Say WHAT missed. A bare MISS on a one-off run leaves nothing to go on: the first
       // baseline had one, and whether it was the person, the fact or the routing could only
       // be guessed at afterwards.
       const why = missed
         ? [
-            !routedOk ? `routed ${gathered.depth.depth}, expected ${c.expectDepth}` : null,
+            !routedOk ? `routed ${depth}, expected ${c.expectDepth}` : null,
             ...people.flatMap((p, i) => (score.mentioned[i] ? [] : [`did not name ${p.fullName}`])),
             ...c.mustSay.flatMap((f, i) => (score.said[i] ? [] : [`did not say "${f}"`])),
             score.forbiddenHits ? `${score.forbiddenHits} unsupported claim(s)` : null,
@@ -1757,7 +1850,7 @@ export async function runResearchTask({ userId, limit, log }: RunOpts): Promise<
             .filter(Boolean)
             .join("; ")
         : "";
-      log(`  ${missed ? "MISS" : "ok  "} research/${c.id} [${gathered.depth.depth}]${research}${why ? ` — ${why}` : ""}`);
+      log(`  ${missed ? "MISS" : "ok  "} research/${c.id} [${depth}]${research}${why ? ` — ${why}` : ""}`);
       if (missed) log(`       answer: ${(result.answer ?? "").replace(/\s+/g, " ").slice(0, 300)}`);
     } catch (err) {
       misses.push(c.id);

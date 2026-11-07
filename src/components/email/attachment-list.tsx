@@ -43,7 +43,7 @@ export function AttachmentList({
             </span>
             <button
               type="button"
-              className="-mr-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
+              className="relative tap-target -my-1 -mr-1.5 grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground disabled:opacity-50"
               aria-label={`Remove ${a.filename}`}
               onClick={() => onRemove(a.id)}
               disabled={disabled}

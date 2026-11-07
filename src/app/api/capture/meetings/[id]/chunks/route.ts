@@ -10,7 +10,8 @@ import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit
 
 export const dynamic = "force-dynamic";
 // One chunk is one transcription, whose own deadline is 90s (`TRANSCRIBE_TIMEOUT_MS`).
-export const maxDuration = 120;
+// Deepgram (90 s) then the fallback engine (90 s) can both run for one chunk.
+export const maxDuration = 180;
 
 /**
  * One chunk of a live meeting: raw 16 kHz WAV in, its transcript out.
@@ -97,7 +98,10 @@ export async function POST(request: Request, ctx: Params) {
   try {
     const result = await ingestMeetingChunk(userId, id, meta, wav);
     if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: result.status });
+      // 429 here is another upload of this same chunk mid-transcription: the recorder waits
+      // and retries, and then gets the stored segment back as a duplicate.
+      const headers = result.status === 429 ? { "Retry-After": String(result.retryAfterSec) } : undefined;
+      return NextResponse.json({ error: result.error }, { status: result.status, headers });
     }
     return NextResponse.json({
       seq: result.seq,

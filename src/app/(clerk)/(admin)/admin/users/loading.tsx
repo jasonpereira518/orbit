@@ -1,3 +1,4 @@
+import { UsersTabs } from "@/components/admin/admin-tabs";
 import { AdminLoading } from "@/components/admin/loading-shells";
 
 export default function AdminUsersLoading() {
@@ -5,6 +6,7 @@ export default function AdminUsersLoading() {
     <AdminLoading
       title="Users"
       subtitle="Loading accounts…"
+      tabs={<UsersTabs />}
       blocks={[{ toolbar: true }, { panel: true, height: "h-96" }]}
     />
   );

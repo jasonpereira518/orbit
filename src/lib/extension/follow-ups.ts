@@ -13,6 +13,7 @@ import { getDb } from "@/db";
 import { contacts, reminders } from "@/db/schema";
 import { snoozeReminder } from "@/lib/reminders";
 import { ContactNotFoundError } from "@/lib/contact-writes";
+import { trackFollowUpSet } from "@/lib/reminder-writes";
 import type { FollowUpInput } from "./contract";
 
 export type ScheduleResult = {
@@ -109,6 +110,8 @@ export async function scheduleContactFollowUp(
       createdBy: "extension",
     })
     .returning();
+
+  if (reminder) trackFollowUpSet(userId, reminder, "extension", { surface: "extension" });
 
   return {
     contactId: contact.id,

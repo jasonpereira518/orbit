@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getDb, rowsOf } from "@/db";
 import { aiSuggestions, captureJobs, cloudNoteFiles, contacts, reminders, suggestedReminders } from "@/db/schema";
 import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
@@ -8,6 +9,10 @@ import {
   type AccountHealthContext,
 } from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
+import { alertableContactSql, alertableReminderSql } from "@/lib/met-contact";
+
+/** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
+const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
 /** Upcoming follow-ups are shown this far ahead; further out is noise. */
 const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
@@ -40,7 +45,7 @@ export async function loadNotificationPanel(
   const context: AccountHealthContext | undefined = opts.settings
     ? {
         settings: opts.settings,
-        entitlements: opts.entitlements ?? entitlementsFromSettings(userId, opts.settings),
+        entitlements: opts.entitlements ?? entitlementsFromSettings(userId, opts.settings, await getEffectivePlanConfig()),
       }
     : undefined;
 
@@ -56,7 +61,13 @@ export async function loadNotificationPanel(
     cloudNoteRows,
   ] = await Promise.all([
     db.query.reminders.findMany({
-      where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
+      // Only what is allowed to alert: the user's own reminders, and generated ones about
+      // people they have actually met or talked with (see `met-contact.ts`).
+      where: and(
+        eq(reminders.userId, userId),
+        eq(reminders.status, "pending"),
+        alertableReminderSql(userId)
+      ),
       orderBy: (r, { asc: ascOrder }) => [ascOrder(r.dueDate)],
       limit: 80,
     }),
@@ -67,7 +78,8 @@ export async function loadNotificationPanel(
       where: and(
         eq(contacts.userId, userId),
         isNotNull(contacts.nextFollowUpAt),
-        lte(contacts.nextFollowUpAt, new Date(now.getTime() + UPCOMING_WINDOW_MS))
+        lte(contacts.nextFollowUpAt, new Date(now.getTime() + UPCOMING_WINDOW_MS)),
+        alertableContactSql(sql`${contacts.id}`, userId)
       ),
       columns: {
         id: true,
@@ -80,10 +92,24 @@ export async function loadNotificationPanel(
       orderBy: (c, { asc: ascOrder }) => [ascOrder(c.nextFollowUpAt)],
       limit: 100,
     }),
+    // A suggestion about a contact that no longer exists in this account is dropped, as the
+    // dashboard (`loadDashboardSuggestions`) and the chat attention brief already do:
+    // `related_contact_ids` is jsonb with no foreign key, so deleting the contact leaves the
+    // suggestion behind, and the panel would keep naming them with a link that 404s. Filtered
+    // in SQL so ghosts do not use up the 30 rows.
     db.query.aiSuggestions.findMany({
       where: and(
         eq(aiSuggestions.userId, userId),
-        eq(aiSuggestions.status, "pending")
+        eq(aiSuggestions.status, "pending"),
+        sql`(
+          coalesce(${aiSuggestions.relatedContactIds} ->> 0, '') = ''
+          or exists (
+            select 1 from ${contacts} live
+            where live.user_id = ${userId}
+              and live.id = case when (${aiSuggestions.relatedContactIds} ->> 0) ~ ${CANONICAL_UUID_RE}
+                                 then (${aiSuggestions.relatedContactIds} ->> 0)::uuid end
+          )
+        )`
       ),
       orderBy: (s, { desc: descOrder }) => [descOrder(s.confidenceScore)],
       limit: 30,

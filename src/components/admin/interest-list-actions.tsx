@@ -31,7 +31,7 @@ const BUTTON =
 /**
  * Let one person in: a Clerk invitation, emailed by Clerk, that creates an account even while
  * the site is in stealth. No confirm dialog — it grants one address one link, is revocable
- * from /admin/access, and is audited there like every other invitation.
+ * from /admin/access/invites, and is audited there like every other invitation.
  */
 function InviteButton({ email }: { email: string }) {
   const [pending, start] = useTransition();
@@ -82,12 +82,12 @@ export function InterestListRowActions({
       {unsubscribed ? (
         <ConfirmActionDialog
           trigger={
-            <span
+            <button type="button"
               className={`${BUTTON} text-muted-foreground hover:border-border hover:text-foreground`}
             >
               <Undo2 className="size-3" aria-hidden />
               Restore
-            </span>
+            </button>
           }
           title="Put them back on the waitlist?"
           description={
@@ -103,12 +103,12 @@ export function InterestListRowActions({
       ) : (
         <ConfirmActionDialog
           trigger={
-            <span
+            <button type="button"
               className={`${BUTTON} text-muted-foreground hover:border-border hover:text-foreground`}
             >
               <MailX className="size-3" aria-hidden />
               Remove
-            </span>
+            </button>
           }
           title="Take this address off the waitlist?"
           description={
@@ -126,12 +126,12 @@ export function InterestListRowActions({
 
       <ConfirmActionDialog
         trigger={
-          <span
+          <button type="button"
             className={`${BUTTON} border-destructive/40 text-destructive hover:bg-destructive/10`}
           >
             <Trash2 className="size-3" aria-hidden />
             Delete
-          </span>
+          </button>
         }
         title="Delete this signup entirely?"
         description={

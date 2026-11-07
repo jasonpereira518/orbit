@@ -21,6 +21,15 @@ import {
   requireExtensionUser,
 } from "./auth";
 import { isPaywallError } from "@/lib/entitlements";
+import { noteMachineSurfaceAccount } from "@/lib/attribution";
+import {
+  EXTENSION_INSTALL_HEADER,
+  extensionVersionFrom,
+  eventSiteFrom,
+  trackExtensionAction,
+  trackExtensionInstalled,
+  type ExtensionAction,
+} from "./telemetry";
 
 /** Rolling one-minute budgets, per user. */
 const REQUEST_LIMIT_PER_MINUTE = 60;
@@ -106,7 +115,7 @@ export class ExtensionRouteError extends Error {
  * expression in a DO UPDATE sees the pre-update row, so the window check and
  * the counter reset stay consistent with each other.
  */
-async function consumeBudget(userId: string, cost: RouteCost) {
+async function consumeBudget(userId: string, cost: RouteCost, version: string | null = null) {
   const db = await getDb();
   const aiCost = cost === "ai" ? 1 : 0;
   const windowExpired = (column: unknown) =>
@@ -119,6 +128,8 @@ async function consumeBudget(userId: string, cost: RouteCost) {
       requestCount: 1,
       aiCount: aiCost,
       lastSeenAt: new Date(),
+      firstSeenAt: new Date(),
+      version,
     })
     .onConflictDoUpdate({
       target: extensionUsage.userId,
@@ -128,6 +139,11 @@ async function consumeBudget(userId: string, cost: RouteCost) {
         aiWindowStartedAt: sql`CASE WHEN ${windowExpired(extensionUsage.aiWindowStartedAt)} THEN now() ELSE ${extensionUsage.aiWindowStartedAt} END`,
         aiCount: sql`CASE WHEN ${windowExpired(extensionUsage.aiWindowStartedAt)} THEN ${aiCost} ELSE ${extensionUsage.aiCount} + ${aiCost} END`,
         lastSeenAt: sql`now()`,
+        // Written once: the first authenticated request ever. Rows from before the column
+        // existed get the first request after it did, which is the best that can be known.
+        firstSeenAt: sql`coalesce(${extensionUsage.firstSeenAt}, now())`,
+        // The latest build that identified itself; a request without the header keeps the last.
+        version: sql`coalesce(${version}, ${extensionUsage.version})`,
       },
     })
     .returning();
@@ -260,18 +276,60 @@ function toErrorResponse(error: unknown) {
 export function extensionRoute<TIn, TOut>(config: {
   schema?: z.ZodType<TIn>;
   cost?: RouteCost;
+  /**
+   * Set ONLY on routes that perform something the person asked for (save, log, schedule,
+   * roster, starters). The session probe `GET /me`, the background `POST /resolve` and
+   * `POST /parse`, and the contact search are not actions and must not set it: that is what
+   * keeps `extension_action` a count of use rather than of background chatter.
+   */
+  action?: ExtensionAction;
+  /** The page adapter's site for `extension_action`, from the validated body. Else `other`. */
+  siteOf?: (input: TIn) => string | null | undefined;
   handler: (ctx: RouteContext<TIn>) => Promise<TOut>;
 }) {
   return async function handle(req: Request) {
     try {
       const { userId, settings } = await requireExtensionUser(req);
-      await consumeBudget(userId, config.cost ?? "request");
+      const version = extensionVersionFrom(req.headers);
+      await consumeBudget(userId, config.cost ?? "request", version);
+
+      // An account that only ever uses the extension never renders a web page, so nothing
+      // else would attribute it. Idempotent; off the request path.
+      noteMachineSurfaceAccount(userId, settings);
+      // The first authenticated request after install announces itself with a header; the
+      // event id is per account, so it can arrive more than once without counting twice.
+      if (req.headers.get(EXTENSION_INSTALL_HEADER)?.trim() === "1") {
+        trackExtensionInstalled({ userId, version, userAgent: req.headers.get("user-agent") });
+      }
 
       const input = config.schema
         ? await readJsonBody(req, config.schema)
         : (undefined as TIn);
 
-      const data = await config.handler({ userId, settings, input, req });
+      let data: TOut;
+      try {
+        data = await config.handler({ userId, settings, input, req });
+      } catch (error) {
+        // An attempted action that failed is still an action: ok=false. Auth, budget and
+        // validation failures above never reach here, so they are not counted.
+        if (config.action) {
+          trackExtensionAction({
+            userId,
+            action: config.action,
+            site: eventSiteFrom(config.siteOf?.(input)),
+            ok: false,
+          });
+        }
+        throw error;
+      }
+      if (config.action) {
+        trackExtensionAction({
+          userId,
+          action: config.action,
+          site: eventSiteFrom(config.siteOf?.(input)),
+          ok: true,
+        });
+      }
       return jsonOk(data);
     } catch (error) {
       return toErrorResponse(error);

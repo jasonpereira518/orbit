@@ -21,7 +21,7 @@ import { formatElapsed } from "@/lib/format-elapsed";
 import { useMeetingFlow, useMeetingSession } from "@/components/capture/meeting-session";
 import { cn } from "@/lib/utils";
 
-const MEETING_HREF = "/capture?mode=meeting";
+const MEETING_HREF = "/meetings";
 
 export function MeetingWidget() {
   const s = useMeetingSession();

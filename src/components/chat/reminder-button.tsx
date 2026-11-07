@@ -87,6 +87,8 @@ export function ReminderButton({
     <motion.div
       ref={scope}
       className={cn("relative inline-flex", className)}
+      // Motion makes a `whileTap` element focusable; the button inside is the tab stop.
+      tabIndex={-1}
       whileTap={phase === "idle" ? { scale: 0.96 } : undefined}
       transition={SPRING_TAP}
     >

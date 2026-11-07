@@ -21,6 +21,40 @@ import { findReminderListForUser, getInboxListId } from "@/lib/reminder-lists";
 import { revalidatePathIfRequestScoped, revalidateReminderPaths } from "@/lib/reminder-paths";
 import { completeReminder, reopenReminder, type CompletionSnapshot } from "@/lib/reminders";
 import { settle, unwrap } from "@/lib/settled";
+import { track, type TrackOptions } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
+import type { FOLLOWUP_ORIGINS, FOLLOWUP_VIA } from "@/lib/product-event-schemas";
+
+export type FollowUpOrigin = (typeof FOLLOWUP_ORIGINS)[number];
+
+/**
+ * Record `followup_set` for a reminder a PERSON created or rescheduled. One fact per
+ * (reminder, due day), so a retried or double-invoked action dedupes on the event id.
+ * Callers that act for Orbit rather than the person (the Radar autopilot, the nightly queue)
+ * must not call this.
+ */
+export function trackFollowUpSet(
+  userId: string,
+  reminder: { id: string; dueDate: Date | null },
+  origin: FollowUpOrigin,
+  options: Pick<TrackOptions, "surface"> = {}
+): void {
+  track(
+    "followup_set",
+    { reminder_id: reminder.id, origin, has_due_date: reminder.dueDate !== null },
+    {
+      userId,
+      surface: options.surface,
+      id: eventId("followup_set", reminder.id, reminder.dueDate ? reminder.dueDate.toISOString().slice(0, 10) : "none"),
+    }
+  );
+}
+
+export type ReminderWriteTracking = {
+  /** Where the follow-up came from. `null` records nothing. */
+  origin?: FollowUpOrigin | null;
+  surface?: TrackOptions["surface"];
+};
 
 export type CreateReminderInput = {
   contactId?: string;
@@ -47,7 +81,16 @@ export async function assertReminderContactOwned(userId: string, contactId: stri
   if (!owned) throw new Error("Contact not found");
 }
 
-export async function createReminderForUser(userId: string, input: CreateReminderInput) {
+/**
+ * Every caller today is a person (the form, the ask bar, a chat card they accepted, an
+ * assistant acting for them), so this records `followup_set` unless told otherwise:
+ * `origin` defaults to "manual"; pass `null` to record nothing.
+ */
+export async function createReminderForUser(
+  userId: string,
+  input: CreateReminderInput,
+  tracking: ReminderWriteTracking = {}
+) {
   const db = await getDb();
   // Moved in from the MCP tool's own ad hoc version of it: a caller that reaches this
   // function some other way — the proposed-action commit in `chat-actions.ts`, today — must
@@ -88,6 +131,9 @@ export async function createReminderForUser(userId: string, input: CreateReminde
     })
     .returning();
 
+  if (row && tracking.origin !== null) {
+    trackFollowUpSet(userId, row, tracking.origin ?? "manual", { surface: tracking.surface });
+  }
   return row;
 }
 
@@ -101,7 +147,10 @@ export async function createReminderForUser(userId: string, input: CreateReminde
 export async function scheduleContactFollowUpForUser(
   userId: string,
   contactId: string,
-  days = 7
+  days = 7,
+  // Opt-in, unlike `createReminderForUser`: the Radar autopilot reaches this too, and a
+  // follow-up Orbit booked for itself is not the person setting one.
+  tracking: ReminderWriteTracking = {}
 ) {
   const db = await getDb();
   // The inbox lookup (which lazily creates the Inbox, before any not-found check — as it
@@ -183,6 +232,9 @@ export async function scheduleContactFollowUpForUser(
     })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
+  if (row && tracking.origin) {
+    trackFollowUpSet(userId, row, tracking.origin, { surface: tracking.surface });
+  }
   return { reminder: row, dueDate: due.toISOString(), days };
 }
 
@@ -201,7 +253,10 @@ export type ClearFollowUpSnapshot = {
  */
 export async function clearContactFollowUpForUser(
   userId: string,
-  contactId: string
+  contactId: string,
+  // Which control closed the reminders, for `followup_completed`. The email drain and the
+  // "I sent it" flows are a touch; the contact page's own Clear button passes "list".
+  via: (typeof FOLLOWUP_VIA)[number] = "touch"
 ): Promise<{ remindersClosed: number; snapshot: ClearFollowUpSnapshot }> {
   const db = await getDb();
   const before = await db.query.contacts.findFirst({
@@ -217,7 +272,7 @@ export async function clearContactFollowUpForUser(
   });
   const completions: CompletionSnapshot[] = [];
   for (const r of open) {
-    const snap = await completeReminder(userId, r.id);
+    const snap = await completeReminder(userId, r.id, { via });
     if (snap) completions.push(snap);
   }
   revalidateReminderPaths(contactId);

@@ -62,7 +62,10 @@ export function ContactProfileOverview({
     : "Never";
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    // `grid-cols-1` (a minmax(0, 1fr) track, not an auto one) and `wrap-anywhere`: the AI
+    // summary and the facts quote names and URLs verbatim, and one long unbroken word in an
+    // auto track pushed every card past a phone's edge.
+    <div className="grid grid-cols-1 gap-4 wrap-anywhere lg:grid-cols-2">
       <Card className="border-border/70 shadow-none lg:col-span-2">
         <CardHeader className="border-b border-border/50">
           <CardTitle as="h2">Who they are</CardTitle>
@@ -146,7 +149,7 @@ export function ContactProfileOverview({
         </Card>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-2">
         <Card className="border-border/70 shadow-none">
           <CardHeader>
             <CardTitle as="h2">Closeness</CardTitle>
