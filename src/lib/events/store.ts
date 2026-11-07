@@ -38,6 +38,7 @@ export type EventListRow = Pick<
   | "title"
   | "startsAt"
   | "endsAt"
+  | "timezone"
   | "venue"
   | "city"
   | "url"
@@ -117,7 +118,7 @@ export async function listEventsForUser(
       ? sql`e.starts_at ASC NULLS LAST, e.id ASC`
       : sql`e.starts_at DESC NULLS LAST, e.id DESC`;
   const rows = await db.execute(sql`
-    SELECT e.id, e.title, e.starts_at, e.ends_at, e.venue, e.city, e.url, e.role, e.source,
+    SELECT e.id, e.title, e.starts_at, e.ends_at, e.timezone, e.venue, e.city, e.url, e.role, e.source,
            e.cover_image_url, e.theme_color, e.discovered_via, e.rsvp_status,
            COALESCE(a.total, 0)     AS attendee_count,
            COALESCE(a.connected, 0) AS connected_count
@@ -141,6 +142,7 @@ export async function listEventsForUser(
     title: string;
     starts_at: string | Date | null;
     ends_at: string | Date | null;
+    timezone: string | null;
     venue: string | null;
     city: string | null;
     url: string | null;
@@ -160,6 +162,7 @@ export async function listEventsForUser(
     title: r.title,
     startsAt: r.starts_at ? new Date(r.starts_at) : null,
     endsAt: r.ends_at ? new Date(r.ends_at) : null,
+    timezone: r.timezone,
     venue: r.venue,
     city: r.city,
     url: r.url,
