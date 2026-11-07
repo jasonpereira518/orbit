@@ -4,7 +4,6 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { getPeopleToMeet, saveResearchedPerson } from "@/actions/web-research";
-import { useViewerPlan } from "@/components/viewer-plan";
 import { SuggestionRow } from "@/components/dashboard/suggestion-row";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,38 +33,34 @@ export type SuggestedOutreachItem = {
 
 /** Loads after paint (a weekly web search can be slow) and renders nothing until there are rows. */
 function PeopleToMeet() {
-  const [people, setPeople] = useState<PersonToMeet[]>([]);
+  const [result, setResult] = useState<{ people: PersonToMeet[]; canResearch: boolean } | null>(null);
   useEffect(() => {
     let live = true;
     getPeopleToMeet()
-      .then((r) => live && setPeople(r))
+      .then((r) => live && setResult(r))
       .catch(() => {}); // a failed load is the same as nothing to show
     return () => {
       live = false;
     };
   }, []);
-  if (!people.length) return null;
+  if (!result?.people.length) return null;
   return (
     <section aria-labelledby="people-to-meet" className="space-y-2 pt-2">
       <h3 id="people-to-meet" className="text-sm font-medium text-ink">People to meet</h3>
       <div className={LIST_CLASS}>
-        {people.map((p) => (
-          <PersonToMeetRow key={p.url} person={p} />
+        {result.people.map((p) => (
+          <PersonToMeetRow key={p.url} person={p} canResearch={result.canResearch} />
         ))}
       </div>
     </section>
   );
 }
 
-function PersonToMeetRow({ person }: { person: PersonToMeet }) {
+function PersonToMeetRow({ person, canResearch }: { person: PersonToMeet; canResearch: boolean }) {
   const [briefKey, setBriefKey] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  // Find people is a paid feature: Free sees the row and the link, but /api/research and
-  // saveResearchedPerson would refuse it, so no buttons.
-  const { plan, planConfig } = useViewerPlan();
-  const canResearch = planConfig[plan].features.findPeople;
 
   // Save and Brief share one person brief (cached server-side), so Save never needs Brief first.
   const brief = async () => {
@@ -111,30 +106,30 @@ function PersonToMeetRow({ person }: { person: PersonToMeet }) {
       <p className="mt-1.5 text-sm text-ink/80">{person.whyMatches}</p>
       {summary && <p className="mt-1.5 text-xs text-muted-foreground">{summary}</p>}
       {canResearch && (
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {saved ? (
-          <Link href={`/contacts/${saved}`} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
-            Saved — open
-          </Link>
-        ) : (
-          <>
-            <Button type="button" size="sm" disabled={pending} onClick={save}>
-              Save
-            </Button>
-            {!summary && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() => run(async () => {})}
-              >
-                {pending ? "Reading…" : "Brief"}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {saved ? (
+            <Link href={`/contacts/${saved}`} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
+              Saved — open
+            </Link>
+          ) : (
+            <>
+              <Button type="button" size="sm" disabled={pending} onClick={save}>
+                Save
               </Button>
-            )}
-          </>
-        )}
-      </div>
+              {!summary && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pending}
+                  onClick={() => run(async () => {})}
+                >
+                  {pending ? "Reading…" : "Brief"}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   );

@@ -5,6 +5,7 @@ import { requireUserId } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
 import { loadPeopleToMeet, type PersonToMeet } from "@/lib/people-to-meet";
 import { requireUserForReleasedSurface } from "@/lib/plan-guards";
+import { isSurfaceLive } from "@/lib/surface-visibility";
 import { saveResearchedPersonForUser } from "@/lib/web-research";
 
 /** "Save to Orbit" on a /find brief. The work is `saveResearchedPersonForUser`. */
@@ -23,6 +24,10 @@ export async function saveResearchedPerson(key: string) {
  * weekly web search can take 20s. `[]` whenever the card should stay empty — the gates live
  * in `loadPeopleToMeet`, not here, because this card is free on every plan.
  */
-export async function getPeopleToMeet(): Promise<PersonToMeet[]> {
-  return loadPeopleToMeet(await requireUserId());
+export async function getPeopleToMeet(): Promise<{ people: PersonToMeet[]; canResearch: boolean }> {
+  const userId = await requireUserId();
+  const people = await loadPeopleToMeet(userId);
+  // Save/Brief go through /find's gate (plan feature, tier rules, admin/demo exemption), which the
+  // card itself does not enforce: let the server say whether those buttons would be accepted.
+  return { people, canResearch: people.length > 0 && (await isSurfaceLive(userId, "page.find")) };
 }
