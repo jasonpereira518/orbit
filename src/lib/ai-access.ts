@@ -379,14 +379,34 @@ function keyFor(grant: AiGrant<AiProvider>, provider: AiProvider): string {
 export async function geminiClient(grant: AiGrant<AiProvider>): Promise<GoogleGenAI> {
   const apiKey = keyFor(grant, "gemini");
   const { GoogleGenAI } = await import("@google/genai");
+  const client = new GoogleGenAI({ apiKey });
   // The OpenAI and Anthropic SDKs retry a transient failure twice on their own; this one does
-  // not retry at all unless told to, and Gemini is the default provider. Same budget here:
-  // one try plus two retries on 408/429/5xx, short delays (the call's own deadline still ends
-  // it). Embeddings opt out per request, having a backoff of their own.
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: { retryOptions: { attempts: 3, initialDelay: 0.5, maxDelay: 4 } },
-  });
+  // not retry unless told to, and Gemini is the default provider. Its own `retryOptions` throws a
+  // bare "Retryable HTTP Error" once the attempts run out (no status, so a rate limit would read
+  // as an unknown failure), so the retry lives here instead: one try plus two retries on
+  // 408/429/5xx with a short backoff, and the SDK's error reaches the caller untouched.
+  // Only generation retries; embeddings have a backoff of their own.
+  const generate = client.models.generateContent.bind(client.models);
+  client.models.generateContent = (params) => retryTransientGemini(() => generate(params), params.config?.abortSignal);
+  return client;
+}
+
+const GEMINI_RETRY_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const GEMINI_RETRY_ATTEMPTS = 3;
+const GEMINI_RETRY_BASE_MS = 500;
+
+async function retryTransientGemini<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      const status = (err as { status?: unknown } | null)?.status;
+      if (attempt >= GEMINI_RETRY_ATTEMPTS || typeof status !== "number" || !GEMINI_RETRY_STATUSES.has(status)) throw err;
+      if (signal?.aborted) throw err;
+      await new Promise((resolve) => setTimeout(resolve, GEMINI_RETRY_BASE_MS * 2 ** (attempt - 1)));
+      if (signal?.aborted) throw err;
+    }
+  }
 }
 
 export async function openaiClient(grant: AiGrant<AiProvider>): Promise<OpenAI> {
