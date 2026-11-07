@@ -5998,6 +5998,133 @@
             }
           },
           {
+            "name": "list_events",
+            "title": "List events",
+            "description": "The user's events (conferences, meetups, mixers) from Orbit's events page: upcoming, past or both, with how many are on each roster and how many of those are already contacts. Use an event's id with get_event_roster or who_to_talk_to.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "when": {
+                  "default": "all",
+                  "type": "string",
+                  "enum": [
+                    "upcoming",
+                    "past",
+                    "all"
+                  ]
+                },
+                "limit": {
+                  "default": 10,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_event_roster",
+            "title": "Who is at an event",
+            "description": "The roster of one event: each person's attendeeId, name, company, title, role, whether the user marked that they spoke to them, and their contact id when they are already a contact. Filter to the people the user spoke to, or to people already in their contacts.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "eventId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "spoke_to": {
+                  "description": "Only people the user did (true) or did not (false) speak to.",
+                  "type": "boolean"
+                },
+                "in_contacts": {
+                  "description": "Only people already in (true) or not in (false) the user's contacts.",
+                  "type": "boolean"
+                },
+                "limit": {
+                  "default": 50,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              },
+              "required": [
+                "eventId"
+              ]
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "who_to_talk_to",
+            "title": "Who to talk to at an event",
+            "description": "Orbit's ranking of the people on one event's roster worth meeting (upcoming) or following up with (past), with the reasons — the same list the event page shows.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "eventId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "limit": {
+                  "default": 5,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                }
+              },
+              "required": [
+                "eventId"
+              ]
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "events_with_contact",
+            "title": "Events shared with someone",
+            "description": "Every event a contact was on the roster of, newest first, and whether the user spoke to them there.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                }
+              },
+              "required": [
+                "contactId"
+              ]
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
             "name": "list_opportunities",
             "title": "Opportunities",
             "description": "Opportunities Orbit tracks on people — referrals, intros, roles, investments, asks — for one contact or across the network, open by default, with any due date.",
