@@ -1,5 +1,14 @@
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
-import { FREE_STARTER_CREDITS, PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import {
+  FREE_STARTER_CREDITS,
+  PLAN_CONFIG,
+  PLAN_LABELS,
+  PLAN_RANK,
+  PURCHASABLE_PLANS,
+  type Plan,
+  type PurchasablePlan,
+  type PlanConfig,
+} from "@/lib/plans/plan-config";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 
 /**
@@ -123,8 +132,15 @@ export const AI_HINT_COPY: Record<AiAccessDenial, string> = {
   managed_unavailable: "Orbit’s AI is unavailable right now — add your own API key in Settings for summaries",
 };
 
-/** The plan to offer instead, for the plans that have one above them (Lifetime and Max do not). */
-const NEXT_PLAN: Partial<Record<Plan, string>> = { free: "Orbit Pro", orbit: "Orbit Max" };
+/**
+ * The plan to offer instead of `plan` when its credits run out: the cheapest plan on sale above
+ * it that includes more AI under `config` (the effective plan table). Free → Orbit Pro and
+ * Pro → Orbit Max by default; Max and Lifetime have none.
+ */
+export function nextPlanFor(plan: Plan, config: Record<Plan, PlanConfig> = PLAN_CONFIG): PurchasablePlan | null {
+  const credits = (p: Plan) => (config[p].features.hostedAi ? config[p].monthlyCredits ?? 0 : 0);
+  return PURCHASABLE_PLANS.find((p) => PLAN_RANK[p] > PLAN_RANK[plan] && credits(p) > credits(plan)) ?? null;
+}
 
 /** The one-line refusal for this reason on this plan: out of credits is worded for what the plan can do. */
 export function refusalCopyFor(reason: AiAccessDenial | null, plan: Plan): string {
@@ -133,8 +149,12 @@ export function refusalCopyFor(reason: AiAccessDenial | null, plan: Plan): strin
 }
 
 /** The field hint for this reason on this plan, same rule. */
-export function hintCopyFor(reason: AiAccessDenial | null, plan: Plan): string {
-  if (reason === "managed_limit" && PLAN_CONFIG[plan].features.creditPacks) {
+export function hintCopyFor(
+  reason: AiAccessDenial | null,
+  plan: Plan,
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): string {
+  if (reason === "managed_limit" && config[plan].features.creditPacks) {
     return `${plan === "free" ? "This month’s" : "Your"} AI credits are used — add a pack or your own API key in Settings for summaries`;
   }
   return AI_HINT_COPY[reason ?? "key_required"];
@@ -156,13 +176,19 @@ export type NoticeCopy = { title: (verb: string) => string; body: string; offer:
  * pack offers one (and the plan above, where there is one); Free at zero also gets the refill
  * date. A plan with no packs (Lifetime) falls through to `AI_NOTICE_COPY`: key only.
  */
-export function noticeCopyFor(reason: AiAccessDenial | null, plan: Plan, resetsAt: string | null): NoticeCopy {
-  if (reason === "managed_limit" && PLAN_CONFIG[plan].features.creditPacks) {
+export function noticeCopyFor(
+  reason: AiAccessDenial | null,
+  plan: Plan,
+  resetsAt: string | null,
+  /** The effective plan table (`useViewerPlan().planConfig`); the code default otherwise. */
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): NoticeCopy {
+  if (reason === "managed_limit" && config[plan].features.creditPacks) {
     const free = plan === "free";
-    const next = NEXT_PLAN[plan];
+    const next = nextPlanFor(plan, config);
     return {
       title: () => (free ? "You’ve used this month’s AI credits" : "You’ve used your AI credits"),
-      body: `${free ? `They refill on ${resetsAt ? formatAllowanceReset(resetsAt) : "the 1st"}` : "AI is paused until your allowance resets"} — nothing is charged automatically. To keep going now, add a pack of ${CREDIT_PACK_CREDITS} credits${next ? ` or move to ${next}` : ""}.`,
+      body: `${free ? `They refill on ${resetsAt ? formatAllowanceReset(resetsAt) : "the 1st"}` : "AI is paused until your allowance resets"} — nothing is charged automatically. To keep going now, add a pack of ${CREDIT_PACK_CREDITS} credits${next ? ` or move to ${PLAN_LABELS[next]}` : ""}.`,
       offer: "credits",
       linkToKeys: true,
     };
@@ -174,10 +200,15 @@ export function noticeCopyFor(reason: AiAccessDenial | null, plan: Plan, resetsA
  * A refusal as one line, for places with no room for a notice (a failed background job).
  * Free out of credits gets the notice's refill date; anything else is the message as is.
  */
-export function refusalWithRefill(message: string, plan: Plan, resetsAt: string | null): string {
+export function refusalWithRefill(
+  message: string,
+  plan: Plan,
+  resetsAt: string | null,
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): string {
   const reason = aiDenialFromMessage(message);
   if (reason !== "managed_limit" || plan !== "free") return message;
-  const copy = noticeCopyFor(reason, plan, resetsAt);
+  const copy = noticeCopyFor(reason, plan, resetsAt, config);
   return `${copy.title("")}. ${copy.body.replace(/\.$/, "")}, or use your own API key in Settings`;
 }
 
@@ -189,4 +220,7 @@ export function allowancePercentUsed(allowance: { granted: number; remaining: nu
 }
 
 /** Settings → AI provider, top line, Free only. */
-export const FREE_AI_EXPLAINER = `Free includes ${PLAN_CONFIG.free.monthlyCredits} AI credits a month and ${FREE_STARTER_CREDITS} to start. Add your own key to use AI with no limit`;
+export function freeAiExplainer(config: Record<Plan, PlanConfig> = PLAN_CONFIG): string {
+  return `Free includes ${config.free.monthlyCredits ?? 0} AI credits a month and ${FREE_STARTER_CREDITS} to start. Add your own key to use AI with no limit`;
+}
+export const FREE_AI_EXPLAINER = freeAiExplainer();

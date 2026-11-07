@@ -16,6 +16,7 @@ import {
   type SceneBody,
 } from "@/lib/imports/finish-scene-geometry";
 import { initialsFromName } from "@/lib/initials";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /** The planet at the centre: the app's own asset, 192px so a 46px draw is sharp at 2×. */
 const PLANET_SRC = "/imports/earth.webp";
@@ -101,7 +102,7 @@ export function ImportFinishScene({
     }
 
     let disposed = false;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = prefersReducedMotion();
     const font = getComputedStyle(canvas).fontFamily || "system-ui, sans-serif";
 
     let scene: Scene | null = null;

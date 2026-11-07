@@ -11,7 +11,8 @@
  */
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform, type PanInfo } from "motion/react";
+import { AnimatePresence, motion, useDragControls, useMotionValue, useTransform, type PanInfo } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import { ArrowLeft, Check, Clock, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DecisionStamp } from "@/components/capture/review/decision-stamp";
@@ -59,6 +60,9 @@ export function draftFromItem(item: BulkNotePersonPreview, decision: CaptureDeci
       website: edits.website ?? item.parsed.website ?? "",
       school: edits.school ?? item.parsed.school ?? "",
       industry: edits.industry ?? item.parsed.industry ?? "",
+      email: edits.email ?? item.parsed.email ?? "",
+      linkedinUrl: edits.linkedinUrl ?? item.parsed.linkedin_url ?? "",
+      location: edits.location ?? item.parsed.location ?? "",
     },
     mergeContactId: decision ? decision.mergeContactId : defaultMergeId(item, preferredContactId),
     closeness: clampCloseness(decision?.relationshipScore ?? item.parsed.relationship_score_suggestion),
@@ -93,6 +97,9 @@ export function decisionFromDraft(kind: CaptureDecisionKind, index: number, draf
       website: draft.fields.website.trim() || null,
       school: draft.fields.school.trim() || null,
       industry: draft.fields.industry.trim() || null,
+      email: draft.fields.email.trim() || null,
+      linkedinUrl: draft.fields.linkedinUrl.trim() || null,
+      location: draft.fields.location.trim() || null,
     },
     decidedAt: new Date().toISOString(),
   };
@@ -143,7 +150,7 @@ export function PersonDeck({
 }) {
   const people = peopleDecisions(decisions);
   const [drafts, setDrafts] = useState<Record<string, PersonDraft>>({});
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useReducedMotionPreference() ?? false;
   const [custom, setCustom] = useState<Custom>({ dir: 1, leaving: "back", reduced });
   /** The card whose stamp is forced on for its fly-out — only that card, never the next. */
   const [leaving, setLeaving] = useState<Leaving>(null);

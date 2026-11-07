@@ -23,7 +23,7 @@
  * grant is admin-assigned, and gets the silver version).
  */
 
-import { PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_LABELS, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 import { planCopy } from "@/lib/plan-copy";
 
 export type PaidPlan = Extract<Plan, "orbit" | "max" | "lifetime">;
@@ -200,8 +200,9 @@ const THEMES: Record<PaidPlan, TierTheme> = {
   },
 };
 
-export function tierTheme(plan: PaidPlan): TierTheme {
-  return THEMES[plan];
+/** `plan`'s theme; `config` (the effective plan table, `useViewerPlan().planConfig`) picks the perks. */
+export function tierTheme(plan: PaidPlan, config?: Record<Plan, PlanConfig>): TierTheme {
+  return config ? { ...THEMES[plan], perks: planCopy(plan, config).features.slice(0, MAX_PERKS) } : THEMES[plan];
 }
 
 export function isPaidPlan(plan: Plan): plan is PaidPlan {

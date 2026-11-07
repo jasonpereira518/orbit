@@ -18,7 +18,7 @@ test("the guided tour walks the real pages with example people, then removes the
   // and the constellation is the heaviest, so a first compile mid-tour would read as a
   // navigation that never happened.
   await ensureOnboarded(page);
-  for (const route of ["/graph", "/imports", "/reminders", "/chat", "/capture", "/contacts"]) {
+  for (const route of ["/graph", "/reminders", "/chat", "/capture", "/contacts"]) {
     await page.goto(route);
     await expect(page).toHaveURL(new RegExp(`${route}$`), { timeout: 120_000 });
   }
@@ -90,7 +90,8 @@ test("the guided tour walks the real pages with example people, then removes the
   await rail.getByRole("button", { name: "Skip this" }).click();
 
   // Stop 10: imports, then the finish card.
-  await expect(page).toHaveURL(/\/imports$/, { timeout: 60_000 });
+  // Imports is a tab on Capture now; /imports only redirects there.
+  await expect(page).toHaveURL(/\/capture\?mode=imports$/, { timeout: 60_000 });
   // No export requested: the stop explains the export instead of waiting for it.
   await expect(rail).toContainText("Bring in everyone you know", { timeout: 15_000 });
   await rail.getByRole("button", { name: "Next" }).click();

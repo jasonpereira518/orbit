@@ -1,5 +1,6 @@
 "use client";
 
+import { useViewerPlan } from "@/components/viewer-plan";
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import {
@@ -36,7 +37,6 @@ import { WritingInstructionsField } from "@/components/chat/writing-instructions
 import { clearSendResume, peekSendResumeFor } from "@/lib/chat-send-resume";
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import {
-  askNetwork,
   createChatThread,
   deleteChatThread,
   getChatThread,
@@ -84,7 +84,7 @@ import { createThreadPrefetcher } from "@/lib/chat-thread-prefetch";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
-import { ProposedActionsCard } from "@/components/chat/proposed-actions";
+import { ProposedActionsList } from "@/components/chat/proposed-actions";
 import type { ChatPerson } from "@/components/chat/chat-markdown";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Button } from "@/components/ui/button";
@@ -120,11 +120,6 @@ import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { draftContactFollowUp } from "@/actions/contacts";
 import { useDictation } from "@/lib/use-dictation";
-
-type ChatResult = Extract<
-  Awaited<ReturnType<typeof askNetwork>>,
-  { ok: true }
->;
 
 export type ThreadSummary = {
   id: string;
@@ -281,6 +276,7 @@ export function ChatPanel({
    */
   initialThreads?: ChatThreadPage | null;
 } = {}) {
+  const { planConfig } = useViewerPlan();
   const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads?.threads ?? []);
   /**
    * Whether the history list has been read at least once. Until then an empty list means
@@ -763,6 +759,8 @@ export function ChatPanel({
             steps: row.activity ?? undefined,
             evidence: row.evidence ?? undefined,
             proposedActions: row.proposedActions ?? undefined,
+            // Stored since v196; older answers have none and show no chips.
+            followUps: row.followUps?.length ? row.followUps : undefined,
             feedback: row.feedback ?? null,
             // It came out of the database, so by definition there is a row to rate.
             persisted: true,
@@ -857,7 +855,7 @@ export function ChatPanel({
     if (gmail === "connected") {
       toast.success("Gmail connected — you can send now");
     } else if (gmail === "error") {
-      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"));
+      const oauth = describeOAuthReason(params.get("reason"), "Gmail", params.get("purpose"), planConfig);
       if (oauth.cancelled) toast.message(oauth.message);
       else toast.error(oauth.message);
     }
@@ -2155,17 +2153,28 @@ const AssistantBubble = memo(function AssistantBubble({
           </p>
         )}
         {gridRecs.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{gridRecs.map(renderCard)}</div>}
-        {/* Only once persisted: committing needs a real row to address. */}
-        {msg.persisted && (msg.proposedActions?.length ?? 0) > 0 && (
-          <div className="flex flex-col gap-2">
-            {msg.proposedActions!.map((action) => (
-              <ProposedActionsCard
-                key={action.id}
-                messageId={msg.id}
-                action={action}
-                contactName={"contactId" in action.args && action.args.contactId ? nameById.get(action.args.contactId) : null}
-                onSettled={(next) => onActionSettled?.(msg.id, action.id, next)}
-              />
+        {/* As soon as they stream, beside the answer that proposed them; their controls wait
+            for the saved row, since committing needs its real id. */}
+        {(msg.proposedActions?.length ?? 0) > 0 && (
+          <ProposedActionsList
+            messageId={msg.id}
+            actions={msg.proposedActions!}
+            nameById={nameById}
+            pending={!msg.persisted}
+            onSettled={(actionId, next) => onActionSettled?.(msg.id, actionId, next)}
+          />
+        )}
+        {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {msg.followUps?.map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => onFollowUp?.(q)}
+                className="rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                {q}
+              </button>
             ))}
           </div>
         )}
@@ -2180,20 +2189,6 @@ const AssistantBubble = memo(function AssistantBubble({
               retryLabel={retryLabel}
             />
             {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}
-          </div>
-        )}
-        {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {msg.followUps?.map((q) => (
-              <button
-                key={q}
-                type="button"
-                onClick={() => onFollowUp?.(q)}
-                className="rounded-full border border-border/70 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                {q}
-              </button>
-            ))}
           </div>
         )}
       </div>
@@ -2250,7 +2245,7 @@ const RecommendationCard = memo(function RecommendationCard({
   messageId,
   sentAt,
 }: {
-  rec: ChatResult["recommendations"][number];
+  rec: ChatRecommendation;
   /** The question the answer was for — what a draft written on demand is about. */
   question?: string;
   /** Role and company from retrieval — absent on a reloaded thread, which is fine. */

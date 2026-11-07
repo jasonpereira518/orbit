@@ -22,9 +22,11 @@
  * Scripts run SEQUENTIALLY: PGlite is single-writer, and the pglite tier shares one
  * throwaway directory per run so the DDL bootstraps once, not fifty times.
  *
- * `--shard i/n` runs every n-th script (1-based i) so CI can split the suite across
+ * `--shard i/n` runs one share of the suite (1-based i) so CI can split it across
  * machines. Each shard is its own process with its own PGlite directory, so the
  * single-writer rule still holds, and the shards together cover every script exactly once.
+ * The shares are balanced by how long each script took last time (scripts/smoke-timings.json,
+ * see `shardOf`): a plain every-n-th split left the slowest shard ~70% over the fastest.
  * `--list` prints the selection and exits, for checking a partition without running it.
  *
  * Run: npx tsx scripts/run-smoke.ts [--ci | --bugs] [--check] [--shard i/n] [--list] [--only <name>...]
@@ -43,9 +45,19 @@ const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-test-harness": "pure", // the fixtures, fetch mock and known-bug exit codes themselves
   "smoke-friendly-error": "pure",
+  "smoke-scroll-restore": "pure",
+  "smoke-plain-text": "pure",
+  "smoke-markdown-shortcuts": "pure",
+  "smoke-meeting-row-details": "pure",
   "smoke-ai-notice-copy": "pure",
   "smoke-interaction-edit": "pure",
   "smoke-inbox-search": "pure",
+  "smoke-contact-name-guess": "pure",
+  "smoke-granola": "pure",
+  "smoke-granola-activity": "pglite",
+  "smoke-granola-pick": "pglite",
+  "smoke-contact-name-sweep": "pglite",
+  "smoke-non-person-participant": "pglite",
   "smoke-onboarding-steps": "pure",
   "smoke-onboarding-examples-cast": "pure",
   "smoke-onboarding-gate": "pure",
@@ -69,6 +81,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-openrouter-oauth": "pure",
   "smoke-report-error": "pure",
   "smoke-toast-actions": "pure",
+  "smoke-corner-clearance": "pure",
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
   "smoke-a11y-patterns": "pure",
@@ -123,7 +136,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-route-progress": "pure",
   "smoke-settings-export": "pure",
   "smoke-chat-evidence": "pure",
-  "smoke-chat-proposed-actions": "pure",
+  "smoke-chat-abstention": "pure",
   "smoke-chat-pipeline": "pure",
   "smoke-chat-prompt": "pure",
   "smoke-chat-retrieval": "pure",
@@ -138,6 +151,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-commands": "pure",
   "smoke-chat-refine": "pure",
   "smoke-cross-tenant-refs": "pglite",
+  "smoke-contact-tags-ownership": "pglite",
   "smoke-tenant-isolation": "pglite", // every id-taking tool and the v1 API, called with another account's ids
   "smoke-extension-auth": "pglite",
   "smoke-resend-signature": "pglite",
@@ -195,6 +209,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-event-gmail-scan": "pure",
   "smoke-event-relevance": "pure",
   "smoke-radar-score": "pure",
+  "smoke-radar-email-score": "pure",
   "smoke-event-parse": "pure",
   "smoke-event-resync": "pure",
   "smoke-event-theme": "pure",
@@ -209,6 +224,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-profile-format": "pure",
   "smoke-contacts-file": "pure",
   "smoke-disconnect-categories": "pure",
+  "smoke-provider-themes": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
   "smoke-deepgram-params": "pure",
@@ -239,6 +255,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-email-no-resend": "pure",
   "smoke-compose-draft": "pure",
   "smoke-graph-canvas": "pure",
+  "smoke-constellation-modules": "pure",
   "smoke-hash-stream": "pure",
   "smoke-sky-layout": "pure",
   "smoke-graph-family-seating": "pure",
@@ -291,6 +308,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-note-window": "pure",
   "smoke-memory-chunks": "pure",
   "smoke-tool-loop": "pure",
+  "smoke-tool-stream-driver": "pure",
   "smoke-ops-alerts": "pure",
   "smoke-outreach-sender": "pure",
   "smoke-parsers": "pure",
@@ -298,6 +316,14 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-recruiter-query": "pure",
   "smoke-recruiter-scan": "pure",
   "smoke-recruiter-triage": "pure",
+  "smoke-email-intel-consent": "pure",
+  "smoke-email-intel-messages": "pure",
+  "smoke-email-intel-extract": "pure",
+  "smoke-email-intel-relevance": "pure",
+  "smoke-email-intel-inbox-pick": "pure",
+  "smoke-email-intel-inbox-ui": "pure",
+  "smoke-email-intel-search-chunk": "pure",
+  "smoke-email-intel-triage": "pure",
   "smoke-relationship-health": "pure",
   "smoke-relative-date": "pure",
   "smoke-reveal-reduced-motion": "pure",
@@ -345,6 +371,12 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ai-result-cache": "pglite",
   "smoke-ai-shared-prefix": "pglite",
   "smoke-ai-batch": "pglite",
+  "smoke-ai-finish": "pglite",
+  "smoke-embedding-space": "pglite",
+  "smoke-outreach-batch": "pglite",
+  "smoke-capture-detail-match": "pglite",
+  "smoke-ai-structured": "pglite",
+  "smoke-tool-driver-cache": "pglite",
   "smoke-recruiter-scan-batch": "pglite",
   "smoke-api-keys": "pglite",
   "smoke-api-routes": "pglite",
@@ -353,6 +385,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-apple-actions": "pglite",
   "smoke-server-graph": "pure",
   "smoke-site-css-sources": "pure",
+  "smoke-admin-redirects": "pure",
   "smoke-action-items": "pglite",
   "smoke-admin": "pglite",
   "smoke-app-pulse": "pglite",
@@ -372,6 +405,11 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-lanes": "pglite",
   "smoke-chat-citations": "pglite",
   "smoke-chat-actions": "pglite",
+  "smoke-chat-legacy-proposals": "pglite",
+  "smoke-chat-writes": "pglite",
+  "smoke-chat-auto-apply": "pglite",
+  "smoke-calendar-write": "pglite",
+  "smoke-chat-writes-features": "pglite",
   "smoke-chat-persist": "pglite",
   "smoke-chat-photos": "pglite",
   "smoke-clear-api-key": "pglite",
@@ -411,6 +449,9 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-demo-signin-message": "pure",
   "smoke-demo-data": "pglite",
   "smoke-linkedin-reminder": "pglite",
+  "smoke-linkedin-settings": "pglite",
+  "smoke-google-settings": "pglite",
+  "smoke-microsoft-settings": "pglite",
   "smoke-credits-intro": "pglite",
   "smoke-onboarding-examples": "pglite",
   "smoke-demo-workspace": "pglite",
@@ -429,6 +470,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-site-access": "pglite",
   "smoke-invite-ledger": "pglite",
   "smoke-attribution-chain": "pglite",
+  "smoke-metrics-rollup": "pglite", // metrics_daily: idempotent, agrees with direct counts
+  "smoke-tracking-events": "pglite", // v187: vitals, client event kind, last touch, Resend engagement, search sampling
   "smoke-account-kind": "pglite",
   "smoke-constellation-payload-leak": "pglite",
   "smoke-constellation-pin": "pglite",
@@ -436,7 +479,19 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-profile": "pglite",
   "smoke-work-history-research": "pglite",
   "smoke-web-research": "pglite",
+  "smoke-capture-review-quality": "pglite",
   "smoke-work-history-sweep": "pglite",
+  "smoke-email-intel-store": "pglite",
+  "smoke-email-intel-claims": "pglite",
+  "smoke-email-intel-extractor": "pglite",
+  "smoke-email-intel-route": "pglite",
+  "smoke-email-intel-resolve": "pglite",
+  "smoke-email-intel-rank": "pglite",
+  "smoke-email-intel-inbox-load": "pglite",
+  "smoke-email-intel-inbox-add": "pglite",
+  "smoke-email-intel-search-index": "pglite",
+  "smoke-email-intel-search-chat": "pglite",
+  "smoke-email-intel-sweep": "pglite",
   "smoke-contact-search-rank": "pglite",
   "smoke-contacts-search-paging": "pglite",
   "smoke-contacts-page": "pglite", // own in-memory PGlite, but imports the DDL from ../src/db
@@ -463,6 +518,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-import-row-staging": "pglite",
   "smoke-linkedin-connections-chunked": "pglite",
   "smoke-touch-counts": "pglite",
+  "smoke-met-contact": "pglite",
   "smoke-capture-upload-parts": "pglite",
   "smoke-import-people": "pglite",
   "smoke-drive-import": "pglite",
@@ -519,6 +575,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-lookup-tools": "pglite",
   "smoke-calendar-events": "pglite",
   "smoke-chat-calendar": "pglite",
+  "smoke-chat-prefetch": "pglite",
   "smoke-calendar-reminders": "pglite",
   "smoke-meeting-calendar-context": "pglite",
   "smoke-meeting-prep": "pglite",
@@ -527,7 +584,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-tool-registry": "pglite",
   "smoke-memory-search": "pglite",
   "smoke-memory-embedding": "pglite",
-  "smoke-chat-gather": "pglite",
+  "smoke-chat-agent-loop": "pglite",
+  "smoke-chat-feature-tools": "pglite",
   "smoke-chat-answer-deadline": "pglite",
   "smoke-eval-research-task": "pglite",
   "smoke-agent-sends": "pglite",
@@ -541,6 +599,10 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-job-feed-fetch": "pure",
   "smoke-job-feed-sweep": "pglite",
   "smoke-radar-run": "pglite",
+  "smoke-radar-email-signals": "pglite",
+  "smoke-radar-email-run": "pglite",
+  "smoke-radar-email-accept": "pglite",
+  "smoke-radar-email-text": "pglite",
   "smoke-radar-metrics": "pglite",
   "smoke-radar-feeds": "pglite",
   "smoke-radar-digest": "pglite",
@@ -635,6 +697,8 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-checkout-confirm": "pglite",
   "smoke-stripe-dedupe": "pglite",
   "smoke-surface-visibility": "pglite",
+  "smoke-plan-copy": "pglite", // plan copy, comparison, denials and credit emails follow the effective plan table
+  "smoke-plan-rules": "pglite", // runtime plan rules: row format, effective config, widen/narrow, limits, page lock
   "smoke-sync-concurrency": "pglite",
   "smoke-sync-scheduler": "pglite",
   "smoke-google-contacts-sync": "pglite",
@@ -707,6 +771,37 @@ function check(): string[] {
   return problems;
 }
 
+/**
+ * Seconds each script took on a CI runner, from one whole-suite run's summary table. Only the
+ * shard split reads it, so a stale or missing entry costs balance, never coverage. Refresh it
+ * when the split drifts: run the suite in CI and copy each `ok  smoke-x  12.3s` row.
+ */
+const TIMINGS: Record<string, number> = existsSync(join("scripts", "smoke-timings.json"))
+  ? JSON.parse(readFileSync(join("scripts", "smoke-timings.json"), "utf8"))
+  : {};
+const UNTIMED_SECONDS = 1; // a new script, until the table is refreshed
+
+/**
+ * This shard's scripts, in manifest order. Longest script first, each onto the shard with the
+ * least time so far (the classic greedy split), so the slowest shard ends within one script of
+ * the average. Every shard runs this on the same inputs and so agrees on the whole partition,
+ * which is what makes the shards cover each script exactly once. With no timings at all every
+ * script weighs the same and it falls back to an even count.
+ */
+function shardOf(names: string[], total: number, index: number): string[] {
+  const load = Array<number>(total).fill(0);
+  const mine = new Set<string>();
+  const byWeight = names
+    .map((name, i) => ({ name, i, seconds: TIMINGS[name] ?? UNTIMED_SECONDS }))
+    .sort((a, b) => b.seconds - a.seconds || a.i - b.i);
+  for (const { name, seconds } of byWeight) {
+    const lightest = load.indexOf(Math.min(...load));
+    load[lightest] += seconds;
+    if (lightest === index - 1) mine.add(name);
+  }
+  return names.filter((name) => mine.has(name));
+}
+
 function main() {
   const args = process.argv.slice(2);
   const ci = args.includes("--ci");
@@ -737,14 +832,12 @@ function main() {
   console.log(`run-smoke: manifest covers ${Object.keys(MANIFEST).length} scripts; structure ok.`);
   if (checkOnly) process.exit(0);
 
-  const selected = Object.entries(MANIFEST)
+  const everyScript = Object.entries(MANIFEST)
     .filter(([name, tier]) =>
       only ? only.includes(name) : bugs ? tier === "bug" : ci ? tier !== "manual" && tier !== "bug" : tier !== "bug"
     )
-    .map(([name]) => name)
-    // Round-robin over manifest order, so the few long scripts (see TIMEOUT_MS) land in
-    // different shards rather than one shard inheriting a whole block of them.
-    .filter((_, i) => !shard || i % shard.total === shard.index - 1);
+    .map(([name]) => name);
+  const selected = shard ? shardOf(everyScript, shard.total, shard.index) : everyScript;
   if (shard) console.log(`run-smoke: shard ${shard.index}/${shard.total} — ${selected.length} scripts.`);
   if (listOnly) {
     console.log(selected.join("\n"));

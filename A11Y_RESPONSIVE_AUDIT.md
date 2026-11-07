@@ -666,12 +666,12 @@ All of it went through the shared layer first: the primitives, the theme tokens 
 
 **Also fixed:** constellation edge labels are 10px in rem (were 8px) at 0.6 white (were 0.32, about 3:1).
 
-**Out of scope, not done in this PR (as agreed in the plan):**
-- Tab trapping and `inert` for the full-screen celebration and credits overlays (S-14).
-- Listbox semantics for reminder rows.
-- An in-app "Reduce motion" setting.
+**Out of scope in the first PR, done in a follow-up:**
+- **Full-screen celebration and credits-intro overlays (S-14):** `useModalTakeover` (`src/lib/use-modal-takeover.ts`) makes everything outside the overlay `inert` while it is up and keeps Tab and Shift+Tab inside it; focus still returns to where it was when it closes.
+- **Reminder rows:** each due-date group is a labelled one-column `grid` with `aria-multiselectable`; rows are `row` with `aria-selected` and one `gridcell`. Not a listbox, because listbox options may not contain the row's own menu buttons.
+- **In-app "Reduce motion" setting (S-13):** Settings → Appearance → Motion, "Match system" or "Reduce", saved per device and applied before first paint as `html[data-motion="reduce"]`. It drives the global CSS animation clamp, Tailwind's `motion-reduce:`/`motion-safe:` variants, `usePrefersReducedMotion`, every direct reduced-motion check, and motion/react's `MotionConfig` (`reducedMotion="always"`). The system setting still applies on its own when this is off.
 
-**Found after the audit, still open:** on the landing page, "How it works" steps the dot hasn't reached are dimmed or invisible while on screen, and the fixed "Join the waitlist" pill covers text at the bottom on phones.
+**Found after the audit, fixed in a follow-up:** on the landing page, "How it works" steps the dot hadn't reached sat on screen dimmed or invisible; the step text is now always fully opaque and only the dot and a small slide follow the scroll. On phones the fixed "Join the waitlist" pill and social icons covered body text; they now sit on a bottom fade, the page ends a fade's height lower, and `scroll-padding-bottom` keeps a focused link above them.
 
 ---
 

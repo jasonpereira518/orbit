@@ -58,6 +58,50 @@ export async function getChatFeedbackSummary(): Promise<ChatFeedbackSummary> {
   return { up: row?.up ?? 0, down: row?.down ?? 0, last7Days: row?.last7Days ?? 0 };
 }
 
+const OUTCOME_COLUMNS = [
+  "chat_messages.role",
+  "chat_messages.answer_outcome",
+  "chat_messages.created_at",
+] as const;
+
+/** Labelled assistant answers in the last 7 days, by outcome. */
+export type ChatOutcomeSummary = {
+  answered: number;
+  partial: number;
+  abstained: number;
+  /** answered + partial + abstained; answers stored before the label existed are not counted. */
+  labelled: number;
+};
+
+/**
+ * How often chat answered, in the last 7 days — see `labelAnswer` in `@/lib/chat-abstention`.
+ * Counts only: the label is computed from the answer when it is stored, so this never needs
+ * to read `content`, and the column list is checked like the ratings query above.
+ */
+export async function getChatOutcomeSummary(): Promise<ChatOutcomeSummary> {
+  assertRevealable(OUTCOME_COLUMNS as unknown as string[]);
+  const db = await getDb();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const [row] = await db
+    .select({
+      answered: sql<number>`count(*) filter (where ${chatMessages.answerOutcome} = 'answered')::int`,
+      partial: sql<number>`count(*) filter (where ${chatMessages.answerOutcome} = 'partial')::int`,
+      abstained: sql<number>`count(*) filter (where ${chatMessages.answerOutcome} = 'abstained')::int`,
+    })
+    .from(chatMessages)
+    .where(
+      and(
+        eq(chatMessages.role, "assistant"),
+        sql`${chatMessages.answerOutcome} is not null`,
+        sql`${chatMessages.createdAt} >= ${sevenDaysAgo}`
+      )
+    );
+  const answered = row?.answered ?? 0;
+  const partial = row?.partial ?? 0;
+  const abstained = row?.abstained ?? 0;
+  return { answered, partial, abstained, labelled: answered + partial + abstained };
+}
+
 /** One page of rated answers, newest first — ratings only, never the question or answer text. */
 export async function loadChatFeedbackList(options: {
   page: number;

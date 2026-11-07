@@ -22,6 +22,7 @@ export type SuggestedOutreachItem = {
   contactName: string;
   contactTitle?: string | null;
   contactCompany?: string | null;
+  contactAvatarUrl?: string | null;
   lastInteractionAt?: Date | string | null;
   tier?: "inner" | "mid" | "outer";
 };
@@ -98,6 +99,7 @@ export function SuggestedOutreachCard({
                   contactName={s.contactName}
                   contactTitle={s.contactTitle}
                   contactCompany={s.contactCompany}
+                  contactAvatarUrl={s.contactAvatarUrl}
                   lastInteractionAt={s.lastInteractionAt}
                   tier={s.tier}
                 />
@@ -132,7 +134,8 @@ export function SuggestedOutreachCard({
                           contactName={s.contactName}
                           contactTitle={s.contactTitle}
                           contactCompany={s.contactCompany}
-                  lastInteractionAt={s.lastInteractionAt}
+                          contactAvatarUrl={s.contactAvatarUrl}
+                          lastInteractionAt={s.lastInteractionAt}
                           tier={s.tier}
                         />
                       ))}

@@ -111,9 +111,26 @@ export const JOB_MOVE_CODE = "job_change";
 /** A departure with no new role yet: a check-in, never a congratulation. */
 export const JOB_LEFT_CODE = "job_change_left";
 
-/** What a draft is for, in the card's own words, so it is about the reason the card exists. */
+/** The intent a draft is written to, per email reason: fixed words, never third-party text. */
+export const EMAIL_DRAFT_INTENTS: Readonly<Record<string, string>> = {
+  email_prep: "an interview or call coming up",
+  email_followup: "a reply you owe them from your email",
+  email_job: "a role that came up at their company",
+  email_process: "a hiring process you are in at their company",
+  email_news: "news from their company",
+  email_event: "an event you were invited to",
+};
+
+/**
+ * What a draft is for, in the card's own words, so it is about the reason the card exists.
+ * The intent goes into the draft prompt unfenced, and a card built from mail carries a sentence
+ * a model wrote from someone else's email, so it gets a fixed phrase instead. Both the nightly
+ * drafts and the card's on-demand draft sheet call this, so one rule covers both.
+ */
 export function draftIntent(target: { kind: RecommendationKind; reasons: readonly RadarReason[] }): string {
   const lead = leadReason(target.reasons);
+  const fixed = lead ? EMAIL_DRAFT_INTENTS[lead.code] : undefined;
+  if (fixed) return `${KIND_LABELS[target.kind]}: ${fixed}`;
   if (lead?.code === JOB_MOVE_CODE) return `Congratulate them on the new role: ${lead.label}. Warm and short; no ask.`;
   if (lead?.code === JOB_LEFT_CODE) return `Check in after their move: ${lead.label}. Don't congratulate them.`;
   return lead ? `${KIND_LABELS[target.kind]}: ${lead.label}` : KIND_LABELS[target.kind];
@@ -124,7 +141,17 @@ export function draftIntent(target: { kind: RecommendationKind; reasons: readonl
  * `url` only for a public source (a headline), already through `safeHttpUrl`, and rendered
  * through it again.
  */
-export type RadarEvidence = { label: string; at: string | null; url?: string | null };
+export type RadarEvidence = {
+  label: string;
+  at: string | null;
+  url?: string | null;
+  /**
+   * Set on evidence that comes from the user's mail: which `email_events` row, and whether
+   * this person is on the email. Accepting the card reads it to create the email's own task.
+   * Never text from the mail itself.
+   */
+  ref?: { emailEventId: string; onThread: boolean } | null;
+};
 
 /** The optional AI line, cached against the inputs it was written from. */
 export type RadarAiNote = { why: string; opener: string; inputsHash: string; generatedAt: string };
@@ -235,6 +262,30 @@ export type RadarSignal =
       url: string | null;
     }
   /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */
-  | { kind: "job_change"; contactId: string; at: Date; move: "joined" | "left" | "title_change"; text: string };
+  | { kind: "job_change"; contactId: string; at: Date; move: "joined" | "left" | "title_change"; text: string }
+  /**
+   * An event read from the user's own mail (`email_events`), for a contact the ranker chose
+   * (`src/lib/radar/signals/email.ts`). `at` is when it happened, or will (an interview date).
+   * `text` is the model's one-line summary, cleaned and injection-checked; it is the only
+   * mail-derived text a card carries.
+   */
+  | {
+      kind: "email_event";
+      contactId: string;
+      at: Date;
+      eventId: string;
+      eventKind: "job_posting" | "process_update" | "news" | "event";
+      stage: string | null;
+      text: string;
+      company: string | null;
+      /** Why this person, from the ranker's top reason ("Works at Northwind"). */
+      why: string;
+      /** They are on the email. */
+      onThread: boolean;
+      /** The email asks the user for something, and this person is on it. */
+      hasAsk: boolean;
+      /** 0..1: how relevant the ranker found this person. */
+      fit: number;
+    };
 
 export type RadarSignalKind = RadarSignal["kind"];

@@ -1,6 +1,7 @@
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
-import { LockedFeature } from "@/components/locked-feature";
+import { RecruitersLocked } from "@/components/locked-feature";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 
 /**
  * The entitlement gate for every page under /recruiters.
@@ -20,18 +21,7 @@ export default async function RecruitersLayout({
   const { canUseRecruiters } = await getEntitlements(await requireUserId());
 
   if (!canUseRecruiters) {
-    return (
-      <LockedFeature
-        title="Recruiter tracking"
-        description="A crowdsourced directory of recruiters, plus a record of every conversation you've had with each of them."
-        highlights={[
-          "Search recruiters by company and specialism",
-          "Log interactions and unlock contact details",
-          "Pull recruiter threads straight out of Gmail",
-          "See who has gone quiet and who is worth a nudge",
-        ]}
-      />
-    );
+    return <RecruitersLocked config={await getEffectivePlanConfig()} />;
   }
 
   return <>{children}</>;

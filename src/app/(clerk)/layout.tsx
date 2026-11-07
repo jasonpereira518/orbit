@@ -1,6 +1,6 @@
 // The full sheet. The root layout loads none, so marketing pages never pay for it (see site.css).
 import "../globals.css";
-import { MotionConfig } from "motion/react";
+import { MotionPreferenceConfig } from "@/components/motion/motion-preference-config";
 import { AuthProvider } from "@/components/auth-provider";
 
 /**
@@ -23,7 +23,7 @@ export default function ClerkLayout({ children }: { children: React.ReactNode })
   // but the admin console, sign-in, /suspended and checkout sit outside it.
   return (
     <AuthProvider>
-      <MotionConfig reducedMotion="user">{children}</MotionConfig>
+      <MotionPreferenceConfig>{children}</MotionPreferenceConfig>
     </AuthProvider>
   );
 }

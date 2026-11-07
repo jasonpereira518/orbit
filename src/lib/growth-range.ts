@@ -1,7 +1,7 @@
 import type { Grain } from "@/lib/admin-trends";
 
 /**
- * The Growth page's window: how far back, and how finely bucketed.
+ * The Activation and Retention tabs' window: how far back, and how finely bucketed.
  *
  * Dependency-free (the `Grain` import is type-only) so the smoke suite can exercise the
  * parsing without a database, and so nothing here can drag `@/db` into a client bundle.
@@ -112,13 +112,19 @@ export function resolveGrowthWindow(
   return { range, grain, buckets, spanDays };
 }
 
-/** The query string for a window, omitting whatever is already the default. */
-export function growthHref(range: GrowthRange, grain: Grain | null): string {
+/**
+ * The link for a window on one Growth tab (`base`), omitting whatever is already the default.
+ */
+export function growthHref(
+  range: GrowthRange,
+  grain: Grain | null,
+  base: string
+): string {
   const params = new URLSearchParams();
   if (range !== DEFAULT_RANGE) params.set("range", range);
   if (grain && grain !== defaultGrain(range)) params.set("grain", grain);
   const qs = params.toString();
-  return `/admin/growth${qs ? `?${qs}` : ""}`;
+  return `${base}${qs ? `?${qs}` : ""}`;
 }
 
 /* ------------------------------------------------------------------- labels --------- */

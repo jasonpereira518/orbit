@@ -5,7 +5,7 @@ import { BuyPackButton } from "@/components/credits/buy-pack-button";
 import { integrationHref } from "@/components/settings/sections";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { noticeCopyFor } from "@/lib/ai-access-copy";
-import { PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { PLAN_SHORT_LABELS, PURCHASABLE_PLANS } from "@/lib/plans/plan-config";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 
 /**
@@ -33,8 +33,8 @@ export function AiKeyNotice({
   reason?: AiAccessDenial | null;
   compact?: boolean;
 }) {
-  const { plan, includedAiAvailable, creditsResetAt } = useViewerPlan();
-  const copy = noticeCopyFor(reason ?? null, plan, creditsResetAt);
+  const { plan, includedAiAvailable, creditsResetAt, planConfig } = useViewerPlan();
+  const copy = noticeCopyFor(reason ?? null, plan, creditsResetAt, planConfig);
   // Free at zero keeps everything on phones too: the refill date is the point of that state.
   const freeOut = reason === "managed_limit" && plan === "free";
   const extra = compact && !freeOut ? "hidden sm:inline" : undefined;
@@ -51,8 +51,10 @@ export function AiKeyNotice({
               ? "write a follow-up"
             : "read your notes and answer questions";
   // "Pro and Max include AI" only to a Free account, and only where it can actually run.
-  const offerUpgrade = copy.offer === "upgrade" && plan === "free" && includedAiAvailable;
-  const offerCredits = copy.offer === "credits" && PLAN_CONFIG[plan].features.creditPacks;
+  // The paid plans that include AI under the effective plan table: "Pro or Max".
+  const aiPlans = PURCHASABLE_PLANS.filter((p) => planConfig[p].features.hostedAi && planConfig[p].monthlyCredits);
+  const offerUpgrade = copy.offer === "upgrade" && plan === "free" && includedAiAvailable && aiPlans.length > 0;
+  const offerCredits = copy.offer === "credits" && planConfig[plan].features.creditPacks;
   const link = "font-medium text-primary underline-offset-2 hover:underline";
   return (
     <div
@@ -72,9 +74,9 @@ export function AiKeyNotice({
               <span className={extra}>
                 , or move to{" "}
                 <Link href="/pricing" className={link}>
-                  Orbit Pro or Max
+                  Orbit {aiPlans.map((p) => PLAN_SHORT_LABELS[p]).join(" or ")}
                 </Link>
-                , which include AI
+                {aiPlans.length > 1 ? ", which include AI" : ", which includes AI"}
               </span>
             ) : null}
             .

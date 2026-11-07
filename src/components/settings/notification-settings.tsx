@@ -108,6 +108,7 @@ export function NotificationSettings({
         await showDesktopNotification(
           {
             id: `orbit-welcome-${Date.now()}`,
+            kind: "test",
             title: "Orbit is ready",
             body: "You’ll get alerts here when follow-ups are due.",
             url: "/dashboard",
@@ -127,7 +128,7 @@ export function NotificationSettings({
     <SettingsRow
       id="settings-notifications"
       title="Desktop notifications"
-      description="Alerts when follow-ups are due. The on/off choice follows your account; each browser still has to be allowed to show them."
+      description="Alerts when follow-ups are due, for people you’ve met or talked with, plus any reminder you set yourself. The on/off choice follows your account; each browser still has to be allowed to show them."
     >
       <p className="text-sm text-muted-foreground" role="status">
         {unsupported ? (

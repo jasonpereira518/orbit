@@ -71,12 +71,17 @@ export const PUBLIC_ROUTES = [
   "/api/embeddings/backfill",
   "/api/work-history/research",
   "/api/work-history/sweep",
+  "/api/email-intel/sweep",
+  "/api/contacts/name-sweep",
   "/api/linkedin/timeline-events/backfill",
   "/api/relationships/run",
   "/api/ops/sweep",
   "/api/ops/speech-usage",
   "/api/ops/billing-reconcile",
   "/api/ops/weekly-digest",
+  // The daily metrics rollup (`metrics_daily`) — authenticated by shared secret (CRON_SECRET
+  // via `isInternalRequest()`), same gate and reasons as the ops routes above.
+  "/api/ops/rollup",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
   // Radar's nightly pass, hourly news sweep and Monday email — same CRON_SECRET gate, same

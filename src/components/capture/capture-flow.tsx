@@ -12,6 +12,7 @@
  */
 import type { CaptureParseHints } from "@/lib/ai";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -67,6 +68,7 @@ const SOURCE_LABEL: Record<CaptureJobSource, string> = {
   // A job the public API enqueued (POST /v1/notes) — shown on resume, since one of these
   // can now sit in `ready`/`reviewing` waiting for the person to open /capture themselves.
   api: "a note you sent in",
+  granola: "a Granola note",
 };
 
 export function CaptureFlow({
@@ -79,7 +81,7 @@ export function CaptureFlow({
   aiReason = null,
   canTranscribe = false,
   canUseMeetings = false,
-  meetingsDeniedMessage,
+  meetingsDeniedMessage = "",
   resumableMeeting = null,
   ignoredCount = 0,
   quota,
@@ -90,7 +92,9 @@ export function CaptureFlow({
   initialMeeting = null,
   cloudNotes = null,
   openCloudReview = false,
+  showImports = false,
   onSaved,
+  variant = "capture",
 }: {
   initialJob: CaptureJobView | null;
   /** Every reachable job, so a multi-file drop can render its queue. */
@@ -107,10 +111,10 @@ export function CaptureFlow({
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
   aiReason?: AiAccessDenial | null;
   canTranscribe?: boolean;
-  /** Meeting recording is on Orbit Pro, Max and Lifetime. False shows an upgrade prompt instead of the recorder. */
+  /** Whether this plan has `meetings` (effective plan table). False shows an upgrade prompt instead of the recorder. */
   canUseMeetings?: boolean;
-  /** `FEATURE_DENIAL.meetings`, read on the server — this file is a client component and cannot import `@/lib/entitlements` (it reaches the database). */
-  meetingsDeniedMessage: string;
+  /** `featureDenial("meetings", effective config)`, read on the server — this file is a client component and cannot import `@/lib/entitlements` (it reaches the database). */
+  meetingsDeniedMessage?: string;
   resumableMeeting?: ResumableMeeting | null;
   ignoredCount?: number;
   quota?: { used: number; limit: number | null } | null;
@@ -126,13 +130,22 @@ export function CaptureFlow({
   cloudNotes?: CloudNotesState | null;
   /** Open the "these look like meeting notes" dialog on arrival (the toast's and the bell's Review). */
   openCloudReview?: boolean;
+  /** Show the Imports tab (the `page.imports` surface is live). Choosing it navigates to `/capture?mode=imports`. */
+  showImports?: boolean;
   /**
    * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
    * hands back to the caller instead of showing the saved screen. The store is cleared
    * first, so coming back to the step later starts on an empty box.
    */
   onSaved?: () => void;
+  /**
+   * Where the flow is hosted. `"meetings"` is the recorder on /meetings: meeting mode only,
+   * no tabs, and the only host that collects a finished recording's analysis. `"capture"`
+   * is every other way in, with no Meeting tab.
+   */
+  variant?: "capture" | "meetings";
 }) {
+  const meetingsHost = variant === "meetings";
   const router = useRouter();
   const { job: storeJob } = useCaptureJob();
   // The server's job is shown on first paint and pushed into the store right after mount
@@ -144,20 +157,20 @@ export function CaptureFlow({
     seeded.current = true;
     if (initialJob) seedCaptureJob(initialJob, { force: true });
   }, [initialJob]);
-  const job = seeded.current ? storeJob : (storeJob ?? initialJob);
+  const anyJob = seeded.current ? storeJob : (storeJob ?? initialJob);
+  // The store holds one job for the whole app. /meetings only shows a meeting's: a notes
+  // capture someone left mid-review is Capture's to resume, not the recorder's to replace.
+  const job = meetingsHost && anyJob?.sourceKind !== "meeting" ? null : anyJob;
 
-  // A meeting still recording (or paused) in the background wins: coming back to Capture
-  // from the widget's "Open" must land on it, not on whichever tab the URL names.
   const meetingFlow = useMeetingFlow();
   const [mode, setMode] = useState<CaptureMode>(() => {
-    const initial = meetingFlow?.busy
-      ? "meeting"
-      : initialJob && (initialJob.status === "ingesting" || prefillJobFor(initialJob))
+    if (meetingsHost) return "meeting";
+    const initial =
+      initialJob && (initialJob.status === "ingesting" || prefillJobFor(initialJob))
         ? tabForSource(initialJob.sourceKind)
         : defaultMode;
-    // Embedded (onboarding) hides the tabs and has no meetings, so a resumed failed meeting
-    // would open on a blank denied panel. Its text prefills the notes box, so open there.
-    const opened = onSaved && initial === "meeting" ? "messy" : initial;
+    // Capture has no Meeting tab: a failed meeting's text prefills the notes box instead.
+    const opened = initial === "meeting" ? "messy" : initial;
     // A link into the Drive tab for someone the tab is not live for.
     return opened === "cloud" && !cloudNotes ? "messy" : opened;
   });
@@ -250,7 +263,6 @@ export function CaptureFlow({
       });
   }, [activeBatchId, queueBusy, batchReadyCount]);
 
-  const meetingBusy = meetingFlow?.busy ?? false;
   const [pendingStart, setPendingStart] = useState(false);
   const [reviewOpened, setReviewOpened] = useState(false);
   const [foundHold, setFoundHold] = useState(false);
@@ -491,14 +503,15 @@ export function CaptureFlow({
   );
 
   // A meeting the user finished while elsewhere is summarized in the background; this is
-  // where it is collected, whenever Capture next mounts.
+  // where it is collected, whenever /meetings next mounts. Only there: Capture claiming it
+  // would put the meeting's review on the wrong page.
   const hasPendingMeeting = meetingFlow?.hasPendingAnalysis ?? false;
   const claimMeeting = meetingFlow?.claimAnalysis;
   useEffect(() => {
-    if (!hasPendingMeeting || !claimMeeting) return;
+    if (!meetingsHost || !hasPendingMeeting || !claimMeeting) return;
     const done = claimMeeting();
     if (done) onMeetingAnalyzed(done.analysis, done.sessionId);
-  }, [hasPendingMeeting, claimMeeting, onMeetingAnalyzed]);
+  }, [meetingsHost, hasPendingMeeting, claimMeeting, onMeetingAnalyzed]);
 
   // Once per save made HERE: the effect re-runs on every phase change, and the caller moves
   // on. A job already "saved" when first seen (saved on /capture earlier this session and
@@ -525,7 +538,7 @@ export function CaptureFlow({
   // ── Render ──────────────────────────────────────────────────────────────────────────
   const items = job?.result?.items ?? [];
   const reviewIndex = job ? firstPendingIndex(items, job.decisions) : -1;
-  const inputLocked = phase !== "input" || meetingBusy;
+  const inputLocked = phase !== "input";
   const blurb = CAPTURE_MODES.find((m) => m.id === mode)?.blurb;
 
   const meetingHeader =
@@ -537,9 +550,15 @@ export function CaptureFlow({
     <div className="space-y-6">
       {phase === "input" && quota && !initialContactId && <ContactQuotaNotice used={quota.used} limit={quota.limit} />}
 
-      {phase === "input" && !onSaved && (
+      {phase === "input" && !onSaved && !meetingsHost && (
         <div className="space-y-2">
-          <CaptureTabs mode={mode} onChange={setMode} disabled={inputLocked} showCloud={Boolean(cloudNotes)} />
+          <CaptureTabs
+            mode={mode}
+            onChange={(next) => (next === "imports" ? router.push("/capture?mode=imports") : setMode(next))}
+            disabled={inputLocked}
+            showCloud={Boolean(cloudNotes)}
+            showImports={showImports}
+          />
           {blurb && <p className="text-sm text-muted-foreground">{blurb}</p>}
         </div>
       )}
@@ -676,6 +695,11 @@ export function CaptureFlow({
         {phase === "review" && job && reviewIndex >= 0 && (
           <motion.div key="review" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: DUR.base }} className="space-y-4">
             {meetingHeader}
+            {job.result?.skippedNonPeople?.length ? (
+              <p className="text-xs text-muted-foreground">
+                Skipped {job.result.skippedNonPeople.join(", ")}: {job.result.skippedNonPeople.length === 1 ? "reads" : "read"} as a company or group, not a person.
+              </p>
+            ) : null}
             <PersonDeck
               items={items}
               decisions={job.decisions}
@@ -707,6 +731,14 @@ export function CaptureFlow({
 
         {phase === "saved" && job?.result && !onSaved && (
           <motion.div key="saved" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+            {meetingsHost && job.meetingSessionId && (
+              <Link
+                href={`/meetings/${job.meetingSessionId}`}
+                className="inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
+              >
+                Open this meeting →
+              </Link>
+            )}
             {meetingHeader}
             <CaptureSaved result={job.result} decisions={job.decisions} onCaptureMore={() => void startOver()} />
           </motion.div>
@@ -714,7 +746,7 @@ export function CaptureFlow({
       </AnimatePresence>
 
       {phase === "input" && history}
-      {phase !== "review" && !onSaved && <IgnoredPeopleSection initialCount={ignoredCount} />}
+      {phase !== "review" && !onSaved && !meetingsHost && <IgnoredPeopleSection initialCount={ignoredCount} />}
     </div>
   );
 }

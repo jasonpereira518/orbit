@@ -1,3 +1,4 @@
+import type { NameGuess } from "@/lib/contact-name-guess";
 import type { PeerEdgeReason } from "@/lib/network-metrics";
 
 export type RelatedReason =
@@ -42,6 +43,8 @@ export type RelatedContact = {
   email: string | null;
   phone: string | null;
   aiSummary: string | null;
+  /** Filled in with the display columns; a weak one puts a "?" by the name. */
+  nameGuess?: NameGuess | null;
   relationshipScore: number | null;
   reason: RelatedReason;
   reasonLabel: string;

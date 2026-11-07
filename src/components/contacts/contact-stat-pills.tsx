@@ -61,16 +61,38 @@ export function ContactStatPills({
               you know.
             </p>
             <p className="border-t pt-2 text-muted-foreground">
-              {health
-                ? "Health, next to it, is how the conversation itself is going: reply speed, who writes, and recency."
-                : "It doesn't look at who writes or how fast replies come — that's Health, once there are touches to score."}
+              Health, next to it, is how the conversation itself is going: reply speed, who
+              writes, and recency.
             </p>
           </>
         }
       >
         Closeness {pct}%
       </StatPillExplainer>
-      {health && <HealthSparkline health={health} />}
+      {health ? (
+        <HealthSparkline health={health} />
+      ) : (
+        // Shown rather than left out: a missing pill reads as a bug, not as "no data".
+        <StatPillExplainer
+          label="Health: nothing recent to score. Show what this means."
+          className="border border-dashed border-border bg-transparent font-normal text-muted-foreground"
+          title="Health · nothing recent to score"
+          body={
+            <>
+              <p className="text-muted-foreground">
+                Health scores how the conversation is going — reply speed, who writes, and
+                recency — from messages, emails and meetings in the last nine months. There
+                haven&apos;t been any with this person in that time.
+              </p>
+              <p className="text-muted-foreground">
+                Log a touch, or import your LinkedIn messages or email, and it will appear.
+              </p>
+            </>
+          }
+        >
+          Health —
+        </StatPillExplainer>
+      )}
       <Badge
         variant="secondary"
         className="rounded-full px-3 py-1 text-xs font-medium capitalize"

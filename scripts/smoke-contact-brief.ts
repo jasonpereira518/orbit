@@ -264,6 +264,12 @@ async function main() {
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await modelPath();
   await goalFitPath();
+  // One grant per brief. `getAiConfig` mints its own, and on Orbit's key that places a credit hold
+  // nothing settles, so a brief used to reserve its estimate twice.
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync("src/lib/contact-brief.ts", "utf8");
+  check("a brief does not mint a second grant just to read the model name", !/getAiConfig\(/.test(src));
+  check("and hands its account to the call it makes", /completeJson\(userId, \{[^}]*access,/.test(src.replace(/\n/g, " ")));
   console.log("\nsmoke-contact-brief: all checks passed");
   process.exit(0);
 }

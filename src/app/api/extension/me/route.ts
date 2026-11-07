@@ -7,7 +7,7 @@ import { getCurrentUserProfile } from "@/lib/auth";
 import type { MeResponse } from "@/lib/extension/contract";
 import { EXTENSION_CONTRACT_VERSION } from "@/lib/extension/contract";
 import { extensionRoute, preflight } from "@/lib/extension/http";
-import { entitlementsFromSettings } from "@/lib/entitlements";
+import { resolvePlan } from "@/lib/entitlements";
 import { PLAN_LABELS } from "@/lib/plans/plan-config";
 
 export const dynamic = "force-dynamic";
@@ -68,7 +68,7 @@ export const GET = extensionRoute<undefined, MeResponse>({
       },
       plan: (() => {
         // Resolved from the row authentication already read: no extra query.
-        const { plan } = entitlementsFromSettings(userId, settings);
+        const { plan } = resolvePlan(settings);
         return { id: plan, label: PLAN_LABELS[plan], paid: plan !== "free" };
       })(),
     };

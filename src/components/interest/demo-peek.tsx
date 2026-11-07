@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /**
  * The phone stand-in for "Take it for a spin": the desktop demo is a desktop window and
@@ -75,7 +76,7 @@ export function DemoPeek() {
 
   function go(i: number) {
     const slide = stripRef.current?.children[i] as HTMLElement | undefined;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = prefersReducedMotion();
     slide?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest", inline: "center" });
   }
 

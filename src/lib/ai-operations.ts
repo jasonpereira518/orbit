@@ -45,6 +45,12 @@ type OperationSpec = {
    * credits remain (`src/lib/managed-ai-policy.ts`).
    */
   background?: boolean;
+  /**
+   * What a JSON call does when the model ran into its output cap. `retry` (the default) asks
+   * once more with double the cap, then fails; `fail` fails at once. Never "accept": a reply
+   * cut off mid-JSON used to be patched into a valid, shorter one and recorded as a success.
+   */
+  onTruncate?: "retry" | "fail";
 };
 
 /**
@@ -68,6 +74,14 @@ export const AI_OPERATIONS = {
   "capture.parse.details": { label: "Capture: details per person", tier: "user", thinking: "minimal" },
   "capture.parse.excerpt-retry": { label: "Capture: re-reading a person’s notes", tier: "user", thinking: "minimal" },
   "capture.dates": { label: "Capture: dates and reminders", tier: "fast", thinking: "minimal" },
+  // The same five calls when nothing is waiting on them and nobody reviews the result (a Drive
+  // import), so the managed background floor applies: `ai_result_cache` and the credit gate key
+  // on the operation id. Same tiers and thinking as the ones above.
+  "capture.parse.bg": { label: "Capture: reading notes (unattended)", tier: "user", thinking: "minimal", background: true },
+  "capture.parse.identify.bg": { label: "Capture: finding people (unattended)", tier: "user", thinking: "minimal", background: true },
+  "capture.parse.details.bg": { label: "Capture: details per person (unattended)", tier: "user", thinking: "minimal", background: true },
+  "capture.parse.excerpt-retry.bg": { label: "Capture: re-reading a person’s notes (unattended)", tier: "user", thinking: "minimal", background: true },
+  "capture.dates.bg": { label: "Capture: dates and reminders (unattended)", tier: "fast", thinking: "minimal", background: true },
   "capture.transcribe.page": { label: "Capture: reading photos", tier: "vision", thinking: "minimal" },
   "capture.transcribe.audio": { label: "Capture: voice notes", tier: "transcribe", thinking: "minimal" },
   "meeting.transcribe": { label: "Meeting transcription", tier: "transcribe", thinking: "minimal" },
@@ -87,6 +101,9 @@ export const AI_OPERATIONS = {
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
   "contact.brief": { label: "Contact briefs", tier: "user" },
+  // A real name for a contact saved under a handle ("jsmith42"), when the address book and
+  // the handle itself say nothing. A few words out; `@/lib/contact-name-sweep`.
+  "contact.name_guess": { label: "Contacts: reading names from handles", tier: "fast", thinking: "minimal", background: true },
   // The fast tier, like the other background extraction: nobody reads this answer directly,
   // it runs unattended on the person's own key, and the costly part of a searched answer is
   // the result pages it reads as input — which cost per token on the pricier model too. The
@@ -120,6 +137,10 @@ export const AI_OPERATIONS = {
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },
+  // Reads the newest messages of a hiring thread and returns events, people and asks. The fast
+  // tier like the recruiter scan it descends from: nobody waits on it, it runs unattended on
+  // the person's own key, and the guarantee is the TypeScript validator, not model size.
+  "email.understand": { label: "Email insights: reading hiring threads", tier: "fast", thinking: "minimal", background: true },
   "recruiter.draft": { label: "Recruiter drafts", tier: "user" },
   // No producer since the relationship engine (2026-09-30); kept for usage history.
   "import.enrich": { label: "LinkedIn import summaries", tier: "fast", thinking: "minimal", background: true },
@@ -148,7 +169,9 @@ export const AI_OPERATIONS = {
   },
   // The same decisions answered by the person's own model when there is no TypeSafe key
   // (decisions/llm.ts). Own ids: the answer cache keys on the operation, not the model.
-  "duplicates.same_person.llm": { label: "Duplicates: same person?", tier: "fast", thinking: "minimal", background: true },
+  // Not `background`: it runs when the review queue renders, so a person is waiting on it, and
+  // the managed floor would silently switch the ranking off once half the allowance is spent.
+  "duplicates.same_person.llm": { label: "Duplicates: same person?", tier: "fast", thinking: "minimal" },
   "mentions.resolve.llm": { label: "Capture: linking mentions", tier: "fast", thinking: "minimal" },
   "notes.detect.llm": { label: "Cloud notes: which docs are meeting notes", tier: "fast", thinking: "minimal", background: true },
   "import.linkedin.timeline": {
@@ -200,6 +223,10 @@ export function aiOperationTier(operation: AiOperationId): AiTier {
 
 export function aiOperationThinking(operation: string): ThinkingLevel | undefined {
   return isAiOperationId(operation) ? (AI_OPERATIONS[operation] as OperationSpec).thinking : undefined;
+}
+
+export function aiOperationOnTruncate(operation: string): "retry" | "fail" {
+  return (isAiOperationId(operation) ? (AI_OPERATIONS[operation] as OperationSpec).onTruncate : undefined) ?? "retry";
 }
 
 export const BACKGROUND_AI_OPERATIONS: ReadonlySet<string> = new Set(

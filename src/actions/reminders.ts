@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePageUser } from "@/lib/plan-guards";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { cache } from "react";
 import { after } from "next/server";
@@ -314,7 +315,7 @@ export async function createReminder(input: {
   listId?: string;
   actionKind?: ReminderActionKind;
 }) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const row = await createReminderForUser(userId, input);
   revalidateReminderPaths(input.contactId);
   return row;
@@ -331,7 +332,7 @@ export async function updateReminder(
     contactId?: string | null;
   }
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const db = await getDb();
 
   const existing = await db.query.reminders.findFirst({
@@ -398,7 +399,7 @@ export async function moveReminderToList(id: string, listId: string) {
  */
 export async function createReminderList(name: string) {
   return asActionResult(async () => {
-    const userId = await requireUserId();
+    const userId = await requirePageUser("page.reminders");
     const db = await getDb();
     await ensureReminderLists(userId);
 
@@ -441,7 +442,7 @@ export async function createReminderList(name: string) {
 
 export async function renameReminderList(id: string, name: string) {
   return asActionResult(async () => {
-    const userId = await requireUserId();
+    const userId = await requirePageUser("page.reminders");
     const db = await getDb();
 
     const list = await findReminderListForUser(userId, id);
@@ -484,7 +485,7 @@ export async function updateReminderList(
   patch: { name?: string; icon?: string | null; color?: string | null }
 ) {
   return asActionResult(async () => {
-    const userId = await requireUserId();
+    const userId = await requirePageUser("page.reminders");
     const db = await getDb();
 
     const list = await findReminderListForUser(userId, id);
@@ -564,7 +565,7 @@ export async function scheduleContactFollowUp(
   contactId: string,
   days = 7
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const result = await scheduleContactFollowUpForUser(userId, contactId, days, { origin: "manual" });
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
@@ -576,7 +577,7 @@ export async function scheduleContactFollowUpAt(
   contactId: string,
   dateIso: string
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const db = await getDb();
   // The inbox lookup (which lazily creates the Inbox, before any not-found check — as it
   // always has), the contact and its pending reminder need nothing from each other, so all
@@ -677,7 +678,7 @@ export async function setKeepInTouchCadence(
   contactId: string,
   days: number | null
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const db = await getDb();
 
   // Anything unusable collapses to "no cadence" rather than throwing: this is a preference
@@ -747,7 +748,7 @@ export async function completeFollowUpWithTouch(
     notes?: string;
   }
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const channel = options?.channel ?? "note";
   // Stamped before the touch is logged, so the card's acted_at never postdates it.
   const at = new Date();
@@ -828,7 +829,7 @@ export async function reopenDoneReminderAction(id: string) {
 
 /** Draft a follow-up message grounded in the reminder contact's conversation history. */
 export async function draftFollowUpResponse(reminderId: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
   return generateFollowUpDraft(userId, reminderId, goals, { writingInstructions });
@@ -1213,7 +1214,7 @@ export async function restoreSuggestion(id: string) {
 }
 
 export async function scheduleFromSuggestion(suggestionId: string, days = 7) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const db = await getDb();
   const { aiSuggestions } = await import("@/db/schema");
 
@@ -1287,7 +1288,7 @@ export async function acceptScoreBump(suggestionId: string) {
 
 /** Generate more due follow-ups from dormant / high-value contacts. */
 export async function generateDueFollowUpsAction(limit = 8) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const result = await generateDueFollowUps(userId, limit);
   revalidateReminderPaths();
   revalidatePathIfRequestScoped("/contacts");

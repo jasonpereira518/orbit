@@ -131,6 +131,47 @@ export async function claimDueConnections(
   }));
 }
 
+/** Sync now refuses a connection that started a run this recently. */
+export const SYNC_NOW_COOLDOWN_MS = 2 * 60 * 1000;
+
+/**
+ * Claim one person's connection for Sync now, under the same lease rule as
+ * `claimDueConnections` — so it never runs beside the cron — and not within
+ * `SYNC_NOW_COOLDOWN_MS` of the last finished run. Null when the claim was refused.
+ */
+export async function claimConnectionNow(
+  provider: SyncProvider,
+  userId: string,
+  now: Date = new Date()
+): Promise<ClaimedConnection | null> {
+  const db = await getDb();
+  const table = sql.raw(PROVIDER_TABLES[provider]);
+  const leaseCutoff = new Date(now.getTime() - SYNC_LEASE_MS);
+  const cooldownCutoff = new Date(now.getTime() - SYNC_NOW_COOLDOWN_MS);
+  const claimed = await db.execute(sql`
+    UPDATE ${table}
+       SET sync_status = 'syncing', sync_started_at = ${now}, updated_at = ${now}
+     WHERE user_id = ${userId}
+       AND status = 'active'
+       AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
+       -- A finished run clears sync_started_at and stamps last_synced_at, so check that too.
+       AND (last_synced_at IS NULL OR last_synced_at < ${cooldownCutoff})
+    RETURNING id, user_id, email_address, scopes, sync_cursor, sync_failures
+  `);
+  const row = rowsOf<ClaimRow>(claimed)[0];
+  return row
+    ? {
+        provider,
+        id: row.id,
+        userId: row.user_id,
+        emailAddress: row.email_address,
+        scopes: row.scopes,
+        syncCursor: parseCursor(row.sync_cursor),
+        syncFailures: Number(row.sync_failures ?? 0),
+      }
+    : null;
+}
+
 export type SyncOutcome =
   | { ok: true; cursor: ProviderSyncCursor | null; nextSyncAt: Date }
   /**

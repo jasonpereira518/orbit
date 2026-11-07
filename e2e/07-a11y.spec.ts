@@ -20,6 +20,12 @@ import { createContact, ensureOnboarded } from "./helpers";
  */
 test.use({ reducedMotion: "reduce" });
 
+// Playwright shards whole files unless a file's tests may run apart. This one holds ~66 of the
+// suite's ~77 tests, so without this one CI shard gets nearly all of them and the rest sit idle.
+// Each test loads its own route; the shared setup is the `beforeAll` below, which runs in
+// whichever worker takes a test. Still one worker per shard, so nothing runs concurrently.
+test.describe.configure({ mode: "parallel" });
+
 const MARKETING = ["/", "/interest", "/privacy", "/terms", "/contact", "/connect", "/pricing", "/upgrade"];
 const APP = [
   "/dashboard",
@@ -35,7 +41,6 @@ const APP = [
   "/recruiters/new",
   "/recruiters/compose",
   "/knowledge",
-  "/imports",
   "/radar",
   "/events",
   "/settings",
@@ -101,7 +106,9 @@ for (const size of WIDTHS) {
   test.describe(`${size.name} (${size.width}px)`, () => {
     test.use({ viewport: { width: size.width, height: size.height }, hasTouch: size.touch, isMobile: size.touch });
 
-    for (const route of [...MARKETING, ...APP, "contact profile", ...ADMIN]) {
+    // `/capture?mode=imports` is the old /imports page, now a tab: audited here (not in APP, whose
+    // routes must each have their own title, and this one shares Capture's).
+    for (const route of [...MARKETING, ...APP, "/capture?mode=imports", "contact profile", ...ADMIN]) {
       test(`axe + overflow: ${route}`, async ({ page }) => {
         const path = route === "contact profile" ? contactPath : route;
         await page.goto(path);

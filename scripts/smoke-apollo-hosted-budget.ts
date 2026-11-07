@@ -12,6 +12,7 @@ import { rateLimitBuckets, userSettings } from "../src/db/schema";
 import { APOLLO_DAILY_LIMIT_MESSAGE, enrichPerson, searchPeople } from "../src/lib/apollo";
 import { encrypt } from "../src/lib/crypto";
 import { PLAN_CONFIG, PLANS } from "../src/lib/plans/plan-config";
+import { invalidateAppFlagRows } from "../src/lib/plans/plan-rules";
 import { RATE_LIMITS } from "../src/lib/rate-limit";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -62,6 +63,9 @@ run(async () => {
   const limit = RATE_LIMITS.apolloSearch.limit;
   let thrown: unknown = null;
   flag.hostedEnrichment = true;
+  // The gates read the effective plan table, memoized from PLAN_CONFIG: drop the memo so the
+  // in-process flip is seen (and again after the restore).
+  invalidateAppFlagRows();
   try {
     for (let i = 0; i < limit; i++) await searchPeople(HOSTED, {});
     try {
@@ -71,6 +75,7 @@ run(async () => {
     }
   } finally {
     flag.hostedEnrichment = false;
+    invalidateAppFlagRows();
   }
   check(`a hosted key would allow ${limit} searches a day`, apolloCalls === limit, String(apolloCalls));
   check("the next one is refused with the cap copy", thrown instanceof Error && thrown.message === APOLLO_DAILY_LIMIT_MESSAGE, String(thrown));
