@@ -2945,7 +2945,7 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // only on the stream's `done` event. Renumbered 193 → 196 on Nov 6 2026 when merging main at 194:
 // a database stamped 194 would never run a 193. NOT 195: claude/gallant-ramanujan-hh5j0s claims it (it reached main
 // first, on Nov 7 2026, and keeps 195 above).
-export const SCHEMA_VERSION = 196;
+export const SCHEMA_VERSION = 197;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
