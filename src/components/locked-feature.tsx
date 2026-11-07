@@ -6,7 +6,10 @@ import { WarpLink } from "@/components/warp/warp-link";
 import {
   PURCHASABLE_PLANS,
   PLAN_RANK,
+  salePlansWith,
+  type FeatureKey,
   type Plan,
+  type PlanConfig,
   type PurchasablePlan,
 } from "@/lib/plans/plan-config";
 import { getSurface } from "@/lib/surfaces";
@@ -21,26 +24,38 @@ import { PlanBadge } from "@/components/plan-badge";
  *
  * Wears the color of the plan that unlocks it (Pro blue, Max gold) and lists the plans on
  * sale that include it. Lifetime is never offered: it is not sold.
+ *
+ * Pass `feature` with the EFFECTIVE plan table (`getEffectivePlanConfig()` on the server,
+ * `useViewerPlan().planConfig` on the client) and the plans follow an admin's plan rules.
  */
 export function LockedFeature({
   title,
   description,
   highlights,
-  unlockPlan = "orbit",
+  feature,
+  config,
+  unlockPlan: unlockAt,
   plans: only,
   note,
 }: {
   title: string;
   description: string;
   highlights: string[];
-  /** The cheapest plan that includes this feature (`unlockPlanFor`). */
+  /** The gate behind this lock: the plans on sale that have it under `config` are offered. */
+  feature?: FeatureKey | "contacts";
+  config?: Record<Plan, PlanConfig>;
+  /** The cheapest plan that includes this feature, when no `feature` is given. Default Pro. */
   unlockPlan?: PurchasablePlan;
   /** The exact plans on sale that include it, when they are not simply `unlockPlan` and up. */
   plans?: readonly PurchasablePlan[];
   note?: string;
 }) {
   const plans =
-    only ?? PURCHASABLE_PLANS.filter((plan) => PLAN_RANK[plan] >= PLAN_RANK[unlockPlan]);
+    only ??
+    (feature
+      ? PURCHASABLE_PLANS.filter((p) => salePlansWith(feature, config).includes(p))
+      : PURCHASABLE_PLANS.filter((plan) => PLAN_RANK[plan] >= PLAN_RANK[unlockAt ?? "orbit"]));
+  const unlockPlan = unlockAt ?? plans[0] ?? "max";
   return (
     <div
       data-plan={unlockPlan}
@@ -149,9 +164,12 @@ export function TierLocked({ surfaceKey, plans }: { surfaceKey: string; plans: r
  * ungated (they return only the user's own rows); the pages are where the lock belongs.
  */
 
-export function OutreachLocked() {
+/** `config`: the effective plan table, from the page. */
+export function OutreachLocked({ config }: { config?: Record<Plan, PlanConfig> }) {
   return (
     <LockedFeature
+      feature="outreach"
+      config={config}
       title="Outreach"
       description="Find the right people, draft messages that sound like you, and track what actually gets replies — without leaving Orbit."
       highlights={[
@@ -165,9 +183,12 @@ export function OutreachLocked() {
   );
 }
 
-export function RecruitersLocked() {
+/** `config`: the effective plan table, from the page. */
+export function RecruitersLocked({ config }: { config?: Record<Plan, PlanConfig> }) {
   return (
     <LockedFeature
+      feature="recruiters"
+      config={config}
       title="Recruiter tracking"
       description="A crowdsourced directory of recruiters, plus a record of every conversation you've had with each of them."
       highlights={[

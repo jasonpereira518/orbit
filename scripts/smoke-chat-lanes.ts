@@ -96,7 +96,7 @@ async function main() {
   const parsed = sanitizeParsedQuery({ shape: "list", filters: { schools: ["Duke"] }, intent: {} }, "Everyone from Duke");
   const roster = await filterLane(USER, parsed, NULL_STEPS);
   check("a list question becomes a complete roster", roster?.kind === "filter" && roster.total === 30 && !roster.truncated, roster?.name);
-  check("named after what it filtered", roster?.name === "Contacts matching schools: Duke");
+  check("named after what it filtered", roster?.name === "People from Duke");
   check(
     "an open question runs no lane",
     (await filterLane(USER, sanitizeParsedQuery({ shape: "open", filters: { schools: ["Duke"] } }, "q"), NULL_STEPS)) === null

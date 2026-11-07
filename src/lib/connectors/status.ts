@@ -18,6 +18,7 @@ export const CONNECTOR_STATUS_LOOKUP_IDS = [
   "contacts_file",
   "chat_exports",
   "google_drive",
+  "granola",
 ] as const;
 
 export type ConnectorStatusId = (typeof CONNECTOR_STATUS_LOOKUP_IDS)[number];

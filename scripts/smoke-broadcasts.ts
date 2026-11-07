@@ -20,6 +20,7 @@ import {
 } from "../src/db/schema";
 import { generateUnsubscribeToken } from "../src/lib/interest-list-email";
 import {
+  audienceCount,
   audienceFor,
   buildBroadcastEmail,
   createBroadcast,
@@ -73,6 +74,8 @@ async function main() {
   check("audience excludes the unsubscribed", !audience.includes(`${PREFIX}gone@example.test`));
   check("audience excludes existing accounts", !audience.includes(`${PREFIX}user@example.test`));
   check("audience keeps ordinary subscribers", audience.length === 2, JSON.stringify(audience));
+  const everyone = (await audienceFor()).length;
+  check("audienceCount counts exactly audienceFor's rows", (await audienceCount()) === everyone, String(everyone));
 
   // --- validation
   check("a blank subject is refused", validateBroadcast({ subject: "", body: "x".repeat(40) }) !== null);
@@ -156,7 +159,7 @@ async function main() {
   check("a sent broadcast cannot be deleted as a draft", (await deleteDraftBroadcast(draft.id)) === null);
 
   // --- page renders
-  const { default: Page } = await import("../src/app/(clerk)/(admin)/admin/growth/broadcasts/page");
+  const { default: Page } = await import("../src/app/(clerk)/(admin)/admin/access/broadcasts/page");
   const tree = await Page();
   check("the broadcasts page renders", tree != null);
 

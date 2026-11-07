@@ -34,7 +34,8 @@ import {
   type FeedbackArea,
   type FeedbackCategory,
 } from "@/lib/feedback-report";
-import type { PanelAnchor } from "@/lib/floating-panel";
+import { useCornerShift } from "@/lib/corner-clearance";
+import { PANEL_CORNER_SHIFT_PX, type PanelAnchor } from "@/lib/floating-panel";
 import { blobToDataUrl } from "@/lib/screenshot-capture";
 import { toast } from "@/lib/toast";
 
@@ -227,6 +228,11 @@ export function FeedbackPanel({
   // goes true, and the close is driven by `open` going false. A fresh mount starts the
   // sequence over, which is exactly what reopening should do.
   const sheetOpen = open && entered;
+
+  // Toasts (this panel's own error toasts included) and the job stack slide to the
+  // window's left while it is open, instead of landing on the Send row. Keyed to `open`,
+  // not mount: the panel stays mounted through its exit transition.
+  useCornerShift(PANEL_CORNER_SHIFT_PX, open);
 
 
   /**

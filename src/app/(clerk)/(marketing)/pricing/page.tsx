@@ -11,8 +11,10 @@ import { WarpArrivalBeacon } from "@/components/warp/warp-arrival-beacon";
 import { PlanComparison } from "@/components/pricing/plan-comparison";
 import { PricingFaq } from "@/components/pricing/pricing-faq";
 import { PricingTiers } from "@/components/pricing/pricing-tiers";
-import { AI_POSITIONING } from "@/lib/plan-copy";
-import { FREE_CONTACT_LIMIT, PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
+import { AI_POSITIONING, publicPlanCopy } from "@/lib/plan-copy";
+import { PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
+import { getTierRules } from "@/lib/surface-visibility";
 import { CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
 import { isCheckoutConfigured } from "@/lib/stripe-config";
 import { isClerkConfigured, isDemoMode } from "@/lib/auth";
@@ -20,10 +22,23 @@ import { isClerkConfigured, isDemoMode } from "@/lib/auth";
 const PRO_PRICE = formatPlanPrice(PLAN_CONFIG.orbit.monthlyPriceCents ?? 0);
 const MAX_PRICE = formatPlanPrice(PLAN_CONFIG.max.monthlyPriceCents ?? 0);
 
-export const metadata: Metadata = {
-  title: "Pricing",
-  description: `Orbit is free for your first ${FREE_CONTACT_LIMIT} contacts. Orbit Pro is ${PRO_PRICE} a month and Orbit Max ${MAX_PRICE} a month, both with AI included. ${AI_POSITIONING}`,
-};
+/**
+ * Rendered per request: the cards, comparison and FAQ follow the plan rules an operator sets
+ * from /admin/product/plans (`getEffectivePlanConfig`, memoized per instance for 15s). Static
+ * prerendering would read the database during `next build` (PGlite locally, the schema check
+ * against Neon on Vercel), and `revalidatePath("/pricing")` alone only refreshes it on the
+ * instance that saved.
+ */
+export const dynamic = "force-dynamic";
+
+export async function generateMetadata(): Promise<Metadata> {
+  const limit = (await getEffectivePlanConfig()).free.contactLimit;
+  const free = limit === null ? "Orbit is free" : `Orbit is free for your first ${limit} contacts`;
+  return {
+    title: "Pricing",
+    description: `${free}. Orbit Pro is ${PRO_PRICE} a month and Orbit Max ${MAX_PRICE} a month, both with AI included. ${AI_POSITIONING}`,
+  };
+}
 
 const HEADING =
   "font-[family-name:var(--font-display)] font-normal leading-[1.12] tracking-[-0.025em] text-[#e8f3f1]";
@@ -47,10 +62,13 @@ const TRUST = [
 ];
 
 /**
- * Static and shared by everyone: who is signed in, their plan, and whether a founding price
- * applies to them resolve in the browser (`LandingAuthControls`, `PricingTiers`).
+ * Shared by everyone: who is signed in, their plan, and whether a founding price applies to
+ * them resolve in the browser (`LandingAuthControls`, `PricingTiers`). What each plan includes
+ * is the effective plan table and page tier rules, read here on the server.
  */
-export default function PricingPage() {
+export default async function PricingPage() {
+  const [config, tierRules] = await Promise.all([getEffectivePlanConfig(), getTierRules()]);
+  const freeLimit = config.free.contactLimit;
   const clerkOn = isClerkConfigured();
   const demoMode = isDemoMode();
   // Only offer checkout when Stripe can actually take the payment.
@@ -93,8 +111,16 @@ export default function PricingPage() {
             <h1 className={`${HEADING} text-[clamp(32px,5vw,56px)]`}>
               {/* Fraunces' true italic, declared in the root layout — the word that
                   carries the offer is the word that leans. */}
-              <em className="italic">Free</em> for your first {FREE_CONTACT_LIMIT}{" "}
-              contacts.
+              {freeLimit === null ? (
+                <>
+                  <em className="italic">Free</em>, for every contact.
+                </>
+              ) : (
+                <>
+                  <em className="italic">Free</em> for your first {freeLimit}{" "}
+                  contacts.
+                </>
+              )}
             </h1>
           </Reveal>
           <Reveal className="reveal-celestial" delay={90}>
@@ -107,7 +133,7 @@ export default function PricingPage() {
         </section>
 
         <Reveal className="reveal-celestial mt-14 block md:mt-20" delay={140}>
-          <PricingTiers clerkOn={clerkOn} checkoutOpen={checkoutOpen} />
+          <PricingTiers clerkOn={clerkOn} checkoutOpen={checkoutOpen} plans={publicPlanCopy(config)} />
         </Reveal>
 
         <Reveal className="reveal-celestial mt-20 block">
@@ -139,7 +165,7 @@ export default function PricingPage() {
             </h2>
           </Reveal>
           <Reveal className="reveal-celestial mt-8 block" delay={80}>
-            <PlanComparison />
+            <PlanComparison config={config} tierRules={tierRules} />
           </Reveal>
         </section>
 
@@ -153,7 +179,7 @@ export default function PricingPage() {
             </h2>
           </Reveal>
           <Reveal className="reveal-celestial mt-10 block" delay={80}>
-            <PricingFaq />
+            <PricingFaq config={config} />
           </Reveal>
         </section>
 

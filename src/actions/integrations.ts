@@ -9,7 +9,10 @@ import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { getLastLinkedInImportAt } from "@/actions/imports";
 import { listCalendarSubscriptions } from "@/actions/calendar";
 import { listEventConnections } from "@/lib/events/connections";
+import { getConnectorConnection } from "@/lib/connectors/connections";
 import { requireUserId } from "@/lib/auth";
+import { availableOn } from "@/lib/plans/plan-config";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { withDemoIntegrationStatuses } from "@/lib/demo-workspace-connections";
 import { connectionSummary } from "@/lib/connection-status";
@@ -55,7 +58,7 @@ function plural(n: number, word: string) {
  * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns] =
+  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola] =
     await Promise.all([
       settle(getSettings()),
       settle(getCalendarFeedStatus()),
@@ -66,6 +69,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       settle(getLastLinkedInImportAt()),
       settle(listCalendarSubscriptions()),
       settle(requireUserId().then((id) => listEventConnections(id))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "granola"))),
     ]);
   const now = new Date();
   const pages: IntegrationStatuses["pages"] = {};
@@ -117,7 +121,13 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
   // an unread plan is passed down as "unknown" and costs the inbox capability alone: the page
   // still reports its status, and an account that signed Orbit out still raises its attention
   // item, rather than the whole account going blank because a settings read timed out.
-  const plan = settings === "unknown" ? "unknown" : { canUseRecruiters: settings.plan.canUseRecruiters };
+  const plan =
+    settings === "unknown"
+      ? "unknown"
+      : {
+          canUseRecruiters: settings.plan.canUseRecruiters,
+          recruitersOn: availableOn("recruiters", await getEffectivePlanConfig()),
+        };
   accounts.google = google === "unknown" ? "unknown" : googleAccountStatus(google, plan);
   accounts.microsoft = outlook === "unknown" ? "unknown" : microsoftAccountStatus(outlook, plan);
   pages.google = accounts.google === "unknown" ? "unknown" : accountPageStatus(accounts.google);
@@ -127,6 +137,8 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
 
   // Assistants sign in through Clerk and leave no record in Orbit, so there is nothing to report.
   pages.assistants = { state: "none", detail: "Works on every plan" };
+  // The catalog is a place to browse, not something that can be on or off.
+  pages.connectors = { state: "none", detail: "Everything Orbit connects to" };
 
   // --- the connector catalog ------------------------------------------------------------
   // Keyed by connector id, not by page: the catalog answers for things that are not pages
@@ -185,6 +197,15 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
   connectors.contacts_file = { state: "none", detail: "Upload a file any time" };
   connectors.chat_exports = { state: "none", detail: "Upload an export any time" };
   connectors.google_drive = connectors.google;
+  connectors.granola =
+    granola === "unknown"
+      ? "unknown"
+      : !granola
+        ? { state: "off", detail: "Not connected" }
+        : granola.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: "Connected" };
+  pages.granola = connectors.granola;
 
   // The registry and this action must answer for the same connectors. The smoke test checks
   // the list against the registry; this checks the implementation against the list.

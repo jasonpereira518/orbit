@@ -32,6 +32,21 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url =
     (event.notification.data && event.notification.data.url) || "/dashboard";
+  const kind = event.notification.data && event.notification.data.kind;
+
+  // `notification_clicked` through the same allow-listed beacon the page uses
+  // (`src/lib/client-events.ts`): the kind only, never the text. The server validates it and
+  // takes the user from the session cookie this same-origin request carries.
+  if (kind) {
+    event.waitUntil(
+      fetch("/api/p/v", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "event", id: crypto.randomUUID(), name: "notification_clicked", props: { kind } }),
+        keepalive: true,
+      }).catch(() => undefined)
+    );
+  }
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {

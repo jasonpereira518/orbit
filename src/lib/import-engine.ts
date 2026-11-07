@@ -1390,7 +1390,7 @@ export async function runImportJob(importId: string): Promise<void> {
 
     revalidatePath("/");
     revalidatePath("/contacts");
-    revalidatePath("/imports");
+    revalidatePath("/capture");
     revalidatePath("/graph");
     revalidatePath("/knowledge");
     revalidatePath("/chat");

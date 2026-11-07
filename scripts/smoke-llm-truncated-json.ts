@@ -118,7 +118,9 @@ run(async () => {
     } finally {
       http.restore();
     }
-    t.check(`${p}: the provider was called once`, http.calls.length === 1);
+    // A cut-off JSON answer is asked for once more with twice the room (`retryingOnTruncation`),
+    // and fails as incomplete when the second one is cut off too.
+    t.check(`${p}: the provider was called twice (the retry with more room)`, http.calls.length === 2, `${http.calls.length} call(s)`);
     const people = value ? (JSON.parse(value) as { people?: Array<{ fullName?: string }> }).people ?? [] : [];
     t.check(
       `${p} — a max-tokens stop fails as "${AI_INCOMPLETE_MESSAGE}"`,

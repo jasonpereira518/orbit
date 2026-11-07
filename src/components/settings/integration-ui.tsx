@@ -2,10 +2,11 @@
 
 import {
   BookUser,
-  Bot,
   CalendarDays,
   FileSpreadsheet,
   KeyRound,
+  LayoutGrid,
+  NotebookPen,
   Send,
   Sparkles,
   Users,
@@ -13,7 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { IntegrationTabId } from "@/components/settings/sections";
-import { GoogleMark, LinkedInMark, MicrosoftMark } from "@/components/settings/provider-marks";
+import { AssistantsMark, GoogleMark, GranolaMark, LinkedInMark, MicrosoftMark } from "@/components/settings/provider-marks";
 import type { PageStatus } from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
 
@@ -21,8 +22,10 @@ const ICONS: Record<IntegrationTabId, LucideIcon> = {
   google: Users,
   microsoft: BookUser,
   linkedin: FileSpreadsheet,
+  granola: NotebookPen,
+  connectors: LayoutGrid,
   ai: Sparkles,
-  assistants: Bot,
+  assistants: Sparkles,
   reminders: CalendarDays,
   api: KeyRound,
   webhooks: Webhook,
@@ -33,6 +36,8 @@ const MARKS: Partial<Record<IntegrationTabId, (props: { className?: string }) =>
   google: GoogleMark,
   microsoft: MicrosoftMark,
   linkedin: LinkedInMark,
+  granola: GranolaMark,
+  assistants: AssistantsMark,
 };
 
 /** Decorative: every use sits beside the page's name. Accounts get their provider's mark. */

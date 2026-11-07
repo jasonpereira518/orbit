@@ -34,6 +34,7 @@ import {
   setConstellationConfig,
   type ConstellationConfig,
 } from "@/lib/constellation-config";
+import { resetPlanRule, setFeaturePlans, setPlanLimit } from "@/lib/plans/plan-rules";
 import { setStealth } from "@/lib/site-access";
 import {
   setManagedAiPaused,
@@ -220,11 +221,12 @@ export async function getAuditTrail(targetUserId: string) {
 /** Paths that show account state. Any operator write invalidates all of them. */
 function revalidateInterestList() {
   revalidatePath("/admin/growth");
-  revalidatePath("/admin/growth/interest-list");
+  // Layout, not page: the Broadcasts tab's audience count reads the same list.
+  revalidatePath("/admin/access", "layout");
 }
 
 function revalidateBroadcasts() {
-  revalidatePath("/admin/growth/broadcasts");
+  revalidatePath("/admin/access/broadcasts");
 }
 
 function revalidateAdmin(targetUserId?: string) {
@@ -249,7 +251,7 @@ export async function retryImportAction(input: {
   after(() => ops.runImportJob(importId));
 
   revalidateAdmin(input.targetUserId);
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   return { ok: true };
 }
 
@@ -261,7 +263,7 @@ export async function cancelImportAction(input: {
   const adminUserId = await requireAdminUserId();
   await ops.cancelImport(adminUserId, input);
   revalidateAdmin(input.targetUserId);
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   return { ok: true };
 }
 
@@ -354,7 +356,7 @@ export async function setSurfaceHiddenAction(input: {
   await setSurfaceHidden(adminUserId, input.surfaceKey, input.hidden);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
   return { ok: true };
 }
 
@@ -372,7 +374,7 @@ export async function setSurfaceComingSoonAction(input: {
   await setSurfaceComingSoon(adminUserId, input.surfaceKey, input.soon);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
   return { ok: true };
 }
 
@@ -389,7 +391,57 @@ export async function setSurfaceTiersAction(input: {
   await setSurfaceTiers(adminUserId, input.surfaceKey, input.plans);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
+  return { ok: true };
+}
+
+/**
+ * Plan rules change what every account may do, and what the pricing and upgrade pages should
+ * say, so the whole app layout is dropped along with those two pages.
+ */
+function revalidatePlanRules() {
+  revalidatePath("/", "layout");
+  revalidatePath("/admin/product", "layout");
+  revalidatePath("/pricing");
+  revalidatePath("/upgrade");
+}
+
+/**
+ * Give a plan feature to exactly these plans (`setFeaturePlans`). Widening and narrowing are
+ * both allowed; an empty list means nobody. Taking a feature off a plan keeps every account's
+ * data and locks new use, exactly as a downgrade does. `reason` comes from the confirm dialog
+ * the console shows when paying accounts lose the feature, and is kept in the audit row.
+ */
+export async function setFeaturePlansAction(input: {
+  feature: string;
+  plans: string[];
+  reason?: string;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await setFeaturePlans(adminUserId, input.feature, input.plans, { reason: input.reason });
+  revalidatePlanRules();
+  return { ok: true };
+}
+
+/** Set one numeric limit for one plan (`setPlanLimit`). `value: null` is unlimited where allowed. */
+export async function setPlanLimitAction(input: {
+  plan: string;
+  field: string;
+  value: number | null;
+}): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await setPlanLimit(adminUserId, input.plan, input.field, input.value);
+  revalidatePlanRules();
+  return { ok: true };
+}
+
+/** Drop a feature or limit override so the code default applies again (`resetPlanRule`). */
+export async function resetPlanRuleAction(
+  input: { kind: "feature"; feature: string } | { kind: "limit"; plan: string; field: string }
+): Promise<{ ok: true }> {
+  const adminUserId = await requireAdminUserId();
+  await resetPlanRule(adminUserId, input);
+  revalidatePlanRules();
   return { ok: true };
 }
 
@@ -400,7 +452,7 @@ export async function setNavOrderAction(input: { order: string[] }): Promise<{ o
   await setNavOrder(adminUserId, input.order);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
   return { ok: true };
 }
 
@@ -425,7 +477,7 @@ export async function setConstellationConfigAction(input: {
   const next = await setConstellationConfig(adminUserId, input);
 
   revalidatePath("/", "layout");
-  revalidatePath("/admin/product");
+  revalidatePath("/admin/product", "layout");
   revalidatePath("/graph");
   revalidatePath("/dashboard");
   return next;
@@ -1053,9 +1105,9 @@ export async function refreshProvidersAction(): Promise<{ ok: true }> {
 
 /* ------------------------------------------------------------------------ site access */
 
+/** The stealth switch sits in the header of every Access tab, so all of them go stale. */
 function revalidateAccess() {
-  revalidatePath("/admin/access");
-  revalidatePath("/admin/growth/interest-list");
+  revalidatePath("/admin/access", "layout");
 }
 
 /**
@@ -1087,7 +1139,7 @@ export async function setWaitlistDemoAction(input: {
   const enabled = await setWaitlistDemoEnabled(adminUserId, input.enabled === true);
   revalidatePath("/interest");
   revalidatePath("/");
-  revalidatePath("/admin/growth/interest-list");
+  revalidatePath("/admin/access");
   return { ok: true, enabled };
 }
 
@@ -1160,7 +1212,7 @@ export async function setWebSearchPausedAction(input: {
 /* ------------------------------------------------- Shared LinkedIn photo takedown ------- */
 
 function revalidateAvatars() {
-  revalidatePath("/admin/avatars");
+  revalidatePath("/admin/product/photos");
   revalidatePath("/admin/users");
 }
 

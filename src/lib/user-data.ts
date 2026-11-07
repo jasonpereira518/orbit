@@ -9,6 +9,7 @@ import { purgeEmailAttachmentsForUser } from "@/lib/email/attachments";
 import { and, asc, eq, getTableName, inArray, lt, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
+import { INBOX_IGNORED_CONTEXT } from "@/lib/email-intel/types";
 import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
@@ -85,6 +86,8 @@ import {
   planUpgradeEvents,
   radarRuns,
   contactSignals,
+  emailEvents,
+  emailThreads,
   recommendationFeedback,
   recommendations,
   recruiterMessages,
@@ -246,8 +249,8 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns)],
-    counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(emailThreads), own(emailEvents)],
+    counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts, emailThreads, emailEvents],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
       // holding this person's prompts, and deleting our row would only lose the handle to
@@ -259,6 +262,14 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(aiResultCache).where(eq(aiResultCache.userId, userId));
       await db.delete(embeddingFailures).where(eq(embeddingFailures.userId, userId));
       await db.delete(closenessCohorts).where(eq(closenessCohorts.userId, userId));
+      // Email insights: derived from the person's mail. Events cascade from threads, but an
+      // insights-only delete says so explicitly.
+      await db.delete(emailEvents).where(eq(emailEvents.userId, userId));
+      await db.delete(emailThreads).where(eq(emailThreads.userId, userId));
+      // The names dismissed from Radar's "From your inbox" strip came from that mail too.
+      await db
+        .delete(ignoredPeople)
+        .where(and(eq(ignoredPeople.userId, userId), eq(ignoredPeople.context, INBOX_IGNORED_CONTEXT)));
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
       // Passages of the person's own notes. Derived, but derived from the most personal text
       // in the product — leaving these behind after a deletion would leave the notes behind.
@@ -292,6 +303,11 @@ const STEPS: Record<DataCategory, CategoryStep> = {
           radarNextAt: null,
           radarLeaseUntil: null,
           radarModel: null,
+          // A later re-enable backfills from scratch. The switch itself is not reset here:
+          // turning the feature off is `deleteEmailIntelData`'s job, and a full purge already
+          // re-inserts settings at the default of 0.
+          emailIntelCursorAt: null,
+          emailIntelNextAt: null,
         })
         .where(eq(userSettings.userId, userId));
     },

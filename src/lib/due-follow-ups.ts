@@ -7,6 +7,7 @@ import {
   type ClosenessCohortSlimResult,
   type ClosenessScalars,
 } from "@/lib/closeness-cohort";
+import { alertableContactSql } from "@/lib/met-contact";
 
 /** How many due follow-ups the dashboard card, and every reader of its list, shows. */
 export const DUE_FOLLOW_UP_CAP = 12;
@@ -93,7 +94,8 @@ export async function loadDueFollowUps(
         and(
           eq(contacts.userId, userId),
           isNotNull(contacts.nextFollowUpAt),
-          lte(contacts.nextFollowUpAt, sql`now() + interval '1 hour'`)
+          lte(contacts.nextFollowUpAt, sql`now() + interval '1 hour'`),
+          alertableContactSql(sql`${contacts.id}`, userId)
         )
       ),
     opts.cohort ? Promise.resolve(false) : storedScoresAreCurrent(userId),

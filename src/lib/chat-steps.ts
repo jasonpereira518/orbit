@@ -18,6 +18,8 @@
  */
 
 import type { ChatStep, ChatStepKind, ChatStepRef } from "@/lib/chat-stream-protocol";
+import type { ParsedQuery } from "@/lib/chat-retrieval";
+import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 
 export type StepPatch = {
   label?: string;
@@ -60,12 +62,17 @@ export function createStepEmitter(onStep: (step: ChatStep) => void): StepEmitter
   const steps = new Map<string, ChatStep>();
   const startedAt = new Map<string, number>();
   const order: string[] = [];
+  // Steps run in parallel, so their durations cannot be summed into "how long this took".
+  // Each records when it began, relative to this, and the answer's real elapsed time is the
+  // latest `at + ms`.
+  const origin = Date.now();
 
   return {
     start(kind, label, detail, id = kind) {
       if (!steps.has(id)) order.push(id);
-      startedAt.set(id, Date.now());
-      const step: ChatStep = { id, kind, label, detail, status: "active" };
+      const now = Date.now();
+      startedAt.set(id, now);
+      const step: ChatStep = { id, kind, label, detail, status: "active", at: now - origin };
       steps.set(id, step);
       onStep(step);
     },
@@ -82,6 +89,7 @@ export function createStepEmitter(onStep: (step: ChatStep) => void): StepEmitter
         label: patch?.label ?? prior?.label ?? kind,
         detail: patch?.detail ?? prior?.detail,
         status: "done",
+        at: prior?.at,
         ms: began === undefined ? undefined : Date.now() - began,
         refs: patch?.refs ?? prior?.refs,
       };
@@ -125,6 +133,69 @@ export function createStepEmitter(onStep: (step: ChatStep) => void): StepEmitter
 /** "1 contact" / "412 contacts" — counts are always real, so they are always shown. */
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+
+/**
+ * A count that may have hit the limit it was fetched with: "60+ possible matches" rather than
+ * "60", which would read as the size of the answer when it is only the size of the page.
+ */
+export function countFound(n: number, cap: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString()}${n >= cap ? "+" : ""} ${n === 1 ? one : many}`;
+}
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+/** "Stripe", "Stripe or Plaid", "Stripe, Plaid or Ramp" — values cleaned for one line. */
+function either(values: readonly string[]): string {
+  const clean = values.map((v) => sanitizeProfileLine(v)).filter(Boolean);
+  if (clean.length <= 1) return clean.join("");
+  return `${clean.slice(0, -1).join(", ")} or ${clean[clean.length - 1]}`;
+}
+
+const TIER_WORDS: Record<string, string> = {
+  inner: "inner circle",
+  mid: "middle ring",
+  outer: "outer ring",
+};
+
+/**
+ * The question as the parser read it, so the steps can talk about what was asked rather than
+ * about "your network" in general.
+ *
+ * `interpreted` is false when the parser added nothing — no key, a question too short to
+ * parse, a timeout. Its fallback is exactly the question with no filters, so that is what is
+ * checked; the steps then say the words were used as written instead of claiming a reading.
+ */
+/** The parser's filters as words a person would say: "at Stripe", "from Duke", "in your inner circle". */
+export function filterWords(f: ParsedQuery["filters"] | null | undefined): string[] {
+  const out: string[] = [];
+  if (!f) return out;
+  if (f.companies?.length) out.push(`at ${either(f.companies)}`);
+  if (f.industries?.length) out.push(`in ${either(f.industries)}`);
+  if (f.schools?.length) out.push(`from ${either(f.schools)}`);
+  if (f.locations?.length) out.push(`in ${either(f.locations)}`);
+  if (f.tags?.length) out.push(`tagged ${either(f.tags)}`);
+  if (f.closenessTiers?.length) out.push(`in your ${either(f.closenessTiers.map((t) => TIER_WORDS[t] ?? t))}`);
+  return out;
+}
+
+export function describeQuestion(
+  parsed: Pick<ParsedQuery, "semanticQuery" | "filters" | "expansionTerms">,
+  question: string
+): { subject: string; interpreted: boolean; detail?: string } {
+  const filters = filterWords(parsed.filters);
+  const expansions = parsed.expansionTerms ?? [];
+  const rewritten = parsed.semanticQuery.trim() !== question.trim();
+  const interpreted = rewritten || filters.length > 0 || expansions.length > 0;
+
+  const subject =
+    rewritten || filters.length === 0
+      ? `“${clip(sanitizeProfileLine(parsed.semanticQuery), 60)}”`
+      : clip(`people ${filters.join(" ")}`, 80);
+  const detail = [...filters, ...(expansions.length ? [`also matching ${either(expansions.slice(0, 4))}`] : [])];
+  return { subject, interpreted, ...(detail.length ? { detail: detail.join(" · ") } : {}) };
 }
 
 /** The arms that actually matched something, named the way a person would say them. */
@@ -187,7 +258,11 @@ export function deriveFollowUps(source: FollowUpSource, limit = 3): string[] {
 
   if (source.topRosterCompany) add(`Who else do I know at ${source.topRosterCompany}?`);
   if (source.firstOverdueName) add(`Draft a note to ${source.firstOverdueName}`);
-  if (source.topContactName) add(`Tell me more about ${source.topContactName}`);
+  // Not when the question already asks about them: "tell me about Maya" must not offer
+  // "Tell me more about Maya".
+  if (source.topContactName && !asked.includes(source.topContactName.trim().toLowerCase())) {
+    add(`Tell me more about ${source.topContactName}`);
+  }
 
   return out.slice(0, limit);
 }

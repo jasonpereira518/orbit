@@ -24,7 +24,7 @@ import {
   type ReminderActionKind,
   type ReminderOrigin,
 } from "@/db/schema";
-import { dueDayOf, ymdInZone } from "@/lib/reminder-due-bucket";
+import { dueDayOf, isDateOnlyDue, ymdInZone } from "@/lib/reminder-due-bucket";
 import {
   REMINDERS_PAGE_SIZE,
   type ReminderRailCounts,
@@ -122,6 +122,9 @@ function filterConditions(
     );
   } else {
     switch (filters.view ?? "today") {
+      case "all":
+        conds.push(eq(reminders.status, "pending"));
+        break;
       case "today":
         conds.push(eq(reminders.status, "pending"));
         conds.push(sql`${dueDay} <= ${today}::date`);
@@ -252,6 +255,10 @@ export async function queryRemindersPage(
     description: r.description,
     dueDate: r.dueDate ? r.dueDate.toISOString() : null,
     dueDay: dueDayOf(r.dueDate, filters.tz),
+    dueTime:
+      r.actionKind === "meet" && r.dueDate && !isDateOnlyDue(r.dueDate)
+        ? r.dueDate.toLocaleTimeString("en-US", { timeZone: filters.tz, hour: "numeric", minute: "2-digit" })
+        : null,
     status: r.status,
     reminderType: r.reminderType,
     actionKind: (r.actionKind || "task") as ReminderActionKind,
@@ -302,6 +309,7 @@ export async function queryReminderRailCounts(
   const [viewRows, listRows, suggestedRows] = await Promise.all([
     db
       .select({
+        all: sql<number>`count(*) filter (where ${pending})::int`,
         today: sql<number>`count(*) filter (where ${pending} and ${dueDay} <= ${today}::date)::int`,
         overdue: sql<number>`count(*) filter (where ${pending} and ${dueDay} < ${today}::date)::int`,
         upcoming: sql<number>`count(*) filter (where ${pending} and ${dueDay} > ${today}::date)::int`,
@@ -333,6 +341,7 @@ export async function queryReminderRailCounts(
   const v = viewRows[0];
   return {
     counts: {
+      all: Number(v?.all ?? 0),
       today: Number(v?.today ?? 0),
       overdue: Number(v?.overdue ?? 0),
       upcoming: Number(v?.upcoming ?? 0),

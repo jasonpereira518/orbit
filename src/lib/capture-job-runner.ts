@@ -44,9 +44,11 @@ import { resolveAvatarNow } from "@/lib/avatar-backfill";
 import { downloadAndPersistAvatar } from "@/lib/contact-avatar";
 import { resolveLinkedInPhotoCached } from "@/lib/shared-avatars";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
-import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
+import { saveConfidentGranolaPeople, type GranolaJobHints } from "@/lib/connectors/granola-save";
+import { buildDuplicateIndex, findDuplicateCandidatesIndexed, linkedinSlug, DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { kickWorkHistoryResearch, linkedInCaptureContactIds } from "@/lib/work-history-research";
+import { writeResearchedProfile } from "@/lib/web-research";
 import { reportAndContinue, reportedFailure } from "@/lib/report-error";
 import { upsertIgnoredPeople, type IgnoredPersonInput } from "@/lib/ignored-people";
 import { getMeetingSession, getNoteBatchForUser, markMeetingSessionSaved, toNoteBatchMeeting } from "@/lib/meeting-sessions";
@@ -178,6 +180,8 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     const parsed = await Promise.race([
       parse(row.userId, corpus, row.inputHints, {
         meetingSessionId: row.meetingSessionId,
+        // The review flow: someone will look at these cards, so new people are worth a search.
+        lookUpNewPeople: true,
         // Stored on the job rather than folded into `inputHints`, because a contact id is
         // not a parse hint — and anything on an AI-facing type eventually ends up in a prompt.
         mentionPicks: row.mentionPicks ?? [],
@@ -191,6 +195,34 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
     ]);
     if (!(await heartbeatCaptureJob(id, token))) throw new ClaimLostError();
     const { sourceText, sourceHash, ...rest } = parsed;
+    const granola = (row.inputHints as GranolaJobHints | null)?.granola;
+    if (granola) {
+      // A note picked from Granola: people already in Orbit are saved now, and only the new
+      // ones (plus any dated commitments) wait for review. See `saveConfidentGranolaPeople`.
+      const split = await saveConfidentGranolaPeople(row.userId, { result: parsed, text: sourceText, granola, now: deps.now ?? new Date() });
+      const result: CaptureJobResult = {
+        ...rest,
+        // Each card carries its note, so a combined review that folds this job into another
+        // still saves it as Granola's (see `granola` on `BulkNotePersonPreview`).
+        items: split.remaining.map((item) => ({ ...item, granola })),
+        ...(split.saved && !split.needsReview ? { saved: savedSummaryOf(split.saved, {}) } : {}),
+      };
+      await settleCaptureJob(id, token, {
+        ...(split.needsReview || !split.saved
+          ? { status: "ready" as const }
+          : { status: "saved" as const, noteBatchId: split.saved.batchId }),
+        result,
+        sourceText,
+        sourceHash,
+        error: null,
+      });
+      for (const contactId of deps.enrich === false ? [] : (split.saved?.contactIds ?? [])) {
+        await generateAndStoreContactBrief(row.userId, contactId).catch(
+          reportAndContinue({ where: "job.capture.granola.brief", userId: row.userId, extra: { jobId: id } }, null)
+        );
+      }
+      return getCaptureJobById(id);
+    }
     const result: CaptureJobResult = rest;
     await settleCaptureJob(id, token, { status: "ready", result, sourceText, sourceHash, error: null });
   } catch (err) {
@@ -243,7 +275,16 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
       // A job in the review flow: the person ticked these reminders, so each is a follow-up they set.
       const input = { ...(await buildSaveInput(row)), trackFollowUps: true };
       out = await save(userId, input);
-      linkedInContactIds = linkedInCaptureContactIds(input.participants, out.contactIds);
+      // A card looked up while it was extracted already holds their career: write it from
+      // the cached brief rather than paying for the same search again.
+      const fromWeb = new Set<string>();
+      for (const [i, p] of input.participants.entries()) {
+        const contactId = out.contactIds[i];
+        if (!p.webResearchKey || !contactId) continue;
+        const written = await writeResearchedProfile(userId, contactId, p.webResearchKey).catch(() => false);
+        if (written) fromWeb.add(contactId);
+      }
+      linkedInContactIds = linkedInCaptureContactIds(input.participants, out.contactIds).filter((id) => !fromWeb.has(id));
     }
 
     const saved = savedSummary(row, out);
@@ -409,6 +450,15 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
       ...(edits.website !== undefined ? { website: normalizeWebsite(edits.website) } : {}),
       ...(edits.school !== undefined ? { school: edits.school?.trim().slice(0, 200) || null } : {}),
       ...(edits.industry !== undefined ? { industry: edits.industry?.trim().slice(0, 200) || null } : {}),
+      ...(edits.location !== undefined ? { location: edits.location?.trim().slice(0, 200) || null } : {}),
+      // An address or profile link that does not look like one is dropped, not saved: both
+      // become identity keys, and a typo there would claim someone else's identity.
+      ...(edits.email !== undefined
+        ? { email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(edits.email?.trim() ?? "") ? edits.email!.trim().toLowerCase() : null }
+        : {}),
+      ...(edits.linkedinUrl !== undefined
+        ? { linkedin_url: linkedinSlug(edits.linkedinUrl) ? edits.linkedinUrl!.trim() : null }
+        : {}),
     };
     const top =
       !decision.mergeContactId && index
@@ -464,6 +514,7 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
     const facts = reminderFactsFor(item, decision);
     return {
       notes: item.notes,
+      webResearchKey: item.web?.key ?? null,
       ...(item.noteHash ? { sourceHash: item.noteHash } : {}),
       parsed,
       mergeContactId,
@@ -479,6 +530,15 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
       cadencePhrase: item.cadence?.phrase ?? null,
       interactionDate: item.interactionDate,
       interactionType: item.interactionType,
+      // A Granola card: logged as Granola's, at the meeting's real time (a day-only date is
+      // stored at noon), under the id the sync checks so it never logs the meeting twice.
+      ...(item.granola
+        ? {
+            interactionDate: item.granola.meetingAt,
+            externalIdBase: `granola:${item.granola.noteId}`,
+            interactionSource: "granola",
+          }
+        : {}),
       // Opportunities belong to the card that produced them, so rejecting a person drops
       // theirs with them — `accepted` is already the filter. A per-opportunity untick from
       // the summary narrows it further.
@@ -588,6 +648,10 @@ function savedSummary(row: CaptureJobRow, out: SaveNoteBatchOutput): CaptureSave
     const card = accepted[i];
     if (card) contactIdByKey[card.item.key] = p.contactId;
   });
+  return savedSummaryOf(out, contactIdByKey);
+}
+
+function savedSummaryOf(out: SaveNoteBatchOutput, contactIdByKey: Record<string, string>): CaptureSavedSummary {
   return {
     batchId: out.batchId,
     created: out.created,

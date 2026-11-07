@@ -7,6 +7,7 @@ import { safeReturnPath } from "@/lib/safe-return-path";
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
+import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { purgeUserData } from "@/lib/user-data";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
 import { getDb } from "@/db";
@@ -14,7 +15,6 @@ import { outlookConnections, imports } from "@/db/schema";
 import { deleteCalendarSourcesForProvider } from "@/lib/calendar-sources";
 import { requireUserId } from "@/lib/auth";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
-import { pauseSync, resumeSync } from "@/lib/provider-connections";
 import { requireRecruitersUser } from "@/lib/plan-guards";
 import { getAiConfig } from "@/lib/ai";
 import { isAiAccessError } from "@/lib/ai-access";
@@ -35,6 +35,7 @@ import {
   hasSendScope,
 } from "@/lib/outlook";
 import {
+  grantCovers,
   isMicrosoftPurpose,
   parseMicrosoftPurposes,
   serializeMicrosoftPurposes,
@@ -62,6 +63,10 @@ export type OutlookConnectionStatus = {
   canSend: boolean;
   /** True when the person switched meetings off with the Meetings switch (`setCalendarSync`). */
   syncPaused: boolean;
+  /** The "Keep contacts in sync" switch; on unless turned off (v194). */
+  contactsSyncEnabled: boolean;
+  /** Files.Read: OneDrive notes are being watched. */
+  canReadFiles: boolean;
   /** Null when there is no connection row. See `deriveConnectionHealth`. */
   status: ConnectionHealth | null;
   /** The scheduler's last error, verbatim — never rendered as-is (`calendarPauseLine`). */
@@ -88,6 +93,8 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
       hasMailScope: false,
       canSend: false,
       syncPaused: false,
+      contactsSyncEnabled: true,
+      canReadFiles: false,
       status: null,
       syncError: null,
       nextSyncAt: null,
@@ -109,7 +116,10 @@ export async function getOutlookConnectionStatus(): Promise<OutlookConnectionSta
     hasCalendarScope: Boolean(conn && conn.status === "active" && hasCalendarScope(conn.scopes)),
     hasMailScope: Boolean(conn && conn.status === "active" && hasMailScope(conn.scopes)),
     canSend: Boolean(conn && conn.status === "active" && hasSendScope(conn.scopes)),
-    syncPaused: Boolean(conn && conn.syncStatus === "paused"),
+    // The Meetings switch is its own lane now (v194), not a paused connection.
+    syncPaused: Boolean(conn && conn.calendarSyncEnabled === 0),
+    contactsSyncEnabled: !conn || conn.contactsSyncEnabled !== 0,
+    canReadFiles: Boolean(conn && conn.status === "active" && grantCovers("files", conn.scopes)),
     status: conn
       ? deriveConnectionHealth({
           status: conn.status,
@@ -201,12 +211,43 @@ export async function setCalendarSync(enabled: boolean): Promise<ActionResult<vo
           "Allow Orbit to see your calendar first — reconnect Outlook and accept calendar access"
         );
       }
-      await resumeSync("microsoft", userId);
-    } else {
-      await pauseSync("microsoft", userId);
     }
-    revalidatePath("/settings");
+    // Only the calendar lane: contacts keep syncing (it used to pause the whole connection).
+    await setOutlookLane(userId, { calendarSyncEnabled: enabled ? 1 : 0 }, enabled);
+    revalidatePathIfRequestScoped("/settings");
   });
+}
+
+/** "Keep contacts in sync" on the Microsoft page: the background contacts lane only. */
+export async function setOutlookContactsSync(enabled: boolean): Promise<ActionResult<void>> {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    if (enabled) {
+      const db = await getDb();
+      const conn = await db.query.outlookConnections.findFirst({
+        where: eq(outlookConnections.userId, userId),
+        columns: { scopes: true },
+      });
+      if (!hasContactsScope(conn?.scopes)) {
+        throw new UserFacingError("Allow Orbit to see your contacts first — reconnect Outlook and accept contacts access");
+      }
+    }
+    await setOutlookLane(userId, { contactsSyncEnabled: enabled ? 1 : 0 }, enabled);
+    revalidatePathIfRequestScoped("/settings");
+  });
+}
+
+/** Flip one lane switch; turning one on also makes the connection due now, so it starts soon. */
+async function setOutlookLane(
+  userId: string,
+  set: { calendarSyncEnabled?: number; contactsSyncEnabled?: number },
+  dueNow: boolean
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(outlookConnections)
+    .set({ ...set, ...(dueNow ? { nextSyncAt: new Date() } : {}), updatedAt: new Date() })
+    .where(and(eq(outlookConnections.userId, userId), eq(outlookConnections.status, "active")));
 }
 
 /**
@@ -232,7 +273,7 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   }
   revalidatePath("/settings");
   revalidatePath("/recruiters");
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 }
 
 export async function consumeOutlookOAuthState(

@@ -1,21 +1,18 @@
 import { sql } from "drizzle-orm";
-import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { resolvePlan, type Plan, type PlanSource } from "@/lib/entitlements";
-import type { AdminUserRow } from "@/lib/admin-metrics";
+import { cachedAdminAggregates, type AdminUserRow } from "@/lib/admin-metrics";
 import { PRESENCE_WINDOW_MS } from "@/lib/presence-window";
 
 /**
  * The paginated roster query.
  *
- * `/admin/users` used to load every account and filter, sort and slice in JS. Its comment
- * said paging was impossible because a derived sort ("most contacts") could not be pushed
- * into the base query. That was true of the *shape* it used — six independent aggregate
- * scans joined in JS afterwards — but not of the problem: as CTEs joined onto
- * `user_settings`, the derived columns are in the base query, so ORDER BY and LIMIT can
- * live in SQL where they belong. The CTEs each scan their table once, exactly as the old
- * fan-out did, so the cost is unchanged while the result set stops growing with the
- * account count.
+ * `/admin/users` used to load every account and filter, sort and slice in JS. Now the
+ * derived per-user counts are joined onto `user_settings` as an `agg` CTE, so ORDER BY and
+ * LIMIT live in SQL. The counts themselves come from `admin-metrics`' memoized aggregates
+ * (`cachedAdminAggregates`, ten minutes), passed in as ONE jsonb parameter and unpacked with
+ * `jsonb_to_recordset` — not five whole-table GROUP BYs per sort and page, and not a VALUES
+ * list, which would hit the 65k bind-parameter ceiling at a few thousand accounts.
  *
  * `loadAdminUserRows()` in `admin-metrics.ts` is deliberately kept for `/admin` and
  * `/admin/billing`, which genuinely need every row to build the funnel and the alert list.
@@ -307,56 +304,122 @@ function buildPredicates(query: RosterQuery) {
   return sql.join(parts, sql` AND `);
 }
 
-function rosterSql(query: RosterQuery, limit: number, offset: number) {
+/** One `agg` row per account, the shape the CTE's `jsonb_to_recordset` column list reads. */
+type AggRecord = {
+  user_id: string;
+  contacts: number;
+  interactions: number;
+  imports: number;
+  chat_messages: number;
+  ai_calls: number;
+  ai_failures: string;
+  in_tokens: string;
+  out_tokens: string;
+  cost_micros: string;
+  first_interaction_at: string | null;
+  first_contact_at: string | null;
+  last_write_at: string | null;
+};
+
+/**
+ * The per-user counts, from `admin-metrics`' memoized aggregates instead of five whole-table
+ * GROUP BYs on every load, sort and page. Counts may lag by up to `ADMIN_AGGREGATES_TTL_MS`;
+ * `user_settings` (plans, suspensions, new signups) is still read live.
+ */
+async function rosterAggregates(): Promise<AggRecord[]> {
+  const { contactAgg, interactionAgg, importAgg, chatAgg, usageAgg } =
+    await cachedAdminAggregates();
+  const out = new Map<string, AggRecord>();
+  const at = (userId: string) => {
+    let r = out.get(userId);
+    if (!r) {
+      r = {
+        user_id: userId,
+        contacts: 0,
+        interactions: 0,
+        imports: 0,
+        chat_messages: 0,
+        ai_calls: 0,
+        ai_failures: "0",
+        in_tokens: "0",
+        out_tokens: "0",
+        cost_micros: "0",
+        first_interaction_at: null,
+        first_contact_at: null,
+        last_write_at: null,
+      };
+      out.set(userId, r);
+    }
+    return r;
+  };
+  const touch = (r: AggRecord, lastAt: Date | string | null) => {
+    const d = maxDate(r.last_write_at, lastAt);
+    r.last_write_at = d ? d.toISOString() : null;
+  };
+  const iso = (v: Date | string | null) => toDate(v)?.toISOString() ?? null;
+
+  for (const c of contactAgg) {
+    const r = at(c.userId);
+    r.contacts = num(c.n);
+    r.first_contact_at = iso(c.firstAt);
+    touch(r, c.lastAt);
+  }
+  for (const i of interactionAgg) {
+    const r = at(i.userId);
+    r.interactions = num(i.n);
+    r.first_interaction_at = iso(i.firstAt);
+    touch(r, i.lastAt);
+  }
+  for (const im of importAgg) {
+    const r = at(im.userId);
+    r.imports = num(im.n);
+    touch(r, im.lastAt);
+  }
+  for (const ch of chatAgg) {
+    const r = at(ch.userId);
+    r.chat_messages = num(ch.n);
+    touch(r, ch.lastAt);
+  }
+  for (const u of usageAgg) {
+    const r = at(u.userId);
+    r.ai_calls = num(u.n);
+    // Strings, so bigint sums past 2^53 survive the JSON round trip into SQL.
+    r.ai_failures = String(u.failures ?? "0");
+    r.in_tokens = String(u.inTok ?? "0");
+    r.out_tokens = String(u.outTok ?? "0");
+    r.cost_micros = String(u.costMicros ?? "0");
+    touch(r, u.lastAt);
+  }
+  return [...out.values()];
+}
+
+function rosterSql(
+  query: RosterQuery,
+  limit: number,
+  offset: number,
+  aggregates: AggRecord[]
+) {
   const sort: RosterSort = isRosterSort(query.sort) ? query.sort : "signup";
   const dir = query.dir ?? DEFAULT_SORT_DIR[sort];
   const direction = dir === "asc" ? "ASC" : "DESC";
 
   return sql`
     WITH agg AS (
-      SELECT
-        u.user_id,
-        max(u.contacts)          AS contacts,
-        max(u.interactions)      AS interactions,
-        max(u.imports)           AS imports,
-        max(u.chat_messages)     AS chat_messages,
-        max(u.ai_calls)          AS ai_calls,
-        max(u.ai_failures)       AS ai_failures,
-        max(u.in_tokens)         AS in_tokens,
-        max(u.out_tokens)        AS out_tokens,
-        max(u.cost_micros)       AS cost_micros,
-        max(u.first_interaction_at) AS first_interaction_at,
-        max(u.first_contact_at)  AS first_contact_at,
-        max(u.last_write_at)     AS last_write_at
-      FROM (
-        SELECT user_id, count(*)::int AS contacts, 0 AS interactions, 0 AS imports,
-               0 AS chat_messages, 0 AS ai_calls, 0::bigint AS ai_failures,
-               0::bigint AS in_tokens, 0::bigint AS out_tokens, 0::bigint AS cost_micros,
-               NULL::timestamptz AS first_interaction_at,
-               min(created_at) AS first_contact_at, max(created_at) AS last_write_at
-        FROM contacts WHERE source IS DISTINCT FROM ${TOUR_EXAMPLE_SOURCE} GROUP BY user_id
-        UNION ALL
-        SELECT user_id, 0, count(*)::int, 0, 0, 0, 0::bigint, 0::bigint, 0::bigint,
-               0::bigint, min(created_at), NULL::timestamptz, max(created_at)
-        FROM interactions GROUP BY user_id
-        UNION ALL
-        SELECT user_id, 0, 0, count(*)::int, 0, 0, 0::bigint, 0::bigint, 0::bigint,
-               0::bigint, NULL::timestamptz, NULL::timestamptz, max(created_at)
-        FROM imports GROUP BY user_id
-        UNION ALL
-        SELECT user_id, 0, 0, 0, count(*)::int, 0, 0::bigint, 0::bigint, 0::bigint,
-               0::bigint, NULL::timestamptz, NULL::timestamptz, max(created_at)
-        FROM chat_messages GROUP BY user_id
-        UNION ALL
-        SELECT user_id, 0, 0, 0, 0, count(*)::int,
-               coalesce(sum(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0),
-               coalesce(sum(input_tokens), 0),
-               coalesce(sum(output_tokens), 0),
-               coalesce(sum(estimated_cost_micros), 0),
-               NULL::timestamptz, NULL::timestamptz, max(created_at)
-        FROM usage_events GROUP BY user_id
-      ) u
-      GROUP BY u.user_id
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(aggregates)}::jsonb) AS x(
+        user_id text,
+        contacts int,
+        interactions int,
+        imports int,
+        chat_messages int,
+        ai_calls int,
+        ai_failures bigint,
+        in_tokens bigint,
+        out_tokens bigint,
+        cost_micros bigint,
+        first_interaction_at timestamptz,
+        first_contact_at timestamptz,
+        last_write_at timestamptz
+      )
     )
     SELECT
       s.user_id, s.email, s.created_at, s.last_active_at,
@@ -396,7 +459,9 @@ export async function loadAdminRoster(
   const pageSize = Math.min(Math.max(query.pageSize ?? ROSTER_PAGE_SIZE, 1), MAX_PAGE_SIZE);
   const page = Math.max(query.page ?? 1, 1);
 
-  const result = await db.execute(rosterSql(query, pageSize, (page - 1) * pageSize));
+  const result = await db.execute(
+    rosterSql(query, pageSize, (page - 1) * pageSize, await rosterAggregates())
+  );
   const records = rowsOf<RosterRecord>(result);
 
   // `count(*) OVER ()` rides along on every row, so the total costs no second query — but
@@ -417,7 +482,9 @@ export async function loadAdminRosterAll(
   query: Omit<RosterQuery, "page" | "pageSize"> = {}
 ): Promise<AdminUserRow[]> {
   const db = await getDb();
-  const result = await db.execute(rosterSql(query, ROSTER_EXPORT_LIMIT, 0));
+  const result = await db.execute(
+    rosterSql(query, ROSTER_EXPORT_LIMIT, 0, await rosterAggregates())
+  );
   return rowsOf<RosterRecord>(result).map(toRow);
 }
 

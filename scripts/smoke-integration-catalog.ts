@@ -48,6 +48,11 @@ check(
   plannedMismatch.map((i) => i.id).join(",")
 );
 
+const lostAliases = items.flatMap((i) =>
+  (connectorById(i.id)?.aliases ?? []).filter((a) => !i.aliases.includes(a)).map((a) => `${i.id}:${a}`)
+);
+check("every registry alias is searchable in the catalog", lostAliases.length === 0, lostAliases.join(","));
+
 check(
   "tab targets are real dialog pages",
   items.every((i) => !("tab" in i.to) || tabIds.has(i.to.tab))

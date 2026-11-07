@@ -31,6 +31,7 @@ import { CelebrationCanvas } from "@/components/celebration/celebration-canvas";
 import { CelebrationContent } from "@/components/celebration/celebration-content";
 import { CelebrationReduced } from "@/components/celebration/celebration-reduced";
 import { OrbitLogo } from "@/components/orbit-logo";
+import { useModalTakeover } from "@/lib/use-modal-takeover";
 
 /**
  * The full-screen takeover. Sits one layer below warp's z-[9999] — if a warp
@@ -92,6 +93,8 @@ export function CelebrationStage({
     phaseRef.current = phase;
   }, [phase]);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // Before the focus effect below, so its cleanup lifts `inert` before focus is handed back.
+  useModalTakeover(rootRef);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const stingRef = useRef<Sting | null>(null);
   // The moment "t=0" of the choreography happened, shifted back when the

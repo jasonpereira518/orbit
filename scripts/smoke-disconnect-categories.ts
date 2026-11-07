@@ -33,6 +33,8 @@ for (const [provider, ids] of Object.entries(DISCONNECT_DELETE_CATEGORIES)) {
 const only = (ids: readonly string[], one: string) => ids.length === 1 && ids[0] === one;
 check("Google offers the recruiter scan data and nothing else", only(DISCONNECT_DELETE_CATEGORIES.gmail, "recruiters"));
 check("Outlook offers the recruiter scan data and nothing else", only(DISCONNECT_DELETE_CATEGORIES.outlook, "recruiters"));
+// Granola's page passes `hasDeletableData: false`, which is only honest while this is empty.
+check("Granola offers nothing to delete", DISCONNECT_DELETE_CATEGORIES.granola.length === 0);
 
 if (failures > 0) process.exit(1);
 console.log("\nAll disconnect-category checks passed.");

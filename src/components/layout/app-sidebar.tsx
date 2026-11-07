@@ -16,15 +16,16 @@ import {
   type AppNavItem,
 } from "@/components/layout/app-nav";
 import {
-  COMING_SOON_UNLOCK_PLAN,
   isHrefComingSoon,
   isHrefHidden,
   orderNavItems,
   surfaceKeyForHref,
   tierTagPlan,
   tierTagTitle,
+  comingSoonUnlockPlans,
 } from "@/lib/surfaces";
-import { PLAN_LABELS, PLAN_SHORT_LABELS } from "@/lib/plans/plan-config";
+import { PLAN_SHORT_LABELS, planList } from "@/lib/plans/plan-config";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
@@ -38,6 +39,8 @@ import { useModKeyLabel } from "@/lib/use-mod-key";
 /** Nav destinations whose page leans on a lazy client chunk: warmed on hover or focus. */
 const CHUNK_WARMERS: Record<string, (() => void) | undefined> = {
   "/capture": preloadCaptureFlow,
+  // The recorder on /meetings is the same flow.
+  "/meetings": preloadCaptureFlow,
   "/chat": preloadChatPanel,
 };
 
@@ -63,6 +66,7 @@ function SidebarNavLink({
 }) {
   const active = isNavActive(pathname, item.href);
   const Icon = item.icon;
+  const { planConfig } = useViewerPlan();
   // Shown to operators too, who still reach the real page: the tag is how they know what
   // everyone else gets. "Hidden" outranks it, because a hidden page is not even announced.
   const comingSoon = !hiddenFromUsers && isHrefComingSoon(item.href, soon);
@@ -87,7 +91,7 @@ function SidebarNavLink({
         hiddenFromUsers
           ? `${item.label} — hidden from users`
           : comingSoon
-            ? `${item.label} — coming soon · unlocks with ${PLAN_LABELS[COMING_SOON_UNLOCK_PLAN]}`
+            ? `${item.label} — coming soon · unlocks with ${planList(comingSoonUnlockPlans(surfaceKeyForHref(item.href) ?? "", planConfig))}`
             : tiers && tierPlan
               ? tierTagTitle(item.label, tiers)
               : item.label
@@ -271,7 +275,10 @@ export function AppSidebar({
       </div>
       )}
 
-      <nav aria-label="Main" className="relative flex flex-1 flex-col gap-0.5 px-1.5 lg:px-2">
+      <nav aria-label="Main" className="flex min-h-0 flex-1 flex-col">
+        {/* Only the page list scrolls; Settings stays pinned below it, so a short window
+            never clips it. `-mt-1 pt-1` leaves room for the active pill's ring at the top. */}
+        <div className="relative flex min-h-0 flex-1 flex-col gap-0.5 -mt-1 overflow-y-auto overscroll-contain px-1.5 pb-1 pt-1 [scrollbar-width:thin] lg:px-2">
         {core.map((item) => (
           <SidebarNavLink
             soon={comingSoon}
@@ -305,10 +312,9 @@ export function AppSidebar({
           />
         ))}
 
-        {/* `mt-auto` drops Settings to the foot of the nav, clear of the Coming soon group.
-            `py-2` keeps it off the account divider below and holds the same gap
-            above when a short viewport leaves no slack for `mt-auto` to eat. */}
-        <div className="mt-auto py-2">
+        </div>
+
+        <div className="shrink-0 px-1.5 py-2 lg:px-2">
           <SidebarNavLink
             soon={comingSoon}
             item={APP_NAV_SETTINGS}

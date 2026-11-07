@@ -13,6 +13,7 @@ import {
   Target,
   Bell,
   Calendar,
+  CalendarClock,
   CalendarPlus,
   Check,
   CircleCheck,
@@ -29,7 +30,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { commitProposedAction, dismissProposedAction, undoProposedAction } from "@/actions/chat-actions";
+import { addMeetingToCalendar, commitProposedAction, dismissProposedAction, undoProposedAction } from "@/actions/chat-actions";
+import { startGmailOAuth } from "@/actions/gmail";
+import { startOutlookOAuth } from "@/actions/outlook";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
 import { Button } from "@/components/ui/button";
@@ -48,6 +51,7 @@ const TOOL_ICON: Record<string, typeof NotebookPen> = {
   delete_contact: Trash2,
   complete_action_item: ListChecks,
   create_reminder: Bell,
+  create_meeting: CalendarClock,
   complete_reminder: CircleCheck,
   snooze_reminder: AlarmClock,
   reschedule_reminder: AlarmClock,
@@ -110,15 +114,23 @@ export function ProposedActionsCard({
   messageId,
   action,
   contactName,
+  pending = false,
   onSettled,
 }: {
   messageId: string;
   action: StoredProposedAction;
   /** From `chat-panel`'s own retrieval-grounded map — absent for an action naming nobody. */
   contactName?: string | null;
+  /**
+   * The card streamed in before its answer was saved. It shows straight away, so the person
+   * reads it beside the answer that proposed it, but every control waits: committing needs the
+   * saved row's real id, which `messageId` only becomes once the answer lands.
+   */
+  pending?: boolean;
   onSettled: (next: StoredProposedAction) => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusy] = useState(false);
+  const busy = busyAction || pending;
   const [sending, setSending] = useState(false);
   const draft = draftOf(action);
   const Icon = TOOL_ICON[action.args.tool] ?? NotebookPen;
@@ -164,6 +176,34 @@ export function ProposedActionsCard({
   }
 
   const resultHref = action.href ?? null;
+  // A meeting only in Orbit can still go on the person's calendar (`@/lib/calendar-write`).
+  const offerCalendar = action.args.tool === "create_meeting" && action.undo?.input?.onCalendar !== true;
+
+  async function addToCalendar() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await addMeetingToCalendar(messageId, action.id);
+      if (res.ok) {
+        onSettled({ ...action, undo: { tool: "remove_created_meeting", input: { reminderId: action.resultId, onCalendar: true } } });
+        toast.success("Added to your calendar");
+      } else if (res.grant) {
+        // The consent screen, then back here; pressing again adds it.
+        const returnTo = `${window.location.pathname}${window.location.search}`;
+        const { url } =
+          res.grant === "microsoft"
+            ? await startOutlookOAuth({ purposes: ["calendar_write"], returnTo })
+            : await startGmailOAuth({ purpose: "calendar_write", returnTo });
+        window.location.href = url;
+        return;
+      } else {
+        toast.error(res.reason);
+      }
+    } catch {
+      toast.error("Couldn’t reach your calendar — try again?");
+    }
+    setBusy(false);
+  }
 
   return (
     <div
@@ -270,6 +310,21 @@ export function ProposedActionsCard({
                   </button>
                 </>
               )}
+              {offerCalendar && (
+                <>
+                  {" · "}
+                  <button
+                    type="button"
+                    onClick={addToCalendar}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1 text-primary underline underline-offset-2 disabled:opacity-50"
+                    aria-label={`Add to calendar: ${action.preview}`}
+                  >
+                    <CalendarPlus className="size-3" aria-hidden />
+                    Add to calendar
+                  </button>
+                </>
+              )}
             </span>
           )}
           {action.status === "undoing" && (
@@ -279,6 +334,9 @@ export function ProposedActionsCard({
           )}
           {action.status === "undone" && <span className="text-xs text-muted-foreground">Undone</span>}
           {action.status === "dismissed" && <span className="text-xs text-muted-foreground">Dismissed</span>}
+          {pending && action.status === "proposed" && (
+            <span className="text-xs text-muted-foreground">Saving the answer…</span>
+          )}
         </div>
       </div>
     </div>
@@ -294,11 +352,14 @@ export function ProposedActionsList({
   messageId,
   actions,
   nameById,
+  pending = false,
   onSettled,
 }: {
   messageId: string;
   actions: StoredProposedAction[];
   nameById: ReadonlyMap<string, string>;
+  /** Still streaming: the cards show, their controls wait for the saved row. See the card. */
+  pending?: boolean;
   onSettled: (actionId: string, next: StoredProposedAction) => void;
 }) {
   const [running, setRunning] = useState<{ done: number; of: number } | null>(null);
@@ -307,7 +368,7 @@ export function ProposedActionsList({
   const anyAutoApplied = actions.some((a) => a.autoApplied);
 
   async function confirmAll() {
-    if (running || waiting.length < 2) return;
+    if (pending || running || waiting.length < 2) return;
     setRunning({ done: 0, of: waiting.length });
     try {
       for (const [i, action] of waiting.entries()) {
@@ -333,7 +394,7 @@ export function ProposedActionsList({
       )}
       {waiting.length >= 2 && (
         <div className="flex items-center gap-2">
-          <Button type="button" size="sm" variant="secondary" onClick={confirmAll} disabled={Boolean(running)}>
+          <Button type="button" size="sm" variant="secondary" onClick={confirmAll} disabled={pending || Boolean(running)}>
             {running ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <Check className="size-3.5" aria-hidden />}
             {running ? `Confirming ${running.done + 1} of ${running.of}…` : `Confirm all (${waiting.length})`}
           </Button>
@@ -350,6 +411,7 @@ export function ProposedActionsList({
             messageId={messageId}
             action={action}
             contactName={contactId ? nameById.get(contactId) : null}
+            pending={pending}
             onSettled={(next) => onSettled(action.id, next)}
           />
         );

@@ -259,7 +259,15 @@ run(async () => {
       try {
         const r = await outcome(() => ask(user));
         t.check(`${label}: ${what} → friendly copy naming ${label}`, isFriendly(r.err) && (r.err as Error).message.includes(label), String(r.err ?? r.value));
-        t.check(`${label}: ${what} is not retried behind the caller's back (x-should-retry honoured)`, http.calls.length === 1, `${http.calls.length} call(s)`);
+        // OpenAI and Anthropic honour the stub's x-should-retry: false. Gemini's SDK has no such
+        // header, and Orbit gives it the same transient-error retry the others have by default
+        // (`geminiClient`: three attempts), so a 429 or 500 is tried three times before it fails.
+        const expected = p === "gemini" ? 3 : 1;
+        t.check(
+          `${label}: ${what} ${p === "gemini" ? "is retried up to three attempts" : "is not retried behind the caller's back (x-should-retry honoured)"}`,
+          http.calls.length === expected,
+          `${http.calls.length} call(s)`,
+        );
       } finally {
         http.restore();
       }

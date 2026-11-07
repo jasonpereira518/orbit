@@ -133,6 +133,32 @@ export const RULED_OUT_VERDICT: RecruiterScanResult = Object.freeze({
   summary: null,
 }) as RecruiterScanResult;
 
+/** How long a classification stays good. A sender is re-read on every scan; the verdict is not redone. */
+export const RECRUITER_VERDICT_TTL_DAYS = 90;
+
+/** A verdict worth remembering: it parses as the shape we ask for. */
+export const acceptRecruiterContent = (raw: string) => recruiterScanSchema.safeParse(parseAiJson(raw)).success;
+
+/**
+ * The model call for one sender. One definition, used by the inline classifier and by the Gmail
+ * batch submitter, so both build the same cache key and a verdict from either answers the other.
+ */
+export function recruiterCallInput(input: {
+  senderName: string;
+  senderEmail: string;
+  firmGuess: string | null;
+  messages: RecruiterScanMessage[];
+}) {
+  return {
+    operation: "recruiter.scan" as const,
+    // Low temperature: this is an extraction task, and the summary is stored as fact.
+    temperature: 0.2,
+    maxOutputTokens: 700,
+    system: RECRUITER_SYSTEM,
+    user: buildRecruiterUserPrompt(input),
+  };
+}
+
 export async function classifyRecruiterSender(
   userId: string,
   input: {
@@ -154,16 +180,9 @@ export async function classifyRecruiterSender(
   // Re-scans see the same senders again, and an overlap window re-reads the last two days of
   // mail on purpose. A sender whose rendered mail is byte-identical gets the verdict it got
   // last time instead of another model call; one new message changes the prompt and the key.
-  const content = await cachedCompleteJson(userId, {
-    operation: "recruiter.scan",
-    // Low temperature: this is an extraction task, and the summary is stored as fact.
-    temperature: 0.2,
-    maxOutputTokens: 700,
-    system: RECRUITER_SYSTEM,
-    user: buildRecruiterUserPrompt(input),
-  }, {
-    ttlDays: 90,
-    accept: (raw) => recruiterScanSchema.safeParse(parseAiJson(raw)).success,
+  const content = await cachedCompleteJson(userId, recruiterCallInput(input), {
+    ttlDays: RECRUITER_VERDICT_TTL_DAYS,
+    accept: acceptRecruiterContent,
   });
 
   return recruiterResultFromContent(content);

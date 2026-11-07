@@ -9,6 +9,7 @@ import {
   GoogleCalendarMark,
   GoogleDriveMark,
   GoogleMark,
+  GranolaMark,
   HubSpotMark,
   LinkedInMark,
   MicrosoftMark,
@@ -16,7 +17,6 @@ import {
   ZapierMark,
 } from "@/components/settings/provider-marks";
 import type { IntegrationTabId } from "@/components/settings/sections";
-import { connectorById } from "@/lib/connectors/registry";
 
 type Mark = ComponentType<{ className?: string }>;
 
@@ -33,6 +33,9 @@ export type CatalogItem = {
   blurb: string;
   mark: Mark;
   to: CatalogTarget;
+  /** Search words beyond the label. A superset of the registry's own aliases — checked by
+   *  `smoke-integration-catalog`, because this file cannot import the registry (below). */
+  aliases: string[];
 };
 
 export type CatalogGroup = {
@@ -50,12 +53,16 @@ function lucide(Icon: ComponentType<{ className?: string; "aria-hidden"?: boolea
   };
 }
 
-function item(id: string, blurb: string, mark: Mark, to: CatalogTarget, label?: string): CatalogItem {
-  return { id, label: label ?? connectorById(id)?.label ?? id, blurb, mark, to };
+function item(id: string, label: string, blurb: string, mark: Mark, to: CatalogTarget, aliases: string[] = []): CatalogItem {
+  return { id, label, blurb, mark, to, aliases };
 }
 
 /**
  * Everything Orbit connects to, in the order a person looks for it.
+ *
+ * Labels and aliases are written out here rather than read from `@/lib/connectors/registry`:
+ * the registry's `sync` functions `import()` database modules, and the bundler follows those
+ * into the browser. `smoke-integration-catalog` holds the two lists together instead.
  *
  * The `href` targets on /imports are temporary: those rows move into this dialog as their own
  * pages, and each tile becomes a `tab`. WhatsApp & iMessage is left out until then — its row is
@@ -67,9 +74,10 @@ export const CATALOG: CatalogGroup[] = [
     label: "Your accounts",
     accent: "bg-primary",
     items: [
-      item("google", "Contacts, calendar, Gmail and Drive.", GoogleMark, { tab: "google" }),
-      item("outlook", "Outlook contacts, calendar and mail.", MicrosoftMark, { tab: "microsoft" }, "Microsoft"),
-      item("linkedin", "Your connections and messages.", LinkedInMark, { tab: "linkedin" }),
+      item("google", "Google", "Contacts, calendar, Gmail and Drive.", GoogleMark, { tab: "google" }, ["gmail", "google contacts", "google calendar"]),
+      item("outlook", "Microsoft", "Outlook contacts, calendar and mail.", MicrosoftMark, { tab: "microsoft" }, ["microsoft", "office", "outlook", "outlook people", "teams"]),
+      item("linkedin", "LinkedIn", "Your connections, messages and profile.", LinkedInMark, { tab: "linkedin" }),
+      item("granola", "Granola", "Meeting notes, synced in as they happen.", GranolaMark, { tab: "granola" }, ["meeting notes"]),
     ],
   },
   {
@@ -77,11 +85,11 @@ export const CATALOG: CatalogGroup[] = [
     label: "People and contacts",
     accent: "bg-import-connections",
     items: [
-      item("contacts_file", "A CSV or vCard from your phone or anywhere else.", lucide(BookUser), {
+      item("contacts_file", "Contacts file", "A CSV or vCard from your phone or anywhere else.", lucide(BookUser), {
         href: "/imports#import-contacts-file",
-      }),
-      item("apple_contacts", "Keep iCloud contacts in sync.", AppleMark, { planned: true }),
-      item("hubspot", "Import the contacts you own, log what you do.", HubSpotMark, { planned: true }),
+      }, ["csv", "vcard", "vcf", "phone", "excel"]),
+      item("apple_contacts", "Apple Contacts", "Keep iCloud contacts in sync.", AppleMark, { planned: true }, ["icloud", "carddav"]),
+      item("hubspot", "HubSpot", "Import the contacts you own, log what you do.", HubSpotMark, { planned: true }),
     ],
   },
   {
@@ -89,13 +97,13 @@ export const CATALOG: CatalogGroup[] = [
     label: "Calendars and events",
     accent: "bg-import-calendar",
     items: [
-      item("calendar_ics", "Any calendar’s private link, kept in sync.", GoogleCalendarMark, {
+      item("calendar_ics", "Calendar subscription", "Any calendar’s private link, kept in sync.", GoogleCalendarMark, {
         href: "/imports#import-panel-calendar",
-      }),
-      item("luma", "Events and guest lists.", lucide(CalendarRange), { href: "/events" }),
-      item("eventbrite", "Events and attendees.", EventbriteMark, { href: "/events" }),
-      item("reminders", "Your follow-ups next to your meetings.", lucide(CalendarDays), { tab: "reminders" }, "Reminders in calendar"),
-      item("apple_calendar", "Log meetings from iCloud Calendar.", AppleMark, { planned: true }),
+      }, ["ics", "webcal"]),
+      item("luma", "Luma", "Events and guest lists.", lucide(CalendarRange), { href: "/events" }),
+      item("eventbrite", "Eventbrite", "Events and attendees.", EventbriteMark, { href: "/events" }),
+      item("reminders", "Reminders in calendar", "Your follow-ups next to your meetings.", lucide(CalendarDays), { tab: "reminders" }),
+      item("apple_calendar", "Apple Calendar", "Log meetings from iCloud Calendar.", AppleMark, { planned: true }, ["icloud", "caldav"]),
     ],
   },
   {
@@ -103,9 +111,9 @@ export const CATALOG: CatalogGroup[] = [
     label: "Notes and documents",
     accent: "bg-import-messages",
     items: [
-      item("google_drive", "Pick documents; Orbit finds the people in them.", GoogleDriveMark, { href: "/imports" }),
-      item("notion", "Import a people database.", NotionMark, { planned: true }),
-      item("apple_reminders", "A reminder for each follow-up.", AppleMark, { planned: true }),
+      item("google_drive", "Google Drive", "Pick documents; Orbit finds the people in them.", GoogleDriveMark, { href: "/imports" }, ["docs", "google docs"]),
+      item("notion", "Notion", "Import a people database.", NotionMark, { planned: true }),
+      item("apple_reminders", "Apple Reminders", "A reminder for each follow-up.", AppleMark, { planned: true }, ["shortcuts", "icloud"]),
     ],
   },
   {
@@ -113,8 +121,8 @@ export const CATALOG: CatalogGroup[] = [
     label: "AI and assistants",
     accent: "bg-tier-max",
     items: [
-      item("ai", "Turns notes into contacts and answers questions.", lucide(Sparkles), { tab: "ai" }, "AI"),
-      item("assistants", "Use Orbit from inside Claude or ChatGPT.", ClaudeMark, { tab: "assistants" }, "Claude and ChatGPT"),
+      item("ai", "AI", "Turns notes into contacts and answers questions.", lucide(Sparkles), { tab: "ai" }),
+      item("assistants", "Claude and ChatGPT", "Use Orbit from inside Claude or ChatGPT.", ClaudeMark, { tab: "assistants" }),
     ],
   },
   {
@@ -122,16 +130,15 @@ export const CATALOG: CatalogGroup[] = [
     label: "Automations and enrichment",
     accent: "bg-import-scan",
     items: [
-      item("zapier", "Send events in and out with an Orbit API key.", ZapierMark, { tab: "api" }),
-      item("apollo", "Work history and contact details.", lucide(Rocket), { tab: "outreach" }),
+      item("zapier", "Zapier & Make", "Send events in and out with an Orbit API key.", ZapierMark, { tab: "api" }, ["make", "n8n", "webhooks"]),
+      item("apollo", "Apollo", "Work history and contact details.", lucide(Rocket), { tab: "outreach" }),
     ],
   },
 ];
 
-/** Label, blurb and the registry's aliases ("iCloud" finds Apple, "Teams" finds Outlook). */
+/** Label, blurb and aliases ("iCloud" finds Apple, "Teams" finds Microsoft). */
 export function matchesCatalogQuery(entry: CatalogItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const aliases = connectorById(entry.id)?.aliases ?? [];
-  return [entry.label, entry.blurb, ...aliases].some((s) => s.toLowerCase().includes(q));
+  return [entry.label, entry.blurb, ...entry.aliases].some((s) => s.toLowerCase().includes(q));
 }

@@ -901,7 +901,17 @@ export default async function AdminUserDetailPage({
           </section>
 
           <section id="audit" className="scroll-mt-32 lg:scroll-mt-20">
-            <AdminPanel title="Audit trail">
+            <AdminPanel
+              title="Audit trail"
+              action={
+                <Link
+                  href={`/admin/users/audit?target=${encodeURIComponent(identity.userId)}`}
+                  className="text-xs text-muted-foreground hover:text-primary"
+                >
+                  Full log →
+                </Link>
+              }
+            >
               {audit.length === 0 ? (
                 <EmptyState>No admin actions on this account.</EmptyState>
               ) : (

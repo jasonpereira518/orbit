@@ -13,7 +13,7 @@ import "./smoke/_env";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, userSettings } from "../src/db/schema";
+import { contacts, interactions, userSettings } from "../src/db/schema";
 import { loadAppPulse } from "../src/lib/app-pulse";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -38,7 +38,24 @@ async function main() {
     .insert(contacts)
     .values({ userId: USER, fullName: "Due Person", nextFollowUpAt: new Date(now.getTime() - DAY) })
     .returning();
-  await db.insert(contacts).values({ userId: USER, fullName: "Later Person", nextFollowUpAt: new Date(now.getTime() + 3 * DAY) });
+  const [later] = await db
+    .insert(contacts)
+    .values({ userId: USER, fullName: "Later Person", nextFollowUpAt: new Date(now.getTime() + 3 * DAY) })
+    .returning();
+  // Follow-ups only alert for people the user has met or talked with (`met-contact.ts`).
+  await db.insert(interactions).values(
+    [due.id, later.id].map((contactId) => ({
+      userId: USER,
+      contactId,
+      interactionType: "meeting" as const,
+      interactionDate: new Date(now.getTime() - 10 * DAY),
+    }))
+  );
+  // Someone merely in the address book, with a follow-up already due: never an alert.
+  const [stranger] = await db
+    .insert(contacts)
+    .values({ userId: USER, fullName: "Stranger Person", nextFollowUpAt: new Date(now.getTime() - DAY) })
+    .returning();
 
   const pulse = await loadAppPulse(USER, now);
   check("carries the panel", pulse.panel.items.length >= 2 && typeof pulse.panel.dueCount === "number");
@@ -46,6 +63,10 @@ async function main() {
   const dueItem = pulse.panel.items.find((i) => i.kind === "follow_up" && i.contactId === due.id);
   check("the due follow-up is a due item", Boolean(dueItem) && pulse.dueItems.some((i) => i.id === dueItem!.id));
   check("upcoming items are not due items", !pulse.dueItems.some((i) => /Later Person/.test(i.title)));
+  check(
+    "a due follow-up for someone never met is not in the panel or the desktop alerts",
+    !pulse.panel.items.some((i) => i.contactId === stranger.id) && !pulse.dueItems.some((i) => /Stranger Person/.test(i.title))
+  );
   check("due items carry what a desktop notification needs",
     pulse.dueItems.every((i) => i.id && i.title && i.url));
 

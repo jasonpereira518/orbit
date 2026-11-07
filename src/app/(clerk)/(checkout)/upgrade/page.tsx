@@ -16,6 +16,7 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { isKnownGate } from "@/lib/gate-events";
 import { foundingAppliesToNewSubscription } from "@/lib/founding";
 import { CREDIT_PACK_PRICE_LABEL, isCheckoutConfigured } from "@/lib/stripe-config";
@@ -70,12 +71,13 @@ export default async function UpgradePage({
   const firstGate = Array.isArray(rawGate) ? rawGate[0] : rawGate;
   const gate = isKnownGate(firstGate) ? firstGate : null;
   const db = await getDb();
-  const [entitlements, row] = await Promise.all([
+  const [entitlements, row, config] = await Promise.all([
     getEntitlements(userId),
     db.query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),
       columns: { foundingEligible: true, foundingRedeemedAt: true },
     }),
+    getEffectivePlanConfig(),
   ]);
   const onPaidPlan = entitlements.plan !== "free";
 
@@ -134,6 +136,7 @@ export default async function UpgradePage({
             founding={foundingAppliesToNewSubscription(row)}
             checkoutOpen={isCheckoutConfigured()}
             gate={gate}
+            config={config}
           />
 
           {!onPaidPlan && (

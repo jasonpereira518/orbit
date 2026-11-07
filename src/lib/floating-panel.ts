@@ -22,6 +22,16 @@ export const PANEL_INSET_PX = 16;
 export const PANEL_MAX_W_PX = 384; // sm:max-w-sm = 24rem
 
 /**
+ * How far an open window pushes the toast column and job stack left (`useCornerShift`):
+ * the window's width plus its right inset, so the column's own `--orbit-corner-right`
+ * becomes the gap beside it. Only applied at `md`+, where the width is always the cap.
+ *
+ * ponytail: assumes the window sits at its anchor; a feedback window dragged left can
+ * still land on the toasts. Measure the window's left edge if that ever matters.
+ */
+export const PANEL_CORNER_SHIFT_PX = PANEL_MAX_W_PX + PANEL_INSET_PX;
+
+/**
  * Where `sm:max-w-sm` starts applying. Below it the window is `w-[calc(100%-2rem)]` and
  * uncapped, so capping the width here regardless — which this did until the feedback panel
  * gained a mobile trigger and made it visible — puts the origin up to 223px off at a 639px

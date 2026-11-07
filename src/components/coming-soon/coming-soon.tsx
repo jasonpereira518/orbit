@@ -12,7 +12,8 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { UnlocksWith } from "@/components/locked-feature";
-import { COMING_SOON_UNLOCK_PLAN } from "@/lib/surfaces";
+import { comingSoonUnlockPlans } from "@/lib/surfaces";
+import type { Plan, PlanConfig } from "@/lib/plans/plan-config";
 
 /**
  * What renders in place of a page that is announced but not released (`comingSoon` in
@@ -164,7 +165,16 @@ function MotionPauseToggle() {
   );
 }
 
-export function ComingSoon({ surfaceKey, label }: { surfaceKey: string; label: string }) {
+export function ComingSoon({
+  surfaceKey,
+  label,
+  config,
+}: {
+  surfaceKey: string;
+  label: string;
+  /** The effective plan table (`getEffectivePlanConfig()`), so "Unlocks with" follows an admin's plan rules. */
+  config?: Record<Plan, PlanConfig>;
+}) {
   const feature = FEATURES[surfaceKey] ?? FALLBACK;
   return (
     <div className="flex min-h-[calc(100dvh-16.5rem)] min-w-0 flex-col justify-center md:min-h-[calc(100dvh-11rem)]">
@@ -185,7 +195,7 @@ export function ComingSoon({ surfaceKey, label }: { surfaceKey: string; label: s
               <span className="mt-1 block text-4xl md:text-5xl">Coming soon</span>
             </h1>
             <p className="text-sm leading-relaxed text-muted-foreground">{feature.teaser}</p>
-            <UnlocksWith plan={COMING_SOON_UNLOCK_PLAN} className="justify-center md:justify-start" />
+            <UnlocksWith plans={comingSoonUnlockPlans(surfaceKey, config)} className="justify-center md:justify-start" />
           </div>
         </div>
 
