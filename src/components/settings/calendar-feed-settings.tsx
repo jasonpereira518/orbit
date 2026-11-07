@@ -10,7 +10,8 @@ import {
   regenerateCalendarFeedToken,
   type CalendarFeedStatus,
 } from "@/actions/calendar-feed";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { LoadError } from "@/components/settings/account-page";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsSection } from "@/components/settings/settings-section";
@@ -115,20 +116,7 @@ export function CalendarFeedSettings() {
     >
 
       {loadFailure && !status ? (
-        <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
-            {loadFailure === "timeout"
-              ? "Your calendar feed settings took too long to load."
-              : "Couldn't load your calendar feed settings."}
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setReloadKey((k) => k + 1)}
-          >
-            Try again
-          </Button>
-        </div>
+        <LoadError what="calendar feed settings" onRetry={() => setReloadKey((k) => k + 1)} />
       ) : !status ? (
         <div className="space-y-2" aria-busy="true" aria-label="Loading calendar feed">
           <Skeleton className="h-4 w-2/3" />
@@ -139,11 +127,7 @@ export function CalendarFeedSettings() {
           <p className="text-sm text-muted-foreground">
             Creates a private link your calendar app checks periodically.
           </p>
-          <Button
-            disabled={pending}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={() => run("Calendar feed created", enableCalendarFeed)}
-          >
+          <Button disabled={pending} onClick={() => run("Calendar feed created", enableCalendarFeed)}>
             Create calendar feed
           </Button>
         </div>
@@ -155,17 +139,14 @@ export function CalendarFeedSettings() {
                 These open your calendar app’s add-calendar screen — finish subscribing there.
               </p>
               <div className="flex flex-wrap items-center gap-2">
-                <a
-                  href={status.webcalUrl!}
-                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
-                >
+                <a href={status.webcalUrl!} className={buttonVariants({ variant: "outline", size: "sm" })}>
                   Open in Apple Calendar
                 </a>
                 <a
                   href={status.googleAddUrl!}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm hover:bg-accent"
+                  className={buttonVariants({ variant: "outline", size: "sm" })}
                 >
                   Open in Google Calendar
                 </a>

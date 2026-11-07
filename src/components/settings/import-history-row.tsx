@@ -4,7 +4,7 @@ import { useState } from "react";
 import { History } from "lucide-react";
 import type { ImportHistoryItem } from "@/actions/imports";
 import { Button } from "@/components/ui/button";
-import { FeatureRow } from "@/components/settings/account-page";
+import { FeatureRow, whenLine } from "@/components/settings/account-page";
 import { ImportUndoButton } from "@/components/imports/import-finish-card";
 import { importSourceLabel } from "@/lib/imports/import-sources";
 import { summarizeImport } from "@/lib/imports/import-summary";
@@ -65,11 +65,7 @@ export function ImportHistoryRow({
                     <p className="text-sm font-medium text-ink">
                       {importSourceLabel(item.importType)}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">
-                        {new Date(item.createdAt).toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        })}
+                        {whenLine(item.createdAt)}
                       </span>
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">

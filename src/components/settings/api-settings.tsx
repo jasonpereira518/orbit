@@ -23,7 +23,9 @@ import {
   type ApiKeySummary,
   type CreatedApiKey,
 } from "@/actions/api-keys";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { LoadError } from "@/components/settings/account-page";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsSection } from "@/components/settings/settings-section";
@@ -137,7 +139,7 @@ export function ApiSettings() {
     >
       {/* A new key, shown once. */}
       {created ? (
-        <div className="border-primary/40 bg-primary/5 space-y-3 rounded-lg border p-4">
+        <div className="border-primary/40 bg-primary/5 space-y-3 rounded-xl border p-4">
           <p className="text-sm font-medium">
             Copy this now — it will not be shown again.
           </p>
@@ -165,19 +167,16 @@ export function ApiSettings() {
       ) : null}
 
       {blocked ? (
-        <div className="bg-muted/40 space-y-2 rounded-lg border p-4">
+        <div className="bg-muted/40 space-y-2 rounded-xl border p-4">
           <p className="text-sm">{blocked}</p>
-          <a
-            href="/upgrade?gate=api"
-            className="bg-primary text-primary-foreground inline-flex h-8 items-center rounded-md px-3 text-sm font-medium"
-          >
+          <a href="/upgrade?gate=api" className={buttonVariants({ size: "sm" })}>
             See plans
           </a>
         </div>
       ) : null}
 
       {/* Create */}
-      <div className="space-y-3 rounded-lg border p-4">
+      <div className="space-y-3 rounded-xl border p-4">
         <label className="text-sm font-medium" htmlFor="api-key-name">
           Create a key
         </label>
@@ -189,11 +188,7 @@ export function ApiSettings() {
           maxLength={80}
         />
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={allowWrite}
-            onChange={(e) => setAllowWrite(e.target.checked)}
-          />
+          <Checkbox checked={allowWrite} onCheckedChange={(on) => setAllowWrite(on === true)} />
           Allow this key to add contacts and log interactions
         </label>
         <div className="flex flex-wrap gap-2">
@@ -211,12 +206,7 @@ export function ApiSettings() {
       {/* Existing */}
       <div className="space-y-2">
         {error ? (
-          <div className="text-sm">
-            <p className="text-destructive">{error}</p>
-            <Button size="sm" variant="ghost" onClick={load}>
-              Retry
-            </Button>
-          </div>
+          <LoadError what="API keys" onRetry={load} />
         ) : keys === null ? (
           <div className="space-y-2" aria-busy="true" aria-label="Loading your keys">
             <Skeleton className="h-16 w-full rounded-lg" />
@@ -228,7 +218,7 @@ export function ApiSettings() {
           keys.map((key) => (
             <div
               key={key.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
             >
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{key.name}</p>

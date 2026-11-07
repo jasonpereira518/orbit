@@ -132,6 +132,21 @@ run(async () => {
   panel = await getMicrosoftPanel();
   t.check("a watched OneDrive shows up", panel.oneDrive !== null && panel.oneDrive.notesFound === 0, JSON.stringify(panel.oneDrive));
 
+  // --- Sync now's claim: the cron's lease rule, plus a two-minute cooldown --------------------
+  const { claimConnectionNow } = await import("../src/lib/provider-connections");
+  const setRun = (set: Partial<typeof outlookConnections.$inferInsert>) =>
+    db.update(outlookConnections).set(set).where(eq(outlookConnections.userId, USER));
+  const longAgo = new Date(Date.now() - 60 * 60_000);
+  await setRun({ syncStatus: "idle", syncStartedAt: null, lastSyncedAt: longAgo });
+  const claimed = await claimConnectionNow("microsoft", USER);
+  t.check("an idle connection is claimed", claimed?.userId === USER);
+  t.check("a claimed connection is marked syncing", (await flags()).syncStatus === "syncing");
+  t.check("it can't be claimed twice while the cron or a click holds it", (await claimConnectionNow("microsoft", USER)) === null);
+  await setRun({ syncStatus: "idle", syncStartedAt: null, lastSyncedAt: new Date(Date.now() - 30_000) });
+  t.check("not again within two minutes of a finished run", (await claimConnectionNow("microsoft", USER)) === null);
+  await setRun({ syncStatus: "syncing", syncStartedAt: longAgo, lastSyncedAt: longAgo });
+  t.check("an abandoned lease can be taken over", (await claimConnectionNow("microsoft", USER)) !== null);
+
   await cleanup();
   t.done("microsoft settings smoke tests");
 });

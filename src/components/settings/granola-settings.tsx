@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
-import { formatDistanceToNow } from "date-fns";
-import { ArrowUpRight, FolderOpen, History, MoreHorizontal, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowUpRight, FolderOpen, History, RefreshCw, Sparkles } from "lucide-react";
 import {
   disconnectGranola,
   getGranolaFolders,
@@ -19,24 +18,11 @@ import type { GranolaActivity, GranolaActivityPerson } from "@/lib/connectors/gr
 import type { GranolaFolder } from "@/lib/connectors/granola-xml";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
-import { FeatureRow } from "@/components/settings/account-page";
+import { AccountPageShell, FeatureRow, syncStatusLine, whenLine } from "@/components/settings/account-page";
+import { SegmentedControl } from "@/components/settings/account-rows";
+import { PROVIDER_THEMES } from "@/components/settings/provider-themes";
+import type { AccountStatus } from "@/lib/integration-status";
 import { GranolaMark } from "@/components/settings/provider-marks";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
@@ -107,204 +93,92 @@ export function GranolaSettings() {
       }
     });
 
-  if (failed && !panel) {
-    return (
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">Couldn’t check your Granola connection.</p>
-        <Button variant="outline" size="sm" onClick={load}>
-          Try again
-        </Button>
-      </div>
-    );
-  }
-  if (!panel) return <PageSkeleton />;
-
-  const conn = panel.connection;
-  if (!conn) {
-    return (
-      <section className="space-y-4">
-        <div className="flex items-center gap-3">
-          <GranolaMark className="size-10 shrink-0" />
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-ink">Granola</p>
-            <p className="text-sm text-muted-foreground">Your meeting notes, on the people you met</p>
-          </div>
-        </div>
-        <div className="space-y-2 rounded-xl bg-muted/40 p-4 text-sm">
-          <p className="font-medium text-ink">Each new note</p>
-          <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-            <li>updates the people in it, or adds them</li>
-            <li>logs the meeting at its real time</li>
-            <li>refreshes their AI notes — nothing to review</li>
-          </ul>
-          <p className="text-muted-foreground">Works with every Granola plan. Brings in the last 30 days first.</p>
-        </div>
-        {result === "error" ? <p className="text-sm text-destructive">That didn’t connect. Try again.</p> : null}
-        <Button disabled={pending} onClick={connect}>
-          Connect Granola
-        </Button>
-      </section>
-    );
-  }
-
-  const signedOut = conn.status === "needs_reauth";
-  const syncing = conn.syncStatus === "syncing" || waiting;
+  const conn = panel?.connection ?? null;
+  const account: AccountStatus | null = panel
+    ? {
+        state: !conn ? "not_connected" : conn.status === "needs_reauth" ? "needs_reauth" : "connected",
+        email: conn?.accountRef ?? null,
+        capabilities: {},
+      }
+    : null;
+  const signedOut = conn?.status === "needs_reauth";
+  const syncing = conn?.syncStatus === "syncing" || waiting;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <GranolaMark className="size-10 shrink-0" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-ink">Granola</p>
-          <p className="truncate text-sm text-muted-foreground">{conn.accountRef ?? "Connected"}</p>
-          <SyncStatus
-            signedOut={signedOut}
-            syncing={syncing}
-            lastSyncedAt={conn.lastSyncedAt}
-            error={conn.syncError}
+    <AccountPageShell
+      name="Granola"
+      mark={<GranolaMark className="size-6" />}
+      theme={theme}
+      account={account}
+      loading={!panel && !failed}
+      failed={failed}
+      onRetry={load}
+      onConnect={connect}
+      connectCopy={GRANOLA_CONNECT}
+      connectError={result === "error" ? "That didn’t connect. Try again." : null}
+      connectBusy={pending}
+      signedOutText="Granola signed Orbit out. Sign in again to keep syncing."
+      status={syncStatusLine({ signedOut, syncing, lastSyncedAt: conn?.lastSyncedAt, error: conn?.syncError })}
+      primaryAction={{
+        label: syncing ? "Syncing…" : "Sync now",
+        icon: <RefreshCw aria-hidden className={cn(syncing && "animate-spin")} />,
+        disabled: pending || syncing,
+        onClick: () => {
+          setWaitingSince(Date.now());
+          run(syncGranolaNow, "Couldn’t start a sync — try again?");
+        },
+      }}
+      menuItems={[{ label: "Reconnect", onSelect: connect }]}
+      disconnect={{
+        provider: "granola",
+        hasDeletableData: false,
+        onConfirm: () => run(disconnectGranola, "Couldn’t disconnect — try again?", "Granola disconnected"),
+      }}
+    >
+      {panel && conn ? (
+        <>
+          <FeatureRow
+            icon={<Sparkles className="size-4" />}
+            tone={theme.tone}
+            title="Automatic extraction"
+            description={
+              panel.autoExtract
+                ? "New notes update the people in them on their own."
+                : "Off: pick notes yourself from Capture → Notes library → From Granola."
+            }
+            control={{ kind: "switch", on: panel.autoExtract }}
+            disabled={pending || signedOut}
+            onAction={() =>
+              run(
+                () => setGranolaAutoExtract(!panel.autoExtract),
+                "Couldn’t change that — try again?",
+                panel.autoExtract ? "Granola notes now come in only when you pick them" : "New Granola notes will be extracted automatically",
+              )
+            }
           />
-        </div>
-        {signedOut ? null : (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={pending || syncing}
-            onClick={() => {
-              setWaitingSince(Date.now());
-              run(syncGranolaNow, "Couldn’t start a sync — try again?");
-            }}
-          >
-            <RefreshCw aria-hidden className={cn(syncing && "animate-spin")} />
-            {syncing ? "Syncing…" : "Sync now"}
-          </Button>
-        )}
-        <AccountMenu
-          onReconnect={connect}
-          onDisconnect={() => run(disconnectGranola, "Couldn’t disconnect — try again?", "Granola disconnected")}
-        />
-      </div>
-
-      {signedOut ? (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-warning/10 p-4 text-sm text-warning">
-          <p className="min-w-0 flex-1">Granola signed Orbit out. Sign in again to keep syncing.</p>
-          <Button size="sm" disabled={pending} onClick={connect}>
-            Sign in again
-          </Button>
-        </div>
+          {/* Keyed on the saved ids: a save remounts it from the new choice, while a reload
+              that changed nothing (Sync now) leaves unsaved ticks alone. */}
+          <FoldersRow
+            key={panel.folderIds.join(",")}
+            saved={panel.folderIds}
+            disabled={pending || signedOut}
+            onSave={(ids) => run(() => setGranolaFolders(ids), "Couldn’t save your folders — try again?", "Folders saved")}
+          />
+          <ActivityRow activity={panel.activity} />
+        </>
       ) : null}
-
-      {/* `inert` while signed out: nothing below can do anything until the grant is back. */}
-      <ul inert={signedOut} className={cn(signedOut && "opacity-60")}>
-        <FeatureRow
-          icon={<Sparkles className="size-4" />}
-          title="Automatic extraction"
-          description={
-            panel.autoExtract
-              ? "New notes update the people in them on their own."
-              : "Off: pick notes yourself from Capture → Notes library → From Granola."
-          }
-          control={{ kind: "switch", on: panel.autoExtract }}
-          disabled={pending || signedOut}
-          onAction={() =>
-            run(
-              () => setGranolaAutoExtract(!panel.autoExtract),
-              "Couldn’t change that — try again?",
-              panel.autoExtract ? "Granola notes now come in only when you pick them" : "New Granola notes will be extracted automatically",
-            )
-          }
-        />
-        {/* Keyed on the saved ids: a save remounts it from the new choice, while a reload
-            that changed nothing (Sync now) leaves unsaved ticks alone. */}
-        <FoldersRow
-          key={panel.folderIds.join(",")}
-          saved={panel.folderIds}
-          disabled={pending || signedOut}
-          onSave={(ids) => run(() => setGranolaFolders(ids), "Couldn’t save your folders — try again?", "Folders saved")}
-        />
-        <ActivityRow activity={panel.activity} />
-      </ul>
-    </div>
+    </AccountPageShell>
   );
 }
 
-function SyncStatus({
-  signedOut,
-  syncing,
-  lastSyncedAt,
-  error,
-}: {
-  signedOut: boolean;
-  syncing: boolean;
-  lastSyncedAt: Date | null;
-  error: string | null;
-}) {
-  const [tone, text] = signedOut
-    ? (["bg-warning", "Reconnect needed"] as const)
-    : syncing
-      ? (["bg-primary animate-pulse", "Syncing…"] as const)
-      : error
-        ? (["bg-warning", "Last sync hit a problem"] as const)
-        : lastSyncedAt
-          ? (["bg-primary", `Synced ${formatDistanceToNow(lastSyncedAt, { addSuffix: true })}`] as const)
-          : (["bg-primary animate-pulse", "First sync is running"] as const);
-  return (
-    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground" title={error ?? undefined}>
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", tone)} />
-      {text}
-    </p>
-  );
-}
+const theme = PROVIDER_THEMES.granola;
 
-/** Reconnect and a confirmed Disconnect, behind the same ··· the account pages use. */
-function AccountMenu({ onReconnect, onDisconnect }: { onReconnect: () => void; onDisconnect: () => void }) {
-  const [confirming, setConfirming] = useState(false);
-  return (
-    <>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button variant="ghost" size="icon-sm" aria-label="Granola account options" className="tap-target relative">
-              <MoreHorizontal aria-hidden />
-            </Button>
-          }
-        />
-        <DropdownMenuContent align="end" className="w-auto min-w-40">
-          <DropdownMenuItem onClick={onReconnect}>Reconnect</DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onClick={() => setConfirming(true)}>
-            Disconnect
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <Dialog open={confirming} onOpenChange={setConfirming}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Disconnect Granola?</DialogTitle>
-            <DialogDescription>
-              Orbit stops bringing in new notes and deletes its copy of the sign-in. The contacts and meetings
-              already logged from Granola stay in Orbit.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                setConfirming(false);
-                onDisconnect();
-              }}
-            >
-              Disconnect
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
+const GRANOLA_CONNECT = {
+  intro: "Your meeting notes, on the people you met.",
+  asksTitle: "Each new note",
+  asks: ["Updates the people in it, or adds them", "Logs the meeting at its real time", "Refreshes their AI notes — nothing to review"],
+  note: "Works with every Granola plan. Brings in the last 30 days first.",
+} as const;
 
 /**
  * "All notes" or a chosen set. With no folders to choose from — none in Granola yet, or a Free
@@ -332,16 +206,22 @@ function FoldersRow({
 
   if (!folders?.length) {
     return (
-      <li className="flex items-center gap-2 border-b border-border/60 pb-3 text-sm text-muted-foreground">
-        <FolderOpen aria-hidden className="size-4 shrink-0" />
-        {folders === undefined ? (
-          <Skeleton className="h-4 w-48" />
-        ) : folders === null ? (
-          "Syncing every note · folder choice needs a paid Granola plan"
-        ) : (
-          "Syncing every note · no Granola folders yet"
-        )}
-      </li>
+      <FeatureRow
+        icon={<FolderOpen className="size-4" />}
+        tone={theme.tone}
+        title="Folders"
+        description={
+          folders === undefined ? (
+            "Checking your Granola folders…"
+          ) : folders === null ? (
+            "Syncing every note. Picking folders needs a paid Granola plan."
+          ) : (
+            "Syncing every note. No Granola folders yet."
+          )
+        }
+        control={NO_CONTROL}
+        onAction={noop}
+      />
     );
   }
 
@@ -353,6 +233,7 @@ function FoldersRow({
   return (
     <FeatureRow
       icon={<FolderOpen className="size-4" />}
+      tone={theme.tone}
       title="Folders"
       description="Bring in every note, or only the Granola folders you pick."
       control={{ kind: "action", label: open ? "Done" : label }}
@@ -361,24 +242,16 @@ function FoldersRow({
     >
       {open ? (
         <div className="space-y-3">
-          <div role="radiogroup" aria-label="Which notes to sync" className="flex flex-wrap gap-4 text-sm">
-            {[
+          <SegmentedControl
+            label="Which notes to sync"
+            options={[
               { value: false, label: "All notes" },
               { value: true, label: "Only these folders" },
-            ].map((o) => (
-              <label key={o.label} className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="granola-folders"
-                  checked={onlyPicked === o.value}
-                  disabled={disabled}
-                  onChange={() => setOnlyPicked(o.value)}
-                  className="accent-primary"
-                />
-                {o.label}
-              </label>
-            ))}
-          </div>
+            ]}
+            value={onlyPicked}
+            onChange={setOnlyPicked}
+            disabled={disabled}
+          />
           {onlyPicked ? (
             <ul className="space-y-2">
               {folders.map((f) => (
@@ -415,6 +288,7 @@ function ActivityRow({ activity }: { activity: GranolaActivity }) {
   return (
     <FeatureRow
       icon={<History className="size-4" />}
+      tone={theme.tone}
       title="Recent activity"
       description={
         activity.notes
@@ -432,7 +306,7 @@ function ActivityRow({ activity }: { activity: GranolaActivity }) {
                 <div className="flex items-baseline gap-2">
                   <p className="min-w-0 flex-1 truncate text-sm font-medium text-ink">{note.title}</p>
                   <time dateTime={new Date(note.at).toISOString()} className="shrink-0 text-xs text-muted-foreground">
-                    {new Date(note.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                    {whenLine(note.at)}
                   </time>
                 </div>
                 <div className="mt-1.5 flex items-center justify-between gap-2">
@@ -493,21 +367,6 @@ function AvatarStack({ people }: { people: GranolaActivityPerson[] }) {
           {people[0].name}
         </Link>
       ) : null}
-    </div>
-  );
-}
-
-function PageSkeleton() {
-  return (
-    <div className="space-y-4" aria-busy="true" aria-label="Loading Granola">
-      <div className="flex items-center gap-3">
-        <Skeleton className="size-10 rounded-xl" />
-        <div className="space-y-1.5">
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-3 w-40" />
-        </div>
-      </div>
-      <Skeleton className="h-24 w-full rounded-xl" />
     </div>
   );
 }
