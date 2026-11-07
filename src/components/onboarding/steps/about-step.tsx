@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { ArrowRight, X } from "lucide-react";
-import { lookUpMyself, saveAboutYou } from "@/actions/about-you";
+import { saveAboutYou } from "@/actions/about-you";
 import {
   BackButton,
   Stagger,
@@ -110,9 +110,15 @@ export function AboutStep({
     }
     const seq = ++lookupSeq.current;
     setLookup("pending");
-    // Not awaited: screen 2 is usable while this runs.
-    void lookUpMyself(parsed.url)
-      .then((res): AboutLookup => (res.status === "invalid" ? { status: "unavailable" } : res))
+    // Not awaited, and a route rather than a server action: Next runs a client's actions one at a
+    // time, so an action here would hold "Looks right" behind the web search.
+    void fetch("/api/onboarding/self-lookup", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-orbit-research": "1" },
+      body: JSON.stringify({ linkedinUrl: parsed.url }),
+    })
+      .then((r) => (r.ok ? (r.json() as Promise<AboutLookup | { status: "invalid" }>) : null))
+      .then((res): AboutLookup => (!res || res.status === "invalid" ? { status: "unavailable" } : res))
       .catch((): AboutLookup => ({ status: "unavailable" }))
       .then((res) => {
         if (seq === lookupSeq.current) setLookup(res);
@@ -230,12 +236,24 @@ export function AboutStep({
               options={AIM_KINDS}
               labels={AIM_LABELS}
               value={aim}
-              onChange={setAim}
+              onChange={(next) => {
+                setAim(next);
+                // A field is saved only with an aim: clear it rather than drop it silently.
+                if (!next) setField(null);
+              }}
             />
           </StaggerItem>
 
           <StaggerItem className="space-y-3">
-            <ChipGroup label="Field" options={FIELDS} labels={FIELD_LABELS} value={field} onChange={setField} />
+            <ChipGroup
+              label="Field"
+              options={FIELDS}
+              labels={FIELD_LABELS}
+              value={field}
+              onChange={setField}
+              disabled={!aim}
+              hint={aim ? undefined : "Pick what you’re going for first."}
+            />
             <div className="min-w-0 space-y-2">
               <Field label="Companies you’d like to work at" description={`Up to ${MAX_COMPANIES}.`}>
                 <div className="flex min-w-0 gap-2">
@@ -376,16 +394,21 @@ function ChipGroup<T extends string>({
   labels,
   value,
   onChange,
+  disabled = false,
+  hint,
 }: {
   label: string;
   options: readonly T[];
   labels: Record<T, string>;
   value: T | null;
   onChange: (next: T | null) => void;
+  disabled?: boolean;
+  hint?: string;
 }) {
   return (
     <div role="group" aria-label={label} className="min-w-0 space-y-2">
       <p className="text-sm font-medium text-ink">{label}</p>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       <div className="flex min-w-0 flex-wrap gap-2">
         {options.map((option) => {
           const on = value === option;
@@ -394,9 +417,11 @@ function ChipGroup<T extends string>({
               key={option}
               type="button"
               aria-pressed={on}
+              disabled={disabled}
               onClick={() => onChange(on ? null : option)}
               className={cn(
                 "rounded-full border px-3 py-1.5 text-sm transition-[border-color,background-color,color,transform] duration-200 active:scale-[0.97]",
+                "disabled:pointer-events-none disabled:opacity-50",
                 "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                 on
                   ? "border-primary bg-primary text-primary-foreground"

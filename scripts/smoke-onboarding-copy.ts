@@ -53,7 +53,12 @@ check("the stage renders the About you step", /step === "about" && \([\s\S]{0,20
 check("'Skip for now' is a Button that skips without saving", /<Button[^>]*onClick=\{onSkip\}[^>]*>\s*Skip for now/.test(about));
 check("there is a no-LinkedIn way through", about.includes("I don’t use LinkedIn"));
 check("an unconfirmed lookup says so", about.includes("We couldn’t confirm this is you"));
-check("the lookup is fired, never awaited", about.includes("lookUpMyself(") && !/await lookUpMyself/.test(about));
+check("the lookup is a fetch to the route, never awaited",
+  /void fetch\("\/api\/onboarding\/self-lookup"/.test(about) && !/await fetch\("\/api\/onboarding\/self-lookup"/.test(about));
+check("the step imports no lookup server action",
+  !/import[^;]*lookUp[^;]*from "@\/actions\//.test(about) && !readFileSync("src/actions/about-you.ts", "utf8").includes("lookUpSelfForUser"));
+check("Field chips wait for an aim (a field with no aim is not saved)",
+  /label="Field"[\s\S]{0,200}disabled=\{!aim\}/.test(about) && /if \(!next\) setField\(null\)/.test(about));
 check("only a confident lookup becomes the prefill", /status === "confident" \? lookup\.prefill : null/.test(about));
 check("chips are toggle buttons", /<button[\s\S]{0,120}aria-pressed=/.test(about));
 check("the URL field has a visible label", /<Field[^>]*label="Your LinkedIn profile"/.test(about));
