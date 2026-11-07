@@ -27,6 +27,10 @@ check("the highlight tag says Uses AI credits", highlights.includes("Uses AI cre
 check("the overview subtitle no longer says tags show what needs a key", !highlights.includes("needs a key") && highlights.includes("uses AI credits"));
 // Onboarding capture runs on the durable capture job, like /capture, so a reload resumes the
 // review instead of dropping it: the page hands the open job down, the step renders CaptureFlow.
+// Goals in Settings speak to the people Orbit is for: a student's goal, not a founder's.
+const goalsSettings = readFileSync("src/components/settings/goals-settings.tsx", "utf8");
+check("the Settings goal placeholder is a student example",
+  goalsSettings.includes('placeholder="e.g. Land a summer 2027 internship in product design"') && !goalsSettings.includes("Raise seed round"));
 const onboardingPage = readFileSync("src/app/(clerk)/(app)/onboarding/page.tsx", "utf8");
 const captureStep = readFileSync("src/components/onboarding/steps/capture-step.tsx", "utf8");
 check("the onboarding page loads the open capture job", onboardingPage.includes("getActiveCaptureJob()"));
