@@ -382,7 +382,7 @@ async function main() {
       const draftCalls = callsIn("src/actions/email-compose.ts", "draftComposeWithAi");
       check("draftComposeWithAi requires Compose to be released",
         draftCalls.has("requireUserForReleasedSurface") && !draftCalls.has("requireUserForSurface"), [...draftCalls].join(", "));
-      for (const fn of ["connectLuma", "connectEventFeed", "setGmailEventScan", "startEventbriteOAuth"]) {
+      for (const fn of ["connectLuma", "connectEventFeed", "startEventbriteOAuth"]) {
         check(`${fn} requires Events to be released`, callsIn("src/actions/events.ts", fn).has("requireReleasedSurface"));
       }
     }

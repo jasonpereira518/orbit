@@ -100,7 +100,8 @@ async function main() {
   );
 
   // --- the surface gate --------------------------------------------------------------------
-  // Events is "coming soon" by default: until it is released, the extension saves nothing.
+  // While Events is coming soon (an operator can put it back), the extension saves nothing.
+  await setSurfaceComingSoon(ADMIN, "page.events", true);
   check(
     "while Events is unreleased → not_found",
     (await refusal(() => saveEventRoster(USER, pageFor({ guests })))) === "not_found"
@@ -145,7 +146,7 @@ async function main() {
     .where(and(eq(eventAttendees.eventId, first.eventId), eq(eventAttendees.userId, OTHER)));
   check("…and nothing lands on this user's event", leaked.length === 0);
 
-  await setSurfaceComingSoon(ADMIN, "page.events", true); // back to the code default
+  await setSurfaceComingSoon(ADMIN, "page.events", false); // back to the code default
 
   if (failures) {
     console.error(`\nsmoke-extension-event-roster: ${failures} failure(s)`);

@@ -167,7 +167,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
     bullets: [
       { label: "Recruiters, kept apart from friends", entitlement: "canUseRecruiters" },
       { label: "Outreach drafts for every person", soon: true },
-      { label: "Events and who you’ll see there", soon: true },
+      { label: "Events, and the people you met there" },
       { label: "A Chrome extension for LinkedIn", soon: !EXTENSION_PUBLISHED },
       { label: "Orbit in Claude and ChatGPT, free" },
     ],
