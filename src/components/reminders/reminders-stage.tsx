@@ -766,7 +766,7 @@ export function RemindersStage({
                   </div>
                 ) : (
                   groups.map((group, groupIndex) => (
-                    <div key={group.bucket ?? "all"} role="group" aria-labelledby={group.bucket ? `bucket-${group.bucket}` : undefined}>
+                    <div key={group.bucket ?? "all"}>
                       {group.bucket && (
                         <h3
                           id={`bucket-${group.bucket}`}
@@ -784,7 +784,14 @@ export function RemindersStage({
                           </span>
                         </h3>
                       )}
+                      {/* A one-column grid, not a plain list: each row is focusable and
+                          selectable, and a screen reader needs to hear both ("row, selected").
+                          Not a listbox, whose options may not hold the row's own menu buttons. */}
                       <ul
+                        role="grid"
+                        aria-multiselectable="true"
+                        aria-labelledby={group.bucket ? `bucket-${group.bucket}` : undefined}
+                        aria-label={group.bucket ? undefined : "Reminders"}
                         aria-keyshortcuts="j k ArrowDown ArrowUp x e s m # Delete Enter Escape"
                         className="divide-y divide-border/40"
                       >

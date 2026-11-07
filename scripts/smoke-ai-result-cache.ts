@@ -137,6 +137,14 @@ async function main() {
   await classifyRecruiterSender(USER, sender);
   check("  and then served from the cache for the new model", modelCalls === 3, `calls ${modelCalls}`);
 
+  // Who answers is part of the question: a verdict one model gave is not replayed as another's.
+  await db.update(userSettings).set({ aiModel: "gemini-3.1-flash-lite" }).where(eq(userSettings.userId, USER));
+  const before = modelCalls;
+  await classifyRecruiterSender(USER, sender);
+  check("switching model asks the new model, not the cache", modelCalls === before + 1, `calls ${modelCalls - before}`);
+  await classifyRecruiterSender(USER, sender);
+  check("  and that answer is then cached under the new model", modelCalls === before + 1, `calls ${modelCalls - before}`);
+
   await reset();
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

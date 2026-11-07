@@ -19,7 +19,10 @@ import { priceFor } from "@/lib/ai-pricing";
 export const FAST_MODELS: Record<AiProvider, string> = {
   gemini: "gemini-3.1-flash-lite",
   openai: "gpt-4o-mini",
-  anthropic: "claude-haiku-4-5",
+  // Haiku 5.5: $0.10/$0.50 per MTok against Haiku 4.5's $1/$5, and already what Orbit's own key
+  // runs every tier on. It takes a JSON schema (4.5 does too) and caches from 512 tokens (4.5
+  // needs 4,096). A person whose own model is cheaper still keeps it (`modelForOperation`).
+  anthropic: "claude-haiku-5-5",
   openrouter: "google/gemini-3.1-flash-lite",
 };
 
