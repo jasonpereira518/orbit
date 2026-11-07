@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { saveResearchedPerson } from "@/actions/web-research";
-import { friendlyError, UserFacingError } from "@/lib/errors";
+import { friendlyError } from "@/lib/errors";
 import { LINKEDIN_PROFILE, requestBrief, type Brief } from "@/lib/research-client";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
