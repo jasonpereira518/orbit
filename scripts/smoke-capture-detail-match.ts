@@ -36,7 +36,7 @@ check("a different person with the same first name is not a match", JSON.stringi
 /* ---- the parse, against a stub that gets it wrong ---- */
 const PEOPLE = ["Alice Ng", "Bob Ray", "Cara Lee", "Dan Fox", "Eve Poe"];
 const COMPANY: Record<string, string> = { "Alice Ng": "A-Co", "Bob Ray": "B-Co", "Cara Lee": "C-Co", "Dan Fox": "D-Co", "Eve Poe": "E-Co" };
-let detailCalls: string[][] = [];
+const detailCalls: string[][] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;

@@ -23,7 +23,10 @@ function check(label: string, ok: boolean, detail?: string) {
   }
 }
 
-const bodies: Array<Record<string, any>> = [];
+// Provider request bodies come in three SDK shapes; the checks below read them loosely.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Body = Record<string, any>;
+const bodies: Body[] = [];
 const usages = [
   { input_tokens: 40, output_tokens: 20, cache_creation_input_tokens: 4000, cache_read_input_tokens: 0 },
   { input_tokens: 300, output_tokens: 20, cache_creation_input_tokens: 0, cache_read_input_tokens: 4000 },

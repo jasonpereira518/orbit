@@ -77,7 +77,6 @@ import {
   geminiFinish,
   openaiFinish,
   openaiResponsesFinish,
-  type AiFinish,
 } from "@/lib/ai-finish";
 import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
 import { EMBEDDING_MODELS, modelForOperation } from "@/lib/ai-models";

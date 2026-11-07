@@ -37,7 +37,10 @@ check("a 400 about something else is not", !isSchemaRejection(Object.assign(new 
 check("a 500 is not", !isSchemaRejection(Object.assign(new Error("schema"), { status: 500 })));
 
 /* ---- on the wire ---- */
-type Sent = { host: "gemini" | "openai" | "anthropic"; body: Record<string, any> };
+// Provider request bodies come in three SDK shapes; the checks below read them loosely.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Body = Record<string, any>;
+type Sent = { host: "gemini" | "openai" | "anthropic"; body: Body };
 const sent: Sent[] = [];
 let rejectSchema = false;
 const REPLY = JSON.stringify({ title: "A title" });
@@ -45,7 +48,7 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const raw = init?.body ?? (input instanceof Request ? await input.clone().text() : null);
-  const body = typeof raw === "string" ? (JSON.parse(raw) as Record<string, any>) : {};
+  const body = typeof raw === "string" ? (JSON.parse(raw) as Body) : {};
   const refuse = (hasSchema: boolean) => rejectSchema && hasSchema;
   const badSchema = () => Response.json({ error: { code: 400, message: "Invalid JSON schema for response_format", status: "INVALID_ARGUMENT", type: "invalid_request_error" } }, { status: 400 });
   if (/generativelanguage/.test(url)) {
