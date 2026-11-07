@@ -7,7 +7,6 @@
  * Run: npx tsx scripts/smoke-org-suggest.ts
  */
 import { forgetOrgSuggestCache, isProduct, suggestOrgs, type SuggestOpts } from "../src/lib/org-suggest";
-import { isBareDomain } from "../src/lib/wikidata";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -134,11 +133,6 @@ async function main() {
     check("a multinational company is not", !isProduct("American multinational technology company, a subsidiary of Alphabet Inc."));
     check("a software company is not", !isProduct("American software company"));
     check("a university is not", !isProduct("private research university in Cambridge, Massachusetts"));
-    check("bare domains pass the logo route's check", ["google.com", "ox.ac.uk", "aws.amazon.com"].every(isBareDomain));
-    check(
-      "anything else fails it",
-      ["", "localhost", "127.0.0.1", "google.com/evil", "a@b.com", "https://google.com", "google.com:443", "goo gle.com", "GOOGLE.COM", `${"a".repeat(250)}.com`].every((d) => !isBareDomain(d))
-    );
   }
 
   if (failures) {

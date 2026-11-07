@@ -14,11 +14,6 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 
 const DOMAIN_RE = /^(?=.{3,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
-/** Exactly a bare lowercase hostname with a dot: no scheme, port, path or credentials. */
-export function isBareDomain(value: string): boolean {
-  return DOMAIN_RE.test(value);
-}
-
 /** A bare, lowercase registrable-looking host from a URL, a host or an email, or null. */
 export function toDomain(value: string | null | undefined): string | null {
   if (!value) return null;

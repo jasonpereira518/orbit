@@ -24,13 +24,15 @@ export function OrgLogo({ name, domain, className }: { name: string; domain: str
     return (
       // eslint-disable-next-line @next/next/no-img-element -- a same-origin 64px proxy, as elsewhere
       <img
-        src={`/api/orgs/logo?domain=${encodeURIComponent(domain)}`}
+        src={`/api/logos/${encodeURIComponent(domain)}`}
         alt=""
         aria-hidden
         loading="lazy"
         decoding="async"
         className={cn(tile, "bg-white object-contain p-px")}
         onError={() => setFailed(true)}
+        // The logo route answers a miss with a 1×1 transparent pixel rather than a 404.
+        onLoad={(e) => e.currentTarget.naturalWidth <= 1 && setFailed(true)}
       />
     );
   }
