@@ -23,6 +23,9 @@ export const excerptRetrySchema = z.object({
     .optional(),
 });
 
+/** `{ "first": …, "last": … }`, or a bare `null`; `sanitizeGuessedName` decides what is usable. */
+export const contactNameGuessSchema = z.object({ first: z.unknown().optional(), last: z.unknown().optional() }).nullable();
+
 /** `{ "title": … }`, or a bare `null`; `sanitizeChatTitle` decides whether the title is usable. */
 export const chatTitleReplySchema = z.object({ title: z.unknown().optional() }).nullable();
 

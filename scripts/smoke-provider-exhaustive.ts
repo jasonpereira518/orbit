@@ -214,10 +214,10 @@ const ALLOWLIST: Record<string, string> = {
   "src/lib/ai-tools.ts::createToolDriver::anthropic": OPENROUTER_ROUTED_AWAY + " (createToolDriver's anthropic arm; " +
     "openai and openrouter both now take the isOpenAiShaped branch below, leaving only " +
     "Gemini as this arm's fallthrough.)",
-  "src/lib/admin-metrics.ts::<anonymous>::openai": "the \"openai\" arm of the four-way ternary that now also " +
+  "src/lib/admin-metrics.ts::hasKeyForProvider::openai": "the \"openai\" arm of the four-way ternary that now also " +
     "checks \"anthropic\" and \"openrouter\" explicitly (this commit added the openrouter " +
     "arm and its query column), defaulting to gemini — exhaustive over AiProvider.",
-  "src/lib/admin-metrics.ts::<anonymous>::anthropic": "the \"anthropic\" arm of the same ternary — same ternary as the entry for its sibling arm.",
+  "src/lib/admin-metrics.ts::hasKeyForProvider::anthropic": "the \"anthropic\" arm of the same ternary — same ternary as the entry for its sibling arm.",
   // Task 3 widened the completion arms of these cascades — completeJson,
   // completeMultimodalJsonInner and streamText, but NOT transcribeAudioWithAI, reverted in
   // fix round 1 (see its own entry below) — to `isOpenAiShaped(...)`, which already admits
@@ -245,8 +245,10 @@ const ALLOWLIST: Record<string, string> = {
   // webSearchJson: four explicit arms in order — gemini, openrouter, openai, then anthropic
   // as the fallthrough. OpenRouter has its own arm (its search is a request plugin, not the
   // Responses API tool the openai arm uses), so neither literal below can receive it.
-  "src/lib/ai.ts::<anonymous>::gemini#3": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
-    "arm follows it, so the four arms are exhaustive over AiProvider.",
+  "src/lib/ai-structured.ts::structuredOutputAllowed::anthropic": "structuredOutputAllowed: OpenRouter has its own explicit early return on " +
+    "the line above (it is deliberately left on prompt-only JSON), so this \"anthropic\" arm is " +
+    "reached only by gemini, openai and anthropic; gemini and openai take the default `true`, " +
+    "and anthropic alone needs a per-model allowlist. Exhaustive over AiProvider.",
   "src/lib/ai.ts::<anonymous>::openai": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
     "above (plugin-based search, not the Responses API), so it never reaches this one.",
   "src/lib/errors.ts::aiProviderLabel::gemini": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
@@ -256,10 +258,6 @@ const ALLOWLIST: Record<string, string> = {
     "|| selected === \"openrouter\"` (this commit's fix) — the openrouter half is the " +
     "literal on the same line, which this checker does not flag; both fall to the plain " +
     "EMBEDDING_ORDER, per the comment above EMBEDDING_ORDER.",
-  "src/lib/managed-ai-policy.ts::chooseEmbeddingKey::openai": "managedOrder only ever chooses between \"openai\" and " +
-    "\"gemini\": Orbit holds no managed OpenRouter key (facts.managed.openrouter is " +
-    "hardcoded false and MANAGED_PROVIDER_ORDER excludes it), so no selected provider — " +
-    "openrouter included — ever needs a third slot here.",
   "src/lib/admin-user-detail.ts::getAdminUserDetail::openai": "the \"openai\" arm of the four-way ternary that now " +
     "also checks \"anthropic\" and \"openrouter\" explicitly (this commit added the " +
     "openrouter arm and its keys.openrouter column), defaulting to gemini.",

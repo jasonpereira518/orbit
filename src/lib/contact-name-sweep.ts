@@ -77,7 +77,7 @@ async function askAiForName(userId: string, c: Candidate): Promise<GuessedName |
       user: fields.join("\n"),
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
-    const parsed = parseAiJson<{ first?: unknown; last?: unknown } | null>(content);
+    const parsed = parseAiJson(contactNameGuessSchema, content);
     return sanitizeGuessedName(parsed?.first, parsed?.last);
   } catch {
     // No key, no credits, a timeout: the contact keeps its handle and gets the "?".
