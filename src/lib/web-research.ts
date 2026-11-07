@@ -827,6 +827,31 @@ export function toDiscoveryResult(query: string, json: string, sources: WebSourc
   };
 }
 
+function discoveryKeyParts(query: string) {
+  return { system: DISCOVER_SYSTEM, user: `Find people who match this description:\n\n${fenceUntrusted("description", query)}` };
+}
+
+/**
+ * The cached `discoverPeople` answer for a description, without running a search; null when
+ * the description would be refused or nothing is cached within `RESEARCH_CACHE_DAYS`.
+ */
+export async function loadCachedDiscovery(userId: string, input: unknown): Promise<DiscoveryResult | null> {
+  const normalized = normalizeDiscoveryQuery(input);
+  if (!normalized.ok) return null;
+  const db = await getDb();
+  const row = await db.query.aiResultCache.findFirst({
+    where: and(
+      eq(aiResultCache.userId, userId),
+      eq(aiResultCache.operation, DISCOVER_OPERATION),
+      eq(aiResultCache.inputHash, aiResultCacheKey(DISCOVER_OPERATION, discoveryKeyParts(normalized.query))),
+      gt(aiResultCache.createdAt, freshSince()),
+    ),
+    columns: { result: true },
+  });
+  const brief = row ? asBrief(row.result) : null;
+  return brief?.kind === "discover" ? brief : null;
+}
+
 /**
  * People who match a description ("product managers at Stripe who went to Michigan"),
  * found on the public web. Honest about its limits: a handful of cited candidates, never a
@@ -842,7 +867,8 @@ export async function discoverPeople(
   if (!normalized.ok) return normalized;
   const { query } = normalized;
   const now = options.now ?? (() => new Date());
-  const user = `Find people who match this description:\n\n${fenceUntrusted("description", query)}`;
+  const keyParts = discoveryKeyParts(query);
+  const { user } = keyParts;
   const research: DiscoveryResearcher =
     options.researcher ??
     ((uid, prompt, signal) =>
@@ -854,7 +880,6 @@ export async function discoverPeople(
         maxOutputTokens: MAX_DISCOVERY_OUTPUT_TOKENS,
         signal,
       }));
-  const keyParts = { system: DISCOVER_SYSTEM, user };
 
   try {
     const result = await withAiResultCache(
