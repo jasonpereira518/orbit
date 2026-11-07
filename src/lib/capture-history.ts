@@ -5,11 +5,20 @@
  * `unresolved-mentions.ts` is, so `scripts/smoke-capture-history.ts` can drive it against
  * PGlite with no auth.
  */
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { noteBatches, type CaptureSourceKind } from "@/db/schema";
+import { captureJobs, interactions, noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
-import { captureExcerpt, captureHistoryTitle, captureSourceKinds } from "@/lib/note-batches";
+import {
+  captureAttendeeNames,
+  captureExcerpt,
+  captureHistoryTitle,
+  captureMethod,
+  captureNextStep,
+  captureSourceKinds,
+  captureSummary,
+  type CaptureMethod,
+} from "@/lib/note-batches";
 
 export const CAPTURE_HISTORY_FIRST_PAGE = 5;
 export const CAPTURE_HISTORY_PAGE = 10;
@@ -23,7 +32,13 @@ export type CaptureHistoryItem = {
   status: "saved" | "undone";
   entryPoint: "capture" | "profile" | "relationship";
   kinds: CaptureSourceKind[];
+  method: CaptureMethod;
   title: string | null;
+  /** Everyone the capture saved, each once. */
+  names: string[];
+  /** Plain text, never markdown. */
+  summary: string | null;
+  nextSteps: string | null;
   excerpt: string;
   peopleCount: number;
   reminderCount: number;
@@ -113,16 +128,39 @@ export async function listCaptureHistoryFor(
     .limit(limit + 1);
 
   const page = rows.slice(0, limit);
-  const photos = await listCapturePhotosForBatches(
-    userId,
-    page.map((r) => r.id)
-  );
+  const batchIds = page.map((r) => r.id);
+  const interactionIds = [
+    ...new Set(page.flatMap((r) => (r.result?.participants ?? []).map((p) => p.interactionId).filter((id): id is string => Boolean(id)))),
+  ];
+  // One read per source for the whole page. Interactions are found by their primary key
+  // (the snapshot names them) rather than by note_batch_id, which has no index.
+  const [photos, jobs, people] = await Promise.all([
+    listCapturePhotosForBatches(userId, batchIds),
+    batchIds.length
+      ? db
+          .select({ noteBatchId: captureJobs.noteBatchId, sourceKind: captureJobs.sourceKind })
+          .from(captureJobs)
+          .where(and(eq(captureJobs.userId, userId), inArray(captureJobs.noteBatchId, batchIds)))
+      : [],
+    interactionIds.length
+      ? db
+          .select({
+            id: interactions.id,
+            source: interactions.source,
+            summary: sql<string | null>`left(${interactions.aiSummary}, 600)`,
+          })
+          .from(interactions)
+          .where(and(eq(interactions.userId, userId), inArray(interactions.id, interactionIds)))
+      : [],
+  ]);
   const photosByBatch = new Map<string, string[]>();
   for (const photo of photos) {
     const list = photosByBatch.get(photo.noteBatchId) ?? [];
     list.push(photo.id);
     photosByBatch.set(photo.noteBatchId, list);
   }
+  const jobSourceByBatch = new Map(jobs.map((j) => [j.noteBatchId, j.sourceKind]));
+  const interactionById = new Map(people.map((p) => [p.id, p]));
 
   const items: CaptureHistoryItem[] = page.map((row) => {
     const photoIds = photosByBatch.get(row.id) ?? [];
@@ -135,13 +173,28 @@ export async function listCaptureHistoryFor(
     const kinds = captureSourceKinds(
       photoIds.length && !stored.includes("photo") ? [...stored, "photo"] : stored
     );
+    const saved = participants.map((p) => (p.interactionId ? interactionById.get(p.interactionId) : undefined));
+    const meeting = row.result?.meeting;
+    const names = captureAttendeeNames(participants);
+    const title = captureHistoryTitle({ meetingTitle: meeting?.title, head: row.head ?? "", names, reminders });
+    const nextSteps = row.result ? captureNextStep(row.result) : null;
     return {
       id: row.id,
       createdAt: new Date(row.createdAt).toISOString(),
       status: row.status,
       entryPoint: row.entryPoint,
       kinds,
-      title: captureHistoryTitle({ participants, reminders }),
+      method: captureMethod({
+        meeting: Boolean(meeting),
+        granola: saved.some((i) => i?.source === "granola"),
+        jobSource: jobSourceByBatch.get(row.id),
+        kinds,
+      }),
+      title,
+      names,
+      summary: captureSummary(meeting?.summary, saved.map((i) => i?.summary)),
+      // A dates-only note is already titled by its reminder; don't repeat it underneath.
+      nextSteps: nextSteps === title ? null : nextSteps,
       excerpt: captureExcerpt(row.head ?? ""),
       peopleCount: participants.length,
       reminderCount: reminders.length,

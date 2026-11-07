@@ -3,6 +3,7 @@
  * the results page. No DB, no AI — everything here is unit-checkable.
  */
 import { atLocalNoon } from "@/lib/interaction-date";
+import { stripMarkdown } from "@/lib/plain-text";
 import type { CaptureSourceKind, NoteBatchResult, ReminderDateBasis } from "@/db/schema";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
 import type { CaptureParseHints } from "@/lib/ai";
@@ -36,18 +37,90 @@ export function captureSourceKinds(labels: readonly unknown[] | null | undefined
   return SOURCE_KIND_ORDER.filter((k) => kinds.has(k));
 }
 
+/** How a capture arrived, as the history row's icon and label name it. */
+export type CaptureMethod = "notes" | "meeting" | "voice" | "scan" | "granola" | "file" | "calendar" | "email" | "phone";
+
+// "messy" and "api" are the typed-notes job; they say nothing the input labels do not.
+const METHOD_BY_JOB: Partial<Record<string, CaptureMethod>> = {
+  meeting: "meeting",
+  voice: "voice",
+  scan: "scan",
+  phone: "phone",
+  granola: "granola",
+};
+const METHOD_BY_KIND: Record<CaptureSourceKind, CaptureMethod> = {
+  text: "notes",
+  voice: "voice",
+  photo: "scan",
+  calendar: "calendar",
+  email: "email",
+  file: "file",
+};
+
 /**
- * The line a capture is recognised by in the history: who it was about. Falls back to the
- * first reminder for a dates-only note ("Board review 15th of October"), then to nothing —
- * the caller shows the excerpt instead.
+ * Most specific evidence first: a stored meeting digest, then Granola provenance on the
+ * saved interactions, then the job that produced the batch, then the input labels (the
+ * only record a batch saved before capture jobs has).
  */
-export function captureHistoryTitle(result: Pick<NoteBatchResult, "participants" | "reminders">): string | null {
-  const names = [...new Set(result.participants.map((p) => p.name.trim()).filter(Boolean))];
+export function captureMethod(input: {
+  meeting: boolean;
+  granola: boolean;
+  jobSource: string | null | undefined;
+  kinds: readonly CaptureSourceKind[];
+}): CaptureMethod {
+  if (input.meeting) return "meeting";
+  if (input.granola) return "granola";
+  return (input.jobSource ? METHOD_BY_JOB[input.jobSource] : undefined) ?? METHOD_BY_KIND[input.kinds[0] ?? "text"];
+}
+
+/** The people a capture saved, in order, each once. */
+export function captureAttendeeNames(participants: NoteBatchResult["participants"]): string[] {
+  return [...new Set(participants.map((p) => p.name.trim()).filter(Boolean))];
+}
+
+// The calendar-seeded first line (`/capture?event=`, "Notes from “X” with …") and the
+// Granola header ("Meeting: X"). "the meeting" is the seed's stand-in for an untitled event.
+const NAMED_FIRST_LINE = /^(?:Notes from “(.+?)”|Meeting: (.+))/;
+
+/**
+ * The line a capture is recognised by in the history: the meeting's own name when it has
+ * one, else who it was with ("Chat with A / B +1 more"), else the first reminder for a
+ * dates-only note ("Board review 15th of October"), else nothing — the caller shows the
+ * method label instead.
+ */
+export function captureHistoryTitle(input: {
+  meetingTitle?: string | null;
+  head: string;
+  names: readonly string[];
+  reminders: readonly { title: string }[];
+}): string | null {
+  const meeting = input.meetingTitle?.trim();
+  if (meeting) return meeting;
+  const m = input.head.trimStart().match(NAMED_FIRST_LINE);
+  const named = (m?.[1] ?? m?.[2])?.trim();
+  if (named && named !== "the meeting") return named;
+  const { names } = input;
   if (names.length) {
-    const shown = names.slice(0, 2).join(", ");
-    return names.length > 2 ? `${shown} +${names.length - 2} more` : shown;
+    const shown = names.slice(0, 2).join(" / ");
+    return `Chat with ${shown}${names.length > 2 ? ` +${names.length - 2} more` : ""}`;
   }
-  return result.reminders[0]?.title.trim() || null;
+  return input.reminders[0]?.title.trim() || null;
+}
+
+/** The meeting's summary, else the first per-person summary the save wrote, as plain text. */
+export function captureSummary(meetingSummary: string | null | undefined, personSummaries: readonly (string | null | undefined)[]): string | null {
+  for (const s of [meetingSummary, ...personSummaries]) {
+    const plain = s ? stripMarkdown(s) : "";
+    if (plain) return plain.slice(0, 400);
+  }
+  return null;
+}
+
+/** The first thing to do after this capture: a meeting action item, a note's, or a reminder. */
+export function captureNextStep(result: Pick<NoteBatchResult, "meeting" | "actionItems" | "reminders">): string | null {
+  // Optional chains throughout: `result` is a stored snapshot, and older batches predate keys.
+  const first = result.meeting?.actionItems?.[0]?.text ?? result.actionItems?.[0]?.text ?? result.reminders?.[0]?.title;
+  return (first && stripMarkdown(first)) || null;
 }
 
 /** The start of the notes, whitespace-collapsed and cut on a word boundary. */
