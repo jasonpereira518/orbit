@@ -6,8 +6,9 @@
  * without pulling a client component into the server bundle.
  *
  * Two paths: the **guided tour** (welcome → about you → connect → a coach rail over the real pages) and
- * **quick setup** (welcome → your people → connect → a paged overview). People come first:
- * the person's own contacts are the easy win.
+ * **quick setup** (welcome → about you → your people → connect → a paged overview). Both open
+ * with About you (a LinkedIn link and three taps, all skippable) so suggestions and drafts know
+ * the goal; on quick setup people come next, since the person's own contacts are the easy win.
  */
 
 export const ONBOARDING_STEPS = [
@@ -62,8 +63,8 @@ export function isOnboardingPath(value: string | null | undefined): value is Onb
 }
 
 /**
- * The two main lines. Quick setup goes straight to the person's own people; the tour shows
- * them around. `linkedin` and `ai-key` left both lines (Sprint B): the LinkedIn export is a
+ * The two main lines, both opening with About you. Quick setup then goes to the person's own
+ * people; the tour shows them around. `linkedin` and `ai-key` left both lines (Sprint B): the LinkedIn export is a
  * dashboard card now, and Free includes AI. Their ids stay in ONBOARDING_STEPS so a stored
  * step still parses, and `resumeStep` moves it onto the path's first step.
  */

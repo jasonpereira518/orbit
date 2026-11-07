@@ -208,18 +208,22 @@ async function draftFromContext(input: {
   const operation = input.operation ?? "followup.draft";
   // Tripwire, never a block: the history is other people's mail, DMs and calendar invites.
   auditUntrustedWrite(input.userId, operation, "history", `${profileBlock}\n${transcript}`);
-  const aim = aimLine(await loadUserAim(input.userId));
+  // Who the message is from, beyond a first name. Loaded here rather than threaded through
+  // every caller so no draft path can be left without it — that is exactly how the sign-off
+  // name above ended up being fetched inline too. Omitted entirely when unset; see
+  // `senderProfileBlock` on why "unknown" is worse than absent. Both reads are best-effort:
+  // a failure leaves the line out rather than costing the draft.
+  const [userAim, senderBio] = await Promise.all([
+    loadUserAim(input.userId).catch(() => null),
+    loadSenderBio(input.userId),
+  ]);
+  const aim = aimLine(userAim);
   const goalsBlock =
     (input.userGoals.length > 0
       ? `Your active goals: ${input.userGoals.join("; ")}`
       : "Your active goals: (none specified)") + (aim ? `\n${aim}` : "");
   const givenPurpose = normalizePurpose(input.purpose);
-
-  // Who the message is from, beyond a first name. Loaded here rather than threaded through
-  // every caller so no draft path can be left without it — that is exactly how the sign-off
-  // name above ended up being fetched inline too. Omitted entirely when unset; see
-  // `senderProfileBlock` on why "unknown" is worse than absent.
-  const senderBlock = senderProfileBlock(await loadSenderBio(input.userId));
+  const senderBlock = senderProfileBlock(senderBio);
 
   const channelLabel =
     input.channel === "email"
