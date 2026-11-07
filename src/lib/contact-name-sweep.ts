@@ -20,6 +20,7 @@ import {
 } from "@/lib/contact-name-guess";
 import { updateContactForUser } from "@/lib/contact-writes";
 import { internalFetch } from "@/lib/internal-auth";
+import { contactNameGuessSchema } from "@/lib/ai-reply-schemas";
 import { reportError } from "@/lib/report-error";
 
 /** Contacts looked at per user per pass; more waits for the next pass. */
