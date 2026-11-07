@@ -12,7 +12,7 @@
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { closenessCohorts, contacts, contactTags, tags } from "../src/db/schema";
 import { openIngestContext, finalizeIngest } from "../src/lib/ingest/events";
@@ -47,7 +47,7 @@ run(async () => {
   check("the same person matched", second.matched === 1, JSON.stringify(second));
   check("no duplicate was created", second.created === 0);
 
-  const [ada] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  const [ada] = await db.select().from(contacts).where(and(eq(contacts.userId, USER), eq(contacts.email, "ada@example.com")));
   check("the blank field was filled", ada?.title === "Mathematician");
   check("the existing field was kept", ada?.company === "Analytical");
 
@@ -73,7 +73,7 @@ run(async () => {
   const alanRows = await db
     .select()
     .from(contacts)
-    .where(eq(contacts.email, "alan@example.com"));
+    .where(and(eq(contacts.userId, USER), eq(contacts.email, "alan@example.com")));
   check("exactly one Alan Turing contact exists", alanRows.length === 1, String(alanRows.length));
   check(
     "the two in-batch rows folded into one another (company from the first, title from the second)",
@@ -91,7 +91,7 @@ run(async () => {
   const blockedRows = await db
     .select()
     .from(contacts)
-    .where(eq(contacts.email, "brandnew@example.com"));
+    .where(and(eq(contacts.userId, USER), eq(contacts.email, "brandnew@example.com")));
   check("the capped person was not written", blockedRows.length === 0);
 
   console.log("\nfifth pass: the cap can bite part-way through a single batch");
@@ -116,7 +116,7 @@ run(async () => {
     },
   ]);
   check("the person with notes was created", sixth.created === 1, JSON.stringify(sixth));
-  const [marie] = await db.select().from(contacts).where(eq(contacts.email, "marie@example.com"));
+  const [marie] = await db.select().from(contacts).where(and(eq(contacts.userId, USER), eq(contacts.email, "marie@example.com")));
   check(
     "the note was written to the new contact",
     marie?.notes === "Met at a conference in Paris.",
@@ -138,7 +138,7 @@ run(async () => {
   const [marieAgain] = await db
     .select()
     .from(contacts)
-    .where(eq(contacts.email, "marie@example.com"));
+    .where(and(eq(contacts.userId, USER), eq(contacts.email, "marie@example.com")));
   check(
     "an ordinary blank field (title) still fills on merge",
     marieAgain?.title === "Physicist",
@@ -166,7 +166,7 @@ run(async () => {
   check("one created, one matched", eighth.created === 1 && eighth.matched === 1, JSON.stringify(eighth));
 
   const tagNamesFor = async (email: string) => {
-    const [contact] = await db.select().from(contacts).where(eq(contacts.email, email));
+    const [contact] = await db.select().from(contacts).where(and(eq(contacts.userId, USER), eq(contacts.email, email)));
     if (!contact) return null;
     const rows = await db
       .select({ name: tags.name })

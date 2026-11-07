@@ -42,7 +42,7 @@ import { useWindowFileDrop, useWindowFilePaste } from "@/lib/use-window-file-dro
 
 /** A LinkedIn archive folder is dozens of files: the same cap as /imports. */
 const DROP_LIMITS = { maxFiles: 200, maxDepth: MAX_DROP_DEPTH };
-const CHATS_HREF = "/imports#import-panel-chats";
+const CHATS_HREF = "/capture?mode=imports#import-panel-chats";
 
 type Router = ReturnType<typeof useRouter>;
 
@@ -143,7 +143,7 @@ export function CaptureImportStrip({
       }
       if (routed.chats.length) {
         handOffChatFiles(routed.chats);
-        // The chat card lives on /imports for now; the hand-off waits there until it mounts.
+        // The chat card lives on the Imports tab; the hand-off waits there until it mounts.
         if (!isMixedDrop(routed)) router.push(CHATS_HREF);
         else
           toast.message(`${routed.chats.length === 1 ? "A chat export is" : `${routed.chats.length} chat exports are`} ready`, {

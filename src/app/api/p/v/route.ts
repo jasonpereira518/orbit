@@ -15,7 +15,10 @@ import {
   deviceFromUserAgent,
   hashVisitor,
 } from "@/lib/analytics-visitor";
-import { recordDwell, recordLoad, recordPageView } from "@/lib/page-views";
+import { recordDwell, recordLoad, recordPageView, recordVitals } from "@/lib/page-views";
+import { eventSchemas, isClientEvent } from "@/lib/product-event-schemas";
+import { eventId } from "@/lib/product-event-ids";
+import { trackNow } from "@/lib/product-events";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,7 +33,13 @@ export const runtime = "nodejs";
  * POSTs one of these per page view, a `load` once its content is on screen, then a `dwell`
  * for it on the way out.
  *
- * ONE VERB, TWO KINDS, and not because that is prettier. The exit message has to survive
+ * Two more kinds ride the same pipe: `vitals` (Core Web Vitals for a document's first view,
+ * patched onto its row like `load`) and `event` — the ONE door for client-only product events
+ * (`CLIENT_EVENTS`: an error screen shown, a desktop notification shown or clicked). Any other
+ * event name is dropped; the properties are validated against `product-event-schemas` before
+ * anything is written, and the user is whoever the request's session says, never the body.
+ *
+ * ONE VERB, SEVERAL KINDS, and not because that is prettier. The exit message has to survive
  * the page being torn down, which means `navigator.sendBeacon` — the only transport the
  * browser guarantees to flush during unload. `sendBeacon` can issue nothing but POST, so a
  * PATCH route would compile, look correct, and never once fire in production.
@@ -171,6 +180,23 @@ function geoFrom(headers: Headers) {
   };
 }
 
+/**
+ * Who sent this beacon, or null. Demo mode has no Clerk, so `auth()` yields nothing and every
+ * local page view would record as anonymous — which makes the per-account breakdown impossible
+ * to see while developing it. `requireUserId()` is the wrong tool: it throws when signed out
+ * and bootstraps a user row on the way, and a fire-and-forget beacon must do neither.
+ */
+async function resolveUserId(request: Request): Promise<string | null> {
+  if (isDemoMode()) return "demo-user";
+  try {
+    const userId = (await auth()).userId;
+    if (userId) return userId;
+  } catch {
+    // Signed out, or Clerk unconfigured. Both are ordinary here.
+  }
+  return userFromStaleSession(request);
+}
+
 const isUuid = (value: unknown): value is string =>
   typeof value === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -192,6 +218,11 @@ export async function POST(request: Request) {
       navType?: unknown;
       internal?: unknown;
       automated?: unknown;
+      lcpMs?: unknown;
+      inpMs?: unknown;
+      clsMilli?: unknown;
+      name?: unknown;
+      props?: unknown;
     } | null;
 
     if (!body || !isUuid(body.id)) return OK();
@@ -213,11 +244,35 @@ export async function POST(request: Request) {
       return OK();
     }
 
-    if (!isUuid(body.sessionId)) return OK();
-    if (typeof body.path !== "string" || !isTrackedPath(body.path)) return OK();
+    // Core Web Vitals for the document's first view: monotonic, like dwell.
+    if (body.kind === "vitals") {
+      await recordVitals(body.id, { lcpMs: body.lcpMs, inpMs: body.inpMs, clsMilli: body.clsMilli });
+      return OK();
+    }
 
     const headers = request.headers;
     const userAgent = headers.get("user-agent") ?? "";
+
+    // A client-only product event. Allow-listed by name, schema-checked before the write.
+    if (body.kind === "event") {
+      if (!isClientEvent(body.name)) return OK();
+      if (isBotUserAgent(userAgent) || body.automated === true) return OK();
+      const parsed = eventSchemas[body.name].safeParse(body.props);
+      if (!parsed.success) return OK();
+      const userId = await resolveUserId(request);
+      // The client's id dedupes a retried beacon, namespaced by the caller so a forged id can
+      // never pre-empt another event's deterministic id.
+      await trackNow(body.name, parsed.data as never, {
+        userId,
+        sessionId: isUuid(body.sessionId) ? body.sessionId : null,
+        id: eventId("client_event", userId ?? "anonymous", body.id),
+      });
+      return OK();
+    }
+
+    if (!isUuid(body.sessionId)) return OK();
+    if (typeof body.path !== "string" || !isTrackedPath(body.path)) return OK();
+
     const visitorHash = hashVisitor(clientIp(headers), userAgent);
 
     // The client sends its full URL so the UTMs can be read here rather than trusted from
@@ -237,19 +292,7 @@ export async function POST(request: Request) {
         ? attribution.referrer
         : null;
 
-    // Demo mode has no Clerk, so `auth()` yields nothing and every local page view would
-    // record as anonymous — which makes the per-account breakdown impossible to see while
-    // developing it. `requireUserId()` is the wrong tool: it throws when signed out and
-    // bootstraps a user row on the way, and a fire-and-forget beacon must do neither.
-    let userId: string | null = isDemoMode() ? "demo-user" : null;
-    if (!userId) {
-      try {
-        userId = (await auth()).userId ?? null;
-      } catch {
-        // Signed out, or Clerk unconfigured. Both are ordinary here.
-      }
-    }
-    if (!userId) userId = await userFromStaleSession(request);
+    const userId = await resolveUserId(request);
 
     const route = routeFor(body.path, headers.get("host"));
     const isBot = isBotUserAgent(userAgent) || body.automated === true;

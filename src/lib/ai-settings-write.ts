@@ -14,8 +14,10 @@
  * construction: it has no action id, so it is not reachable by POST at all. It uses `@/db`
  * and no `next/server`, so both callers can import it.
  */
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { clearMemoryChunkVectors } from "@/lib/memory-chunks";
 import { contactEmbeddings, userSettings } from "@/db/schema";
 import { resolveAiModel, resolveAiProvider, type AiProvider } from "@/lib/ai";
 import { managedKeysConfigured } from "@/lib/ai-access";
@@ -88,7 +90,7 @@ export function embeddingBackendFor(
 
 export async function managedEligibilityFor(userId: string): Promise<ManagedEligibility> {
   const { plan } = await getEntitlements(userId);
-  return managedEligibility(plan, isDemoAccount(userId));
+  return managedEligibility(plan, isDemoAccount(userId), await getEffectivePlanConfig());
 }
 
 /**
@@ -183,6 +185,7 @@ export async function applyAiKeyChange(input: {
   if (embeddingReset) {
     // Different embedding spaces can't be compared — clear stale vectors.
     await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+    await clearMemoryChunkVectors(userId);
   }
 
   return { embeddingReset };

@@ -29,9 +29,10 @@
  */
 import "./smoke/_env";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts } from "../src/db/schema";
+import { getEffectivePlanConfig } from "../src/lib/plans/plan-rules";
+import { contacts, interactions } from "../src/db/schema";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
@@ -197,6 +198,15 @@ async function main() {
     })
   )?.id;
   check("fixture: the due-row contact exists", Boolean(dueId));
+  // Follow-ups only alert for people the user has met or talked with (`met-contact.ts`).
+  if (dueId) {
+    await db.insert(interactions).values({
+      userId: USER,
+      contactId: dueId,
+      interactionType: "meeting",
+      interactionDate: new Date(Date.now() - 30 * 86_400_000),
+    });
+  }
 
   // ---- Dashboard ---------------------------------------------------------------------
   console.log("\nDashboard (getDashboardData)…");
@@ -266,15 +276,21 @@ async function main() {
   // windowed read of `contact_career_moves`), the news probe (one indexed read of the global
   // news tables with the account's company keys; a write only when it finds news), and the
   // posts read (recent `contact_signals` posts, one windowed read, LIMIT 200). The nightly
-  // post check itself runs on `schedule` runs only and is not counted here.
+  // post check itself runs on `schedule` runs only and is not counted here. 28, up from 26 by two reads:
+  // `loadUserFocus` and the email-insights opt-in check (`produceEmailSignals`), one statement that returns nothing
+  // for an account that has not opted in.
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
-  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`).
-  check("radar run issues ≤ 27 statements", radarRunCount <= 27, `got ${radarRunCount}`);
+  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`) + the
+  // email-insights opt-in check above = 28.
+  check("radar run issues ≤ 28 statements", radarRunCount <= 28, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),
     radarRunQueries.find((q) => selectsBare(q, "notes"))?.slice(0, 200)
   );
+  // The app_surface_flags read (page flags + runtime plan rules) is memoized per instance for
+  // 15s and the app shell has always made it by the time a page loads; warm it, as a request has.
+  await getEffectivePlanConfig();
   startQueryCount();
   const radarPage = await loadRadarPage(USER);
   const radarPageCount = stopQueryCount();
@@ -387,6 +403,10 @@ async function main() {
     "panel surfaces the due follow-up at row 2900",
     Boolean(dueId) && panel.items.some((i) => i.kind === "follow_up" && i.contactId === dueId)
   );
+  // The met-evidence row above is only for the follow-up assertions. Later budgets (the
+  // knowledge base reads interactions, and runs one more statement when any exist) were
+  // measured on a network with none.
+  if (dueId) await db.delete(interactions).where(eq(interactions.contactId, dueId));
 
   // ---- Contacts list projection ------------------------------------------------------
   // The hottest contacts scan in the app, and the one that was NOT guarded here — it
@@ -414,9 +434,19 @@ async function main() {
   );
   const listJson = JSON.stringify(listRows);
   check("contacts list payload carries no inline base64", !listJson.includes("data:image/"));
+  // Asked of rows that are KNOWN to hold an inline photo, not of whichever 50 the planner
+  // returns first: with no ORDER BY, the first 50 depend on the plan, and a plan that reaches
+  // none of the avatar rows made this check fail on CI while it passed locally.
+  const inlineRows = await db
+    .select(contactsListSelection)
+    .from(contacts)
+    .where(and(eq(contacts.userId, USER), sql`substr(${contacts.profileImageUrl}, 1, 11) = 'data:image/'`))
+    .limit(10);
+  check("the fixture has contacts with an inline avatar", inlineRows.length > 0, `${inlineRows.length}`);
   check(
     "contacts list still resolves an inline avatar to the avatar route",
-    listJson.includes("/api/avatars/")
+    inlineRows.length > 0 && inlineRows.every((r) => r.profileImageUrl?.startsWith("/api/avatars/")),
+    inlineRows.find((r) => !r.profileImageUrl?.startsWith("/api/avatars/"))?.profileImageUrl?.slice(0, 80)
   );
 
   // ---- Composer suggestion signals ---------------------------------------------------

@@ -19,7 +19,8 @@
  *
  * Pure: no network, no database. Run: npx tsx scripts/smoke-chat-prompt.ts
  */
-import { buildChatPrompt } from "../src/lib/ai";
+import { buildChatPrompt, CHAT_STREAM_TAIL } from "../src/lib/ai";
+import { WRITE_RULES } from "../src/lib/chat-agent-loop";
 import { renderAttachedPeople } from "../src/lib/chat-attached";
 import { renderFocusProfile } from "../src/lib/chat-context";
 import type { StoredProfile } from "../src/lib/contact-profile";
@@ -798,6 +799,18 @@ console.log("\nLook before you say you don't know");
   check("a partial answer names the section it checked", systemCore.includes("which section you checked and what it did not show"));
   check("length follows the question", systemCore.includes("a single detail (an email, a date, a count) is one line"));
   check("still never counts from the relevance slice", systemCore.includes("never count from it"));
+}
+
+console.log("\nOne layout for every answer");
+{
+  check("the first line carries the bolded key fact", CHAT_STREAM_TAIL.includes("the one key fact in it in bold"));
+  check("three or more become bullets", CHAT_STREAM_TAIL.includes("Three or more people or items are a bullet list"));
+  check("a bullet is name then reason", CHAT_STREAM_TAIL.includes('"**Name** — the specific\n  reason"'));
+  check("a carded person's role is not restated", CHAT_STREAM_TAIL.includes('do not restate "title at company"'));
+  check("only the fact is bold, not the sentence", CHAT_STREAM_TAIL.includes("never the whole sentence"));
+  check("no headings, one Next line at most", CHAT_STREAM_TAIL.includes("No markdown headings") && CHAT_STREAM_TAIL.includes('at most one line starting "**Next:**"'));
+  check("the blocks are still described", CHAT_STREAM_TAIL.includes("::people[<id>,<id>]") && CHAT_STREAM_TAIL.includes("::list[r1]"));
+  check("a change gets one clause, the card the details", WRITE_RULES.includes("give it one clause"));
 }
 
 if (failures > 0) {

@@ -18,6 +18,7 @@ import "./smoke/_env";
 import { eq, like } from "drizzle-orm";
 import AdminFeedbackDetailPage from "../src/app/(clerk)/(admin)/admin/feedback/[feedbackId]/page";
 import AdminFeedbackPage from "../src/app/(clerk)/(admin)/admin/feedback/page";
+import AdminChatRatingsPage from "../src/app/(clerk)/(admin)/admin/feedback/chat/page";
 import { getDb } from "../src/db";
 import { adminAuditLog, feedback, feedbackScreenshots, userSettings } from "../src/db/schema";
 import {
@@ -228,6 +229,11 @@ async function main() {
   check("the list page renders the excerpt", listText.includes("goes blank when I filter"));
   check("the list page renders the area", listText.includes("graph"));
   check("the list page renders the status", listText.includes("resolved"));
+  check("Triaged is a filter chip, not a tile", listText.includes("Triaged") && !listText.includes("Nobody has looked at these yet Triaged"));
+
+  // Chat ratings moved to their own tab; it must render on its own loaders.
+  const chatText = textOf(await AdminChatRatingsPage({ searchParams: Promise.resolve({}) })).join(" ");
+  check("the chat ratings tab renders", chatText.includes("Thumbs up") && chatText.includes("Did chat answer?"));
 
   const detailTree = await AdminFeedbackDetailPage({
     params: Promise.resolve({ feedbackId: withShot.id }),

@@ -58,6 +58,12 @@ export type PersonSubject = {
   company: string | null;
   domain: string | null;
   linkedinUrl: string | null;
+  /**
+   * What the user's own note says about them (role, where they met, city), for a person
+   * with no company or profile link. Only a full name may lean on it: a first name plus
+   * "PM, met at a mixer" still matches half the internet.
+   */
+  context?: string | null;
 };
 
 export type PersonDossier = {
@@ -144,6 +150,7 @@ export function normalizePersonSubject(input: {
   company?: unknown;
   domain?: unknown;
   linkedinUrl?: unknown;
+  context?: unknown;
 }): { ok: true; subject: PersonSubject } | { ok: false; reason: "invalid" | "no_anchor"; message: string } {
   const fullName = clean(input.fullName, MAX_NAME + 1);
   if (!fullName || fullName.length < 2 || fullName.length > MAX_NAME) {
@@ -166,14 +173,26 @@ export function normalizePersonSubject(input: {
   if (linkedinUrl && !LINKEDIN_RE.test(linkedinUrl)) {
     return { ok: false, reason: "invalid", message: "Use a LinkedIn profile link like linkedin.com/in/their-name" };
   }
-  if (!company && !domain && !linkedinUrl) {
+  const context = clean(input.context, 300);
+  const hasFullName = fullName.split(" ").length >= 2;
+  if (!company && !domain && !linkedinUrl && !(context && hasFullName)) {
     return {
       ok: false,
       reason: "no_anchor",
       message: "Add their company, website or LinkedIn link too — a name alone matches too many people",
     };
   }
-  return { ok: true, subject: { fullName, company, domain: domain || null, linkedinUrl: linkedinUrl || null } };
+  return {
+    ok: true,
+    subject: {
+      fullName,
+      company,
+      domain: domain || null,
+      linkedinUrl: linkedinUrl || null,
+      // Only when it is the anchor: a subject with a company keeps its old cache key.
+      ...(!company && !domain && !linkedinUrl && context ? { context } : {}),
+    },
+  };
 }
 
 function subjectPrompt(subject: PersonSubject): string {
@@ -182,6 +201,7 @@ function subjectPrompt(subject: PersonSubject): string {
     subject.linkedinUrl ? `LinkedIn: ${subject.linkedinUrl}` : null,
     subject.company ? `Company: ${subject.company}` : null,
     subject.domain ? `Company website: ${subject.domain}` : null,
+    subject.context ? `What the user's notes say about them (use only to tell namesakes apart): ${subject.context}` : null,
   ].filter(Boolean);
   // Typed by the user, but fenced anyway: a "name" like "ignore the above" stays a name.
   return `Research this person:\n\n${fenceUntrusted("person", lines.join("\n"))}`;
@@ -430,8 +450,23 @@ export async function saveResearchedPersonForUser(
     { source: "web_research", ...options },
   );
 
+  const profileWritten = confident ? await writeDossierProfile(userId, contactId, dossier) : false;
+  return { contactId, outcome, profileWritten };
+}
+
+/**
+ * A confident brief's work history onto a contact, as a `"web"` profile. Shared by "Save to
+ * Orbit" and by a capture card that was looked up while it was extracted, so the career the
+ * lookup already paid for is not searched for a second time.
+ */
+export async function writeResearchedProfile(userId: string, contactId: string, key: string): Promise<boolean> {
+  const dossier = await loadResearchedPerson(userId, key);
+  return dossier?.match === "confident" ? writeDossierProfile(userId, contactId, dossier) : false;
+}
+
+async function writeDossierProfile(userId: string, contactId: string, dossier: PersonDossier): Promise<boolean> {
   let profileWritten = false;
-  if (confident && dossier.experiences.length) {
+  if (dossier.experiences.length) {
     const result = await saveContactProfile(userId, contactId, {
       source: "web",
       sourceUrl: dossier.subject.linkedinUrl ?? dossier.sources[0]?.url ?? null,
@@ -448,7 +483,7 @@ export async function saveResearchedPersonForUser(
     });
     profileWritten = result.written;
   }
-  return { contactId, outcome, profileWritten };
+  return profileWritten;
 }
 
 /* ------------------------------------------------------------------ companies ----- */

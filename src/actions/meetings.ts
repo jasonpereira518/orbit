@@ -12,7 +12,7 @@ import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
 import { meetingCandidatesFrom, meetingCandidatesFromRows, type MeetingCandidate } from "@/lib/meeting-calendar";
 import { findEventByKey, listUpcomingEvents, matchEventForSession } from "@/lib/calendar-events";
 import { buildMeetingRecap, type MeetingRecap } from "@/lib/meeting-recap";
-import { listMeetingsFor, type MeetingsPage } from "@/lib/meetings-list";
+import { listMeetingsFor, type MeetingSourceFilter, type MeetingsPage } from "@/lib/meetings-list";
 import {
   analyzeMeetingTranscript,
   buildMeetingCorpus,
@@ -31,6 +31,7 @@ import {
   getMeetingTranscript,
   loadMeetingSelf,
   resumeMeetingSessionRow,
+  setMeetingUserNotes,
   storeMeetingDigest,
   updateMeetingDetails,
   type MeetingAttendee,
@@ -157,6 +158,21 @@ export async function saveMeetingDetails(
   }
 }
 
+/**
+ * The notes box, saved as the person types (debounced by the engine) and from the detail
+ * page. Not plan-gated: they are the user's own words about a meeting they already have.
+ */
+export async function saveMeetingNotes(id: string, notes: string): Promise<{ ok: true } | Fail> {
+  try {
+    const userId = await requireUserId();
+    const saved = await setMeetingUserNotes(userId, id, cleanUserNotes(notes));
+    if (!saved) return { ok: false, error: "That meeting no longer exists" };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t save your notes", "meetings.save-meeting-notes") };
+  }
+}
+
 export type MeetingTranscriptView = {
   id: string;
   title: string | null;
@@ -240,7 +256,12 @@ export async function analyzeMeetingSession(
     if (!t) return { ok: false, error: "That meeting no longer exists" };
     if (t.session.status === "saved") return { ok: false, error: "That meeting was already saved" };
 
-    const notes = cleanUserNotes(opts.notes);
+    // Notes sent with the request are new: they mean a fresh digest, and they are kept with
+    // the meeting. Without any, the stored notes still feed a digest made for another reason
+    // (Try again, a first summary) — but never force one by themselves.
+    const typed = cleanUserNotes(opts.notes);
+    if (typed && typed !== (t.session.userNotes ?? "")) await setMeetingUserNotes(userId, t.session.id, typed);
+    const notes = typed || cleanUserNotes(t.session.userNotes);
 
     // The calendar event this was, when known — from the nudge, or matched now by time and guests.
     let event = t.session.calendarEventKey ? await findEventByKey(userId, t.session.calendarEventKey) : null;
@@ -286,7 +307,7 @@ export async function analyzeMeetingSession(
       );
     };
 
-    let digest = !opts.force && !notes ? t.session.digest : null;
+    let digest = !opts.force && !typed ? t.session.digest : null;
     if (!digest) {
       try {
         digest = await analyzeMeetingTranscript(
@@ -500,11 +521,13 @@ export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
 /** One more page of past meetings, for the list's "Load more". */
 export async function listMeetingsPage(
   q: string | null,
-  cursor: string | null
+  cursor: string | null,
+  source: MeetingSourceFilter = "all"
 ): Promise<({ ok: true } & MeetingsPage) | Fail> {
   try {
-    const userId = await requireMeetingsUser();
-    return { ok: true, ...(await listMeetingsFor(userId, { q, cursor })) };
+    // A read of the user's own history, Granola rows included: not plan-gated.
+    const userId = await requireUserId();
+    return { ok: true, ...(await listMeetingsFor(userId, { q, cursor, source })) };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t load your meetings", "meetings.list-meetings-page") };
   }

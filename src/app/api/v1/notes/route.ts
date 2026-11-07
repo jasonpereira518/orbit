@@ -40,6 +40,7 @@
  *     has no foreign key, so nothing downstream would ever notice — but it would be one
  *     account quietly attaching its capture to a stranger's contact row. Checked here.
  */
+import { requirePlanForSurface } from "@/lib/surface-visibility";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
@@ -64,6 +65,8 @@ const NOTE_BODY_MAX_BYTES = 50_000 * 4;
 
 export const POST = apiHandler({ scope: "write", bucket: "apiWrite" }, async (request, { caller }) => {
   const body = await readJson(request, noteBody, NOTE_BODY_MAX_BYTES);
+  // A note becomes a capture: the same tier lock the Capture page's actions apply.
+  await requirePlanForSurface(caller.userId, "page.capture");
 
   if (body.contactId) {
     const db = await getDb();

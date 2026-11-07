@@ -140,7 +140,16 @@ export async function deleteDraftBroadcast(id: string) {
  * Exactly the audience the console calls "waiting": still on the list, and not already an
  * account. Mailing someone who left is the one unforgivable bug here, and mailing the
  * waitlist to an existing user reads as a product that does not know its own customers.
+ *
+ * "Converted" is the console's definition, one shared fragment (`convertedSql`): linked to an
+ * account by id, or the address matches an account's email. Its correlation is aliased and
+ * qualified on purpose (see that file), the failure mode being a NOT EXISTS that excludes
+ * everyone so a broadcast silently reaches nobody.
  */
+function audienceWhere() {
+  return and(isNull(interestListSignups.unsubscribedAt), sql`not ${convertedSql}`);
+}
+
 export async function audienceFor(): Promise<
   Array<{ id: string; email: string; unsubscribeToken: string }>
 > {
@@ -152,16 +161,17 @@ export async function audienceFor(): Promise<
       unsubscribeToken: interestListSignups.unsubscribeToken,
     })
     .from(interestListSignups)
-    .where(
-      and(
-        isNull(interestListSignups.unsubscribedAt),
-        // "Converted" is the console's definition, one shared fragment (`convertedSql`): linked
-        // to an account by id, or the address matches an account's email. Its correlation is
-        // aliased and qualified on purpose (see that file), the failure mode being a NOT EXISTS
-        // that excludes everyone so a broadcast silently reaches nobody.
-        sql`not ${convertedSql}`
-      )
-    );
+    .where(audienceWhere());
+}
+
+/** The size of `audienceFor()`, for the console, without loading every row to count them. */
+export async function audienceCount(): Promise<number> {
+  const db = await getDb();
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(interestListSignups)
+    .where(audienceWhere());
+  return Number(rows[0]?.n ?? 0);
 }
 
 /** A single send, used by both the test-send and the real one. */

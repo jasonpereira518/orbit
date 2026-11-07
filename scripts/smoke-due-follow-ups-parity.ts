@@ -78,6 +78,11 @@ run(async () => {
       last_interaction_at = CASE WHEN n % 3 = 0 THEN now() - (n || ' days')::interval ELSE NULL END
     FROM numbered WHERE c.id = numbered.id
   `);
+  // Follow-ups only alert for people the user has met or talked with (`met-contact.ts`).
+  await db.execute(sql`
+    INSERT INTO interactions (user_id, contact_id, interaction_type, interaction_date)
+    SELECT ${USER}, id, 'meeting', now() - interval '30 days' FROM contacts WHERE user_id = ${USER}
+  `);
   await recalibrateCloseness(USER);
 
   startQueryCount();

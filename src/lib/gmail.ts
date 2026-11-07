@@ -303,7 +303,18 @@ export async function upsertGmailConnection(
         nextSyncAt: armed && !pausedByUser ? new Date() : null,
         syncFailures: 0,
         syncError: null,
-        ...(switchedFrom ? { syncCursor: null, syncStatus: null, syncStartedAt: null, lastSyncedAt: null } : {}),
+        // A different account starts with every lane on, as a pause did before v192. The same
+        // account reconnecting keeps its switches: they aren't in this update at all.
+        ...(switchedFrom
+          ? {
+              syncCursor: null,
+              syncStatus: null,
+              syncStartedAt: null,
+              lastSyncedAt: null,
+              calendarSyncEnabled: 1,
+              contactsSyncEnabled: 1,
+            }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(gmailConnections.id, existing.id))
@@ -1198,6 +1209,43 @@ export async function fetchGmailThread(
   } catch (err) {
     if (err instanceof ReauthRequiredError) throw err;
     return null;
+  }
+}
+
+/** The newest `max` messages of a thread, oldest first, each with its text body (cut hard). */
+export function parseThreadMessages(
+  raw: { id?: string; messages?: RawGmailMessage[] },
+  threadId: string,
+  max = 4
+): GmailMessageContent[] {
+  const messages = raw.messages ?? [];
+  return messages.slice(-max).map((msg) => ({
+    ...toHeaderSummary(msg, threadId),
+    // The same cut as `fetchGmailMessages`: quoted reply chains run to tens of thousands of
+    // characters and add nothing the extractor needs.
+    body: extractBody(msg.payload).slice(0, 4000),
+  }));
+}
+
+/**
+ * A thread's newest messages with their text, for the email-insights extractor. One
+ * `threads.get?format=full` call, which also carries the user's own replies. Returns `[]` on
+ * any failure: the caller counts that as a stalled attempt, not an error.
+ */
+export async function fetchGmailThreadMessages(
+  accessToken: string,
+  threadId: string,
+  opts: { max?: number } = {}
+): Promise<GmailMessageContent[]> {
+  try {
+    const res = await gmailFetchWithRetry(
+      `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?format=full`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 20_000 }
+    );
+    if (!res.ok) return [];
+    return parseThreadMessages((await res.json()) as RawGmailThread, threadId, opts.max ?? 4);
+  } catch {
+    return [];
   }
 }
 

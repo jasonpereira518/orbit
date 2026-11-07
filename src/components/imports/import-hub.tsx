@@ -1,5 +1,7 @@
 "use client";
 
+import { useViewerPlan } from "@/components/viewer-plan";
+import { availableOn } from "@/lib/plans/plan-config";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
@@ -340,6 +342,12 @@ export function ImportHub({
 }) {
   const job = useImportJob();
   const queue = useImportQueue();
+  // The effective plan table, so "available on …" names the plans the gates actually use.
+  const { planConfig } = useViewerPlan();
+  const driveOn = `Google Drive is on ${availableOn("sync", planConfig)}`;
+  const connectionsNote = planConfig.free.features.extraConnections
+    ? "Every plan connects both Google and Outlook. LinkedIn imports and one-off calendar files are free on every plan."
+    : `Free connects one of Google or Outlook; ${availableOn("extraConnections", planConfig)} connect both. LinkedIn imports and one-off calendar files are free on every plan.`;
   const [open, setOpen] = useState<RowId | null>(null);
   const [drivePicks, setDrivePicks] = useState<PickedDriveFile[] | null>(null);
   // Covers the whole click→token→Picker round trip: a slow token fetch or a Picker that
@@ -613,7 +621,7 @@ export function ImportHub({
               disabled={!canUseSync || drivePickerBusy || queueBusy}
               title={
                 !canUseSync
-                  ? IMPORT_COPY.drivePaywalled
+                  ? driveOn
                   : queueBusy
                     ? IMPORT_COPY.driveWaitForQueue
                     : undefined
@@ -805,6 +813,8 @@ export function ImportHub({
               />
             ) : (
               <LockedFeature
+                feature="sync"
+                config={planConfig}
                 title="Calendar sync"
                 description="Connecting Google or Outlook is free and brings in your own calendar. This keeps every calendar syncing — paste a calendar’s private link and Orbit polls it, so networking events and the people in them stay up to date."
                 highlights={[
@@ -813,7 +823,7 @@ export function ImportHub({
                   "Networking meetings become logged interactions",
                   "New people from invites land in your contacts",
                 ]}
-                note="Free connects one of Google or Outlook; Pro and Max connect both. LinkedIn imports and one-off calendar files are free on every plan."
+                note={connectionsNote}
               />
             )}
           </ImportSourceRow>

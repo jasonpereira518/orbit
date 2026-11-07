@@ -1,5 +1,5 @@
 /**
- * Is Radar working? Aggregates for `/admin/analytics/radar`, across every account.
+ * Is Radar working? Aggregates for `/admin/growth/radar`, across every account.
  *
  * Nothing here is new tracking. Every number is read from rows Radar already keeps for its
  * own reasons: `recommendations` (status, impressions, `acted_at`, `outcome_at`, the rerank's

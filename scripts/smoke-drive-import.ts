@@ -27,6 +27,7 @@ import { getDb } from "../src/db";
 import { contacts, importJobRows, imports, interactions, noteBatches, reminders } from "../src/db/schema";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import {
+  contactDetailInDoc,
   DRIVE_ROW_COPY,
   MAX_DRIVE_FILES_PER_IMPORT,
   runDriveImportJob,
@@ -411,6 +412,67 @@ async function main() {
   check("a person the doc never names is not added unattended", injected.length === 0, String(injected.length));
   const priyasAfterHostile = await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Priya Raman")) });
   check("a model-picked, low-confidence merge target is not merged unattended", priyasAfterHostile.length === priyasBeforeHostile.length + 1, `${priyasBeforeHostile.length} → ${priyasAfterHostile.length}`);
+
+  // An unattended merge rests only on what the doc says, and only fills blanks.
+  {
+    check("an email written in the doc is grounded", contactDetailInDoc("email", "Kai@Lund.test", "Reach kai@lund.test any time"));
+    check("an email the doc never mentions is not", !contactDetailInDoc("email", "noor@old.test", "Lunch with Noor Basu."));
+    check("a LinkedIn slug is matched wherever the doc writes it", contactDetailInDoc("linkedin", "https://www.linkedin.com/in/kai-lund/", "profile: linkedin.com/in/kai-lund"));
+    check("a phone number matches across punctuation", contactDetailInDoc("phone", "+1 (415) 555-0100", "call 415 555 0100"));
+
+    const [noor] = await db.insert(contacts).values({ userId: USER, fullName: "Noor Basu", email: "noor@old.test", company: "RealCo", title: "Director" }).returning();
+    const [kai] = await db.insert(contacts).values({ userId: USER, fullName: "Kai Lund", company: "OldCo" }).returning();
+
+    const ungrounded = await stageDriveImport(USER, [file("n")]);
+    await runDriveImportJob(ungrounded.importId, deps({
+      exportText: async () => "Lunch with Noor Basu.",
+      parse: async (_u, text) => {
+        const r = parsed(text, ["Noor Basu"], []);
+        const item = r.items[0] as unknown as { parsed: { email: string | null; company: string | null }; duplicates: unknown[]; suggestedMergeId: string | null };
+        item.parsed.email = "noor@old.test"; // not in the doc: the model's guess
+        item.parsed.company = "Evil Corp";
+        item.duplicates = [{ id: noor.id, fullName: "Noor Basu", company: "RealCo", title: "Director", reason: "Same email", confidence: 0.95 }];
+        item.suggestedMergeId = noor.id;
+        return r;
+      },
+    }));
+    const noorsAfter = await db.query.contacts.findMany({ where: and(eq(contacts.userId, USER), eq(contacts.fullName, "Noor Basu")) });
+    const noorRow = noorsAfter.find((c) => c.id === noor.id);
+    check("a merge resting on an email the doc lacks does not happen", noorsAfter.length === 2, String(noorsAfter.length));
+    check("…and the existing contact is untouched", noorRow?.company === "RealCo" && noorRow?.email === "noor@old.test", JSON.stringify(noorRow));
+
+    const grounded = await stageDriveImport(USER, [file("o")]);
+    await runDriveImportJob(grounded.importId, deps({
+      exportText: async () => "Coffee with Kai Lund, kai@lund.test. Kai is CTO now.",
+      parse: async (_u, text) => {
+        const r = parsed(text, ["Kai Lund"], []);
+        const item = r.items[0] as unknown as { parsed: { email: string | null; company: string | null; role: string | null }; duplicates: unknown[]; suggestedMergeId: string | null };
+        item.parsed.email = "kai@lund.test";
+        item.parsed.company = "NewCo";
+        item.parsed.role = "CTO";
+        item.duplicates = [{ id: kai.id, fullName: "Kai Lund", company: "OldCo", title: null, reason: "Same email", confidence: 0.95 }];
+        item.suggestedMergeId = kai.id;
+        return r;
+      },
+    }));
+    const [kaiAfter] = await db.select().from(contacts).where(eq(contacts.id, kai.id));
+    check("a merge on a grounded email goes ahead", kaiAfter?.title === "CTO" && kaiAfter?.email === "kai@lund.test", JSON.stringify(kaiAfter));
+    check("…filling blanks but never overwriting what was there", kaiAfter?.company === "OldCo", String(kaiAfter?.company));
+  }
+
+  // Nobody waits on a Drive import or reviews it, so its model calls are background work.
+  {
+    let asked: { background?: boolean } | undefined;
+    const bg = await stageDriveImport(USER, [file("bg")]);
+    await runDriveImportJob(bg.importId, deps({
+      exportText: async () => "Lunch with Omar Haddad about the roadmap.",
+      parse: async (_u, text, _hints, opts) => {
+        asked = opts as { background?: boolean };
+        return parsed(text, ["Omar Haddad"], []);
+      },
+    }));
+    check("a Drive import parses its docs as background work", asked?.background === true, JSON.stringify(asked));
+  }
 
   // I4: a row already started twice without finishing is skipped without being read.
   const stuck = await stageDriveImport(USER, [file("l")]);

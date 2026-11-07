@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
+import { clearMemoryChunkVectors } from "@/lib/memory-chunks";
 import {
   contactEmbeddings,
   userSettings,
@@ -26,6 +27,7 @@ import {
   type DataCategory,
 } from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import {
@@ -107,6 +109,8 @@ export async function getSettings() {
      * this account's AI key. On unless switched off; see the column in schema.ts.
      */
     workHistoryAutoEnabled: (settings?.workHistoryAutoEnabled ?? 1) !== 0,
+    /** Email insights (opt-in). Off unless switched on; see `user_settings.email_intel_enabled`. */
+    emailIntelEnabled: (settings?.emailIntelEnabled ?? 0) !== 0,
     /** Whether chat may apply its small, reversible changes itself. Off unless switched on. */
     chatAutoApply: (settings?.chatAutoApply ?? 0) !== 0,
     /** Radar's Monday email. On unless switched off (Settings, or its one-click link). */
@@ -310,6 +314,7 @@ export async function clearApiKey(provider?: AiProvider) {
     embeddingReset = clearMovesEmbeddings(active, existing, await managedEligibilityFor(userId));
     if (embeddingReset) {
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+      await clearMemoryChunkVectors(userId);
     }
   }
 
@@ -520,12 +525,14 @@ export async function deleteAllData(categories?: readonly DataCategory[]) {
 /** Everything the settings billing card needs, in one round trip. */
 export async function getPlanOverview() {
   const userId = await requireUserId();
-  const [entitlements, usage] = await Promise.all([
+  const [entitlements, usage, planConfig] = await Promise.all([
     getEntitlements(userId),
     contactUsageForUser(userId),
+    getEffectivePlanConfig(),
   ]);
 
-  return { entitlements, usage, demoAccount: demoAccountReason(userId) };
+  // `planConfig`: the effective plan table, so plan copy follows an admin's plan rules.
+  return { entitlements, usage, demoAccount: demoAccountReason(userId), planConfig };
 }
 
 

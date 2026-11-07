@@ -17,11 +17,14 @@ import { rowControl, type CapabilityStatus } from "@/lib/integration-status";
 export function GooglePhotoMatch({
   capability,
   busy,
+  tone,
   onAllow,
 }: {
   /** The account's Contacts grant — photos come from the same scope. */
   capability: CapabilityStatus | undefined;
   busy: boolean;
+  /** The row's brand color, passed to its `FeatureRow`. */
+  tone?: string;
   onAllow: () => void;
 }) {
   const [pending, start] = useTransition();
@@ -58,6 +61,7 @@ export function GooglePhotoMatch({
   return (
     <FeatureRow
       icon={<ImageDown className="size-4" />}
+      tone={tone}
       title="Photos from Google Contacts"
       description="Fills in missing contact photos. Matches on email address, so nobody gets someone else’s face."
       control={{ kind: "action", label: pending ? "Matching…" : needsAllow ? "Allow" : "Match photos" }}

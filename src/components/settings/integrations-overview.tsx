@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 const DESCRIPTIONS: Partial<Record<IntegrationTabId, string>> = {
   google: "Contacts, calendar and Gmail.",
   microsoft: "Outlook contacts, calendar and mail.",
-  linkedin: "Your connections and messages.",
+  linkedin: "Your connections, messages and profile.",
   ai: "Turns your notes into contacts and answers questions about your network.",
   assistants: "Use Orbit from inside Claude or ChatGPT.",
   reminders: "See your follow-ups next to your meetings.",

@@ -4,12 +4,13 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { createHash, randomBytes } from "node:crypto";
 import { nothingUsable } from "@/lib/managed-ai-policy";
-import { WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
+import { geminiSearchFeeMicros, openAiSearchInputTokens, WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 import {
   anthropicClient,
   geminiClient,
   getAiAccessStatus,
+  isAiAccessError,
   isOpenAiShaped,
   openaiClient,
   openAiShapedClient,
@@ -61,7 +62,22 @@ import {
 } from "@/lib/errors";
 import { RECOMMENDATIONS_MARKER } from "@/lib/chat-stream-protocol";
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
-import { aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
+import { aiOperationOnTruncate, aiOperationThinking, type AiOperationId } from "@/lib/ai-operations";
+import {
+  isSchemaRejection,
+  SchemaRejectedError,
+  structuredOutputAllowed,
+  toWireSchema,
+  type StructuredSchema,
+} from "@/lib/ai-structured";
+import {
+  AiFinishError,
+  anthropicFinish,
+  assertUsableFinish,
+  geminiFinish,
+  openaiFinish,
+  openaiResponsesFinish,
+} from "@/lib/ai-finish";
 import { geminiThinkingConfig, openaiCompletionOptions } from "@/lib/ai-request-options";
 import { EMBEDDING_MODELS, modelForOperation } from "@/lib/ai-models";
 import type { ThinkingConfig } from "@google/genai";
@@ -327,7 +343,20 @@ export type CaptureParseHints = {
   interactionType?: string | null;
   /** The user's active goals, so the model can score each person's `relevance`. */
   goals?: string[];
+  /** Who wrote the notes. Named to the model so it never returns the user as a person. */
+  self?: { name?: string | null; email?: string | null } | null;
 };
+
+/** The capture parse's operation ids, and the unattended twins `background` selects. */
+const CAPTURE_OPERATIONS = {
+  "capture.parse": "capture.parse.bg",
+  "capture.parse.identify": "capture.parse.identify.bg",
+  "capture.parse.details": "capture.parse.details.bg",
+  "capture.parse.excerpt-retry": "capture.parse.excerpt-retry.bg",
+} as const satisfies Record<string, AiOperationId>;
+function captureOperation<K extends keyof typeof CAPTURE_OPERATIONS>(base: K, background?: boolean): AiOperationId {
+  return background ? CAPTURE_OPERATIONS[base] : base;
+}
 
 const TWO_PASS_CHAR_THRESHOLD = 2500;
 /**
@@ -397,6 +426,22 @@ export async function resolveEmbeddingBackend(userId: string, access?: AiAccess)
 }> {
   const resolved = access?.forUser(userId) ?? (await resolveAiAccess(userId));
   return { backend: resolved.requireEmbeddingBackend() };
+}
+
+/**
+ * The embedding model this account's new vectors come from, or null when it has none (an
+ * Anthropic-only account) or the gate would not say. Stored beside every vector so a vector
+ * made by a different model is recognised later instead of being compared as if it were
+ * this one's.
+ */
+export async function currentEmbeddingModel(userId: string, access?: AiAccess): Promise<string | null> {
+  try {
+    const resolved = access?.forUser(userId) ?? (await resolveAiAccess(userId));
+    const backend = resolved.embeddingBackend();
+    return backend ? EMBEDDING_MODELS[backend] : null;
+  } catch {
+    return null;
+  }
 }
 
 function extractJsonText(raw: string) {
@@ -494,22 +539,6 @@ function repairTruncatedJson(text: string): string | null {
   }
 }
 
-/**
- * The provider's own "I ran out of output tokens" stop: OpenAI-shaped `finish_reason:
- * "length"`, Anthropic `stop_reason: "max_tokens"`, Gemini `finishReason: "MAX_TOKENS"`.
- *
- * Checked BEFORE parsing. A truncated answer can still parse — cut between two list items it
- * is valid JSON missing the rest — and the repair above would close it either way, so the
- * text alone cannot say whether it is complete. The provider can, so its word decides: the
- * call fails as `AI_INCOMPLETE_MESSAGE` ("got cut off — try again") rather than handing the
- * caller a partial capture as if it were the whole one (see `transcribeNotePage`).
- */
-const OUTPUT_LIMIT_STOPS = new Set(["length", "max_tokens", "MAX_TOKENS"]);
-
-function assertNotCutOff(stop: string | null | undefined): void {
-  if (stop && OUTPUT_LIMIT_STOPS.has(stop)) throw new Error(AI_INCOMPLETE_MESSAGE);
-}
-
 export function parseAiJson<T = unknown>(raw: string): T {
   const text = extractJsonText(raw);
   try {
@@ -553,7 +582,7 @@ export type MultimodalPart =
   | { type: "image"; mimeType: string; base64: string }
   | { type: "audio"; mimeType: string; base64: string };
 
-export async function completeJson(
+async function completeJsonOnce(
   userId: string,
   input: {
     system: string;
@@ -576,6 +605,14 @@ export async function completeJson(
      * provider request kept running (and billing) for up to AI_CALL_TIMEOUT_MS after the
      * caller had moved on. With a signal, the request itself is aborted.
      */
+    /**
+     * Ask the provider to constrain the reply to this shape (Gemini `responseJsonSchema`,
+     * OpenAI `json_schema`, Anthropic `output_config.format`) instead of only describing it in
+     * the prompt. Still validate the result: this guarantees the wire shape, not the meaning.
+     * A provider or model that cannot take a schema, or rejects this one, gets the prompt-only
+     * call it always had (`ai-structured.ts`).
+     */
+    schema?: StructuredSchema;
     signal?: AbortSignal;
     /**
      * The account already resolved for this request (see `AiAccess.forUser`): skips the
@@ -596,6 +633,10 @@ export async function completeJson(
   const prefix = input.sharedPrefix?.text ?? "";
   const userText = prefix + input.user;
   const callSignal = () => (input.signal ? AbortSignal.any([aiSignal(), input.signal]) : aiSignal());
+  const schemaJson =
+    input.schema && structuredOutputAllowed(provider, model) && !schemaRefused.has(`${provider}:${model}`)
+      ? toWireSchema(input.schema.zod)
+      : null;
 
   return runOnGrant(grant, withUsage(
     {
@@ -617,12 +658,13 @@ export async function completeJson(
               temperature,
               maxOutputTokens,
               responseMimeType: "application/json",
+              ...(schemaJson ? { responseJsonSchema: schemaJson } : {}),
               systemInstruction: system,
               ...geminiThinking(model, operation),
             },
           });
           report(tokensFromGemini(response));
-          assertNotCutOff(response.candidates?.[0]?.finishReason);
+          assertUsableFinish(geminiFinish(response));
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content);
@@ -633,7 +675,10 @@ export async function completeJson(
           const response = await client.chat.completions.create(withOpenRouterRouting(provider, {
             model,
             ...openaiCompletionOptions(model, { temperature, maxOutputTokens, thinking: aiOperationThinking(operation) }),
-            response_format: { type: "json_object" },
+            response_format:
+              schemaJson && input.schema
+                ? { type: "json_schema", json_schema: { name: input.schema.name, strict: true, schema: schemaJson } }
+                : { type: "json_object" },
             messages: [
               { role: "system", content: system },
               { role: "user", content: userText },
@@ -641,7 +686,7 @@ export async function completeJson(
             ...(input.sharedPrefix ? { prompt_cache_key: input.sharedPrefix.cacheKey } : {}),
           }), { signal: callSignal() });
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
-          assertNotCutOff(response.choices[0]?.finish_reason);
+          assertUsableFinish(openaiFinish(response.choices[0]));
           const content = response.choices[0]?.message?.content;
           if (!content) throw new Error("Empty AI response");
           return normalizeJsonResponse(content);
@@ -653,7 +698,10 @@ export async function completeJson(
           max_tokens: maxOutputTokens,
           // Claude 4.7 and later reject sampling parameters with a 400.
           ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
-          ...anthropicEffort(model),
+          // `effort` and `format` share one `output_config`; spreading both would drop the first.
+          ...(schemaJson
+            ? { output_config: { ...anthropicEffort(model).output_config, format: { type: "json_schema" as const, schema: schemaJson } } }
+            : anthropicEffort(model)),
           system,
           messages: [
             {
@@ -669,13 +717,15 @@ export async function completeJson(
           ],
         }, { signal: callSignal() });
         report(tokensFromAnthropic(response));
-        assertNotCutOff(response.stop_reason);
+        assertUsableFinish(anthropicFinish(response.stop_reason));
         const block = response.content.find((b) => b.type === "text");
         if (!block || block.type !== "text" || !block.text) {
           throw new Error("Empty AI response");
         }
         return normalizeJsonResponse(block.text);
       } catch (err) {
+        if (err instanceof AiFinishError) throw err;
+        if (schemaJson && isSchemaRejection(err)) throw new SchemaRejectedError(provider, model);
         if (
           err instanceof Error &&
           (err.message === "Empty AI response" || err.message === AI_INCOMPLETE_MESSAGE)
@@ -694,6 +744,68 @@ export async function completeJson(
   ));
 }
 
+/** A truncation retry never asks for more than this; capture's own cap is 12,288. */
+const TRUNCATION_RETRY_MAX_OUTPUT_TOKENS = 32_768;
+
+/**
+ * Re-runs a call the model cut off at its output cap, once, with twice the room. The first
+ * attempt is its own `usage_events` row (a failure, `error_kind = 'truncated'`) because it was
+ * billed; what the caller gets is a whole answer or an honest error, never a repaired fragment.
+ */
+async function retryingOnTruncation<I extends { operation: AiOperationId; maxOutputTokens?: number; signal?: AbortSignal }, T>(
+  input: I,
+  run: (input: I) => Promise<T>,
+  defaultCap: number,
+): Promise<T> {
+  try {
+    return await run(input);
+  } catch (err) {
+    if (!(err instanceof AiFinishError) || err.kind !== "truncated") throw err;
+    if (aiOperationOnTruncate(input.operation) !== "retry" || input.signal?.aborted) throw err;
+    const was = input.maxOutputTokens ?? defaultCap;
+    const next = Math.min(was * 2, TRUNCATION_RETRY_MAX_OUTPUT_TOKENS);
+    if (next <= was) throw err;
+    return run({ ...input, maxOutputTokens: next });
+  }
+}
+
+/**
+ * A managed provider that just failed for Orbit (`runOnGrant` reworded it, and a spent pool was
+ * already taken out of the set) is tried once more: the retry mints a fresh grant, which lands
+ * on the next provider in `MANAGED_PROVIDER_ORDER` when the first was dropped. Before this the
+ * person saw an error and the NEXT call quietly worked. Only the call that failed is repeated,
+ * never one that produced an answer, and never on a person's own key.
+ */
+async function failingOverManaged<T>(signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isAiAccessError(err) || err.reason !== "managed_unavailable" || signal?.aborted) throw err;
+    return run();
+  }
+}
+
+/** Provider+model pairs that refused a schema; not asked again by this instance. */
+const schemaRefused = new Set<string>();
+
+export async function completeJson(
+  userId: string,
+  input: Parameters<typeof completeJsonOnce>[1],
+): Promise<string> {
+  const run = (i: typeof input) =>
+    retryingOnTruncation(i, (j) => failingOverManaged(j.signal, () => completeJsonOnce(userId, j)), 4096);
+  try {
+    return await run(input);
+  } catch (err) {
+    if (!(err instanceof SchemaRejectedError)) throw err;
+    // The provider would not take the schema. Remember that, and make the call the way every
+    // call was made before schemas: describe the shape in the prompt, validate afterwards.
+    schemaRefused.add(`${err.provider}:${err.model}`);
+    const { schema: _dropped, ...promptOnly } = input;
+    return run(promptOnly);
+  }
+}
+
 /**
  * `completeJson` with the account already resolved for this request, for the helpers that
  * take an injectable `completeFn` (`understandQuery`, the rerank, `generateChatTitle`).
@@ -706,6 +818,17 @@ export function completeJsonOn(access: AiAccess | undefined): typeof completeJso
 
 /** Multimodal JSON completion for vision OCR / image+text prompts. */
 export async function completeMultimodalJson(
+  userId: string,
+  input: MultimodalInput,
+): Promise<string> {
+  return retryingOnTruncation(
+    input,
+    (i) => failingOverManaged(undefined, () => completeMultimodalJsonOnce(userId, i)),
+    4096,
+  );
+}
+
+async function completeMultimodalJsonOnce(
   userId: string,
   input: MultimodalInput,
 ): Promise<string> {
@@ -776,7 +899,7 @@ async function completeMultimodalJsonInner(
         },
       });
       report(tokensFromGemini(response));
-      assertNotCutOff(response.candidates?.[0]?.finishReason);
+      assertUsableFinish(geminiFinish(response));
       const content = response.text;
       if (!content) throw new Error("Empty AI response");
       return normalizeJsonResponse(content);
@@ -816,7 +939,7 @@ async function completeMultimodalJsonInner(
         ],
       }), { signal: aiSignal() });
       report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
-      assertNotCutOff(response.choices[0]?.finish_reason);
+      assertUsableFinish(openaiFinish(response.choices[0]));
       const out = response.choices[0]?.message?.content;
       if (!out) throw new Error("Empty AI response");
       return normalizeJsonResponse(out);
@@ -870,13 +993,14 @@ async function completeMultimodalJsonInner(
       messages: [{ role: "user", content }],
     }, { signal: aiSignal() });
     report(tokensFromAnthropic(response));
-    assertNotCutOff(response.stop_reason);
+    assertUsableFinish(anthropicFinish(response.stop_reason));
     const block = response.content.find((b) => b.type === "text");
     if (!block || block.type !== "text" || !block.text) {
       throw new Error("Empty AI response");
     }
     return normalizeJsonResponse(block.text);
   } catch (err) {
+    if (err instanceof AiFinishError) throw err;
     if (
       err instanceof Error &&
       (err.message === "Empty AI response" || err.message === AI_INCOMPLETE_MESSAGE)
@@ -1341,7 +1465,8 @@ const PERSON_FIELD_RULES = `- relationship_score_suggestion: ${closenessLegend()
 - shared_interests: what the USER and this person have in common, stated or clearly implied. topics: subjects discussed. tags: 1-4 short lowercase labels useful for filtering a contact list later ("recruiter", "founder", "ml", "nyc"), never phrases.
 - connections: other people this person is linked to in the notes — a colleague, cofounder, manager, someone they offered to introduce, someone you both know. name = that person's name as written; relation = the link in a few words ("her cofounder", "offered to intro me"); source_excerpt = the sentence, VERBATIM. [] when none.
 - promises: everything either side said they would do. direction "you_owe" = the user promised it; "they_owe" = this person promised it. text = a verb phrase with no subject ("send the Q3 deck", "intro me to their VP of Eng"); due_phrase = the deadline in the notes' own words, or null; source_excerpt = the sentence, VERBATIM. Only explicit promises — inferences belong in implied_next_steps.
-- location: where they are based, when stated.
+- location: where they are based, when stated. When it is not, but the notes place the meeting in a city, use that city and list "location" in low_confidence_fields.
+- company and role, when not stated outright: infer company from a work email domain or a signature (jane@stripe.com → "Stripe"; never from gmail/outlook/icloud-style addresses) and role from what they plainly do ("runs growth at Ramp" → "Head of Growth"). List every inferred field in low_confidence_fields. Never guess beyond what the text supports.
 - follow_up_recommendation: one short line on the best reason to reach out next, grounded in the notes, or null. follow_up_days: days until that makes sense, or null. suggested_next_message: a 1-2 sentence message the user could send, in first person, referencing something specific from the notes, or null.
 - opportunities: CONCRETE possibilities the notes describe — a named internship, a referral offered, an intro promised, a company worth chasing, an investor who might be interested. NOT interests, NOT topics, NOT "seems friendly". label = 3-10 words in the notes' own vocabulary, never a full sentence and never the date. due_phrase = the deadline in the notes' own words when one is stated ("applications close Oct 15"), else null — never rewrite it into a calendar date. source_excerpt = the sentence it came from, copied VERBATIM from the notes. An opportunity with no verbatim sentence is dropped, so copy exactly.
 - implied_next_steps: what this discussion CALLS FOR that nobody said out loud — e.g. "she mentioned her team is hiring two backend engineers" implies offering a referral. At most two per person. An empty array is a correct and very common answer; do not invent one to fill the field. rationale = one short clause naming what in the notes implies it. source_excerpt = the sentence it was inferred from, VERBATIM. confidence below 0.6 when you are guessing at intent rather than reading it.
@@ -1349,8 +1474,17 @@ const PERSON_FIELD_RULES = `- relationship_score_suggestion: ${closenessLegend()
 - REFERRALS matter most, so never bury one. If the person offers to refer you, pass your resume or name along, put in a good word, vouch for you, or to find / introduce / reach the hiring manager or a recruiter, emit an opportunity with kind "referral" and keep the offer's own words in the label. When the referral is for a specific internship or role, still use "referral" and name the role in the label ("referral for the summer infra internship").
 - Be thorough: read every line about this person and put each fact in the most specific field that fits. Everything must still be supported by the notes — when a field has nothing, use null or [].`;
 
+function selfPreamble(self: CaptureParseHints["self"]): string {
+  const name = self?.name?.trim();
+  const email = self?.email?.trim();
+  if (!name && !email) return "";
+  const who = name && email ? `${name} <${email}>` : name || email;
+  return `\n\nThese notes were written by the user, ${who}. "I", "me" and "my" refer to them. Never output the user as a person or a mention.`;
+}
+
 function hintsPreamble(hints?: CaptureParseHints | null) {
   if (!hints) return "";
+  const self = selfPreamble(hints.self);
   const lines: string[] = [];
   if (hints.eventDate?.trim()) {
     lines.push(`Known event/interaction date (ISO): ${hints.eventDate.trim()}`);
@@ -1382,8 +1516,8 @@ function hintsPreamble(hints?: CaptureParseHints | null) {
   if (goals.length) {
     lines.push(`The user's current goals (score each person's relevance against these):\n- ${goals.join("\n- ")}`);
   }
-  if (!lines.length) return "";
-  return `\n\nStructured hints from calendar/email/LinkedIn (use when consistent with the notes):\n${lines.join("\n")}`;
+  if (!lines.length) return self;
+  return `${self}\n\nStructured hints from calendar/email/LinkedIn (use when consistent with the notes):\n${lines.join("\n")}`;
 }
 
 function normalizeSharedNotes(
@@ -1430,9 +1564,10 @@ async function parseMultiPersonSinglePass(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
+  background?: boolean,
 ): Promise<ParsedMultiPersonNotes> {
   const content = await completeJson(userId, {
-    operation: "capture.parse",
+    operation: captureOperation("capture.parse", background),
     temperature: 0.2,
     maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
     user: fenceUntrusted("NOTES", notes.slice(0, 100_000)) + hintsPreamble(hints),
@@ -1458,6 +1593,7 @@ Rules:
 - people[] is for PARTICIPANTS: people the user actually talked with, met, or messaged in these notes. Set presence "participant".
 - Anyone only referred to — a cofounder, a boss, "she'll intro me to Raj", a speaker they watched — is a MENTION. Put them in mentions[] with the sentence fragment as context and near_person = the participant whose section mentioned them. Do NOT create a people[] entry for them unless the notes give real profile detail (role, company, contact info); if you do, set presence "mentioned".
 - Skip vague groups ("a few engineers") with no identifiable person.
+- people[] and mentions[] are individual humans only. A company, team, school, product, event, community or group is never a person: put it in the right person's company/school/connections field, or leave it out.
 - Extract only information supported by the notes. Use null when unknown. Do not invent people or facts.
 - Include every key on every person object. Use null (or [] for arrays) when unknown — never omit keys.
 - source_excerpt must be the person-specific slice of the original notes (not the whole dump, and not the shared group text alone).
@@ -1521,9 +1657,10 @@ async function identifyPeople(
   sliced: string,
   hints: CaptureParseHints | null | undefined,
   onProgress: ParseProgress | undefined,
+  background?: boolean,
 ) {
   const identityRaw = await completeJson(userId, {
-    operation: "capture.parse.identify",
+    operation: captureOperation("capture.parse.identify", background),
     temperature: 0.2,
     maxOutputTokens: 4096,
     user: fenceUntrusted("NOTES", sliced) + hintsPreamble(hints),
@@ -1547,6 +1684,7 @@ Return strict JSON:
 }
 Rules:
 - One object per identifiable person. Skip vague groups with no name.
+- people[] and mentions[] are individual humans only. A company, team, school, product, event, community or group is never a person: put it in the right person's company/school/connections field, or leave it out.
 - Do not invent people. Prefer seed attendees when they clearly belong to this event.
 - shared_notes hold ONLY multi-person context (not person-only facts). person_names must match people[].name (or [] for everyone).
 - interaction_date: YYYY-MM-DD when known from notes/hints; else null.
@@ -1560,6 +1698,48 @@ Rules:
   return multiPersonIdentitySchema.parse(JSON.parse(identityRaw));
 }
 
+const DETAIL_CONCURRENCY = 2;
+
+const nameKey = (name: string | null | undefined) => (name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
+ * For each requested name, the index of the reply entry that answers it, or null. Exact name
+ * first; then the one unclaimed entry sharing first and last word (a reply that dropped a
+ * middle name), or for a one-word request the one unclaimed entry starting with it. Never by
+ * position, and an entry answers at most one request.
+ */
+export function matchDetailResults(
+  requested: readonly string[],
+  answered: ReadonlyArray<{ name?: string | null }>,
+): Array<number | null> {
+  const taken = new Set<number>();
+  const out: Array<number | null> = requested.map(() => null);
+  const claim = (j: number, matches: (a: string) => boolean) => {
+    const candidates = answered.flatMap((a, k) => (!taken.has(k) && matches(nameKey(a.name)) ? [k] : []));
+    if (candidates.length !== 1) return;
+    taken.add(candidates[0]!);
+    out[j] = candidates[0]!;
+  };
+  requested.forEach((name, j) => {
+    const want = nameKey(name);
+    const exact = answered.findIndex((a, k) => !taken.has(k) && nameKey(a.name) === want);
+    if (exact >= 0) {
+      taken.add(exact);
+      out[j] = exact;
+    }
+  });
+  requested.forEach((name, j) => {
+    if (out[j] !== null) return;
+    const words = nameKey(name).split(" ").filter(Boolean);
+    if (words.length === 0) return;
+    const first = words[0]!;
+    const last = words[words.length - 1]!;
+    if (words.length === 1) claim(j, (a) => a.split(" ")[0] === first);
+    else claim(j, (a) => a.split(" ")[0] === first && a.split(" ").pop() === last);
+  });
+  return out;
+}
+
 async function parseMultiPersonTwoPass(
   userId: string,
   notes: string,
@@ -1567,6 +1747,7 @@ async function parseMultiPersonTwoPass(
   onProgress?: ParseProgress,
   /** People a single pass already found, so an escalation need not pay to identify twice. */
   known?: ParsedMultiPersonNotes,
+  background?: boolean,
 ): Promise<ParsedMultiPersonNotes> {
   const sliced = notes.slice(0, 100_000);
   const identity = known
@@ -1583,7 +1764,7 @@ async function parseMultiPersonTwoPass(
         })),
         mentions: known.mentions,
       }
-    : await identifyPeople(userId, sliced, hints, onProgress);
+    : await identifyPeople(userId, sliced, hints, onProgress, background);
   const peopleIds = identity.people.filter((p) => p.name?.trim());
 
   // Merge seed people that weren't found by name/email.
@@ -1639,19 +1820,10 @@ async function parseMultiPersonTwoPass(
       ? { text: notesPrefix, cacheKey: `capture.details:${createHash("sha256").update(notesPrefix).digest("hex").slice(0, 32)}` }
       : undefined;
 
-  // The batches are independent, so they run concurrently and are merged back in batch
-  // order: the same people, fields and order as one-after-another, in the time of the
-  // slowest batch rather than the sum (LATENCY_PLAN AI-5: a 5-person note spent 8 s of its
-  // 12 s here). The trade: concurrent calls cannot read a prompt cache the first one writes,
-  // so a provider-side cache of `sharedPrefix` saves less input cost than it did serially.
-  const batches: (typeof peopleIds)[] = [];
-  for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) {
-    batches.push(peopleIds.slice(i, i + DETAIL_BATCH_SIZE));
-  }
-  const detailedBatches = await Promise.all(batches.map(async (batch) => {
-    const merged: ParsedPersonNote[] = [];
+  type Requested = (typeof peopleIds)[number];
+  const callDetails = async (batch: Requested[]) => {
     const batchRaw = await completeJson(userId, {
-      operation: "capture.parse.details",
+      operation: captureOperation("capture.parse.details", background),
       temperature: 0.2,
       maxOutputTokens: CAPTURE_MAX_OUTPUT_TOKENS,
       ...(sharedPrefix ? { sharedPrefix } : {}),
@@ -1680,17 +1852,31 @@ ${PERSON_FIELD_RULES}`,
     });
 
     await beat(onProgress);
-    const batchParsed = personDetailBatchSchema.parse(JSON.parse(batchRaw));
-    for (let j = 0; j < batch.length; j++) {
-      const requested = batch[j]!;
-      const found =
-        batchParsed.people.find(
-          (p) =>
-            p.name?.trim().toLowerCase() ===
-            requested.name.trim().toLowerCase(),
-        ) || batchParsed.people[j];
+    return personDetailBatchSchema.parse(JSON.parse(batchRaw)).people;
+  };
 
-      const person: ParsedPersonNote = {
+  /**
+   * One batch, matched back to the people it asked about BY NAME. It used to fall back to the
+   * array position, so a reply that reordered or dropped someone put one person's fields on
+   * another — under the right name, on a review card nobody can tell is wrong. A person the
+   * reply did not answer is asked about once more on their own; if that fails too they keep the
+   * identity pass's facts and nothing else, which is true if thin.
+   */
+  const detailBatch = async (batch: Requested[]): Promise<ParsedPersonNote[]> => {
+    const answered = await callDetails(batch);
+    const foundList = matchDetailResults(batch.map((p) => p.name), answered).map((m) =>
+      m === null ? undefined : answered[m],
+    );
+    const missing = foundList.flatMap((f, j) => (f ? [] : [j]));
+    if (missing.length > 0) {
+      const again = await callDetails(missing.map((j) => batch[j]!)).catch(() => []);
+      matchDetailResults(missing.map((j) => batch[j]!.name), again).forEach((m, k) => {
+        if (m !== null) foundList[missing[k]!] = again[m];
+      });
+    }
+    return batch.map((requested, j) => {
+      const found = foundList[j];
+      const merged: ParsedPersonNote = {
         name: requested.name,
         presence: requested.presence,
         company: found?.company || requested.company || null,
@@ -1729,11 +1915,27 @@ ${PERSON_FIELD_RULES}`,
         source_excerpt: found?.source_excerpt || "",
       };
 
-      merged.push(person);
-    }
-    return merged;
-  }));
-  for (const batch of detailedBatches) detailed.push(...batch);
+      return merged;
+    });
+  };
+
+  // The first batch alone, so a provider that caches the shared notes has written them before
+  // the rest read them; the others two at a time, which is latency only (each call is
+  // independent) and stays under a BYOK key's per-minute limits.
+  const batches: Requested[][] = [];
+  for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) batches.push(peopleIds.slice(i, i + DETAIL_BATCH_SIZE));
+  const detailedBatches: ParsedPersonNote[][] = new Array(batches.length);
+  if (batches.length > 0) detailedBatches[0] = await detailBatch(batches[0]!);
+  let nextBatch = 1;
+  await Promise.all(
+    Array.from({ length: Math.min(DETAIL_CONCURRENCY, Math.max(0, batches.length - 1)) }, async () => {
+      while (nextBatch < batches.length) {
+        const at = nextBatch++;
+        detailedBatches[at] = await detailBatch(batches[at]!);
+      }
+    }),
+  );
+  detailed.push(...detailedBatches.flat());
 
   // Excerpts that came back empty. The notes are already in hand, so look for the person's
   // own sentence first — free, and exact where the note names them. Only whoever is still
@@ -1750,7 +1952,7 @@ ${PERSON_FIELD_RULES}`,
   if (stillEmpty.length > 0) {
     try {
       const retryRaw = await completeJson(userId, {
-        operation: "capture.parse.excerpt-retry",
+        operation: captureOperation("capture.parse.excerpt-retry", background),
         temperature: 0.1,
         maxOutputTokens: 2048,
         user: `NOTES:\n${fenceUntrusted("NOTES", sliced)}\n\nPeople:\n${stillEmpty.map((p, i) => `${i + 1}. ${p.name}`).join("\n")}\n\nReturn JSON { "excerpts": [{ "name": string, "source_excerpt": string }] } with each person's own slice of the notes.`,
@@ -1785,22 +1987,26 @@ export async function parseMultiPersonNotesWithAI(
   userId: string,
   notes: string,
   hints?: CaptureParseHints | null,
-  opts: { onProgress?: ParseProgress } = {},
+  opts: {
+    onProgress?: ParseProgress;
+    /** Unattended work nobody reviews or waits on: runs under the `.bg` operation ids. */
+    background?: boolean;
+  } = {},
 ): Promise<ParsedMultiPersonNotes> {
   const useTwoPass =
     notes.length >= TWO_PASS_CHAR_THRESHOLD ||
     (hints?.seedPeople?.length || 0) >= 5;
 
   if (useTwoPass) {
-    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, undefined, opts.background);
   }
 
-  const single = await parseMultiPersonSinglePass(userId, notes, hints);
+  const single = await parseMultiPersonSinglePass(userId, notes, hints, opts.background);
   await beat(opts.onProgress);
   // Escalate to two-pass when many people came back (token pressure risk) — reusing the
   // people this pass already found, rather than paying to identify them a second time.
   if (single.people.length > DETAIL_BATCH_SIZE) {
-    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, single);
+    return parseMultiPersonTwoPass(userId, notes, hints, opts.onProgress, single, opts.background);
   }
   return single;
 }
@@ -2015,7 +2221,7 @@ export type ChatPromptNotePassage = {
   contactId: string | null;
   date: string | null;
   snippet: string;
-  kind?: "interaction" | "meeting";
+  kind?: "interaction" | "meeting" | "email_event";
   startMs?: number | null;
   title?: string | null;
   contactName?: string | null;
@@ -2330,7 +2536,11 @@ export function buildChatPrompt({
     ? `Passages from your notes found for this question:\n${notePassages
         .map(
           (p) =>
-            p.kind === "meeting"
+            p.kind === "email_event"
+              ? // The user's own summary of mail someone sent them: say so, so an answer does not
+                // present it as something the user wrote down themselves.
+                `- [${ledger.mint({ kind: "email_event", sourceId: p.sourceId, contactId: p.contactId, date: p.date })}] ${p.date ?? "undated"}, from your email${p.contactName ? `, about ${sanitizeProfileLine(p.contactName)}${p.contactId ? ` [id=${p.contactId}]` : ""}` : ""}: ${sanitizeProfileLine(p.snippet)}`
+              : p.kind === "meeting"
               ? // A recorded call: said at some point in it, by someone the transcript does not name.
                 `- [${ledger.mint({ kind: "meeting", sourceId: p.sourceId, date: p.date, startMs: p.startMs ?? null })}] ${p.date ?? "undated"}, in the recorded meeting “${sanitizeProfileLine(p.title ?? "Untitled")}” (speakers are not named): ${sanitizeProfileLine(p.snippet)}`
               : `- [${ledger.mint({ kind: "interaction", sourceId: p.sourceId, contactId: p.contactId, date: p.date })}] ${p.date ?? "undated"}${p.contactName ? `, about ${sanitizeProfileLine(p.contactName)}${p.contactId ? ` [id=${p.contactId}]` : ""}` : ""}: ${sanitizeProfileLine(p.snippet)}`
@@ -2377,7 +2587,7 @@ export function buildChatPrompt({
 Answer from everything below: the contacts${hasRecruiters ? " and recruiters" : ""} (their Details lines, summaries, notes, key facts and dated "Recent interactions" lines) and every other section. Never invent people, companies, dates, contact details or message content: state only what a section says. Read every section before you decide you don't know — the answer is often in one the question did not name.
 Use prior conversation for context when present, but ground every recommendation in the provided lists.
 The Contacts list is a relevance-ranked subset, so never present it as everyone the user knows and never count from it.
-${evidenceBlock ? "A \"Looked up for this question\" section is present: lookups made specifically to answer this, including dated passages from the user's own notes. Prefer it over the relevance-ranked Contacts list for what was said, discussed or promised and when, and quote the date when you use a passage. A person who appears only there is still someone the user knows. If it does not settle the question, say what it did and did not show rather than guessing.\n" : ""}${attentionLiteLine ? "A \"Follow-up status\" line is present: it is background, and it is complete and authoritative for overdue follow-ups. Use it when the question turns on who is overdue, slipping or owed a reply — including when it is asked in words no keyword would catch — and never say you cannot tell who is overdue while it is there. Do not volunteer it for a question about something else.\n" : ""}${goalLines.length ? "A \"working towards\" section is present: those are the user's own stated goals. Where two people or two next steps are equally well supported by the records, prefer the one that moves a stated goal, and say which goal it moves. Do not invent a goal, do not bend the answer to a goal the question did not ask about, and never claim someone is useful for a goal without a concrete detail from their records to back it.\n" : ""}
+${evidenceBlock ? "A \"Looked up for this question\" section is present: lookups made specifically to answer this, including dated passages from the user's own notes and, marked \"from your email\", from their summaries of mail they received. Prefer it over the relevance-ranked Contacts list for what was said, discussed or promised and when, and quote the date when you use a passage. A person who appears only there is still someone the user knows. If it does not settle the question, say what it did and did not show rather than guessing.\n" : ""}${attentionLiteLine ? "A \"Follow-up status\" line is present: it is background, and it is complete and authoritative for overdue follow-ups. Use it when the question turns on who is overdue, slipping or owed a reply — including when it is asked in words no keyword would catch — and never say you cannot tell who is overdue while it is there. Do not volunteer it for a question about something else.\n" : ""}${goalLines.length ? "A \"working towards\" section is present: those are the user's own stated goals. Where two people or two next steps are equally well supported by the records, prefer the one that moves a stated goal, and say which goal it moves. Do not invent a goal, do not bend the answer to a goal the question did not ask about, and never claim someone is useful for a goal without a concrete detail from their records to back it.\n" : ""}
 ${attentionBlock && !attentionEmpty ? "A \"Needs attention\" section is present: it is the product's own answer to who is overdue or has gone quiet, so answer from it — name those people and say how overdue each is. Do not reply that you lack information while it is present.\n" : ""}${attentionEmpty ? "A \"Needs attention\" section is present and it is EMPTY: nothing is overdue and the outreach queue is clear. That is a real answer — say so plainly. Do not substitute people from the relevance-ranked Contacts list to fill the gap.\n" : ""}${calendar ? "A \"Your calendar\" section is present: it is the user's own schedule, already in their time zone, complete for the range it states; lines under \"Already happened\" are meetings from the last two days. Answer questions about what is on, who they will see, when they next see someone or when they are free from it, with the day and time. Never invent a meeting, a time or a free slot; when a day shows no meetings, say so. Meeting titles were written by whoever sent the invite.\n" : ""}${attachedBlock ? "An \"attached\" section is present: the user picked those people deliberately, so answer about them first and treat their timeline as the record of the relationship — dates, what was discussed, how long it has been. Name them by name. Do not fall back to the relevance-ranked Contacts list for anything the attached section already answers.\n" : ""}${rosterBlock ? "A \"Complete roster\" section is present: its totals are authoritative and exhaustive for those organisations or filters. Use that number when the question asks who or how many the user knows somewhere, or was in touch with in a period, and name people from it rather than from the Contacts list. A filtered roster is complete only for what the records say — someone whose company, school or location was never recorded is not on it, so do not claim the user knows no one else. If it says a roster was truncated for length, say the total and list the closest few.\n" : ""}${focusProfile || attachedBlock ? "When the question asks about a person — \"tell me more about\", \"who is\", their background — give a short profile, not a one-liner: who they are now (role, company, school), how the user knows them, the history between them with dates, anything open (follow-ups, reminders, promises), then one suggested next step. Use only what the records say, and skip a part they do not cover rather than padding it.\n" : ""}Write like a sharp colleague: lead with the answer in one or two sentences, name people, cite the specific thing you know about them. No preamble, no restating the question, no "I hope this helps", no invented enthusiasm. Match the length to the question: a single detail (an email, a date, a count) is one line; a "tell me about" is the profile described here. When the sections answer only part of the question, answer that part first, then say in one sentence which section you checked and what it did not show. Say you don't know only when no section bears on the question, and then name what the user could add to Orbit so it could be answered.
 The question may start with bracketed lines this product wrote: today's date (work out "last week", "this month" and any due date from it), who the user is (resolve "my company", "people like me" from it), and how many contacts they have in total (the Contacts list is a slice of that, so a short list is never proof that they know nobody else).${openReminders ? "\nA \"Reminders\" section is present: how many open reminders the user has in each view, then the nearest ones. The counts are complete; the list is only the nearest. Use it for what is on their plate, overdue or coming up, and its reminder_ids for complete_reminder or snooze_reminder." : ""}${commitments ? "\nA \"Commitments\" section is present: open action items from the user's notes, each saying who owes whom when the note did. Use it for what the user owes people, promised to send, or is waiting on." : ""}${events ? "\nAn \"Events\" section is present: the user's next and most recent events, with roster sizes and how many on each roster are already contacts. Use it for questions about events, conferences or who is going." : ""}
 Titles and companies say where someone works today and nothing more — never turn "Founder @ Acme" into "founded Acme", or a seniority into a history you were not given.
@@ -2396,7 +2606,16 @@ ${hasRecruiters ? "When the question is about recruiters, prefer recruiters the 
  * proposed by calling one of the chat writes (`@/lib/tools/chat-writes`).
  */
 export const CHAT_STREAM_TAIL = `
-Write the answer as prose (markdown is fine). Two blocks can sit between paragraphs, each on a
+Lay every answer out the same way, so it can be scanned:
+- The first line answers in one or two sentences, with the one key fact in it in bold (the
+  count, the name, the date) — bold just those few words, never the whole sentence.
+- Three or more people or items are a bullet list, one line each: "**Name** — the specific
+  reason", with its citation after it. Never list them in a paragraph.
+- Say each person's why once. When a ::people block shows them, the bullets carry the why and the
+  card already shows their role and company, so do not restate "title at company" in the words.
+- No markdown headings (#). A person profile may use short bold labels ("**Open:**") for its
+  parts. End with at most one line starting "**Next:**" that names one concrete step.
+Write the answer as markdown in that layout. Two blocks can sit between paragraphs, each on a
 line of its own and nothing else on that line:
 - ::people[<id>,<id>] shows up to 6 contacts as cards the user can act on (draft a message, set
   a reminder). Use it when the answer recommends specific people to reach out to or ask, after
@@ -2516,7 +2735,7 @@ export async function webSearchJson(
 ): Promise<{ json: string; sources: WebSource[] }> {
   const { operation } = input;
   const access = input.access?.forUser(userId) ?? (await resolveAiAccess(userId));
-  const grant = await access.completion(operation);
+  const grant = await access.completion(operation, { webSearch: true });
   const { provider, keyOwner } = grant;
   const model = modelForOperation(operation, grant);
   const maxOutputTokens = input.maxOutputTokens ?? 4096;
@@ -2553,8 +2772,9 @@ export async function webSearchJson(
           report({
             ...tokensFromGemini(response),
             webSearches: searches,
-            surchargeMicros: grounded ? WEB_SEARCH_FEE_MICROS.gemini : 0,
+            surchargeMicros: geminiSearchFeeMicros(model, searches, grounded),
           });
+          assertUsableFinish(geminiFinish(response));
           const content = response.text;
           if (!content) throw new Error("Empty AI response");
           const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
@@ -2584,6 +2804,7 @@ export async function webSearchJson(
           // One plugin search per call; its fee is inside the reported cost.
           searches = 1;
           report({ ...tokensFromOpenAi(response), reportedCostMicros: reportedCostMicros(response as OpenAiUsageWithCost) });
+          assertUsableFinish(openaiFinish(response.choices[0]));
           const message = response.choices[0]?.message;
           if (!message?.content) throw new Error("Empty AI response");
           const annotations =
@@ -2607,17 +2828,20 @@ export async function webSearchJson(
               // tier — enough to read a profile snippet, which is all a lookup needs.
               tools: [{ type: "web_search", search_context_size: "low" }],
               max_output_tokens: maxOutputTokens,
+              // No ceiling here: the installed SDK's request type has no `max_tool_calls`, so
+              // `maxSearches` is only a request in the prompt on OpenAI. The count is recorded below.
             },
             { signal: callSignal() },
           );
           searches = response.output.filter((item) => item.type === "web_search_call").length;
           report({
-            inputTokens: response.usage?.input_tokens ?? null,
+            inputTokens: openAiSearchInputTokens(model, response.usage?.input_tokens ?? null, searches),
             outputTokens: response.usage?.output_tokens ?? null,
             cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? null,
             webSearches: searches,
             surchargeMicros: searches * WEB_SEARCH_FEE_MICROS.openai,
           });
+          assertUsableFinish(openaiResponsesFinish(response));
           const content = response.output_text;
           if (!content) throw new Error("Empty AI response");
           const sources: WebSource[] = [];
@@ -2664,7 +2888,9 @@ export async function webSearchJson(
           if (response.stop_reason !== "pause_turn") break;
           messages.push({ role: "assistant", content: response.content });
         }
-        if (!response || response.stop_reason === "refusal") throw new Error("Empty AI response");
+        if (!response) throw new Error("Empty AI response");
+        // A refusal is a refusal, and a reply cut off at the cap is not research to cache.
+        assertUsableFinish(anthropicFinish(response.stop_reason));
 
         // Citations split the answer into several text blocks; the JSON may span them.
         const text = response.content
@@ -2678,6 +2904,7 @@ export async function webSearchJson(
         }
         return { json: normalizeJsonResponse(text), sources };
       } catch (err) {
+        if (err instanceof AiFinishError) throw err;
         if (err instanceof Error && err.message === "Empty AI response") throw err;
         if (err instanceof Error && err.message.startsWith("Failed to parse AI JSON")) {
           throw new Error(AI_INCOMPLETE_MESSAGE);

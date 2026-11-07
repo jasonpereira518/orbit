@@ -511,10 +511,12 @@ export async function mrrReconciliation(now: Date = new Date()): Promise<{
   ledgerCents: number;
   liveCents: number;
   driftCents: number;
+  /** `currentMrrDetail().pastDueCents`, carried along so a caller need not read live state twice. */
+  pastDueCents: number;
 }> {
   const db = await getDb();
-  const [liveCents, rows] = await Promise.all([
-    currentMrrCents(now),
+  const [live, rows] = await Promise.all([
+    currentMrrDetail(now),
     // The same population as the live side: no internal/tester accounts, no comped ones.
     // Without this an operator's own test subscription (or a comp placed over a paying
     // subscriber) is permanent "drift" that blames a dropped webhook (audit I2, I5).
@@ -527,5 +529,6 @@ export async function mrrReconciliation(now: Date = new Date()): Promise<{
   const raw = Number(rows[0]?.total ?? 0);
   const ledgerCents = Number.isFinite(raw) ? raw : 0;
 
-  return { ledgerCents, liveCents, driftCents: liveCents - ledgerCents };
+  const liveCents = live.mrrCents;
+  return { ledgerCents, liveCents, driftCents: liveCents - ledgerCents, pastDueCents: live.pastDueCents };
 }

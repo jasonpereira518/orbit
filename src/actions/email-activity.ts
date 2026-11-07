@@ -60,6 +60,6 @@ export async function setEmailActivitySync(enabled: boolean) {
       target: userSettings.userId,
       set: { emailActivitySync: enabled ? 1 : 0, updatedAt: new Date() },
     });
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   return { enabled };
 }

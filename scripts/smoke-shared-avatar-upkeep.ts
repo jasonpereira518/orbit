@@ -8,7 +8,7 @@
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
-import { eq, inArray, like, or } from "drizzle-orm";
+import { eq, inArray, like, or, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, linkedinAvatars, rateLimitBuckets } from "../src/db/schema";
 import { setAvatarBlobClientForTests } from "../src/lib/avatar-blob";
@@ -78,7 +78,13 @@ run(async () => {
   const savedCounters = await db.select().from(rateLimitBuckets).where(or(like(rateLimitBuckets.bucket, "avatarSource.%"), like(rateLimitBuckets.bucket, "avatarFill:%")));
   const resetCounters = () =>
     db.delete(rateLimitBuckets).where(or(like(rateLimitBuckets.bucket, "avatarSource.shared:%"), like(rateLimitBuckets.bucket, "avatarFill:%"), like(rateLimitBuckets.bucket, "avatarSource.user:%system:avatar-fill:%")));
+  // Other smokes share this DB and leave LinkedIn contacts behind; the fill would spend its run on
+  // those slugs first (CI: "found 15", deferred) and starve this smoke's own. They are parked behind a
+  // placeholder row for the hourly fill and released in cleanup.
+  let parked: string[] = [];
   const cleanup = async () => {
+    if (parked.length) await db.delete(linkedinAvatars).where(inArray(linkedinAvatars.slug, parked));
+    parked = [];
     await db.delete(linkedinAvatars).where(like(linkedinAvatars.slug, `${P}%`));
     await db.delete(contacts).where(inArray(contacts.userId, USERS));
     await resetCounters();
@@ -152,6 +158,9 @@ run(async () => {
     check("a negative row is upgraded", (await seedSharedAvatar(negative, unav)) === "promoted" && (await row(negative))?.imageUrl?.startsWith("https://") === true);
 
     console.log("\nHourly fill");
+    const foreign = await db.execute(sql`SELECT DISTINCT linkedin_slug AS slug FROM contacts WHERE linkedin_slug IS NOT NULL AND linkedin_slug NOT LIKE ${`${P}%`} AND NOT EXISTS (SELECT 1 FROM linkedin_avatars la WHERE la.slug = contacts.linkedin_slug)`);
+    parked = (foreign.rows as { slug: string }[]).map((r) => r.slug);
+    if (parked.length) await db.insert(linkedinAvatars).values(parked.map((slug) => ({ slug, imageUrl: null, source: "unavatar" as const })));
     const [A, B, C] = [`${P}fill-a`, `${P}fill-b`, `${P}fill-c`];
     const hasRow = `${P}fill-has-row`;
     const offHost = `${P}fill-offhost`;

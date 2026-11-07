@@ -102,7 +102,7 @@ Notes on honesty:
 
 ### 2.2 Acquisition by channel
 
-**Channel** is the first-touch tuple on `user_settings` (`signup_utm_source`, `signup_utm_medium`, `signup_referrer`, `signup_landing_path`), collapsed by `channelOf()` in `src/lib/attribution.ts` into a short closed list (direct, referral-link, search, social, newsletter, product-hunt, extension, mcp, other).
+**Channel** is the first-touch tuple on `user_settings` (`signup_utm_source`, `signup_utm_medium`, `signup_referrer`, `signup_landing_path`), collapsed by `channelOf()` in `src/lib/attribution.ts` into a short closed list (direct, referral-link, search, social, newsletter, product-hunt, extension, mcp, other). Beside it (v187), the **last touch** before signup: `user_settings.last_touch_source` (UTM source, else referrer host), `_medium`, `_campaign`, `_landing_path` and `_at`, from the `orbit_attr_last` cookie that `src/proxy.ts` overwrites on every channel-bearing landing, written in the same write-once UPDATE as `signup_*`. Channel rollups stay first-touch; last touch answers "what brought them back the day they signed up".
 
 | Metric | Definition | Num / Den | Window | Cuts | Source | Decision |
 |---|---|---|---|---|---|---|
@@ -325,7 +325,7 @@ Events marked **(exists)** already have a row somewhere and need no new write; t
 
 | event | actor | fires at (file / function) | key properties |
 |---|---|---|---|
-| `page_viewed` (exists as `page_views`) | user | `src/app/api/track/route.ts` POST | route, session |
+| `page_viewed` (exists as `page_views`) | user | `src/app/api/p/v/route.ts` POST | route, session; `load_ms`/`nav_type`; first view only: `lcp_ms`, `inp_ms`, `cls_milli` (v187, `vitals` beacon kind) |
 | `waitlist_joined` (exists as row) | user | `src/lib/interest-list-join.ts` `joinInterestListCore` | signup_id, source (`form`, `referral`, `poll`), has_referrer, **session_id (new column)** |
 | `waitlist_shared` | user | the share / copy / ticket-download handlers in `src/components/interest/*` | signup_id, channel (`copy`, `x`, `linkedin`, `ticket`) |
 | `invite_sent` | system/user | `src/lib/site-invites.ts` `inviteToSite` (today: Clerk invitation + `admin_audit_log` only) | invite_id, wave_id (new), source |
@@ -364,11 +364,14 @@ Events marked **(exists)** already have a row somewhere and need no new write; t
 |---|---|---|---|
 | `mcp_connected` | user | OAuth grant completion in `src/lib/mcp/oauth.ts` | client (`claude`, `chatgpt`, `other`), grant_id |
 | `mcp_tool_called` | user | the handler wrapper in `src/lib/mcp/handle.ts` around each `server.registerTool` | tool, client, duration_ms, ok, result_count |
-| `mcp_disconnected` | user | token revoke | client |
+| `mcp_disconnected` | user | `src/actions/api-keys.ts` `revokeApiKey` (an `mcp_url` key; Clerk OAuth revokes are invisible to Orbit) | client |
+| `search_performed` | user | `listContactsPage` (first page of `?q=`), `searchContactsForPicker` (command palette), `GET /api/v1/contacts?q=`; sampled to one per user per surface per 10s | surface, query_length (capped), result_count (capped) |
+| `notification_shown` / `notification_clicked` | user | `src/lib/browser-notifications.ts`, `public/orbit-sw.js` (client events via `/api/p/v` kind `event`) | kind (`due`, `meeting`, `test`) |
 | `extension_installed` | user | `extension/src/background/index.ts` `onInstalled` → open `/dashboard?utm_source=extension&utm_medium=install&utm_campaign=<version>`; the beacon records it; a server event is written on the first authenticated `/api/extension/me` with `install: true` | version, browser |
 | `extension_action` | user | each `src/app/api/extension/*` route that performs a user action (save person, log interaction, event roster) | action, site (`linkedin`, `gmail`, `luma`, `other`), ok |
 | `extension_uninstalled` | user | `chrome.runtime.setUninstallURL` → `/api/extension/uninstalled?v=` (unauthenticated, counts only) | version |
 | `radar_digest_sent` / `radar_digest_opened` | system / user | `src/app/api/radar/digest/route.ts`; Resend webhook `opened` | run_id |
+| outreach email engagement (exists as columns) | system | Resend webhook `email.delivered` / `email.opened` / `email.clicked` → `outreach_messages.delivered_at` / `opened_at` / `clicked_at`, matched on `delivery_id`, earliest time wins (v187) | |
 | `voice_recorded` (exists as `speech_usage`) | user | `src/app/api/speech/usage/route.ts` | seconds, surface (`note`, `meeting`) |
 
 **Monetization**
@@ -387,7 +390,7 @@ Events marked **(exists)** already have a row somewhere and need no new write; t
 
 | event | actor | fires at | key properties |
 |---|---|---|---|
-| `error_shown` | system | `src/lib/report-error.ts` client branch, when a toast or error state is rendered to the user | where, error_kind |
+| `error_shown` | system | the error boundaries (`ErrorFallback`, `global-error.tsx`) via `src/lib/client-events.ts` → `/api/p/v` kind `event` (allow-listed); toasts not wired | where (fixed per boundary), error_kind (`chunk_load`, `network`, `server`, `render`, `unknown`) |
 | `sync_failed` | system | connector sync runners (`src/lib/sync-*.ts`, `calendar-sync.ts`, `gmail-scan-processor.ts`) | provider, error_kind |
 | `email_send_failed` | system | `src/lib/email/*` providers | provider, kind |
 | `feedback_submitted` (exists as row) | user | `src/lib/feedback-submission.ts` `createFeedbackSubmission` | feedback_id, category (new), sentiment (new), page route |
