@@ -151,6 +151,9 @@ run(async () => {
 
   await db.execute(sql`DELETE FROM reminders WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM contacts WHERE user_id = ${USER}`);
+  // The runner shares one PGlite across scripts; a leftover account counts against other
+  // scripts' claim limits (`smoke-radar-run` claims at most 100).
+  await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${USER}`);
   if (failures) throw new Error(`${failures} check(s) failed`);
   console.log("\nAll met-contact checks passed");
 });

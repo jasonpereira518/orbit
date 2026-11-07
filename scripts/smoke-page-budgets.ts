@@ -403,6 +403,10 @@ async function main() {
     "panel surfaces the due follow-up at row 2900",
     Boolean(dueId) && panel.items.some((i) => i.kind === "follow_up" && i.contactId === dueId)
   );
+  // The met-evidence row above is only for the follow-up assertions. Later budgets (the
+  // knowledge base reads interactions, and runs one more statement when any exist) were
+  // measured on a network with none.
+  if (dueId) await db.delete(interactions).where(eq(interactions.contactId, dueId));
 
   // ---- Contacts list projection ------------------------------------------------------
   // The hottest contacts scan in the app, and the one that was NOT guarded here — it
