@@ -11,7 +11,7 @@ What to do when something is wrong, and how the routine things are done. Short o
 | A known condition opened / recovered | ops sweep → `#orbit-ops` (critical also → `#orbit-ops-critical`) |
 | An exception nobody anticipated | Sentry (linked from `/admin/health`) |
 | What is open right now | `/admin/health` → System status strip and Open alerts |
-| Deep probe | `GET /api/health?token=$HEALTH_TOKEN` — a wrong token answers 401 |
+| Deep probe | `curl -H "Authorization: Bearer $HEALTH_TOKEN" /api/health` — a wrong bearer answers 401; `?token=` is refused in production |
 | Which code is live | `/api/health` → `sha` (compare with `main`) |
 
 ## Deploy
@@ -89,7 +89,7 @@ above. Vercel Pro crons remove the rule entirely.
 | `emailintel.schedule_missed` | The email-insights sweep started once and then went quiet for over two hours (it runs every fifteen minutes), so new application updates are not being noticed. Check the ops workflow ran the `5,20,35,50 * * * *` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/email-intel/sweep`. Never having run is not an alert: the feature is opt-in. |
 | `emailintel.run_failed` | The last email-insights run failed or was killed. Read its `cron_runs` row (job `email-intel.sweep`) and the `email-intel.sweep` errors. One account failing, running out of its daily allowance, or out of time marks the run `partial`, which is not an alert. |
 | `backfill.failed` | `/admin/health` → error events, source `backfill.failed`: `kind` names the backfill, `message` says why. Two or more accounts means it is not one user's key — check the provider status panel and `ai.provider_outage`. |
-| `config.statement_timeout_unbounded` | Run `ALTER ROLE <app role> SET statement_timeout = '20s';` (Neon one-time settings below), then confirm `GET /api/health?token=$HEALTH_TOKEN` shows `config.statementTimeout: "20s"`. It clears on the next sweep. |
+| `config.statement_timeout_unbounded` | Run `ALTER ROLE <app role> SET statement_timeout = '20s';` (Neon one-time settings below), then confirm `curl -H "Authorization: Bearer $HEALTH_TOKEN" /api/health` shows `config.statementTimeout: "20s"`. It clears on the next sweep. |
 | `embedding.backlog` | Check `backfill.failed`, `embedding.unembeddable` and `ai.provider_outage` first. One account: usually that user's key (they already see an account alert). Several: `/admin/health` → Nightly job stats — `embeddingsGenerated` 0 with `embeddingBackfillsKicked` > 0 means every kick is failing. |
 | `sync.lagging` | More connections are due than a run syncs (20 per run, 4 at a time). `sync.run` stats: `budgetExhausted` true on every run means the budget is the limit — raise `CONNECTIONS_PER_RUN` in `src/lib/sync-scheduler.ts` or schedule more often (Vercel Pro crons); many `failed` means a provider problem. |
 | `embedding.unembeddable` | `SELECT error_kind, source_type, count(*) FROM embedding_failures WHERE failed_at > now() - interval '1 day' GROUP BY 1, 2;`. One kind on one provider across users is a provider change (check its status page and changelog); the rows retry once the bisect in `src/lib/embedding-backfill.ts` can embed them. |
@@ -338,7 +338,7 @@ runner. The first real drill needs the secrets set.
 ## Neon one-time settings
 
 - `ALTER ROLE <app role> SET statement_timeout = '20s';` — bounds a runaway query; the
-  HTTP driver cannot set this per session. **Verify it**: `GET /api/health?token=$HEALTH_TOKEN`
+  HTTP driver cannot set this per session. **Verify it**: `curl -H "Authorization: Bearer $HEALTH_TOKEN" /api/health`
   reports `config.statementTimeout`. `"0"` means unbounded — the ALTER ROLE never ran, or ran
   on the wrong role.
 - Verify the restore window under Project → Settings.
