@@ -286,7 +286,8 @@ export function forgetManagedAiPause() {
 }
 
 function managedKey(provider: AiProvider): string | null {
-  if (managedAiSwitchedOff()) return null;
+  // Orbit never spends its own Gemini key, in production or on a dev server.
+  if (managedAiSwitchedOff() || !MANAGED_PROVIDER_ORDER.includes(provider)) return null;
   const explicit = process.env[MANAGED_ENV[provider]]?.trim();
   if (explicit) return explicit;
   if (!process.env.VERCEL) return process.env[LOCAL_ENV[provider]]?.trim() || null;

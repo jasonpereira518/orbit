@@ -28,6 +28,11 @@ export const REQUIRED_IN_PRODUCTION = [
   "ADMIN_USER_IDS",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  // Not read by the app. It arms `checkMigrationTarget` below, which refuses a build whose
+  // DATABASE_URL points at production from a non-production environment. Required rather
+  // than expected: without it a preview build cannot tell its own Neon branch from
+  // production, and the build must fail rather than guess.
+  "PRODUCTION_DB_HOST",
 ] as const;
 
 /** Absent → a feature is quietly off. Worth a warning, not a failed build. */
@@ -44,9 +49,6 @@ export const EXPECTED_IN_PRODUCTION = [
   // and /admin/analytics says so — deliberately not REQUIRED, because that list fails the
   // production build, and an analytics secret must never be able to block a deploy.
   "ANALYTICS_SALT",
-  // Not read by the app at all — it exists so `checkMigrationTarget` below can tell a
-  // preview build pointed at its own Neon branch from one pointed at production.
-  "PRODUCTION_DB_HOST",
   // Critical alerts also go here (the channel with push on); unset, criticals only reach #orbit-ops.
   "SLACK_OPS_CRITICAL_WEBHOOK_URL",
   // The only detector for a dead scheduler: the sweep pings it, the monitor pages on silence.
@@ -74,6 +76,10 @@ export const REQUIRED_IN_PREVIEW = [
   "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY",
   "ENCRYPTION_SECRET",
+  // A preview build runs `db:migrate` too (see `vercel.json`). Without this, a preview
+  // pointed at the production DATABASE_URL is indistinguishable from one on its own Neon
+  // branch, so the guard refuses the build instead of risking live customer data.
+  "PRODUCTION_DB_HOST",
 ] as const;
 
 /**
@@ -234,11 +240,6 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
         warnings.push(`${name} is unset (required in production)`);
       }
     }
-    // A preview build runs db:migrate too. Without this, nothing can tell whether it is
-    // about to write to its own Neon branch or to production. See `checkMigrationTarget`.
-    if (!has(env, "PRODUCTION_DB_HOST")) {
-      warnings.push("PRODUCTION_DB_HOST is unset; the preview-migration guard is unarmed");
-    }
     return { errors, warnings, missingRequired, missingExpected };
   }
 
@@ -291,10 +292,10 @@ export type MigrationTargetVerdict = {
  * credential, so it is safe to set on all environments, which is exactly what makes it
  * readable from a preview build.
  *
- * Deliberately NOT fail-closed when `PRODUCTION_DB_HOST` is unset: refusing every preview
- * build until someone sets a new variable breaks previews to prevent a hypothetical, and a
- * broken preview pipeline is how guards get deleted. It reports `unarmed` instead, and
- * `check-env` warns.
+ * Fail-closed in every non-production Vercel build: an unset `PRODUCTION_DB_HOST` or an
+ * unparseable `DATABASE_URL` refuses the build rather than migrating a database it cannot
+ * identify. `check-env` requires the variable in preview, so the refusal happens before
+ * `db:migrate` rather than inside it.
  */
 export function checkMigrationTarget(
   env: EnvBag,
@@ -310,17 +311,25 @@ export function checkMigrationTarget(
   const target = databaseHost(env.DATABASE_URL);
   const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
 
+  if (!target) {
+    return {
+      allowed: false,
+      reason:
+        `VERCEL_ENV=${options.vercelEnv ?? "unset"} but DATABASE_URL is missing or unparseable, ` +
+        "so this build cannot tell what it would migrate. Refusing rather than guessing.",
+    };
+  }
   if (!production) {
     return {
-      allowed: true,
+      allowed: false,
       unarmed: true,
       reason:
         "PRODUCTION_DB_HOST is unset, so a preview build pointed at production cannot be told " +
-        "from one pointed at its own branch. Set it (to the production database hostname) on " +
-        "all environments to arm this check.",
+        "from one pointed at its own branch. Refusing the build. Set it (to the production " +
+        "database hostname) on all environments.",
     };
   }
-  if (target && target === production) {
+  if (target === production) {
     return {
       allowed: false,
       reason:
@@ -330,7 +339,7 @@ export function checkMigrationTarget(
         "previews their own Neon branch.",
     };
   }
-  return { allowed: true, reason: `target ${target ?? "(unparseable)"} is not the production host` };
+  return { allowed: true, reason: `target ${target} is not the production host` };
 }
 
 /** drizzle-kit subcommands that write schema to the database the config points at. */

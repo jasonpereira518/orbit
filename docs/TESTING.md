@@ -78,7 +78,7 @@ there (exit code 3; an ordinary failed check is exit 1). The bug tier is not par
 | 0 | **FAIL — FIXED** | the fix landed: move the script to `pure`/`pglite` and drop the `bug` wording |
 | anything else | **FAIL** | something else broke in that script |
 
-So the CI `known-bugs` job is green while the documented bugs stay exactly as documented, and
+So `test:bugs` is green while the documented bugs stay exactly as documented, and
 goes red the moment one is fixed — which is when the test should be promoted, so it then guards
 against a regression.
 
@@ -173,7 +173,7 @@ Known flakiness risks, none observed failing on CI in the last 60 runs:
 | `check` | typecheck, lint, `next build` | yes |
 | `smoke` ×3 | the smoke suite, sharded | yes |
 | `coverage-shard` ×3, `coverage` | the suite again under c8, merged into the run summary (`main` and on demand only) | report only |
-| `known-bugs` | `npm run test:bugs` | yes (red = a bug was fixed, promote its test) |
+| `known-bugs` | `npm run test:bugs` | not in CI (no open bugs); add the job back when one is filed |
 | `security` | `npm audit` of production deps (critical), dependency review of the PR (high; needs the Dependency graph and `DEPENDENCY_REVIEW=true`), gitleaks over the new commits | yes |
 | `e2e` ×3, `e2e-gate` | Playwright journeys in Playwright's container image, split across three runners, failing on flaky tests; `e2e-gate` reports the one required name, `browser flows (Playwright)` | yes |
 
@@ -190,8 +190,8 @@ above a real gate:
 1. **Require a pull request before merging**, with at least 1 approval, and dismiss stale approvals
    on new commits.
 2. **Require status checks to pass**, with "require branches to be up to date": `typecheck · lint ·
-   build`, `smoke suite (PGlite) 1/3`, `2/3`, `3/3`, `known bugs (expected failures)`,
-   `audit · dependency review · secret scan`, `browser flows (Playwright)`.
+   build`, `smoke suite (PGlite) 1/3`, `2/3`, `3/3`, `browser flows (Playwright)`. (The audit, dependency
+   review and secret scan run inside `typecheck · lint · build`.)
 3. `ci.yml` has no `paths-ignore`, so every PR reports these checks — docs-only ones too —
    and requiring them cannot leave a PR waiting on checks that never start.
 4. Keep **block force-pushes and deletion** (already on). Not linear history: PRs merge with

@@ -57,6 +57,27 @@ async function main() {
   const docx = await zip.generateAsync({ type: "arraybuffer" });
   const docxText = await docxToText(docx);
   check("docx paragraphs become lines, entities decoded", docxText === "Attendees: Ana & Raj\nNext\tsteps", JSON.stringify(docxText));
+  {
+    // A .docx is a ZIP, so the transfer cap does not bound what it expands to.
+    const bomb = new JSZip();
+    for (let i = 0; i < 1_001; i++) bomb.file(`x/${i}.xml`, "x");
+    let refused = false;
+    try {
+      await docxToText(await bomb.generateAsync({ type: "arraybuffer" }));
+    } catch {
+      refused = true;
+    }
+    check("a docx with an implausible number of entries is refused", refused);
+  }
+  {
+    let refused = false;
+    try {
+      await docxToText(new Uint8Array(10 * 1024 * 1024 + 1));
+    } catch {
+      refused = true;
+    }
+    check("a docx over the transfer cap is refused before unzipping", refused);
+  }
   const vtt = vttToText("WEBVTT\n\n1\n00:00:01.000 --> 00:00:03.000\n<v Priya Shah>Hello there</v>\n\n2\n00:00:04.000 --> 00:00:05.000\n<v Jason>Hi</v>\n");
   check("vtt keeps speaker: line, drops timings", vtt === "Priya Shah: Hello there\nJason: Hi", JSON.stringify(vtt));
 

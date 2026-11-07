@@ -60,6 +60,15 @@ const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const TIMEOUT_MS = 15_000;
 /** OneDrive files bigger than this are never downloaded — no notes doc is 10 MB. */
 const MAX_ONEDRIVE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * A .docx is a ZIP. The 10 MB transfer cap bounds the bytes on the wire, not what they expand
+ * to, so a 9 MB archive of highly compressible XML was a decompression bomb aimed at the
+ * scan's memory. Only `word/document.xml` is ever read; these bound it and the archive's shape
+ * before JSZip allocates anything.
+ */
+const DOCX_MAX_ENTRIES = 1_000;
+const DOCX_MAX_XML_BYTES = 32 * 1024 * 1024;
 /** What a OneDrive file has to end in to be read. Word docs, plain text, and Teams/Zoom transcripts. */
 const ONEDRIVE_EXTENSIONS = [".docx", ".txt", ".md", ".vtt"] as const;
 
@@ -303,9 +312,25 @@ function decodeXmlEntities(text: string): string {
 
 /** A .docx's body as plain text: paragraphs become lines, tabs and breaks survive. */
 export async function docxToText(data: ArrayBuffer | Uint8Array): Promise<string> {
+  if (data.byteLength > MAX_ONEDRIVE_BYTES) throw new DriveFileTooLargeError();
+
   const zip = await JSZip.loadAsync(data);
-  const xml = await zip.file("word/document.xml")?.async("string");
-  if (xml === undefined) throw new DriveFileUnavailableError();
+  if (Object.keys(zip.files).length > DOCX_MAX_ENTRIES) throw new DriveFileTooLargeError();
+
+  const entry = zip.file("word/document.xml");
+  if (!entry) throw new DriveFileUnavailableError();
+
+  // JSZip reads the size from the archive's central directory, so this refuses a bomb before
+  // it inflates anything. The length check afterwards covers a directory that lied.
+  const declared = (entry as unknown as { _data?: { uncompressedSize?: number } })._data
+    ?.uncompressedSize;
+  if (typeof declared === "number" && declared > DOCX_MAX_XML_BYTES) {
+    throw new DriveFileTooLargeError();
+  }
+
+  const xml = await entry.async("string");
+  if (xml.length > DOCX_MAX_XML_BYTES) throw new DriveFileTooLargeError();
+
   const text = xml
     .replace(/<w:tab\/>/g, "\t")
     .replace(/<w:br\/>|<w:cr\/>/g, "\n")
