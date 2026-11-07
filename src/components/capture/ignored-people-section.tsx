@@ -72,8 +72,10 @@ function IgnoredList({ onCount }: { onCount: (n: number) => void }) {
     });
   }
 
+  // Not the base dialog's scroll: the header stays put and only the list scrolls, so the
+  // dialog never outgrows the viewport.
   return (
-    <DialogContent className="max-h-[80dvh] overflow-y-auto sm:max-w-lg">
+    <DialogContent className="grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-lg">
       <DialogHeader>
         <DialogTitle>Ignored people</DialogTitle>
         <DialogDescription>
@@ -89,26 +91,24 @@ function IgnoredList({ onCount }: { onCount: (n: number) => void }) {
       ) : people.length === 0 ? (
         <p className="rounded-xl bg-muted/40 px-3 py-6 text-center text-sm text-muted-foreground">Nothing ignored yet.</p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="min-h-0 space-y-1.5 overflow-y-auto overscroll-contain">
           {people.map((p) => (
-            <li key={p.id} className="flex items-start gap-3 rounded-xl border border-border/60 bg-card px-3 py-2">
+            <li key={p.id} className="flex items-center gap-2 rounded-xl border border-border/60 bg-card px-3 py-1.5">
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <p className="truncate text-sm font-medium text-foreground">{p.displayName}</p>
-                  <Badge variant="secondary" className="text-3xs">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <p className="min-w-0 truncate text-sm font-medium text-foreground">{p.displayName}</p>
+                  <Badge variant="secondary" className="shrink-0 text-3xs">
                     {REASON_LABEL[p.reason]}
                   </Badge>
                 </div>
-                {(p.context || p.company) && (
-                  <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-                    {[p.company, p.context].filter(Boolean).join(" · ")}
-                  </p>
-                )}
-                <p className="mt-0.5 text-2xs text-muted-foreground">{timelineDayLabel(p.updatedAt)}</p>
+                <p className="truncate break-words text-xs text-muted-foreground">
+                  {[p.company, p.context, timelineDayLabel(p.updatedAt)].filter(Boolean).join(" · ")}
+                </p>
               </div>
               <Button
                 variant="outline"
                 size="sm"
+                className="shrink-0"
                 disabled={pending && busyId === p.id}
                 onClick={() => {
                   setBusyId(p.id);
@@ -132,7 +132,7 @@ function IgnoredList({ onCount }: { onCount: (n: number) => void }) {
                 variant="ghost"
                 size="icon-sm"
                 aria-label={`Forget ${p.displayName}`}
-                className="tap-target relative text-muted-foreground"
+                className="tap-target relative shrink-0 text-muted-foreground"
                 onClick={() => {
                   remove(p.id);
                   void forgetIgnoredPerson(p.id).then((res) => {
