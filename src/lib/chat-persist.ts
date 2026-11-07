@@ -57,6 +57,8 @@ export async function persistAssistantTurn(
     proposedActions?: StoredProposedAction[];
     /** Whether the answer answered — see `labelAnswer` in `@/lib/chat-abstention`. */
     answerOutcome?: AnswerOutcome | null;
+    /** The follow-up chips this answer offered — see `deriveFollowUps`. */
+    followUps?: string[];
     /**
      * Set for a version request: writes the assistant row into this slot/version, inactive,
      * and flips exactly it and its paired user row active once it lands — see
@@ -88,6 +90,7 @@ export async function persistAssistantTurn(
       evidence: turn.evidence ?? {},
       proposedActions: turn.proposedActions ?? [],
       answerOutcome: turn.answerOutcome ?? null,
+      followUps: turn.followUps ?? [],
       ...(turn.version
         ? { slot: turn.version.slot, version: turn.version.version, isActive: false }
         : {}),
