@@ -2,8 +2,9 @@
 
 /**
  * The one-line purpose Orbit picked for a draft, editable. Rendered only when there is one.
- * The parent sends an edited line back as a verbatim `purpose`; an untouched one is never
- * sent, so Regenerate still lets Orbit pick again.
+ * Once the person edits the line, the parent keeps sending it back as a verbatim `purpose` on
+ * every Regenerate or channel switch (until they clear it or the contact changes); an untouched
+ * line is never sent, so Regenerate still lets Orbit pick again.
  */
 export function DraftPurposeRow({
   value,
@@ -26,8 +27,12 @@ export function DraftPurposeRow({
   );
 }
 
-/** The line to send back as an override: only when the person changed it. */
-export function editedPurpose(current: string, picked: string): string | undefined {
+/**
+ * The line to send back as an override: only once the person has edited it. `overridden` is a
+ * flag, not "differs from Orbit's pick": after a draft made with the edit, the edit comes back
+ * as the pick, and comparing would silently hand the choice back to Orbit.
+ */
+export function editedPurpose(current: string, overridden: boolean): string | undefined {
   const t = current.trim();
-  return t && t !== picked ? t : undefined;
+  return overridden && t ? t : undefined;
 }

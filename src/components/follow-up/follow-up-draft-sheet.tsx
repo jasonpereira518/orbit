@@ -66,6 +66,8 @@ export function FollowUpDraftSheet({
   const [aiError, setAiError] = useState<string | null>(null);
   const [purpose, setPurpose] = useState("");
   const [pickedPurpose, setPickedPurpose] = useState("");
+  // Set when the person edits the purpose; cleared when they empty it or the sheet reopens.
+  const [purposeOverridden, setPurposeOverridden] = useState(false);
   const [sendOptions, setSendOptions] =
     useState<ContactFollowUpSendOptions | null>(null);
   const [pending, start] = useTransition();
@@ -81,6 +83,7 @@ export function FollowUpDraftSheet({
     setAiError(null);
     setPurpose("");
     setPickedPurpose("");
+    setPurposeOverridden(false);
     setSendOptions(null);
 
     start(async () => {
@@ -132,7 +135,7 @@ export function FollowUpDraftSheet({
   function regenerate() {
     start(async () => {
       try {
-        const result = await draftContactFollowUp(contactId, { intent, purpose: editedPurpose(purpose, pickedPurpose) });
+        const result = await draftContactFollowUp(contactId, { intent, purpose: editedPurpose(purpose, purposeOverridden) });
         if (!result.ok) {
           setAiError(result.error);
           return;
@@ -227,7 +230,15 @@ export function FollowUpDraftSheet({
             </Button>
           </div>
           {aiError && <AiKeyNotice feature="draft" reason={aiDenialFromMessage(aiError)} compact />}
-          {pickedPurpose ? <DraftPurposeRow value={purpose} onChange={setPurpose} /> : null}
+          {pickedPurpose ? (
+            <DraftPurposeRow
+              value={purpose}
+              onChange={(v) => {
+                setPurpose(v);
+                setPurposeOverridden(v.trim() !== "");
+              }}
+            />
+          ) : null}
           <FollowUpDraftComposer
             contactName={contactName}
             draft={draft}

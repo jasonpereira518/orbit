@@ -102,6 +102,8 @@ export function ContactFollowUpSection({
   const [aiError, setAiError] = useState<string | null>(null);
   const [purpose, setPurpose] = useState("");
   const [pickedPurpose, setPickedPurpose] = useState("");
+  // The contact the person edited the purpose for: a different contact starts un-overridden.
+  const [purposeEditedFor, setPurposeEditedFor] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [sending, startSend] = useTransition();
   const [marking, startMark] = useTransition();
@@ -190,7 +192,7 @@ export function ContactFollowUpSection({
           // A prefill (the related-person reach-out) stays a hint; the purpose is Orbit's
           // pick unless the person edited the line.
           intent: initialIntent?.trim() || undefined,
-          purpose: editedPurpose(purpose, pickedPurpose),
+          purpose: editedPurpose(purpose, purposeEditedFor === contactId),
         });
         if (!result.ok) {
           setAiError(result.error);
@@ -450,7 +452,15 @@ export function ContactFollowUpSection({
 
         {draft ? (
           <div className="space-y-3">
-            {pickedPurpose ? <DraftPurposeRow value={purpose} onChange={setPurpose} /> : null}
+            {pickedPurpose ? (
+              <DraftPurposeRow
+                value={purpose}
+                onChange={(v) => {
+                  setPurpose(v);
+                  setPurposeEditedFor(v.trim() ? contactId : null);
+                }}
+              />
+            ) : null}
             <Textarea
               rows={7}
               aria-label="Follow-up draft"
