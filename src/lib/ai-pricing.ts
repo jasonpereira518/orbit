@@ -219,7 +219,7 @@ export type { AiProvider };
  *  - openai: $10 per 1,000 calls for the hosted `web_search` tool (developers.openai.com/api/docs/pricing,
  *    "Web search (all models)"), one per `web_search_call` output item. Search content tokens are
  *    billed on top at the model's rates; for gpt-4o-mini and gpt-4.1-mini that is a fixed block of
- *    8,000 input tokens per call, which this fee does not include. The $25 rate is the older
+ *    8,000 input tokens per call, which this fee does not include (`openAiSearchInputTokens` floors the recorded input at it). The $25 rate is the older
  *    `web_search_preview` tool for non-reasoning models, which Orbit does not use.
  *  - gemini: Gemini 3 and later bill $14 per 1,000 search QUERIES the model runs, so a prompt that
  *    searches three times costs three; 2.5 and earlier bill $35 per 1,000 GROUNDED PROMPTS, one per
@@ -229,6 +229,20 @@ export type { AiProvider };
  *  - openrouter reports its own cost, plugin included, so it needs no entry.
  */
 export const WEB_SEARCH_FEE_MICROS = { anthropic: 10_000, openai: 10_000, gemini: 14_000 } as const;
+
+/**
+ * OpenAI bills the search content of a `web_search` call on gpt-4o-mini and gpt-4.1-mini as a
+ * fixed block of 8,000 input tokens per call (developers.openai.com/api/docs/pricing). Whether
+ * the response's `usage` already counts that block is not documented, so the recorded input is
+ * never lower than the blocks alone: the larger of what was reported and 8,000 per search. It
+ * cannot double count, but if `usage` leaves the block out it still misses the prompt itself.
+ */
+const OPENAI_SEARCH_BLOCK_TOKENS = 8_000;
+
+export function openAiSearchInputTokens(model: string, reported: number | null, searches: number): number | null {
+  if (searches <= 0 || !/^gpt-(4o|4\.1)-mini(-|$)/.test(model)) return reported;
+  return Math.max(reported ?? 0, searches * OPENAI_SEARCH_BLOCK_TOKENS);
+}
 
 /** Gemini 2.5 and earlier: one fee per grounded response, however many queries it ran. */
 const GEMINI_LEGACY_GROUNDING_FEE_MICROS = 35_000;

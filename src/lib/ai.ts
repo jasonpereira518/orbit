@@ -4,7 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { createHash, randomBytes } from "node:crypto";
 import { nothingUsable } from "@/lib/managed-ai-policy";
-import { geminiSearchFeeMicros, WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
+import { geminiSearchFeeMicros, openAiSearchInputTokens, WEB_SEARCH_FEE_MICROS } from "@/lib/ai-pricing";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 import {
   anthropicClient,
@@ -2827,7 +2827,7 @@ export async function webSearchJson(
           );
           searches = response.output.filter((item) => item.type === "web_search_call").length;
           report({
-            inputTokens: response.usage?.input_tokens ?? null,
+            inputTokens: openAiSearchInputTokens(model, response.usage?.input_tokens ?? null, searches),
             outputTokens: response.usage?.output_tokens ?? null,
             cachedInputTokens: response.usage?.input_tokens_details?.cached_tokens ?? null,
             webSearches: searches,
