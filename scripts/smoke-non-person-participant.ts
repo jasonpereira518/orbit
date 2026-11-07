@@ -7,7 +7,7 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, interactions, reminders } from "../src/db/schema";
 import { listContactsPage } from "../src/lib/contacts-page-query";
@@ -128,6 +128,13 @@ run(async () => {
     deleted.length === 2 && left.size === 5 && [noted, reminded, handMade, person, nameOnly].every((id) => left.has(id)),
     `${deleted.length} deleted`
   );
+
+  // Other smokes share this PGlite and look contacts up by email (ada@example.com), so leave
+  // nothing behind.
+  const users = [PROBE, INGEST, CLEAN];
+  await db.delete(reminders).where(inArray(reminders.userId, users));
+  await db.delete(interactions).where(inArray(interactions.userId, users));
+  await db.delete(contacts).where(inArray(contacts.userId, users));
 
   t.done("non-person participant smoke");
 });
