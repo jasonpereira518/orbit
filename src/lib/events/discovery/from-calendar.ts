@@ -40,7 +40,7 @@ import type { ProviderAttendee } from "@/lib/events/types";
 const MAX_INVITE_GUESTS = 300;
 
 /** Shared inboxes and senders. Never people, and never worth a roster row. */
-const ROLE_LOCALPART =
+export const ROLE_LOCALPART =
   /^(?:no-?reply|do-?not-?reply|noreply|invite|invites|calendar|events?|hello|hi|info|support|team|admin|billing|notifications?|updates?|mailer|bounce|postmaster|help|contact|sales|marketing)$/i;
 
 export function isRoleEmail(email: string | null | undefined): boolean {

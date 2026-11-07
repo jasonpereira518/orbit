@@ -58,6 +58,7 @@ import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import { interactionExternalId } from "@/lib/ingest/external-id";
 import type { InteractionInsert, ReminderInsert } from "@/lib/import-engine";
 import { reportAndContinue } from "@/lib/report-error";
+import { isNonPersonParticipant } from "@/lib/non-person-participant";
 
 /** One identifiable person on an event. Every field optional — sources differ in what they know. */
 export type NetworkParticipant = {
@@ -167,7 +168,7 @@ export type IngestStats = {
   contactsCreated: number;
   contactsMatched: number;
   interactionsLogged: number;
-  /** Participants nothing matched, on a source that does not create contacts. */
+  /** Participants nothing matched, on a source that does not create contacts, or that are not people. */
   unmatched: number;
   /** Participants that would have been created but for the plan's contact cap. */
   blockedByPlan: number;
@@ -465,7 +466,8 @@ export async function ingestEvents(
       metContext: ctx.options.metContext,
       howMet: ctx.options.howMet?.(pair.event) ?? null,
     });
-    if (!input.fullName) {
+    // A group calendar, room or mailbox on the invite is not someone to keep in touch with.
+    if (!input.fullName || isNonPersonParticipant(input.fullName, input.email ?? pair.participant.email)) {
       stats.unmatched++;
       continue;
     }
