@@ -18,6 +18,7 @@ import {
   captureSourceKinds,
   captureSummary,
   type CaptureMethod,
+  type NoteBatchResult,
 } from "@/lib/note-batches";
 
 export const CAPTURE_HISTORY_FIRST_PAGE = 5;
@@ -92,6 +93,46 @@ export async function isCaptureBatchFor(userId: string, batchId: string): Promis
     columns: { id: true },
   });
   return Boolean(row);
+}
+
+/**
+ * One batch's method, from the same evidence `listCaptureHistoryFor` reads, so the results
+ * page names a capture the way its history row does.
+ */
+export async function captureMethodFor(
+  userId: string,
+  batch: { id: string; result: NoteBatchResult; kinds: CaptureSourceKind[] }
+): Promise<CaptureMethod> {
+  const db = await getDb();
+  const interactionIds = batch.result.participants
+    .map((p) => p.interactionId)
+    .filter((id): id is string => Boolean(id));
+  const [jobs, granola] = await Promise.all([
+    db
+      .select({ sourceKind: captureJobs.sourceKind })
+      .from(captureJobs)
+      .where(and(eq(captureJobs.userId, userId), eq(captureJobs.noteBatchId, batch.id)))
+      .limit(1),
+    interactionIds.length
+      ? db
+          .select({ id: interactions.id })
+          .from(interactions)
+          .where(
+            and(
+              eq(interactions.userId, userId),
+              inArray(interactions.id, interactionIds),
+              eq(interactions.source, "granola")
+            )
+          )
+          .limit(1)
+      : [],
+  ]);
+  return captureMethod({
+    meeting: Boolean(batch.result.meeting),
+    granola: granola.length > 0,
+    jobSource: jobs[0]?.sourceKind,
+    kinds: batch.kinds,
+  });
 }
 
 export async function listCaptureHistoryFor(

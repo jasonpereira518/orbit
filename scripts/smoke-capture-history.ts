@@ -38,7 +38,7 @@ import {
   purgeCapturePhotosForUser,
   storeCapturePhotos,
 } from "../src/lib/capture-photos";
-import { isCaptureBatchFor, listCaptureHistoryFor } from "../src/lib/capture-history";
+import { captureMethodFor, isCaptureBatchFor, listCaptureHistoryFor } from "../src/lib/capture-history";
 import { deleteNoteBatchForUser, saveNoteBatch } from "../src/lib/note-batch-save";
 import {
   captureAttendeeNames,
@@ -312,6 +312,14 @@ async function main() {
   check("  titled by who it was with", ph.title === "Chat with Ana Ruiz", String(ph.title));
   check("  no summary to show, so none", ph.summary === null);
   check("  a person listed twice counts once", ph.peopleCount === 1, String(ph.peopleCount));
+  check(
+    "the results page names a capture the way its row does",
+    [
+      await captureMethodFor(USER, { id: granolaBatch!.id, result: granolaResult, kinds: ["text"] }),
+      await captureMethodFor(USER, { id: phoneBatch!.id, result: phoneResult, kinds: ["text"] }),
+      await captureMethodFor(USER, { id: otherBatch.id, result: emptyNoteBatchResult(), kinds: ["text"] }),
+    ].join() === "granola,phone,notes"
+  );
   check("a typed capture with no job reads as typed notes", details.items.find((i) => i.id === otherBatch.id)!.method === "notes");
   check(
     "a dates-only capture does not repeat its title as the next step",

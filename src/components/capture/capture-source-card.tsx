@@ -4,12 +4,11 @@ import { useCallback, useState, useSyncExternalStore } from "react";
 import { format } from "date-fns";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronLeft, ChevronRight, Copy, Download, ExternalLink, FileText } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Download, ExternalLink } from "lucide-react";
 import type { CaptureSourceKind } from "@/lib/note-batches";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { CAPTURE_SOURCE_META, capturePhotoSrc } from "@/components/capture/capture-source-meta";
+import { capturePhotoSrc } from "@/components/capture/capture-source-meta";
 import { safeChatHref } from "@/lib/safe-links";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -69,6 +68,16 @@ function useHydrated() {
 }
 
 /**
+ * When a capture was saved, in the reader's own timezone. Nothing until hydrated: the
+ * server does not know that timezone, and a server-rendered time would be wrong or mismatch.
+ */
+export function CapturedAt({ iso }: { iso: string }) {
+  const hydrated = useHydrated();
+  if (!hydrated) return null;
+  return <time dateTime={iso}>{format(new Date(iso), "EEE, MMM d, yyyy 'at' h:mm a")}</time>;
+}
+
+/**
  * The original a capture was made from: the photos, and the text Orbit read — typed,
  * transcribed from a voice note, or read out of the photos themselves.
  *
@@ -77,20 +86,16 @@ function useHydrated() {
  * parsed rather than tidied (typed notes render their own markdown — see `NOTES_MARKDOWN`).
  */
 export function CaptureSourceCard({
-  createdAt,
   kinds,
   sourceText,
   photos,
 }: {
-  createdAt: string;
   kinds: CaptureSourceKind[];
   sourceText: string;
   photos: CaptureSourcePhoto[];
 }) {
-  const hydrated = useHydrated();
   const [expanded, setExpanded] = useState(sourceText.length <= COLLAPSE_AT_CHARS);
   const [viewing, setViewing] = useState<number | null>(null);
-  const created = new Date(createdAt);
   // Only typed notes are the person's own markdown. Everything else — photos, voice, imported
   // mail, files, calendar bodies — is shown verbatim: it is the thing to check Orbit's reading
   // against, and markdown would rewrite `> quotes`, `---` underlines and indents in it.
@@ -114,93 +119,71 @@ export function CaptureSourceCard({
   const current = viewing === null ? null : photos[viewing] ?? null;
 
   return (
-    <Card className="border-l-4 border-border/70 border-l-teal-500 shadow-none">
-      <CardHeader className="flex-row items-start gap-3 space-y-0">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-teal-500/15 text-teal-700 dark:text-teal-300">
-          <FileText className="size-5" aria-hidden />
-        </span>
-        <div className="min-w-0 space-y-1">
-        <CardTitle as="h2">What you captured</CardTitle>
-        <p className="text-xs text-muted-foreground">
-          {/* Local time only once hydrated — see the history list for why. */}
-          {hydrated && (
-            <>
-              <time dateTime={createdAt}>{format(created, "EEE, MMM d, yyyy 'at' h:mm a")}</time>
-              {" · "}
-            </>
-          )}
-          {kinds.map((k) => CAPTURE_SOURCE_META[k].label).join(" + ")}
-        </p>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {photos.length > 0 && (
-          <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4" aria-label="Photos">
-            {photos.map((photo, index) => (
-              <li key={photo.id}>
-                <button
-                  type="button"
-                  onClick={() => setViewing(index)}
-                  className="group relative block aspect-square w-full overflow-hidden rounded-xl border border-border/60 bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                  aria-label={`Open photo ${index + 1}${photo.fileName ? ` (${photo.fileName})` : ""}`}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element -- served by an
-                      auth-gated API route, not a remote origin next/image can optimise. */}
-                  <img
-                    src={capturePhotoSrc(photo.id)}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    // Contain, not cover: these are pictures of writing, and a crop that
-                    // cuts the first word off every line makes them unrecognisable.
-                    className="size-full object-contain transition-transform duration-base group-hover:scale-[1.03]"
-                  />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+    <section className="space-y-4 rounded-2xl border border-border/70 bg-card p-5">
+      {photos.length > 0 && (
+        <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4" aria-label="Photos">
+          {photos.map((photo, index) => (
+            <li key={photo.id}>
+              <button
+                type="button"
+                onClick={() => setViewing(index)}
+                className="group relative block aspect-square w-full overflow-hidden rounded-xl border border-border/60 bg-muted focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                aria-label={`Open photo ${index + 1}${photo.fileName ? ` (${photo.fileName})` : ""}`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element -- served by an
+                    auth-gated API route, not a remote origin next/image can optimise. */}
+                <img
+                  src={capturePhotoSrc(photo.id)}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  // Contain, not cover: these are pictures of writing, and a crop that
+                  // cuts the first word off every line makes them unrecognisable.
+                  className="size-full object-contain transition-transform duration-base group-hover:scale-[1.03]"
+                />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium text-muted-foreground">
-              {readText
-                ? "The text Orbit read"
-                : "Your notes"}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-medium text-ink">
+            {readText ? "The text Orbit read" : "Your notes"}
+          </h2>
+          <Button variant="ghost" size="sm" onClick={copyNotes}>
+            <Copy className="size-3.5" aria-hidden />
+            Copy
+          </Button>
+        </div>
+        <div
+          className={cn(
+            "relative overflow-hidden rounded-xl border border-border/60 bg-muted/30 px-3 py-2",
+            !expanded && "max-h-56"
+          )}
+        >
+          {readText ? (
+            <p className="text-sm leading-relaxed break-words whitespace-pre-wrap text-foreground">
+              {sourceText}
             </p>
-            <Button variant="ghost" size="sm" onClick={copyNotes}>
-              <Copy className="size-3.5" aria-hidden />
-              Copy
-            </Button>
-          </div>
-          <div
-            className={cn(
-              "relative overflow-hidden rounded-xl border border-border/60 bg-muted/30 px-3 py-2",
-              !expanded && "max-h-56"
-            )}
-          >
-            {readText ? (
-              <p className="text-sm leading-relaxed break-words whitespace-pre-wrap text-foreground">
+          ) : (
+            <div className="text-sm leading-relaxed break-words text-foreground">
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={NOTES_MARKDOWN} disallowedElements={NO_IMAGES}>
                 {sourceText}
-              </p>
-            ) : (
-              <div className="text-sm leading-relaxed break-words text-foreground">
-                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={NOTES_MARKDOWN} disallowedElements={NO_IMAGES}>
-                  {sourceText}
-                </ReactMarkdown>
-              </div>
-            )}
-            {!expanded && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-card to-transparent" />
-            )}
-          </div>
-          {sourceText.length > COLLAPSE_AT_CHARS && (
-            <Button variant="link" size="sm" className="h-auto px-0" onClick={() => setExpanded((v) => !v)}>
-              {expanded ? "Show less" : "Show all"}
-            </Button>
+              </ReactMarkdown>
+            </div>
+          )}
+          {!expanded && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-card to-transparent" />
           )}
         </div>
-      </CardContent>
+        {sourceText.length > COLLAPSE_AT_CHARS && (
+          <Button variant="link" size="sm" className="h-auto px-0" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "Show less" : "Show all"}
+          </Button>
+        )}
+      </div>
 
       <Dialog open={current !== null} onOpenChange={(open) => { if (!open) setViewing(null); }}>
         <DialogContent
@@ -276,6 +259,6 @@ export function CaptureSourceCard({
           )}
         </DialogContent>
       </Dialog>
-    </Card>
+    </section>
   );
 }

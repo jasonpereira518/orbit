@@ -1,15 +1,21 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, BellRing, CalendarDays, Users } from "lucide-react";
 import { getNoteBatch } from "@/actions/note-batches";
-import { CaptureSourceCard } from "@/components/capture/capture-source-card";
-import { NoteBatchResultView } from "@/components/capture/note-batch-result";
-import { captureSourceKinds } from "@/lib/note-batches";
+import { CaptureSourceCard, CapturedAt } from "@/components/capture/capture-source-card";
+import { CAPTURE_METHOD_META } from "@/components/capture/capture-source-meta";
+import { NoteBatchActions, NoteBatchResultView } from "@/components/capture/note-batch-result";
+import { Badge } from "@/components/ui/badge";
+import { requireUserId } from "@/lib/auth";
+import { captureMethodFor } from "@/lib/capture-history";
+import { captureAttendeeNames, captureHistoryTitle, captureSourceKinds } from "@/lib/note-batches";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 export const metadata = { title: "Capture results" };
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 export default async function NoteBatchPage({
   params,
@@ -22,36 +28,60 @@ export default async function NoteBatchPage({
   const { batchId } = await params;
   const batch = await getNoteBatch(batchId);
   if (!batch) notFound();
-  const fromMeeting = Boolean(batch.result.meeting);
+  const kinds = captureSourceKinds(
+    batch.photos.length && !batch.inputSources.includes("photo")
+      ? [...batch.inputSources, "photo"]
+      : batch.inputSources
+  );
+  const method = CAPTURE_METHOD_META[await captureMethodFor(await requireUserId(), { id: batch.id, result: batch.result, kinds })];
+  const MethodIcon = method.icon;
+  const names = captureAttendeeNames(batch.result.participants);
+  // The same line its Recent captures row is recognised by, else the method label, as there.
+  const title =
+    captureHistoryTitle({
+      meetingTitle: batch.result.meeting?.title,
+      head: batch.sourceText,
+      names,
+      reminders: batch.result.reminders,
+    }) ?? method.label;
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
-      <div>
-        {/* This page is reachable from the capture history as well as straight after a
-            save, so it needs a way back that is not the browser's. */}
-        <Link
-          href="/capture"
-          className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" aria-hidden />
-          Capture
-        </Link>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-          {fromMeeting ? "What your meeting produced" : "What your notes produced"}
-        </h1>
-        <p className="mt-1 text-muted-foreground">
-          Here is everything Orbit made from this {fromMeeting ? "meeting" : "capture"}: the
-          people, the things to do, and the reminders. Dismiss anything that looks wrong, or
-          undo the whole batch.
-        </p>
+      {/* This page is reachable from the capture history as well as straight after a
+          save, so it needs a way back that is not the browser's. */}
+      <Link
+        href="/capture"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="size-3.5" aria-hidden /> Capture
+      </Link>
+
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0 flex-1 space-y-2">
+          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">{title}</h1>
+          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays className="size-4" aria-hidden />
+              <CapturedAt iso={new Date(batch.createdAt).toISOString()} />
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <MethodIcon className="size-4" aria-hidden /> {method.label}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Users className="size-4" aria-hidden /> {plural(names.length, "person", "people")}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <BellRing className="size-4" aria-hidden /> {plural(batch.result.reminders.length, "reminder", "reminders")}
+            </span>
+            {batch.status === "undone" && <Badge variant="secondary">Undone</Badge>}
+          </p>
+        </div>
+        <NoteBatchActions batchId={batch.id} status={batch.status} />
       </div>
+
       <CaptureSourceCard
-        createdAt={new Date(batch.createdAt).toISOString()}
-        kinds={captureSourceKinds(
-          batch.photos.length && !batch.inputSources.includes("photo")
-            ? [...batch.inputSources, "photo"]
-            : batch.inputSources
-        )}
+        kinds={kinds}
         sourceText={batch.sourceText}
         photos={batch.photos.map((p) => ({
           id: p.id,
@@ -60,7 +90,9 @@ export default async function NoteBatchPage({
           height: p.height,
         }))}
       />
+      {/* Keyed on the status so an undo from the header menu re-seeds the reminder states. */}
       <NoteBatchResultView
+        key={batch.status}
         batchId={batch.id}
         status={batch.status}
         anchorIso={isoDay(new Date(batch.anchorDate))}
