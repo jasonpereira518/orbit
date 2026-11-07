@@ -31,7 +31,7 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-keep-in-touch";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { aiSuggestions, contacts, userSettings } from "../src/db/schema";
+import { aiSuggestions, contacts, interactions, userSettings } from "../src/db/schema";
 import {
   KEEP_IN_TOUCH_MAX_DAYS,
   KEEP_IN_TOUCH_PRESETS,
@@ -167,6 +167,13 @@ async function dbChecks() {
         ...over,
       })
       .returning();
+    // Suggestions only concern people the user has met or talked with (`met-contact.ts`).
+    await db.insert(interactions).values({
+      userId: USER,
+      contactId: c.id,
+      interactionType: "meeting",
+      interactionDate: realDaysAgo(300),
+    });
     return c;
   }
 

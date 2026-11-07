@@ -320,7 +320,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const model = tallies ? buildRadarModel(tallies, now) : null;
         learned = model;
         const [candidates, suppressions] = await Promise.all([
-          loadCandidates(userId, [...emailSignals, ...signals].map((s) => s.contactId), now),
+          loadCandidates(userId, [...emailSignals, ...signals].map((s) => s.contactId)),
           loadSuppressions(userId, live, now),
         ]);
 

@@ -7,7 +7,7 @@ import "./smoke/_env";
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, emailEvents, emailThreads, radarRuns, recommendations, userSettings } from "../src/db/schema";
+import { contacts, emailEvents, interactions, emailThreads, radarRuns, recommendations, userSettings } from "../src/db/schema";
 import { syncIdentitiesForContact } from "../src/lib/contact-identity";
 import { upsertThreadResult } from "../src/lib/email-intel/store";
 import { draftIntent } from "../src/lib/radar/types";
@@ -61,6 +61,8 @@ async function main() {
   await db.update(userSettings).set({ emailIntelEnabled: 1 }).where(eq(userSettings.userId, U));
 
   const [dana] = await db.insert(contacts).values({ userId: U, fullName: "Dana Kim", company: "Northwind", title: "Technical Recruiter", email: "dana@northwind.example", closenessTier: "inner" }).returning();
+  // Radar only reads people the user has met or talked with (`met-contact.ts`).
+  await db.insert(interactions).values({ userId: U, contactId: dana!.id, interactionType: "meeting", interactionDate: new Date(Date.now() - 100 * 86_400_000) });
   await syncIdentitiesForContact(U, dana!.id, { email: "dana@northwind.example" }, "smoke");
   await upsertThreadResult(U, { threadId: "ret-1", lastMessageId: "m1", subject: "Staff Engineer", participants: ["dana@northwind.example"], lastDirection: "in", decision: "classify", triageScore: 3, event: null });
   const [thread] = await db.select().from(emailThreads).where(eq(emailThreads.userId, U));

@@ -32,7 +32,7 @@ import "./smoke/_env";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { getEffectivePlanConfig } from "../src/lib/plans/plan-rules";
-import { contacts } from "../src/db/schema";
+import { contacts, interactions } from "../src/db/schema";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
@@ -198,6 +198,15 @@ async function main() {
     })
   )?.id;
   check("fixture: the due-row contact exists", Boolean(dueId));
+  // Follow-ups only alert for people the user has met or talked with (`met-contact.ts`).
+  if (dueId) {
+    await db.insert(interactions).values({
+      userId: USER,
+      contactId: dueId,
+      interactionType: "meeting",
+      interactionDate: new Date(Date.now() - 30 * 86_400_000),
+    });
+  }
 
   // ---- Dashboard ---------------------------------------------------------------------
   console.log("\nDashboard (getDashboardData)…");
