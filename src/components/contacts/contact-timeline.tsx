@@ -2,7 +2,8 @@
 
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import { CircleDashed, FileText, Plus, Sparkles } from "lucide-react";
@@ -156,7 +157,7 @@ export function ContactTimeline({
   const [flight, setFlight] = useState<
     (InteractionFlightDetail & { to: { top: number; left: number } }) | null
   >(null);
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = useReducedMotionPreference();
 
   /**
    * The whole history once something has asked for it, with the `interactions` it was read

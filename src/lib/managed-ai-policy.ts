@@ -1,6 +1,6 @@
 import type { AiProvider, EmbeddingBackend } from "@/lib/ai-providers";
 import { BACKGROUND_AI_OPERATIONS } from "@/lib/ai-operations";
-import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 
 /**
  * Who may run AI on whose key — the whole rule, as pure functions.
@@ -93,9 +93,14 @@ export type AiAccessDenial = "key_required" | "managed_unavailable" | "managed_l
 /** Why an account may use Orbit's managed keys at all. Null = it may not. */
 export type ManagedEligibility = "plan" | "demo" | null;
 
-export function managedEligibility(plan: Plan, isDemo: boolean): ManagedEligibility {
+export function managedEligibility(
+  plan: Plan,
+  isDemo: boolean,
+  /** The effective plan table on the server (`getEffectivePlanConfig`); the code table by default. */
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): ManagedEligibility {
   if (isDemo) return "demo";
-  if (PLAN_CONFIG[plan].features.hostedAi) return "plan";
+  if (config[plan].features.hostedAi) return "plan";
   return null;
 }
 
@@ -105,12 +110,13 @@ export type AiKeyPreference = "included" | "own" | null;
 /**
  * The order Orbit spends its own keys in, whatever provider the account picked: the expiring
  * monthly Anthropic credit first (Claude Haiku 5.5 is also the cheapest capable model), then
- * the prepaid OpenAI balance. Gemini last, for a developer's `.env.local` — production holds
- * no managed Gemini key. A provider whose pool is spent is skipped (`MANAGED_AI_POOLS`).
+ * the prepaid OpenAI balance. Orbit NEVER pays for Gemini (Jason, Nov 7 2026): it is not in
+ * this order and `managedKey` refuses it. A provider whose pool is spent is skipped
+ * (`MANAGED_AI_POOLS`); with both spent the account is told to add its own key.
  */
 // OpenRouter is deliberately absent: Orbit holds no OpenRouter key, so it is never a managed
 // provider, and this order is exactly the set of providers Orbit will ever pay for.
-export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["anthropic", "openai", "gemini"];
+export const MANAGED_PROVIDER_ORDER: readonly AiProvider[] = ["anthropic", "openai"];
 
 /**
  * Models the managed key will run. A user can type any model id into Settings, and
@@ -240,9 +246,17 @@ export type KeyChoice<P extends string = AiProvider> =
   | { ok: true; provider: P; source: AiKeySource; model: string }
   | { ok: false; reason: Extract<AiAccessDenial, "key_required" | "managed_unavailable"> };
 
-function anyManaged(facts: KeyFacts) {
-  return MANAGED_PROVIDER_ORDER.some((p) => facts.managed[p]);
+function anyManaged(facts: KeyFacts, skip?: ReadonlySet<AiProvider>) {
+  return MANAGED_PROVIDER_ORDER.some((p) => !skip?.has(p) && facts.managed[p]);
 }
+
+/**
+ * Managed providers a hosted web search never runs on. Orbit pays for these searches, and Gemini's
+ * grounding fee is the dearest and the least predictable (billed per query on Gemini 3, per
+ * prompt before), so a search on Orbit's key goes to Anthropic, then OpenAI. An account's OWN
+ * Gemini key still searches; that is their spend.
+ */
+export const WEB_SEARCH_MANAGED_EXCLUDED: ReadonlySet<AiProvider> = new Set<AiProvider>(["gemini"]);
 
 /**
  * Denial for "nothing usable". Only an account whose plan includes AI was PROMISED Orbit's AI, so only it
@@ -269,14 +283,18 @@ function denied(facts: KeyFacts) {
  * account selected, because Orbit is paying. A key they saved for some OTHER provider is not
  * used for completions.
  */
-export function chooseCompletionKey(facts: KeyFacts): KeyChoice {
+export function chooseCompletionKey(
+  facts: KeyFacts,
+  opts: { skipManaged?: ReadonlySet<AiProvider> } = {},
+): KeyChoice {
   const selected = facts.selectedProvider;
-  const includedFirst = facts.preference === "included" && Boolean(facts.eligibility) && anyManaged(facts);
+  const skip = opts.skipManaged;
+  const includedFirst = facts.preference === "included" && Boolean(facts.eligibility) && anyManaged(facts, skip);
   if (facts.personal[selected] && !includedFirst) {
     return { ok: true, provider: selected, source: "personal", model: facts.selectedModel };
   }
-  if (!facts.eligibility || !anyManaged(facts)) return denied(facts);
-  const provider = MANAGED_PROVIDER_ORDER.find((p) => facts.managed[p])!;
+  if (!facts.eligibility || !anyManaged(facts, skip)) return denied(facts);
+  const provider = MANAGED_PROVIDER_ORDER.find((p) => !skip?.has(p) && facts.managed[p])!;
   return { ok: true, provider, source: "managed", model: managedModel(provider, null) };
 }
 
@@ -313,10 +331,7 @@ export function chooseEmbeddingKey(facts: KeyFacts): KeyChoice<EmbeddingBackend>
   const personal = order.find((p) => facts.personal[p]);
   if (personal) return { ok: true, provider: personal, source: "personal", model: "" };
   if (!facts.eligibility) return { ok: false, reason: "key_required" };
-  // Gemini's managed key embeds too, and is the cheaper of the two.
-  const managedOrder: EmbeddingBackend[] =
-    selected === "openai" ? ["openai", "gemini"] : ["gemini", "openai"];
-  const managed = managedOrder.find((p) => facts.managed[p]);
-  if (managed) return { ok: true, provider: managed, source: "managed", model: "" };
+  // Orbit never pays for Gemini, so OpenAI is the only managed embedding backend.
+  if (facts.managed.openai) return { ok: true, provider: "openai", source: "managed", model: "" };
   return denied(facts);
 }

@@ -21,7 +21,7 @@
  */
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
 import { findCapturedFiles } from "@/actions/capture-jobs";
 import { hashFilesSequentially } from "@/lib/capture/file-hash";
 import { toast } from "@/lib/toast";
@@ -31,11 +31,14 @@ import { CAPTURE_HANDOFF_EVENT, appendHandoff, takeCaptureHandoff } from "@/lib/
 import { ScanControls, useScanDropZone, sortAndNormalizeScanFiles } from "@/components/scan/scan-controls";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   FIELD_BARE,
   FIELD_SHELL,
   MentionComposer,
 } from "@/components/composer/mention-composer";
+import { MarkdownToolbar } from "@/components/composer/markdown-toolbar";
+import { useModKeyLabel } from "@/lib/use-mod-key";
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { extractLinkedInProfileRefs, isLinkedInOnlyPaste } from "@/lib/linkedin-paste";
 import type { CaptureIngest } from "@/lib/capture/use-capture-ingest";
@@ -107,6 +110,7 @@ export function MessyNotesCapture({
   const linkedInOnly = pastedProfiles.length > 0 && isLinkedInOnlyPaste(notes);
   const [restored, setRestored] = useState(false);
   const notesRef = useRef<HTMLTextAreaElement>(null);
+  const mod = useModKeyLabel();
   const loadedKeyRef = useRef<string | null>(null);
 
   // Restore the draft (and take a waiting handoff) once per key. Deferred a microtask —
@@ -339,28 +343,33 @@ export function MessyNotesCapture({
         </p>
       )}
       <div>
-        <div className="flex items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <Label htmlFor="capture-notes">Your notes</Label>
-          {restored && notes.trim() && (
-            <button
-              type="button"
-              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-              onClick={() => {
-                setNotes("");
-                setMentionPicks([]);
-                setRestored(false);
-                if (draftKey) clearCaptureDraft(window.localStorage, draftKey);
-              }}
-            >
-              Restored from your last visit · clear
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {restored && notes.trim() && (
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => {
+                  setNotes("");
+                  setMentionPicks([]);
+                  setRestored(false);
+                  if (draftKey) clearCaptureDraft(window.localStorage, draftKey);
+                }}
+              >
+                Restored from your last visit · clear
+              </button>
+            )}
+            {/* Above the box rather than inside it: the box's top-right is the tips button's,
+                and a row of buttons over the first line would need the text pushed down. */}
+            <MarkdownToolbar textareaRef={notesRef} disabled={extracting} />
+          </div>
         </div>
         {/* `relative` so the `@` menu — which `MentionComposer` renders as a sibling of the
             field box — anchors to the notes box rather than to the whole card. Below it
             rather than above: this box is most of a screen tall and you type at the bottom
             of it, so a menu above the box would open a long way from the caret. */}
-        <div className="relative mt-2">
+        <div className="group/notes relative mt-2">
           <MentionComposer
             className={FIELD_SHELL}
             textareaRef={notesRef}
@@ -373,16 +382,64 @@ export function MessyNotesCapture({
             // conversation, which is something you do when asking a question, not when
             // writing one up.
             menuEnabled={!extracting}
+            markdown
             id="capture-notes"
-            placeholder={`AWS Summit afterparty — talked with a few people over drinks about AI tooling.\n\nMet Sarah Chen — she leads Codex partnerships at OpenAI...\n\nAlso caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team...\n\nOr paste nothing but a profile URL:\nhttps://www.linkedin.com/in/sarah-chen`}
-            textareaClassName={cn("min-h-[220px]", FIELD_BARE)}
+            // Short native placeholder for screen readers only; the visible one is the centered
+            // overlay below (a native placeholder can't be vertically centered).
+            placeholder="Who did you meet? Jot it down messy."
+            // pr-10 keeps the first line clear of the tips button; same box feeds the highlights.
+            boxClassName="py-2 pl-2.5 pr-10 text-base md:text-sm"
+            textareaClassName={cn("min-h-[220px] placeholder:text-transparent", FIELD_BARE)}
             disabled={extracting}
           />
+          {!ingest.notes && (
+            <p
+              aria-hidden
+              // Gone the moment the box is focused, not only once text arrives.
+              className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center px-10 text-center text-sm text-muted-foreground transition-opacity duration-fast group-has-[textarea:focus]/notes:opacity-0"
+            >
+              Who did you meet? Jot it down messy.
+            </p>
+          )}
+          <Popover>
+            <PopoverTrigger
+              aria-label="Show tips and examples"
+              className="absolute right-1.5 top-1.5 z-[2] flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Info className="size-4" />
+            </PopoverTrigger>
+            <PopoverContent
+              side="bottom"
+              align="end"
+              // Below the button, or above it when there's no room: never beside it, and
+              // shifted rather than flipped along the edge, so scrolling only ever moves it
+              // between two spots.
+              collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
+              className="w-80 space-y-2 text-xs leading-relaxed">
+              <p className="text-sm font-medium text-foreground">Tips</p>
+              <p className="text-muted-foreground">
+                Type <span className="font-medium text-foreground">@</span> to name someone already
+                in your orbit, or paste a LinkedIn profile URL on its own to log someone.
+              </p>
+              <p className="text-muted-foreground">
+                Markdown works: <span className="font-medium text-foreground">**bold**</span>,{" "}
+                <span className="font-medium text-foreground">_italic_</span>,{" "}
+                <span className="font-medium text-foreground"># heading</span>,{" "}
+                <span className="font-medium text-foreground">- list</span>. {mod}+B and {mod}+I
+                format the selection, Enter continues a list, Tab indents it.
+              </p>
+              <p className="pt-1 font-medium text-foreground">Example note</p>
+              <div className="space-y-1.5 rounded-lg bg-muted/50 p-2.5 text-muted-foreground">
+                <p>AWS Summit afterparty — talked with a few people over drinks about AI tooling.</p>
+                <p>Met Sarah Chen — she leads Codex partnerships at OpenAI.</p>
+                <p>Also caught up with Marcus Lee (Stripe, recruiting). He offered an intro to their AI infra team.</p>
+              </div>
+              <p className="text-muted-foreground">
+                Or paste nothing but a profile URL: linkedin.com/in/sarah-chen
+              </p>
+            </PopoverContent>
+          </Popover>
         </div>
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          Type <span className="font-medium text-foreground">@</span> to name someone already in
-          your orbit, or a LinkedIn profile URL on its own is enough to log someone.
-        </p>
       </div>
 
       <div className="space-y-2">

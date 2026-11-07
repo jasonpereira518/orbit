@@ -7,6 +7,8 @@
     "plan": "free",
     "preference": null,
     "settings": {
+      "accountKind": null,
+      "aiKeyAddedAt": null,
       "aiKeyPreference": null,
       "aiModel": "gemini-3.8-flash",
       "aiModelMigratedFrom": null,
@@ -17,6 +19,7 @@
       "calendarFeedToken": null,
       "calendarFeedTokenCreatedAt": null,
       "careerProfile": null,
+      "chatAutoApply": 0,
       "chatSelfNames": [],
       "cloudNotesAutoExtract": 0,
       "compedAt": null,
@@ -33,6 +36,9 @@
       "desktopNotifiedIds": [],
       "email": null,
       "emailActivitySync": 0,
+      "emailIntelCursorAt": null,
+      "emailIntelEnabled": 0,
+      "emailIntelNextAt": null,
       "emailSignatureHtml": null,
       "emailSignatureText": null,
       "estimatedMonthlyChurnPct": null,
@@ -46,12 +52,20 @@
       "inboundLogLastReceivedAt": null,
       "inboundLogToken": null,
       "inboundLogTokenCreatedAt": null,
+      "interestSignupId": null,
+      "inviteId": null,
       "lastActiveAt": "<db-now>",
       "lastName": null,
+      "lastTouchAt": null,
+      "lastTouchCampaign": null,
+      "lastTouchLandingPath": null,
+      "lastTouchMedium": null,
+      "lastTouchSource": null,
       "lifetimeCheckoutSessionId": null,
       "lifetimeCheckoutStartedAt": null,
       "lifetimePurchasedAt": null,
       "linkedinExportRequestedAt": null,
+      "linkedinRefreshIntervalDays": null,
       "linkedinReminderShownAt": null,
       "maxNudgeSeenAt": null,
       "onboardingCompletedAt": null,
@@ -77,8 +91,10 @@
       "schools": [],
       "senderBio": null,
       "signupAttributedAt": null,
+      "signupAttributionSource": null,
       "signupLandingPath": null,
       "signupReferrer": null,
+      "signupSessionId": null,
       "signupUtmCampaign": null,
       "signupUtmMedium": null,
       "signupUtmSource": null,
@@ -135,6 +151,10 @@
   "attention": null,
   "attentionLite": "5 follow-ups are overdue: Ken Thompson (20d), Grace Hopper (10d), Dennis Ritchie (4d), Ada Lovelace (2d), Margaret Hamilton (1d).",
   "calendar": null,
+  "commitmentIds": {
+    "<map>": []
+  },
+  "commitments": null,
   "contactNames": {
     "<map>": [
       [
@@ -143,14 +163,18 @@
       ],
       [
         "<id:3>",
-        "Dennis Ritchie"
+        "Grace Hopper"
       ],
       [
         "<id:4>",
-        "Grace Hopper"
+        "Dennis Ritchie"
       ]
     ]
   },
+  "eventIds": {
+    "<map>": []
+  },
+  "events": null,
   "focusProfile": null,
   "goals": [
     "Meet more people in hardware"
@@ -160,6 +184,7 @@
       "aiSummary": null,
       "career": null,
       "company": "Acme",
+      "details": "email ada@acme.test | follow-up due 2026-09-13",
       "fullName": "Ada Lovelace",
       "id": "<id:2>",
       "keyFacts": [],
@@ -184,35 +209,14 @@
       "aiSummary": null,
       "career": null,
       "company": "Acme",
-      "fullName": "Dennis Ritchie",
+      "details": "email grace@acme.test | follow-up due 2026-09-05",
+      "fullName": "Grace Hopper",
       "id": "<id:3>",
       "keyFacts": [],
       "location": null,
       "notes": null,
-      "relationshipScore": 3,
-      "relevance": 0.9838709677419354,
-      "school": "Harvard",
-      "tags": [],
-      "timeline": [
-        {
-          "date": "2026-09-08",
-          "id": "<id:6>",
-          "line": "2026-09-08 · 1:1 Meeting: Talked with Dennis Ritchie about Acme."
-        }
-      ],
-      "title": "Staff"
-    },
-    {
-      "aiSummary": null,
-      "career": null,
-      "company": "Acme",
-      "fullName": "Grace Hopper",
-      "id": "<id:4>",
-      "keyFacts": [],
-      "location": null,
-      "notes": null,
       "relationshipScore": 5,
-      "relevance": 0.9682539682539681,
+      "relevance": 0.9838709677419354,
       "school": "Yale",
       "tags": [
         "mentor",
@@ -221,28 +225,51 @@
       "timeline": [
         {
           "date": "2026-09-05",
-          "id": "<id:7>",
+          "id": "<id:6>",
           "line": "2026-09-05 · 1:1 Meeting: Talked with Grace Hopper about Acme."
         }
       ],
       "title": "Founder"
+    },
+    {
+      "aiSummary": null,
+      "career": null,
+      "company": "Acme",
+      "details": "follow-up due 2026-09-11",
+      "fullName": "Dennis Ritchie",
+      "id": "<id:4>",
+      "keyFacts": [],
+      "location": null,
+      "notes": null,
+      "relationshipScore": 3,
+      "relevance": 0.9682539682539681,
+      "school": "Harvard",
+      "tags": [],
+      "timeline": [
+        {
+          "date": "2026-09-08",
+          "id": "<id:7>",
+          "line": "2026-09-08 · 1:1 Meeting: Talked with Dennis Ritchie about Acme."
+        }
+      ],
+      "title": "Staff"
     }
   ],
   "modelRecruiters": [],
   "notePassages": [],
-  "openReminders": "- [reminder_id=<id:8>] Send Ada the deck · due 2026-09-14 · Ada Lovelace",
+  "openReminders": "Today is 2026-09-15. Overdue or due today: 1 · coming up: 2 · no date: 0. The nearest:\n- [reminder_id=<id:8>] Send Ada the deck · due 2026-09-14 (overdue) · Ada Lovelace\n- [reminder_id=<id:9>] Intro Margaret to hardware lead · due 2026-09-17 · Margaret Hamilton\n- [reminder_id=<id:10>] File expenses · due 2026-10-05",
   "orgRosters": [
     {
       "kind": "company",
       "name": "Acme",
       "people": [
         {
-          "id": "<id:3>",
+          "id": "<id:4>",
           "name": "Dennis Ritchie",
           "title": "Staff"
         },
         {
-          "id": "<id:4>",
+          "id": "<id:3>",
           "name": "Grace Hopper",
           "title": "Founder"
         },
@@ -264,6 +291,14 @@
       [
         "<id:8>",
         "Send Ada the deck"
+      ],
+      [
+        "<id:9>",
+        "Intro Margaret to hardware lead"
+      ],
+      [
+        "<id:10>",
+        "File expenses"
       ]
     ]
   },
@@ -272,18 +307,23 @@
       "aiSummary": null,
       "closenessTier": null,
       "company": "Acme",
+      "dateMet": null,
       "email": "ada@acme.test",
       "filterMatched": true,
       "fullName": "Ada Lovelace",
+      "howMet": null,
       "id": "<id:2>",
       "industry": null,
       "keyFacts": [],
+      "linkedinUrl": null,
       "location": null,
       "matchedArms": [
         "fts"
       ],
+      "nextFollowUpAt": "2026-09-13T12:00:00.000Z",
       "notes": "Met at the Acme summit.",
       "opportunities": [],
+      "phone": null,
       "preferredName": null,
       "priorityLevel": 2,
       "relationshipScore": 4,
@@ -299,54 +339,64 @@
       "aiSummary": null,
       "closenessTier": null,
       "company": "Acme",
-      "email": null,
-      "filterMatched": true,
-      "fullName": "Dennis Ritchie",
-      "id": "<id:3>",
-      "industry": null,
-      "keyFacts": [],
-      "location": null,
-      "matchedArms": [
-        "fts"
-      ],
-      "notes": null,
-      "opportunities": [],
-      "preferredName": null,
-      "priorityLevel": 0,
-      "relationshipScore": 3,
-      "relevance": 0.9838709677419354,
-      "rrfScore": 0.016129032258064516,
-      "school": "Harvard",
-      "tags": [],
-      "title": "Staff"
-    },
-    {
-      "aiSummary": null,
-      "closenessTier": null,
-      "company": "Acme",
+      "dateMet": null,
       "email": "grace@acme.test",
       "filterMatched": true,
       "fullName": "Grace Hopper",
-      "id": "<id:4>",
+      "howMet": null,
+      "id": "<id:3>",
       "industry": null,
       "keyFacts": [],
+      "linkedinUrl": null,
       "location": null,
       "matchedArms": [
         "fts"
       ],
+      "nextFollowUpAt": "2026-09-05T12:00:00.000Z",
       "notes": null,
       "opportunities": [],
+      "phone": null,
       "preferredName": null,
       "priorityLevel": 1,
       "relationshipScore": 5,
-      "relevance": 0.9682539682539681,
-      "rrfScore": 0.015873015873015872,
+      "relevance": 0.9838709677419354,
+      "rrfScore": 0.016129032258064516,
       "school": "Yale",
       "tags": [
         "mentor",
         "founder"
       ],
       "title": "Founder"
+    },
+    {
+      "aiSummary": null,
+      "closenessTier": null,
+      "company": "Acme",
+      "dateMet": null,
+      "email": null,
+      "filterMatched": true,
+      "fullName": "Dennis Ritchie",
+      "howMet": null,
+      "id": "<id:4>",
+      "industry": null,
+      "keyFacts": [],
+      "linkedinUrl": null,
+      "location": null,
+      "matchedArms": [
+        "fts"
+      ],
+      "nextFollowUpAt": "2026-09-11T12:00:00.000Z",
+      "notes": null,
+      "opportunities": [],
+      "phone": null,
+      "preferredName": null,
+      "priorityLevel": 0,
+      "relationshipScore": 3,
+      "relevance": 0.9682539682539681,
+      "rrfScore": 0.015873015873015872,
+      "school": "Harvard",
+      "tags": [],
+      "title": "Staff"
     }
   ],
   "route": {
@@ -362,7 +412,7 @@
     "recruiters": false,
     "shape": "open"
   },
-  "scopedQuestion": "[Today is 2026-09-15.]\n\n[The user has 10 contacts in total; the Contacts list below is only the 3 most relevant to this question.]\n\nWho do I know at Acme?",
+  "scopedQuestion": "[Today is 2026-09-15. Now: Tuesday 2026-09-15 12:00 in the user's time zone, UTC.]\n\n[The user has 10 contacts in total; the Contacts list below is only the 3 most relevant to this question.]\n\nWho do I know at Acme?",
   "searchNotice": null,
   "snippets": {
     "<map>": [
@@ -383,9 +433,9 @@
         {
           "timeline": [
             {
-              "date": "2026-09-08",
+              "date": "2026-09-05",
               "id": "<id:6>",
-              "line": "2026-09-08 · 1:1 Meeting: Talked with Dennis Ritchie about Acme."
+              "line": "2026-09-05 · 1:1 Meeting: Talked with Grace Hopper about Acme."
             }
           ]
         }
@@ -395,9 +445,9 @@
         {
           "timeline": [
             {
-              "date": "2026-09-05",
+              "date": "2026-09-08",
               "id": "<id:7>",
-              "line": "2026-09-05 · 1:1 Meeting: Talked with Grace Hopper about Acme."
+              "line": "2026-09-08 · 1:1 Meeting: Talked with Dennis Ritchie about Acme."
             }
           ]
         }
@@ -405,6 +455,7 @@
     ]
   },
   "thread": null,
+  "timeZone": "UTC",
   "userContext": null,
   "userSchools": [],
   "writingInstructions": null

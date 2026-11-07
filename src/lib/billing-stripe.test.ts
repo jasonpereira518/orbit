@@ -480,6 +480,7 @@ describe("decideStripeEvent: refunds and disputes", () => {
       userId: USER,
       reason: "dispute_lost",
       periodEnd: Math.floor(NOW.getTime() / 1000),
+      eventAt: NOW,
     });
     assert.deepEqual(summarize(d).bookings, [
       ["dp:dp_1", "refund", 1000, 0],

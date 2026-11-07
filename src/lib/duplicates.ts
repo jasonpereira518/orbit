@@ -32,6 +32,13 @@ export type DuplicateSubject = Pick<
  */
 export const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
+/**
+ * The most a name match can score against someone with a different LinkedIn profile, unless
+ * it looks like one person who changed their profile URL (see `findDuplicateCandidatesIndexed`).
+ * The bare-name tier: a question for the review page, never an automatic merge.
+ */
+export const DIFFERENT_PROFILE_CONFIDENCE = 0.6;
+
 function normalize(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
 }
@@ -80,11 +87,16 @@ export function nameSimilarity(a: string | null | undefined, b: string | null | 
  * MUST stay equal to the `linkedin_slug` generated column in `src/db/index.ts`
  * (`lower(split_part(linkedin_url, '/in/', 2) …)`) — the column and this function are two
  * spellings of one rule, and `contact_identities` rows are written from this one.
+ *
+ * Returns "" when there is no `/in/<slug>`, exactly where the column is NULL. It used to fall
+ * back to the whole normalised URL, which gave a company or school page a non-empty "slug":
+ * two different people pasted with their employer's page then matched at 0.98 and
+ * auto-merged. "" is "no signal" to every caller (no identity key, no duplicate match).
  */
 export function linkedinSlug(url: string | null | undefined) {
   if (!url) return "";
   const slug = extractLinkedInSlug(url);
-  return slug !== null ? slug.toLowerCase() : normalize(url);
+  return slug !== null ? slug.toLowerCase() : "";
 }
 
 /**
@@ -376,6 +388,31 @@ export function findDuplicateCandidatesIndexed(
   const matched = new Set<DuplicateSubject>();
   const matches: DuplicateMatch[] = [];
 
+  /**
+   * A name match against someone on a DIFFERENT LinkedIn profile. Two profiles are two
+   * people unless it looks like one person who changed their profile URL: the exact same
+   * name at the same company. Anything else is held below `DUPLICATE_MERGE_CONFIDENCE`, so it
+   * is asked about rather than merged: similar names sharing a title ("Jon Smith"/"John
+   * Smith", both "Software Engineer") were being folded into one contact. A similar name is
+   * never enough on its own here, even at the same company in the same role: two colleagues
+   * can be one letter apart, and a wrong merge costs more than one review prompt.
+   */
+  const nameMatch = (contact: DuplicateSubject, reason: string, confidence: number): DuplicateMatch => {
+    const theirs = linkedin ? linkedinSlug(contact.linkedinUrl) : "";
+    if (!theirs || theirs === linkedin) return { contact, reason, confidence, strong: false };
+    const sameCompany = Boolean(company) && company === normalize(contact.company);
+    const exactName = Boolean(name) && name === normalize(contact.fullName);
+    if (sameCompany && exactName) {
+      return { contact, reason: `${reason} (LinkedIn profile changed)`, confidence, strong: false };
+    }
+    return {
+      contact,
+      reason: `${reason}, different LinkedIn profile`,
+      confidence: Math.min(confidence, DIFFERENT_PROFILE_CONFIDENCE),
+      strong: false,
+    };
+  };
+
   const addAll = (
     contacts: DuplicateSubject[] | undefined,
     reason: string,
@@ -385,7 +422,7 @@ export function findDuplicateCandidatesIndexed(
     for (const contact of contacts || []) {
       if (matched.has(contact)) continue;
       matched.add(contact);
-      matches.push({ contact, reason, confidence, strong });
+      matches.push(strong ? { contact, reason, confidence, strong } : nameMatch(contact, reason, confidence));
     }
   };
 
@@ -408,21 +445,21 @@ export function findDuplicateCandidatesIndexed(
   for (const key of fuzzyBucketKeys(incoming.fullName)) {
     for (const contact of index.fuzzyBuckets.get(key) || []) {
       if (matched.has(contact)) continue;
-      const fuzzy = nameSimilarity(incoming.fullName, contact.fullName);
-      if (fuzzy < 0.88) continue;
+      // A similar name only counts alongside a shared company or title, so those two string
+      // comparisons go first and the edit distance runs only when one of them holds. Same
+      // matches, same order; but buckets grow with the network, and computing the distance
+      // for every member was 53% of an import's CPU (20k-row LinkedIn import, --cpu-prof).
       const sameCompany = company && company === normalize(contact.company);
       const sameTitle = title && title === normalize(contact.title);
+      if (!sameCompany && !sameTitle) continue;
+      const fuzzy = nameSimilarity(incoming.fullName, contact.fullName);
+      if (fuzzy < 0.88) continue;
       if (sameCompany) {
         matched.add(contact);
-        matches.push({
-          contact,
-          reason: "Similar name + company",
-          confidence: 0.87,
-          strong: false,
-        });
+        matches.push(nameMatch(contact, "Similar name + company", 0.87));
       } else if (sameTitle) {
         matched.add(contact);
-        matches.push({ contact, reason: "Similar name + title", confidence: 0.85, strong: false });
+        matches.push(nameMatch(contact, "Similar name + title", 0.85));
       }
     }
   }
@@ -452,4 +489,92 @@ export function daysAgo(date: Date | string | null | undefined) {
   if (!date) return Infinity;
   const d = typeof date === "string" ? new Date(date) : date;
   return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+// ── Loose name candidates (review cards) ──────────────────────────────────────────────
+
+/**
+ * Common English nickname ↔ given-name pairs. Both directions are looked up.
+ * ponytail: a short table, not a nickname database; add pairs as misses show up.
+ */
+const NICKNAMES: Record<string, string[]> = {
+  alex: ["alexander", "alexandra", "alexis"], andy: ["andrew"], drew: ["andrew"],
+  ben: ["benjamin"], bill: ["william"], will: ["william"], liam: ["william"],
+  bob: ["robert"], rob: ["robert"], bobby: ["robert"], chris: ["christopher", "christina", "christine"],
+  dan: ["daniel"], danny: ["daniel"], dave: ["david"], ed: ["edward"], eddie: ["edward"],
+  jim: ["james"], jimmy: ["james"], jamie: ["james"], joe: ["joseph"], joey: ["joseph"],
+  jon: ["jonathan"], john: ["jonathan"], kate: ["katherine", "kathryn", "catherine"],
+  katie: ["katherine", "kathryn", "catherine"], liz: ["elizabeth"], beth: ["elizabeth"],
+  matt: ["matthew"], mike: ["michael"], mick: ["michael"], nick: ["nicholas"],
+  pat: ["patrick", "patricia"], pete: ["peter"], rich: ["richard"], rick: ["richard"],
+  sam: ["samuel", "samantha"], steve: ["steven", "stephen"], sue: ["susan"],
+  tom: ["thomas"], tony: ["anthony"], vic: ["victor", "victoria"], zach: ["zachary"],
+  jen: ["jennifer"], jenny: ["jennifer"], meg: ["megan", "margaret"], greg: ["gregory"],
+  jeff: ["jeffrey"], josh: ["joshua"], nate: ["nathan", "nathaniel"], tim: ["timothy"],
+  ken: ["kenneth"], larry: ["lawrence"], abby: ["abigail"], becky: ["rebecca"],
+};
+
+function sameGivenName(a: string, b: string): boolean {
+  if (a === b) return true;
+  return Boolean(NICKNAMES[a]?.includes(b) || NICKNAMES[b]?.includes(a));
+}
+
+export type LooseNameSubject = DuplicateSubject & {
+  preferredName?: string | null;
+  lastInteractionAt?: Date | string | null;
+};
+
+/**
+ * Candidates the exact matcher cannot see, for a review card to OFFER (never to merge on):
+ * "Mike" or "Mike Torres" for Michael Torres, "Jose Ruiz" for José Ruiz, a first name the
+ * user only ever wrote alone. Every score stays below `DUPLICATE_MERGE_CONFIDENCE` except
+ * an accent-only difference with the same company, which is the exact tier spelled twice.
+ */
+export function findLooseNameCandidates<T extends LooseNameSubject>(
+  existing: readonly T[],
+  incoming: { fullName?: string | null; company?: string | null },
+): DuplicateMatch<T>[] {
+  const tokens = normalizeName(incoming.fullName).split(" ").filter(Boolean);
+  if (!tokens.length) return [];
+  const folded = tokens.join(" ");
+  const company = normalizeName(incoming.company);
+  const first = tokens[0];
+  const last = tokens.length > 1 ? tokens[tokens.length - 1] : null;
+
+  const out: DuplicateMatch<T>[] = [];
+  const firstOnly: T[] = [];
+  for (const c of existing) {
+    const theirTokens = normalizeName(c.fullName).split(" ").filter(Boolean);
+    if (!theirTokens.length) continue;
+    const theirs = theirTokens.join(" ");
+    const sameCompany = Boolean(company) && company === normalizeName(c.company);
+    if (theirs === folded) {
+      out.push({ contact: c, reason: sameCompany ? "Same name + company" : "Same name", confidence: sameCompany ? 0.9 : 0.6, strong: false });
+      continue;
+    }
+    const theirFirst = theirTokens[0];
+    const preferred = normalizeName(c.preferredName);
+    const givenMatches = sameGivenName(first, theirFirst) || (preferred && sameGivenName(first, preferred));
+    if (!givenMatches) continue;
+    if (last) {
+      if (theirTokens.length > 1 && theirTokens[theirTokens.length - 1] === last) {
+        out.push({ contact: c, reason: "Same surname, nickname of their first name", confidence: sameCompany ? 0.8 : 0.7, strong: false });
+      }
+    } else {
+      firstOnly.push(c);
+    }
+  }
+
+  // A first name alone: one contact by that name is a good guess, several are a short list.
+  if (firstOnly.length === 1) {
+    out.push({ contact: firstOnly[0], reason: "Only contact with this first name", confidence: 0.7, strong: false });
+  } else if (firstOnly.length > 1) {
+    const recency = (c: T) => (c.lastInteractionAt ? new Date(c.lastInteractionAt).getTime() : 0);
+    const sameCo = (c: T) => (company && company === normalizeName(c.company) ? 1 : 0);
+    firstOnly
+      .sort((a, b) => sameCo(b) - sameCo(a) || recency(b) - recency(a))
+      .slice(0, 5)
+      .forEach((c) => out.push({ contact: c, reason: "Same first name", confidence: sameCo(c) ? 0.7 : 0.6, strong: false }));
+  }
+  return out.sort((a, b) => b.confidence - a.confidence);
 }

@@ -25,6 +25,7 @@ import {
 import { loadManagedAiOpsFacts } from "@/lib/managed-ai-ops";
 import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
 import { prunePageViews } from "@/lib/page-views";
+import { loadProductOpsFacts } from "@/lib/product-ops";
 import { formatWeeklyCostReport, isoWeekKey, loadSpendOpsFacts, loadWeeklyCostReport, weeklyReportDue } from "@/lib/spend-ops";
 import { reportAndContinue, reportError } from "@/lib/report-error";
 
@@ -59,6 +60,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     lastRadarFeeds,
     lastRadarDigest,
     lastWorkHistoryRun,
+    lastEmailIntelRun,
     webhooks,
     issues,
     outreach,
@@ -78,6 +80,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     syncOldestDueAgeMs,
     [aiSecurityRow],
     spend,
+    product,
   ] = await Promise.all([
       db
         .select()
@@ -119,6 +122,12 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "work-history.sweep"))
+        .orderBy(desc(cronRuns.startedAt))
+        .limit(1),
+      db
+        .select()
+        .from(cronRuns)
+        .where(eq(cronRuns.job, "email-intel.sweep"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
       recentWebhookOutcomes(5, now),
@@ -206,6 +215,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         reportError(err, { where: "job.ops-sweep.spend", level: "warning" });
         return undefined;
       }),
+      loadProductOpsFacts(now).catch((err) => {
+        reportError(err, { where: "job.ops-sweep.product", level: "warning" });
+        return undefined;
+      }),
     ]);
 
   const bySource = new Map(errorsLastHour.map((r) => [r.source, r.n]));
@@ -243,6 +256,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const radarFeeds = lastRadarFeeds[0];
   const radarDigest = lastRadarDigest[0];
   const workHistoryRun = lastWorkHistoryRun[0];
+  const emailIntelRun = lastEmailIntelRun[0];
   return {
     cron: {
       processStalled: {
@@ -276,6 +290,10 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       workHistory: {
         lastStartedAt: workHistoryRun?.startedAt ?? null,
         lastState: workHistoryRun ? deriveCronRunState(workHistoryRun, now) : null,
+      },
+      emailIntel: {
+        lastStartedAt: emailIntelRun?.startedAt ?? null,
+        lastState: emailIntelRun ? deriveCronRunState(emailIntelRun, now) : null,
       },
     },
     processStalledRecent: lastNightly.map((r) => deriveCronRunState(r, now)),
@@ -330,6 +348,7 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     stuckPurges: stuckPurgeRow?.n ?? 0,
     managedAi,
     spend,
+    product,
   };
 }
 

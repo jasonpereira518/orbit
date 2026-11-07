@@ -9,7 +9,6 @@ import { describe, it } from "node:test";
 import { z } from "zod";
 import { parseAiJson } from "@/lib/ai";
 import {
-  chatAnswerJsonSchema,
   chatRefineReplySchema,
   chatTitleReplySchema,
   companyResearchSchema,
@@ -72,40 +71,6 @@ describe("excerptRetrySchema", () => {
   it("allows no excerpts, rejects a non-array", () => {
     assert.equal(excerptRetrySchema.parse({}).excerpts, undefined);
     assert.equal(excerptRetrySchema.safeParse({ excerpts: "none" }).success, false);
-  });
-});
-
-describe("chatAnswerJsonSchema", () => {
-  const rec = {
-    contact_id: null,
-    recruiter_id: "r1",
-    name: "Grace",
-    reason: "knows the team",
-    suggested_action: "email",
-    draft_message: null,
-  };
-  it("passes a well-formed answer through", () => {
-    const out = chatAnswerJsonSchema.parse({ answer: "Ask Grace.", recommendations: [rec], proposed_actions: [{ type: "x" }] });
-    assert.equal(out.answer, "Ask Grace.");
-    assert.deepEqual(out.recommendations, [rec]);
-    assert.deepEqual(out.proposed_actions, [{ type: "x" }]);
-  });
-  it("turns absent or mistyped sections into empty ones instead of a later TypeError", () => {
-    assert.deepEqual(chatAnswerJsonSchema.parse({}), { answer: "", recommendations: [], proposed_actions: [] });
-    assert.deepEqual(chatAnswerJsonSchema.parse({ answer: 5, recommendations: "none", proposed_actions: {} }), {
-      answer: "",
-      recommendations: [],
-      proposed_actions: [],
-    });
-  });
-  it("drops a malformed recommendation and keeps the others", () => {
-    const out = chatAnswerJsonSchema.parse({ answer: "a", recommendations: [rec, null, { name: "x" }, "y"] });
-    assert.deepEqual(out.recommendations, [rec]);
-  });
-  it("rejects a reply that is not an object", () => {
-    for (const bad of [null, "answer", 5, []]) {
-      assert.equal(chatAnswerJsonSchema.safeParse(bad).success, false, JSON.stringify(bad));
-    }
   });
 });
 

@@ -18,10 +18,10 @@ import {
   type DisconnectProvider,
 } from "@/lib/data-categories";
 
-const NAMES: Record<DisconnectProvider, string> = { gmail: "Google", outlook: "Outlook" };
+const NAMES: Record<DisconnectProvider, string> = { gmail: "Google", outlook: "Outlook", granola: "Granola" };
 
 /**
- * One confirmation for every Gmail/Outlook Disconnect button. DB-free imports only.
+ * One confirmation for every account page's Disconnect (Google, Outlook, Granola). DB-free imports only.
  *
  * Opens itself from its own outline button, unless a caller passes `open` — the account
  * pages reach Disconnect through the header's ⋯ menu, which is the trigger, so there the
@@ -89,6 +89,8 @@ export function DisconnectAccountDialog({
             <DialogDescription>
               {provider === "gmail" ? (
                 <>Orbit deletes its copy of the sign-in and asks Google to revoke its access.</>
+              ) : provider === "granola" ? (
+                <>Orbit stops bringing in new notes and deletes its copy of the sign-in.</>
               ) : (
                 <>
                   Orbit deletes its copy of the sign-in. Microsoft doesn’t let apps revoke their
@@ -128,8 +130,8 @@ export function DisconnectAccountDialog({
             </label>
           ) : (
             <p className="text-xs leading-snug text-muted-foreground">
-              Contacts imported from {name} stay in Orbit. Delete them from Contacts, or remove
-              everything in Settings → Data and privacy.
+              {provider === "granola" ? "Contacts and meetings" : "Contacts"} imported from {name} stay in
+              Orbit. Delete them from Contacts, or remove everything in Settings → Data and privacy.
             </p>
           )}
 

@@ -11,6 +11,7 @@ import { speechAllowance } from "@/lib/speech-quota";
 import { RATE_LIMITS } from "@/lib/rate-limit";
 import { withRateLimit } from "@/lib/route-http";
 import { reportedFailure } from "@/lib/report-error";
+import { recordGateRefusal } from "@/lib/gate-refusal";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +105,10 @@ export async function POST(request: Request, ctx: Params) {
   // seconds to reach its own three-hour limit.
   const inProgress = await meetingHasAudio(session.id);
   if (allowance.exhausted && !inProgress) {
+    await recordGateRefusal(userId, "speechMeeting", {
+      surface: "web",
+      route: "/api/capture/meetings/[id]/stream-token",
+    });
     return NextResponse.json(
       { error: "You’ve used this month’s meeting transcription minutes", code: "quota-spent" },
       { status: 402 },

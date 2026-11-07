@@ -1,6 +1,7 @@
 import { getDb } from "@/db";
 import { errorEvents } from "@/db/schema";
 import { toUserFacingError } from "@/lib/errors";
+import { scrubText } from "@/lib/sentry-scrub";
 
 /**
  * Failures that would otherwise vanish into a `catch {}`.
@@ -44,6 +45,7 @@ export const ERROR_SOURCES = {
    */
   eventPageFetch: "event.page_fetch",
   oauthEventbriteCallback: "oauth.eventbrite.callback",
+  oauthGranolaCallback: "oauth.granola.callback",
   /**
    * A CalDAV request to iCloud (`src/lib/caldav/client.ts`) exhausted its retries. Kept
    * apart from `eventPageFetch` deliberately — the two share `guardedFetchText`'s retry
@@ -175,8 +177,10 @@ export async function recordErrorEvent(input: ErrorEventInput): Promise<void> {
       source: input.source,
       kind: input.kind,
       userId: input.userId ?? null,
+      // Scrubbed like a Sentry event is: a failure thrown over a contact or a send names an
+      // email address, and this row is read verbatim on /admin/health and kept 30 days.
       message: input.message
-        ? toUserFacingError(input.message, "Unknown error").message.slice(0, 500)
+        ? scrubText(toUserFacingError(input.message, "Unknown error").message).slice(0, 500)
         : null,
       context: boundedContext(input.context),
     });

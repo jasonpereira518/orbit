@@ -186,7 +186,7 @@ function StepMarker({
  * on the first/last marker at the very ends of the range, where sub-pixel
  * scroll jitter would make it look stuck. */
 const DOT_RUN: [number, number] = [0.04, 0.96];
-/** How far ahead of the dot a step starts fading up, and how long the marker
+/** How far ahead of the dot a step starts sliding in, and how long the marker
  * takes to fill once the dot is on it. */
 const COPY_LEAD = 0.07;
 const MARK_FILL = 0.02;
@@ -236,9 +236,6 @@ function StepRow({
   arrival: number;
   reduced: boolean;
 }) {
-  const opacity = useTransform(p, (v) =>
-    scrub01(v, arrival - COPY_LEAD, arrival + MARK_FILL)
-  );
   const x = useTransform(p, (v) =>
     14 * (1 - scrub01(v, arrival - COPY_LEAD, arrival + MARK_FILL))
   );
@@ -249,10 +246,12 @@ function StepRow({
   return (
     <motion.li
       className="relative flex gap-4"
-      // Resting values, not `undefined`, under reduced motion: the preference is learned after
-      // the first render, and dropping the style prop left Motion's last inline opacity on the
-      // row, so every step stayed dimmed (3.3:1 captions).
-      style={reduced ? { opacity: 1, x: 0 } : { opacity, x }}
+      // The text is always fully opaque: it used to fade in on the same scroll as the dot, so
+      // steps the dot had not reached sat on screen invisible or dimmed (down to 1.5:1). The
+      // dot filling in and this small slide carry the progress. Resting values, not
+      // `undefined`, under reduced motion: the preference is learned after the first render,
+      // and dropping a style key leaves Motion's last inline value behind.
+      style={reduced ? { opacity: 1, x: 0 } : { opacity: 1, x }}
     >
       <span
         data-step-marker

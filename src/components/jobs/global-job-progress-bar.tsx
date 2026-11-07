@@ -79,7 +79,7 @@ export function GlobalJobProgressBar() {
   return (
     <div
       ref={stackRef}
-      className="fixed bottom-(--orbit-corner-bottom) right-(--orbit-corner-right) z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2"
+      className="fixed bottom-(--orbit-corner-bottom) right-(--orbit-toast-right) z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2"
       role="status"
       aria-live="polite"
     >

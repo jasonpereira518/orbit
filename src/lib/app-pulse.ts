@@ -1,5 +1,6 @@
 import { entitlementsFromSettings } from "@/lib/entitlements";
 import { reportAndContinue } from "@/lib/report-error";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { loadNotificationPanel } from "@/lib/notification-panel";
 import type { AccountHealthContext } from "@/lib/account-health";
 import { ensureUserSettings } from "@/lib/user-settings";
@@ -58,7 +59,7 @@ export async function loadAppPulse(
   loadedSettings?: AccountHealthContext["settings"]
 ): Promise<AppPulse> {
   const settings = loadedSettings ?? (await ensureUserSettings(userId));
-  const entitlements = entitlementsFromSettings(userId, settings);
+  const entitlements = entitlementsFromSettings(userId, settings, await getEffectivePlanConfig());
   const [rawPanel, canOpenAdmin, nextMeeting, unloggedMeeting] = await Promise.all([
     // One visibility read for both gated rows (what `isSurfaceLive` checks, per key).
     resolveSurfaceVisibility(userId).then(({ hidden, comingSoon }) => {

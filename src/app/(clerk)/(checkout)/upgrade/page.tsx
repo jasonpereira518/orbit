@@ -16,6 +16,8 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
+import { isKnownGate } from "@/lib/gate-events";
 import { foundingAppliesToNewSubscription } from "@/lib/founding";
 import { CREDIT_PACK_PRICE_LABEL, isCheckoutConfigured } from "@/lib/stripe-config";
 
@@ -54,17 +56,28 @@ const TRUST = [
  * split across two files; `UpgradeTransition`'s `maxOrder` must stay in step with the
  * highest slot used anywhere in the tree (currently the trust row's 5).
  */
-export default async function UpgradePage() {
+export default async function UpgradePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   // Protected by proxy.ts, but resolved here too so the page never renders without a user
   // to attribute a purchase to.
   const userId = await requireUserId();
+  // `?gate=<feature>`: which paywall sent them. Used only to attribute the checkout that
+  // follows (`checkout_started.from_gate`); anything that is not a known gate key is dropped,
+  // so a hand-edited URL changes nothing on the page or in the event.
+  const rawGate = (await searchParams).gate;
+  const firstGate = Array.isArray(rawGate) ? rawGate[0] : rawGate;
+  const gate = isKnownGate(firstGate) ? firstGate : null;
   const db = await getDb();
-  const [entitlements, row] = await Promise.all([
+  const [entitlements, row, config] = await Promise.all([
     getEntitlements(userId),
     db.query.userSettings.findFirst({
       where: eq(userSettings.userId, userId),
       columns: { foundingEligible: true, foundingRedeemedAt: true },
     }),
+    getEffectivePlanConfig(),
   ]);
   const onPaidPlan = entitlements.plan !== "free";
 
@@ -122,6 +135,8 @@ export default async function UpgradePage() {
             currentPlan={entitlements.plan}
             founding={foundingAppliesToNewSubscription(row)}
             checkoutOpen={isCheckoutConfigured()}
+            gate={gate}
+            config={config}
           />
 
           {!onPaidPlan && (

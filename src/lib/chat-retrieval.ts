@@ -2,6 +2,7 @@ import { completeJson, parseAiJson } from "@/lib/ai";
 import { rerankReplySchema } from "@/lib/ai-reply-schemas";
 import { RERANK_TUNING, rerankQuestion } from "@/lib/decisions/catalog";
 import { askPerItem, type Decider } from "@/lib/decisions/jev";
+import { sanitizeProfileLine } from "@/lib/contact-profile-format";
 import type { RankedContact, SearchFilters } from "@/lib/hybrid-search";
 import { pickNoteWindow } from "@/lib/note-window";
 import { withTimeout } from "@/lib/async";
@@ -262,7 +263,9 @@ export async function understandQuery(
     const content = await withTimeout(
       completeFn(userId, {
         operation: "chat.understand",
-            temperature: 0,
+        temperature: 0,
+        // Cancels the request itself when the stage gives up, instead of leaving it to bill on.
+        signal: AbortSignal.timeout(UNDERSTAND_TIMEOUT_MS),
         maxOutputTokens: 512,
         system: UNDERSTAND_SYSTEM,
         user: `${todayBlock}${aboutBlock}${goalsBlock}${historyBlock}Question: ${question}`,
@@ -289,13 +292,34 @@ const RERANK_MIN_SURVIVORS = 3;
 
 const RERANK_SYSTEM = `You score how relevant each candidate contact is to the user's question about their network.
 10 = directly answers the question. 5 = plausibly useful. 0 = unrelated.
-Judge from the card text only. Score every candidate you were given, using their exact ids.
+Judge from the card text only. Score every candidate you were given, using their exact ids (c01, c02, …).
 Candidates marked matches_filters=no did not satisfy the user's explicit filters and were included only as backup — prefer matches_filters=yes candidates when relevance is comparable.
 Return JSON: {"scores": [{"id": string, "relevance": number}]}`;
 
-function candidateCard(c: RankedContact): string {
+/**
+ * The short id a candidate goes by in the rerank prompt. A 36-character UUID is a dozen
+ * tokens, the model writes one back for every candidate it scores, and sixty of them is most of
+ * the answer's 2048-token cap: the same scores in `c01`-style ids are about a third the output.
+ */
+export function rerankAlias(index: number): string {
+  return `c${String(index + 1).padStart(2, "0")}`;
+}
+
+/** The candidate an id from the model means: its alias in any case or padding, or its real id. */
+export function resolveRerankId<T extends { id: string }>(
+  raw: string,
+  candidates: readonly T[],
+): T | undefined {
+  // A real id first: it can never be mistaken for a position, whatever it looks like.
+  const exact = candidates.find((c) => c.id === raw);
+  if (exact) return exact;
+  const digits = /^c0*(\d+)$/i.exec(raw.trim())?.[1];
+  return digits ? candidates[Number(digits) - 1] : undefined;
+}
+
+function candidateCard(c: RankedContact, index: number): string {
   const summary = (c.aiSummary || c.notes || "").replace(/\s+/g, " ").slice(0, 160);
-  return `[id=${c.id}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | school=${c.school || "?"} | location=${c.location || "?"} | industry=${c.industry || "?"} | tier=${c.closenessTier || "?"} | tags=${c.tags.join(",") || "-"}${summary ? ` | ${summary}` : ""} | matches_filters=${c.filterMatched ? "yes" : "no"}`;
+  return `[id=${rerankAlias(index)}] ${c.fullName} | ${c.title || "?"} @ ${c.company || "?"} | school=${c.school || "?"} | location=${c.location || "?"} | industry=${c.industry || "?"} | tier=${c.closenessTier || "?"} | tags=${c.tags.join(",") || "-"}${summary ? ` | ${summary}` : ""} | matches_filters=${c.filterMatched ? "yes" : "no"}`;
 }
 
 /**
@@ -434,7 +458,7 @@ export async function rerankCandidatesWithEngine(
             ? `Looking for: ${semanticQuery.trim()}`
             : "",
           "",
-          `Candidates:\n${candidates.map(candidateCard).join("\n")}`,
+          `Candidates:\n${candidates.map((c, i) => candidateCard(c, i)).join("\n")}`,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -443,22 +467,27 @@ export async function rerankCandidatesWithEngine(
       "stage timeout"
     );
     const parsed = parseAiJson(rerankReplySchema, content);
-    const byId = new Map(candidates.map((c) => [c.id, c]));
+    // Each id is checked against the candidates that were offered; an id nobody was offered
+    // (invented, or out of range) is dropped, and a candidate scored twice counts once.
+    const seen = new Set<string>();
     const scored = (parsed.scores ?? [])
-      .filter(
-        (s): s is { id: string; relevance: number } =>
-          typeof s.id === "string" && byId.has(s.id) && typeof s.relevance === "number"
-      )
+      .flatMap((s) => {
+        if (typeof s.id !== "string" || typeof s.relevance !== "number") return [];
+        const contact = resolveRerankId(s.id, candidates);
+        if (!contact || seen.has(contact.id)) return [];
+        seen.add(contact.id);
+        return [{ contact, relevance: s.relevance }];
+      })
       .sort((a, b) => b.relevance - a.relevance);
 
     const kept = scored
       .filter((s) => s.relevance >= RERANK_MIN_RELEVANCE)
       .slice(0, FINAL_CONTACT_COUNT)
-      .map((s) => byId.get(s.id)!);
+      .map((s) => s.contact);
     if (kept.length >= RERANK_MIN_SURVIVORS) return { contacts: kept, engine: "llm" };
 
     // Threshold starved the set — trust the model's ordering for a smaller page.
-    const ordered = scored.slice(0, 5).map((s) => byId.get(s.id)!);
+    const ordered = scored.slice(0, 5).map((s) => s.contact);
     return ordered.length > 0 ? { contacts: ordered, engine: "llm" } : searchOrder();
   } catch {
     return searchOrder();
@@ -496,7 +525,54 @@ export type BudgetedContact = {
   /** Compact career summary — "Ramp, ex-Stripe · MIT". Null when no profile is stored. */
   career: string | null;
   school: string | null;
+  /**
+   * Contact details and relationship facts as one sanitized line — email, phone, LinkedIn,
+   * how and when you met, industry, closeness, the next follow-up and open opportunities —
+   * or null when none is recorded. See `contactDetailsLine`.
+   */
+  details: string | null;
 };
+
+/** One field of a details line: sanitized, capped, null when blank. */
+function detail(label: string, value: string | null | undefined, max = 160): string | null {
+  const clean = value ? sanitizeProfileLine(value).slice(0, max) : "";
+  return clean ? `${label} ${clean}` : null;
+}
+
+function isoDay(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+/**
+ * The contact-card facts a question like "what's Maya's email?" or "how did I meet Omar?"
+ * turns on. They were never in the prompt: search found the right person and the model
+ * still had to say it did not know. Every value is the user's own record or an import,
+ * sanitized to one line — the row this joins is inside the CONTACTS fence either way.
+ */
+export function contactDetailsLine(c: RankedContact): string | null {
+  const met = [c.howMet ? sanitizeProfileLine(c.howMet).slice(0, 160) : "", isoDay(c.dateMet) ?? ""]
+    .filter(Boolean)
+    .join(", ");
+  const parts = [
+    detail("email", c.email),
+    detail("phone", c.phone, 40),
+    detail("LinkedIn", c.linkedinUrl, 200),
+    met ? `met ${met}` : null,
+    detail("industry", c.industry, 80),
+    detail("closeness", c.closenessTier, 40),
+    isoDay(c.nextFollowUpAt) ? `follow-up due ${isoDay(c.nextFollowUpAt)}` : null,
+    c.opportunities?.length
+      ? `open opportunities: ${c.opportunities
+          .slice(0, 3)
+          .map((o) => sanitizeProfileLine(o).slice(0, 120))
+          .filter(Boolean)
+          .join("; ")}`
+      : null,
+  ].filter((p): p is string => Boolean(p));
+  return parts.length ? parts.join(" | ") : null;
+}
 
 /**
  * Per-contact context caps by rank tier, under one total character budget
@@ -553,13 +629,14 @@ export function budgetContactsContext(
       .slice(0, tier.entries)
       .map((entry) => ({ ...entry, line: entry.line.slice(0, tier.entryChars) }));
     const career = careerLines.get(c.id) ?? null;
+    const details = contactDetailsLine(c);
 
     const cost =
       c.fullName.length + (c.company?.length ?? 0) + (c.title?.length ?? 0) +
       (c.location?.length ?? 0) +
       (notes?.length ?? 0) + (aiSummary?.length ?? 0) + (career?.length ?? 0) + (c.school?.length ?? 0) +
       keyFacts.join("").length + timeline.map((t) => t.line).join("").length +
-      c.tags.join("").length + 80; // formatting overhead
+      (details?.length ?? 0) + c.tags.join("").length + 80; // formatting overhead
     // Budget exhaustion stops serialization entirely — a later, cheaper
     // contact must not be appended out of rank order once we've run dry.
     if (spent + cost > TOTAL_CONTEXT_CHAR_BUDGET && out.length > 0) break;
@@ -580,6 +657,7 @@ export function budgetContactsContext(
       relevance: c.relevance,
       career,
       school: c.school ?? null,
+      details,
     });
   }
   return out;

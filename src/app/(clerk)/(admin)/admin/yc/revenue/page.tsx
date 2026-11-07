@@ -22,6 +22,7 @@ function signed(cents: number) {
 export default async function RevenuePage() {
   const {
     mrrUsd,
+    pastDueUsd,
     subscriberGrowthPct,
     newSubscribers30d,
     newSubscribersPrior30d,
@@ -51,7 +52,9 @@ export default async function RevenuePage() {
           <MetricTile
             label="MRR"
             value={`$${Math.round(mrrUsd).toLocaleString()}`}
-            hint="recurring, excludes comps and one-time sales"
+            hint={`recurring; excludes comps, internal accounts and one-time sales${
+              pastDueUsd > 0 ? ` · includes ${usd(pastDueUsd * 100)} past due` : ""
+            }`}
           />
           <MetricTile
             label="Subscriber growth"
@@ -119,7 +122,7 @@ export default async function RevenuePage() {
               label="Cash in (30d)"
               value={usd(movement.cashInCents)}
               tone="muted"
-              hint="payments and one-time sales"
+              hint="payments, Lifetime and credit packs"
             />
             <MetricTile
               label="Refunded"

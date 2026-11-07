@@ -9,9 +9,8 @@ import {
   RelativeTime,
   Td,
   Th,
-  TrendBars,
 } from "@/components/admin/primitives";
-import { MoneyTabs } from "@/components/admin/money-tabs";
+import { MoneyTabs } from "@/components/admin/admin-tabs";
 import { formatCents } from "@/lib/format-money";
 import {
   ADMIN_AGGREGATES_TTL_MS,
@@ -20,14 +19,15 @@ import {
   subscriptionsNeedingAttention,
 } from "@/lib/admin-metrics";
 import { mrrReconciliation } from "@/lib/billing-events";
-import { loadCreditsMoney, planDistribution } from "@/lib/credits/admin-credits";
-import { getManagedAiSwitchState } from "@/lib/managed-ai-switch";
-import { ManagedAiSwitch } from "@/components/admin/managed-ai-switch";
+import { loadCreditsMoney } from "@/lib/credits/admin-credits";
+import { getManagedAiSwitchState, getWebSearchSwitchState } from "@/lib/managed-ai-switch";
+import { ManagedAiSwitch, WebSearchSwitch } from "@/components/admin/managed-ai-switch";
+import { LIFETIME_INTRO_PRICE, LIFETIME_STANDARD_PRICE } from "@/lib/plan-limits";
 import { PLAN_CONFIG, PLAN_LABELS } from "@/lib/plans/plan-config";
 import {
   compedForegoneCents,
   cashFlowSeries,
-  mrrMovementSeries,
+  lifetimeSales,
   recentMovements,
   revenueAtRiskCents,
 } from "@/lib/money-metrics";
@@ -35,8 +35,6 @@ import { countLifetimePurchases } from "@/lib/user-settings";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Admin · Money" };
-
-const MONTH = new Intl.DateTimeFormat("en", { month: "short", timeZone: "UTC" });
 
 /**
  * Money in, money out, and whether either number can be trusted.
@@ -51,9 +49,9 @@ const MONTH = new Intl.DateTimeFormat("en", { month: "short", timeZone: "UTC" })
 export default async function AdminMoneyPage() {
   const [
     rows,
-    lifetimeSold,
+    lifetimeHolders,
+    lifetime,
     reconciliation,
-    movements,
     flow,
     atRisk,
     comps,
@@ -62,23 +60,27 @@ export default async function AdminMoneyPage() {
     // Plans and billing columns come from user_settings and are always live; only the
     // per-account counts may lag, by the same TTL the overview uses.
     loadAdminUserRows({ aggregatesMaxAgeMs: ADMIN_AGGREGATES_TTL_MS }),
+    // Holders: accounts that hold Lifetime right now. Sold: the ledger's count, net of refunds.
     countLifetimePurchases().catch(() => 0),
+    lifetimeSales(),
+    // Live MRR (and its past-due part) rides inside the reconciliation: one read of live state.
     mrrReconciliation(),
-    mrrMovementSeries("month", 6),
-    cashFlowSeries(3),
+    // Only this month is shown, so only this month is read. The 6-month shape is on Revenue.
+    cashFlowSeries(1),
     revenueAtRiskCents(),
     compedForegoneCents(),
     recentMovements(12),
   ]);
 
   const spendable = new Set(rows.filter((r) => PLAN_CONFIG[r.plan].features.creditPacks).map((r) => r.userId));
-  const [credits, distribution, managedSwitch] = await Promise.all([
+  const [credits, managedSwitch, webSearchSwitch] = await Promise.all([
     loadCreditsMoney(spendable),
-    planDistribution(rows),
     getManagedAiSwitchState(),
+    getWebSearchSwitchState(),
   ]);
 
   const plans = buildPlanBreakdown(rows);
+  const onPlan = (plan: keyof typeof PLAN_LABELS) => rows.filter((r) => r.plan === plan).length;
   const needsAttention = subscriptionsNeedingAttention(rows);
   const thisMonth = flow.at(-1);
   const drift = reconciliation.driftCents;
@@ -93,7 +95,11 @@ export default async function AdminMoneyPage() {
               {formatCents(reconciliation.liveCents)}
             </span>
             /mo recurring ·{" "}
-            <span className="tabular-nums">{lifetimeSold}</span> Lifetime sold ·{" "}
+            {(["free", "orbit", "max", "lifetime"] as const).map((plan) => (
+              <span key={plan}>
+                <span className="tabular-nums">{onPlan(plan)}</span> {PLAN_LABELS[plan]} ·{" "}
+              </span>
+            ))}
             <span className="tabular-nums">{plans.comped}</span> comped
           </>
         }
@@ -154,7 +160,11 @@ export default async function AdminMoneyPage() {
           <MetricTile
             label="Net MRR"
             value={formatCents(reconciliation.liveCents)}
-            hint="from live subscription state"
+            hint={
+              reconciliation.pastDueCents > 0
+                ? `live state · includes ${formatCents(reconciliation.pastDueCents)} past due`
+                : "from live subscription state"
+            }
           />
           <MetricTile
             label="ARR"
@@ -164,7 +174,7 @@ export default async function AdminMoneyPage() {
           <MetricTile
             label="Cash in, this month"
             value={formatCents(thisMonth?.cashInCents ?? 0)}
-            hint="invoices, credit packs, legacy Lifetime"
+            hint={`invoices, credit packs, legacy Lifetime · ${thisMonth?.chargeCount ?? 0} charges`}
           />
           <MetricTile
             label="Contribution"
@@ -190,79 +200,88 @@ export default async function AdminMoneyPage() {
           />
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <AdminPanel title="Recurring movement, 6 months">
-            <TrendBars
-              rows={movements.map((m) => ({
-                label: MONTH.format(m.bucketStart),
-                count: Math.round((m.newCents + m.reactivationCents) / 100),
-                secondary: Math.round(Math.abs(m.churnCents + m.contractionCents) / 100),
-                secondaryLabel: "lost",
-              }))}
-              emptyLabel="No recurring movement recorded yet."
-            />
-            <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-              Dollars per month gained, then lost. Whole dollars, not cents — at this
-              volume the cents are noise and the shape is the signal.
-            </p>
-          </AdminPanel>
-
-          <AdminPanel title="Needs a decision">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <MetricTile
-                label="Past due"
-                value={formatCents(atRisk.pastDueCents)}
-                tone={atRisk.pastDueCents > 0 ? "danger" : "muted"}
-                hint="per month, payment failing"
-              />
-              <MetricTile
-                label="Cancelling"
-                value={formatCents(atRisk.cancellingCents)}
-                tone={atRisk.cancellingCents > 0 ? "accent" : "muted"}
-                hint="per month, still paid through"
-              />
-              <MetricTile
-                label="Comped"
-                value={formatCents(comps.foregoneMonthlyCents)}
-                tone={comps.comped > 0 ? "accent" : "muted"}
-                hint={`${comps.comped} accounts, priced at list`}
-              />
-              <MetricTile
-                label="Lifetime sold"
-                value={lifetimeSold}
-                hint="one-time purchases"
-              />
-            </div>
-            <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-              Money, not headcount. &ldquo;Three past due&rdquo; and &ldquo;
-              {formatCents(atRisk.pastDueCents)} past due&rdquo; prompt different
-              decisions, and only one of them is the amount at stake.
-            </p>
-          </AdminPanel>
-        </div>
-
-        <AdminPanel title="Plans">
+        <AdminPanel title="Needs a decision">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div data-plan="free">
-              <MetricTile label={PLAN_LABELS.free} value={distribution.free} hint="accounts" />
-            </div>
-            {(["orbit", "max", "lifetime"] as const).map((plan) => {
-              const d = distribution[plan];
-              return (
-                <div key={plan} data-plan={plan} className="rounded-xl border-l-2 border-tier-border">
-                  <MetricTile
-                    label={PLAN_LABELS[plan]}
-                    value={d.founding + d.standard}
-                    hint={plan === "lifetime" ? "admin-granted or bought before v2" : `${d.founding} founding · ${d.standard} standard`}
-                  />
-                </div>
-              );
-            })}
+            <MetricTile
+              label="Past due"
+              value={formatCents(atRisk.pastDueCents)}
+              tone={atRisk.pastDueCents > 0 ? "danger" : "muted"}
+              hint="per month, payment failing · still counted in MRR"
+            />
+            <MetricTile
+              label="Cancelling"
+              value={formatCents(atRisk.cancellingCents)}
+              tone={atRisk.cancellingCents > 0 ? "accent" : "muted"}
+              hint="per month, still paid through"
+            />
+            <MetricTile
+              label="Comped"
+              value={formatCents(comps.foregoneMonthlyCents)}
+              tone={comps.comped > 0 ? "accent" : "muted"}
+              hint={`${comps.comped} accounts, priced at list`}
+            />
+            <MetricTile
+              label="Lifetime sold"
+              value={lifetime.sold}
+              hint={`Intro ($${LIFETIME_INTRO_PRICE}) ${lifetime.intro} · Standard ($${LIFETIME_STANDARD_PRICE}) ${lifetime.standard}${
+                lifetime.unknown > 0 ? ` · other ${lifetime.unknown}` : ""
+              } · ${formatCents(lifetime.cashCents)} collected · ${lifetimeHolders} holders now`}
+            />
           </div>
           <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-            Founding means a paying subscription whose founding discount is still running. Comped
-            accounts count under their plan and are never founding.
+            Money, not headcount: {formatCents(atRisk.atRiskCents)}/mo at risk in total (past due
+            plus pending cancellations). Lifetime sold is the ledger&apos;s count net of refunds;
+            holders also drop on deletion and revocation, and include admin grants.
           </p>
+
+          <div className="mt-4 border-t border-border/60 pt-4">
+            {needsAttention.length === 0 ? (
+              <EmptyState>Every subscription is current.</EmptyState>
+            ) : (
+              <AdminTable label="Subscription health" minWidth="sm"
+                head={
+                  <>
+                    <Th>Account</Th>
+                    <Th>Status</Th>
+                    <Th numeric>Access ends</Th>
+                    <Th numeric>Contacts</Th>
+                  </>
+                }
+              >
+                {needsAttention.map((row) => (
+                  <tr key={row.userId} className="border-b border-border/40 last:border-b-0">
+                    <Td>
+                      <Link
+                        href={`/admin/users/${encodeURIComponent(row.userId)}`}
+                        className="hover:text-primary"
+                      >
+                        {row.email ?? row.userId}
+                      </Link>
+                    </Td>
+                    <Td>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1",
+                          row.subscriptionStatus === "past_due" && "text-destructive"
+                        )}
+                      >
+                        {row.subscriptionStatus === "past_due" && (
+                          <AlertTriangle className="size-3" aria-hidden />
+                        )}
+                        {row.subscriptionStatus}
+                      </span>
+                    </Td>
+                    <Td numeric>
+                      {row.subscriptionPeriodEnd
+                        ? row.subscriptionPeriodEnd.toISOString().slice(0, 10)
+                        : "—"}
+                    </Td>
+                    <Td numeric>{row.counts.contacts}</Td>
+                  </tr>
+                ))}
+              </AdminTable>
+            )}
+          </div>
         </AdminPanel>
 
         <AdminPanel title="Credits and included AI, last 30 days">
@@ -312,6 +331,10 @@ export default async function AdminMoneyPage() {
             <ManagedAiSwitch state={managedSwitch} />
           </div>
 
+          <div className="mt-4 border-t border-border/60 pt-4">
+            <WebSearchSwitch state={webSearchSwitch} />
+          </div>
+
           {credits.managedAi.topSpenders.length > 0 && (
             <div className="mt-4 border-t border-border/60 pt-4">
               <AdminTable label="Credits and included AI, last 30 days"
@@ -340,59 +363,11 @@ export default async function AdminMoneyPage() {
           )}
           <p className="mt-3 border-t border-border/60 pt-3 text-xs text-muted-foreground">
             Liability is what buyers paid for the pack credits they have not used yet — the most a
-            refund of every live pack could return. Frozen credits belong to accounts no longer on
-            Pro or Max and come back if they resubscribe. Included AI cost is real model cost on
-            Orbit&apos;s keys; it is also a line of burn on the Runway page.
+            refund of every live pack could return. Frozen credits belong to accounts on a plan where
+            packs cannot be spent (Lifetime) and come back if the account moves to one where they
+            can. Included AI cost is real model cost on Orbit&apos;s keys, on every plan; it is also
+            a line of burn on the Runway page. The switches above pause it, and web search, here.
           </p>
-        </AdminPanel>
-
-        <AdminPanel title="Subscription health">
-          {needsAttention.length === 0 ? (
-            <EmptyState>Every subscription is current.</EmptyState>
-          ) : (
-            <AdminTable label="Subscription health" minWidth="sm"
-              head={
-                <>
-                  <Th>Account</Th>
-                  <Th>Status</Th>
-                  <Th numeric>Access ends</Th>
-                  <Th numeric>Contacts</Th>
-                </>
-              }
-            >
-              {needsAttention.map((row) => (
-                <tr key={row.userId} className="border-b border-border/40 last:border-b-0">
-                  <Td>
-                    <Link
-                      href={`/admin/users/${encodeURIComponent(row.userId)}`}
-                      className="hover:text-primary"
-                    >
-                      {row.email ?? row.userId}
-                    </Link>
-                  </Td>
-                  <Td>
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1",
-                        row.subscriptionStatus === "past_due" && "text-destructive"
-                      )}
-                    >
-                      {row.subscriptionStatus === "past_due" && (
-                        <AlertTriangle className="size-3" aria-hidden />
-                      )}
-                      {row.subscriptionStatus}
-                    </span>
-                  </Td>
-                  <Td numeric>
-                    {row.subscriptionPeriodEnd
-                      ? row.subscriptionPeriodEnd.toISOString().slice(0, 10)
-                      : "—"}
-                  </Td>
-                  <Td numeric>{row.counts.contacts}</Td>
-                </tr>
-              ))}
-            </AdminTable>
-          )}
         </AdminPanel>
 
         <AdminPanel title="Recent movements">

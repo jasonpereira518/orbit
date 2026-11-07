@@ -413,7 +413,49 @@ export async function revokeLifetimePurchase(userId: string): Promise<boolean> {
     .returning();
   return rows.length > 0;
 }
-/** How many one-time Lifetime purchases have been made. Reported in /admin. */
+
+/**
+ * Remember the Lifetime Checkout Session this account just opened, so the AI gate can ask
+ * Stripe about it if the webhook is slow. Overwrites any earlier one — only the latest
+ * attempt can still be paid. See `src/lib/lifetime-checkout.ts`.
+ */
+export async function setPendingLifetimeCheckout(userId: string, sessionId: string) {
+  await ensureUserSettings(userId);
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({
+      lifetimeCheckoutSessionId: sessionId,
+      lifetimeCheckoutStartedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(userSettings.userId, userId));
+}
+
+/**
+ * Forget a pending Lifetime checkout that Stripe says is over (expired, or not ours).
+ *
+ * Conditional on the id, so a stale verdict about an OLD session can never erase a newer
+ * checkout the user opened in the meantime.
+ */
+export async function clearPendingLifetimeCheckout(userId: string, sessionId: string) {
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ lifetimeCheckoutSessionId: null, lifetimeCheckoutStartedAt: null })
+    .where(
+      and(
+        eq(userSettings.userId, userId),
+        eq(userSettings.lifetimeCheckoutSessionId, sessionId)
+      )
+    );
+}
+
+/**
+ * How many accounts HOLD a Lifetime purchase right now ("Lifetime holders" in /admin). Not
+ * "Lifetime sold": a refund or a deleted account lowers this, while a sale stays a sale. The
+ * sales count is the ledger's (`lifetimeSales` in `money-metrics.ts`).
+ */
 export async function countLifetimePurchases() {
   const db = await getDb();
   const [row] = await db

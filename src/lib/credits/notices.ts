@@ -7,7 +7,9 @@ import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
 import { getEntitlements } from "@/lib/entitlements";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { escapeHtml } from "@/lib/interest-list-email";
-import { PLAN_CONFIG, PLAN_LABELS, type Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, PLAN_LABELS, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
+import { nextPlanFor } from "@/lib/ai-access-copy";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS } from "@/lib/stripe-config";
 import { sleep } from "@/lib/async";
 
@@ -90,14 +92,21 @@ function day(d: Date): string {
 }
 
 /** The email, in the app's own voice: what happened, when it resets, and the choices. */
-export function buildCreditEmail(notice: CreditNotice, unsubscribeUrl: string): CreditEmail {
+export function buildCreditEmail(
+  notice: CreditNotice,
+  unsubscribeUrl: string,
+  /** The effective plan table (`getEffectivePlanConfig()`), so packs and the plan above follow an admin's plan rules. */
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+): CreditEmail {
   const plan = PLAN_LABELS[notice.plan];
+  // A paid plan is pitched the one above it; Free hears about credits in-app, not here.
+  const next = notice.plan === "free" ? null : nextPlanFor(notice.plan, config);
   const pack = `$${(CREDIT_PACK_PRICE_CENTS / 100).toFixed(0)} pack of ${CREDIT_PACK_CREDITS} credits`;
   const resets = day(notice.resetsAt);
   const options = [
     // Packs only where the plan can buy one; Lifetime is left with its own key.
-    ...(PLAN_CONFIG[notice.plan].features.creditPacks ? [`add a ${pack}`] : []),
-    ...(notice.plan === "orbit" ? [`move to Orbit Max, which includes ${PLAN_CONFIG.max.monthlyCredits} credits a month`] : []),
+    ...(config[notice.plan].features.creditPacks ? [`add a ${pack}`] : []),
+    ...(next ? [`move to ${PLAN_LABELS[next]}, which includes ${config[next].monthlyCredits} credits a month`] : []),
     "switch to your own AI key, which never uses credits",
   ];
   const choices = options.length > 1 ? `${options.slice(0, -1).join(", ")}, or ${options.at(-1)}` : options[0];
@@ -282,7 +291,10 @@ export async function sendCreditNotices(
       stats.skipped++;
       continue;
     }
-    const balance = await getCreditBalance(c.user_id, ent.plan, null, now, { ensure: false });
+    const [balance, planConfig] = await Promise.all([
+      getCreditBalance(c.user_id, ent.plan, null, now, { ensure: false }),
+      getEffectivePlanConfig(),
+    ]);
     const packCredits = balance.packsFrozen ? 0 : Math.floor(balance.packRemaining / MICROS_PER_CREDIT);
     const unsubscribeUrl = creditEmailUnsubscribeUrl(c.user_id);
     const email = buildCreditEmail(
@@ -294,7 +306,8 @@ export async function sendCreditNotices(
         packCredits,
         resetsAt: new Date(c.period_end),
       },
-      unsubscribeUrl
+      unsubscribeUrl,
+      planConfig
     );
     const result = await deliver({ to: c.email.trim(), ...email, unsubscribeUrl });
     if (result.ok) {

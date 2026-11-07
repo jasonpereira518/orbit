@@ -50,6 +50,8 @@ export type TokenCounts = {
    * a search on Orbit's key spent credit and pool money that neither ever saw.
    */
   surchargeMicros?: number | null;
+  /** Hosted web searches the call ran (`webSearchJson`), stored for the per-feature breakdown. */
+  webSearches?: number | null;
 };
 
 /**
@@ -120,6 +122,7 @@ export function usageRow(rec: UsageRecord) {
     estimatedCostMicros: surcharge > 0 ? (base ?? 0) + surcharge : base,
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- keeps the literal union when the row is spread into the insert
     costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
+    webSearches: rec.webSearches ?? null,
     success: rec.success ? 1 : 0,
     errorKind: rec.errorKind ?? null,
     durationMs: rec.durationMs ?? null,

@@ -116,6 +116,7 @@ const eslintConfig = defineConfig([
       "src/lib/ai-tools.ts",
       "src/lib/ai-access.ts",
       "src/lib/ai-batch.ts",
+      "src/lib/ai-tools-stream.ts",
       "src/lib/ai-key-check.ts",
     ],
     rules: {

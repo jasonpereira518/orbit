@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ComponentType } from "react";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import { Bell, Calendar, MessageSquare, Network, Plug, Send, Star } from "lucide-react";
 import { setPollStars } from "@/actions/waitlist-poll";
 import { usePassProgress, type PassProgress } from "@/lib/interest-progress-store";
@@ -89,7 +90,7 @@ function useNear(ref: React.RefObject<HTMLElement | null>) {
  * `useReducedMotion`: rows jump to their places.
  */
 export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: string | null }) {
-  const reduced = useReducedMotion();
+  const reduced = useReducedMotionPreference();
   const rootRef = useRef<HTMLDivElement>(null);
   const near = useNear(rootRef);
 

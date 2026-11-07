@@ -23,6 +23,7 @@ const HEALTHY: OpsSnapshot = {
     radarFeeds: { lastStartedAt: hoursAgo(1), lastState: "ok" },
     radarDigest: { lastStartedAt: hoursAgo(30), lastState: "ok" },
     workHistory: { lastStartedAt: hoursAgo(1), lastState: "ok" },
+    emailIntel: { lastStartedAt: hoursAgo(1), lastState: "ok" },
   },
   webhooks: { clerk: ["handled", "handled", "ignored"], stripe: ["handled"], resend: [] },
   stripeCheckoutErrorsLastHour: 0,

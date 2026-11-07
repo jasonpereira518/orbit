@@ -22,6 +22,7 @@ import {
 import { EASE_HOUSE } from "@/lib/motion";
 import type { Plan } from "@/lib/plans/plan-config";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { useModalTakeover } from "@/lib/use-modal-takeover";
 
 /**
  * The full-screen credits intro. Built on the plan celebration's contract
@@ -58,6 +59,8 @@ export function CreditsIntroStage({
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const exitingRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // Before the focus effect below, so its cleanup lifts `inert` before focus is handed back.
+  useModalTakeover(rootRef);
   const counted = useMotionValue(0);
   const countText = useTransform(counted, (v) => Math.round(v).toLocaleString("en-US"));
 

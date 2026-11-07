@@ -87,10 +87,11 @@ import { CAMERA_MS } from "@/lib/motion";
 function reducedMotionNow() {
   return (
     typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    prefersReducedMotion()
   );
 }
 import { Loader2 } from "lucide-react";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 type LayoutNodes = ReturnType<typeof buildHybridGraphLayout>["nodes"];
 

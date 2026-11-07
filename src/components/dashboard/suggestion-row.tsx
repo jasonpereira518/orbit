@@ -15,6 +15,7 @@ import {
 } from "@/actions/reminders";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 
@@ -56,6 +57,7 @@ export function SuggestionRow({
   contactName,
   contactTitle,
   contactCompany,
+  contactAvatarUrl,
   lastInteractionAt,
   tier,
 }: {
@@ -66,6 +68,7 @@ export function SuggestionRow({
   contactName: string;
   contactTitle?: string | null;
   contactCompany?: string | null;
+  contactAvatarUrl?: string | null;
   lastInteractionAt?: Date | string | null;
   tier?: "inner" | "mid" | "outer";
 }) {
@@ -85,6 +88,13 @@ export function SuggestionRow({
   return (
     <div className="rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start justify-between gap-3">
+        <ContactAvatar
+          contactId={contactId}
+          fullName={contactName}
+          profileImageUrl={contactAvatarUrl}
+          size="sm"
+          className="mt-0.5"
+        />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             {contactId ? (

@@ -6,7 +6,8 @@ import {
   normalizeEmail,
 } from "@/lib/email-activity";
 import {
-  fetchGmailHeaders,
+  type fetchGmailHeaders,
+  fetchGmailHeadersBatched,
   getValidAccessToken,
   listGmailMessagePage,
 } from "@/lib/gmail";
@@ -40,7 +41,7 @@ export type EmailActivityDeps = {
 const DEFAULT_DEPS: EmailActivityDeps = {
   getAccessToken: getValidAccessToken,
   listPage: listGmailMessagePage,
-  fetchHeaders: fetchGmailHeaders,
+  fetchHeaders: fetchGmailHeadersBatched,
 };
 
 export type EmailActivityStats = {

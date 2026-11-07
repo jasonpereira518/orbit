@@ -7,13 +7,8 @@ export default function AdminOverviewLoading() {
       subtitle="Counting accounts…"
       blocks={[
         { panel: true, title: "Needs attention", height: "h-10" },
-        {
-          pair: [
-            { title: "Activation", height: "h-44" },
-            { title: "Signed up recently", height: "h-44" },
-          ],
-        },
-        { panel: true, title: "Money", height: "h-24" },
+        { panel: true, title: "Signed up recently", height: "h-44" },
+        { tiles: 6 },
       ]}
     />
   );

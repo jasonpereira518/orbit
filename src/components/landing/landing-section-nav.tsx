@@ -6,10 +6,10 @@ import {
   LayoutGroup,
   motion,
   useMotionValue,
-  useReducedMotion,
   useSpring,
   type MotionValue,
 } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import {
   LANDING_HEADER_SCROLL_OFFSET,
   LANDING_SECTIONS,
@@ -144,7 +144,7 @@ export function LandingSectionNav({
   activeId: string | null;
   setActiveId: (id: string) => void;
 }) {
-  const reduced = useReducedMotion();
+  const reduced = useReducedMotionPreference();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const highlightId = hoveredId ?? activeId;
 

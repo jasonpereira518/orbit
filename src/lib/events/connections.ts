@@ -20,6 +20,8 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { encrypt, decryptOrNull } from "@/lib/crypto";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
 import {
   MAX_SYNC_FAILURES,
   SYNC_LEASE_MS,
@@ -157,6 +159,7 @@ export async function markEventSyncResult(
   const message = outcome.error.slice(0, 500);
   if (!outcome.retryable) {
     await disarmEventSync(id, message, now);
+    await trackEventSyncGaveUp(id, message, now);
     return;
   }
 
@@ -168,6 +171,7 @@ export async function markEventSyncResult(
 
   if (failures >= MAX_SYNC_FAILURES) {
     await disarmEventSync(id, message, now, failures);
+    await trackEventSyncGaveUp(id, message, now, failures);
     return;
   }
 
@@ -181,6 +185,43 @@ export async function markEventSyncResult(
            updated_at = ${now}
      WHERE id = ${id}
   `);
+}
+
+/** A closed set of codes from an error message: the text itself never reaches an event. */
+function eventSyncErrorKind(message: string): string {
+  if (/reauth|unauthori[sz]ed|forbidden|invalid.*(key|token)|\b40[13]\b/i.test(message)) return "reauth_required";
+  if (/fetch failed|econnreset|econnrefused|enotfound|network|timed? ?out|socket hang up/i.test(message)) return "network";
+  return "unexpected";
+}
+
+/**
+ * `sync_failed` for Luma, Eventbrite and the event iCal feeds: the sync has stopped for good,
+ * either a dead grant (disarmed at once) or the failure that spends the last retry. A run
+ * that fails and recovers records nothing, the same rule as the calendar connections. One per
+ * connection per day and failure count. Never throws: a telemetry write must not undo the
+ * disarm it follows.
+ */
+async function trackEventSyncGaveUp(id: string, message: string, now: Date, failures = MAX_SYNC_FAILURES): Promise<void> {
+  try {
+    const db = await getDb();
+    const row = rowsOf<{ user_id: string; provider: string }>(
+      await db.execute(sql`SELECT user_id, provider FROM event_provider_connections WHERE id = ${id}`)
+    )[0];
+    if (!row) return;
+    const provider = row.provider.startsWith("eventbrite") ? "eventbrite" : row.provider.startsWith("luma") ? "luma" : "ics_feed";
+    track(
+      "sync_failed",
+      { provider, error_kind: eventSyncErrorKind(message) },
+      {
+        userId: row.user_id,
+        actor: "system",
+        surface: "cron",
+        id: eventId("sync_failed", id, String(failures), now.toISOString().slice(0, 10)),
+      }
+    );
+  } catch {
+    // Telemetry only.
+  }
 }
 
 /**

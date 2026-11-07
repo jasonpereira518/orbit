@@ -10,14 +10,9 @@ import {
   setSurfaceTiersAction,
 } from "@/actions/admin";
 import { APP_NAV_CORE, APP_NAV_EXTRAS } from "@/components/layout/app-nav";
+import { PLANS, PLAN_SHORT_LABELS, type Plan } from "@/lib/plans/plan-config";
 import {
-  PLANS,
-  PLAN_SHORT_LABELS,
-  planHasFeature,
-  type FeatureKey,
-  type Plan,
-} from "@/lib/plans/plan-config";
-import {
+  PAGE_FEATURE,
   canMarkComingSoon,
   canTierLock,
   orderNavItems,
@@ -104,49 +99,35 @@ function StatusSegment({
 }
 
 /**
- * Pages whose plan gate lives in code (`PLAN_CONFIG.features`). A tier rule can only narrow
- * who opens them, never widen it, so the chips for plans the code already refuses are off.
+ * Which plans can open a page. Since plan features became editable (Plans tab), a page's
+ * feature (`PAGE_FEATURE`) no longer greys chips out — both rules are editable, and the
+ * feature's current plans are shown under the page instead.
  */
-const PAGE_FEATURE: Record<string, FeatureKey> = {
-  "page.recruiters": "recruiters",
-  "page.outreach": "outreach",
-  "page.meetings": "meetings",
-};
-
 function TierChips({
   label,
-  surfaceKey,
   value,
   onChange,
   disabled,
 }: {
   label: string;
-  surfaceKey: string;
   value: readonly Plan[];
   onChange: (next: Plan[]) => void;
   disabled?: boolean;
 }) {
-  const feature = PAGE_FEATURE[surfaceKey];
-  const codeBlocks = (plan: Plan) => feature !== undefined && !planHasFeature(plan, feature);
-  // Plans that can really open it: a rule naming a plan the code refuses still leaves it out.
-  const open = value.filter((p) => !codeBlocks(p));
   return (
     <div role="group" aria-label={`${label}: plans that can open it`} className="flex shrink-0 gap-1">
       {PLANS.map((plan) => {
-        const codeBlocked = codeBlocks(plan);
-        const on = !codeBlocked && value.includes(plan);
-        const last = on && open.length === 1;
+        const on = value.includes(plan);
+        const last = on && value.length === 1;
         return (
           <button
             key={plan}
             type="button"
             data-plan={plan}
             aria-pressed={on}
-            disabled={disabled || codeBlocked || last}
+            disabled={disabled || last}
             title={
-              codeBlocked
-                ? `${PLAN_SHORT_LABELS[plan]} doesn't include this feature`
-                : last
+              last
                   ? "At least one plan must open it. To close it for everyone, hide it"
                   : on
                     ? `${PLAN_SHORT_LABELS[plan]} can open it — click to lock them out`
@@ -158,7 +139,6 @@ function TierChips({
               on
                 ? "border-tier-border bg-tier-surface font-medium text-tier-accent"
                 : "border-border/60 text-muted-foreground-subtle line-through decoration-muted-foreground/40 hover:text-foreground",
-              codeBlocked && "opacity-40",
               last && "cursor-not-allowed"
             )}
           >
@@ -191,6 +171,7 @@ export function PageStatusList({
   hidden,
   comingSoon,
   tierRules,
+  featurePlans,
 }: {
   pages: Surface[];
   order: string[];
@@ -198,6 +179,8 @@ export function PageStatusList({
   comingSoon: string[];
   /** Tier-limited pages → the plans that may open them. Absent means every plan. */
   tierRules: Record<string, Plan[]>;
+  /** Pages with a plan feature (`PAGE_FEATURE`) → the plans that have it now (effective config). */
+  featurePlans: Record<string, Plan[]>;
 }) {
   const router = useRouter();
   const [flagOverrides, setFlagOverrides] = useState<Record<string, Flags>>({});
@@ -357,6 +340,12 @@ export function PageStatusList({
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {locked ? surface.reason : surface.description}
                 </p>
+                {PAGE_FEATURE[row.key] && (
+                  <p className="mt-0.5 text-2xs text-muted-foreground">
+                    Also needs the <code>{PAGE_FEATURE[row.key]}</code> feature —{" "}
+                    {(featurePlans[row.key] ?? []).map((p) => PLAN_SHORT_LABELS[p]).join(", ") || "no plan"} (Plans tab)
+                  </p>
+                )}
                 {errors[row.key] && (
                   <p role="alert" className="mt-1 text-xs text-destructive">
                     {errors[row.key]}
@@ -367,7 +356,6 @@ export function PageStatusList({
               {canTierLock(row.key) && (
                 <TierChips
                   label={surface.label}
-                  surfaceKey={row.key}
                   value={tiersFor(row.key)}
                   disabled={busy.has(row.key)}
                   onChange={(next) => void changeTiers(row.key, next)}

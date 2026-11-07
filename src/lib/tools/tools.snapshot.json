@@ -1312,6 +1312,1346 @@
           "fullName"
         ]
       }
+    },
+    {
+      "name": "query_contacts",
+      "title": "Count and list contacts",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "contacts",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "chat": [
+          "total",
+          "groups",
+          "rows"
+        ],
+        "mcp": [
+          "total",
+          "groups",
+          "rows"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "companies",
+        "industries",
+        "schools",
+        "locations",
+        "tags",
+        "tiers",
+        "added_after",
+        "added_before",
+        "interacted_after",
+        "interacted_before",
+        "never_interacted",
+        "missing",
+        "sort",
+        "group_by",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "companies": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "industries": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "schools": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "locations": {
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "tags": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "tiers": {
+            "description": "Closeness tiers.",
+            "maxItems": 3,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "inner",
+                "mid",
+                "outer"
+              ]
+            }
+          },
+          "added_after": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "added_before": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "interacted_after": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "interacted_before": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "never_interacted": {
+            "type": "boolean"
+          },
+          "missing": {
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "email",
+                "phone",
+                "company",
+                "title",
+                "linkedin"
+              ]
+            }
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "closeness",
+              "last_touch",
+              "name",
+              "added"
+            ]
+          },
+          "group_by": {
+            "type": "string",
+            "enum": [
+              "company",
+              "industry",
+              "tag",
+              "tier",
+              "school",
+              "location"
+            ]
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "query_interactions",
+      "title": "Count and list interactions",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "interactions",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "chat": [
+          "total",
+          "groups",
+          "rows"
+        ],
+        "mcp": [
+          "total",
+          "groups",
+          "rows"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "types",
+        "source",
+        "after",
+        "before",
+        "group_by",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "types": {
+            "description": "e.g. coffee, meeting, call, email, note.",
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 30
+            }
+          },
+          "source": {
+            "description": "Where it came from, e.g. gmail, linkedin, calendar, chat_proposed.",
+            "type": "string",
+            "maxLength": 40
+          },
+          "after": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "before": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "group_by": {
+            "type": "string",
+            "enum": [
+              "type",
+              "month",
+              "contact",
+              "source"
+            ]
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "list_events",
+      "title": "List events",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "events",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "id",
+          "title",
+          "date",
+          "venue",
+          "city",
+          "hosted",
+          "rosterSize",
+          "inYourContacts"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "when",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "when": {
+            "default": "all",
+            "type": "string",
+            "enum": [
+              "upcoming",
+              "past",
+              "all"
+            ]
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          }
+        }
+      }
+    },
+    {
+      "name": "get_event_roster",
+      "title": "Who is at an event",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "people",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "event",
+          "total",
+          "people"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "eventId",
+        "spoke_to",
+        "in_contacts",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "spoke_to": {
+            "description": "Only people the user did (true) or did not (false) speak to.",
+            "type": "boolean"
+          },
+          "in_contacts": {
+            "description": "Only people already in (true) or not in (false) the user's contacts.",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "eventId"
+        ]
+      }
+    },
+    {
+      "name": "who_to_talk_to",
+      "title": "Who to talk to at an event",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "people",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "event",
+          "when",
+          "people"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "eventId",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "limit": {
+            "default": 5,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "eventId"
+        ]
+      }
+    },
+    {
+      "name": "events_with_contact",
+      "title": "Events shared with someone",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "events",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "eventId",
+          "title",
+          "date",
+          "spokeTo"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "contactId"
+        ]
+      }
+    },
+    {
+      "name": "list_opportunities",
+      "title": "Opportunities",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "opportunities",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "id",
+          "contactId",
+          "contactName",
+          "kind",
+          "label",
+          "status",
+          "direction",
+          "dueDate"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "status",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "status": {
+            "default": "open",
+            "type": "string",
+            "enum": [
+              "open",
+              "all"
+            ]
+          },
+          "limit": {
+            "default": 15,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "list_radar_cards",
+      "title": "Radar suggestions",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "suggestions",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "id",
+          "contactId",
+          "name",
+          "company",
+          "kind",
+          "priority",
+          "why"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "default": 5,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        }
+      }
+    },
+    {
+      "name": "list_campaigns",
+      "title": "Outreach campaigns",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "campaigns",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "id",
+          "name",
+          "status",
+          "updated",
+          "metrics"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [],
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "list_outreach_messages",
+      "title": "A campaign's messages",
+      "scope": "read",
+      "surfaces": [
+        "chat"
+      ],
+      "resultLabel": "messages",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "campaignId",
+        "status",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "campaignId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "status": {
+            "default": "all",
+            "type": "string",
+            "enum": [
+              "unsent",
+              "sent",
+              "all"
+            ]
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 40
+          }
+        },
+        "required": [
+          "campaignId"
+        ]
+      }
+    },
+    {
+      "name": "list_my_recruiters",
+      "title": "The user's recruiters",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "recruiters",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "recruiterId",
+          "name",
+          "firm",
+          "specialty",
+          "status",
+          "personalRating",
+          "updated"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "default": 15,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "get_dossier",
+      "title": "Relationship dossier",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "dossier",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "chat": [
+          "contact",
+          "brief",
+          "goals",
+          "stale"
+        ],
+        "mcp": [
+          "contact",
+          "brief",
+          "goals",
+          "stale"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "contactId"
+        ]
+      }
+    },
+    {
+      "name": "list_sent_emails",
+      "title": "Emails sent from Orbit",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "emails",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "to",
+          "subject",
+          "status",
+          "date",
+          "from"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          }
+        }
+      }
+    },
+    {
+      "name": "recent_captures",
+      "title": "Recent captures",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "captures",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "date",
+          "status",
+          "kinds",
+          "people",
+          "reminders"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "default": 5,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        }
+      }
+    },
+    {
+      "name": "recent_imports",
+      "title": "Recent imports",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "imports",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "type",
+          "fileName",
+          "status",
+          "createdAt",
+          "contactsCreated"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "default": 5,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        }
+      }
+    },
+    {
+      "name": "add_tags",
+      "title": "Tag a contact",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "tags"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "tags": {
+            "minItems": 1,
+            "maxItems": 5,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            }
+          }
+        },
+        "required": [
+          "contactId",
+          "tags"
+        ]
+      }
+    },
+    {
+      "name": "reschedule_reminder",
+      "title": "Move a reminder to a date",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "reminderId",
+        "due_date"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reminderId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "due_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}"
+          }
+        },
+        "required": [
+          "reminderId",
+          "due_date"
+        ]
+      }
+    },
+    {
+      "name": "create_event",
+      "title": "Add an event",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "title",
+        "starts_on",
+        "venue",
+        "city"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "starts_on": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}"
+          },
+          "venue": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "city": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    {
+      "name": "mark_spoke_to",
+      "title": "Mark who the user spoke to",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "eventId",
+        "attendeeIds"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "attendeeIds": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        },
+        "required": [
+          "eventId",
+          "attendeeIds"
+        ]
+      }
+    },
+    {
+      "name": "add_goal",
+      "title": "Add a goal",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "text"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "create_opportunity",
+      "title": "Track an opportunity",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "contactId",
+        "kind",
+        "label",
+        "direction",
+        "due_date"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "contactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "internship",
+              "job",
+              "referral",
+              "introduction",
+              "startup_lead",
+              "mentor",
+              "investor",
+              "speaker",
+              "customer",
+              "collaboration",
+              "advice",
+              "other"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "they_offer",
+              "you_ask"
+            ]
+          },
+          "due_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}"
+          }
+        },
+        "required": [
+          "contactId",
+          "kind",
+          "label"
+        ]
+      }
+    },
+    {
+      "name": "update_opportunity",
+      "title": "Edit an opportunity",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "opportunityId",
+        "kind",
+        "label",
+        "direction",
+        "due_date"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "opportunityId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "internship",
+              "job",
+              "referral",
+              "introduction",
+              "startup_lead",
+              "mentor",
+              "investor",
+              "speaker",
+              "customer",
+              "collaboration",
+              "advice",
+              "other"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 140
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "they_offer",
+              "you_ask"
+            ]
+          },
+          "due_date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}"
+          }
+        },
+        "required": [
+          "opportunityId"
+        ]
+      }
+    },
+    {
+      "name": "set_opportunity_status",
+      "title": "Move an opportunity along",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "opportunityId",
+        "status"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "opportunityId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "in_progress",
+              "landed",
+              "passed",
+              "dismissed"
+            ]
+          }
+        },
+        "required": [
+          "opportunityId",
+          "status"
+        ]
+      }
+    },
+    {
+      "name": "schedule_recommendation",
+      "title": "Act on a radar card",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "recommendationId",
+        "days"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "recommendationId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "type": "number",
+                "const": 3
+              },
+              {
+                "type": "number",
+                "const": 7
+              },
+              {
+                "type": "number",
+                "const": 14
+              }
+            ]
+          }
+        },
+        "required": [
+          "recommendationId",
+          "days"
+        ]
+      }
+    },
+    {
+      "name": "snooze_recommendation",
+      "title": "Snooze a radar card",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "recommendationId",
+        "length"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "recommendationId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "length": {
+            "type": "string",
+            "enum": [
+              "1w",
+              "1m"
+            ]
+          }
+        },
+        "required": [
+          "recommendationId",
+          "length"
+        ]
+      }
+    },
+    {
+      "name": "update_campaign",
+      "title": "Edit a campaign's wording",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "campaignId",
+        "name",
+        "message_intent",
+        "reply_cta",
+        "tone"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "campaignId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "message_intent": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "reply_cta": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "tone": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "campaignId"
+        ]
+      }
+    },
+    {
+      "name": "update_recruiter_link",
+      "title": "Update a recruiter",
+      "scope": "write",
+      "surfaces": [
+        "mcp"
+      ],
+      "resultLabel": null,
+      "annotations": null,
+      "fields": null,
+      "surfaceKey": null,
+      "inputKeys": [
+        "recruiterId",
+        "status",
+        "personal_rating",
+        "notes"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "recruiterId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "contacted",
+              "active"
+            ]
+          },
+          "personal_rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "recruiterId"
+        ]
+      }
     }
   ],
   "toolsFor": {
@@ -1337,7 +2677,33 @@
         "complete_reminder",
         "snooze_reminder",
         "schedule_follow_up",
-        "create_contact"
+        "create_contact",
+        "query_contacts",
+        "query_interactions",
+        "list_events",
+        "get_event_roster",
+        "who_to_talk_to",
+        "events_with_contact",
+        "list_opportunities",
+        "list_radar_cards",
+        "list_campaigns",
+        "list_my_recruiters",
+        "get_dossier",
+        "list_sent_emails",
+        "recent_captures",
+        "recent_imports",
+        "add_tags",
+        "reschedule_reminder",
+        "create_event",
+        "mark_spoke_to",
+        "add_goal",
+        "create_opportunity",
+        "update_opportunity",
+        "set_opportunity_status",
+        "schedule_recommendation",
+        "snooze_recommendation",
+        "update_campaign",
+        "update_recruiter_link"
       ],
       "readOnly": [
         "search_contacts",
@@ -1350,7 +2716,21 @@
         "get_goals",
         "find_path_to",
         "upcoming_meetings",
-        "free_time"
+        "free_time",
+        "query_contacts",
+        "query_interactions",
+        "list_events",
+        "get_event_roster",
+        "who_to_talk_to",
+        "events_with_contact",
+        "list_opportunities",
+        "list_radar_cards",
+        "list_campaigns",
+        "list_my_recruiters",
+        "get_dossier",
+        "list_sent_emails",
+        "recent_captures",
+        "recent_imports"
       ]
     },
     "chat": {
@@ -1372,7 +2752,22 @@
         "research_person",
         "research_company",
         "find_people",
-        "list_open_commitments"
+        "list_open_commitments",
+        "query_contacts",
+        "query_interactions",
+        "list_events",
+        "get_event_roster",
+        "who_to_talk_to",
+        "events_with_contact",
+        "list_opportunities",
+        "list_radar_cards",
+        "list_campaigns",
+        "list_outreach_messages",
+        "list_my_recruiters",
+        "get_dossier",
+        "list_sent_emails",
+        "recent_captures",
+        "recent_imports"
       ],
       "readOnly": [
         "search_contacts",
@@ -1392,7 +2787,22 @@
         "research_person",
         "research_company",
         "find_people",
-        "list_open_commitments"
+        "list_open_commitments",
+        "query_contacts",
+        "query_interactions",
+        "list_events",
+        "get_event_roster",
+        "who_to_talk_to",
+        "events_with_contact",
+        "list_opportunities",
+        "list_radar_cards",
+        "list_campaigns",
+        "list_outreach_messages",
+        "list_my_recruiters",
+        "get_dossier",
+        "list_sent_emails",
+        "recent_captures",
+        "recent_imports"
       ]
     }
   }

@@ -74,6 +74,10 @@ export const RADAR_WEIGHTS = {
   // heads_up: something they posted. A LinkedIn post the person chose to save counts more.
   socialPost: 12,
   savedPost: 16,
+  // An event read from the user's own mail, scaled by how well the ranker matched the person
+  // (60% to 100% of the base). An interview coming up outranks a reply you owe; both outrank
+  // a colleague's opening, which is a chance rather than a debt.
+  email: { prep: 34, followUp: 30, jobOnThread: 26, jobNetwork: 20, processNetwork: 18, news: 16, event: 14 },
   // reach_out
   inboundUnanswered: 34,
   recentIntro: 30,
@@ -99,7 +103,7 @@ export const RADAR_WEIGHTS = {
 } as const;
 
 /** Half-lives for facts whose value fades. Everything else holds until it stops being true. */
-export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10, companyNews: 5, socialPost: 4 } as const;
+export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10, companyNews: 5, socialPost: 4, emailJob: 14, emailProcess: 21, emailNews: 5, emailEvent: 7 } as const;
 
 export const RADAR_BUCKETS = { today: 50, soon: 32, later: 18 } as const;
 
@@ -135,6 +139,11 @@ export const RADAR_WINDOWS = {
   newsMax: 7,
   /** A post older than this is not a reason to write. */
   postMax: 7,
+  /** How long an event read from mail still makes someone worth a message. */
+  emailJobMax: 21,
+  emailProcessMax: 21,
+  emailNewsMax: 7,
+  emailEventMax: 14,
 } as const;
 
 /** Headlines about money or a deal: worth a little more than a product launch. */
@@ -255,6 +264,69 @@ function isHighValue(c: RadarContact): boolean {
     (c.statedCloseness ?? 0) >= 4 ||
     (c.hasEvidence && (c.tier === "inner" || c.tier === "mid"))
   );
+}
+
+type EmailEventSignal = Extract<RadarSignal, { kind: "email_event" }>;
+
+/** The card an email event becomes for one person, and what it is worth before scaling. */
+export type EmailCard = {
+  kind: RecommendationKind;
+  code: string;
+  base: number;
+  /** Null for a fact that does not fade (an interview on Thursday). */
+  halfLifeDays: number | null;
+  anchorAt: Date | null;
+};
+
+/**
+ * Which card, if any, an email event calls for, for one person. Every rule about mail lives
+ * here so the producer stays a query and the table in the P4 plan has one implementation.
+ * Null means the event is over, out of its window, or has nothing for this person to do.
+ */
+export function emailCardFor(s: EmailEventSignal, now: Date): EmailCard | null {
+  const W = RADAR_WEIGHTS.email;
+  const H = RADAR_HALF_LIFE_DAYS;
+  const age = daysSince(s.at, now) ?? 0;
+
+  if (s.eventKind === "news") {
+    if (age > RADAR_WINDOWS.emailNewsMax) return null;
+    return { kind: "heads_up", code: "email_news", base: W.news, halfLifeDays: H.emailNews, anchorAt: null };
+  }
+  if (s.eventKind === "event") {
+    if (age > RADAR_WINDOWS.emailEventMax) return null;
+    return { kind: "heads_up", code: "email_event", base: W.event, halfLifeDays: H.emailEvent, anchorAt: null };
+  }
+  if (s.eventKind === "process_update") {
+    if (age > RADAR_WINDOWS.emailProcessMax) return null;
+    const stage = s.stage;
+    // Nothing to do about a no: a thank-you note is the person's call, not a nag.
+    if (stage === "rejected" || stage === "withdrawn") return null;
+    // A colleague at the company you are in a process with: an opening to ask for help.
+    if (!s.onThread) {
+      return { kind: "opportunity", code: "email_process", base: W.processNetwork, halfLifeDays: H.emailJob, anchorAt: null };
+    }
+    const ahead = s.at.getTime() - now.getTime();
+    if ((stage === "interviewing" || stage === "screening") && ahead > 0 && ahead <= RADAR_WINDOWS.prepAhead * DAY_MS) {
+      return { kind: "prep", code: "email_prep", base: W.prep, halfLifeDays: null, anchorAt: s.at };
+    }
+    if (s.hasAsk || stage === "screening" || stage === "interviewing" || stage === "offer") {
+      return { kind: "follow_up", code: "email_followup", base: W.followUp, halfLifeDays: H.emailProcess, anchorAt: null };
+    }
+    // An automated "we received your application": informative, nothing to do.
+    return null;
+  }
+  // job_posting
+  if (age > RADAR_WINDOWS.emailJobMax) return null;
+  if (s.onThread && s.hasAsk) {
+    return { kind: "follow_up", code: "email_followup", base: W.followUp, halfLifeDays: H.emailProcess, anchorAt: null };
+  }
+  return {
+    kind: "opportunity",
+    code: "email_job",
+    base: s.onThread ? W.jobOnThread : W.jobNetwork,
+    halfLifeDays: H.emailJob,
+    anchorAt: null,
+  };
 }
 
 type Draft = { reasons: RadarReason[]; evidence: RadarEvidence[]; anchorAt: Date | null };
@@ -414,6 +486,25 @@ export function scoreContactKinds(
         );
         break;
       }
+      case "email_event": {
+        const card = emailCardFor(s, now);
+        if (!card) break;
+        const age = daysSince(s.at, now) ?? 0;
+        // 60% to 100% of the base, by how well the ranker matched this person.
+        const scaled = Math.round(card.base * (0.6 + 0.4 * Math.min(1, Math.max(0, s.fit))));
+        const soon = card.kind === "prep" && s.at.getTime() - now.getTime() <= RADAR_WINDOWS.within48h * DAY_MS;
+        const points = (card.halfLifeDays ? decayed(scaled, age, card.halfLifeDays) : scaled) + (soon ? W.upcomingMeetingWithin48h : 0);
+        add(
+          drafts,
+          card.kind,
+          { code: card.code, label: `${s.text}${s.why ? ` — ${s.why}` : ""}`.slice(0, 200), points },
+          // The label is fixed on purpose: evidence labels reach the AI prompts, and nothing
+          // from the mail itself belongs in one. The ref is how an accept finds the email.
+          { label: "From your email", at: iso(s.at), ref: { emailEventId: s.eventId, onThread: s.onThread } },
+          card.anchorAt
+        );
+        break;
+      }
       case "inbound_unanswered": {
         const days = daysSince(s.at, now) ?? 0;
         if (days < RADAR_WINDOWS.inboundMin || days > RADAR_WINDOWS.inboundMax) break;
@@ -441,21 +532,8 @@ export function scoreContactKinds(
     }
   }
 
-  // A fresh intro with nothing since: the one follow-up that decays fastest if skipped.
-  if (contact.firstInteractionAt) {
-    const days = daysSince(contact.firstInteractionAt, now) ?? 0;
-    const single =
-      !contact.lastInteractionAt ||
-      contact.lastInteractionAt.getTime() === contact.firstInteractionAt.getTime();
-    if (single && days >= RADAR_WINDOWS.recentIntroMin && days <= RADAR_WINDOWS.recentIntroMax) {
-      add(
-        drafts,
-        "reach_out",
-        { code: "recent_intro", label: `You met ${plural(days, "day")} ago and haven’t followed up`, points: W.recentIntro },
-        { label: "First met", at: iso(contact.firstInteractionAt) }
-      );
-    }
-  }
+  // No "recent intro" reason any more: first and last interaction both equal the import time for
+  // any contact an importer created, so it read "you met N days ago" about people never met.
 
   // Dormancy, against the rhythm the person stated or the default window. Unknown recency
   // is not dormancy: a contact with no touch on record is skipped rather than nagged about.

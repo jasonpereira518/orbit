@@ -1,12 +1,10 @@
 /**
- * Structural checks that the chat route runs the new pipeline: parallel
+ * Structural checks that chat retrieval runs the new pipeline: parallel
  * embed+understand, hybrid retrieval at CANDIDATE_POOL, rerank, budget.
  *
  * Retrieval itself lives in `src/lib/chat-context.ts`, not `src/actions/chat.ts` —
- * `prepareChatContext` is the single retrieval entry point (the JSON action that used
- * to share it was removed), and a copy of this pipeline inlined in chat.ts would
- * reintroduce the drift it exists to prevent. The checks below scan the files rather than
- * assuming one.
+ * `prepareChatContext`, so the pipeline is never re-inlined into a server action. The checks
+ * below scan both files rather than assuming one.
  *
  * Run: npx tsx scripts/smoke-chat-pipeline.ts
  */
@@ -55,24 +53,15 @@ async function main() {
   // The retrieval pipeline must live in the shared module, not be re-inlined into the
   // action — that duplication is exactly what prepareChatContext exists to prevent.
   check("retrieval lives in chat-context.ts, not re-inlined in the action", !actionSrc.includes("hybridSearchContacts"));
-  check("the streaming route delegates to prepareChatContext", routeSrc.includes("prepareChatContext"));
 
-  // `chatWithNetworkStream`'s trailing parameters are optional-with-default, so a call site
-  // that simply omits one compiles clean and silently reverts the chat path to no focused
-  // profile or no writing preferences. tsc cannot catch a missing trailing optional, so this
-  // guards it structurally, the same way the checks above guard the rest of the pipeline.
-  const routeCall = extractCall(routeSrc, "chatWithNetworkStream");
-  check("the chatWithNetworkStream call site exists in the streaming route", routeCall.length > 0, routeSrc);
-  check(
-    "the streaming route passes ctx.focusProfile to chatWithNetworkStream",
-    routeCall.includes("ctx.focusProfile"),
-    routeCall
-  );
-  check(
-    "the streaming route passes ctx.writingInstructions to chatWithNetworkStream",
-    routeCall.includes("ctx.writingInstructions"),
-    routeCall
-  );
+  // The route answers through `answerWithLookups`, and its prompt is built from the WHOLE context in one
+  // place (`promptArgsFromContext`), which a call site cannot leave an argument out of.
+  const loopSrc = readFileSync("src/lib/chat-agent-loop.ts", "utf8");
+  check("the streaming route answers through answerWithLookups", extractCall(routeSrc, "answerWithLookups").length > 0, routeSrc);
+  const promptArgs = loopSrc.slice(loopSrc.indexOf("export function promptArgsFromContext("));
+  check("the answer's prompt carries ctx.focusProfile", promptArgs.includes("ctx.focusProfile"));
+  // A missing writing-preferences argument would silently make the answer ignore the user's notes.
+  check("the answer's prompt carries ctx.writingInstructions", promptArgs.includes("ctx.writingInstructions"));
 
   // The action module must remain a valid "use server" file (async exports only).
   const exportsNonAsync = /export (function|const|let|var) /.test(actionSrc);

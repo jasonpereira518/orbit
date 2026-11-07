@@ -31,6 +31,7 @@ import type { TranscribeOptions, TranscriptionResult } from "@/lib/ai";
 import { deepgramOpenFor, meetingHasAudio } from "@/lib/speech-credit";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError, releaseBucket } from "@/lib/rate-limit";
 import { recordSpeechSeconds, speechAllowance } from "@/lib/speech-quota";
+import { recordGateRefusal } from "@/lib/gate-refusal";
 
 export type MeetingAttendee = { name: string; email?: string | null };
 
@@ -187,6 +188,39 @@ export async function endMeetingSessionRow(
     .returning();
   return row;
 }
+
+export async function updateMeetingDetails(
+  userId: string,
+  sessionId: string,
+  input: { title?: string | null; attendees?: MeetingAttendee[] },
+): Promise<MeetingSessionRow | null> {
+  const session = await getMeetingSession(userId, sessionId);
+  if (!session) return null;
+  const db = await getDb();
+  const [row] = await db
+    .update(meetingSessions)
+    .set({
+      ...(input.title !== undefined ? { title: cleanTitle(input.title) } : {}),
+      ...(input.attendees !== undefined ? { attendees: cleanAttendees(input.attendees) } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(meetingSessions.id, session.id))
+    .returning();
+  return row;
+}
+
+/** The meeting's notes box. Empty text clears it. False when there is no such meeting of theirs. */
+export async function setMeetingUserNotes(userId: string, sessionId: string, notes: string): Promise<boolean> {
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return false;
+  const db = await getDb();
+  const rows = await db
+    .update(meetingSessions)
+    .set({ userNotes: notes || null, updatedAt: new Date() })
+    .where(and(eq(meetingSessions.id, sessionId), eq(meetingSessions.userId, userId)))
+    .returning();
+  return rows.length > 0;
+}
+
 /** A provider event or series id from the client: shape-checked, since it is only ever compared. */
 function calendarIdOrNull(v: unknown): string | null {
   return typeof v === "string" && /^[\w@.-]{1,256}$/.test(v) ? v : null;
@@ -203,6 +237,24 @@ export async function linkMeetingSessionToEvent(
     .update(meetingSessions)
     .set({ calendarEventKey: link.eventKey, calendarSeriesId: link.seriesId })
     .where(and(eq(meetingSessions.id, sessionId), eq(meetingSessions.userId, userId)));
+}
+
+/**
+ * Set or clear which calendar event a recording was of — chat's `link_meeting_to_event` and
+ * its undo. Returns false when the session is not the user's.
+ */
+export async function setMeetingSessionEventLink(
+  userId: string,
+  sessionId: string,
+  link: { eventKey: string | null; seriesId: string | null }
+): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db
+    .update(meetingSessions)
+    .set({ calendarEventKey: link.eventKey, calendarSeriesId: link.seriesId, updatedAt: new Date() })
+    .where(and(eq(meetingSessions.id, sessionId), eq(meetingSessions.userId, userId)))
+    .returning();
+  return rows.length > 0;
 }
 
 /**
@@ -467,6 +519,7 @@ export async function ingestMeetingChunk(
       const allowance = await speechAllowance(userId, "meeting");
       // Lenient: a meeting already recording finishes past the cap (`meetingSecondsAllowed`).
       if (allowance.exhausted && !(await meetingHasAudio(session.id))) {
+        await recordGateRefusal(userId, "speechMeeting", { surface: "web", route: "meeting.chunk" });
         return { ok: false, status: 402, error: "You’ve used this month’s meeting transcription minutes" };
       }
     }
@@ -878,16 +931,27 @@ export async function getNoteBatchForUser(userId: string, batchId: string) {
   return row ?? null;
 }
 
-/** Who "I" is on a recording — so the user is never offered as a contact from their own call. */
-export async function loadMeetingSelf(
-  userId: string,
-): Promise<{ firstName: string | null; lastName: string | null }> {
+/**
+ * Who "I" is — on a recording, and in any note the user writes — so the user is never
+ * offered as a contact from their own capture.
+ */
+export async function loadMeetingSelf(userId: string): Promise<{
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  linkedinUrl: string | null;
+}> {
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
-    columns: { firstName: true, lastName: true },
+    columns: { firstName: true, lastName: true, email: true, socialLinks: true },
   });
-  return { firstName: row?.firstName ?? null, lastName: row?.lastName ?? null };
+  return {
+    firstName: row?.firstName ?? null,
+    lastName: row?.lastName ?? null,
+    email: row?.email ?? null,
+    linkedinUrl: row?.socialLinks?.linkedin ?? null,
+  };
 }
 
 // ── Input hygiene ─────────────────────────────────────────────────────────────────────

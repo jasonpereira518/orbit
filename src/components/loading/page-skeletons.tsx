@@ -333,14 +333,17 @@ export function SettingsPageSkeleton() {
 export function NoteBatchResultSkeleton() {
   return (
     <LoadingRegion label="Loading capture results" className="mx-auto max-w-3xl space-y-6">
+      {/* Back link, then the title and its meta row. */}
+      <Skeleton className="h-5 w-20" />
       <div className="space-y-2">
         <Skeleton className="h-9 w-72 max-w-full" />
-        <Skeleton className="h-4 w-full max-w-md" />
+        <Skeleton className="h-5 w-full max-w-md" />
       </div>
+      {/* The source card, then the result sections. */}
+      <Skeleton className="h-40 w-full rounded-2xl" />
       <div className="space-y-4">
-        <Skeleton className="h-12 w-full rounded-2xl" />
-        <Skeleton className="h-48 w-full rounded-2xl" />
-        <Skeleton className="h-40 w-full rounded-2xl" />
+        <Skeleton className="h-36 w-full rounded-2xl" />
+        <Skeleton className="h-36 w-full rounded-2xl" />
       </div>
     </LoadingRegion>
   );

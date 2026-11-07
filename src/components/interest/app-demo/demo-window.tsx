@@ -18,14 +18,8 @@ import { ConstellationScreen } from "./screens/constellation";
 import { ContactProfileScreen } from "./screens/contact-profile";
 import { ContactsScreen } from "./screens/contacts";
 import { DashboardScreen } from "./screens/dashboard";
+import { prefersReducedMotion, subscribeReducedMotion } from "@/lib/motion-preference";
 
-const REDUCED_QUERY = "(prefers-reduced-motion: reduce)";
-
-function subscribeReduced(onChange: () => void) {
-  const mq = window.matchMedia(REDUCED_QUERY);
-  mq.addEventListener("change", onChange);
-  return () => mq.removeEventListener("change", onChange);
-}
 
 const SCREENS: Record<Screen, ComponentType> = {
   dashboard: DashboardScreen,
@@ -44,9 +38,9 @@ const FILL: Screen[] = ["chat", "constellation"];
  * every button works against `demoReducer`. "Replay tour" hands control back.
  */
 export function DemoWindow() {
-  const reduced = useSyncExternalStore(subscribeReduced, () => window.matchMedia(REDUCED_QUERY).matches, () => false);
+  const reduced = useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion, () => false);
   const [state, dispatch] = useReducer(demoReducer, undefined, () =>
-    initialDemoState(window.matchMedia(REDUCED_QUERY).matches ? "explore" : "tour")
+    initialDemoState(prefersReducedMotion() ? "explore" : "tour")
   );
   const rootRef = useRef<HTMLDivElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);

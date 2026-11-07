@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
 import { joinInterestList, recordPassCheckAction, saveInterestListName } from "@/actions/interest-list";
+import { readPageviewSessionId } from "@/lib/pageview-session";
 import { BoardingPass } from "@/components/interest/boarding-pass";
 import { PlanetArt } from "@/components/interest/planet-art";
 import { ProofLine } from "@/components/interest/proof-line";
@@ -144,8 +145,16 @@ export function InterestHero({
   }, [phase, entrance, ticket, reduced, pagePath]);
 
   // Count a real browser open of the pass — not admin add, not email-link prefetch of HTML.
+  //
+  // NOT THE JOIN ITSELF. This effect fires the moment the ticket appears, which for a new
+  // member is the join they just made, so `pass_check_count` read +1 for every web joiner and
+  // "came back to look" was never zero (audit D7). The token a join produced in this mount is
+  // remembered and skipped; opening a pass later, or re-entering an address already on the
+  // list, is a real look and counts.
+  const joinedToken = useRef<string | null>(null);
   useEffect(() => {
     if (phase !== "ticket" || !ticket?.shareToken) return;
+    if (joinedToken.current === ticket.shareToken) return;
     void recordPassCheckAction(ticket.shareToken);
   }, [phase, ticket?.shareToken]);
 
@@ -176,11 +185,16 @@ export function InterestHero({
           website: String(data.get("website") ?? ""),
           elapsedMs: readyAt.current ? Date.now() - readyAt.current : 0,
           ref: ref ?? undefined,
+          // This tab's analytics session id, so the signup can be traced to its visit. Null
+          // where sessionStorage is blocked; the join is identical without it.
+          sessionId: readPageviewSessionId(),
         });
         if (!result.ok) {
           fail(result.message);
           return;
         }
+        // A brand-new member's first pass view is the join, not a return visit (see above).
+        if (!result.returning) joinedToken.current = result.ticket.shareToken;
         setTicket(result.ticket);
         // The referral tracker further down the page has no token until a reload; this hands
         // it the new pass so it can start watching for friends.

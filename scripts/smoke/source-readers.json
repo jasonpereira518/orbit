@@ -3,6 +3,20 @@
     "src/app",
     "src/components"
   ],
+  "smoke-account-kind.ts": [
+    "scripts/seed-account-kind.ts",
+    "src/actions/admin.ts",
+    "src/app/(clerk)/(admin)/admin/users/[userId]/page.tsx"
+  ],
+  "smoke-action-input-validation.ts": [
+    "src/actions",
+    "src/actions/"
+  ],
+  "smoke-action-no-internal-options.ts": [
+    "src/actions",
+    "src/actions/",
+    "src/lib/"
+  ],
   "smoke-action-user-scope.ts": [
     "src/actions",
     "src/actions/",
@@ -10,9 +24,13 @@
     "src/lib/",
     "src/lib/contact-writes.ts"
   ],
+  "smoke-activation-events.ts": [
+    "src/actions/reminders.ts"
+  ],
   "smoke-admin-analytics.ts": [
     "scripts/run-smoke.ts",
     "src/app",
+    "src/app/api/p/v/route.ts",
     "src/components/analytics/pageview-beacon.tsx",
     "src/components/analytics/vercel-telemetry.tsx",
     "src/lib/analytics-redact.ts"
@@ -63,11 +81,12 @@
     "src/app/api/chat/route.ts",
     "src/components/chat/chat-panel.tsx",
     "src/components/layout/floating-ask-bar.tsx",
-    "src/lib/ai.ts"
+    "src/lib/chat-agent-loop.ts"
   ],
   "smoke-chat-pipeline.ts": [
     "src/actions/chat.ts",
     "src/app/api/chat/route.ts",
+    "src/lib/chat-agent-loop.ts",
     "src/lib/chat-context.ts"
   ],
   "smoke-chat-send.ts": [
@@ -91,8 +110,16 @@
     "src/actions/events.ts",
     "src/lib/rate-limit.ts"
   ],
+  "smoke-contact-brief.ts": [
+    "src/lib/contact-brief.ts"
+  ],
   "smoke-contact-profile.ts": [
     "src/lib/contact-profile.ts"
+  ],
+  "smoke-cron-gates.ts": [
+    "src/app/api",
+    "src/app/api/a/[id]/route.ts",
+    "src/lib/public-routes.ts"
   ],
   "smoke-dashboard-search.ts": [
     "src/actions/search.ts"
@@ -119,6 +146,24 @@
   "smoke-email-attachments.ts": [
     "src/app/api/email/attachments/upload/route.ts",
     "src/lib/public-routes.ts"
+  ],
+  "smoke-email-intel-consent.ts": [
+    "src/app/(site)/(docs)/privacy/page.tsx"
+  ],
+  "smoke-email-intel-extract.ts": [
+    "scripts/eval-fixtures/ai-email-intel-eval.json"
+  ],
+  "smoke-email-intel-inbox-ui.ts": [
+    "src/lib/email-intel/inbox-people.ts",
+    "src/lib/radar/autopilot.ts",
+    "src/lib/radar/digest-email.ts",
+    "src/lib/radar/digest.ts",
+    "src/lib/radar/drafts.ts",
+    "src/lib/radar/explain.ts",
+    "src/lib/radar/rerank-prompt.ts",
+    "src/lib/radar/rerank.ts",
+    "src/lib/radar/signals/email.ts",
+    "src/lib/radar/why-prompt.ts"
   ],
   "smoke-email-no-resend.ts": [
     "src/actions/outreach.ts",
@@ -158,6 +203,10 @@
   "smoke-export-limit.ts": [
     "src/components/settings/data-settings.tsx"
   ],
+  "smoke-extension-telemetry.ts": [
+    "extension/src/background/index.ts",
+    "extension/src/lib/api.ts"
+  ],
   "smoke-fast-model.ts": [
     "src/lib/ai.ts"
   ],
@@ -181,6 +230,9 @@
   "smoke-friendly-error.ts": [
     "src/lib/ai.ts"
   ],
+  "smoke-gate-coverage.ts": [
+    "src/app/(clerk)/(admin)/admin/billing/revenue/page.tsx"
+  ],
   "smoke-housekeeping-sweeps.ts": [
     "src/app/api/imports/process-stalled/route.ts"
   ],
@@ -194,8 +246,10 @@
   ],
   "smoke-import-size-guard.ts": [
     "src/app/api/imports/[id]/continue/route.ts",
+    "src/components/imports/import-utils.tsx",
     "src/lib/import-job-runner.ts",
-    "src/lib/import-stall.ts"
+    "src/lib/import-stall.ts",
+    "src/lib/imports/use-import-queue.ts"
   ],
   "smoke-import-sources.ts": [
     "src/components/imports/import-history.tsx",
@@ -227,6 +281,9 @@
     "src/app/(site)/(docs)/terms/page.tsx"
   ],
   "smoke-log-hygiene.ts": [
+    "src/actions",
+    "src/app",
+    "src/lib",
     "src/lib/extension/parse-profile.ts",
     "src/lib/interest-list-join.ts"
   ],
@@ -238,6 +295,9 @@
   ],
   "smoke-meeting-gate.ts": [
     "src/actions/meetings.ts"
+  ],
+  "smoke-merge-coverage.ts": [
+    "src/lib/contact-merge.ts"
   ],
   "smoke-migration-guards.ts": [
     "scripts/migrate.ts",
@@ -265,6 +325,13 @@
   "smoke-pcm-worklet.ts": [
     "public/orbit-pcm-worklet.js"
   ],
+  "smoke-plan-rules.ts": [
+    "src/actions/capture.ts",
+    "src/actions/contacts.ts",
+    "src/actions/imports.ts",
+    "src/actions/reminders.ts",
+    "src/lib/plan-guards.ts"
+  ],
   "smoke-provider-exhaustive.ts": [
     "scripts/smoke-admin-health.ts",
     "scripts/smoke-admin-roster.ts",
@@ -282,7 +349,10 @@
     "src/app/(clerk)/(marketing)",
     "src/app/(clerk)/(marketing)/",
     "src/app/(site)",
-    "src/app/(site)/"
+    "src/app/(site)/",
+    "src/app/api/p/v/route.ts",
+    "src/app/api/track/route.ts",
+    "src/components/analytics/pageview-beacon.tsx"
   ],
   "smoke-report-error.ts": [
     "src/app/global-error.tsx",
@@ -346,6 +416,7 @@
     "src/components/capture/capture-source-card.tsx",
     "src/components/capture/capture-summary.tsx",
     "src/components/capture/ignored-people-section.tsx",
+    "src/components/composer/markdown-toolbar.tsx",
     "src/components/contacts/contacts-list.tsx",
     "src/components/reminders/reminder-bulk-bar.tsx",
     "src/components/reminders/reminder-card.tsx",
@@ -370,6 +441,10 @@
   ],
   "smoke-vercel-ignore-build.ts": [
     "scripts/vercel-ignore-build.sh"
+  ],
+  "smoke-waitlist-analytics.ts": [
+    "src/components/interest/interest-hero.tsx",
+    "src/lib/pageview-session.ts"
   ],
   "smoke-waitlist-copy.ts": [
     "src/app/(site)/interest/loading.tsx",

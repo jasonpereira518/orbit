@@ -1,17 +1,20 @@
 {
-  "liveUserIdTables": 86,
+  "liveUserIdTables": 91,
   "missing": [
     "contact_opportunities",
+    "contact_touch_counts",
     "job_posting_matches"
   ],
   "missingFromCountsAndExports": [
     "billing_events",
     "cloud_note_sources",
     "contact_opportunities",
+    "contact_touch_counts",
     "credit_accounts",
     "credit_grants",
     "credit_holds",
     "embedding_failures",
+    "interest_list_signups",
     "job_posting_matches",
     "plan_meter_usage"
   ],
@@ -21,5 +24,5 @@
     "outreach_messages",
     "outreach_prospects"
   ],
-  "registryTables": 80
+  "registryTables": 83
 }

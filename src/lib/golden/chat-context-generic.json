@@ -7,6 +7,8 @@
     "plan": "free",
     "preference": null,
     "settings": {
+      "accountKind": null,
+      "aiKeyAddedAt": null,
       "aiKeyPreference": null,
       "aiModel": "gemini-3.8-flash",
       "aiModelMigratedFrom": null,
@@ -17,6 +19,7 @@
       "calendarFeedToken": null,
       "calendarFeedTokenCreatedAt": null,
       "careerProfile": null,
+      "chatAutoApply": 0,
       "chatSelfNames": [],
       "cloudNotesAutoExtract": 0,
       "compedAt": null,
@@ -33,6 +36,9 @@
       "desktopNotifiedIds": [],
       "email": null,
       "emailActivitySync": 0,
+      "emailIntelCursorAt": null,
+      "emailIntelEnabled": 0,
+      "emailIntelNextAt": null,
       "emailSignatureHtml": null,
       "emailSignatureText": null,
       "estimatedMonthlyChurnPct": null,
@@ -46,12 +52,20 @@
       "inboundLogLastReceivedAt": null,
       "inboundLogToken": null,
       "inboundLogTokenCreatedAt": null,
+      "interestSignupId": null,
+      "inviteId": null,
       "lastActiveAt": "<db-now>",
       "lastName": null,
+      "lastTouchAt": null,
+      "lastTouchCampaign": null,
+      "lastTouchLandingPath": null,
+      "lastTouchMedium": null,
+      "lastTouchSource": null,
       "lifetimeCheckoutSessionId": null,
       "lifetimeCheckoutStartedAt": null,
       "lifetimePurchasedAt": null,
       "linkedinExportRequestedAt": null,
+      "linkedinRefreshIntervalDays": null,
       "linkedinReminderShownAt": null,
       "maxNudgeSeenAt": null,
       "onboardingCompletedAt": null,
@@ -77,8 +91,10 @@
       "schools": [],
       "senderBio": null,
       "signupAttributedAt": null,
+      "signupAttributionSource": null,
       "signupLandingPath": null,
       "signupReferrer": null,
+      "signupSessionId": null,
       "signupUtmCampaign": null,
       "signupUtmMedium": null,
       "signupUtmSource": null,
@@ -131,9 +147,17 @@
   "attention": null,
   "attentionLite": "5 follow-ups are overdue: Ken Thompson (20d), Grace Hopper (10d), Dennis Ritchie (4d), Ada Lovelace (2d), Margaret Hamilton (1d).",
   "calendar": null,
+  "commitmentIds": {
+    "<map>": []
+  },
+  "commitments": null,
   "contactNames": {
     "<map>": []
   },
+  "eventIds": {
+    "<map>": []
+  },
+  "events": null,
   "focusProfile": null,
   "goals": [
     "Meet more people in hardware"
@@ -141,7 +165,7 @@
   "modelContacts": [],
   "modelRecruiters": [],
   "notePassages": [],
-  "openReminders": "- [reminder_id=<id:2>] Send Ada the deck · due 2026-09-14 · Ada Lovelace",
+  "openReminders": "Today is 2026-09-15. Overdue or due today: 1 · coming up: 2 · no date: 0. The nearest:\n- [reminder_id=<id:2>] Send Ada the deck · due 2026-09-14 (overdue) · Ada Lovelace\n- [reminder_id=<id:3>] Intro Margaret to hardware lead · due 2026-09-17 · Margaret Hamilton\n- [reminder_id=<id:4>] File expenses · due 2026-10-05",
   "orgRosters": [],
   "priorTurns": [],
   "q": "How is my network doing overall?",
@@ -151,6 +175,14 @@
       [
         "<id:2>",
         "Send Ada the deck"
+      ],
+      [
+        "<id:3>",
+        "Intro Margaret to hardware lead"
+      ],
+      [
+        "<id:4>",
+        "File expenses"
       ]
     ]
   },
@@ -168,12 +200,13 @@
     "recruiters": false,
     "shape": "open"
   },
-  "scopedQuestion": "[Today is 2026-09-15.]\n\n[The user has 10 contacts in total; the Contacts list below is only the 0 most relevant to this question.]\n\nHow is my network doing overall?",
+  "scopedQuestion": "[Today is 2026-09-15. Now: Tuesday 2026-09-15 12:00 in the user's time zone, UTC.]\n\n[The user has 10 contacts in total; the Contacts list below is only the 0 most relevant to this question.]\n\nHow is my network doing overall?",
   "searchNotice": null,
   "snippets": {
     "<map>": []
   },
   "thread": null,
+  "timeZone": "UTC",
   "userContext": null,
   "userSchools": [],
   "writingInstructions": null

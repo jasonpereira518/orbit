@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { joinInterestList } from "@/actions/interest-list";
+import { readPageviewSessionId } from "@/lib/pageview-session";
 
 const inputClass =
   "w-full rounded-xl border border-[#e8f3f1]/[0.14] bg-[#05070f]/50 px-4.5 py-3.5 text-[#e8f3f1] placeholder:text-[#6d807c] focus:border-[#f2c14e]/50 focus:outline-none focus-visible:ring-3 focus-visible:ring-[#f2c14e]/70";
@@ -44,6 +45,9 @@ export function WaitlistForm() {
         email,
         website: String(data.get("website") ?? ""),
         elapsedMs: readyAt.current ? Date.now() - readyAt.current : 0,
+        // The per-tab analytics id (null when storage is blocked), so the sign-up can be tied to
+        // the page it came from without a cookie. See joinSessionId on the waitlist row.
+        sessionId: readPageviewSessionId(),
       });
       setStatus(result.ok ? "success" : "error");
     } catch {

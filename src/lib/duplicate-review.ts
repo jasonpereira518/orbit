@@ -17,6 +17,7 @@
 
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { rememberedDuplicateCount } from "@/lib/duplicate-count-memo";
 import { contacts, duplicateSuggestions, interactions } from "@/db/schema";
 import { DUPLICATE_MERGE_CONFIDENCE } from "@/lib/duplicates";
 import { NO_ENGINES, type Engines } from "@/lib/decisions/engine";
@@ -296,10 +297,13 @@ export async function getDuplicateReview(
  * render, the number is only used to decide whether to show a link and what badge to put on
  * it, and "99+" is as actionable as an exact figure.
  */
-export async function countDuplicatesAwaitingReview(userId: string): Promise<number> {
-  const [recorded, scanned] = await Promise.all([
-    findPendingSuggestions(userId, 99),
-    findNameCollisions(userId, 99),
-  ]);
-  return dedupePairs([...recorded, ...scanned]).length;
+export function countDuplicatesAwaitingReview(userId: string): Promise<number> {
+  // Remembered per instance for a minute; see duplicate-count-memo.ts.
+  return rememberedDuplicateCount(userId, async () => {
+    const [recorded, scanned] = await Promise.all([
+      findPendingSuggestions(userId, 99),
+      findNameCollisions(userId, 99),
+    ]);
+    return dedupePairs([...recorded, ...scanned]).length;
+  });
 }

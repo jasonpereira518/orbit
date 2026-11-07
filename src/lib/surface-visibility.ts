@@ -7,10 +7,14 @@ import { isAdminUser } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-audit";
 import { isDemoAccount } from "@/lib/demo-account";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
-import { PaywallError, getEntitlements } from "@/lib/entitlements";
+import { PaywallError, getEntitlements, requireEntitlement } from "@/lib/entitlements";
+import { recordGateHit } from "@/lib/gate-events";
 import { PLANS, PLAN_SHORT_LABELS, type Plan } from "@/lib/plans/plan-config";
+import { isPlanRuleRow } from "@/lib/plans/plan-overrides";
+import { invalidateAppFlagRows, readAppFlagRows } from "@/lib/plans/plan-rules";
 import {
   COMING_SOON_COMPANIONS,
+  SURFACE_FEATURE,
   DEFAULT_COMING_SOON_KEYS,
   LIVE_FLAG_PREFIX,
   ORDER_FLAG_PREFIX,
@@ -25,6 +29,8 @@ import {
   surfaceKeyForHref,
   tierLockedFor,
 } from "@/lib/surfaces";
+import { tourRailVisible } from "@/lib/tour/tour-state";
+import { ensureUserSettings } from "@/lib/user-settings";
 import { APP_NAV_CORE, APP_NAV_EXTRAS } from "@/components/layout/app-nav";
 
 /**
@@ -76,64 +82,38 @@ export function isSurfaceHiddenError(err: unknown): err is SurfaceHiddenError {
   return err instanceof Error && err.name === "SurfaceHiddenError";
 }
 
-/**
- * Across requests, per server instance. Every page and gated action reads this table, and
- * on a sidebar click (which skips the layouts that would otherwise have read it once) it
- * was a round trip in front of the page's own queries. It changes only when an operator
- * flips a switch, so each instance re-reads it at most every `HIDDEN_KEYS_TTL_MS`:
- * `setSurfaceHidden` clears it at once on the instance that made the change, and other
- * instances catch up within the TTL. Hiding is product gating, not authorization — a
- * surface staying reachable for a few more seconds after it is hidden is acceptable.
- */
-const HIDDEN_KEYS_TTL_MS = 15_000;
 type FlagSnapshot = {
   hidden: Set<string>;
   comingSoon: Set<string>;
   navOrder: string[];
   tierRules: Map<string, Plan[]>;
 };
-let flagsMemo: { snapshot: FlagSnapshot; at: number } | null = null;
 
-/** Forget the cross-request copy. For writers of `app_surface_flags`, including tests. */
+/**
+ * Forget the cross-request copy of `app_surface_flags`. For writers, including tests.
+ *
+ * The rows are read once and memoized for 15 seconds in `plan-rules.ts` (`readAppFlagRows`),
+ * which this reader and the runtime plan table share. Every page and gated action reads this
+ * table, and it changes only when an operator flips a switch; hiding is product gating, not
+ * authorization, so a surface staying reachable for a few seconds on another instance after it
+ * is hidden is acceptable.
+ */
 export function invalidateHiddenSurfaceKeys(): void {
-  flagsMemo = null;
+  invalidateAppFlagRows();
 }
 
 /**
- * One read of `app_surface_flags`, split into its two meanings: plain keys are hidden
- * surfaces, `soon:`/`live:` rows are coming-soon overrides (see `effectiveComingSoonKeys`).
- * Kept in one table so marking a page coming soon needs no schema migration.
+ * One read of `app_surface_flags`, split into its meanings: plain keys are hidden surfaces,
+ * `soon:`/`live:` rows are coming-soon overrides (see `effectiveComingSoonKeys`), `order:` the
+ * sidebar, `tiers:` page tier rules, and plan rules (`plan-overrides.ts`) are read elsewhere.
+ * Kept in one table so none of them needs a schema migration.
  */
 const getFlagSnapshot = cache(async (): Promise<FlagSnapshot> => {
-  const now = Date.now();
-  if (flagsMemo && now - flagsMemo.at < HIDDEN_KEYS_TTL_MS) return flagsMemo.snapshot;
-  try {
-    const db = await getDb();
-    const rows = await db
-      .select({ surfaceKey: appSurfaceFlags.surfaceKey })
-      .from(appSurfaceFlags);
-    const all = rows.map((r) => r.surfaceKey);
-    const isOverride = (k: string) =>
-      k.startsWith(SOON_FLAG_PREFIX) ||
-      k.startsWith(LIVE_FLAG_PREFIX) ||
-      k.startsWith(ORDER_FLAG_PREFIX) ||
-      k.startsWith(TIERS_FLAG_PREFIX);
-    const orderRow = all.find((k) => k.startsWith(ORDER_FLAG_PREFIX));
-    const snapshot: FlagSnapshot = {
-      hidden: new Set(all.filter((k) => !isOverride(k))),
-      comingSoon: effectiveComingSoonKeys(all),
-      navOrder: orderRow
-        ? orderRow.slice(ORDER_FLAG_PREFIX.length).split(",").filter(Boolean)
-        : [],
-      tierRules: parseTierRules(all),
-    };
-    flagsMemo = { snapshot, at: now };
-    return snapshot;
-  } catch {
+  const read = await readAppFlagRows();
+  if (!read) {
     // Visible is the safe failure for hiding: a database hiccup that hid half the product
     // would be a far worse outage than one that briefly showed a surface meant to be dark.
-    // Coming-soon falls back to the code defaults for the same reason. Not memoized, so the
-    // failure lasts one request rather than the whole TTL.
+    // Coming-soon falls back to the code defaults for the same reason.
     return {
       hidden: new Set<string>(),
       comingSoon: new Set(DEFAULT_COMING_SOON_KEYS),
@@ -142,6 +122,22 @@ const getFlagSnapshot = cache(async (): Promise<FlagSnapshot> => {
       tierRules: new Map(),
     };
   }
+  const all = read.rows;
+  const isOverride = (k: string) =>
+    k.startsWith(SOON_FLAG_PREFIX) ||
+    k.startsWith(LIVE_FLAG_PREFIX) ||
+    k.startsWith(ORDER_FLAG_PREFIX) ||
+    k.startsWith(TIERS_FLAG_PREFIX) ||
+    isPlanRuleRow(k);
+  const orderRow = all.find((k) => k.startsWith(ORDER_FLAG_PREFIX));
+  return {
+    hidden: new Set(all.filter((k) => !isOverride(k))),
+    comingSoon: effectiveComingSoonKeys(all),
+    navOrder: orderRow
+      ? orderRow.slice(ORDER_FLAG_PREFIX.length).split(",").filter(Boolean)
+      : [],
+    tierRules: parseTierRules(all),
+  };
 });
 
 /**
@@ -305,7 +301,65 @@ async function throwIfTierLocked(userId: string, visibility: SurfaceVisibility, 
   if (!plans) return;
   const label = getSurface(surfaceKey)?.label ?? surfaceKey;
   const { plan } = await getEntitlements(userId);
+  // Recorded like every paywall refusal, so Money › Revenue's demand panel sees page locks.
+  await recordGateHit({
+    userId,
+    feature: "page",
+    plan,
+    unlockPlan: plans.find((p) => p === "free" || p === "orbit" || p === "max") ?? null,
+    context: { surface: "web", route: surfaceKey, plans },
+  });
   throw new PaywallError("page", plan, tierLockedMessage(label, plans));
+}
+
+/**
+ * The plan feature a surface's guards also enforce (`SURFACE_FEATURE`), via `requireEntitlement`.
+ * An exempt operator skips it, as they skip tier rules: these surfaces had no plan gate before
+ * they had a feature key, and an admin previewing one must not need to hold a paid plan.
+ */
+async function requireSurfaceFeature(userId: string, visibility: SurfaceVisibility, surfaceKey: string) {
+  const feature = SURFACE_FEATURE[surfaceKey];
+  if (feature && !visibility.exempt) await requireEntitlement(userId, feature, { route: surfaceKey });
+}
+
+/** False when `surfaceKey` has a plan feature (`SURFACE_FEATURE`) this viewer's plan lacks. */
+async function hasSurfaceFeature(userId: string, surfaceKey: string, exempt: boolean): Promise<boolean> {
+  const feature = SURFACE_FEATURE[surfaceKey];
+  return !feature || exempt || (await getEntitlements(userId)).features[feature];
+}
+
+/**
+ * True while an account is still in first-run setup — onboarding, the quick-setup wizard, or
+ * the guided tour on screen. Those drive capture, contacts and imports on a brand-new account
+ * (see `plan-guards.ts`), so a page tier lock must not break them.
+ * ponytail: someone who never finishes the tour keeps the exemption; tighten if it is abused.
+ */
+async function inFirstRunSetup(userId: string): Promise<boolean> {
+  const row = await ensureUserSettings(userId);
+  return (
+    !row.onboardingCompletedAt ||
+    tourRailVisible(row) ||
+    (row.wizardStep != null && row.wizardCompletedAt == null)
+  );
+}
+
+/**
+ * The plans that may use `surfaceKey` when THIS viewer's plan is not one of them, else null.
+ * Tier rule only — no hidden or coming-soon check — for the pages whose action modules must
+ * keep working while the page is hidden (`plan-guards.ts`: contacts, imports, reminders,
+ * capture). Admins, demo accounts and accounts in first-run setup are never locked.
+ */
+export async function surfaceTierLock(userId: string, surfaceKey: string): Promise<Plan[] | null> {
+  if (isAlwaysVisible(surfaceKey)) return null;
+  const plans = (await resolveSurfaceVisibility(userId)).tierLocked.get(surfaceKey);
+  if (!plans || (await inFirstRunSetup(userId))) return null;
+  return plans;
+}
+
+/** Throws the upgrade refusal (recorded as a `page` gate hit) when `surfaceTierLock` locks this viewer out. */
+export async function requirePlanForSurface(userId: string, surfaceKey: string): Promise<void> {
+  if (!(await surfaceTierLock(userId, surfaceKey))) return;
+  await throwIfTierLocked(userId, await resolveSurfaceVisibility(userId), surfaceKey);
 }
 
 export async function isSurfaceVisible(
@@ -324,8 +378,13 @@ export async function isSurfaceVisible(
  * suggestion drawn from a feature the viewer cannot open yet.
  */
 export async function isSurfaceLive(userId: string, surfaceKey: string): Promise<boolean> {
-  const { hidden, comingSoon, tierLocked } = await resolveSurfaceVisibility(userId);
-  return !hidden.has(surfaceKey) && !comingSoon.has(surfaceKey) && !tierLocked.has(surfaceKey);
+  const { hidden, comingSoon, tierLocked, exempt } = await resolveSurfaceVisibility(userId);
+  return (
+    !hidden.has(surfaceKey) &&
+    !comingSoon.has(surfaceKey) &&
+    !tierLocked.has(surfaceKey) &&
+    (await hasSurfaceFeature(userId, surfaceKey, exempt))
+  );
 }
 
 /** Throws `SurfaceHiddenError` (or `PaywallError` for a tier-locked page) unless this viewer may reach `surfaceKey`. */
@@ -334,6 +393,7 @@ export async function requireVisibleSurface(userId: string, surfaceKey: string) 
   const visibility = await resolveSurfaceVisibility(userId);
   if (visibility.hidden.has(surfaceKey)) throw new SurfaceHiddenError(surfaceKey);
   await throwIfTierLocked(userId, visibility, surfaceKey);
+  await requireSurfaceFeature(userId, visibility, surfaceKey);
 }
 
 /**
@@ -349,6 +409,7 @@ export async function requireReleasedSurface(userId: string, surfaceKey: string)
     throw new SurfaceHiddenError(surfaceKey);
   }
   await throwIfTierLocked(userId, visibility, surfaceKey);
+  await requireSurfaceFeature(userId, visibility, surfaceKey);
 }
 
 /**

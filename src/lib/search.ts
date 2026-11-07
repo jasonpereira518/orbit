@@ -4,7 +4,7 @@ import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
 import { careerLine, type ExperienceEntry } from "@/lib/contact-profile-format";
 import { metContextLabel } from "@/lib/met-context";
-import { createEmbedding, createEmbeddingsBatch } from "@/lib/ai";
+import { createEmbedding, createEmbeddingsBatch, currentEmbeddingModel } from "@/lib/ai";
 import { formatVectorLiteral } from "@/lib/pgvector";
 
 export function computeContentHash(content: string): string {
@@ -100,19 +100,23 @@ export async function upsertContactEmbedding(
             eq(contactEmbeddings.sourceId, sourceId)
           ),
           // Only the id and hash are read below — never the stored vector (jsonb) or text.
-          columns: { id: true, contentHash: true },
+          columns: { id: true, contentHash: true, embeddingModel: true },
         })
       : undefined;
 
-    // Unchanged content: the stored embedding is still correct — skip the API call.
-    if (existing?.contentHash === contentHash) return false;
+    // Unchanged content made by THIS model: the stored embedding is still correct — skip the
+    // API call. A vector another model made is not comparable with this account's queries,
+    // however unchanged its text, so it is redone.
+    const model = await currentEmbeddingModel(userId);
+    const sameModel = !existing?.embeddingModel || !model || existing.embeddingModel === model;
+    if (existing?.contentHash === contentHash && sameModel) return false;
 
     const embedding = await embed(userId, content);
 
     if (existing) {
       await db
         .update(contactEmbeddings)
-        .set({ embedding, content, contentHash })
+        .set({ embedding, content, contentHash, embeddingModel: model })
         .where(eq(contactEmbeddings.id, existing.id));
       await persistEmbeddingVectors([{ id: existing.id, embedding }]);
       return true;
@@ -120,7 +124,7 @@ export async function upsertContactEmbedding(
 
     const [inserted] = await db
       .insert(contactEmbeddings)
-      .values({ userId, contactId, sourceType, sourceId, embedding, content, contentHash })
+      .values({ userId, contactId, sourceType, sourceId, embedding, content, contentHash, embeddingModel: model })
       .returning();
     if (inserted?.id) {
       await persistEmbeddingVectors([{ id: inserted.id, embedding }]);

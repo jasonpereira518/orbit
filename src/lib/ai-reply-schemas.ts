@@ -23,35 +23,6 @@ export const excerptRetrySchema = z.object({
     .optional(),
 });
 
-const chatRecommendationJsonSchema = z.object({
-  contact_id: z.string().nullish(),
-  recruiter_id: z.string().nullish(),
-  name: z.string(),
-  reason: z.string(),
-  suggested_action: z.string(),
-  draft_message: z.string().nullable(),
-});
-
-/**
- * The non-streaming chat answer. A missing or mistyped `answer` / `recommendations` /
- * `proposed_actions` becomes empty (what the old `?? ""` / `?? []` did for absent ones, now
- * also for wrongly typed ones); a recommendation that is not the documented shape is dropped
- * rather than failing the whole answer.
- */
-export const chatAnswerJsonSchema = z.object({
-  answer: z.string().catch(""),
-  recommendations: z
-    .array(z.unknown())
-    .catch([])
-    .transform((items) =>
-      items.flatMap((item) => {
-        const parsed = chatRecommendationJsonSchema.safeParse(item);
-        return parsed.success ? [parsed.data] : [];
-      })
-    ),
-  proposed_actions: z.array(z.unknown()).catch([]),
-});
-
 /** `{ "title": … }`, or a bare `null`; `sanitizeChatTitle` decides whether the title is usable. */
 export const chatTitleReplySchema = z.object({ title: z.unknown().optional() }).nullable();
 

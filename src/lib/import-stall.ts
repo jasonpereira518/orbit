@@ -56,6 +56,23 @@ export async function kickImportContinuation(importId: string): Promise<void> {
   if (!res.ok) throw new Error(`import continuation kick answered ${res.status}`);
 }
 
+/**
+ * Start a job the caller just created in its own 300s invocation.
+ *
+ * A Server Action's `after()` runs inside the invoking page's function, so a job started
+ * from a 60s page (the recruiter scans, which the integrations dialog can start anywhere)
+ * was killed at ~60s against its 4.5-minute budget and sat until the stall sweep. When the
+ * kick is refused (no `CRON_SECRET` in local dev, a network error), run the job here as
+ * before: the jobs are safe to start twice.
+ */
+export async function startJobInOwnInvocation(importId: string, runHere: (importId: string) => Promise<void>): Promise<void> {
+  try {
+    await kickImportContinuation(importId);
+  } catch {
+    await runHere(importId);
+  }
+}
+
 export type StallSweepResult = {
   found: number;
   resumed: number;

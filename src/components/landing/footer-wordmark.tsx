@@ -19,6 +19,7 @@ import {
   type Dot,
 } from "@/components/landing/footer-wordmark-field";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion, subscribeReducedMotion } from "@/lib/motion-preference";
 
 const FLARE_RGB = "255, 244, 200";
 const HALO_RGB = "255, 233, 160";
@@ -68,7 +69,6 @@ export function FooterWordmark({ className }: { className?: string }) {
     if (!wrap || !canvas || !ctx) return;
 
     const base = document.createElement("canvas");
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
     const family = getComputedStyle(canvas).fontFamily;
     const active = new Set<number>();
     let dots: Dot[] = [];
@@ -148,7 +148,7 @@ export function FooterWordmark({ className }: { className?: string }) {
     }
 
     function ignite(a: { x: number; y: number }, b: { x: number; y: number }) {
-      if (reduced.matches || dots.length === 0) return;
+      if (prefersReducedMotion() || dots.length === 0) return;
       const now = performance.now();
       for (const [i, strength] of dotsNearSegment(dots, a.x, a.y, b.x, b.y, TRAIL_RADIUS)) {
         const d = dots[i];
@@ -197,7 +197,7 @@ export function FooterWordmark({ className }: { className?: string }) {
     canvas.addEventListener("pointerup", onUp);
     canvas.addEventListener("pointerleave", onLeave);
     canvas.addEventListener("pointercancel", onLeave);
-    reduced.addEventListener("change", onReducedChange);
+    const unsubscribeReduced = subscribeReducedMotion(onReducedChange);
     // Sample the letters in the real face, not the fallback it swaps from. The heading
     // font is almost always loaded by the time the page bottom mounts.
     void document.fonts
@@ -216,7 +216,7 @@ export function FooterWordmark({ className }: { className?: string }) {
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointerleave", onLeave);
       canvas.removeEventListener("pointercancel", onLeave);
-      reduced.removeEventListener("change", onReducedChange);
+      unsubscribeReduced();
     };
   }, []);
 

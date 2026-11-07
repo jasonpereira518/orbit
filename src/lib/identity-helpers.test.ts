@@ -80,18 +80,18 @@ const URL_TABLE: UrlRow[] = [
   { input: "www.linkedin.com/in/jane", contactInput: true, actionsContacts: true, slug: "jane", recruiters: `${L}/in/jane`, build: `${L}/in/www.linkedin.com/in/jane` },
   { input: "https://www.linkedin.com/in/jane/?trk=x#frag", contactInput: true, actionsContacts: true, slug: "jane", recruiters: `${L}/in/jane`, build: `${L}/in/jane/?trk=x#frag` },
   { input: "https://www.linkedin.com/in/jane?utm=1", contactInput: true, actionsContacts: true, slug: "jane", recruiters: `${L}/in/jane`, build: `${L}/in/jane?utm=1` },
-  { input: "https://www.linkedin.com/company/acme", contactInput: true, actionsContacts: true, slug: `${L}/company/acme`, recruiters: `${L}/company/acme`, build: `${L}/company/acme` },
-  { input: "https://www.linkedin.com/", contactInput: true, actionsContacts: true, slug: `${L}/`, recruiters: L, build: `${L}/` },
-  { input: "https://www.linkedin.com/in/", contactInput: true, actionsContacts: true, slug: `${L}/in/`, recruiters: `${L}/in`, build: `${L}/in/` },
-  { input: "https://www.linkedin.com/pub/jane/1/2/3", contactInput: true, actionsContacts: true, slug: `${L}/pub/jane/1/2/3`, recruiters: `${L}/pub/jane/1/2/3`, build: `${L}/pub/jane/1/2/3` },
+  { input: "https://www.linkedin.com/company/acme", contactInput: true, actionsContacts: true, slug: "", recruiters: `${L}/company/acme`, build: `${L}/company/acme` },
+  { input: "https://www.linkedin.com/", contactInput: true, actionsContacts: true, slug: "", recruiters: L, build: `${L}/` },
+  { input: "https://www.linkedin.com/in/", contactInput: true, actionsContacts: true, slug: "", recruiters: `${L}/in`, build: `${L}/in/` },
+  { input: "https://www.linkedin.com/pub/jane/1/2/3", contactInput: true, actionsContacts: true, slug: "", recruiters: `${L}/pub/jane/1/2/3`, build: `${L}/pub/jane/1/2/3` },
   { input: "http://linkedin.com/in/jane", contactInput: true, actionsContacts: true, slug: "jane", recruiters: `${L}/in/jane`, build: "http://linkedin.com/in/jane" },
-  { input: "https://example.com/in/jane", contactInput: false, actionsContacts: false, slug: "https://example.com/in/jane", recruiters: `${L}/in/jane`, build: "https://example.com/in/jane" },
+  { input: "https://example.com/in/jane", contactInput: false, actionsContacts: false, slug: "", recruiters: `${L}/in/jane`, build: "https://example.com/in/jane" },
   { input: "https://evil.com/linkedin.com/in/jane", contactInput: false, actionsContacts: false, slug: "jane", recruiters: `${L}/linkedin.com/in/jane`, build: "https://evil.com/linkedin.com/in/jane" },
   { input: "notlinkedin.com/in/jane", contactInput: false, actionsContacts: false, slug: "jane", recruiters: `${L}/in/jane`, build: `${L}/in/notlinkedin.com/in/jane` },
-  { input: "https://linkedin.com.evil.com/in/jane", contactInput: false, actionsContacts: false, slug: "https://linkedin.com.evil.com/in/jane", recruiters: `${L}/in/jane`, build: "https://linkedin.com.evil.com/in/jane" },
+  { input: "https://linkedin.com.evil.com/in/jane", contactInput: false, actionsContacts: false, slug: "", recruiters: `${L}/in/jane`, build: "https://linkedin.com.evil.com/in/jane" },
   { input: "ftp://linkedin.com/in/x", contactInput: false, actionsContacts: false, slug: "x", recruiters: `${L}//linkedin.com/in/x`, build: `${L}/in/ftp://linkedin.com/in/x` },
-  { input: "jane-doe", contactInput: false, actionsContacts: false, slug: "jane-doe", recruiters: L, build: `${L}/in/jane-doe` },
-  { input: "/in/jane", contactInput: false, actionsContacts: false, slug: "/in/jane", recruiters: `${L}/jane`, build: `${L}/in/in/jane` },
+  { input: "jane-doe", contactInput: false, actionsContacts: false, slug: "", recruiters: L, build: `${L}/in/jane-doe` },
+  { input: "/in/jane", contactInput: false, actionsContacts: false, slug: "", recruiters: `${L}/jane`, build: `${L}/in/in/jane` },
   { input: "", contactInput: false, actionsContacts: false, slug: "", recruiters: null, build: null },
   { input: "   ", contactInput: false, actionsContacts: false, slug: "", recruiters: null, build: null },
 ];
@@ -153,9 +153,10 @@ describe("DISAGREEMENTS (LinkedIn): P4.3 flips these", () => {
     assert.equal(canonicalLinkedInUrl("Jane-Doe"), `${L}/in/Jane-Doe`); // keeps case
   });
 
-  it("[P4.3] normalizeLinkedinUrl rewrites ANY host to www.linkedin.com; linkedinSlug keeps a non-LinkedIn URL whole", () => {
+  it("[P4.3] normalizeLinkedinUrl rewrites ANY host to www.linkedin.com; linkedinSlug finds no slug in a non-LinkedIn URL", () => {
     assert.equal(normalizeLinkedinUrl("https://example.com/in/jane"), `${L}/in/jane`);
-    assert.equal(linkedinSlug("https://example.com/in/jane"), "https://example.com/in/jane");
+    // Main stopped falling back to the whole URL: a company page used to match as a "slug".
+    assert.equal(linkedinSlug("https://example.com/in/jane"), "");
   });
 
   it("[P4.3] a bare slug: buildLinkedInUrl makes a profile URL, normalizeLinkedinUrl drops it to the bare host", () => {
@@ -171,7 +172,7 @@ describe("DISAGREEMENTS (LinkedIn): P4.3 flips these", () => {
   it("[P4.3] a slug-less /in/ URL is a valid profile URL to one copy and has no slug in the other", () => {
     // unchanged: accepted under the shared rule too (any linkedin.com host).
     assert.equal(isLinkedInProfileUrlActionsContacts("https://www.linkedin.com/in/"), true);
-    assert.equal(linkedinSlug("https://www.linkedin.com/in/"), `${L}/in/`);
+    assert.equal(linkedinSlug("https://www.linkedin.com/in/"), "");
   });
 });
 

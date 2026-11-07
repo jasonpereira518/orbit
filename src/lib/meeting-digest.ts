@@ -216,17 +216,56 @@ export function groundDigest(digest: MeetingDigest, transcript: string): Meeting
   };
 }
 
+/** Who the user is, as far as telling them apart from the people in their own notes goes. */
+export type CaptureSelf = {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  linkedinUrl?: string | null;
+};
+
+function foldName(s: string): string {
+  return s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function linkedinSlugOf(url: string | null | undefined): string | null {
+  const m = url?.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]).toLowerCase();
+  } catch {
+    return m[1].toLowerCase();
+  }
+}
+
 /**
- * The user is on every call they record; they are never a contact to create. Matched on
- * the full name and on the first name alone, since the model often has only what was said.
+ * The user writes the notes and is on every call they record; they are never a contact to
+ * create. Matched on the full name and on the first name alone, since the model often has
+ * only what was said — unless the person carries an email or LinkedIn that is not the
+ * user's, which makes them someone else who happens to share a first name.
  */
-export function isSelf(name: string, self: { firstName?: string | null; lastName?: string | null }): boolean {
-  const n = name.replace(/\s+/g, " ").trim().toLowerCase();
+export function isSelf(
+  name: string,
+  self: CaptureSelf,
+  person?: { email?: string | null; linkedinUrl?: string | null; company?: string | null },
+): boolean {
+  const email = person?.email?.trim().toLowerCase() || null;
+  const slug = linkedinSlugOf(person?.linkedinUrl);
+  const selfEmail = self.email?.trim().toLowerCase() || null;
+  const selfSlug = linkedinSlugOf(self.linkedinUrl);
+  if (email && selfEmail && email === selfEmail) return true;
+  if (slug && selfSlug && slug === selfSlug) return true;
+  // A different identifier is a different person, whatever their name.
+  if ((email && email !== selfEmail) || (slug && slug !== selfSlug)) return false;
+
+  const n = foldName(name);
   if (n === "me" || n === "i" || n === "myself") return true;
-  const first = self.firstName?.trim().toLowerCase();
-  const last = self.lastName?.trim().toLowerCase();
+  const first = self.firstName ? foldName(self.firstName) : "";
+  const last = self.lastName ? foldName(self.lastName) : "";
   if (!n || !first) return false;
-  if (n === first) return true;
+  // A bare first name with a company attached ("Jason from Stripe") is someone else who
+  // shares the user's first name. Callers pass `company` only where that reading holds.
+  if (n === first) return !person?.company?.trim();
   return Boolean(last && n === `${first} ${last}`);
 }
 

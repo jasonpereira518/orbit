@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, MessageCircle, Share2 } from "lucide-react";
 import { motion } from "motion/react";
+import { recordWaitlistShare } from "@/actions/interest-list";
 import { SHARE_TEXT, SHARE_TITLE, buildShareUrl, type InterestTicket } from "@/lib/interest-list";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,18 @@ export function ShareRow({
   const [messageCopied, setMessageCopied] = useState(false);
   const [canShare, setCanShare] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Count this share (`waitlist_shared`): the signup id and the channel, server-side. Fire and
+   * forget; a counter must never be able to fail a share or hold up the UI.
+   */
+  function report(channel: "copy" | "linkedin" | "native") {
+    try {
+      void recordWaitlistShare({ shareToken: ticket.shareToken, channel }).catch(() => {});
+    } catch {
+      // Nothing to do.
+    }
+  }
   const timer = useRef<number | null>(null);
   const messageTimer = useRef<number | null>(null);
 
@@ -69,6 +82,7 @@ export function ShareRow({
       }
     }
     if (!ok) return;
+    report("copy");
     setCopied(true);
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setCopied(false), 1600);
@@ -81,6 +95,7 @@ export function ShareRow({
       // Dismissed. Nothing to do.
       return;
     }
+    report("native");
     onShared?.();
   }
 
@@ -95,6 +110,7 @@ export function ShareRow({
       ok = false;
     }
     if (!ok) return;
+    report("copy");
     setMessageCopied(true);
     if (messageTimer.current) window.clearTimeout(messageTimer.current);
     messageTimer.current = window.setTimeout(() => setMessageCopied(false), 1600);
@@ -134,7 +150,7 @@ export function ShareRow({
           {messageCopied ? <Check className="size-4" aria-hidden="true" /> : <MessageCircle className="size-4" aria-hidden="true" />}
           {messageCopied ? "Copied — paste in Messages" : "Share on Messages"}
         </button>
-        <a href={linkedin} target="_blank" rel="noopener noreferrer" className={PILL}>
+        <a href={linkedin} target="_blank" rel="noopener noreferrer" className={PILL} onClick={() => report("linkedin")}>
           LinkedIn
         </a>
         {canShare ? (

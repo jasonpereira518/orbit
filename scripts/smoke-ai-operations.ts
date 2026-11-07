@@ -134,9 +134,15 @@ console.log("\nDerived lists");
     [...BACKGROUND_AI_OPERATIONS].sort().join(",") ===
       [
         "calendar.kind",
+        "capture.dates.bg",
+        "capture.parse.bg",
+        "capture.parse.details.bg",
+        "capture.parse.excerpt-retry.bg",
+        "capture.parse.identify.bg",
+        "contact.name_guess",
         "contact.work_history",
         "duplicates.same_person",
-        "duplicates.same_person.llm",
+        "email.understand",
         "import.enrich",
         "import.enrich.gate",
         "import.linkedin.timeline",

@@ -1,7 +1,8 @@
 import { eq, sql } from "drizzle-orm";
 import { reportError } from "@/lib/report-error";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getCreditBalance } from "@/lib/credits/ledger";
-import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import type { Plan } from "@/lib/plans/plan-config";
 import { getDb, rowsOf } from "@/db";
 import { notTourExample } from "@/lib/onboarding-examples/sql";
 import { tourRailVisible } from "@/lib/tour/tour-state";
@@ -38,8 +39,8 @@ import {
 } from "@/lib/outlook";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
-import { LINKEDIN_IMPORT_TYPE, LINKEDIN_MESSAGES_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
 import { num } from "@/lib/admin-metrics";
+import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-import-types";
 
 /**
  * The server half of account alerts: loads the facts, hands them to the pure predicates in
@@ -198,7 +199,7 @@ export async function loadAccountHealthInput(
   // so resolving from the row in hand is the same answer without a second read of it.
   const settings = context?.settings ?? (await ensureUserSettings(userId));
   if (!settings) return null;
-  const entitlements = context?.entitlements ?? entitlementsFromSettings(userId, settings);
+  const entitlements = context?.entitlements ?? entitlementsFromSettings(userId, settings, await getEffectivePlanConfig());
 
   const provider = resolveAiProvider(settings.aiProvider);
   const stalledBefore = new Date(now.getTime() - STALLED_IMPORT_MS);
@@ -328,7 +329,7 @@ export async function loadAccountHealthInput(
       lastLinkedInImportAt: sql<string | null>`(
         SELECT max(${imports.createdAt}) FROM ${imports}
         WHERE ${imports.userId} = ${userId}
-          AND ${imports.importType} IN (${LINKEDIN_IMPORT_TYPE}, ${LINKEDIN_MESSAGES_IMPORT_TYPE})
+          AND ${imports.importType} IN (${sql.join(LINKEDIN_UPLOAD_IMPORT_TYPES.map((t) => sql`${t}`), sql`, `)})
           AND ${imports.status} = 'completed'
           AND ${imports.revertedAt} IS NULL)`,
 
@@ -402,6 +403,7 @@ export async function loadAccountHealthInput(
     importStalledTotal: row.importStalledTotal == null ? null : num(row.importStalledTotal),
     emailSendFailedCount: num(row.emailSendFailedCount),
     lastLinkedInImportAt: row.lastLinkedInImportAt ? new Date(row.lastLinkedInImportAt) : null,
+    linkedInRefreshIntervalDays: settings.linkedinRefreshIntervalDays ?? null,
 
     plan: entitlements.plan,
     planSource: entitlements.source,
@@ -411,6 +413,7 @@ export async function loadAccountHealthInput(
     contactCount: needContacts ? num(row.contactCount) : null,
     credits: await creditFacts(userId, entitlements.plan, settings, now),
     pausedApiItems: entitlements.canUseApi ? 0 : await pausedApiItems(userId),
+    planConfig: await getEffectivePlanConfig(),
   };
 }
 
@@ -437,7 +440,7 @@ async function creditFacts(
   settings: Parameters<typeof getCreditBalance>[2],
   now: Date
 ): Promise<HealthInput["credits"]> {
-  if (!PLAN_CONFIG[plan].features.hostedAi) return null;
+  if (!(await getEffectivePlanConfig())[plan].features.hostedAi) return null;
   // Running on the account's own key (the default whenever one is saved, unless it chose
   // included AI first): credits are not what its AI runs on, so no credit notices.
   const row = settings as {

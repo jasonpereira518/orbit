@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,13 @@ export type ReviewPerson = {
   repeatReason?: string | null;
   meta?: string;
 };
+
+/**
+ * Rows drawn at a time. A LinkedIn export can be 30,000 people, and drawing every one made the
+ * review list tens of thousands of DOM rows; the counts, "Select all" and the import itself
+ * still cover everyone, drawn or not.
+ */
+const REVIEW_PAGE = 500;
 
 export function ImportPeopleReview({
   people,
@@ -31,6 +39,7 @@ export function ImportPeopleReview({
   const selectedCount = people.filter((p) => selectedIds.has(p.id)).length;
   const allSelected = people.length > 0 && selectedCount === people.length;
   const repeatCount = people.filter((p) => p.isRepeat).length;
+  const [shown, setShown] = useState(REVIEW_PAGE);
 
   function toggle(id: string, checked: boolean) {
     const next = new Set(selectedIds);
@@ -88,7 +97,7 @@ export function ImportPeopleReview({
         </div>
 
         <ul>
-          {people.map((person) => {
+          {people.slice(0, shown).map((person) => {
             const checked = selectedIds.has(person.id);
             return (
               <li
@@ -142,6 +151,13 @@ export function ImportPeopleReview({
             );
           })}
         </ul>
+        {people.length > shown ? (
+          <div className="border-t border-border/50 px-3 py-2 text-center">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setShown((n) => n + REVIEW_PAGE)}>
+              Show {Math.min(REVIEW_PAGE, people.length - shown)} more of {people.length - shown}
+            </Button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

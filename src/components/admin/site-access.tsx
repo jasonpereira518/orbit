@@ -28,11 +28,12 @@ function copyLink(url: string) {
 }
 
 /**
- * The stealth switch. Confirmed and reasoned through `ConfirmActionDialog` rather than a bare
- * toggle: switching it off opens every page to the public, and "who opened the site, when,
- * why" belongs in the audit log.
+ * The stealth switch, sized for the Access header so every Access tab shows whether the site
+ * is open. Confirmed and reasoned through `ConfirmActionDialog` rather than a bare toggle:
+ * switching it off opens every page to the public, and "who opened the site, when, why"
+ * belongs in the audit log. The dialogs carry the explanation the old full-width panel did.
  */
-export function StealthSwitch({
+export function StealthControl({
   stealth,
   fromConsole,
   stealthSinceLabel,
@@ -44,79 +45,71 @@ export function StealthSwitch({
   // Stealth from `SITE_STEALTH` alone has no start date, so no account is being checked for an
   // invitation yet — see `src/lib/site-access.ts`. Saving it "on" here dates it.
   const unguarded = stealth && !stealthSinceLabel;
+  const source = !fromConsole
+    ? " · from SITE_STEALTH"
+    : stealth && stealthSinceLabel
+      ? ` since ${stealthSinceLabel}`
+      : "";
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start gap-4">
-        <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-2 text-sm">
-            {stealth ? (
-              <EyeOff className="size-3.5 text-primary" aria-hidden />
-            ) : (
-              <Globe className="size-3.5 text-muted-foreground" aria-hidden />
-            )}
-            {stealth ? "Stealth is on" : "The site is public"}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {stealth
-              ? "Anyone without an account is sent to the waitlist from every page. People with an account sign in at /sign-in and use Orbit as usual; new accounts need an invitation."
-              : "Every public page is open and anyone can create an account."}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {fromConsole
-              ? stealth && stealthSinceLabel
-                ? `On since ${stealthSinceLabel}.`
-                : "Set from this console."
-              : "Set by the SITE_STEALTH environment variable. Changing it here takes over from it."}{" "}
-            Changes reach every server within about ten seconds.
-          </p>
-        </div>
-
-        {/* Keyed on the state so the refresh after a switch remounts it: otherwise the
-            closing dialog's fade shows the OPPOSITE action's title for a moment. */}
-        <ConfirmActionDialog
-          key={String(stealth)}
-          trigger={
-            <button type="button"
-              className={cn(
-                BUTTON,
-                stealth
-                  ? "border-destructive/40 text-destructive hover:bg-destructive/10"
-                  : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/15"
-              )}
-            >
-              {stealth ? <Globe className="size-3" aria-hidden /> : <EyeOff className="size-3" aria-hidden />}
-              {stealth ? "Open the site" : "Turn on stealth"}
-            </button>
-          }
-          title={stealth ? "Open the site to everyone?" : "Put the site in stealth?"}
-          description={
-            stealth
-              ? "Every page becomes public and anyone can create an account without an invitation. Waitlist links keep working."
-              : "Everyone without an account is sent to the waitlist from every page. Existing accounts keep working. Accounts created from now on need an invitation."
-          }
-          confirmLabel={stealth ? "Open the site" : "Turn on stealth"}
-          danger={stealth}
-          onConfirm={(reason) => setSiteStealthAction({ enabled: !stealth, reason })}
-        />
-      </div>
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        {stealth ? (
+          <EyeOff className="size-3.5 text-primary" aria-hidden />
+        ) : (
+          <Globe className="size-3.5" aria-hidden />
+        )}
+        <span className={stealth ? "text-foreground" : undefined}>
+          {stealth ? "Stealth on" : "Site is public"}
+        </span>
+        {source}
+      </span>
 
       {unguarded && (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2">
-          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-            New accounts aren’t checked for an invitation yet, because stealth came from the
-            environment and has no start date. A Google sign-in could still create an account.
-            Save stealth here to start checking every account created from now on.
-          </p>
-          <ConfirmActionDialog
-            trigger={<button type="button" className={cn(BUTTON, "border-border/70 hover:text-foreground")}>Start checking</button>}
-            title="Start checking new accounts?"
-            description="Stealth stays on. Accounts created from now on need an invitation to get in. Every account that exists today keeps working."
-            confirmLabel="Start checking"
-            onConfirm={(reason) => setSiteStealthAction({ enabled: true, reason })}
-          />
-        </div>
+        <ConfirmActionDialog
+          trigger={
+            <button
+              type="button"
+              className={cn(BUTTON, "border-amber-500/40 bg-amber-500/5 hover:text-foreground")}
+            >
+              Start checking new accounts
+            </button>
+          }
+          title="Start checking new accounts?"
+          description="Stealth came from the environment and has no start date, so new accounts aren’t checked for an invitation yet — a Google sign-in could still create one. Stealth stays on. Accounts created from now on need an invitation to get in. Every account that exists today keeps working."
+          confirmLabel="Start checking"
+          onConfirm={(reason) => setSiteStealthAction({ enabled: true, reason })}
+        />
       )}
+
+      {/* Keyed on the state so the refresh after a switch remounts it: otherwise the
+          closing dialog's fade shows the OPPOSITE action's title for a moment. */}
+      <ConfirmActionDialog
+        key={String(stealth)}
+        trigger={
+          <button
+            type="button"
+            className={cn(
+              BUTTON,
+              stealth
+                ? "border-destructive/40 text-destructive hover:bg-destructive/10"
+                : "border-primary/40 bg-primary/10 text-primary hover:bg-primary/15"
+            )}
+          >
+            {stealth ? <Globe className="size-3" aria-hidden /> : <EyeOff className="size-3" aria-hidden />}
+            {stealth ? "Open the site" : "Turn on stealth"}
+          </button>
+        }
+        title={stealth ? "Open the site to everyone?" : "Put the site in stealth?"}
+        description={
+          stealth
+            ? "Every page becomes public and anyone can create an account without an invitation. Waitlist links keep working. Reaches every server within about ten seconds."
+            : "Everyone without an account is sent to the waitlist from every page. People with an account sign in at /sign-in as usual; accounts created from now on need an invitation. Reaches every server within about ten seconds."
+        }
+        confirmLabel={stealth ? "Open the site" : "Turn on stealth"}
+        danger={stealth}
+        onConfirm={(reason) => setSiteStealthAction({ enabled: !stealth, reason })}
+      />
     </div>
   );
 }
@@ -142,6 +135,7 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
   const [pending, start] = useTransition();
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
+  const [wave, setWave] = useState("");
   const [notify, setNotify] = useState(true);
   const [result, setResult] = useState<SiteInviteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -153,7 +147,7 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
     setResult(null);
     start(async () => {
       try {
-        const res = await inviteToSiteAction({ email, notify, firstName });
+        const res = await inviteToSiteAction({ email, notify, firstName, wave });
         if (res.kind === "error") {
           setError(res.message);
           return;
@@ -197,6 +191,17 @@ export function InviteForm({ clerkOn }: { clerkOn: boolean }) {
           maxLength={60}
           disabled={pending || !notify}
           className="h-8 w-44 max-w-full text-sm"
+        />
+        <Input
+          value={wave}
+          onChange={(e) => setWave(e.target.value)}
+          placeholder="Wave (w1)"
+          aria-label="Wave label for this invitation, like w1 or w2"
+          maxLength={4}
+          pattern="[Ww][0-9]{1,3}"
+          title="A wave looks like w1, w2, w12"
+          disabled={pending}
+          className="h-8 w-24 max-w-full text-sm"
         />
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <input

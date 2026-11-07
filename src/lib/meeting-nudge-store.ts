@@ -194,9 +194,10 @@ function alertDesktop(c: MeetingCandidate): void {
   if (typeof document === "undefined" || document.visibilityState !== "hidden") return;
   void showDesktopNotification({
     id: `meeting-nudge:${nudgeKey(c)}`,
+    kind: "meeting",
     title: c.title,
     body: `${nudgeTiming(c, Date.now())} — open Orbit to record it`,
-    url: "/capture?mode=meeting",
+    url: "/meetings",
   }).catch(() => {});
 }
 

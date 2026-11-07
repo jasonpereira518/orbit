@@ -265,7 +265,9 @@ export type AiSecurityEventKind =
   /** An MCP caller sent more calls in one request than the batch cap allows. */
   | "batch_rejected"
   /** A draft was refused because too many are already waiting for approval. */
-  | "draft_flood";
+  | "draft_flood"
+  /** Chat applied a change itself, under the person's auto-apply setting. Not a fault: an audit. */
+  | "chat_auto_apply";
 
 export type AiSecurityEvent = {
   kind: AiSecurityEventKind;

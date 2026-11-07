@@ -3,6 +3,7 @@ import { TierLocked } from "@/components/locked-feature";
 import { SurfaceUnavailable } from "@/components/surface-unavailable";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getSurface } from "@/lib/surfaces";
 
 /**
@@ -30,7 +31,7 @@ export async function pageVisibilityGate(surfaceKey: string) {
     return <SurfaceUnavailable label={surface?.label} />;
   }
   if (comingSoon.has(surfaceKey)) {
-    return <ComingSoon surfaceKey={surfaceKey} label={surface?.label ?? surfaceKey} />;
+    return <ComingSoon surfaceKey={surfaceKey} label={surface?.label ?? surfaceKey} config={await getEffectivePlanConfig()} />;
   }
   const plans = tierLocked.get(surfaceKey);
   if (plans) return <TierLocked surfaceKey={surfaceKey} plans={plans} />;

@@ -17,13 +17,13 @@
  * rounds to run lives in `@/lib/chat-tool-loop` and never sees any of it — which is also what
  * makes the loop testable with a fake driver and no key.
  *
- * Non-streaming on purpose: nothing a gather round writes is shown to the user. The answer
- * that IS shown is written afterwards by `chatWithNetworkStream`, unchanged.
+ * A round is one plain call unless `onText` is given; the chat answer loop
+ * (`@/lib/chat-agent-loop`) streams its rounds, since their prose is the answer.
  */
 import { z, type ZodRawShape } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
-import type { Content, FunctionDeclaration } from "@google/genai";
+import type { Content, FunctionCallingConfigMode, FunctionDeclaration } from "@google/genai";
 import {
   anthropicClient,
   geminiClient,
@@ -40,7 +40,8 @@ import { geminiThinking, translatingProviderErrors } from "@/lib/ai";
 import { modelForOperation } from "@/lib/ai-models";
 import type { AiOperationId } from "@/lib/ai-operations";
 import { aiOperationThinking } from "@/lib/ai-operations";
-import { anthropicAcceptsTemperature } from "@/lib/ai-providers";
+import { anthropicAcceptsTemperature, anthropicEffort } from "@/lib/ai-providers";
+import { readAnthropicText, readGeminiRound, readOpenAiRound } from "@/lib/ai-tools-stream";
 import { openaiCompletionOptions } from "@/lib/ai-request-options";
 import { aiProviderLabel } from "@/lib/errors";
 import {
@@ -70,8 +71,16 @@ export type ToolStep = {
   text: string;
 };
 
+export type ToolStepOptions = {
+  /**
+   * The model may not call a tool this round: it must answer from what it has. The answer
+   * loop's last round, when the lookup budget or the time for lookups has run out.
+   */
+  noTools?: boolean;
+};
+
 export type ToolDriver = {
-  step(signal: AbortSignal): Promise<ToolStep>;
+  step(signal: AbortSignal, options?: ToolStepOptions): Promise<ToolStep>;
   /** One result per call from the last step, in any order. */
   addResults(results: Array<{ call: ToolCall; content: string }>): void;
 };
@@ -102,7 +111,48 @@ type DriverInput = {
    * grant, and its managed-allowance check, is still minted here for this driver alone.
    */
   access?: AiAccess;
+  /**
+   * Stream each round: the model's prose is handed here as it arrives, and the round's tool
+   * calls are returned once its stream ends. For the chat answer loop
+   * (`@/lib/chat-agent-loop`), whose prose IS the answer. Absent, a round is one plain call.
+   */
+  onText?: (delta: string) => void;
+  /**
+   * The caller walking away (the person pressed Stop), as distinct from a deadline. A round
+   * aborted by this is filed as `cancelled`; one cut by any other part of its signal — the
+   * answer's deadline — as the timeout it is. Absent, any abort of the round is `cancelled`.
+   */
+  cancelSignal?: AbortSignal;
 };
+
+/**
+ * One Anthropic tool round's request. Every round of a loop resends tools, system and the
+ * whole conversation so far, so it carries two cache breakpoints: one on the system block,
+ * which caches tools + system (they render first and are the same every round), and the
+ * top-level one, which caches the growing conversation — round N reads round N-1's prefix
+ * instead of paying for it again. Both at the default 5-minute TTL. Exported for
+ * `scripts/smoke-tool-stream-driver.ts`.
+ */
+export function anthropicRoundParams(p: {
+  model: string;
+  maxOutputTokens: number;
+  temperature: number;
+  system: string;
+  tools: Anthropic.Tool[];
+  noTools: boolean;
+  messages: Anthropic.MessageParam[];
+}) {
+  return {
+    model: p.model,
+    max_tokens: p.maxOutputTokens,
+    ...(anthropicAcceptsTemperature(p.model) ? { temperature: p.temperature } : {}),
+    system: [{ type: "text" as const, text: p.system, cache_control: { type: "ephemeral" as const } }],
+    cache_control: { type: "ephemeral" as const },
+    tools: p.tools,
+    ...(p.noTools ? { tool_choice: { type: "none" as const } } : {}),
+    messages: p.messages,
+  };
+}
 
 export async function createToolDriver(input: DriverInput): Promise<ToolDriver> {
   const access = input.access?.forUser(input.userId) ?? (await resolveAiAccess(input.userId));
@@ -124,7 +174,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     runOnGrant(
       grant,
       withUsage(usage, (report) => translatingProviderErrors(aiProviderLabel(provider), () => work(report)), {
-        cancelSignal: signal,
+        cancelSignal: input.cancelSignal ?? signal,
       })
     );
 
@@ -136,20 +186,29 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
       input_schema: toolParameters(t.inputSchema) as Anthropic.Tool.InputSchema,
     }));
     const messages: Anthropic.MessageParam[] = [{ role: "user", content: input.user }];
+    const onText = input.onText;
     return {
-      async step(signal) {
+      async step(signal, stepOptions) {
         const response = await metered(signal, async (report) => {
-          const r = await client.messages.create(
-            {
-              model,
-              max_tokens: maxOutputTokens,
-              ...(anthropicAcceptsTemperature(model) ? { temperature } : {}),
-              system: input.system,
-              tools,
-              messages,
-            },
-            { signal }
-          );
+          const params = anthropicRoundParams({
+            model,
+            maxOutputTokens,
+            temperature,
+            system: input.system,
+            tools,
+            noTools: Boolean(stepOptions?.noTools),
+            messages,
+          });
+          if (onText) {
+            // The effort dial the answer stream has always used (`streamText`), since this
+            // round is the answer now.
+            const stream = client.messages.stream({ ...params, ...anthropicEffort(model) }, { signal });
+            await readAnthropicText(stream, onText);
+            const r = await stream.finalMessage();
+            report(tokensFromAnthropic(r));
+            return r;
+          }
+          const r = await client.messages.create(params, { signal });
           report(tokensFromAnthropic(r));
           return r;
         });
@@ -187,8 +246,42 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
       { role: "system", content: input.system },
       { role: "user", content: input.user },
     ];
+    const onText = input.onText;
     return {
-      async step(signal) {
+      async step(signal, stepOptions) {
+        if (onText) {
+          const round = await metered(signal, async (report) => {
+            const stream = await client.chat.completions.create(
+              withOpenRouterRouting(provider, {
+                model,
+                ...openaiCompletionOptions(model, {
+                  temperature,
+                  maxOutputTokens,
+                  thinking: aiOperationThinking(input.operation),
+                }),
+                tools,
+                ...(stepOptions?.noTools ? { tool_choice: "none" as const } : {}),
+                messages,
+                stream: true,
+                stream_options: { include_usage: true },
+              }),
+              { signal }
+            );
+            const read = await readOpenAiRound(stream, onText);
+            // OpenAI's iterator ENDS on an abort rather than throwing, so a cut-off round
+            // would read as a finished one. Same rethrow as `streamText`.
+            signal.throwIfAborted();
+            if (read.usage) {
+              report({
+                ...tokensFromOpenAi({ usage: read.usage }),
+                reportedCostMicros: reportedCostMicros({ usage: read.usage }),
+              });
+            }
+            return read;
+          });
+          messages.push(round.message);
+          return { calls: round.calls, text: round.text };
+        }
         const response = await metered(signal, async (report) => {
           const r = await client.chat.completions.create(
             withOpenRouterRouting(provider, {
@@ -199,6 +292,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
                 thinking: aiOperationThinking(input.operation),
               }),
               tools,
+              ...(stepOptions?.noTools ? { tool_choice: "none" as const } : {}),
               messages,
             }),
             { signal }
@@ -242,8 +336,31 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
     parametersJsonSchema: toolParameters(t.inputSchema),
   }));
   const contents: Content[] = [{ role: "user", parts: [{ text: input.user }] }];
+  const onText = input.onText;
   return {
-    async step(signal) {
+    async step(signal, stepOptions) {
+      if (onText) {
+        const round = await metered(signal, async (report) => {
+          const stream = await client.models.generateContentStream({
+            model,
+            contents,
+            config: {
+              abortSignal: signal,
+              temperature,
+              maxOutputTokens,
+              systemInstruction: input.system,
+              tools: [{ functionDeclarations }],
+              ...(stepOptions?.noTools ? { toolConfig: { functionCallingConfig: { mode: "NONE" as FunctionCallingConfigMode } } } : {}),
+              ...geminiThinking(model, input.operation),
+            },
+          });
+          const read = await readGeminiRound(stream, onText, `call-${contents.length}`);
+          if (read.last) report(tokensFromGemini(read.last));
+          return read;
+        });
+        if (round.content.parts?.length) contents.push(round.content);
+        return { calls: round.calls, text: round.text };
+      }
       const response = await metered(signal, async (report) => {
         const r = await client.models.generateContent({
           model,
@@ -254,6 +371,7 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
             maxOutputTokens,
             systemInstruction: input.system,
             tools: [{ functionDeclarations }],
+            ...(stepOptions?.noTools ? { toolConfig: { functionCallingConfig: { mode: "NONE" as FunctionCallingConfigMode } } } : {}),
             ...geminiThinking(model, input.operation),
           },
         });

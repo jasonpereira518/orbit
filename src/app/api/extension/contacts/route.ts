@@ -19,6 +19,8 @@ const SEARCH_LIMIT = 10;
 /** Create a contact, or merge the page's fields into an existing one. */
 export const POST = extensionRoute<SaveContactRequest, SaveContactResponse>({
   schema: saveContactRequestSchema,
+  action: "save_person",
+  siteOf: (input) => input.page.site,
   handler: ({ userId, input }) => saveContactFromExtension(userId, input, after),
 });
 

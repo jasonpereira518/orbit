@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb } from "@/db";
+import { clearMemoryChunkVectors } from "@/lib/memory-chunks";
 import {
   contactEmbeddings,
   userSettings,
@@ -14,6 +15,7 @@ import { normalizeSenderBio } from "@/lib/sender-profile";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
+import { saveChatAutoApplyFor } from "@/lib/chat-auto-apply";
 import { loadEmailSettings, saveDefaultSendProvider, saveEmailSignature } from "@/lib/email/settings";
 import { getSendCapability, type SendCapability } from "@/lib/email/sender";
 import { requireUserForSurface } from "@/lib/plan-guards";
@@ -25,6 +27,7 @@ import {
   type DataCategory,
 } from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import {
@@ -45,7 +48,9 @@ import {
   applyAiKeyChange,
   clearedKeyPatch, clearMovesEmbeddings,
   managedEligibilityFor,
+  trackAiKeyAdded,
 } from "@/lib/ai-settings-write";
+import { track } from "@/lib/product-events";
 
 export async function getSettings() {
   const userId = await requireUserId();
@@ -104,6 +109,10 @@ export async function getSettings() {
      * this account's AI key. On unless switched off; see the column in schema.ts.
      */
     workHistoryAutoEnabled: (settings?.workHistoryAutoEnabled ?? 1) !== 0,
+    /** Email insights (opt-in). Off unless switched on; see `user_settings.email_intel_enabled`. */
+    emailIntelEnabled: (settings?.emailIntelEnabled ?? 0) !== 0,
+    /** Whether chat may apply its small, reversible changes itself. Off unless switched on. */
+    chatAutoApply: (settings?.chatAutoApply ?? 0) !== 0,
     /** Radar's Monday email. On unless switched off (Settings, or its one-click link). */
     radarDigestEnabled: (settings?.radarDigestEnabled ?? 1) !== 0,
     /**
@@ -216,6 +225,12 @@ export async function saveThemePreference(theme: ThemePreference) {
     });
 }
 
+/** The "Let chat make small changes for you" switch on the AI settings page. */
+export async function saveChatAutoApply(enabled: boolean) {
+  const userId = await requireUserId();
+  await saveChatAutoApplyFor(userId, enabled);
+}
+
 /** The "Keep work history current" switch on the AI settings page. */
 export async function saveWorkHistoryAutoEnabled(enabled: boolean) {
   const userId = await requireUserId();
@@ -243,9 +258,14 @@ export async function saveAiSettings(input: {
   const newKey = input.apiKey?.trim() || null;
   let keyNote: string | null = null;
   if (newKey) {
-    const outcome = keyCheckOutcome(await checkAiKey(provider, newKey), provider);
+    const verdict = await checkAiKey(provider, newKey);
+    const outcome = keyCheckOutcome(verdict, provider);
     // Returned, not thrown: a thrown message is a digest in production.
-    if (!outcome.save) return { ok: false as const, error: outcome.error };
+    if (!outcome.save) {
+      // The verdict is a closed word ("rejected" | "malformed"), never the key or the provider's text.
+      track("ai_key_check_failed", { provider, error_kind: verdict }, { userId });
+      return { ok: false as const, error: outcome.error };
+    }
     keyNote = outcome.note;
   }
   const encrypted = newKey ? encrypt(newKey) : null;
@@ -294,6 +314,7 @@ export async function clearApiKey(provider?: AiProvider) {
     embeddingReset = clearMovesEmbeddings(active, existing, await managedEligibilityFor(userId));
     if (embeddingReset) {
       await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+      await clearMemoryChunkVectors(userId);
     }
   }
 
@@ -349,12 +370,20 @@ export async function saveDecisionKey(apiKey: string) {
   const key = apiKey.trim();
   if (!key) return { ok: false as const, error: "Paste a TypeSafe key first" };
 
-  const outcome = keyCheckOutcome(await checkDecisionKey(key), "typesafe");
+  const verdict = await checkDecisionKey(key);
+  const outcome = keyCheckOutcome(verdict, "typesafe");
   // Returned, not thrown: a thrown message is a digest in production.
-  if (!outcome.save) return { ok: false as const, error: outcome.error };
+  if (!outcome.save) {
+    track("ai_key_check_failed", { provider: "typesafe", error_kind: verdict }, { userId });
+    return { ok: false as const, error: outcome.error };
+  }
 
   const encrypted = encrypt(key);
   const db = await getDb();
+  const before = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { typesafeApiKeyEncrypted: true, createdAt: true },
+  });
   await db
     .insert(userSettings)
     .values({ userId, typesafeApiKeyEncrypted: encrypted })
@@ -362,6 +391,12 @@ export async function saveDecisionKey(apiKey: string) {
       target: userSettings.userId,
       set: { typesafeApiKeyEncrypted: encrypted, updatedAt: new Date() },
     });
+
+  // The decision key is a personal key too (`ai_key_added`, provider "typesafe"), but it does not
+  // make chat AI ready, so it does not stamp `user_settings.ai_key_added_at`.
+  if (!before?.typesafeApiKeyEncrypted) {
+    await trackAiKeyAdded(userId, "typesafe", before?.createdAt ?? new Date());
+  }
 
   revalidatePath("/settings");
   return { ok: true as const, keyNote: outcome.note };
@@ -490,12 +525,14 @@ export async function deleteAllData(categories?: readonly DataCategory[]) {
 /** Everything the settings billing card needs, in one round trip. */
 export async function getPlanOverview() {
   const userId = await requireUserId();
-  const [entitlements, usage] = await Promise.all([
+  const [entitlements, usage, planConfig] = await Promise.all([
     getEntitlements(userId),
     contactUsageForUser(userId),
+    getEffectivePlanConfig(),
   ]);
 
-  return { entitlements, usage, demoAccount: demoAccountReason(userId) };
+  // `planConfig`: the effective plan table, so plan copy follows an admin's plan rules.
+  return { entitlements, usage, demoAccount: demoAccountReason(userId), planConfig };
 }
 
 

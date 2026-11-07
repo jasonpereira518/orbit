@@ -1,13 +1,6 @@
 import Link from "next/link";
-import {
-  CheckCircle2,
-  Download,
-  Image as ImageIcon,
-  Inbox,
-  MessageSquareText,
-  ThumbsDown,
-  ThumbsUp,
-} from "lucide-react";
+import { Download, Image as ImageIcon, Inbox } from "lucide-react";
+import { FeedbackTabs } from "@/components/admin/admin-tabs";
 import { Pager } from "@/components/admin/pager";
 import {
   AdminPageHeader,
@@ -22,15 +15,13 @@ import {
 import {
   FEEDBACK_PAGE_SIZE,
   getFeedbackSummary,
+  getFeedbackThemes,
+  isFeedbackArea,
+  isFeedbackCategory,
   isFeedbackFilter,
   loadFeedbackList,
   type FeedbackFilter,
 } from "@/lib/admin-feedback";
-import {
-  CHAT_FEEDBACK_PAGE_SIZE,
-  getChatFeedbackSummary,
-  loadChatFeedbackList,
-} from "@/lib/admin-chat-feedback";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Admin · Feedback" };
@@ -59,44 +50,53 @@ const STATUS_CLASS: Record<string, string> = {
 export default async function AdminFeedbackPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string; page?: string; q?: string; chatPage?: string }>;
+  searchParams: Promise<{ filter?: string; page?: string; q?: string; area?: string; category?: string }>;
 }) {
   const params = await searchParams;
   const filter: FeedbackFilter = isFeedbackFilter(params.filter) ? params.filter : "all";
   const q = (params.q ?? "").trim();
+  const area = isFeedbackArea(params.area) ? params.area : null;
+  const category = isFeedbackCategory(params.category) ? params.category : null;
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
-  const requestedChatPage = Number.parseInt(params.chatPage ?? "1", 10);
 
-  const [summary, listing, chatSummary, chatListing] = await Promise.all([
+  const [summary, listing, themes] = await Promise.all([
     getFeedbackSummary(),
     loadFeedbackList({
       page: Number.isFinite(requestedPage) ? requestedPage : 1,
       filter,
       q,
+      area,
+      category,
     }),
-    getChatFeedbackSummary(),
-    loadChatFeedbackList({
-      page: Number.isFinite(requestedChatPage) ? requestedChatPage : 1,
-    }),
+    getFeedbackThemes(28),
   ]);
+  // Triaged and Resolved are states to filter by, not numbers to watch, so their counts ride
+  // on the filter chips rather than taking a tile each.
+  const filterCount: Record<FeedbackFilter, number> = {
+    all: summary.total,
+    new: summary.new,
+    triaged: summary.triaged,
+    resolved: summary.resolved,
+  };
 
   const query = (over: Record<string, string | number>) => {
     const sp = new URLSearchParams();
     if (filter !== "all") sp.set("filter", filter);
     if (q) sp.set("q", q);
+    if (area) sp.set("area", area);
+    if (category) sp.set("category", category);
     for (const [k, v] of Object.entries(over)) sp.set(k, String(v));
     const s = sp.toString();
     return `/admin/feedback${s ? `?${s}` : ""}`;
   };
 
-  const chatQuery = (over: Record<string, string | number>) => {
+  const clearFacetsHref = (() => {
     const sp = new URLSearchParams();
     if (filter !== "all") sp.set("filter", filter);
     if (q) sp.set("q", q);
-    for (const [k, v] of Object.entries(over)) sp.set(k, String(v));
     const s = sp.toString();
-    return `/admin/feedback${s ? `?${s}` : ""}#chat-answers`;
-  };
+    return `/admin/feedback${s ? `?${s}` : ""}`;
+  })();
 
   return (
     <>
@@ -113,8 +113,9 @@ export default async function AdminFeedbackPage({
           </a>
         }
       />
+      <FeedbackTabs />
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid gap-3 sm:grid-cols-2">
         <MetricTile
           label="New"
           value={summary.new}
@@ -122,8 +123,6 @@ export default async function AdminFeedbackPage({
           icon={Inbox}
           tone={summary.new > 0 ? "accent" : "muted"}
         />
-        <MetricTile label="Triaged" value={summary.triaged} icon={MessageSquareText} />
-        <MetricTile label="Resolved" value={summary.resolved} icon={CheckCircle2} />
         <MetricTile
           label="Last 7 days"
           value={summary.last7Days}
@@ -132,7 +131,65 @@ export default async function AdminFeedbackPage({
         />
       </div>
 
+      <AdminPanel title={`What people are saying · last ${themes.days} days`}>
+        {themes.byCategory.length === 0 ? (
+          <EmptyState>No feedback in this window.</EmptyState>
+        ) : (
+          <div className="grid gap-6 py-1 sm:grid-cols-2">
+            <div>
+              <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">By kind</div>
+              <ul className="space-y-1 text-sm">
+                {themes.byCategory.map((c) => (
+                  <li key={c.category} className="flex items-center justify-between gap-3">
+                    <Link
+                      href={isFeedbackCategory(c.category) ? query({ category: c.category, page: 1 }) : query({ page: 1 })}
+                      className={cn("underline-offset-2 hover:underline", category === c.category && "text-primary")}
+                    >
+                      {c.category}
+                      {c.sentiment && <span className="ml-2 text-xs text-muted-foreground">{c.sentiment}</span>}
+                    </Link>
+                    <span className="tabular-nums">{c.count}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">By area</div>
+              <ul className="space-y-1 text-sm">
+                {themes.byArea.slice(0, 8).map((a) => (
+                  <li key={a.area} className="flex items-center justify-between gap-3">
+                    <Link
+                      href={isFeedbackArea(a.area) ? query({ area: a.area, page: 1 }) : query({ page: 1 })}
+                      className={cn("underline-offset-2 hover:underline", area === a.area && "text-primary")}
+                    >
+                      {a.area}
+                    </Link>
+                    <span className="tabular-nums">
+                      {a.count}
+                      {a.negative > 0 && <span className="ml-1 text-xs text-destructive">{a.negative} negative</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+        <p className="mt-3 border-t border-border/40 pt-2 text-xs text-muted-foreground">
+          {themes.contactableOpen} unresolved {themes.contactableOpen === 1 ? "entry" : "entries"} where the person said we may contact them.
+          {(area || category) && (
+            <>
+              {" "}
+              Filtering by {[category, area].filter(Boolean).join(" · ")}.{" "}
+              <Link href={clearFacetsHref} className="underline underline-offset-2">
+                Clear
+              </Link>
+            </>
+          )}
+        </p>
+      </AdminPanel>
+
       <AdminPanel
+        className="mt-6"
         action={
           <div className="flex flex-wrap items-center gap-3">
             {/* A GET form, so a search is linkable and survives a reload — same reasoning
@@ -174,7 +231,8 @@ export default async function AdminFeedbackPage({
                         : "text-muted-foreground hover:text-foreground"
                     )}
                   >
-                    {option.label}
+                    {option.label}{" "}
+                    <span className="tabular-nums text-muted-foreground">{filterCount[option.value]}</span>
                   </Link>
                 );
               })}
@@ -219,6 +277,7 @@ export default async function AdminFeedbackPage({
                   <Td className="text-muted-foreground">{row.area ?? "—"}</Td>
                   <Td className="text-muted-foreground">
                     {row.category ?? (row.kind === "freeform" ? "—" : row.kind)}
+                    {row.contactOk && <span className="ml-1 text-[0.625rem] text-accent-foreground" title="Said we may contact them">✉</span>}
                   </Td>
                   <Td>
                     <Link
@@ -259,81 +318,6 @@ export default async function AdminFeedbackPage({
         )}
       </AdminPanel>
 
-      <div id="chat-answers" className="mt-8 scroll-mt-6">
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Chat answer ratings</h2>
-        <div className="mb-4 grid gap-3 sm:grid-cols-3">
-          <MetricTile label="Thumbs up" value={chatSummary.up} icon={ThumbsUp} tone="muted" />
-          <MetricTile label="Thumbs down" value={chatSummary.down} icon={ThumbsDown} tone="muted" />
-          <MetricTile label="Last 7 days" value={chatSummary.last7Days} icon={MessageSquareText} />
-        </div>
-
-        {/*
-          No question or answer text here, on purpose — `chat_messages.content` is on the
-          permanent denylist in `admin-redaction.ts`. Just the rating itself: who, when, up
-          or down, and the optional note a thumbs-down can carry, which is text someone
-          meant as feedback rather than a transcript.
-        */}
-        <AdminPanel>
-          {chatListing.rows.length === 0 ? (
-            <EmptyState>No chat answers have been rated yet.</EmptyState>
-          ) : (
-            <>
-              <AdminTable
-                label="Rated chat answers"
-                head={
-                  <>
-                    <Th>When</Th>
-                    <Th>Who</Th>
-                    <Th>Rating</Th>
-                    <Th>Note</Th>
-                  </>
-                }
-              >
-                {chatListing.rows.map((row) => (
-                  <tr key={row.id} className="border-b border-border/40 last:border-0">
-                    <Td className="whitespace-nowrap text-muted-foreground">
-                      <RelativeTime date={row.createdAt} />
-                    </Td>
-                    <Td className="text-muted-foreground">
-                      {row.submitterEmail ?? (
-                        <span className="text-muted-foreground/50">account purged</span>
-                      )}
-                    </Td>
-                    <Td>
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.625rem] font-medium",
-                          row.feedback === "up"
-                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                            : "bg-destructive/15 text-destructive"
-                        )}
-                      >
-                        {row.feedback === "up" ? (
-                          <ThumbsUp className="size-3 fill-current" />
-                        ) : (
-                          <ThumbsDown className="size-3 fill-current" />
-                        )}
-                        {row.feedback}
-                      </span>
-                    </Td>
-                    <Td className="text-muted-foreground">
-                      {row.feedbackNote?.trim() || <span className="text-muted-foreground/50">—</span>}
-                    </Td>
-                  </tr>
-                ))}
-              </AdminTable>
-              <Pager
-                page={chatListing.page}
-                pageCount={chatListing.pageCount}
-                total={chatListing.total}
-                pageSize={CHAT_FEEDBACK_PAGE_SIZE}
-                hrefFor={(page) => chatQuery({ chatPage: page })}
-                label="ratings"
-              />
-            </>
-          )}
-        </AdminPanel>
-      </div>
     </>
   );
 }

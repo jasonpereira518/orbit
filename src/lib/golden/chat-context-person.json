@@ -7,6 +7,8 @@
     "plan": "free",
     "preference": null,
     "settings": {
+      "accountKind": null,
+      "aiKeyAddedAt": null,
       "aiKeyPreference": null,
       "aiModel": "gemini-3.8-flash",
       "aiModelMigratedFrom": null,
@@ -17,6 +19,7 @@
       "calendarFeedToken": null,
       "calendarFeedTokenCreatedAt": null,
       "careerProfile": null,
+      "chatAutoApply": 0,
       "chatSelfNames": [],
       "cloudNotesAutoExtract": 0,
       "compedAt": null,
@@ -33,6 +36,9 @@
       "desktopNotifiedIds": [],
       "email": null,
       "emailActivitySync": 0,
+      "emailIntelCursorAt": null,
+      "emailIntelEnabled": 0,
+      "emailIntelNextAt": null,
       "emailSignatureHtml": null,
       "emailSignatureText": null,
       "estimatedMonthlyChurnPct": null,
@@ -46,12 +52,20 @@
       "inboundLogLastReceivedAt": null,
       "inboundLogToken": null,
       "inboundLogTokenCreatedAt": null,
+      "interestSignupId": null,
+      "inviteId": null,
       "lastActiveAt": "<db-now>",
       "lastName": null,
+      "lastTouchAt": null,
+      "lastTouchCampaign": null,
+      "lastTouchLandingPath": null,
+      "lastTouchMedium": null,
+      "lastTouchSource": null,
       "lifetimeCheckoutSessionId": null,
       "lifetimeCheckoutStartedAt": null,
       "lifetimePurchasedAt": null,
       "linkedinExportRequestedAt": null,
+      "linkedinRefreshIntervalDays": null,
       "linkedinReminderShownAt": null,
       "maxNudgeSeenAt": null,
       "onboardingCompletedAt": null,
@@ -77,8 +91,10 @@
       "schools": [],
       "senderBio": null,
       "signupAttributedAt": null,
+      "signupAttributionSource": null,
       "signupLandingPath": null,
       "signupReferrer": null,
+      "signupSessionId": null,
       "signupUtmCampaign": null,
       "signupUtmMedium": null,
       "signupUtmSource": null,
@@ -133,6 +149,10 @@
   "attention": null,
   "attentionLite": "5 follow-ups are overdue: Ken Thompson (20d), Grace Hopper (10d), Dennis Ritchie (4d), Ada Lovelace (2d), Margaret Hamilton (1d).",
   "calendar": null,
+  "commitmentIds": {
+    "<map>": []
+  },
+  "commitments": null,
   "contactNames": {
     "<map>": [
       [
@@ -141,6 +161,10 @@
       ]
     ]
   },
+  "eventIds": {
+    "<map>": []
+  },
+  "events": null,
   "focusProfile": null,
   "goals": [
     "Meet more people in hardware"
@@ -150,6 +174,7 @@
       "aiSummary": null,
       "career": null,
       "company": "Acme",
+      "details": "email ada@acme.test | follow-up due 2026-09-13",
       "fullName": "Ada Lovelace",
       "id": "<id:2>",
       "keyFacts": [],
@@ -173,7 +198,7 @@
   ],
   "modelRecruiters": [],
   "notePassages": [],
-  "openReminders": "- [reminder_id=<id:4>] Send Ada the deck · due 2026-09-14 · Ada Lovelace",
+  "openReminders": "Today is 2026-09-15. Overdue or due today: 1 · coming up: 2 · no date: 0. The nearest:\n- [reminder_id=<id:4>] Send Ada the deck · due 2026-09-14 (overdue) · Ada Lovelace\n- [reminder_id=<id:5>] Intro Margaret to hardware lead · due 2026-09-17 · Margaret Hamilton\n- [reminder_id=<id:6>] File expenses · due 2026-10-05",
   "orgRosters": [],
   "priorTurns": [],
   "q": "What did Ada Lovelace and I last talk about?",
@@ -183,6 +208,14 @@
       [
         "<id:4>",
         "Send Ada the deck"
+      ],
+      [
+        "<id:5>",
+        "Intro Margaret to hardware lead"
+      ],
+      [
+        "<id:6>",
+        "File expenses"
       ]
     ]
   },
@@ -191,19 +224,24 @@
       "aiSummary": null,
       "closenessTier": null,
       "company": "Acme",
+      "dateMet": null,
       "email": "ada@acme.test",
       "filterMatched": true,
       "fullName": "Ada Lovelace",
+      "howMet": null,
       "id": "<id:2>",
       "industry": null,
       "keyFacts": [],
+      "linkedinUrl": null,
       "location": null,
       "matchedArms": [
         "fts",
         "trigram"
       ],
+      "nextFollowUpAt": "2026-09-13T12:00:00.000Z",
       "notes": "Met at the Acme summit.",
       "opportunities": [],
+      "phone": null,
       "preferredName": null,
       "priorityLevel": 2,
       "relationshipScore": 4,
@@ -229,7 +267,7 @@
     "recruiters": false,
     "shape": "open"
   },
-  "scopedQuestion": "[Today is 2026-09-15.]\n\n[The user has 10 contacts in total; the Contacts list below is only the 1 most relevant to this question.]\n\nWhat did Ada Lovelace and I last talk about?",
+  "scopedQuestion": "[Today is 2026-09-15. Now: Tuesday 2026-09-15 12:00 in the user's time zone, UTC.]\n\n[The user has 10 contacts in total; the Contacts list below is only the 1 most relevant to this question.]\n\nWhat did Ada Lovelace and I last talk about?",
   "searchNotice": null,
   "snippets": {
     "<map>": [
@@ -248,6 +286,7 @@
     ]
   },
   "thread": null,
+  "timeZone": "UTC",
   "userContext": null,
   "userSchools": [],
   "writingInstructions": null

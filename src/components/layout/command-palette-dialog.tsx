@@ -12,6 +12,7 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
+  AudioLines,
   BellPlus,
   CalendarClock,
   CornerDownLeft,
@@ -86,7 +87,7 @@ const ACTIONS: Command[] = [
     hint: "Paste notes or upload photos",
     href: "/capture",
     icon: Sparkles,
-    keywords: "log interaction notes paste photo picture upload meeting extract add",
+    keywords: "log interaction notes paste photo picture upload extract add",
   },
   {
     id: "action:voice",
@@ -95,6 +96,13 @@ const ACTIONS: Command[] = [
     href: "/capture?mode=voice",
     icon: Mic,
     keywords: "dictate audio speak capture microphone",
+  },
+  {
+    id: "action:meeting",
+    label: "Record a meeting",
+    href: "/meetings",
+    icon: AudioLines,
+    keywords: "call zoom meet transcribe transcript summary recorder",
   },
   {
     id: "action:structured",
@@ -252,7 +260,8 @@ export function CommandPaletteDialog({
           const rows = await searchContactsForPicker(
             term || undefined,
             term ? SEARCH_CONTACTS : RECENT_CONTACTS,
-            "recent"
+            "recent",
+            "command_palette"
           );
           if (request === requestRef.current) setPeople(rows);
         } catch {

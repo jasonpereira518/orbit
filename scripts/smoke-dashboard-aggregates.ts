@@ -14,7 +14,7 @@ import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contactTags, contacts, tags } from "../src/db/schema";
+import { contactTags, contacts, interactions, tags } from "../src/db/schema";
 import { isCometContact } from "../src/lib/comet";
 import {
   getDashboardCounts,
@@ -79,7 +79,14 @@ async function seed() {
   ];
 
   for (const r of rows) {
-    await db.insert(contacts).values({ userId: USER, ...r });
+    const [row] = await db.insert(contacts).values({ userId: USER, ...r }).returning();
+    // The due count only includes people the user has met or talked with (`met-contact.ts`).
+    await db.insert(interactions).values({
+      userId: USER,
+      contactId: row.id,
+      interactionType: "meeting",
+      interactionDate: ago(60),
+    });
   }
 
   // One tag on one contact, and a tag on nobody — the second must not reach the filter list.

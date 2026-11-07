@@ -46,7 +46,7 @@ export const MAX_EMAIL_PARTICIPANTS = 10;
  * more aggressive starts dropping real people, and a missed filter costs one junk row while
  * an over-eager one silently loses a relationship.
  */
-const AUTOMATED_LOCAL_PARTS = new Set([
+export const AUTOMATED_LOCAL_PARTS = new Set([
   "noreply",
   "no-reply",
   "donotreply",

@@ -108,7 +108,17 @@ const ddlTemplate = (() => {
   return m[1];
 })();
 
-const scaleDdl = arrayBlock("SCALE_DDL");
+/**
+ * `SCALE_DDL` with any `...NAME` spread inlined: statements kept in their own named array
+ * (RELATED_CORPUS_FUNCTIONS, TOUCH_COUNT_DDL) run as part of it, so they are DDL to guard.
+ * Read without them, a change to one passed this check with no version bump.
+ */
+const scaleDdl = (() => {
+  const block = arrayBlock("SCALE_DDL");
+  const outside = block.replace(/`[^`]*`/g, "``");
+  const spreads = [...outside.matchAll(/\.\.\.([A-Z_][A-Z0-9_]*)/g)].map((m) => m[1]);
+  return [block, ...spreads.map((name) => arrayBlock(name))].join("\n");
+})();
 const alters = arrayBlock("alters");
 const adminV2 = arrayBlock("ADMIN_V2_STATEMENTS");
 const pgliteBody = functionBlock("migratePglite", "migrateNeon");

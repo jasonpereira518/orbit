@@ -15,7 +15,9 @@ import {
 } from "@/lib/suggested-reminder-utils";
 import { revalidateReminderPaths } from "@/lib/reminder-paths";
 import { getInboxListId, findReminderListForUser } from "@/lib/reminder-lists";
-import { assertReminderContactOwned } from "@/lib/reminder-writes";
+import { assertReminderContactOwned, trackFollowUpSet } from "@/lib/reminder-writes";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
 import {
   inferReminderActionKind,
   isReminderActionKind,
@@ -184,6 +186,9 @@ export async function confirmSuggestedReminder(
       )
     );
 
+  // The person confirmed what Orbit extracted from their notes: a follow-up they set, by suggestion.
+  trackFollowUpSet(userId, reminder, "suggestion");
+
   revalidateReminderPaths(contactId);
   return { reminderId: reminder.id, contactId };
 }
@@ -203,6 +208,10 @@ export async function discardSuggestedReminder(id: string) {
         eq(suggestedReminders.userId, userId)
       )
     );
+
+  // `loadPendingSuggestion` refused a resolved row, so this is the one discard. `reminder_id`
+  // holds the suggestion's id (no reminder exists).
+  track("followup_dismissed", { reminder_id: id }, { userId, id: eventId("followup_dismissed", id) });
 
   revalidateReminderPaths(row.contactId);
 }

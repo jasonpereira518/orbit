@@ -28,7 +28,14 @@ import {
   emptyCommitmentResult,
 } from "@/lib/date-commitment-extract";
 import { normalizePastedCaptureText } from "@/lib/capture-ingest";
-import { buildDuplicateIndex, findDuplicateCandidatesIndexed, type DuplicateSubject } from "@/lib/duplicates";
+import {
+  buildDuplicateIndex,
+  findDuplicateCandidatesIndexed,
+  findLooseNameCandidates,
+  DUPLICATE_MERGE_CONFIDENCE,
+  type DuplicateMatch,
+  type DuplicateSubject,
+} from "@/lib/duplicates";
 import { UserFacingError } from "@/lib/errors";
 import { resolvePastedLinkedInProfiles } from "@/lib/linkedin-capture";
 import {
@@ -40,6 +47,10 @@ import {
   type LinkedInProfileRef,
 } from "@/lib/linkedin-paste";
 import { isSelf } from "@/lib/meeting-digest";
+import { collapseSamePeople, looksLikeOrganization } from "@/lib/capture/person-cleanup";
+import { companyFromEmail } from "@/lib/guest-profiles";
+import { lookUpNewPeople } from "@/lib/capture/web-lookup";
+import type { PersonResearcher } from "@/lib/web-research";
 import { getMeetingTranscript, loadMeetingSelf } from "@/lib/meeting-sessions";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { decideCaptureChecks, decideMentions, decideMergeTargets } from "@/lib/decisions/capture";
@@ -93,6 +104,11 @@ export type CaptureParseOptions = {
    * only thing here that knows what the user owns.
    */
   mentionPicks?: readonly MentionPick[];
+  /**
+   * Nothing is waiting on this parse and nobody reviews its result (a Drive import): its model
+   * calls run under the unattended operation ids, so the managed background floor applies.
+   */
+  background?: boolean;
   /** Injectable clock, for the smoke suite. */
   now?: Date;
   /**
@@ -105,6 +121,12 @@ export type CaptureParseOptions = {
    * claim here so a long multi-call parse is never mistaken for a dead one and run twice.
    */
   onProgress?: ParseProgress;
+  /**
+   * Look up people who would be NEW contacts on the web and fill their empty fields. Only
+   * the review flow sets it: unattended syncs (Granola, Drive) would spend the account's
+   * search budget on people nobody has looked at.
+   */
+  lookUpNewPeople?: boolean | { researcher: PersonResearcher };
 };
 
 export const NO_PEOPLE_OR_DATES_MESSAGE = "No people or dates found in those notes";
@@ -165,7 +187,9 @@ export async function runCaptureParse(
   if (opts.meetingSessionId && !meeting) {
     throw new UserFacingError("That meeting no longer exists");
   }
-  const self = meeting ? await loadMeetingSelf(userId) : null;
+  // Every capture, not only recordings: the user writes their own notes too, and "I" in a
+  // pasted note is them.
+  const self = await loadMeetingSelf(userId).catch(() => null);
   const goals = opts.goals ?? (await listActiveGoalTextsForUser(userId).catch(() => [] as string[]));
 
   const profileRefs = extractLinkedInProfileRefs(notes);
@@ -215,6 +239,9 @@ export async function runCaptureParse(
     seedPeople: seedPeople.length ? seedPeople : undefined,
     interactionType: hints?.interactionType || detected.hints.interactionType || null,
     goals: goals.length ? goals : undefined,
+    self: self
+      ? { name: [self.firstName, self.lastName].filter(Boolean).join(" ") || null, email: self.email }
+      : null,
   };
 
   const baseCorpus =
@@ -235,11 +262,12 @@ export async function runCaptureParse(
   // model, and it starts inside this same Promise.all.
   const enginesP = opts.engines ? Promise.resolve(opts.engines) : openEngines(userId, { llm: true });
   const [personParse, rawCommitments, existing] = await Promise.all([
-    parseMultiPersonNotesWithAI(userId, corpus, mergedHints, { onProgress: opts.onProgress }),
+    parseMultiPersonNotesWithAI(userId, corpus, mergedHints, { onProgress: opts.onProgress, background: opts.background }),
     fetchRawCommitments(userId, corpus, {
       today,
       knownPeople: seedPeople.map((p) => p.name).filter(Boolean) as string[],
       engines: enginesP,
+      background: opts.background,
     }).catch(
       () => ({ commitments: [], cadences: [] })
     ),
@@ -247,24 +275,43 @@ export async function runCaptureParse(
       db.query.contacts.findMany({
         where: eq(contacts.userId, userId),
         columns: {
-          id: true,
-          fullName: true,
-          email: true,
-          linkedinUrl: true,
-          xHandle: true,
-          company: true,
-          title: true,
-        } satisfies Record<keyof DuplicateSubject, true>,
+          ...({
+            id: true,
+            fullName: true,
+            email: true,
+            linkedinUrl: true,
+            xHandle: true,
+            company: true,
+            title: true,
+          } satisfies Record<keyof DuplicateSubject, true>),
+          // For the loose first-name / nickname candidates only.
+          preferredName: true,
+          lastInteractionAt: true,
+        },
       })
     ),
   ]);
 
   const { shared_notes, interaction_date } = personParse;
-  // The person recording a meeting is on every call they record, and the corpus says
-  // "I am <name>" — which a parser reads as one more participant. Never a contact.
-  const people = self
-    ? personParse.people.filter((p) => !p.name || !isSelf(p.name, self))
-    : personParse.people;
+  // One entry per person first, so a self or org check sees the merged identifiers.
+  // The user is never a contact (a meeting corpus even says "I am <name>"), and neither is a
+  // company the model filed as a person.
+  const skippedNonPeople: string[] = [];
+  const people = collapseSamePeople(personParse.people).filter((p) => {
+    if (!p.name) return true;
+    if (self && isSelf(p.name, self, {
+      email: p.email,
+      linkedinUrl: p.linkedin_url,
+      // On a recording the model may attach the user's own company to them; in a note the
+      // user wrote, "Jason from Stripe" is somebody else.
+      company: meeting ? null : p.company,
+    })) return false;
+    if (looksLikeOrganization(p.name, p.company)) {
+      skippedNonPeople.push(p.name.trim());
+      return false;
+    }
+    return true;
+  });
   // people[] mixes two roles: participants (actually talked to) and mentions demoted into
   // people[] because the note gave them real profile detail. Only participants get a
   // review card; demoted mentions fold into mention resolution below, and are also
@@ -337,6 +384,37 @@ export async function runCaptureParse(
     }
   }
 
+  // The exact matcher, then what it cannot see — "Mike" for Michael Torres, an accent the
+  // note dropped — offered on the card (below the merge bar) rather than becoming a new
+  // contact. The best score per contact wins.
+  const candidatesFor = (parsed: ParsedNote) => {
+    const best = new Map<string, DuplicateMatch>();
+    for (const m of [
+      ...findDuplicateCandidatesIndexed(duplicateIndex, {
+        fullName: parsed.name,
+        email: parsed.email,
+        linkedinUrl: parsed.linkedin_url,
+        xHandle: parsed.x_handle,
+        company: parsed.company,
+        title: parsed.role,
+      }),
+      ...findLooseNameCandidates(existing, { fullName: parsed.name, company: parsed.company }),
+    ]) {
+      const prev = best.get(m.contact.id);
+      if (!prev || m.confidence > prev.confidence) best.set(m.contact.id, m);
+    }
+    return [...best.values()].sort((a, b) => b.confidence - a.confidence).slice(0, 5);
+  };
+  const toCardDuplicates = (matches: ReturnType<typeof candidatesFor>) =>
+    matches.map((d) => ({
+      id: d.contact.id,
+      fullName: d.contact.fullName,
+      company: d.contact.company,
+      title: d.contact.title,
+      reason: d.reason,
+      confidence: d.confidence,
+    }));
+
   const items: BulkNotePersonPreview[] = participants.map((person, index) => {
     const { source_excerpt, ...parsedBase } = person;
     const sharedForPerson = sharedNotesForPerson(parsedBase.name, shared_notes);
@@ -350,8 +428,15 @@ export async function runCaptureParse(
       parsedBase.takeaways?.length ? parsedBase.takeaways : summaryToTakeaways(parsedBase.summary),
       MAX_TAKEAWAYS
     );
+    // A work address names its employer ("priya@harbor-health.com" → Harbor Health) when the
+    // note did not; flagged as a guess so the card says "check this".
+    const emailCompany = parsedBase.company ? null : companyFromEmail(parsedBase.email);
     const parsed: ParsedNote = {
       ...parsedBase,
+      company: parsedBase.company || emailCompany,
+      low_confidence_fields: emailCompany
+        ? [...new Set([...(parsedBase.low_confidence_fields ?? []), "company"])]
+        : parsedBase.low_confidence_fields,
       met_at: parsedBase.met_at || sharedForPerson.find((s) => s.met_at)?.met_at || null,
       topics: mergeTopics(parsedBase.topics, sharedForPerson),
       interaction_date: parsedBase.interaction_date || defaultDate,
@@ -371,13 +456,7 @@ export async function runCaptureParse(
       promises: validatePromises(parsedBase.promises, haystack),
     };
 
-    const duplicates = findDuplicateCandidatesIndexed(duplicateIndex, {
-      fullName: parsed.name,
-      email: parsed.email,
-      linkedinUrl: parsed.linkedin_url,
-      company: parsed.company,
-      title: parsed.role,
-    }).slice(0, 5);
+    const duplicates = candidatesFor(parsed);
 
     const top = duplicates[0];
     const suggestedMergeId =
@@ -425,14 +504,7 @@ export async function runCaptureParse(
         const c = named ?? (participants.length === 1 ? unnamedCadence : null);
         return c ? { days: c.days, phrase: c.rawPhrase, sourceExcerpt: c.sourceExcerpt } : null;
       })(),
-      duplicates: duplicates.map((d) => ({
-        id: d.contact.id,
-        fullName: d.contact.fullName,
-        company: d.contact.company,
-        title: d.contact.title,
-        reason: d.reason,
-        confidence: d.confidence,
-      })),
+      duplicates: toCardDuplicates(duplicates),
       suggestedMergeId,
       sharedNoteTexts: sharedForPerson.map((s) => s.text),
       interactionDate: parsed.interaction_date,
@@ -476,6 +548,26 @@ export async function runCaptureParse(
       return rows.map((r) => r.name);
     })().catch(() => [] as string[]);
     await decideCaptureChecks(engines, { items, corpus, existingTags }).catch(() => null);
+  }
+
+  // Look the new people up and fill what the note left empty. A lookup that found their
+  // full name or profile can reveal they ARE a contact ("Priya" → Priya Raman, already
+  // saved), so those cards are matched again — a confident hit becomes their target.
+  if (opts.lookUpNewPeople) {
+    await lookUpNewPeople(userId, items, {
+      researcher: typeof opts.lookUpNewPeople === "object" ? opts.lookUpNewPeople.researcher : undefined,
+      onProgress: opts.onProgress,
+    }).catch(() => undefined);
+    for (const item of items) {
+      if (!item.web?.filled.some((f) => f === "name" || f === "LinkedIn")) continue;
+      const again = candidatesFor(item.parsed);
+      if (!again.length) continue;
+      item.duplicates = toCardDuplicates(again);
+      if (again[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+        item.suggestedMergeId = again[0].contact.id;
+        item.suggestedNew = undefined;
+      }
+    }
   }
 
   const subjects = existing.map((c) => ({ id: c.id, fullName: c.fullName, email: c.email, linkedinUrl: c.linkedinUrl, xHandle: c.xHandle, company: c.company, title: c.title }));
@@ -606,6 +698,7 @@ export async function runCaptureParse(
     suggestionsSkipped: commitmentResult.rejected,
     mentions,
     mentionedOnly,
+    skippedNonPeople,
     linkedinLookup: linkedin
       ? {
           found: linkedin.people.length,

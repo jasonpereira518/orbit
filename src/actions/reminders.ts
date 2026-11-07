@@ -1,6 +1,7 @@
 "use server";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { requirePageUser } from "@/lib/plan-guards";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { cache } from "react";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
@@ -41,11 +42,14 @@ import {
   createReminderForUser,
   scheduleContactFollowUpForUser,
   clearContactFollowUpForUser,
+  trackFollowUpSet,
   undoClearContactFollowUpForUser,
   type ClearFollowUpSnapshot,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
 import { settle, unwrap } from "@/lib/settled";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
 import {
   REMINDERS_PAGE_SIZE,
   isReminderSource,
@@ -311,7 +315,7 @@ export async function createReminder(input: {
   listId?: string;
   actionKind?: ReminderActionKind;
 }) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const row = await createReminderForUser(userId, input);
   revalidateReminderPaths(input.contactId);
   return row;
@@ -328,7 +332,7 @@ export async function updateReminder(
     contactId?: string | null;
   }
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const db = await getDb();
 
   const existing = await db.query.reminders.findFirst({
@@ -395,7 +399,7 @@ export async function moveReminderToList(id: string, listId: string) {
  */
 export async function createReminderList(name: string) {
   return asActionResult(async () => {
-    const userId = await requireUserId();
+    const userId = await requirePageUser("page.reminders");
     const db = await getDb();
     await ensureReminderLists(userId);
 
@@ -435,6 +439,42 @@ export async function createReminderList(name: string) {
     return row;
   });
 }
+
+export async function renameReminderList(id: string, name: string) {
+  return asActionResult(async () => {
+    const userId = await requirePageUser("page.reminders");
+    const db = await getDb();
+
+    const list = await findReminderListForUser(userId, id);
+    if (!list) throw new Error("List not found");
+    if (list.isInbox === 1) throw new UserFacingError("The Inbox can’t be renamed");
+
+    const display = displayListName(name);
+    if (!display) throw new UserFacingError("Give the list a name first");
+    const normalized = normalizeListName(display);
+    if (normalized === "inbox") throw new UserFacingError("Inbox is taken — pick another name");
+
+    const clash = await db.query.reminderLists.findFirst({
+      where: and(
+        eq(reminderLists.userId, userId),
+        eq(reminderLists.nameNormalized, normalized)
+      ),
+    });
+    if (clash && clash.id !== id) {
+      throw new UserFacingError("You already have a list with that name");
+    }
+
+    const [row] = await db
+      .update(reminderLists)
+      .set({ name: display, nameNormalized: normalized })
+      .where(and(eq(reminderLists.id, id), eq(reminderLists.userId, userId)))
+      .returning();
+
+    revalidatePathIfRequestScoped("/reminders");
+    return row;
+  });
+}
+
 /**
  * The list editor's save: any of name, icon and colour. `null` resets icon or colour to the
  * default. The Inbox keeps its name (Jason's call — it's the list Orbit files things into),
@@ -445,7 +485,7 @@ export async function updateReminderList(
   patch: { name?: string; icon?: string | null; color?: string | null }
 ) {
   return asActionResult(async () => {
-    const userId = await requireUserId();
+    const userId = await requirePageUser("page.reminders");
     const db = await getDb();
 
     const list = await findReminderListForUser(userId, id);
@@ -525,8 +565,8 @@ export async function scheduleContactFollowUp(
   contactId: string,
   days = 7
 ) {
-  const userId = await requireUserId();
-  const result = await scheduleContactFollowUpForUser(userId, contactId, days);
+  const userId = await requirePageUser("page.reminders");
+  const result = await scheduleContactFollowUpForUser(userId, contactId, days, { origin: "manual" });
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
   return result;
@@ -537,7 +577,7 @@ export async function scheduleContactFollowUpAt(
   contactId: string,
   dateIso: string
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const db = await getDb();
   // The inbox lookup (which lazily creates the Inbox, before any not-found check — as it
   // always has), the contact and its pending reminder need nothing from each other, so all
@@ -614,6 +654,8 @@ export async function scheduleContactFollowUpAt(
     })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
+  if (row) trackFollowUpSet(userId, row, "manual");
+
   revalidateReminderPaths(contactId);
   revalidatePathIfRequestScoped("/contacts");
   return { reminder: row, dueDate: due.toISOString() };
@@ -636,7 +678,7 @@ export async function setKeepInTouchCadence(
   contactId: string,
   days: number | null
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const db = await getDb();
 
   // Anything unusable collapses to "no cadence" rather than throwing: this is a preference
@@ -665,7 +707,12 @@ export async function setKeepInTouchCadence(
 
 export async function clearContactFollowUp(contactId: string) {
   const userId = await requireUserId();
-  const { remindersClosed, snapshot } = await clearContactFollowUpForUser(userId, contactId);
+  return clearFollowUpAs(userId, contactId, "list");
+}
+
+/** The body of `clearContactFollowUp`, with the control that closed the reminders named. */
+async function clearFollowUpAs(userId: string, contactId: string, via: "list" | "touch") {
+  const { remindersClosed, snapshot } = await clearContactFollowUpForUser(userId, contactId, via);
   // The count is load-bearing, not telemetry: clearing a follow-up also marks every
   // pending reminder for the contact done (and completes their linked action items),
   // which the caller has to be able to say out loud. The snapshot is what lets it offer Undo.
@@ -701,7 +748,7 @@ export async function completeFollowUpWithTouch(
     notes?: string;
   }
 ) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const channel = options?.channel ?? "note";
   // Stamped before the touch is logged, so the card's acted_at never postdates it.
   const at = new Date();
@@ -740,7 +787,7 @@ export async function completeFollowUpWithTouch(
   // sent from it: the card closes and a congratulations nudge retires.
   const { markContactReachedOutForUser } = await import("@/lib/radar/actions-core");
   await markContactReachedOutForUser(userId, contactId, at);
-  return clearContactFollowUp(contactId);
+  return clearFollowUpAs(userId, contactId, "touch");
 }
 
 export async function markReminderDone(id: string) {
@@ -772,7 +819,8 @@ export async function reopenDoneReminderAction(id: string) {
   const db = await getDb();
   const rows = await db
     .update(reminders)
-    .set({ status: "pending" })
+    // Reopened: no longer completed (`completed_at` is cleared with the status).
+    .set({ status: "pending", completedAt: null })
     .where(and(eq(reminders.id, id), eq(reminders.userId, userId), eq(reminders.status, "done")))
     .returning(); // bare: a field selector breaks over the Db union
   revalidateReminderPaths();
@@ -781,7 +829,7 @@ export async function reopenDoneReminderAction(id: string) {
 
 /** Draft a follow-up message grounded in the reminder contact's conversation history. */
 export async function draftFollowUpResponse(reminderId: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
   return generateFollowUpDraft(userId, reminderId, goals, { writingInstructions });
@@ -928,7 +976,7 @@ export async function bulkReminderAction(
     switch (action.op) {
       case "done": {
         const items = await mapPooled(unique, (id) =>
-          completeReminder(userId, id)
+          completeReminder(userId, id, { via: "bulk" })
         );
         snapshot = {
           op: "done",
@@ -1115,14 +1163,26 @@ export async function listDueNotificationItems() {
     }));
 }
 
-export async function dismissSuggestion(id: string) {
-  const userId = await requireUserId();
+/** Mark a suggestion dismissed. Returns whether it moved (false: already dismissed or not this user's). */
+async function markSuggestionDismissed(userId: string, id: string): Promise<boolean> {
   const db = await getDb();
   const { aiSuggestions } = await import("@/db/schema");
-  await db
+  const moved = await db
     .update(aiSuggestions)
     .set({ status: "dismissed" })
-    .where(and(eq(aiSuggestions.id, id), eq(aiSuggestions.userId, userId)));
+    .where(and(eq(aiSuggestions.id, id), eq(aiSuggestions.userId, userId), ne(aiSuggestions.status, "dismissed")))
+    .returning(); // bare: a field selector breaks over the Db union
+  return moved.length > 0;
+}
+
+export async function dismissSuggestion(id: string) {
+  const userId = await requireUserId();
+  if (await markSuggestionDismissed(userId, id)) {
+    // The person turned a suggestion down; `reminder_id` holds the suggestion's id (there is
+    // no reminder). Resolving a suggestion by ACCEPTING it goes through
+    // `markSuggestionDismissed` directly and records nothing here.
+    track("followup_dismissed", { reminder_id: id }, { userId, id: eventId("followup_dismissed", id) });
+  }
   revalidatePathIfRequestScoped("/");
   revalidatePathIfRequestScoped("/dashboard");
 }
@@ -1154,7 +1214,7 @@ export async function restoreSuggestion(id: string) {
 }
 
 export async function scheduleFromSuggestion(suggestionId: string, days = 7) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const db = await getDb();
   const { aiSuggestions } = await import("@/db/schema");
 
@@ -1169,8 +1229,14 @@ export async function scheduleFromSuggestion(suggestionId: string, days = 7) {
   const contactId = suggestion.relatedContactIds?.[0];
   if (!contactId) throw new Error("No contact linked to this suggestion");
 
-  const result = await scheduleContactFollowUp(contactId, days);
-  await dismissSuggestion(suggestionId);
+  // Same writes and revalidation as `scheduleContactFollowUp`, with the origin named: the
+  // person accepted a suggestion, which is not the same signal as typing one in.
+  const result = await scheduleContactFollowUpForUser(userId, contactId, days, { origin: "suggestion" });
+  revalidateReminderPaths(contactId);
+  revalidatePathIfRequestScoped("/contacts");
+  await markSuggestionDismissed(userId, suggestionId);
+  revalidatePathIfRequestScoped("/");
+  revalidatePathIfRequestScoped("/dashboard");
   return result;
 }
 
@@ -1210,7 +1276,9 @@ export async function acceptScoreBump(suggestionId: string) {
     })
     .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
 
-  await dismissSuggestion(suggestionId);
+  await markSuggestionDismissed(userId, suggestionId);
+  revalidatePathIfRequestScoped("/");
+  revalidatePathIfRequestScoped("/dashboard");
 
   revalidatePathIfRequestScoped("/contacts");
   revalidatePath(`/contacts/${contactId}`);
@@ -1220,7 +1288,7 @@ export async function acceptScoreBump(suggestionId: string) {
 
 /** Generate more due follow-ups from dormant / high-value contacts. */
 export async function generateDueFollowUpsAction(limit = 8) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.reminders");
   const result = await generateDueFollowUps(userId, limit);
   revalidateReminderPaths();
   revalidatePathIfRequestScoped("/contacts");

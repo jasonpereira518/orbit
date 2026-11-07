@@ -38,12 +38,23 @@ import {
   type StoredCalendarEvent,
 } from "@/lib/connectors/google-calendar";
 import type { CalendarSyncCursor } from "@/db/schema";
+import { assertGraphUrl, GRAPH_API, graphFetchWithRetry } from "@/lib/graph-fetch";
 
 export { CalendarSyncTokenExpiredError, toNetworkEvents };
 
 const CALENDAR_VIEW_DELTA_API =
   "https://graph.microsoft.com/v1.0/me/calendarView/delta";
 const CALENDAR_VIEW_API = "https://graph.microsoft.com/v1.0/me/calendarView";
+
+/** The seeded row's id for the account's default calendar (`calendar_sources`). */
+export const MICROSOFT_DEFAULT_CALENDAR_ID = "default";
+
+/** A calendar's plain `calendarView`: the default one, or any other by its Graph id. */
+function calendarViewUrl(calendarId: string | undefined): string {
+  return !calendarId || calendarId === MICROSOFT_DEFAULT_CALENDAR_ID
+    ? CALENDAR_VIEW_API
+    : `${GRAPH_API}/me/calendars/${encodeURIComponent(calendarId)}/calendarView`;
+}
 
 type GraphAttendee = {
   emailAddress?: { name?: string; address?: string };
@@ -145,6 +156,12 @@ export type FetchPageOptions = {
    */
   ownerEmail: string;
   now?: Date;
+  /**
+   * Which calendar (`calendar_sources.calendarId`); the default one when omitted. Graph v1.0
+   * offers delta only on the default calendar, so any other is read as a plain windowed
+   * `calendarView` every pass: no deltaLink, so its cursor never holds a `syncToken`.
+   */
+  calendarId?: string;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
 };
@@ -161,14 +178,16 @@ export type FetchPageOptions = {
 export async function fetchCalendarPage(opts: FetchPageOptions): Promise<CalendarFetchResult> {
   const { accessToken, cursor, ownerEmail } = opts;
   const now = opts.now ?? new Date();
-  const doFetch = opts.fetchImpl ?? fetch;
 
+  // Both stored links are replayed with the bearer token, so each must be Graph's own.
   let url: string;
   if (cursor?.pageToken) {
     // Mid-run: always a full `@odata.nextLink` URL, valid regardless of how the run started.
+    assertGraphUrl(cursor.pageToken, "Bad Microsoft Calendar cursor");
     url = cursor.pageToken;
   } else if (cursor?.syncToken) {
     // Incremental: the stored `@odata.deltaLink` URL, refetched as-is.
+    assertGraphUrl(cursor.syncToken, "Bad Microsoft Calendar cursor");
     url = cursor.syncToken;
   } else {
     const start = new Date(now.getTime() - CALENDAR_WINDOW_PAST_MS).toISOString();
@@ -177,15 +196,25 @@ export async function fetchCalendarPage(opts: FetchPageOptions): Promise<Calenda
       startDateTime: start,
       endDateTime: end,
     });
-    url = `${CALENDAR_VIEW_DELTA_API}?${params}`;
+    // ponytail: non-default calendars re-read the whole window each pass (no v1.0 delta);
+    // fine at a few calendars, switch to the beta events/delta if Graph's bill shows it.
+    const isDefault = !opts.calendarId || opts.calendarId === MICROSOFT_DEFAULT_CALENDAR_ID;
+    if (!isDefault) params.set("$top", "100");
+    url = `${isDefault ? CALENDAR_VIEW_DELTA_API : calendarViewUrl(opts.calendarId)}?${params}`;
   }
 
-  const res = await doFetch(url, {
+  // Through graph-fetch: a per-attempt timeout, because the scheduler's per-connection
+  // deadline is only checked between pages and a hung request would otherwise hold the lane
+  // for the whole invocation; and a wait on 429/503/504, because throttling is Graph saying
+  // "later", not a failed sync that walks the connection up the backoff ladder.
+  const res = await graphFetchWithRetry(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       // Every event comes back already normalized to UTC — see `parseWhen`'s comment.
       Prefer: 'outlook.timezone="UTC"',
     },
+    timeoutMs: 20_000,
+    fetchImpl: opts.fetchImpl,
   });
 
   if (res.status === 410) throw new CalendarSyncTokenExpiredError();
@@ -268,6 +297,8 @@ const WINDOW_SELECT = [
  */
 export async function fetchCalendarWindow(opts: {
   accessToken: string;
+  /** The default calendar when omitted. */
+  calendarId?: string;
   from: Date;
   to: Date;
   maxPages?: number;
@@ -276,7 +307,7 @@ export async function fetchCalendarWindow(opts: {
 }): Promise<{ items: GraphEvent[]; complete: boolean; status: number }> {
   const doFetch = opts.fetchImpl ?? fetch;
   const items: GraphEvent[] = [];
-  let url: string | undefined = `${CALENDAR_VIEW_API}?${new URLSearchParams({
+  let url: string | undefined = `${calendarViewUrl(opts.calendarId)}?${new URLSearchParams({
     startDateTime: opts.from.toISOString(),
     endDateTime: opts.to.toISOString(),
     $top: "100",
@@ -292,6 +323,9 @@ export async function fetchCalendarWindow(opts: {
     items.push(...(body.value || []));
     url = body["@odata.nextLink"];
     if (!url) return { items, complete: true, status: res.status };
+    // Followed with the bearer token, so only ever Graph's own. A foreign link reads as an
+    // unfinished window — the caller then deletes nothing on absence.
+    if (!url.startsWith(`${GRAPH_API}/`)) return { items, complete: false, status: res.status };
   }
   return { items, complete: false, status: 200 };
 }
@@ -357,4 +391,44 @@ export function toStoredEvent(raw: GraphEvent, ownerEmail: string): StoredCalend
 
 export function storedEventsOf(items: GraphEvent[], ownerEmail: string): StoredCalendarEvent[] {
   return items.map((raw) => toStoredEvent(raw, ownerEmail)).filter((e): e is StoredCalendarEvent => e !== null);
+}
+
+export type MicrosoftCalendarListEntry = { id: string; summary: string; primary: boolean; color: string | null };
+
+/**
+ * The calendars this account can read, for the Microsoft page's picker. `GET /me/calendars`
+ * needs only Calendars.ReadBasic, below the Calendars.Read meetings already hold — nothing new.
+ */
+export async function listMicrosoftCalendars(opts: {
+  accessToken: string;
+  fetchImpl?: typeof fetch;
+}): Promise<MicrosoftCalendarListEntry[]> {
+  const out: MicrosoftCalendarListEntry[] = [];
+  let url: string | undefined = `${GRAPH_API}/me/calendars?$select=id,name,isDefaultCalendar,hexColor&$top=100`;
+  for (let page = 0; page < 5 && url; page++) {
+    const res = await graphFetchWithRetry(url, {
+      headers: { Authorization: `Bearer ${opts.accessToken}` },
+      timeoutMs: 20_000,
+      fetchImpl: opts.fetchImpl,
+    });
+    if (!res.ok) throw new Error(`Microsoft calendar list failed (${res.status})`);
+    const body = (await res.json()) as {
+      value?: Array<{ id?: string; name?: string; isDefaultCalendar?: boolean; hexColor?: string }>;
+      "@odata.nextLink"?: string;
+    };
+    for (const c of body.value ?? []) {
+      if (!c.id) continue;
+      out.push({
+        // The sync keys the default calendar "default" (`seedCalendarSources`), not by its id.
+        id: c.isDefaultCalendar ? MICROSOFT_DEFAULT_CALENDAR_ID : c.id,
+        summary: (c.name || "Calendar").trim(),
+        primary: Boolean(c.isDefaultCalendar),
+        // Empty until the person picks a colour in Outlook.
+        color: c.hexColor ? c.hexColor : null,
+      });
+    }
+    url = body["@odata.nextLink"];
+    if (url) assertGraphUrl(url, "Bad Microsoft calendar list link");
+  }
+  return out;
 }

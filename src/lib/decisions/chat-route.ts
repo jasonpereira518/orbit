@@ -50,7 +50,7 @@ const CALENDAR_QUESTION =
 const AVAILABILITY_QUESTION = /\b(am i (free|busy|available)|free (slot|time)|open (slot|time)|when am i free|availability)\b/i;
 /**
  * Preparing for one meeting wants `meeting_context` — each attendee's history and what is open —
- * which only the research step calls. A schedule question is answered from the calendar block.
+ * which the answer looks up itself. A schedule question is answered from the calendar block.
  */
 const PREP_QUESTION = /\b(prep(are)? me|brief me|get me ready)\b/i;
 const PREP: DepthDecision = { depth: "research", reason: "prepares for a meeting" };

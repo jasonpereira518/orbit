@@ -1,12 +1,15 @@
 import { cookies } from "next/headers";
 import {
   ATTRIBUTION_COOKIE,
+  LAST_TOUCH_COOKIE,
   parseAttribution,
+  parseLastTouch,
 } from "@/lib/attribution-parse";
-import { recordDirectVisit, recordFirstTouch } from "@/lib/attribution";
+import { attributionPending, recordDirectVisit, recordFirstTouch } from "@/lib/attribution";
+import { claimSiteInviteGrant } from "@/lib/site-invites";
 
 /**
- * Move the first-touch cookie into the account row, once.
+ * Move the first-touch (and last-touch) cookies into the account row, once.
  *
  * Called from `(app)/layout.tsx`, which is the first authenticated surface every new user
  * reaches. It cannot go in `bootstrapAuthenticatedUser` — that runs from server actions
@@ -29,8 +32,18 @@ export async function captureAttribution(userId: string): Promise<void> {
     const attribution = parseAttribution(raw);
 
     if (attribution) {
-      await recordFirstTouch(userId, attribution);
+      // The proxy sets both cookies on the same channel-bearing landing, so a first touch
+      // always has a last touch beside it (the same landing, for a one-visit signup).
+      const lastTouch = parseLastTouch(store.get(LAST_TOUCH_COOKIE)?.value ?? null);
+      await recordFirstTouch(userId, attribution, "cookie", lastTouch);
     } else {
+      // No cookie. An invited account's cookie lives on the waitlist host, so this is the
+      // normal shape of an invited sign-up, and the waitlist row holds its real channel. The
+      // Clerk webhook that links the account to that row can land AFTER this first render, so
+      // while the account is still unattributed the link is made here first (one Clerk call,
+      // once per account: `attributionPending` is false from then on). It also fills the
+      // ledger for a webhook that never arrives.
+      if (await attributionPending(userId)) await claimSiteInviteGrant(userId);
       await recordDirectVisit(userId);
     }
   } catch {

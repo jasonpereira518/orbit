@@ -105,6 +105,26 @@ export function recipientsOf(event: ResendEvent): string[] {
  * Soft bounces are deliberately excluded. A full mailbox clears; suppressing on one would
  * silently lose a real subscriber to a temporary condition.
  */
+/** The engagement column a Resend event stamps on its send, or null for any other type. */
+export function engagementOf(event: ResendEvent): "deliveredAt" | "openedAt" | "clickedAt" | null {
+  switch (event.type) {
+    case "email.delivered":
+      return "deliveredAt";
+    case "email.opened":
+      return "openedAt";
+    case "email.clicked":
+      return "clickedAt";
+    default:
+      return null;
+  }
+}
+
+/** When the event happened, per Resend; now when absent or unparseable. */
+export function eventTimeOf(event: ResendEvent, now = new Date()): Date {
+  const at = event.created_at ? new Date(event.created_at) : null;
+  return at && Number.isFinite(at.getTime()) && at.getTime() <= now.getTime() + 5 * 60_000 ? at : now;
+}
+
 export function shouldSuppress(event: ResendEvent): boolean {
   if (event.type === "email.complained") return true;
   if (event.type !== "email.bounced") return false;

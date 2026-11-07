@@ -211,7 +211,7 @@ async function main() {
 
   console.log("\nthe admin page");
   {
-    const { default: AdminRadarPage } = await import("../src/app/(clerk)/(admin)/admin/analytics/radar/page");
+    const { default: AdminRadarPage } = await import("../src/app/(clerk)/(admin)/admin/growth/radar/page");
     const page = await AdminRadarPage({ searchParams: Promise.resolve({ window: "7" }) });
     check("renders without throwing", page != null);
     const bogus = await AdminRadarPage({ searchParams: Promise.resolve({ window: "9999" }) });

@@ -35,6 +35,7 @@
       "location": null,
       "mastodonAcct": null,
       "metContext": "online",
+      "nameGuess": null,
       "nextFollowUpAt": null,
       "notes": null,
       "opportunities": [],
@@ -56,6 +57,8 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryMissSlug": null,
+      "workHistoryMisses": 0,
       "xHandle": null
     },
     {
@@ -93,6 +96,7 @@
       "location": null,
       "mastodonAcct": null,
       "metContext": "online",
+      "nameGuess": null,
       "nextFollowUpAt": null,
       "notes": null,
       "opportunities": [],
@@ -114,6 +118,8 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryMissSlug": null,
+      "workHistoryMisses": 0,
       "xHandle": null
     },
     {
@@ -151,6 +157,7 @@
       "location": null,
       "mastodonAcct": null,
       "metContext": "online",
+      "nameGuess": null,
       "nextFollowUpAt": null,
       "notes": null,
       "opportunities": [],
@@ -172,6 +179,8 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryMissSlug": null,
+      "workHistoryMisses": 0,
       "xHandle": null
     },
     {
@@ -209,6 +218,7 @@
       "location": null,
       "mastodonAcct": null,
       "metContext": "online",
+      "nameGuess": null,
       "nextFollowUpAt": null,
       "notes": null,
       "opportunities": [],
@@ -230,6 +240,8 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryMissSlug": null,
+      "workHistoryMisses": 0,
       "xHandle": null
     },
     {
@@ -267,6 +279,7 @@
       "location": null,
       "mastodonAcct": null,
       "metContext": "online",
+      "nameGuess": null,
       "nextFollowUpAt": null,
       "notes": null,
       "opportunities": [],
@@ -288,6 +301,8 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryMissSlug": null,
+      "workHistoryMisses": 0,
       "xHandle": null
     },
     {
@@ -325,6 +340,7 @@
       "location": null,
       "mastodonAcct": null,
       "metContext": "online",
+      "nameGuess": null,
       "nextFollowUpAt": null,
       "notes": null,
       "opportunities": [],
@@ -346,6 +362,8 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryMissSlug": null,
+      "workHistoryMisses": 0,
       "xHandle": null
     }
   ],

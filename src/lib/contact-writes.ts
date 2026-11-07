@@ -24,6 +24,7 @@ import {
 } from "@/lib/memory-chunks";
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { mergeFactList } from "@/lib/fact-lists";
+import type { NameGuess } from "@/lib/contact-name-guess";
 import {
   contactIdentities,
   contactTags,
@@ -33,7 +34,10 @@ import {
   type Interaction,
 } from "@/db/schema";
 import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
+import { PLAN_LABELS, availableOn, salePlansWith } from "@/lib/plans/plan-config";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { recordGateHit, recordGateHitThrottled } from "@/lib/gate-events";
+import { requirePlanForSurface, surfaceTierLock } from "@/lib/surface-visibility";
 import {
   companyFieldsForWrite,
   companyFieldsForWriteCached,
@@ -107,6 +111,12 @@ export type ContactInput = {
   firstName?: string;
   lastName?: string;
   preferredName?: string;
+  /**
+   * Only from the name sweep and the "?" review (`@/lib/contact-name-guess`). A `fullName`
+   * change written without it settles any guess already there: a person or a better source
+   * has named them.
+   */
+  nameGuess?: NameGuess | null;
   company?: string;
   title?: string;
   location?: string;
@@ -413,6 +423,9 @@ export async function contactHeadroomForUser(
   // Optional: a caller already holding the account's entitlements skips re-reading them.
   entitlements?: Entitlements
 ) {
+  // A Contacts page an operator limited to other plans adds no contacts from anywhere —
+  // imports, sync, capture, the API — the same "lock new use, keep the data" the cap is.
+  if (await surfaceTierLock(userId, "page.contacts")) return 0;
   const { contactLimit } = entitlements ?? (await getEntitlements(userId));
   if (contactLimit === null) return null;
 
@@ -451,6 +464,9 @@ export async function createContactForUser(
   // Before the headroom check: an invalid contact should not consume the plan
   // allowance or record a paywall gate-hit on its way to being rejected.
   const input = parseContactInput(rawInput);
+  // THE shared create path (actions, MCP, REST, extension, chat, capture), so a Contacts tier
+  // lock is enforced once here rather than in every caller. Throws the page's upgrade refusal.
+  await requirePlanForSurface(userId, "page.contacts");
 
   // Resolved once for both the headroom check and the paywall below; each used to read it.
   const entitlements = options?.entitlements ?? (await getEntitlements(userId));
@@ -466,10 +482,14 @@ export async function createContactForUser(
       plan,
       context: { contactLimit },
     });
+    // Names the plans with no cap under the effective table, so an admin's limit change reads true.
+    const uncapped = salePlansWith("contacts", await getEffectivePlanConfig()).length
+      ? ` to ${availableOn("contacts", await getEffectivePlanConfig())}`
+      : "";
     throw new PaywallError(
       "contacts",
       plan,
-      `You've reached the ${contactLimit}-contact limit on the free plan. Upgrade to add more people to your orbit.`
+      `You've reached the ${contactLimit}-contact limit on ${plan === "free" ? "the free plan" : PLAN_LABELS[plan]}. Upgrade${uncapped} to add more people to your orbit.`
     );
   }
 
@@ -1004,6 +1024,15 @@ export async function updateContactForUser(
       ...(input.preferredName !== undefined
         ? { preferredName: input.preferredName }
         : {}),
+      ...(input.nameGuess !== undefined
+        ? { nameGuess: input.nameGuess }
+        : input.fullName !== undefined
+          ? {
+              // Old values on the right of SET: only a name that actually changed settles it.
+              nameGuess: sql`CASE WHEN ${contacts.nameGuess} IS NOT NULL AND ${contacts.fullName} IS DISTINCT FROM ${input.fullName}
+                THEN ${contacts.nameGuess} || '{"weak": false}'::jsonb ELSE ${contacts.nameGuess} END`,
+            }
+          : {}),
       ...(companyPatch
         ? { company: companyPatch.company, companyId: companyPatch.companyId }
         : {}),
@@ -1093,7 +1122,10 @@ export async function updateContactForUser(
     await syncIdentitiesForContact(userId, id, contact, input.source);
   }
 
-  if (input.tagNames) {
+  // Only once the update matched the caller's own row. The UPDATE above is user-scoped, but
+  // `syncTags` deletes and attaches by contact id alone: run for another account's id, it
+  // stripped that contact's tags and attached the caller's (scripts/smoke-contact-tags-ownership.ts).
+  if (contact && input.tagNames) {
     await syncTags(userId, id, input.tagNames);
   }
 

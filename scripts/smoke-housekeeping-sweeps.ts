@@ -79,7 +79,8 @@ run(async () => {
     check("…and prunes the rate-limit buckets", route.includes("pruneRateLimitBuckets()"));
     const stepOf = (call: string) => {
       const at = route.indexOf(call);
-      const open = route.lastIndexOf("    try {", at);
+      // Each stage is `if (stage("…")) try { … }`, so its block opens at the nearest `try {`.
+      const open = route.lastIndexOf(" try {", at);
       return { at, open, close: route.indexOf("\n    }", at) };
     };
     const fill = stepOf("await fillSharedAvatars()");

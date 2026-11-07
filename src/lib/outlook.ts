@@ -3,7 +3,7 @@ import { getDb } from "@/db";
 import { outlookConnections } from "@/db/schema";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { ReauthRequiredError, isRefreshRejection } from "@/lib/errors";
-import { graphFetchWithRetry } from "@/lib/graph-fetch";
+import { assertGraphUrl, graphFetchWithRetry } from "@/lib/graph-fetch";
 import {
   hasCalendarScope as msHasCalendarScope,
   hasContactsScope as msHasContactsScope,
@@ -302,7 +302,17 @@ export async function upsertOutlookConnection(
         nextSyncAt: armed && !pausedByUser ? new Date() : null,
         syncFailures: 0,
         syncError: null,
-        ...(switchedFrom ? { syncCursor: null, syncStatus: null, syncStartedAt: null, lastSyncedAt: null } : {}),
+        // A different account starts with every lane on; the same account keeps its switches.
+        ...(switchedFrom
+          ? {
+              syncCursor: null,
+              syncStatus: null,
+              syncStartedAt: null,
+              lastSyncedAt: null,
+              calendarSyncEnabled: 1,
+              contactsSyncEnabled: 1,
+            }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(outlookConnections.id, existing.id))
@@ -518,6 +528,8 @@ export async function fetchOutlookContacts(
     }
 
     url = data["@odata.nextLink"] || null;
+    // Followed with the bearer token, so only ever Graph's own link.
+    if (url) assertGraphUrl(url, "Bad Outlook contacts page link");
   }
 
   return people.filter((p) => p.fullName.trim());
@@ -590,6 +602,9 @@ export async function listOutlookMessagePage(
   accessToken: string,
   opts: { query: string; skipToken?: string | null; top?: number }
 ): Promise<{ messages: OutlookMessageRef[]; nextLink: string | null }> {
+  // The stored link is replayed with the bearer token (it lives in the scan job's stats
+  // between invocations), so it must be Graph's own.
+  if (opts.skipToken) assertGraphUrl(opts.skipToken, "Bad Outlook page link");
   const url =
     opts.skipToken ||
     `${GRAPH_MESSAGES}?$search=${encodeURIComponent(opts.query)}&$top=${opts.top ?? 200}&$select=id`;

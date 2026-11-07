@@ -48,16 +48,51 @@
  * job (`contacts.jobRunning`) instead. It is the one deliberate behaviour change here.
  */
 
-import { useState, useTransition } from "react";
+import { useViewerPlan } from "@/components/viewer-plan";
+import { availableOn } from "@/lib/plans/plan-config";
+import Link from "next/link";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { longRelativeLabel } from "@/lib/relative-date";
-import { CalendarClock, CalendarDays, Loader2, Mail, Send, Users } from "lucide-react";
-import { getGmailScanStatus, setCalendarSync, type GmailScanStatus } from "@/actions/gmail";
+import {
+  CalendarClock,
+  CalendarDays,
+  HardDrive,
+  Loader2,
+  Mail,
+  MailCheck,
+  RefreshCw,
+  Send,
+  Users,
+} from "lucide-react";
+import {
+  getGmailScanStatus,
+  setCalendarSync,
+  setGoogleContactsSync,
+  type GmailScanStatus,
+} from "@/actions/gmail";
+import {
+  getGooglePanel,
+  refreshGoogleCalendars,
+  setGoogleCalendarEnabled,
+  type GoogleCalendarRow,
+  type GooglePanel,
+} from "@/actions/google-settings";
+import { listImports, type ImportHistoryItem } from "@/actions/imports";
+import { setEmailActivitySync } from "@/actions/email-activity";
+import { getSendCapabilityAction } from "@/actions/email-sends";
 import { Button } from "@/components/ui/button";
+import { CalendarPicker, SwitchRow, useSyncNow } from "@/components/settings/account-rows";
+import { PROVIDER_THEMES } from "@/components/settings/provider-themes";
+import { syncAccountNow } from "@/actions/sync-now";
+import { cn } from "@/lib/utils";
+import { GoogleMark } from "@/components/settings/provider-marks";
+import { IMPORT_HISTORY_LIMIT, ImportHistoryRow } from "@/components/settings/import-history-row";
+import { GMAIL_SCAN_IMPORT_TYPE } from "@/lib/gmail-scan-type";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
 import { GooglePhotoMatch } from "@/components/settings/google-photo-match";
-import { AccountPageShell, FeatureRow } from "@/components/settings/account-page";
+import { AccountPageShell, FeatureRow, syncStatusLine } from "@/components/settings/account-page";
 import { useContactsImport } from "@/components/settings/use-contacts-import";
 import { useGoogleConnection } from "@/components/settings/use-provider-connection";
 import { useLatestScan, useRecruiterScan } from "@/components/settings/use-recruiter-scan";
@@ -74,6 +109,17 @@ import { TOAST_COPY } from "@/lib/toast-copy";
 
 /** Where `?integration=gmail` lands. Kept on the inbox row itself, which is what it names. */
 const INBOX_ROW_ID = focusTargetId("google", "inbox");
+
+/**
+ * Google's own published colors, exactly as `GoogleMark` draws them (`provider-marks.tsx`).
+ * Never a near-miss: Orbit's consent screen is in verification, and a mark in almost-Google
+ * colors beside the real one is what gets noticed. Each tints the icon tile of the rows whose
+ * feature it stands for; buttons and switches stay Orbit's own.
+ */
+const GOOGLE = { blue: "#4285F4", red: "#EA4335", yellow: "#FBBC05", green: "#34A853" } as const;
+const GOOGLE_IMPORT_TYPES = ["google_contacts", "drive_docs", GMAIL_SCAN_IMPORT_TYPE];
+
+type SendCapability = Awaited<ReturnType<typeof getSendCapabilityAction>>;
 
 export function GoogleAccountPage({
   returnTo,
@@ -94,10 +140,12 @@ export function GoogleAccountPage({
   /** Opens another page of this dialog — the Reminders row and the "Turn on AI" link. */
   onOpenPage: (page: IntegrationTabId) => void;
 }) {
+  const router = useRouter();
   const connection = useGoogleConnection({ returnTo });
   const contacts = useContactsImport("google");
   const { status } = connection;
-  const account = status ? googleAccountStatus(status, { canUseRecruiters }) : null;
+  const recruitersOn = availableOn("recruiters", useViewerPlan().planConfig);
+  const account = status ? googleAccountStatus(status, { canUseRecruiters, recruitersOn }) : null;
   const capabilities = account?.capabilities ?? {};
 
   const showsInbox = inboxVisible && active;
@@ -138,31 +186,94 @@ export function GoogleAccountPage({
       ? latestScan.scan !== null
       : undefined;
 
+  // Counts, calendars, history and today's sends: read once the account is known to be
+  // connected, which also keeps them clear of the sign-in return's strip (see the scan read).
+  const connected = account?.state === "connected";
+  const [panel, setPanel] = useState<GooglePanel | null>(null);
+  const [history, setHistory] = useState<ImportHistoryItem[] | null>(null);
+  const [sendCap, setSendCap] = useState<SendCapability | null>(null);
+  const loadPanel = useCallback(() => {
+    getGooglePanel().then(setPanel, () => {});
+    listImports({ limit: IMPORT_HISTORY_LIMIT, importTypes: GOOGLE_IMPORT_TYPES }).then(setHistory, () =>
+      setHistory([])
+    );
+    getSendCapabilityAction().then(setSendCap, () => {});
+  }, []);
+  useEffect(() => {
+    if (connected) loadPanel();
+  }, [connected, loadPanel]);
+
+  const syncNow = useSyncNow(() => syncAccountNow("google"), status?.lastSyncedAt, connection.refresh);
+
   return (
     <AccountPageShell
-      provider="google"
+      name="Google"
+      mark={<GoogleMark className="size-6" />}
+      theme={PROVIDER_THEMES.google}
       account={account}
       loading={connection.loading}
       failed={connection.failed}
       onRetry={connection.retry}
       onConnect={() => connection.connect()}
-      onDisconnect={(opts) =>
-        connection.disconnect(opts).then(
-          () => contacts.reset(),
-          (err) => toast.error(friendlyError(err, "Couldn’t disconnect that account — try again?"))
-        )
-      }
-      hasDeletableData={hasDeletableData}
+      status={syncStatusLine({
+        signedOut: account?.state === "needs_reauth",
+        syncing: syncNow.syncing,
+        lastSyncedAt: status?.lastSyncedAt,
+        error: status?.syncError,
+      })}
+      primaryAction={{
+        label: syncNow.syncing ? "Syncing…" : "Sync now",
+        icon: <RefreshCw aria-hidden className={cn(syncNow.syncing && "animate-spin")} />,
+        onClick: syncNow.sync,
+        disabled: syncNow.syncing || connection.busy,
+      }}
+      menuItems={[{ label: "Switch account", onSelect: () => connection.connect() }]}
+      disconnect={{
+        provider: "gmail",
+        hasDeletableData,
+        onConfirm: (opts) =>
+          void connection.disconnect(opts).then(
+            () => contacts.reset(),
+            (err) => toast.error(friendlyError(err, "Couldn’t disconnect that account — try again?"))
+          ),
+      }}
     >
       <ContactsRow
         capability={capabilities.contacts}
         contacts={contacts}
+        fromGoogle={panel?.contactsFromGoogle ?? null}
         busy={connection.busy}
         onAllow={() => connection.connect(["contacts"])}
       />
 
+      {status?.canImportContacts ? (
+        <SwitchRow
+          icon={<RefreshCw className="size-4" />}
+          tone={GOOGLE.blue}
+          title="Keep contacts in sync"
+          description={
+            status.contactsSyncEnabled
+              ? `New and changed Google contacts come in on their own.${
+                  panel?.contactsSyncedAt
+                    ? ` Synced ${longRelativeLabel(new Date(panel.contactsSyncedAt))}.`
+                    : ""
+                }`
+              : "Off — only the contacts you import yourself come in."
+          }
+          on={status.contactsSyncEnabled}
+          busy={connection.busy}
+          save={(on) => setGoogleContactsSync(on)}
+          done={(on) => (on ? "Contacts will keep in sync" : "Contacts sync is off")}
+          onSaved={() => {
+            connection.refresh();
+            loadPanel();
+          }}
+        />
+      ) : null}
+
       <GooglePhotoMatch
         capability={capabilities.contacts}
+        tone={GOOGLE.blue}
         busy={connection.busy}
         onAllow={() => connection.connect(["contacts"])}
       />
@@ -170,10 +281,48 @@ export function GoogleAccountPage({
       <MeetingsRow
         capability={capabilities.meetings}
         lastCheckedAt={status?.lastSyncedAt ?? null}
+        meetingsLogged={panel?.meetingsLogged ?? null}
+        calendars={panel?.calendars ?? []}
         busy={connection.busy}
-        onRefresh={connection.refresh}
+        onRefresh={() => {
+          connection.refresh();
+          loadPanel();
+        }}
         onAllow={() => connection.connect(["calendar"])}
       />
+
+      {status?.canRead ? (
+        <SwitchRow
+          icon={<MailCheck className="size-4" />}
+          tone={GOOGLE.red}
+          title="Email activity"
+          description={
+            panel?.emailActivityOn
+              ? `Logs emails with people you know onto their timelines.${
+                  panel.emailsLogged ? ` ${panel.emailsLogged.toLocaleString()} logged so far.` : ""
+                }`
+              : "Off — emails aren’t logged. Orbit only ever reads who you wrote to and when."
+          }
+          on={panel?.emailActivityOn ?? false}
+          busy={connection.busy || panel === null}
+          save={async (on) => {
+            await setEmailActivitySync(on);
+            return { ok: true as const };
+          }}
+          done={(on) => (on ? "Email activity is on" : "Email activity is off")}
+          onSaved={loadPanel}
+        />
+      ) : (
+        <FeatureRow
+          icon={<MailCheck className="size-4" />}
+          tone={GOOGLE.red}
+          title="Email activity"
+          description="Logs emails with people you know onto their timelines. Asks Google first."
+          control={{ kind: "action", label: "Allow" }}
+          disabled={connection.busy}
+          onAction={() => connection.connect(["email_intel"])}
+        />
+      )}
 
       {showsInbox ? (
         // Keyed on what the scan read found: `useRecruiterScan` takes `initialScan` as a
@@ -194,11 +343,36 @@ export function GoogleAccountPage({
 
       <FeatureRow
         icon={<Send className="size-4" />}
+        tone={GOOGLE.red}
         title="Send from Gmail"
-        description="Replies you approve go out from your address."
+        description={
+          <>
+            Replies you approve go out from your address.
+            {status?.canSend && sendCap ? ` ${sendCap.usedToday} of ${sendCap.dailyCap} sent today. ` : " "}
+            {status?.canSend ? (
+              <Link href="/settings#settings-email" className="underline underline-offset-2 hover:text-foreground">
+                Signature and defaults
+              </Link>
+            ) : null}
+          </>
+        }
         control={rowControl("send", capabilities.send)}
         disabled={connection.busy}
         onAction={() => connection.connect(["send"])}
+      />
+
+      <FeatureRow
+        icon={<HardDrive className="size-4" />}
+        tone={GOOGLE.yellow}
+        title="Docs and Slides from Drive"
+        description="Pick meeting notes from Drive and Orbit adds the people in them. Only the files you pick."
+        control={{ kind: "action", label: status?.canImportDrive ? "Import from Drive" : "Allow" }}
+        disabled={connection.busy}
+        onAction={() =>
+          status?.canImportDrive
+            ? router.push("/capture?mode=imports#import-panel-drive")
+            : connection.connect(["drive"])
+        }
       />
 
       <FeatureRow
@@ -210,6 +384,8 @@ export function GoogleAccountPage({
         control={{ kind: "action", label: "Add" }}
         onAction={() => onOpenPage("reminders")}
       />
+
+      <ImportHistoryRow history={history} source="Google" onUndone={loadPanel} />
     </AccountPageShell>
   );
 }
@@ -217,11 +393,14 @@ export function GoogleAccountPage({
 function ContactsRow({
   capability,
   contacts,
+  fromGoogle,
   busy,
   onAllow,
 }: {
   capability: CapabilityStatus | undefined;
   contacts: ReturnType<typeof useContactsImport>;
+  /** Contacts that came in from Google, imported or synced. Null until the panel read lands. */
+  fromGoogle: number | null;
   busy: boolean;
   onAllow: () => void;
 }) {
@@ -248,11 +427,14 @@ function ContactsRow({
   return (
     <FeatureRow
       icon={<Users className="size-4" />}
+      tone={GOOGLE.blue}
       title="Contacts"
       description={
         imported
           ? `${imported} You pick who comes in.`
-          : "Bring your Google contacts into Orbit. You choose who before anything’s added."
+          : fromGoogle
+            ? `${fromGoogle.toLocaleString()} ${fromGoogle === 1 ? "contact" : "contacts"} from Google. You pick who else comes in.`
+            : "Bring your Google contacts into Orbit. You choose who before anything’s added."
       }
       control={rowControlForState}
       disabled={working}
@@ -289,6 +471,8 @@ function ContactsRow({
 function MeetingsRow({
   capability,
   lastCheckedAt,
+  meetingsLogged,
+  calendars,
   busy,
   onRefresh,
   onAllow,
@@ -296,6 +480,8 @@ function MeetingsRow({
   capability: CapabilityStatus | undefined;
   /** ISO, from the connection status. Null until the first run. */
   lastCheckedAt: string | null;
+  meetingsLogged: number | null;
+  calendars: GoogleCalendarRow[];
   busy: boolean;
   onRefresh: () => void;
   onAllow: () => void;
@@ -314,7 +500,7 @@ function MeetingsRow({
           toast.error(result.error);
           return;
         }
-        toast.success(on ? "Meetings are on" : "Meetings are off");
+        toast.success(on ? "Meetings are on" : "Meetings are off — contacts and email keep syncing");
         onRefresh();
       } catch (err) {
         toast.error(friendlyError(err, TOAST_COPY.saveFailed));
@@ -325,8 +511,9 @@ function MeetingsRow({
   return (
     <FeatureRow
       icon={<CalendarDays className="size-4" />}
+      tone={GOOGLE.green}
       title="Meetings"
-      description={meetingsLine(capability, lastCheckedAt)}
+      description={meetingsLine(capability, lastCheckedAt, meetingsLogged)}
       control={control}
       disabled={busy || pending}
       onAction={() => {
@@ -335,17 +522,36 @@ function MeetingsRow({
         if (control.kind === "switch") toggle(!control.on);
         else onAllow();
       }}
-    />
+    >
+      {control.kind === "switch" && control.on ? (
+        <CalendarPicker
+          calendars={calendars}
+          tone={GOOGLE.green}
+          primaryLabel="Primary"
+          setEnabled={setGoogleCalendarEnabled}
+          refreshList={refreshGoogleCalendars}
+          onChanged={onRefresh}
+        />
+      ) : null}
+    </FeatureRow>
   );
 }
 
 /** Never `syncError`, which can be a raw provider body — `detail` is already safe to show. */
-function meetingsLine(capability: CapabilityStatus | undefined, lastCheckedAt: string | null): string {
+function meetingsLine(
+  capability: CapabilityStatus | undefined,
+  lastCheckedAt: string | null,
+  meetingsLogged: number | null
+): string {
   if (capability?.state === "paused" && capability.detail) return capability.detail;
   if (capability?.state === "off") return "Off — meetings aren’t being logged.";
   const base = "Logs meetings with people you know onto their timelines.";
-  if (capability?.state !== "on" || !lastCheckedAt) return base;
-  return `${base} Checked ${longRelativeLabel(new Date(lastCheckedAt))}.`;
+  if (capability?.state !== "on") return base;
+  const logged = meetingsLogged ? ` ${meetingsLogged.toLocaleString()} logged.` : "";
+  const checked = lastCheckedAt
+    ? ` Checked ${longRelativeLabel(new Date(lastCheckedAt))}.`
+    : "";
+  return `${base}${logged}${checked}`;
 }
 
 /**
@@ -378,6 +584,7 @@ function InboxRow({
   onAllow: () => void;
   onOpenPage: (page: IntegrationTabId) => void;
 }) {
+  const recruitersOn = availableOn("recruiters", useViewerPlan().planConfig);
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const { scan, running, phaseLabel, percent, start, cancel } = useRecruiterScan(
@@ -404,6 +611,7 @@ function InboxRow({
     <FeatureRow
       id={INBOX_ROW_ID}
       icon={<Mail className="size-4" />}
+      tone={GOOGLE.red}
       title="Recruiters in Gmail"
       description={
         needsAi ? (
@@ -426,7 +634,7 @@ function InboxRow({
       control={control}
       disabled={disabled}
       onAction={() => {
-        if (control.kind === "locked") router.push("/upgrade");
+        if (control.kind === "locked") router.push("/upgrade?gate=recruiters");
         else if (isAllow) onAllow();
         else {
           onScanStarted();
@@ -436,7 +644,7 @@ function InboxRow({
     >
       {control.kind === "locked" ? (
         <p className="text-sm text-muted-foreground">
-          {capability?.detail ?? "Part of Orbit Pro and Max"}
+          {capability?.detail ?? `Part of ${recruitersOn}`}
         </p>
       ) : null}
 

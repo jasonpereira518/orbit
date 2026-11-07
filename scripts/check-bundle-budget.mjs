@@ -9,7 +9,10 @@
  * regression, and each improvement should lower them. LATENCY_PLAN.md §3 has the targets
  * (≤ 300 KB per app page, ≤ 220 KB floor) these ratchet toward.
  *
- * The framework root chunks and clerk-js are outside these numbers, as in the report.
+ * The framework root chunks and clerk-js are outside these numbers: the report's
+ * `app_js_gz_kb` column. Its `js_gz_kb` is the full first load, framework included
+ * (~100 KB gz more on every route), which is what a visitor downloads but not what an app
+ * change moves.
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -33,14 +36,15 @@ const failures = [];
 for (const r of rows) {
   if (r.route.startsWith("/admin")) continue;
   const jsMax = MARKETING.has(r.route) ? MAX_MARKETING_JS_GZ_KB : MAX_ROUTE_JS_GZ_KB;
-  if (r.js_gz_kb > jsMax) failures.push(`${r.route}: ${r.js_gz_kb} KB gz of first-load JS (budget ${jsMax})`);
+  if (r.app_js_gz_kb > jsMax) failures.push(`${r.route}: ${r.app_js_gz_kb} KB gz of first-load app JS (budget ${jsMax})`);
   if (r.fonts > MAX_PRELOADED_FONTS) failures.push(`${r.route}: ${r.fonts} preloaded fonts (budget ${MAX_PRELOADED_FONTS})`);
   if (r.font_kb > MAX_FONT_KB) failures.push(`${r.route}: ${r.font_kb} KB of preloaded fonts (budget ${MAX_FONT_KB})`);
 }
 
 const checked = rows.filter((r) => !r.route.startsWith("/admin"));
-const heaviest = [...checked].sort((a, b) => b.js_gz_kb - a.js_gz_kb)[0];
-console.log(`${checked.length} routes checked; heaviest first load ${heaviest?.route} at ${heaviest?.js_gz_kb} KB gz.`);
+// API routes have no client JS, so no app column: count them as 0 rather than sort on NaN.
+const heaviest = [...checked].sort((a, b) => (b.app_js_gz_kb ?? 0) - (a.app_js_gz_kb ?? 0))[0];
+console.log(`${checked.length} routes checked; heaviest app first load ${heaviest?.route} at ${heaviest?.app_js_gz_kb} KB gz (${heaviest?.js_gz_kb} with the framework).`);
 if (failures.length) {
   console.error(`\nOver budget:\n  ${failures.join("\n  ")}\n\nIf the growth is intended, raise the ceiling in scripts/check-bundle-budget.mjs and say why in the commit.`);
   process.exit(1);

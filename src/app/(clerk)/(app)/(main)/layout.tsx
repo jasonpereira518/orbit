@@ -5,6 +5,7 @@ import { SurfaceGate } from "@/components/coming-soon/surface-gate";
 import { SurfaceUnavailable } from "@/components/surface-unavailable";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { surfaceForPathname } from "@/lib/surfaces";
 
 /**
@@ -75,7 +76,7 @@ export default async function MainAppLayout({
       return (
         <SurfaceGate
           surfaceKey={surface.key}
-          blocked={<ComingSoon surfaceKey={surface.key} label={surface.label} />}
+          blocked={<ComingSoon surfaceKey={surface.key} label={surface.label} config={await getEffectivePlanConfig()} />}
         >
           {children}
         </SurfaceGate>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { IntentLink } from "@/components/ui/intent-link";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, ChevronDown, CircleDashed } from "lucide-react";
@@ -9,7 +9,7 @@ import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { ChatOrbit } from "@/components/chat/chat-orbit";
 import { OrbitMark } from "@/components/chat/orbit-mark";
-import { collectOrbitPeople } from "@/lib/chat-orbit-people";
+import { collectOrbitPeople, ORBIT_CAPACITY } from "@/lib/chat-orbit-people";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
 
 /**
@@ -66,7 +66,9 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
     return running ?? steps[steps.length - 1] ?? null;
   }, [steps]);
   const summary = useMemo(() => summarise(steps), [steps]);
-  const people = useMemo(() => collectOrbitPeople(steps), [steps]);
+  // Uncapped, so the caption can give the real count; the scene itself takes the first few.
+  const people = useMemo(() => collectOrbitPeople(steps, Infinity), [steps]);
+  const doneCount = steps.filter((step) => step.status === "done").length;
 
   if (steps.length === 0) return null;
 
@@ -85,7 +87,7 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
         <span className="min-w-0 flex-1 truncate text-left" aria-live="polite" aria-atomic="true">
           {/* Shimmer on the stage name only — the detail beside it is a fact, not the "still
               working" signal. `data-text` must mirror the label. */}
-          <span className="t-shimmer max-w-full truncate align-bottom" data-text={label}>
+          <span className="t-shimmer t-shimmer-brand max-w-full truncate align-bottom" data-text={label}>
             {label}
           </span>
           {current?.detail ? <span className="text-muted-foreground-subtle"> · {current.detail}</span> : null}
@@ -110,6 +112,13 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
           className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-foreground"
         >
           {header}
+          {/* How far along, in facts: stages finished and real time spent. Outside the
+              aria-live line on purpose — a ticking clock in it would be read out constantly,
+              and the trail already tells a screen reader what is done and what is running. */}
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground" aria-hidden="true">
+            {doneCount > 0 ? `${doneCount} done · ` : null}
+            <LiveElapsed />
+          </span>
           <ChevronDown
             className={cn(
               "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -153,7 +162,11 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
                   ))}
                 </ol>
                 <div style={{ zoom: ORBIT_ZOOM }}>
-                  <ChatOrbit people={people} reduceMotion={reduceMotion} />
+                  <ChatOrbit
+                    people={people.slice(0, ORBIT_CAPACITY)}
+                    total={people.length}
+                    reduceMotion={reduceMotion}
+                  />
                 </div>
               </div>
             </motion.div>
@@ -202,7 +215,9 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
                   {step.detail && (
                     <span className="block text-muted-foreground-subtle">{step.detail}</span>
                   )}
-                  {step.kind !== "search" && step.refs && step.refs.length > 0 && (
+                  {(step.kind !== "search" || !steps.some((s) => s.kind === "rank")) &&
+                    step.refs &&
+                    step.refs.length > 0 && (
                     <span className="mt-1 flex flex-wrap gap-1">
                       {step.refs.map((ref) =>
                         ref.kind === "contact" ? (
@@ -237,16 +252,24 @@ export function ChatActivity({ steps, state, variant = "full", answerStarted = f
 
 /** "Looked at 9 contacts · 4.2s" — built only from steps that reported real numbers. */
 function summarise(steps: ChatStep[]): string {
+  const ranked = steps.some((step) => step.kind === "rank");
   const people = new Set<string>();
   for (const step of steps) {
     // The search step's refs are a live preview of candidates, most of whom the rerank then
-    // dropped. Counting them would claim the answer "looked at" people it discarded.
-    if (step.kind === "search") continue;
+    // dropped. Counting them would claim the answer "looked at" people it discarded — unless
+    // no rerank ran, and then the candidates are the answer's people.
+    if (step.kind === "search" && ranked) continue;
     for (const ref of step.refs ?? []) {
       if (ref.kind === "contact") people.add(ref.id);
     }
   }
-  const total = steps.reduce((sum, step) => sum + (step.ms ?? 0), 0);
+  // Real elapsed time: the latest finish. Stages overlap, so summing them overstated it.
+  // Rows saved before steps carried `at` show no time rather than that sum.
+  const total = steps.reduce(
+    (latest, step) =>
+      step.at === undefined || step.ms === undefined ? latest : Math.max(latest, step.at + step.ms),
+    0
+  );
 
   const parts: string[] = [];
   if (people.size > 0) {
@@ -261,4 +284,18 @@ function summarise(steps: ChatStep[]): string {
 function formatMs(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Seconds since the live card appeared — which is when the first step arrived, since the card
+ * renders nothing without one. Real wall-clock, ticking until the card goes final and unmounts.
+ */
+function LiveElapsed() {
+  const [start] = useState(() => Date.now());
+  const [now, setNow] = useState(start);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(timer);
+  }, []);
+  return <>{((now - start) / 1000).toFixed(1)}s</>;
 }

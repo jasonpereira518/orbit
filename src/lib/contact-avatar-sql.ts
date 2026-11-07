@@ -70,6 +70,7 @@ export const contactsListSelection = {
   firstName: contacts.firstName,
   lastName: contacts.lastName,
   preferredName: contacts.preferredName,
+  nameGuess: contacts.nameGuess,
   title: contacts.title,
   company: contacts.company,
   school: contacts.school,

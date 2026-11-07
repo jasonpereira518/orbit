@@ -22,6 +22,7 @@ import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
 import { loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
+import { loadEmailEventSnippet } from "@/lib/chat-evidence-snippet";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { friendlyError } from "@/lib/errors";
@@ -242,6 +243,8 @@ export async function getEvidenceSnippet(messageId: string, id: string) {
   const source = message?.evidence?.[id];
   if (!source) return { found: false as const };
 
+  if (source.kind === "email_event") return loadEmailEventSnippet(userId, source);
+
   if (source.kind === "contact") {
     const contact = await db.query.contacts.findFirst({
       where: and(eq(contacts.id, source.contactId), eq(contacts.userId, userId)),
@@ -333,6 +336,7 @@ export async function deleteChatThread(threadId: string) {
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
   return { ok: true as const };
 }
+
 /**
  * The personalised cards under the composer, best first.
  *

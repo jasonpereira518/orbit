@@ -1,5 +1,6 @@
 "use server";
 
+import { requirePageUser } from "@/lib/plan-guards";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -18,6 +19,7 @@ import {
   type FinishSummary,
 } from "@/lib/imports/import-finish";
 import { importIdsFrom, isImportId } from "@/lib/imports/import-ids";
+import { readImportJobStatus, type ImportJobStatus } from "@/lib/imports/import-job-status";
 import { MAX_FACES } from "@/lib/imports/finish-scene-geometry";
 import {
   performUndo,
@@ -57,6 +59,8 @@ import {
   runImportJobById,
 } from "@/lib/import-job-dispatch";
 import {
+  ENCODING_ARTIFACTS_WARNING,
+  hasEncodingArtifacts,
   LinkedInExportError,
   parseLinkedInConnectionsCsv,
 } from "@/lib/linkedin-connections";
@@ -93,6 +97,7 @@ import {
 } from "@/lib/outlook";
 import { actionFailure } from "@/lib/action-failure";
 import { lastCompletedImportAt } from "@/lib/import-history";
+import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-import-types";
 import { UserFacingError } from "@/lib/errors";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoAddressBookPreview, recordDemoContactsImport } from "@/lib/demo-workspace-actions";
@@ -120,23 +125,6 @@ function linkedInMessageExternalId(
   return `li-msg:${conversationId}:${date ? date.toISOString() : "unknown"}:${simpleHash(content.slice(0, 240))}`;
 }
 
-/** Replacement-character artifacts from decoding a non-UTF8 export as UTF-8. */
-function hasEncodingArtifacts(
-  rows: {
-    firstName: string;
-    lastName: string;
-    company: string;
-    position: string;
-  }[],
-) {
-  return rows.some(
-    (r) =>
-      r.firstName.includes("�") ||
-      r.lastName.includes("�") ||
-      r.company.includes("�") ||
-      r.position.includes("�"),
-  );
-}
 
 /**
  * What a LinkedIn preview tells the person when the parser refuses a file. Only a
@@ -180,7 +168,7 @@ const MAX_YOU_FILE_CHARS = 2_000_000;
  * other previews: a thrown message is stripped in production.
  */
 export async function previewLinkedInYou(target: YouTarget, text: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (!isYouTarget(target) || text.length > MAX_YOU_FILE_CHARS) {
     return refusal("That file isn’t one Orbit can read for your profile.");
   }
@@ -197,7 +185,7 @@ export async function previewLinkedInYou(target: YouTarget, text: string) {
  * Skills never disturbs the headline, and writes `sender_bio` only when the patch carries one.
  */
 export async function applyLinkedInYou(input: { target: YouTarget; text: string; keys: string[] }) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (!isYouTarget(input.target) || input.text.length > MAX_YOU_FILE_CHARS) {
     return refusal("That file isn’t one Orbit can read for your profile.");
   }
@@ -223,7 +211,7 @@ export async function clearLinkedInYou() {
 }
 
 export async function previewLinkedInCsv(csvText: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   // parseLinkedInConnectionsCsv throws for expected validation failures (empty
   // file, wrong export type, no rows found). Server Actions strip thrown error
   // messages in production, replacing them with a generic digest — so those
@@ -237,11 +225,7 @@ export async function previewLinkedInCsv(csvText: string) {
     );
   }
   const { columns, rows, warnings } = parsed;
-  if (hasEncodingArtifacts(rows)) {
-    warnings.push(
-      "Some characters may not have decoded correctly — if names look garbled, re-export the CSV with UTF-8 encoding.",
-    );
-  }
+  if (hasEncodingArtifacts(rows)) warnings.push(ENCODING_ARTIFACTS_WARNING);
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -294,8 +278,6 @@ export async function previewLinkedInCsv(csvText: string) {
     people,
     duplicateCount: people.filter((p) => p.isRepeat).length,
     warnings,
-    // keep legacy key for any callers
-    preview: people,
   };
 }
 
@@ -309,7 +291,7 @@ export async function startLinkedInImport(
   fileName: string,
   selectedIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
 
   const { rows } = parseLinkedInConnectionsCsv(csvText);
@@ -359,44 +341,12 @@ export async function startLinkedInImport(
 
   after(() => runLinkedInImportJob(importRow.id).catch(() => {}));
 
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: selectedIndexes.length };
 }
 
-export type ImportJobStatus = {
-  id: string;
-  status: string;
-  totalRows: number;
-  rowsProcessed: number;
-  contactsCreated: number;
-  contactsUpdated: number;
-  duplicatesFound: number;
-  errorMessage: string | null;
-  /**
-   * The engine's own counters (`ImportStats.interactionsLogged`/`remindersCreated` —
-   * see `src/db/schema.ts`) for how many interaction/reminder rows this job's bulk inserts
-   * actually wrote. Surfaced here so the poll UI can report the number a calendar or
-   * LinkedIn-messages import's user actually cares about — meetings/messages logged — rather
-   * than only `contactsCreated`/`contactsUpdated`, which for a `createsContacts: false`
-   * import like calendar never move the "created" half at all.
-   */
-  interactionsLogged: number;
-  remindersCreated: number;
-  /**
-   * Rows the engine isolated and marked `failed` rather than failing the whole import
-   * (`ImportStats.failedRows`). Surfaced so a user whose file contained unwritable rows is
-   * actually told — chunk narrowing's entire purpose is to drop those rows instead of the
-   * job, and a "completed" toast that never mentions them hides the loss.
-   */
-  failedRows: number;
-  /** Drive imports: docs actually read (skipped and unchanged ones excluded). */
-  docsRead: number;
-  /** LinkedIn export: files kept, and what its extras added (see `ImportStats.filesSaved`). */
-  filesSaved: number;
-  targetsAdded: number;
-  backgroundAdded: number;
-};
+export type { ImportJobStatus } from "@/lib/imports/import-job-status";
 
 /** One row's worth of trouble, named for the person rather than for the database. */
 export type ImportRowProblem = {
@@ -691,7 +641,7 @@ export async function undoImport(importId: string): Promise<UndoResult> {
     result = await performUndo(userId, importId);
     removed += result.removed;
   } while (!result.done && Date.now() - startedAt < UNDO_ACTION_BUDGET_MS);
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   // The people just removed were on the People list too — and the done card's own button
   // links there, filtered to this import.
   revalidatePath("/contacts");
@@ -725,30 +675,9 @@ export async function getImportJobStatus(
   importId: string,
 ): Promise<ImportJobStatus> {
   const userId = await requireUserId();
-  if (!isImportId(importId)) throw new Error("Import session not found");
-  const db = await getDb();
-  const row = await db.query.imports.findFirst({
-    where: and(eq(imports.id, importId), eq(imports.userId, userId)),
-  });
-  if (!row) throw new Error("Import session not found");
-
-  return {
-    id: row.id,
-    status: row.status,
-    totalRows: row.totalRows ?? 0,
-    rowsProcessed: row.rowsProcessed ?? 0,
-    contactsCreated: row.contactsCreated ?? 0,
-    contactsUpdated: row.contactsUpdated ?? 0,
-    duplicatesFound: row.duplicatesFound ?? 0,
-    errorMessage: row.errorMessage,
-    interactionsLogged: row.stats?.interactionsLogged ?? 0,
-    remindersCreated: row.stats?.remindersCreated ?? 0,
-    failedRows: row.stats?.failedRows ?? 0,
-    docsRead: row.stats?.docsRead ?? 0,
-    filesSaved: row.stats?.filesSaved ?? 0,
-    targetsAdded: row.stats?.targetsAdded ?? 0,
-    backgroundAdded: row.stats?.backgroundAdded ?? 0,
-  };
+  const status = await readImportJobStatus(userId, importId);
+  if (!status) throw new Error("Import session not found");
+  return status;
 }
 
 /** Stop a processing import; rows already written are kept. */
@@ -773,7 +702,7 @@ export async function cancelImportSession(importId: string) {
 
   revalidatePath("/");
   revalidatePath("/contacts");
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   revalidatePath("/graph");
   revalidatePath("/chat");
   return updated;
@@ -801,7 +730,7 @@ async function storedSelfLinkedInUrl(userId: string): Promise<string | null> {
  * like a Connections export" is only worth writing if it reaches the person.
  */
 export async function previewLinkedInMessagesCsv(csvText: string) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   let parsed: ReturnType<typeof parseLinkedInMessagesCsv>;
   try {
     parsed = parseLinkedInMessagesCsv(csvText);
@@ -921,7 +850,7 @@ export async function startLinkedInMessagesImport(
   fileName: string,
   selectedConversationIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
 
   const { messages } = parseLinkedInMessagesCsv(csvText);
@@ -1004,7 +933,7 @@ export async function startLinkedInMessagesImport(
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
 
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: selectedConversations.length };
 }
@@ -1064,14 +993,23 @@ const IMPORT_HISTORY_PAGE = 25;
  * a page that never reads them. The `(user_id, created_at)` index already backs the ordering.
  */
 export async function listImports(
-  options: { limit?: number; offset?: number } = {},
+  options: { limit?: number; offset?: number; importTypes?: string[] } = {},
 ): Promise<ImportHistoryItem[]> {
   const userId = await requireUserId();
   const db = await getDb();
+  // One source's history (the LinkedIn integration page). Bounded like `limit`: it is a client
+  // argument.
+  const types = Array.isArray(options.importTypes)
+    ? options.importTypes.filter((t): t is string => typeof t === "string" && t.length <= 64).slice(0, 10)
+    : [];
   const rows = await db.query.imports.findMany({
     // A `staging` chat import is an upload still in flight (or abandoned, and swept in a
     // day): nothing has been imported yet, so it is not history.
-    where: and(eq(imports.userId, userId), ne(imports.status, "staging")),
+    where: and(
+      eq(imports.userId, userId),
+      ne(imports.status, "staging"),
+      types.length ? inArray(imports.importType, types) : undefined,
+    ),
     orderBy: (i, { desc }) => [desc(i.createdAt)],
     // Arguments to a server action come from any client: bounded, so one call can't page the table.
     limit: Math.min(Math.max(Math.trunc(Number(options.limit) || IMPORT_HISTORY_PAGE), 1), 200),
@@ -1122,14 +1060,14 @@ export async function listImports(
 /** When the last LinkedIn import finished — the LinkedIn line on the Integrations overview. */
 export async function getLastLinkedInImportAt(): Promise<Date | null> {
   const userId = await requireUserId();
-  return lastCompletedImportAt(userId, ["linkedin_connections", LINKEDIN_MESSAGES_IMPORT_TYPE]);
+  return lastCompletedImportAt(userId, LINKEDIN_UPLOAD_IMPORT_TYPES);
 }
 
 export async function previewCalendarImport(payload: {
   kind: "ics" | "csv";
   text: string;
 }) {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -1241,7 +1179,7 @@ export async function confirmCalendarImport(payload: {
   fileName: string;
   createFollowUps?: boolean;
 }): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
   const createFollowUps = payload.createFollowUps !== false;
 
@@ -1330,7 +1268,7 @@ export async function confirmCalendarImport(payload: {
   }
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: rowPayloads.length };
 }
@@ -1357,7 +1295,7 @@ export async function previewGoogleContacts(): Promise<{
   contactsScopeGranted: boolean;
   people: GoogleContactPerson[];
 }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     return { connected: true, contactsScopeGranted: true, people: await demoAddressBookPreview(userId) };
   }
@@ -1438,7 +1376,7 @@ export async function previewGoogleContacts(): Promise<{
 export async function confirmGoogleContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "google_contacts", selectedIds.length);
   }
@@ -1483,7 +1421,7 @@ export async function confirmGoogleContactsImport(
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: rows.length };
 }
@@ -1509,7 +1447,7 @@ export async function previewOutlookContacts(): Promise<{
   contactsScopeGranted: boolean;
   people: OutlookContactPerson[];
 }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     const people = await demoAddressBookPreview(userId);
     return {
@@ -1587,7 +1525,7 @@ export async function previewOutlookContacts(): Promise<{
 export async function confirmOutlookContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
   }
@@ -1638,7 +1576,7 @@ export async function confirmOutlookContactsImport(
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: rows.length };
 }
@@ -1686,7 +1624,7 @@ export async function previewContactsFile(
       warnings: string[];
     }
 > {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   let parsed: ReturnType<typeof parseContactsFile>;
   try {
     parsed = parseContactsFile(text, fileName);
@@ -1780,7 +1718,7 @@ export async function confirmContactsFileImport(
   fileName: string,
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   const db = await getDb();
 
   // Throws on a file the preview would have refused — the client only gets here from a
@@ -1832,7 +1770,7 @@ export async function confirmContactsFileImport(
   );
 
   after(() => runImportJobById(importRow.id).catch(() => {}));
-  revalidatePath("/imports");
+  revalidatePath("/capture");
 
   return { importId: importRow.id, totalRows: selectedIndexes.length };
 }
@@ -1865,7 +1803,7 @@ const PHOTO_MATCH_CHUNK = 500;
  * its next tick, the same as any other remote photo.
  */
 export async function matchGooglePhotos(): Promise<GooglePhotoMatchResult> {
-  const userId = await requireUserId();
+  const userId = await requirePageUser("page.imports");
   if (await isDemoWorkspace(userId)) {
     return { connected: true, contactsScopeGranted: true, matched: 0, remaining: 0 };
   }
@@ -1972,7 +1910,7 @@ export async function revertImportAction(importId: string) {
   // Everything an import touches, in reverse.
   revalidatePath("/");
   revalidatePath("/contacts");
-  revalidatePath("/imports");
+  revalidatePath("/capture");
   revalidatePath("/graph");
   revalidatePath("/chat");
   revalidatePath("/reminders");

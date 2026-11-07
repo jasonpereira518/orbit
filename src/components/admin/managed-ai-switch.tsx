@@ -3,9 +3,9 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Pause, Play } from "lucide-react";
-import { setManagedAiPausedAction } from "@/actions/admin";
+import { setManagedAiPausedAction, setWebSearchPausedAction } from "@/actions/admin";
 import { ConfirmActionDialog } from "@/components/admin/confirm-action-dialog";
-import type { ManagedAiSwitchState } from "@/lib/managed-ai-switch";
+import type { ManagedAiSwitchState, WebSearchSwitchState } from "@/lib/managed-ai-switch";
 import { friendlyError } from "@/lib/errors";
 import { MANAGED_AI_POOLS, poolWindowStart } from "@/lib/managed-ai-policy";
 import type { AiProvider } from "@/lib/ai-providers";
@@ -115,6 +115,90 @@ export function ManagedAiSwitch({ state }: { state: ManagedAiSwitchState }) {
           {track}
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Hosted web search for every account, on or paused, with today's Orbit-wide count against the
+ * daily ceiling. Neither direction is confirmed: pausing is the safe one, and resuming only
+ * restores the per-account and daily caps that already bound the spend.
+ */
+export function WebSearchSwitch({ state }: { state: WebSearchSwitchState }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+
+  const toggle = () =>
+    start(async () => {
+      const paused = !state.paused;
+      try {
+        await setWebSearchPausedAction({ paused, reason: `${paused ? "Paused" : "Resumed"} from the Money page` });
+        toast.success(paused ? "Web search is paused" : "Web search is back on");
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t change web search — try again?"));
+      }
+    });
+
+  return (
+    <div className="flex flex-wrap items-center gap-4">
+      <div className="min-w-0 flex-1">
+        <p className="flex items-center gap-2 text-sm">
+          {state.paused ? (
+            <Pause className="size-3.5 text-muted-foreground" aria-hidden />
+          ) : (
+            <Play className="size-3.5 text-primary" aria-hidden />
+          )}
+          {state.paused ? "Web search is paused for everyone" : "Web search is on"}
+        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+          {state.todaySearches.toLocaleString()} of {state.dailyCeiling.toLocaleString()} searches today across Orbit ·
+          work history, research and guest look-ups stop when paused. Changes reach every server within about
+          thirty seconds.
+        </p>
+        {state.byOperation.length > 0 && (
+          <table className="mt-2 w-full max-w-lg text-xs tabular-nums text-muted-foreground">
+            <thead>
+              <tr className="text-left">
+                <th className="font-medium">Searches by feature</th>
+                <th className="text-right font-medium">7 days</th>
+                <th className="text-right font-medium">30 days</th>
+                <th className="text-right font-medium">Per success</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.byOperation.map((row) => (
+                <tr key={row.operation}>
+                  <td>{row.label}</td>
+                  <td className="text-right">{row.searches7.toLocaleString()}</td>
+                  <td className="text-right">{row.searches30.toLocaleString()}</td>
+                  <td className="text-right">{row.perSuccess === null ? "—" : row.perSuccess.toFixed(1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={!state.paused}
+        aria-label="Web search"
+        disabled={pending}
+        onClick={toggle}
+        className={cn(
+          "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors duration-fast disabled:opacity-60",
+          !state.paused ? "border-primary/40 bg-primary" : "border-border bg-muted"
+        )}
+      >
+        <span
+          aria-hidden
+          className={cn(
+            "inline-block size-4.5 rounded-full bg-background shadow transition-transform duration-fast",
+            !state.paused ? "translate-x-[1.35rem]" : "translate-x-0.5"
+          )}
+        />
+      </button>
     </div>
   );
 }

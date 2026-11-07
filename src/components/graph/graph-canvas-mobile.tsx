@@ -92,6 +92,10 @@ export function GraphCanvasMobile(props: GraphChartProps) {
   const tweenRafRef = useRef(0);
   const framedKeyRef = useRef<string | null>(null);
   const readyRef = useRef(false);
+  // The browser refused a 2D context (typically canvas memory exhausted), so the sky cannot be
+  // drawn. `drawAttempt` re-runs the sizing effect when the viewer taps to try again.
+  const [drawFailed, setDrawFailed] = useState(false);
+  const [drawAttempt, setDrawAttempt] = useState(0);
 
   const index = useMemo(
     () => buildSkyIndex(layout),
@@ -239,6 +243,9 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
+    let appliedDpr = 0;
+    let resizeRaf = 0;
+
     const resize = () => {
       const width = container.clientWidth;
       const height = container.clientHeight;
@@ -246,18 +253,48 @@ export function GraphCanvasMobile(props: GraphChartProps) {
       if (width < 2 || height < 2) return;
 
       const dpr = deviceRatio();
+      // A notification for a size already applied (an observer firing on a style change, or
+      // the retry below) must not reallocate two full-size canvases for the same pane: iOS
+      // caps total canvas memory, and a null 2D context is how running out of it shows.
+      const previous = paneRef.current;
+      // `canvas.width > 0`: the unmount cleanup zeroes the backing store, and a StrictMode
+      // remount must rebuild it even though the pane's size has not changed.
+      if (
+        ctxRef.current &&
+        canvas.width > 0 &&
+        previous.width === width &&
+        previous.height === height &&
+        appliedDpr === dpr
+      ) {
+        return;
+      }
+
       canvas.width = Math.floor(width * dpr);
       canvas.height = Math.floor(height * dpr);
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
 
       const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      if (!ctx) {
+        // No context means nothing will ever be drawn here. Say so, with a way to try again,
+        // rather than leave a blank panel that looks like a chart still loading.
+        ctxRef.current = null;
+        setDrawFailed(true);
+        return;
+      }
+      setDrawFailed(false);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctxRef.current = ctx;
+      appliedDpr = dpr;
 
-      const previous = paneRef.current;
       paneRef.current = { width, height };
+      // Hand the previous bake's backing store back now; left for the collector, every
+      // resize stacks another full-size bitmap on the last.
+      const stale = backgroundRef.current;
+      if (stale) {
+        stale.width = 0;
+        stale.height = 0;
+      }
       backgroundRef.current = bakeBackground(width, height, dpr);
 
       if (previous.width < 2) {
@@ -277,12 +314,23 @@ export function GraphCanvasMobile(props: GraphChartProps) {
     };
 
     resize();
-    const observer = new ResizeObserver(resize);
+    // One resize per frame: the fullscreen toggle and a soft keyboard fire a burst, and each
+    // used to rebuild the backing store and the background bake.
+    const observer = new ResizeObserver(() => {
+      if (resizeRaf) return;
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = 0;
+        resize();
+      });
+    });
     // The container, not the window: the fullscreen toggle resizes the stage without a
     // window resize event ever firing.
     observer.observe(container);
-    return () => observer.disconnect();
-  }, [draw, goHome]);
+    return () => {
+      observer.disconnect();
+      if (resizeRaf) cancelAnimationFrame(resizeRaf);
+    };
+  }, [draw, goHome, drawAttempt]);
 
   // A webfont resolving after first paint invalidates every measured label width.
   useEffect(() => {
@@ -514,6 +562,22 @@ export function GraphCanvasMobile(props: GraphChartProps) {
       aria-label="Constellation star chart"
     >
       <canvas ref={canvasRef} aria-hidden className="block h-full w-full" />
+
+      {drawFailed ? (
+        <div
+          role="alert"
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 px-8 text-center"
+        >
+          <p className="text-sm text-ink">Couldn’t draw your constellation on this device.</p>
+          <button
+            type="button"
+            onClick={() => setDrawAttempt((n) => n + 1)}
+            className="rounded-full border border-border px-4 py-2 text-sm text-ink"
+          >
+            Try again
+          </button>
+        </div>
+      ) : null}
 
       {/*
         A canvas is opaque to a screen reader, so the chart states what it holds and then

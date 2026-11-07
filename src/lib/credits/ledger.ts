@@ -1,7 +1,8 @@
 import { and, desc, eq, gt, lte, or, sql } from "drizzle-orm";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { creditGrants, creditHolds } from "@/db/schema";
-import { FREE_STARTER_CREDITS, PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
+import { FREE_STARTER_CREDITS, PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 import { creditsToMicros } from "@/lib/credits/grants";
 
 /**
@@ -42,8 +43,8 @@ export const BATCH_HOLD_TTL_MS = 26 * 60 * 60 * 1000;
 export type CreditPeriod = { start: Date; end: Date };
 
 /** Whether this plan's packs are spendable (every plan but Lifetime). Frozen there. */
-export function packsUsable(plan: Plan): boolean {
-  return PLAN_CONFIG[plan].features.creditPacks;
+export function packsUsable(plan: Plan, config: Record<Plan, PlanConfig> = PLAN_CONFIG): boolean {
+  return config[plan].features.creditPacks;
 }
 
 function monthWindow(now: Date): CreditPeriod {
@@ -51,12 +52,6 @@ function monthWindow(now: Date): CreditPeriod {
     start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
     end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
   };
-}
-
-function minusOneMonth(d: Date): Date {
-  return new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds())
-  );
 }
 
 /** `d` moved by `months` calendar months, clamped to the target month's last day (as Stripe does). */
@@ -103,11 +98,17 @@ export function creditPeriodFor(
   if (!row?.compedPlan && row?.subscriptionPeriodEnd && row.subscriptionPeriodEnd > now) {
     const end = row.subscriptionPeriodEnd;
     const known = row.subscriptionPeriodStart && row.subscriptionPeriodStart <= now ? row.subscriptionPeriodStart : null;
-    // A long period, or an unknown start with more than a month still to run: an annual plan.
-    if (known ? end.getTime() - known.getTime() > MONTHLY_PERIOD_MAX_MS : end.getTime() - now.getTime() > MONTHLY_PERIOD_MAX_MS) {
-      return monthSliceOf(end, now);
+    if (known) {
+      // A long period is an annual plan, cut into months.
+      return end.getTime() - known.getTime() > MONTHLY_PERIOD_MAX_MS ? monthSliceOf(end, now) : { start: known, end };
     }
-    return { start: known ?? minusOneMonth(end), end };
+    // No start on file: assume a monthly period, starting where Stripe would have started it
+    // — one calendar month back, CLAMPED (a Mar 31 end began Feb 28; unclamped "Feb 31" rolls
+    // to Mar 3, a start after now). When that start is still after now, or more than a month
+    // is left to run, it is an annual plan: the anniversary slice always contains now.
+    const start = addMonthsClamped(end, -1);
+    if (start <= now && end.getTime() - now.getTime() <= MONTHLY_PERIOD_MAX_MS) return { start, end };
+    return monthSliceOf(end, now);
   }
   return monthWindow(now);
 }
@@ -150,7 +151,7 @@ export async function ensureAllowance(
   period: CreditPeriod,
   now = new Date()
 ): Promise<void> {
-  const credits = PLAN_CONFIG[plan].monthlyCredits;
+  const credits = (await getEffectivePlanConfig())[plan].monthlyCredits;
   if (!credits) return;
   if (plan === "free") await ensureStarterGrant(userId);
   const micros = creditsToMicros(credits);
@@ -226,9 +227,10 @@ function allowanceIsCurrent(
   starterKey: string,
   plan: Plan,
   period: CreditPeriod,
-  now: Date
+  now: Date,
+  config: Record<Plan, PlanConfig>
 ): boolean {
-  const credits = PLAN_CONFIG[plan].monthlyCredits;
+  const credits = config[plan].monthlyCredits;
   if (!credits) return true;
   if (plan === "free" && !rows.some((g) => g.grantKey === starterKey)) return false;
   const current = rows
@@ -410,14 +412,15 @@ export async function getCreditBalance(
         .where(and(eq(creditHolds.userId, userId), gt(creditHolds.expiresAt, now))),
     ]);
   let [rows, holds] = await read();
+  const planConfig = await getEffectivePlanConfig();
   // Read-only callers (the notification poll) pass `ensure: false`: a missing allowance just
   // reads as none yet, and the next AI call or visit to the card creates it. Everyone else
   // writes only when the rows say a write is due (a new cycle, a raise, a missing starter),
   // then reads again — instead of an INSERT and a SELECT in front of every balance.
   if (
     opts.ensure !== false &&
-    PLAN_CONFIG[plan].features.hostedAi &&
-    !allowanceIsCurrent(rows, starterKey, plan, period, now)
+    planConfig[plan].features.hostedAi &&
+    !allowanceIsCurrent(rows, starterKey, plan, period, now, planConfig)
   ) {
     await ensureAllowance(userId, plan, period, now);
     [rows, holds] = await read();
@@ -434,7 +437,7 @@ export async function getCreditBalance(
   const packRemaining = packs.reduce((sum, g) => sum + g.microsRemaining, 0);
   const adjustments = grants.filter((g) => g.kind === "adjustment").reduce((sum, g) => sum + g.microsRemaining, 0);
   const starterRemaining = grants.filter((g) => g.kind === "starter").reduce((sum, g) => sum + g.microsRemaining, 0);
-  const usable = packsUsable(plan);
+  const usable = packsUsable(plan, planConfig);
   const held = Number(holds[0]?.micros ?? 0);
   const allowanceRemaining = allowanceGrant?.microsRemaining ?? 0;
   const cycleStart = allowanceGrant?.periodStart ?? period.start;

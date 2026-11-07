@@ -83,14 +83,14 @@ export function MeetingSummaryCard({
 
   return (
     <section
-      className={cn("space-y-4 rounded-2xl border border-border/70 bg-card p-5 sm:p-6", className)}
+      className={cn("space-y-4 rounded-2xl border border-border/70 bg-card p-5", className)}
       aria-label="Meeting summary"
     >
       <header className="space-y-1">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Meeting{dateLabel ? ` · ${dateLabel}` : ""} · {formatMeetingDuration(meeting.durationMs)}
         </p>
-        <h2 className="text-lg font-medium text-ink">{meeting.title}</h2>
+        <h2 className="text-sm font-medium text-ink">{meeting.title}</h2>
         {meeting.summary && <p className="text-sm leading-relaxed text-foreground/90">{meeting.summary}</p>}
       </header>
 

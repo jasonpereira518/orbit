@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MotionConfig } from "motion/react";
+import { MotionPreferenceConfig } from "@/components/motion/motion-preference-config";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 // Canvas-only decoration: no reason for its code to be in the shell's first load, and it
 // renders nothing on the server anyway.
@@ -122,7 +122,7 @@ export function AppShell({
   const isKnowledge = pathname === "/knowledge";
   const isViewportLocked = isChat || isConstellation || isReminders || isKnowledge;
   const smallSky = useSmallSky();
-  // The ask bar is not a link to /chat — it streams from /api/chat inline, so it IS chat.
+  // The ask bar is not a link to /chat — it streams answers from `/api/chat` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
   // from every screen, which is the whole thing hiding is supposed to prevent.
   const showAskBar =
@@ -149,18 +149,18 @@ export function AppShell({
 
   if (isOnboarding) {
     return (
-      <MotionConfig reducedMotion="user">
+      <MotionPreferenceConfig>
         <div className="min-h-dvh bg-background">
           <ThemeSync theme={theme} />
           <ConnectivityBanner />
           {children}
         </div>
-      </MotionConfig>
+      </MotionPreferenceConfig>
     );
   }
 
   return (
-    <MotionConfig reducedMotion="user">
+    <MotionPreferenceConfig>
       {/* data-warp-craft: the thing that drops away on lift-off and takes
           the touchdown judder on re-entry. Driven by `html[data-warp]` in
           globals.css so the server layout needs no knowledge of the journey. */}
@@ -341,6 +341,6 @@ export function AppShell({
           </div>
         </div>
       </div>
-    </MotionConfig>
+    </MotionPreferenceConfig>
   );
 }

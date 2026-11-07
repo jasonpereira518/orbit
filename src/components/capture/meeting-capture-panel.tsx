@@ -6,9 +6,9 @@
  * people, reminders, action items, blockers and open questions — landing in the same
  * review-and-save flow as every other capture.
  *
- * This is only a VIEW. The recorder, the live socket, the upload queue and the transcript
- * live in `MeetingSessionProvider` (`meeting-session.tsx`), above the page, so they survive
- * leaving /capture; the bottom-right `MeetingWidget` shows the same state on every other
+ * This is only a VIEW, hosted on /meetings. The recorder, the live socket, the upload queue
+ * and the transcript live in `MeetingSessionProvider` (`meeting-session.tsx`), above the
+ * page, so they survive leaving /meetings; the bottom-right `MeetingWidget` shows the same state on every other
  * page. See that file for the phases and for why nothing extracts until Finish is confirmed.
  */
 
@@ -220,7 +220,6 @@ function PanelBody({
                 : "Summarizing the meeting and pulling out people, next steps, blockers and questions…"}
           </div>
         )}
-        {s.segments.length > 0 && <TranscriptList segments={s.segments} compact />}
       </div>
     );
   }
@@ -378,20 +377,22 @@ function PanelBody({
 
         {s.fatal && <FatalNotice message={s.fatal} />}
 
-        {s.segments.length > 0 || s.liveInterim ? (
-          <TranscriptList
-            segments={s.segments}
-            interim={s.liveInterim}
-            boundaries={s.reconnectSeqs}
-            onRetry={s.failedCount ? s.retryFailedParts : undefined}
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {s.liveStatus === "live" || s.liveStatus === "connecting"
-              ? "The transcript appears here a second or two behind the conversation."
-              : "The transcript appears here about a minute behind the conversation."}
-          </p>
-        )}
+        <TranscriptDisclosure count={s.segments.length} failed={s.failedCount}>
+          {s.segments.length > 0 || s.liveInterim ? (
+            <TranscriptList
+              segments={s.segments}
+              interim={s.liveInterim}
+              boundaries={s.reconnectSeqs}
+              onRetry={s.failedCount ? s.retryFailedParts : undefined}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {s.liveStatus === "live" || s.liveStatus === "connecting"
+                ? "The transcript appears here a second or two behind the conversation."
+                : "The transcript appears here about a minute behind the conversation."}
+            </p>
+          )}
+        </TranscriptDisclosure>
       </div>
     );
   }
@@ -457,11 +458,13 @@ function PanelBody({
         {s.fatal && <FatalNotice message={s.fatal} />}
         <SideNotes value={s.sideNotes} onChange={s.setSideNotes} />
         {s.segments.length > 0 && (
-          <TranscriptList
-            segments={s.segments}
-            boundaries={s.reconnectSeqs}
-            onRetry={s.failedCount ? s.retryFailedParts : undefined}
-          />
+          <TranscriptDisclosure count={s.segments.length} failed={s.failedCount}>
+            <TranscriptList
+              segments={s.segments}
+              boundaries={s.reconnectSeqs}
+              onRetry={s.failedCount ? s.retryFailedParts : undefined}
+            />
+          </TranscriptDisclosure>
         )}
       </div>
     );
@@ -527,6 +530,7 @@ function PanelBody({
       )}
 
       <div className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">
+        <h2 className="font-medium text-ink">Record a meeting</h2>
         {!captureSupported && micSupported && (
           <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-3 text-sm">
             <p className="font-medium text-foreground">This browser can&apos;t hear the call itself</p>
@@ -563,11 +567,6 @@ function PanelBody({
             </div>
           ))}
 
-        <p className="-mb-2 text-right text-xs">
-          <Link href="/meetings" className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-            Past meetings →
-          </Link>
-        </p>
         {canRecord && <MeetingCalendarSuggestions onUse={s.applyCalendarMeeting} />}
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -591,11 +590,13 @@ function PanelBody({
             />
           </div>
         </div>
-        <p className="-mt-2 text-xs text-muted-foreground">
-          Names you list here are spelled the way you typed them, and each becomes a person to review.
-        </p>
 
         {captureSupported && (
+        <details className="group rounded-xl bg-muted/40 text-sm">
+          <summary className="cursor-pointer select-none rounded-xl px-4 py-3 font-medium text-foreground marker:text-muted-foreground">
+            How to share your call &amp; options
+          </summary>
+          <div className="space-y-4 px-4 pb-4">
         <label className="flex items-start gap-2.5 text-sm">
           <Checkbox className="mt-0.5" checked={s.includeMic} onCheckedChange={(v) => s.setIncludeMic(Boolean(v))} />
           <span>
@@ -606,10 +607,7 @@ function PanelBody({
             </span>
           </span>
         </label>
-        )}
-
-        {captureSupported && (
-        <div className="grid gap-3 rounded-xl bg-muted/40 p-4 text-sm sm:grid-cols-2">
+        <div className="grid gap-3 text-sm sm:grid-cols-2">
           <div className="space-y-1">
             <p className="flex items-center gap-1.5 font-medium text-foreground">
               <MonitorUp className="size-4 text-muted-foreground" /> Google Meet in a tab
@@ -629,6 +627,8 @@ function PanelBody({
             </p>
           </div>
         </div>
+          </div>
+        </details>
         )}
 
         {errorNotice}
@@ -655,9 +655,8 @@ function PanelBody({
             </Button>
           )}
           <p className="text-xs text-muted-foreground">
-            Let everyone on the call know you&apos;re taking notes — some places require everyone&apos;s
-            consent. Orbit keeps the transcript, never the audio. Transcription runs on Orbit&apos;s
-            own key, within your plan&apos;s monthly meeting hours.
+            Let everyone know you&apos;re taking notes — some places require consent. Orbit keeps the
+            transcript, never the audio.
           </p>
         </div>
       </div>
@@ -738,6 +737,21 @@ function FatalNotice({ message }: { message: string }) {
   );
 }
 
+/**
+ * The transcript, folded away so the notes box is what a live meeting shows. Native
+ * `<details>`; it opens on its own when a part failed, since Retry lives inside.
+ */
+function TranscriptDisclosure({ count, failed, children }: { count: number; failed: number; children: React.ReactNode }) {
+  return (
+    <details open={failed > 0 || undefined} className="rounded-xl border border-border/60">
+      <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-ink marker:text-muted-foreground">
+        Transcript{count > 0 ? ` · ${count} part${count === 1 ? "" : "s"}` : ""}
+      </summary>
+      <div className="px-3 pb-3">{children}</div>
+    </details>
+  );
+}
+
 const STATUS_COPY: Record<ChunkUploadStatus, string> = {
   queued: "Waiting to upload…",
   uploading: "Transcribing…",
@@ -749,13 +763,11 @@ const STATUS_COPY: Record<ChunkUploadStatus, string> = {
 
 function TranscriptList({
   segments,
-  compact = false,
   interim = "",
   boundaries,
   onRetry,
 }: {
   segments: SegmentView[];
-  compact?: boolean;
   /** The sentence being spoken right now, greyed until Deepgram settles on it. */
   interim?: string;
   /** Seqs where a new live connection began — Deepgram renumbers speakers across one. */
@@ -774,19 +786,15 @@ function TranscriptList({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-ink">Transcript</p>
-        {onRetry && (
+      {onRetry && (
+        <div className="flex justify-end">
           <Button variant="ghost" size="sm" onClick={onRetry}>
             Retry failed parts
           </Button>
-        )}
-      </div>
+        </div>
+      )}
       <div
-        className={cn(
-          "space-y-3 overflow-y-auto rounded-xl border border-border/60 bg-muted/20 p-3 text-sm",
-          compact ? "max-h-48" : "max-h-96"
-        )}
+        className="max-h-96 space-y-3 overflow-y-auto rounded-xl border border-border/60 bg-muted/20 p-3 text-sm"
         aria-live="polite"
       >
         <SegmentLines segments={segments} boundarySet={boundarySet} />

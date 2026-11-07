@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
 /** Save the Luma/Partiful guest list the user has open — on their Save, never on read. */
 export const POST = extensionRoute<EventRosterRequest, EventRosterResponse>({
   schema: eventRosterRequestSchema,
+  action: "event_roster",
+  siteOf: (input) => input.page.site,
   handler: ({ userId, input }) => saveEventRoster(userId, input.page),
 });
 

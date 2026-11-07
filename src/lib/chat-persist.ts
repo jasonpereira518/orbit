@@ -1,9 +1,13 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
+import type { AnswerOutcome } from "@/lib/chat-abstention";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import type { ChatStep } from "@/lib/chat-stream-protocol";
+import { track } from "@/lib/product-events";
+import { eventId } from "@/lib/product-event-ids";
+import { eventErrorKind } from "@/lib/event-error-kind";
 
 const TITLE_MAX = 72;
 
@@ -51,6 +55,10 @@ export async function persistAssistantTurn(
     evidence?: Record<string, EvidenceSource>;
     /** Actions this answer proposed — see `@/lib/chat-proposed-actions`. */
     proposedActions?: StoredProposedAction[];
+    /** Whether the answer answered — see `labelAnswer` in `@/lib/chat-abstention`. */
+    answerOutcome?: AnswerOutcome | null;
+    /** The follow-up chips this answer offered — see `deriveFollowUps`. */
+    followUps?: string[];
     /**
      * Set for a version request: writes the assistant row into this slot/version, inactive,
      * and flips exactly it and its paired user row active once it lands — see
@@ -61,6 +69,11 @@ export async function persistAssistantTurn(
      * can never happen.
      */
     version?: { slot: string; version: number; userMessageId: string };
+    /**
+     * How the answer was produced, for `chat_answer_landed`: wall time since the request began
+     * and the research loop's rounds (0 when one retrieval answered it). Counts only.
+     */
+    metrics?: { durationMs: number; toolRounds: number };
   }
 ): Promise<{ messageId: string | null; title: string | null }> {
   if (!threadId) return { messageId: null, title: existingTitle };
@@ -76,6 +89,8 @@ export async function persistAssistantTurn(
       activity: turn.activity ?? [],
       evidence: turn.evidence ?? {},
       proposedActions: turn.proposedActions ?? [],
+      answerOutcome: turn.answerOutcome ?? null,
+      followUps: turn.followUps ?? [],
       ...(turn.version
         ? { slot: turn.version.slot, version: turn.version.version, isActive: false }
         : {}),
@@ -93,6 +108,20 @@ export async function persistAssistantTurn(
     .update(chatThreads)
     .set({ updatedAt: new Date(), title })
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+  // The answer is stored: the one moment it "landed". Keyed by the message id, so a retried
+  // persist cannot count it twice. Counts and ids only; never the answer or its citations.
+  if (assistantMessage?.id) {
+    track(
+      "chat_answer_landed",
+      {
+        message_id: assistantMessage.id,
+        duration_ms: Math.max(0, Math.round(turn.metrics?.durationMs ?? 0)),
+        tool_rounds: Math.max(0, Math.round(turn.metrics?.toolRounds ?? 0)),
+        evidence_count: Object.keys(turn.evidence ?? {}).length,
+      },
+      { userId, actor: "system", id: eventId("chat_answer_landed", assistantMessage.id) }
+    );
+  }
   return { messageId: assistantMessage?.id ?? null, title };
 }
 
@@ -141,4 +170,15 @@ export async function discardEmptyThread(userId: string, threadId: string | null
   await db
     .delete(chatThreads)
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+}
+
+/**
+ * `chat_answer_failed`: the stream ended in an error before an answer was stored. A machine
+ * code for the cause, never the message, and the thread it belongs to. The caller has already
+ * returned for a Stop (the person leaving is not a failure), and a turn with no thread has
+ * nothing to key the event to.
+ */
+export function trackChatAnswerFailed(userId: string, threadId: string | null, err: unknown): void {
+  if (!threadId) return;
+  track("chat_answer_failed", { thread_id: threadId, error_kind: eventErrorKind(err) }, { userId, actor: "system" });
 }

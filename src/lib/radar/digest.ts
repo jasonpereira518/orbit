@@ -30,8 +30,9 @@ import { sha256Hex, signToken, verifyToken } from "@/lib/crypto";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { isValidTimeZone } from "@/lib/reminder-due-bucket";
 import { buildRadarDigestEmail, type DigestContent } from "@/lib/radar/digest-email";
-import { leadReason, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
 import { sleep } from "@/lib/async";
+import { digestLineFor } from "@/lib/radar/email-text";
+import type { RadarReason, RecommendationKind } from "@/lib/radar/types";
 
 /** People shown in the email; the rest are counted. */
 export const RADAR_DIGEST_TOP = 5;
@@ -248,7 +249,7 @@ export async function loadDigestContent(userId: string): Promise<DigestContent |
       name: (r.preferred_name ?? "").trim() || r.full_name,
       kind: r.kind,
       company: r.company?.trim() || null,
-      line: r.why?.trim() || leadReason(r.reasons ?? [])?.label || "Worth a message this week",
+      line: digestLineFor(r.why, r.reasons ?? []),
       hasDraft: r.has_draft === true,
     })),
   };

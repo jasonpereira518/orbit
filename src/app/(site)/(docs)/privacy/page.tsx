@@ -55,17 +55,18 @@ const TOC: readonly TocItem[] = [
 /** Every service that receives personal data, verified against the code on 2026-10-13. */
 const PROCESSORS = [
   { name: "Clerk", badge: "Required", body: "Sign-in, sessions and account lifecycle. Holds your sign-in identity and records when you accepted these terms." },
-  { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed." },
+  { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed, and BotID, which checks forms for automated traffic." },
   { name: "Neon", badge: "Required", body: "The Postgres database that holds your Orbit data." },
   { name: "Sentry", badge: "Required", body: "Error reports: the error, where in the code it happened, the page and browser. Configured not to attach IP addresses or cookies, and with session replay off." },
-  { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names and error messages. An error message can occasionally include a value it was processing." },
+  { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names, error messages with email addresses and keys removed, and a short excerpt of any feedback you send. An error message can occasionally include a value it was processing." },
   { name: "Better Stack", badge: "Required", body: "Uptime heartbeat. Receives a ping, no personal data." },
   { name: "unavatar.io", badge: "Automatic", body: "Looks up a public profile photo for contacts with a LinkedIn URL. Receives the LinkedIn username only." },
   { name: "Microlink", badge: "Automatic", body: "When unavatar.io has no photo, fetches the public preview image of the contact's LinkedIn profile URL." },
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
+  { name: "Wikidata and Google's favicon service", badge: "Automatic", body: "Brand colors for the companies and schools in your network, and company logos on your meetings. Receives an organization's name or website domain only. A domain may come from a contact's or meeting guest's work email address; the address itself is never sent." },
   { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link. Looking up a meeting guest who is not yet a contact, when you press Look up, runs the same search by their name and the company named by their email domain — never the address." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link. Looking up a meeting guest who is not yet a contact, when you press Look up, runs the same search by their name and the company named by their email domain — never the address. When you review the people a capture found, each one who would be added as a new contact is looked up the same way, by their name with the company, role, place you met and city your note gives — never an email address or phone number." },
   { name: "OpenRouter", badge: "Optional", body: "The same AI features, routed through OpenRouter, only if you connect your own OpenRouter account in Settings." },
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
@@ -76,7 +77,7 @@ const PROCESSORS = [
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), your personal Luma calendar link if you paste it, and the guest list you have open on an event page when you save it from the browser extension." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to, and the guest list you have open on an event page when you save it from the browser extension." },
   { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your own Apollo key. Orbit does not run it on an Apollo account of its own." },
-  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead." },
+  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead. Resend reports back when a message bounces or is marked as spam and, for outreach sent through Orbit's Resend account, when it was delivered, first opened and first clicked. See Cookies, storage & analytics." },
   { name: "Twilio", badge: "Optional", body: "SMS outreach you send, through the Twilio account you connect." },
 ] as const;
 
@@ -205,9 +206,9 @@ export default function PrivacyPage() {
               Integrations → AI provider.
             </li>
             <li>
-              <strong>Page views</strong> — which pages are opened, when and for how long; device type;
-              the referring site and campaign tags; and approximate location looked up from the IP
-              address. Linked to your account while you are signed in. See{" "}
+              <strong>Page views</strong> — which pages are opened, when and for how long; how quickly
+              each loaded; device type; the referring site and campaign tags; and approximate location
+              looked up from the IP address. Linked to your account while you are signed in. See{" "}
               <a href="#cookies">cookies, storage, and analytics</a>.
             </li>
           </ul>
@@ -296,6 +297,47 @@ export default function PrivacyPage() {
               date; it stores no message bodies, reads no other mail, and never sends this mail to
               an AI provider. Turning it off stops the scanning and removes what it recorded about
               where each event was found.
+            </p>
+          </DocCallout>
+          <DocCallout title="Email insights">
+            <p>
+              If you turn on Email insights in Settings, Orbit checks your Gmail every fifteen
+              minutes for new threads that look like a job application or a recruiter
+              conversation, excluding newsletters and mailing lists. It first reads only the
+              sender, the subject, who is on the thread and the short preview Gmail supplies.
+            </p>
+            <p>
+              For a thread that looks like a hiring conversation, Orbit then reads the text of
+              its most recent messages — up to four, each cut to 4,000 characters — and sends it,
+              with the sender names and addresses, to the AI provider that runs your
+              account&rsquo;s AI features. The model notes the company, the role, where things
+              stand, any dates, the people named and what is being asked of you. Orbit keeps
+              those notes, the thread id, the subject, the participants and one short quote
+              (under 200 characters) copied from the mail as evidence. It stores no message
+              bodies, and it does not use this mail to train models or for advertising.
+            </p>
+            <p>
+              The notes it keeps can appear as reasons on your Radar cards, in the short lines
+              and drafts Radar writes with your AI provider, and in your in-app briefing. They
+              are never put in Radar&rsquo;s Monday email.
+            </p>
+            <p>
+              Radar can also list people an email names who are not in your orbit yet, showing
+              the name and job title the email gave. Orbit adds one only when you press Add; it
+              then saves their name, email address and job title as a contact, and nothing else
+              from the email. Dismissing someone keeps only their name, on the Ignored people
+              list, until you delete your insights data or disconnect Gmail.
+            </p>
+            <p>
+              Your chat assistant can search the same notes. When you ask a question, the notes
+              that match are sent with it to the AI provider that runs your account&rsquo;s AI
+              features, and an answer can cite them. Turning Email insights off removes them
+              from chat search at once; disconnecting Gmail or deleting your insights data
+              removes them for good.
+            </p>
+            <p>
+              Turning it off stops the checking; disconnecting Gmail, or deleting your insights
+              in Settings, removes what it recorded.
             </p>
           </DocCallout>
         </DocSection>
@@ -438,12 +480,16 @@ export default function PrivacyPage() {
         </DocSection>
         <DocSection id="cookies" index={9} title="Cookies, local storage, and analytics">
           <p>
-            Orbit uses Clerk session cookies to keep you signed in. On your very
-            first visit it also sets one first-party cookie,{" "}
-            <code>orbit_attr</code>, recording where you arrived from — the
-            referring site and any campaign tags in the link — so we can tell
-            which channels bring people here. It holds no personal information,
-            is never shared, and expires after 90 days. The app also stores
+            Orbit uses Clerk session cookies to keep you signed in. When you
+            first arrive from another site or a link with campaign tags, it also
+            sets a first-party cookie, <code>orbit_attr</code>, recording where
+            you came from — the referring site and the campaign tags — so we can
+            tell which channels bring people here. A second one,{" "}
+            <code>orbit_attr_last</code>, records the same for the most recent
+            such arrival and is replaced each time you arrive that way again; a
+            visit you type in yourself changes neither. What they hold when you
+            create an account is saved with it, once. They hold no personal
+            information, are never shared, and expire after 90 days. The app also stores
             preferences on your device in <code>localStorage</code> —
             theme flash helpers, saved graph layout positions, and per-device
             notification opt-in. Delivered notification history and account
@@ -452,7 +498,11 @@ export default function PrivacyPage() {
           <p>
             Orbit counts its own traffic, and does it{" "}
             <strong>without cookies</strong>. Each page view records which page
-            was opened, when, and for how long; whether it was on a desktop,
+            was opened, when, and for how long; how long it took to load, and for
+            the first page of a visit the browser&apos;s standard performance
+            timings (how long the main content took to appear, how quickly the
+            page responded to a tap or click, and how much the layout shifted);
+            whether it was on a desktop,
             phone, or tablet; the site that linked there and any campaign tags;
             and an approximate location — city, region, and country — looked up
             from the IP address. The IP address itself is not kept: Orbit&apos;s
@@ -488,6 +538,24 @@ export default function PrivacyPage() {
             they are never sold, shared, or used for advertising.
           </p>
           <p>
+            Some things you do leave no record of their own, so Orbit writes a small{" "}
+            <strong>product event</strong> for them: using a connected assistant or the browser
+            extension, hitting a plan limit, seeing a failure, answering a question. An event is a
+            name, the time, your account, and counts or categories from a fixed list. It never
+            contains anything you wrote, named, said or received. When a page fails and shows an
+            error screen, the event says which part of the site it was and a broad type of failure
+            (for example, a page that could not load) — never the error message. A search in
+            Contacts, the command menu or the API records how long the search was (up to a cap)
+            and how many results came back, never what you searched for, and at most once every
+            ten seconds. A desktop notification records its type — a due follow-up, a meeting, a
+            test — when it is shown and when it is clicked, never its text. Occasionally a one-tap question
+            appears at a natural moment, such as after your first capture or when you cancel; your
+            answer is one choice from a short list, and you can dismiss it. The random per-tab id
+            described above is also saved once with your waitlist entry when you join, and with
+            your account on your first visit after signing up, so Orbit can tell which page a
+            sign-up came from; it is not a cookie, and on its own it identifies no one.
+          </p>
+          <p>
             Orbit also runs two of its host&apos;s tools:{" "}
             <strong>Vercel Web Analytics</strong>, which counts page views and
             visitors in aggregate, and <strong>Vercel Speed Insights</strong>,
@@ -500,6 +568,16 @@ export default function PrivacyPage() {
             query parameter except campaign tags is removed, and views of the
             operator console are not sent at all. There are no advertising
             pixels and no cross-site tracking.
+          </p>
+          <p>
+            For email Orbit sends through its email provider, Resend, Resend reports back when a
+            message bounces or is marked as spam, which takes that address off Orbit&apos;s waitlist
+            mailings. For outreach campaigns sent through Orbit&apos;s own Resend account, Orbit
+            also stores when each message was delivered, first opened and first clicked, with the
+            message. Resend detects opens with an invisible image in the message and clicks by
+            passing links through its own address; mail clients that block images make an open
+            invisible. Outreach sent with your own Resend key reports to your Resend account, not
+            to Orbit.
           </p>
         </DocSection>
 
@@ -548,6 +626,16 @@ export default function PrivacyPage() {
             you were signed in, keeping only the anonymous count.
           </p>
           <p>
+            Records of AI calls (which operation ran, on which model, whether it worked, never what
+            you sent or got back) are deleted after 180 days, and error records after 30. Product
+            events, described under cookies and analytics, are deleted after 400 days and with your
+            account, as are the records of limits you hit. Logs of scheduled jobs and incoming
+            webhooks are deleted after 90 days, and the recipient address in an email-delivery log
+            after 30. If you joined the waitlist before creating an account, your email address and
+            name leave that entry 30 days after you accept your invite, and at once if you delete
+            your account.
+          </p>
+          <p>
             A shared LinkedIn photo is deleted within a day once no Orbit account has that person.
             To have one removed sooner, email us through the <Link href="/contact">contact page</Link>.
           </p>
@@ -556,8 +644,9 @@ export default function PrivacyPage() {
             settings, keys and tokens. What remains: Stripe&rsquo;s own records of your payments,
             held by Stripe; Orbit&rsquo;s accounting record of charges, refunds and credit packs, with
             your account id removed; the operator&rsquo;s audit log of actions taken on your account,
-            which refers to an account id that no longer exists; and a few operational counters
-            keyed by that same id. Encrypted database backups are kept for 90 days, so deleted data
+            which refers to an account id that no longer exists and can keep a short excerpt of
+            feedback you sent; and operational logs of up to 90 days that can name an account id.
+            Encrypted database backups are kept for 90 days, so deleted data
             leaves the last backup within 90 days.
           </p>
         </DocSection>

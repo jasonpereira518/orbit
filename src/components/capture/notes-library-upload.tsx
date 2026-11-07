@@ -28,6 +28,7 @@ import {
 } from "@/lib/capture/file-drop";
 import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
 import { DriveCaptureButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
+import { GranolaCaptureButton } from "@/components/capture/granola-capture-button";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { FanoutEntry } from "@/lib/capture/fanout";
@@ -188,6 +189,7 @@ export function NotesLibraryUpload({
             Choose a folder
           </Button>
           <DriveCaptureButton drive={drive} canUseSync={canUseSync} disabled={busy || reading} onQueued={onQueued} />
+          <GranolaCaptureButton canUseSync={canUseSync} disabled={busy || reading} onQueued={onQueued} />
         </div>
 
         {reading && (
