@@ -14,6 +14,8 @@ import {
 const MAIN_SCROLL_ID = "app-main-scroll";
 /** How long a back/forward restore waits for the list to grow tall enough. */
 const RESTORE_WAIT_MS = 1500;
+// A timer, not rAF: background tabs and occluded panes get no animation frames at all.
+const RESTORE_POLL_MS = 50;
 const USER_SCROLL_EVENTS = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
 
 if (typeof window !== "undefined") {
@@ -48,21 +50,21 @@ export function ScrollRestoration() {
     if (pathname !== "/contacts") return;
 
     // On back/forward the list hasn't rendered yet, so the set above clamps (often to 0).
-    // Re-apply each frame until it fits, the wait runs out, or the person scrolls. Saving is
+    // Re-apply every poll until it fits, the wait runs out, or the person scrolls. Saving is
     // off meanwhile, or the clamped offset would overwrite the one being restored.
     let settling = !scrollTargetFits(target, main.scrollHeight, main.clientHeight);
-    let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = performance.now() + RESTORE_WAIT_MS;
     const stopSettling = () => {
       settling = false;
-      cancelAnimationFrame(raf);
+      clearTimeout(timer);
     };
     const tick = () => {
       main.scrollTop = target;
       if (scrollTargetFits(target, main.scrollHeight, main.clientHeight) || performance.now() > deadline) stopSettling();
-      else raf = requestAnimationFrame(tick);
+      else timer = setTimeout(tick, RESTORE_POLL_MS);
     };
-    if (settling) raf = requestAnimationFrame(tick);
+    if (settling) timer = setTimeout(tick, RESTORE_POLL_MS);
 
     const handleScroll = () => {
       if (!settling) sessionStorage.setItem(key, String(main.scrollTop));
