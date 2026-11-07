@@ -6,7 +6,6 @@ import {
   Backpack,
   BookOpen,
   Briefcase,
-  Building2,
   CalendarDays,
   Check,
   ChartLine,
@@ -48,6 +47,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { OrgCombobox, OrgLogo, type PickedOrg } from "@/components/onboarding/org-combobox";
 import {
   AIM_KINDS,
   AIM_LABELS,
@@ -130,8 +130,8 @@ export function AboutStep({
   const [aim, setAim] = useState<AimKind | null>(null);
   const [field, setField] = useState<FieldKind | null>(null);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
-  const [companies, setCompanies] = useState<string[]>([]);
-  const [company, setCompany] = useState("");
+  const [orgs, setOrgs] = useState<PickedOrg[]>([]);
+  const companies = orgs.map((o) => o.name);
 
   // A row's own text once the person types in it; until then it follows the lookup and taps.
   const [edits, setEdits] = useState<Partial<Record<Row, string>>>({});
@@ -200,11 +200,9 @@ export function AboutStep({
     setScreen("taps");
   }
 
-  function addCompany() {
-    const name = company.trim();
-    if (!name || companies.length >= MAX_COMPANIES) return;
-    if (!companies.some((c) => c.toLowerCase() === name.toLowerCase())) setCompanies([...companies, name]);
-    setCompany("");
+  function addOrg(org: PickedOrg) {
+    if (orgs.length >= MAX_COMPANIES) return;
+    if (!orgs.some((o) => o.name.toLowerCase() === org.name.toLowerCase())) setOrgs([...orgs, org]);
   }
 
   function confirm() {
@@ -350,47 +348,29 @@ export function AboutStep({
 
             <StaggerItem className="min-w-0">
               <label htmlFor="about-company" className="block">
-                <GroupLabel aside={`up to ${MAX_COMPANIES}`}>Dream companies</GroupLabel>
+                <GroupLabel aside={`Companies, schools or organizations · up to ${MAX_COMPANIES}`}>
+                  Dream companies &amp; schools
+                </GroupLabel>
               </label>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <div className="flex h-10 min-w-[12rem] flex-1 items-center gap-2 rounded-full border border-input bg-card pr-1 pl-3 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 sm:max-w-xs">
-                  <Building2 className="size-4 shrink-0 text-primary" aria-hidden />
-                  <input
-                    id="about-company"
-                    value={company}
-                    placeholder={companies.length >= MAX_COMPANIES ? "That’s five" : "Add a company…"}
-                    className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
-                    disabled={companies.length >= MAX_COMPANIES}
-                    enterKeyHint="done"
-                    onChange={(e) => setCompany(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addCompany();
-                      }
-                    }}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 rounded-full px-3"
-                    disabled={!company.trim() || companies.length >= MAX_COMPANIES}
-                    onClick={addCompany}
-                  >
-                    Add
-                  </Button>
-                </div>
-                {companies.map((name) => (
+                <OrgCombobox
+                  id="about-company"
+                  className="min-w-[12rem] flex-1 sm:max-w-xs"
+                  disabled={orgs.length >= MAX_COMPANIES}
+                  placeholder={orgs.length >= MAX_COMPANIES ? "That’s five" : "Search or add…"}
+                  onPick={addOrg}
+                />
+                {orgs.map((org) => (
                   <span
-                    key={name}
-                    className="inline-flex h-9 max-w-full min-w-0 items-center gap-1 rounded-full border border-gold/30 bg-gold/10 pr-1 pl-3 text-[0.8125rem]"
+                    key={org.name}
+                    className="inline-flex h-9 max-w-full min-w-0 items-center gap-1.5 rounded-full border border-gold/30 bg-gold/10 pr-1 pl-1.5 text-[0.8125rem]"
                   >
-                    <span className="min-w-0 truncate">{name}</span>
+                    <OrgLogo name={org.name} domain={org.domain} className="size-6 rounded-full" />
+                    <span className="min-w-0 truncate">{org.name}</span>
                     <button
                       type="button"
-                      aria-label={`Remove ${name}`}
-                      onClick={() => setCompanies(companies.filter((c) => c !== name))}
+                      aria-label={`Remove ${org.name}`}
+                      onClick={() => setOrgs(orgs.filter((o) => o !== org))}
                       className="relative grid size-7 shrink-0 tap-target place-items-center rounded-full text-muted-foreground hover:text-foreground"
                     >
                       <X className="size-3.5" aria-hidden />

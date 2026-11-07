@@ -65,6 +65,8 @@ check("chips are toggle buttons", /<button[\s\S]{0,120}aria-pressed=/.test(kit) 
 check("the confirm row is majors for students, the headline for people already working",
   /majorsRow \? \([\s\S]{0,120}Your major\(s\)[\s\S]{0,600}What you do now/.test(about) && about.includes("asksForMajors(aim)"));
 check("'When' is a segmented switch", /label="When"\s+look="segment"/.test(about));
+check("dream orgs take companies, schools and organizations, with suggestions",
+  about.includes("Dream companies &amp; schools") && about.includes("Companies, schools or organizations · up to ${MAX_COMPANIES}") && /<OrgCombobox\s+id="about-company"/.test(about));
 check("the URL field has a visible label", /<Field[^>]*label="Your LinkedIn profile"/.test(about));
 
 // The visual revision: path cards say how long each path takes, the mark replaces the app
