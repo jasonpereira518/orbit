@@ -244,7 +244,9 @@ export function AdminShell({
         </div>
       </header>
 
-      <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1400px] px-4 py-6 outline-none md:px-6">{children}</main>
+      {/* pb-24: the toast column sits in the bottom-right corner; the padding keeps it off
+          the last actions on a page (e.g. /admin/feedback/[id]). */}
+      <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-24 outline-none md:px-6">{children}</main>
     </div>
   );
 }

@@ -812,7 +812,8 @@
             "fullName": "Nina Petrova",
             "preferredName": null,
             "title": "Co-founder & CEO",
-            "company": "Lumen Health"
+            "company": "Lumen Health",
+            "avatarUrl": null
           }
         ],
         [
@@ -823,6 +824,7 @@
             "preferredName": null,
             "title": "Partnerships Lead",
             "company": "OpenAI",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -833,7 +835,8 @@
             "fullName": "Dr. Elena Vasquez",
             "preferredName": null,
             "title": "Professor of Computer Science",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "avatarUrl": null
           }
         ],
         [
@@ -844,6 +847,7 @@
             "preferredName": null,
             "title": "Founding Engineer",
             "company": "Notion",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -855,6 +859,7 @@
             "preferredName": null,
             "title": "Engineering Lead",
             "company": "Linear",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -866,6 +871,7 @@
             "preferredName": null,
             "title": "Program Director",
             "company": "Innovate Carolina",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -877,6 +883,7 @@
             "preferredName": null,
             "title": "Software Engineer",
             "company": "Anthropic",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -888,6 +895,7 @@
             "preferredName": null,
             "title": "Product Manager",
             "company": "Stripe",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -899,6 +907,7 @@
             "preferredName": null,
             "title": "Technical Recruiter",
             "company": "Stripe",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -910,6 +919,7 @@
             "preferredName": null,
             "title": "Engineering Manager",
             "company": "OpenAI",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -921,6 +931,7 @@
             "preferredName": null,
             "title": "Computer Science Student",
             "company": "UNC Chapel Hill",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -931,7 +942,8 @@
             "fullName": "James Okafor",
             "preferredName": null,
             "title": "Partner",
-            "company": "Bellwether Ventures"
+            "company": "Bellwether Ventures",
+            "avatarUrl": null
           }
         ],
         [
@@ -942,6 +954,7 @@
             "preferredName": null,
             "title": "Angel Investor",
             "company": "Independent",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -952,7 +965,8 @@
             "fullName": "Aisha Rahman",
             "preferredName": null,
             "title": "Senior Product Manager",
-            "company": "Google"
+            "company": "Google",
+            "avatarUrl": null
           }
         ],
         [
@@ -963,6 +977,7 @@
             "preferredName": null,
             "title": "Senior Backend Engineer",
             "company": "Notion",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -974,6 +989,7 @@
             "preferredName": null,
             "title": "Founder & CTO",
             "company": "Northlight Robotics",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -985,6 +1001,7 @@
             "preferredName": null,
             "title": "Design Lead",
             "company": "Figma",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -996,6 +1013,7 @@
             "preferredName": null,
             "title": "Head of Talent",
             "company": "Bellwether Ventures",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -1007,6 +1025,7 @@
             "preferredName": null,
             "title": "Research Scientist",
             "company": "Anthropic",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -1017,7 +1036,8 @@
             "fullName": "Tom Bennett",
             "preferredName": null,
             "title": "Staff Software Engineer",
-            "company": "Stripe"
+            "company": "Stripe",
+            "avatarUrl": null
           }
         ],
         [
@@ -1028,6 +1048,7 @@
             "preferredName": null,
             "title": "Founder",
             "company": "Tidepool Analytics",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -1038,7 +1059,8 @@
             "fullName": "Rachel Adeyemi",
             "preferredName": null,
             "title": "Director of Talent",
-            "company": "Figma"
+            "company": "Figma",
+            "avatarUrl": null
           }
         ],
         [
@@ -1049,6 +1071,7 @@
             "preferredName": null,
             "title": "Alumni Relations Lead",
             "company": "UNC Chapel Hill",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -1060,6 +1083,7 @@
             "preferredName": null,
             "title": "Engineering Manager",
             "company": "Google",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -1071,6 +1095,7 @@
             "preferredName": null,
             "title": "Head of Platform",
             "company": "Google",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ]
@@ -8574,7 +8599,8 @@
             "fullName": "Golden Mcpperson",
             "preferredName": null,
             "title": null,
-            "company": null
+            "company": null,
+            "avatarUrl": null
           }
         ],
         [
@@ -8584,7 +8610,8 @@
             "fullName": "Sarah Chen",
             "preferredName": null,
             "title": "Golden Title",
-            "company": "OpenAI"
+            "company": "OpenAI",
+            "avatarUrl": null
           }
         ],
         [
@@ -8594,7 +8621,8 @@
             "fullName": "Golden Newperson",
             "preferredName": null,
             "title": "Engineer",
-            "company": "Acme"
+            "company": "Acme",
+            "avatarUrl": null
           }
         ],
         [
@@ -8605,6 +8633,7 @@
             "preferredName": null,
             "title": "Co-founder & CEO",
             "company": "Lumen Health",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8615,7 +8644,8 @@
             "fullName": "Dr. Elena Vasquez",
             "preferredName": null,
             "title": "Professor of Computer Science",
-            "company": "UNC Chapel Hill"
+            "company": "UNC Chapel Hill",
+            "avatarUrl": null
           }
         ],
         [
@@ -8626,6 +8656,7 @@
             "preferredName": null,
             "title": "Founding Engineer",
             "company": "Notion",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8637,6 +8668,7 @@
             "preferredName": null,
             "title": "Engineering Lead",
             "company": "Linear",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8648,6 +8680,7 @@
             "preferredName": null,
             "title": "Program Director",
             "company": "Innovate Carolina",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8659,6 +8692,7 @@
             "preferredName": null,
             "title": "Software Engineer",
             "company": "Anthropic",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8670,6 +8704,7 @@
             "preferredName": null,
             "title": "Product Manager",
             "company": "Stripe",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8681,6 +8716,7 @@
             "preferredName": null,
             "title": "Technical Recruiter",
             "company": "Stripe",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8692,6 +8728,7 @@
             "preferredName": null,
             "title": "Engineering Manager",
             "company": "OpenAI",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8703,6 +8740,7 @@
             "preferredName": null,
             "title": "Computer Science Student",
             "company": "UNC Chapel Hill",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8714,6 +8752,7 @@
             "preferredName": null,
             "title": "Partner",
             "company": "Bellwether Ventures",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8725,6 +8764,7 @@
             "preferredName": null,
             "title": "Angel Investor",
             "company": "Independent",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8735,7 +8775,8 @@
             "fullName": "Aisha Rahman",
             "preferredName": null,
             "title": "Senior Product Manager",
-            "company": "Google"
+            "company": "Google",
+            "avatarUrl": null
           }
         ],
         [
@@ -8746,6 +8787,7 @@
             "preferredName": null,
             "title": "Senior Backend Engineer",
             "company": "Notion",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8757,6 +8799,7 @@
             "preferredName": null,
             "title": "Founder & CTO",
             "company": "Northlight Robotics",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8768,6 +8811,7 @@
             "preferredName": null,
             "title": "Design Lead",
             "company": "Figma",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8779,6 +8823,7 @@
             "preferredName": null,
             "title": "Head of Talent",
             "company": "Bellwether Ventures",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8790,6 +8835,7 @@
             "preferredName": null,
             "title": "Research Scientist",
             "company": "Anthropic",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8800,7 +8846,8 @@
             "fullName": "Tom Bennett",
             "preferredName": null,
             "title": "Staff Software Engineer",
-            "company": "Stripe"
+            "company": "Stripe",
+            "avatarUrl": null
           }
         ],
         [
@@ -8811,6 +8858,7 @@
             "preferredName": null,
             "title": "Founder",
             "company": "Tidepool Analytics",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8822,6 +8870,7 @@
             "preferredName": null,
             "title": "Director of Talent",
             "company": "Figma",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8833,6 +8882,7 @@
             "preferredName": null,
             "title": "Alumni Relations Lead",
             "company": "UNC Chapel Hill",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8844,6 +8894,7 @@
             "preferredName": null,
             "title": "Engineering Manager",
             "company": "Google",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ],
@@ -8855,6 +8906,7 @@
             "preferredName": null,
             "title": "Head of Platform",
             "company": "Google",
+            "avatarUrl": null,
             "lastInteractionAt": "<ts>"
           }
         ]

@@ -63,6 +63,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 const INLINE_DETAIL_QUERY = "(min-width: 80rem)";
 
 const VIEW_TITLES: Record<string, string> = {
+  all: "All",
   today: "Today",
   upcoming: "Upcoming",
   anytime: "Anytime",
@@ -71,6 +72,7 @@ const VIEW_TITLES: Record<string, string> = {
 };
 
 const EMPTY_COPY: Record<string, { title: string; body: string }> = {
+  all: { title: "No open reminders", body: "Everything you still need to do shows up here." },
   today: { title: "Nothing due today", body: "You’re clear. Upcoming has what’s next." },
   upcoming: { title: "Nothing scheduled ahead", body: "Reminders with a future date land here." },
   anytime: { title: "No undated reminders", body: "Reminders without a due date collect here." },

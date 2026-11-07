@@ -23,22 +23,46 @@ import { useEffect, useId, type RefObject } from "react";
  */
 
 const LIFT_VAR = "--orbit-corner-lift";
+const SHIFT_VAR = "--orbit-corner-shift";
 
-const claims = new Map<string, number>();
-
-function apply() {
-  const root = document.documentElement;
-  let max = 0;
-  for (const px of claims.values()) if (px > max) max = px;
-  if (max > 0) root.style.setProperty(LIFT_VAR, `${max}px`);
-  else root.style.removeProperty(LIFT_VAR);
+/**
+ * One ref-counted claim store per CSS variable: the variable holds the MAX of the live
+ * claims, and is removed (falling back to theme.css's 0px) when none are left.
+ */
+function claimStore(cssVar: string) {
+  const claims = new Map<string, number>();
+  return (id: string, px: number | null) => {
+    if (px == null || px <= 0) claims.delete(id);
+    else claims.set(id, px);
+    let max = 0;
+    for (const v of claims.values()) if (v > max) max = v;
+    const root = document.documentElement;
+    if (max > 0) root.style.setProperty(cssVar, `${max}px`);
+    else root.style.removeProperty(cssVar);
+  };
 }
 
 /** Set (or clear, with null) one claimant's lift. Safe to call every measurement. */
-export function claimCornerLift(id: string, px: number | null) {
-  if (px == null || px <= 0) claims.delete(id);
-  else claims.set(id, px);
-  apply();
+export const claimCornerLift = claimStore(LIFT_VAR);
+
+/**
+ * Set (or clear, with null) one claimant's leftward shift of the corner.
+ *
+ * For floating windows anchored to the right edge (notifications, feedback): the toast
+ * column and the job stack slide to the window's left instead of landing on it. Only
+ * honoured at `md`+ in theme.css — below that the window is (nearly) full width and there
+ * is no room beside it, so toasts overlay it there.
+ */
+export const claimCornerShift = claimStore(SHIFT_VAR);
+
+/** Shift the corner left by `px` for as long as `enabled` holds. Release keys off the flag, not unmount. */
+export function useCornerShift(px: number, enabled: boolean) {
+  const id = useId();
+  useEffect(() => {
+    if (!enabled) return;
+    claimCornerShift(id, px);
+    return () => claimCornerShift(id, null);
+  }, [id, px, enabled]);
 }
 
 /** Raise the corner by a fixed amount for as long as `px` is non-null. */
