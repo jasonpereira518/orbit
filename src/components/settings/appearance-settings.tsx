@@ -1,13 +1,15 @@
 "use client";
 
 import { useSyncExternalStore, useTransition } from "react";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Monitor, Moon, Pause, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { saveThemePreference } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { SettingsRow } from "@/components/settings/settings-section";
 import type { ThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
+import { setAppReduceMotion } from "@/lib/motion-preference";
+import { useAppReducesMotion } from "@/lib/use-prefers-reduced-motion";
 
 const OPTIONS: Array<{
   value: ThemePreference;
@@ -57,6 +59,7 @@ export function AppearanceSettings({
   }
 
   return (
+    <>
     <SettingsRow
       id="settings-appearance"
       title="Theme"
@@ -75,6 +78,50 @@ export function AppearanceSettings({
               active === value && "bg-primary text-primary-foreground hover:bg-primary/90"
             )}
             onClick={() => select(value)}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+          </Button>
+        ))}
+      </div>
+    </SettingsRow>
+    <ReduceMotionSetting />
+    </>
+  );
+}
+
+/**
+ * Orbit's own Reduce motion, for calm without changing the whole computer: it stops the
+ * looping and decorative animation everywhere in Orbit on this device (lib/motion-preference).
+ * The system setting still applies on its own when this is off.
+ */
+function ReduceMotionSetting() {
+  const on = useAppReducesMotion();
+  const options = [
+    { value: false, label: "Match system", icon: Monitor },
+    { value: true, label: "Reduce", icon: Pause },
+  ] as const;
+
+  return (
+    <SettingsRow
+      id="settings-motion"
+      title="Motion"
+      description="Reduce stops Orbit's animations on this device: the moving starfields, loops and slides. Match system follows your device's reduced-motion setting."
+    >
+      <div role="radiogroup" aria-label="Motion" className="flex flex-wrap gap-2">
+        {options.map(({ value, label, icon: Icon }) => (
+          <Button
+            key={label}
+            type="button"
+            role="radio"
+            aria-checked={on === value}
+            variant={on === value ? "default" : "outline"}
+            size="sm"
+            className={cn(
+              "gap-1.5",
+              on === value && "bg-primary text-primary-foreground hover:bg-primary/90"
+            )}
+            onClick={() => setAppReduceMotion(value)}
           >
             <Icon className="h-3.5 w-3.5" />
             {label}

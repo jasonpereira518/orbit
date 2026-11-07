@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "@/lib/toast";
 import {
@@ -10,7 +9,6 @@ import {
   saveChatAutoApply,
   saveWorkHistoryAutoEnabled,
 } from "@/actions/settings";
-import { cn } from "@/lib/utils";
 import {
   AI_PROVIDERS,
   SELECTABLE_AI_PROVIDERS,
@@ -28,11 +26,21 @@ import { Disclosure } from "@/components/settings/disclosure";
 import { ClearKeyButton, ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { freeAiExplainer, noticeCopyFor } from "@/lib/ai-access-copy";
+import { formatAllowanceReset, noticeCopyFor } from "@/lib/ai-access-copy";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { managedModel } from "@/lib/managed-ai-policy";
 import { setAiKeyPreference } from "@/actions/credits";
-import { CreditsCard } from "@/components/credits/credits-card";
+import { Briefcase, MessageSquare } from "lucide-react";
+import { CreditsDetails, CreditsNotice, CreditsTile, useCreditsOverview } from "@/components/credits/credits-card";
+import { SegmentedControl, StatTile, SwitchRow } from "@/components/settings/account-rows";
+import { AiUsageDetails, useAiUsage } from "@/components/settings/ai-usage-card";
+import { DecisionModelSettings } from "@/components/settings/decision-model-settings";
+import {
+  SpeechDetails,
+  formatMinutes,
+  speechTotals,
+  type SpeechAllowances,
+} from "@/components/settings/speech-usage-card";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
@@ -41,14 +49,21 @@ function modelLabel(provider: AiProvider, id: string) {
 }
 
 /**
- * The AI page: one card per provider a person may choose, and everything technical folded
- * into Advanced.
+ * The AI page: a row of stat tiles, one card per provider a person may choose, two switches,
+ * and everything technical — usage detail, speech meters, Jev, saved keys — folded into
+ * Advanced.
  *
  * SELECTABLE_AI_PROVIDERS, not AI_PROVIDERS: the full table also carries providers whose
  * plumbing exists but which no surface offers (OpenRouter). `providerMeta` below still looks
  * up the full table, so an account already on one keeps its real name in the copy.
  */
-export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
+export function AiSettings({
+  initialSettings,
+  speech,
+}: {
+  initialSettings: Settings;
+  speech: SpeechAllowances;
+}) {
   const { planConfig } = useViewerPlan();
   const [settings, setSettings] = useState<Settings>(initialSettings);
   // A router refresh (the plan changed — Lifetime bought or revoked) hands down fresh
@@ -63,6 +78,8 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
     setCustomModel(initialSettings.aiModel);
   }
   const [pending, start] = useTransition();
+  const credits = useCreditsOverview();
+  const usage = useAiUsage();
 
   const provider = settings.aiProvider;
   const model = settings.aiModel;
@@ -140,32 +157,74 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
     }
   }
 
+  const totals = speechTotals(speech);
+  const running = ai.reason
+    ? { value: "Off", sub: "No key yet" }
+    : {
+        value: modelLabel(ai.provider, ai.model),
+        sub: ai.source === "personal" ? "Your key" : onLocalDevKeys ? ".env.local key" : "Orbit’s key",
+      };
+
   return (
     <SettingsSection
-      title="AI provider"
+      title="AI"
       description={
-        onIncluded && ai.plan === "free"
-          ? freeAiExplainer(planConfig)
-          : onIncluded
-            ? "Orbit uses AI to turn your notes into contacts and answer questions about your network. Your plan includes AI on Orbit’s keys, metered in credits. Orbit picks the model for it (Claude Haiku 5.5, with OpenAI as backup) — or bring your own key to choose, which never uses credits."
-            : "Orbit uses AI to turn your notes into contacts and answer questions about your network. Pick a provider and paste its key — keys are encrypted at rest and only used for your account."
+        onLocalDevKeys
+          ? "Running on this dev server’s .env.local keys"
+          : onIncluded && ai.plan === "free"
+            ? `${planConfig.free.monthlyCredits ?? 0} credits a month on Free · add your own key for no limit`
+            : onIncluded
+              ? "Included on your plan · bring your own key to choose the model"
+              : ai.managedConfigured && ai.managedPaused
+                ? "Included AI is paused · add your own key to keep going"
+                : "Add a key to turn on AI"
       }
     >
-      <CreditsCard />
+      <div className="@container">
+        <div className="grid grid-cols-2 gap-3 @xl:grid-cols-4">
+          <CreditsTile overview={credits.overview} />
+          <StatTile label="Running" value={running.value} sub={running.sub} title={running.value} />
+          <StatTile
+            label="AI calls"
+            value={usage === undefined ? undefined : usage === null ? null : usage.totalCalls.toLocaleString()}
+            sub="your key · 30 days"
+          />
+          <StatTile
+            label="Speech"
+            value={formatMinutes(totals.used)}
+            sub={totals.limit > 0 ? `of ${formatMinutes(totals.limit)}` : "Not on this plan"}
+            title={`Resets ${formatAllowanceReset(speech.meeting.resetsAt)}`}
+          />
+        </div>
+      </div>
+      <CreditsNotice overview={credits.overview} />
+      {credits.nudge}
 
       {onIncluded && hasAnyPersonalKey && (
-        <KeyPreference
-          value={ai.preference}
-          onChange={async (next) => {
-            const res = await setAiKeyPreference(next);
-            if (!res.ok) {
-              toast.error(TOAST_COPY.saveFailed);
-              return;
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-ink">Run AI on</p>
+          <SegmentedControl
+            label="Run AI on"
+            options={[
+              { value: "included" as const, label: "Orbit’s credits" },
+              { value: "own" as const, label: "My key" },
+            ]}
+            // Unset means the pre-v2 rule: a saved key wins.
+            value={ai.preference ?? "own"}
+            disabled={pending}
+            onChange={(next) =>
+              start(async () => {
+                const res = await setAiKeyPreference(next);
+                if (!res.ok) {
+                  toast.error(TOAST_COPY.saveFailed);
+                  return;
+                }
+                setSettings(await getSettings());
+                toast.success(next === "included" ? "Using Orbit’s included AI first" : "Using your own key first");
+              })
             }
-            setSettings(await getSettings());
-            toast.success(next === "included" ? "Using Orbit’s included AI first" : "Using your own key first");
-          }}
-        />
+          />
+        </div>
       )}
 
       <ul className="grid gap-3 sm:grid-cols-2">
@@ -184,8 +243,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
 
       {movedFrom ? (
         <p className="rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">
-          Moved from {modelLabel(provider, movedFrom)} to {modelLabel(provider, model)}: newer, and
-          about half the price per token.{" "}
+          Moved from {modelLabel(provider, movedFrom)} to {modelLabel(provider, model)} · newer and about half the price{" "}
           <button
             type="button"
             className="underline underline-offset-2 hover:text-ink"
@@ -201,149 +259,77 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
         </p>
       ) : null}
 
-      {/* The background half of work history. LinkedIn pulls and the profile's own button
-          search regardless; this only governs the unattended re-checks, because they spend
-          this account's key without anyone clicking. */}
-      <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 p-3">
-        <div className="space-y-0.5">
-          <p id="work-history-auto-label" className="text-sm font-medium text-ink">
-            Keep work history current
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Re-checks contacts&rsquo; jobs with a web search on your AI key — closest people
-            monthly, everyone else less often, at most 20 lookups a day — and notes when
-            someone changes jobs.
-          </p>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={settings.workHistoryAutoEnabled}
-          aria-labelledby="work-history-auto-label"
-          disabled={pending}
-          onClick={() => {
-            const next = !settings.workHistoryAutoEnabled;
-            setSettings({ ...settings, workHistoryAutoEnabled: next });
-            start(async () => {
-              try {
-                await saveWorkHistoryAutoEnabled(next);
-              } catch (err) {
-                setSettings({ ...settings, workHistoryAutoEnabled: !next });
-                toast.error(friendlyError(err, TOAST_COPY.saveFailed));
-              }
-            });
+      <ul className="space-y-2">
+        {/* The background half of work history: only the unattended re-checks, because they
+            spend this account's key without anyone clicking. */}
+        <SwitchRow
+          icon={<Briefcase />}
+          tone="var(--primary)"
+          title="Keep work history current"
+          description="Re-checks jobs with a web search · up to 20 a day"
+          on={settings.workHistoryAutoEnabled}
+          busy={pending}
+          save={async (on) => {
+            await saveWorkHistoryAutoEnabled(on);
+            setSettings((s) => ({ ...s, workHistoryAutoEnabled: on }));
+            return { ok: true };
           }}
-          className={cn(
-            "tap-target relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none transition-colors duration-fast ease-house focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
-            settings.workHistoryAutoEnabled ? "bg-primary" : "bg-muted-foreground/30"
-          )}
-        >
-          <span
-            aria-hidden
-            className={cn(
-              "pointer-events-none size-4 rounded-full bg-background shadow-sm transition-transform duration-fast ease-house",
-              settings.workHistoryAutoEnabled ? "translate-x-[1.125rem]" : "translate-x-0.5"
-            )}
-          />
-        </button>
-      </div>
-
-      {/* Chat's own changes. Off by default: with it off every change chat suggests is a card
-          to confirm; on, the small reversible ones happen and land as done cards with Undo. */}
-      <div className="flex items-start justify-between gap-4 rounded-xl border border-border/70 p-3">
-        <div className="space-y-0.5">
-          <p id="chat-auto-apply-label" className="text-sm font-medium text-ink">
-            Let chat make small changes for you
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Logging a note, adding a tag or reminder, snoozing or ticking something off happens
-            when you ask, with Undo on each one in the{" "}
-            <Link href="/chat" className="text-primary underline underline-offset-2">
-              chat
-            </Link>
-            . Edits to someone&rsquo;s details, deletes and anything a note asked for still wait
-            for you to confirm.
-          </p>
-        </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={settings.chatAutoApply}
-          aria-labelledby="chat-auto-apply-label"
-          disabled={pending}
-          onClick={() => {
-            const next = !settings.chatAutoApply;
-            setSettings({ ...settings, chatAutoApply: next });
-            start(async () => {
-              try {
-                await saveChatAutoApply(next);
-              } catch (err) {
-                setSettings({ ...settings, chatAutoApply: !next });
-                toast.error(friendlyError(err, TOAST_COPY.saveFailed));
-              }
-            });
+          done={(on) => (on ? "Work history stays current" : "Work history re-checks off")}
+          onSaved={() => {}}
+        />
+        {/* Off by default: every change chat suggests is a card to confirm; on, the small
+            reversible ones happen and land as done cards with Undo. */}
+        <SwitchRow
+          icon={<MessageSquare />}
+          tone="var(--primary)"
+          title="Let chat make small changes"
+          description="Notes, tags and reminders, with Undo · edits still ask first"
+          on={settings.chatAutoApply}
+          busy={pending}
+          save={async (on) => {
+            await saveChatAutoApply(on);
+            setSettings((s) => ({ ...s, chatAutoApply: on }));
+            return { ok: true };
           }}
-          className={cn(
-            "tap-target relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none transition-colors duration-fast ease-house focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
-            settings.chatAutoApply ? "bg-primary" : "bg-muted-foreground/30"
-          )}
-        >
-          <span
-            aria-hidden
-            className={cn(
-              "pointer-events-none size-4 rounded-full bg-background shadow-sm transition-transform duration-fast ease-house",
-              settings.chatAutoApply ? "translate-x-[1.125rem]" : "translate-x-0.5"
-            )}
-          />
-        </button>
-      </div>
+          done={(on) => (on ? "Chat makes small changes for you" : "Chat asks before every change")}
+          onSaved={() => {}}
+        />
+      </ul>
 
       <Disclosure label="Advanced">
-        <p className="text-sm text-muted-foreground">
-          {onLocalDevKeys
-            ? "This dev server runs AI on the keys in your .env.local — nothing to set up. Save a key above and it is used instead, which is also how you see what a deployed account sees. Keys are encrypted at rest and only used for your account."
-            : onIncluded
-              ? "Your plan includes AI on Orbit’s own keys — nothing to set up. You can still bring your own Gemini, OpenAI, or Anthropic key and choose which runs first; calls on your own key never use credits. Keys are encrypted at rest and only used for your account."
-              : `Choose Gemini, OpenAI, or Anthropic above and paste your own API key. Keys are encrypted at rest and only used for your account.${ai.managedConfigured ? " Every plan, Free included, has AI on Orbit’s own keys, so a key is optional; included AI is paused right now." : ""}`}
-        </p>
-
         {/* No live region below: this sits inside a collapsed panel, and hidden content is
             never announced, so the role would claim an announcement that cannot happen. */}
         {activeProviderStatus && (
           <div className="space-y-1 text-sm text-muted-foreground">
             <p>
-              Status:{" "}
               {activeProviderStatus.hasPersonalKey
                 ? onLocalDevKeys
-                  ? `Your ${providerMeta.label} key is saved, so Orbit uses it — clear it to fall back to .env.local`
+                  ? `Your ${providerMeta.label} key is saved, so Orbit uses it · clear it to fall back to .env.local`
                   : onIncluded
                     ? ai.source === "managed"
-                      ? `Your ${providerMeta.label} key is saved; Orbit’s included AI runs first, as you chose`
-                      : `Your ${providerMeta.label} key is saved and runs first — it never uses credits`
+                      ? `Your ${providerMeta.label} key is saved · Orbit’s included AI runs first, as you chose`
+                      : `Your ${providerMeta.label} key is saved and runs first · never uses credits`
                     : `Your ${providerMeta.label} key is saved`
                 : provider === ai.selectedProvider && ai.reason
                   ? noticeCopyFor(ai.reason, ai.plan, null, planConfig).title("use AI")
                   : managedRuns
                     ? onLocalDevKeys
-                      ? `Using your .env.local ${providerMeta.label} key — ${modelLabel(provider, managedRuns)}`
-                      : `Using Orbit’s included AI — ${modelLabel(provider, managedRuns)} on Orbit’s key`
+                      ? `Using your .env.local ${providerMeta.label} key · ${modelLabel(provider, managedRuns)}`
+                      : `Using Orbit’s included AI · ${modelLabel(provider, managedRuns)} on Orbit’s key`
                     : onIncluded && ai.source === "managed"
-                      ? `No ${providerMeta.label} key — Orbit’s included AI runs on ${modelLabel(ai.provider, ai.model)} instead`
-                      : "No key yet — paste one above to turn on AI features"}
+                      ? `No ${providerMeta.label} key · Orbit’s included AI runs on ${modelLabel(ai.provider, ai.model)}`
+                      : "No key yet · paste one above to turn on AI"}
             </p>
             {managedRuns && !activeProviderStatus.hasPersonalKey && managedRuns !== model && (
-              <p>
-                On Orbit’s key, AI runs on {modelLabel(provider, managedRuns)}; the model you
-                pick above applies once you add your own key.
-              </p>
+              <p>The model you pick above applies once you add your own key</p>
             )}
+            <p>Keys are encrypted at rest and only used for your account</p>
           </div>
         )}
 
         {provider === "anthropic" && (
           <p className="rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">
-            Anthropic has no embeddings API. Keep an OpenAI or Gemini key available
-            so chat search can still embed contacts.
+            Anthropic has no embeddings API · keep an OpenAI or Gemini key so chat search can embed contacts
           </p>
         )}
 
@@ -353,8 +339,7 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
             {/*
               A datalist rather than a select: the tiers are the ids worth suggesting, but this
               field is the one way to reach a model Orbit has not tagged — a preview id, or the
-              id an account is already stored on. A select would make those unreachable from
-              the UI entirely, which is the opposite of what an escape hatch is for.
+              id an account is already stored on.
             */}
             <Input
               id="model"
@@ -385,14 +370,10 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
               Use
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Runs {providerMeta.label} on an id of your own — anything the provider serves,
-            including models with no tier above.
-          </p>
+          <p className="text-xs text-muted-foreground">Any id {providerMeta.label} serves, tiered or not</p>
         </div>
 
-        <div className="space-y-3 border-t border-border/60 pt-4">
-          <h4 className="text-sm font-medium text-ink">Saved keys</h4>
+        <AdvancedBlock title="Saved keys">
           <ul className="space-y-1 text-sm text-muted-foreground">
             {/* Same rule as the cards: a provider with no user-facing surface is not listed
                 — unless this account actually holds a key for it, in which case the row is
@@ -407,8 +388,8 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                       ? "saved"
                       : p.managedAvailable
                         ? onLocalDevKeys
-                          ? "none — .env.local"
-                          : "none — Orbit’s key"
+                          ? "none · .env.local"
+                          : "none · Orbit’s key"
                         : "none"}
                   </span>
                   {/* Per key, not per selected provider: switching provider used to leave the
@@ -428,54 +409,35 @@ export function AiSettings({ initialSettings }: { initialSettings: Settings }) {
                 </li>
               ))}
           </ul>
+        </AdvancedBlock>
+
+        {credits.overview ? (
+          <AdvancedBlock title="Credits">
+            <CreditsDetails overview={credits.overview} />
+          </AdvancedBlock>
+        ) : null}
+
+        <AdvancedBlock title="Usage on your key · 30 days">
+          <AiUsageDetails summary={usage} />
+        </AdvancedBlock>
+
+        <AdvancedBlock title="Speech-to-text · Orbit’s key">
+          <SpeechDetails speech={speech} />
+        </AdvancedBlock>
+
+        <div className="border-t border-border/60 pt-4">
+          <DecisionModelSettings initialSettings={initialSettings} />
         </div>
       </Disclosure>
     </SettingsSection>
   );
 }
 
-/**
- * Which key runs first when a Pro or Max account has both. Included AI spends credits; the
- * account's own key never does. Only offered when there is a real choice to make.
- */
-function KeyPreference({
-  value,
-  onChange,
-}: {
-  value: "included" | "own" | null;
-  onChange: (next: "included" | "own") => Promise<void>;
-}) {
-  const [pending, start] = useTransition();
-  // Unset means the pre-v2 rule: a saved key wins.
-  const current = value ?? "own";
-  const options = [
-    { id: "included" as const, label: "Orbit’s included AI", hint: "Uses your credits" },
-    { id: "own" as const, label: "My own key", hint: "Never uses credits" },
-  ];
+function AdvancedBlock({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <fieldset className="space-y-2 rounded-xl border border-border/70 p-4" disabled={pending}>
-      <legend className="px-1 text-sm font-medium text-ink">Run AI on</legend>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {options.map((o) => (
-          <label
-            key={o.id}
-            className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/70 p-3 text-sm has-[:checked]:border-primary"
-          >
-            <input
-              type="radio"
-              name="ai-key-preference"
-              value={o.id}
-              checked={current === o.id}
-              onChange={() => start(() => onChange(o.id))}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="block text-ink">{o.label}</span>
-              <span className="block text-xs text-muted-foreground">{o.hint}</span>
-            </span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
+    <div className="space-y-2 border-t border-border/60 pt-4">
+      <h4 className="text-sm font-medium text-ink">{title}</h4>
+      {children}
+    </div>
   );
 }

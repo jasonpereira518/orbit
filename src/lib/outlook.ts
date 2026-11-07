@@ -302,7 +302,17 @@ export async function upsertOutlookConnection(
         nextSyncAt: armed && !pausedByUser ? new Date() : null,
         syncFailures: 0,
         syncError: null,
-        ...(switchedFrom ? { syncCursor: null, syncStatus: null, syncStartedAt: null, lastSyncedAt: null } : {}),
+        // A different account starts with every lane on; the same account keeps its switches.
+        ...(switchedFrom
+          ? {
+              syncCursor: null,
+              syncStatus: null,
+              syncStartedAt: null,
+              lastSyncedAt: null,
+              calendarSyncEnabled: 1,
+              contactsSyncEnabled: 1,
+            }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(outlookConnections.id, existing.id))

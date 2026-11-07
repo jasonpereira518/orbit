@@ -981,6 +981,8 @@ CREATE TABLE IF NOT EXISTS outlook_connections (
   sync_started_at timestamptz,
   sync_error text,
   sync_failures integer NOT NULL DEFAULT 0,
+  calendar_sync_enabled integer NOT NULL DEFAULT 1,
+  contacts_sync_enabled integer NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2926,7 +2928,17 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // per-feature switches, replacing the Meetings switch's pause of the whole connection (paused
 // rows are converted to both-off and re-armed). Rescanned every remote ref and worktree on
 // Nov 6 2026: 191 (main) was the highest claimed anywhere.
-export const SCHEMA_VERSION = 192;
+//
+// 194 = outlook_connections.calendar_sync_enabled + contacts_sync_enabled: the same per-feature
+// switches for the Microsoft page (paused rows converted the same way). Rescanned every remote
+// ref on Nov 6 2026: 193 is claimed by claude/chat-loading-updates-pane (unmerged), so 194.
+//
+// 195 = embedding_model on contact_embeddings and memory_chunks (AI audit P0-3): which model made
+// each stored vector, so a vector another model made is recognised and re-embedded instead of
+// being compared. Additive and nullable, no backfill. (Built as 171, then 182; renumbered when
+// merging main at 194. usage_events.web_searches, which this branch also added, is main's and
+// was dropped here.) Rescanned origin/main on Nov 7 2026: 194 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 195;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4356,6 +4368,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "email_signature_text", "text");
   await ensureColumn(client, "user_settings", "email_signature_html", "text");
   await ensureColumn(client, "user_settings", "default_send_provider", "text");
+  // v182: which model made a stored vector.
+  await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
+  await ensureColumn(client, "memory_chunks", "embedding_model", "text");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -4548,6 +4563,11 @@ const alters = [
   // by that pass: syncMemoryChunks carries vectors across by content_hash, which unchanged
   // text does not move.
   `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS source_hash text`,
+  // Schema v182: which embedding model made each stored vector. Vectors from two models cannot
+  // be compared, and until now nothing recorded which one a row held (a key change cleared
+  // contact_embeddings but not memory_chunks).
+  `ALTER TABLE contact_embeddings ADD COLUMN IF NOT EXISTS embedding_model text`,
+  `ALTER TABLE memory_chunks ADD COLUMN IF NOT EXISTS embedding_model text`,
   // Deliberately not backfilled from `committed_at` — see the column's comment in schema.ts.
   `ALTER TABLE fundraising_investors ADD COLUMN IF NOT EXISTS received_at timestamptz`,
   // The events feature landed whole at v32, so these are its first incremental columns.
@@ -4947,6 +4967,10 @@ const alters = [
   `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS calendar_sync_enabled integer NOT NULL DEFAULT 1`,
   `ALTER TABLE gmail_connections ADD COLUMN IF NOT EXISTS contacts_sync_enabled integer NOT NULL DEFAULT 1`,
   `UPDATE gmail_connections SET calendar_sync_enabled = 0, contacts_sync_enabled = 0, sync_status = 'idle', next_sync_at = now() WHERE sync_status = 'paused'`,
+  // v194: the same split for Microsoft. Its Meetings switch paused the whole Outlook row too.
+  `ALTER TABLE outlook_connections ADD COLUMN IF NOT EXISTS calendar_sync_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE outlook_connections ADD COLUMN IF NOT EXISTS contacts_sync_enabled integer NOT NULL DEFAULT 1`,
+  `UPDATE outlook_connections SET calendar_sync_enabled = 0, contacts_sync_enabled = 0, sync_status = 'idle', next_sync_at = now() WHERE sync_status = 'paused'`,
   // Arm the connections that already exist.
   //
   // `sync_status IS NULL` is the load-bearing half of this predicate, not decoration.

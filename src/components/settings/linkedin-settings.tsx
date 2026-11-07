@@ -2,12 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
 import {
   Bell,
   BriefcaseBusiness,
   MessageSquare,
-  MoreHorizontal,
   Newspaper,
   Upload,
   UserRound,
@@ -22,15 +20,11 @@ import { listImports, type ImportHistoryItem } from "@/actions/imports";
 import { markLinkedInExportRequested } from "@/actions/linkedin-export";
 import { saveWorkHistoryAutoEnabled } from "@/actions/settings";
 import { setRadarCaptureLinkedin } from "@/actions/radar";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
-import { FeatureRow } from "@/components/settings/account-page";
+import { useRouter } from "next/navigation";
+import { AccountPageShell, FeatureRow, whenLine, type HeaderStatus } from "@/components/settings/account-page";
+import { SegmentedControl } from "@/components/settings/account-rows";
+import { PROVIDER_THEMES } from "@/components/settings/provider-themes";
+import type { AccountStatus } from "@/lib/integration-status";
 import { IMPORT_HISTORY_LIMIT, ImportHistoryRow } from "@/components/settings/import-history-row";
 import { LinkedInMark } from "@/components/settings/provider-marks";
 import { LinkedInConnectionsImport } from "@/components/imports/linkedin-connections-import";
@@ -53,16 +47,6 @@ import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-imp
 import { LINKEDIN_REFRESH_INTERVAL_OPTIONS } from "@/lib/linkedin-export";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
-
-/**
- * LinkedIn's blue, scoped to this page: every Button, switch, checkbox and focus ring below
- * reads `--primary`/`--ring`, so redefining them here themes the page without touching a
- * component. #0A66C2 is LinkedIn's brand blue; #70B5F9 is the blue LinkedIn itself uses on
- * dark surfaces, where #0A66C2 is too dark to read.
- */
-const LINKEDIN_THEME =
-  "[--primary:#0A66C2] [--primary-foreground:#ffffff] [--ring:#0A66C2] dark:[--primary:#70B5F9] dark:[--primary-foreground:#04121b] dark:[--ring:#70B5F9]";
 
 const NO_CONTROL = { kind: "none" } as const;
 const noop = () => {};
@@ -89,6 +73,7 @@ export function LinkedInSettings() {
   const [open, setOpen] = useState<"connections" | "messages" | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const queue = useImportQueue();
+  const router = useRouter();
 
   const load = useCallback(() => {
     getLinkedInPanel().then(
@@ -160,258 +145,212 @@ export function LinkedInSettings() {
     }
   };
 
-  if (failed && !panel) {
-    return (
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">
-          Couldn’t load your LinkedIn settings.
-        </p>
-        <Button variant="outline" size="sm" onClick={load}>
-          Try again
-        </Button>
-      </div>
-    );
-  }
-  if (!panel) return <PageSkeleton />;
-
-  const imported = panel.lastImportAt !== null;
+  const imported = panel?.lastImportAt != null;
+  // LinkedIn has no sign-in to lose: once the panel is read, the account is simply there.
+  const account: AccountStatus | null = panel ? { state: "connected", email: null, capabilities: {} } : null;
 
   return (
-    <div className={cn("space-y-4", LINKEDIN_THEME)}>
-      {/* Wraps on a phone: the actions drop to their own line rather than squeezing the
-          status into three. */}
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-primary/[0.07] p-3">
-        <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-background shadow-sm">
-          <LinkedInMark className="size-7" />
-        </span>
-        <div className="min-w-0 flex-1 basis-44">
-          <p className="text-sm font-medium text-ink">LinkedIn</p>
-          <ImportStatus panel={panel} />
-          <div className="mt-0.5 text-xs">
-            <LinkedInExportGuide variant="connections" />
-          </div>
-        </div>
-        <div className="ml-auto flex items-center gap-1">
-          <Button
-            size="sm"
-            disabled={scanning || pending}
-            onClick={() => fileInput.current?.click()}
-          >
-            <Upload aria-hidden />
-            {scanning
-              ? "Reading…"
-              : imported
-                ? "Upload new export"
-                : "Upload export"}
-          </Button>
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".zip,application/zip"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (file) void uploadExport(file);
-            }}
-          />
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="LinkedIn options"
-                  className="tap-target relative"
-                >
-                  <MoreHorizontal aria-hidden />
-                </Button>
+    <>
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".zip,application/zip"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) void uploadExport(file);
+        }}
+      />
+      <AccountPageShell
+        name="LinkedIn"
+        mark={<LinkedInMark className="size-6" />}
+        theme={theme}
+        account={account}
+        loading={!panel && !failed}
+        failed={failed}
+        onRetry={load}
+        onConnect={() => fileInput.current?.click()}
+        status={panel ? importStatusLine(panel) : undefined}
+        primaryAction={{
+          label: scanning ? "Reading…" : imported ? "Upload new export" : "Upload export",
+          icon: <Upload aria-hidden />,
+          disabled: scanning || pending,
+          onClick: () => fileInput.current?.click(),
+        }}
+        menuItems={[
+          {
+            label: "I’ve requested my export",
+            onSelect: () =>
+              run(markLinkedInExportRequested, "Couldn’t save that — try again?", "We’ll remind you when it should be ready"),
+          },
+          { label: "Open Imports in Capture", onSelect: () => router.push("/capture?mode=imports") },
+        ]}
+      >
+        {panel ? (
+          <>
+            {queue.items.length ? (
+              <li className="pb-3">
+                <ImportQueueCard onFinishUndone={load} />
+              </li>
+            ) : null}
+            <FeatureRow
+              icon={<Users className="size-4" />}
+              tone={theme.tone}
+              title="Connections"
+              description={countLine(
+                panel.connections.people,
+                "person",
+                "people",
+                panel.connections.lastAt,
+              )}
+              control={{
+                kind: "action",
+                label:
+                  open === "connections"
+                    ? "Close"
+                    : panel.connections.lastAt
+                      ? "Update"
+                      : "Import",
+              }}
+              onAction={() =>
+                setOpen((o) => (o === "connections" ? null : "connections"))
               }
-            />
-            <DropdownMenuContent
-              align="end"
-              className={cn("w-auto min-w-48", LINKEDIN_THEME)}
             >
-              <DropdownMenuItem
-                onClick={() =>
+              {open === "connections" ? (
+                <LinkedInConnectionsImport bare />
+              ) : (
+                <div className="text-xs">
+                  <LinkedInExportGuide variant="connections" />
+                </div>
+              )}
+            </FeatureRow>
+            <FeatureRow
+              icon={<MessageSquare className="size-4" />}
+              tone={theme.tone}
+              title="Messages"
+              description={countLine(
+                panel.messages.people,
+                "person messaged",
+                "people messaged",
+                panel.messages.lastAt,
+              )}
+              control={{
+                kind: "action",
+                label:
+                  open === "messages"
+                    ? "Close"
+                    : panel.messages.lastAt
+                      ? "Update"
+                      : "Import",
+              }}
+              onAction={() =>
+                setOpen((o) => (o === "messages" ? null : "messages"))
+              }
+            >
+              {open === "messages" ? <LinkedInMessagesImport bare /> : null}
+            </FeatureRow>
+            <FeatureRow
+              icon={<UserRound className="size-4" />}
+              tone={theme.tone}
+              title="About you"
+              description={
+                panel.aboutYou ? (
+                  <>
+                    {[panel.aboutYou.role, panel.aboutYou.headline]
+                      .filter(Boolean)
+                      .join(" · ") || "Imported"}
+                    {panel.aboutYou.skills
+                      ? ` · ${panel.aboutYou.skills} skills`
+                      : ""}
+                    {" · "}
+                    <Link
+                      href="/settings"
+                      className="underline underline-offset-2 hover:text-foreground"
+                    >
+                      Edit on your profile
+                    </Link>
+                  </>
+                ) : (
+                  "Your headline, roles and skills come in with your export, so drafts and matches know what you do."
+                )
+              }
+              control={
+                panel.aboutYou
+                  ? NO_CONTROL
+                  : { kind: "action", label: "Upload export" }
+              }
+              onAction={() => fileInput.current?.click()}
+            />
+            <FeatureRow
+              icon={<Bell className="size-4" />}
+              tone={theme.tone}
+              title="Refresh reminder"
+              description="An export is a snapshot. Orbit nudges you to upload a fresh one so new connections come in."
+              control={NO_CONTROL}
+              onAction={noop}
+            >
+              <IntervalPicker
+                value={panel.intervalDays}
+                disabled={pending}
+                onChange={(days) =>
                   run(
-                    markLinkedInExportRequested,
-                    "Couldn’t save that — try again?",
-                    "We’ll remind you when it should be ready",
+                    () => setLinkedInRefreshInterval(days),
+                    "Couldn’t save the reminder — try again?",
+                    days
+                      ? `Reminder set: ${INTERVAL_LABEL[days].toLowerCase()}`
+                      : "Refresh reminder off",
                   )
                 }
-              >
-                I’ve requested my export
-              </DropdownMenuItem>
-              <DropdownMenuItem render={<Link href="/capture?mode=imports" />}>
-                Open Imports in Capture
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-
-      {queue.items.length ? <ImportQueueCard onFinishUndone={load} /> : null}
-
-      <ul className="-mt-1">
-        <FeatureRow
-          icon={<Users className="size-4" />}
-          title="Connections"
-          description={countLine(
-            panel.connections.people,
-            "person",
-            "people",
-            panel.connections.lastAt,
-          )}
-          control={{
-            kind: "action",
-            label:
-              open === "connections"
-                ? "Close"
-                : panel.connections.lastAt
-                  ? "Update"
-                  : "Import",
-          }}
-          onAction={() =>
-            setOpen((o) => (o === "connections" ? null : "connections"))
-          }
-        >
-          {open === "connections" ? <LinkedInConnectionsImport bare /> : null}
-        </FeatureRow>
-        <FeatureRow
-          icon={<MessageSquare className="size-4" />}
-          title="Messages"
-          description={countLine(
-            panel.messages.people,
-            "person messaged",
-            "people messaged",
-            panel.messages.lastAt,
-          )}
-          control={{
-            kind: "action",
-            label:
-              open === "messages"
-                ? "Close"
-                : panel.messages.lastAt
-                  ? "Update"
-                  : "Import",
-          }}
-          onAction={() =>
-            setOpen((o) => (o === "messages" ? null : "messages"))
-          }
-        >
-          {open === "messages" ? <LinkedInMessagesImport bare /> : null}
-        </FeatureRow>
-        <FeatureRow
-          icon={<UserRound className="size-4" />}
-          title="About you"
-          description={
-            panel.aboutYou ? (
-              <>
-                {[panel.aboutYou.role, panel.aboutYou.headline]
-                  .filter(Boolean)
-                  .join(" · ") || "Imported"}
-                {panel.aboutYou.skills
-                  ? ` · ${panel.aboutYou.skills} skills`
-                  : ""}
-                {" · "}
-                <Link
-                  href="/settings"
-                  className="underline underline-offset-2 hover:text-foreground"
-                >
-                  Edit on your profile
-                </Link>
-              </>
-            ) : (
-              "Your headline, roles and skills come in with your export, so drafts and matches know what you do."
-            )
-          }
-          control={
-            panel.aboutYou
-              ? NO_CONTROL
-              : { kind: "action", label: "Upload export" }
-          }
-          onAction={() => fileInput.current?.click()}
-        />
-        <FeatureRow
-          icon={<Bell className="size-4" />}
-          title="Refresh reminder"
-          description="An export is a snapshot. Orbit nudges you to upload a fresh one so new connections come in."
-          control={NO_CONTROL}
-          onAction={noop}
-        >
-          <IntervalPicker
-            value={panel.intervalDays}
-            disabled={pending}
-            onChange={(days) =>
-              run(
-                () => setLinkedInRefreshInterval(days),
-                "Couldn’t save the reminder — try again?",
-                days
-                  ? `Reminder set: ${INTERVAL_LABEL[days].toLowerCase()}`
-                  : "Refresh reminder off",
-              )
-            }
-          />
-        </FeatureRow>
-        <FeatureRow
-          icon={<BriefcaseBusiness className="size-4" />}
-          title="Keep work history current"
-          description="Looks up people’s current roles in the background, so a job change doesn’t slip past you."
-          control={{ kind: "switch", on: panel.workHistoryAuto }}
-          disabled={pending}
-          onAction={() =>
-            run(
-              () => saveWorkHistoryAutoEnabled(!panel.workHistoryAuto),
-              "Couldn’t save that — try again?",
-            )
-          }
-        />
-        {panel.savePosts !== null ? (
-          <FeatureRow
-            icon={<Newspaper className="size-4" />}
-            title="Save LinkedIn posts"
-            description="The Orbit extension saves posts by people you know as Radar activity."
-            control={{ kind: "switch", on: panel.savePosts }}
-            disabled={pending}
-            onAction={() =>
-              run(
-                () => setRadarCaptureLinkedin(!panel.savePosts),
-                "Couldn’t save that — try again?",
-              )
-            }
-          />
+              />
+            </FeatureRow>
+            <FeatureRow
+              icon={<BriefcaseBusiness className="size-4" />}
+              tone={theme.tone}
+              title="Keep work history current"
+              description="Looks up people’s current roles in the background, so a job change doesn’t slip past you."
+              control={{ kind: "switch", on: panel.workHistoryAuto }}
+              disabled={pending}
+              onAction={() =>
+                run(
+                  () => saveWorkHistoryAutoEnabled(!panel.workHistoryAuto),
+                  "Couldn’t save that — try again?",
+                )
+              }
+            />
+            {panel.savePosts !== null ? (
+              <FeatureRow
+                icon={<Newspaper className="size-4" />}
+                tone={theme.tone}
+                title="Save LinkedIn posts"
+                description="The Orbit extension saves posts by people you know as Radar activity."
+                control={{ kind: "switch", on: panel.savePosts }}
+                disabled={pending}
+                onAction={() =>
+                  run(
+                    () => setRadarCaptureLinkedin(!panel.savePosts),
+                    "Couldn’t save that — try again?",
+                  )
+                }
+              />
+            ) : null}
+            <ImportHistoryRow history={history} source="LinkedIn" tone={theme.tone} onUndone={load} />
+          </>
         ) : null}
-        <ImportHistoryRow history={history} source="LinkedIn" onUndone={load} />
-      </ul>
-    </div>
+      </AccountPageShell>
+    </>
   );
 }
 
-function ImportStatus({ panel }: { panel: LinkedInPanel }) {
-  const [tone, text] = !panel.lastImportAt
-    ? (["bg-muted-foreground/40", "Not imported yet"] as const)
-    : panel.refreshLevel
-      ? ([
-          "bg-warning",
-          `Due for a refresh · last upload ${formatDistanceToNow(panel.lastImportAt, { addSuffix: true })}`,
-        ] as const)
-      : ([
-          "bg-primary",
-          `Imported ${formatDistanceToNow(panel.lastImportAt, { addSuffix: true })}`,
-        ] as const);
-  return (
-    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-      <span
-        aria-hidden
-        className={cn("size-1.5 shrink-0 rounded-full", tone)}
-      />
-      {text}
-    </p>
-  );
+const theme = PROVIDER_THEMES.linkedin;
+
+function importStatusLine(panel: LinkedInPanel): HeaderStatus {
+  if (!panel.lastImportAt) return { state: "off", detail: "Not imported yet" };
+  if (panel.refreshLevel) return { state: "partial", detail: `Due for a refresh · last upload ${whenLine(panel.lastImportAt)}` };
+  return { state: "on", detail: `Imported ${whenLine(panel.lastImportAt)}` };
 }
 
-/** The reminder cadence as a segmented control. null (never chosen) reads as the default, monthly. */
+/** The reminder cadence. null (never chosen) reads as the default, monthly. */
 function IntervalPicker({
   value,
   disabled,
@@ -421,32 +360,14 @@ function IntervalPicker({
   disabled: boolean;
   onChange: (days: number) => void;
 }) {
-  const current = value ?? 30;
   return (
-    <div
-      role="radiogroup"
-      aria-label="Refresh reminder"
-      className="inline-flex flex-wrap gap-1 rounded-xl bg-muted/60 p-1"
-    >
-      {LINKEDIN_REFRESH_INTERVAL_OPTIONS.map((days) => (
-        <button
-          key={days}
-          type="button"
-          role="radio"
-          aria-checked={current === days}
-          disabled={disabled}
-          onClick={() => current !== days && onChange(days)}
-          className={cn(
-            "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors duration-fast ease-house outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50",
-            current === days
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {INTERVAL_LABEL[days]}
-        </button>
-      ))}
-    </div>
+    <SegmentedControl
+      label="Refresh reminder"
+      options={LINKEDIN_REFRESH_INTERVAL_OPTIONS.map((days) => ({ value: days, label: INTERVAL_LABEL[days] }))}
+      value={value ?? 30}
+      onChange={onChange}
+      disabled={disabled}
+    />
   );
 }
 
@@ -454,15 +375,6 @@ function countLine(n: number, one: string, many: string, lastAt: Date | null) {
   if (!lastAt && !n) return "Not imported yet";
   const count = `${n.toLocaleString()} ${n === 1 ? one : many}`;
   return lastAt
-    ? `${count} · updated ${formatDistanceToNow(lastAt, { addSuffix: true })}`
+    ? `${count} · updated ${whenLine(lastAt)}`
     : count;
-}
-
-function PageSkeleton() {
-  return (
-    <div className="space-y-4" aria-busy="true" aria-label="Loading LinkedIn">
-      <Skeleton className="h-[4.5rem] w-full rounded-2xl" />
-      <Skeleton className="h-40 w-full rounded-xl" />
-    </div>
-  );
 }

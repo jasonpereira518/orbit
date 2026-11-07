@@ -4,9 +4,9 @@ import { useState } from "react";
 import {
   AnimatePresence,
   motion,
-  useReducedMotion,
   type Transition,
 } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import type { PlanPrice } from "@/lib/plan-copy";
 
 /**
@@ -46,7 +46,7 @@ function magnitude(amount: string) {
 }
 
 export function PlanPriceDisplay({ price }: { price: PlanPrice }) {
-  const reduced = useReducedMotion();
+  const reduced = useReducedMotionPreference();
 
   // Adjusting state during render (rather than in an effect) keeps the direction in the
   // same commit as the value it describes, so the first animated frame already knows

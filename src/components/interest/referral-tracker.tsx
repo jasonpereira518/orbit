@@ -20,6 +20,7 @@ import { pulseStarfield } from "@/lib/starfield-events";
 import { EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /** How often an open pass asks whether a friend has joined. */
 const POLL_MS = 20_000;
@@ -203,7 +204,7 @@ export function ReferralTracker({
 
   // Mount: always replay from 0 when motion is allowed; snap when reduced.
   useEffect(() => {
-    const ok = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const ok = !prefersReducedMotion();
     setMotionOk(ok);
     setAnimatedUpTo(ok ? 0 : referrals);
     // referrals intentionally omitted — reload replay starts at 0 (or snaps once).

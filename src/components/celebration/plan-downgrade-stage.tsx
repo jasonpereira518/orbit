@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { tierTheme, type PaidPlan } from "@/lib/celebration/tier-theme";
 import { EASE_HOUSE } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 const FIELD = "#0d121b";
 const DRAIN_MS = 1550;
@@ -27,7 +28,7 @@ export function PlanDowngradeStage({
   const reduced =
     forceReducedMotion ||
     systemReduced ||
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    prefersReducedMotion();
   const [phase, setPhase] = useState<"start" | "drain" | "rest">("start");
   const [skipped, setSkipped] = useState(false);
   const [entered, setEntered] = useState(false);

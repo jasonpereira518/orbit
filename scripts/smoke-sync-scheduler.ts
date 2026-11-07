@@ -919,6 +919,82 @@ run(async () => {
     );
   }
 
+  // --- The Microsoft page's per-feature switches (v194) -----------------------------------
+  // Meetings off: no calendar read, contacts still sync, the row stays armed and unpaused.
+  // Then every enabled Outlook calendar is read by its own id, the disabled one is not.
+  await clearAll();
+  {
+    const db = await getDb();
+    const wipeMsl = async () => {
+      await db.execute(sql`DELETE FROM calendar_sources WHERE user_id LIKE 'sched-msl-%'`);
+      await db.execute(sql`DELETE FROM outlook_connections WHERE user_id LIKE 'sched-msl-%'`);
+      await db.execute(sql`DELETE FROM contacts WHERE user_id LIKE 'sched-msl-%'`);
+    };
+    await wipeMsl();
+    await db.execute(sql`UPDATE outlook_connections SET next_sync_at = NULL WHERE user_id NOT LIKE 'sched-msl-%'`);
+    const seedMsl = async (userId: string, set: { calendar: number; contacts: number }) =>
+      rowsOf<{ id: string }>(
+        await db.execute(sql`
+          INSERT INTO outlook_connections
+            (user_id, email_address, access_token_encrypted, status, scopes, next_sync_at, sync_failures,
+             calendar_sync_enabled, contacts_sync_enabled)
+          VALUES (${userId}, ${userId + "@example.com"}, 'enc', 'active', 'openid Calendars.Read Contacts.Read',
+                  ${new Date(Date.now() - 60_000)}, 0, ${set.calendar}, ${set.contacts})
+          RETURNING id
+        `)
+      )[0].id;
+    const readMsl = async (id: string) =>
+      rowsOf<{ next_sync_at: Date | string | null; sync_status: string | null; sync_cursor: { contactsSyncedAt?: string } | null }>(
+        await db.execute(sql`SELECT next_sync_at, sync_status, sync_cursor FROM outlook_connections WHERE id = ${id}`)
+      )[0];
+
+    const offId = await seedMsl("sched-msl-off", { calendar: 0, contacts: 1 });
+    const asked: string[] = [];
+    const { deps } = depsFor(new Map());
+    deps.getMicrosoftAccessToken = async (userId: string) => `stub-token:${userId}`;
+    deps.fetchMicrosoftPage = async ({ calendarId }) => {
+      asked.push(calendarId ?? "default");
+      return emptyPage();
+    };
+    deps.fetchMicrosoftContactsPage = async () => ({
+      people: [{ fullName: "Grace Hopper", email: "grace@example.com", company: "Navy" }],
+      nextPageToken: null,
+      nameless: 0,
+    });
+    let stats = await runSyncPass({ deps });
+    check("outlook meetings off: no calendar call is made", asked.length === 0, JSON.stringify(asked));
+    check("outlook meetings off: contacts still sync", stats.contactsCreated === 1, JSON.stringify(stats));
+    const offRow = await readMsl(offId);
+    check(
+      "outlook meetings off: rescheduled, not paused, contacts stamped",
+      offRow.next_sync_at !== null && offRow.sync_status === "idle" && Boolean(offRow.sync_cursor?.contactsSyncedAt),
+      JSON.stringify(offRow),
+    );
+
+    await wipeMsl();
+    const multiId = await seedMsl("sched-msl-multi", { calendar: 1, contacts: 0 });
+    for (const [calendarId, enabled] of [["default", 1], ["AAMkWork", 1], ["AAMkHolidays", 0]] as const) {
+      await db.execute(sql`
+        INSERT INTO calendar_sources (user_id, provider, connection_id, calendar_id, enabled)
+        VALUES ('sched-msl-multi', 'microsoft', ${multiId}, ${calendarId}, ${enabled})
+      `);
+    }
+    let contactsCalls = 0;
+    deps.fetchMicrosoftContactsPage = async () => {
+      contactsCalls++;
+      return { people: [], nextPageToken: null, nameless: 0 };
+    };
+    stats = await runSyncPass({ deps });
+    check("outlook multi-calendar: the connection syncs", stats.synced === 1, JSON.stringify(stats));
+    check(
+      "outlook multi-calendar: both enabled calendars are read, the disabled one is not",
+      asked.sort().join(",") === "AAMkWork,default",
+      JSON.stringify(asked),
+    );
+    check("outlook contacts off: no address-book call is made", contactsCalls === 0, String(contactsCalls));
+    await wipeMsl();
+  }
+
   await clearAll();
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
