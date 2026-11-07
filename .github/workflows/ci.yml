@@ -279,10 +279,10 @@ jobs:
   # Three runners each take a third of the spec files (`--shard`), with their own `next dev`
   # and throwaway PGlite from playwright.config.ts, so the single-writer rule holds. Every
   # spec calls `ensureOnboarded`, so none depends on another's data. `fail-fast: false`
-  # so one shard failing still reports the rest. If a required status check is ever added,
-  # require all three names.
+  # so one shard failing still reports the rest. Branch protection requires the single check
+  # name `browser flows (Playwright)`, which the `e2e-gate` job below keeps alive.
   e2e:
-    name: browser flows (Playwright) ${{ matrix.shard }}/3
+    name: e2e shard ${{ matrix.shard }}/3
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     container:
@@ -317,3 +317,16 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  # One stable check name for branch protection: the shards come and go (rename, resize), and
+  # a required check that no job reports leaves a PR "waiting for status" forever. Runs even
+  # when a shard fails (`always()`), and fails unless every shard succeeded. Skipped with
+  # the shards on a draft PR, which GitHub counts as passing.
+  e2e-gate:
+    name: browser flows (Playwright)
+    needs: e2e
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: test "${{ needs.e2e.result }}" = success

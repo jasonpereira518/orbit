@@ -175,7 +175,7 @@ Known flakiness risks, none observed failing on CI in the last 60 runs:
 | `coverage-shard` ×3, `coverage` | the suite again under c8, merged into the run summary (`main` and on demand only) | report only |
 | `known-bugs` | `npm run test:bugs` | yes (red = a bug was fixed, promote its test) |
 | `security` | `npm audit` of production deps (critical), dependency review of the PR (high; needs the Dependency graph and `DEPENDENCY_REVIEW=true`), gitleaks over the new commits | yes |
-| `e2e` ×3 | Playwright journeys in Playwright's container image, split across three runners, failing on flaky tests | yes |
+| `e2e` ×3, `e2e-gate` | Playwright journeys in Playwright's container image, split across three runners, failing on flaky tests; `e2e-gate` reports the one required name, `browser flows (Playwright)` | yes |
 
 `.github/workflows/post-deploy.yml` runs `scripts/post-deploy-smoke.ts` against the production
 domain after every successful production deployment (and on demand from the Actions tab). If it
@@ -191,7 +191,7 @@ above a real gate:
    on new commits.
 2. **Require status checks to pass**, with "require branches to be up to date": `typecheck · lint ·
    build`, `smoke suite (PGlite) 1/3`, `2/3`, `3/3`, `known bugs (expected failures)`,
-   `audit · dependency review · secret scan`, `browser flows (Playwright) 1/3`, `2/3`, `3/3`.
+   `audit · dependency review · secret scan`, `browser flows (Playwright)`.
 3. `ci.yml` has no `paths-ignore`, so every PR reports these checks — docs-only ones too —
    and requiring them cannot leave a PR waiting on checks that never start.
 4. Keep **block force-pushes and deletion** (already on). Not linear history: PRs merge with

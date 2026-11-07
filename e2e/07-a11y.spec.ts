@@ -20,6 +20,12 @@ import { createContact, ensureOnboarded } from "./helpers";
  */
 test.use({ reducedMotion: "reduce" });
 
+// Playwright shards whole files unless a file's tests may run apart. This one holds ~66 of the
+// suite's ~77 tests, so without this one CI shard gets nearly all of them and the rest sit idle.
+// Each test loads its own route; the shared setup is the `beforeAll` below, which runs in
+// whichever worker takes a test. Still one worker per shard, so nothing runs concurrently.
+test.describe.configure({ mode: "parallel" });
+
 const MARKETING = ["/", "/interest", "/privacy", "/terms", "/contact", "/connect", "/pricing", "/upgrade"];
 const APP = [
   "/dashboard",
