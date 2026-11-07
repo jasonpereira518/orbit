@@ -45,6 +45,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-friendly-error": "pure",
   "smoke-scroll-restore": "pure",
   "smoke-plain-text": "pure",
+  "smoke-markdown-shortcuts": "pure",
   "smoke-meeting-row-details": "pure",
   "smoke-ai-notice-copy": "pure",
   "smoke-interaction-edit": "pure",

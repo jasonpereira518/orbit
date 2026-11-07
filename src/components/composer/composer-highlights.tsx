@@ -19,6 +19,7 @@ import { useEffect, useRef } from "react";
 
 import { findMentions } from "@/lib/chat-mentions";
 import { COMPOSER_TEXT_BOX } from "@/components/composer/composer-mirror";
+import { segmentMarks, tokenizeMarkdown, type MarkKind } from "@/components/composer/markdown-shortcuts";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,11 +32,33 @@ import { cn } from "@/lib/utils";
 const MENTION_MARK =
   "rounded-[4px] bg-emerald-500/18 px-[2px] py-[2px] mx-[-2px] dark:bg-emerald-400/20";
 
+/**
+ * Live markdown, painted only while this layer draws the glyphs (`markdown`). Every style
+ * here must leave each glyph's advance width alone — the caret is the textarea's, laid out
+ * on the textarea's own glyphs, so a wider letter here walks the visible text away from it:
+ *
+ *   bold / heading — faux bold: a hairline `text-shadow` either side, never `font-weight`.
+ *   italic — `font-style: italic` over Outfit, which ships no italic face, so the browser
+ *     synthesises an oblique: a skew of the same glyphs at the same advances.
+ *   code — a background tint, no padding and no monospace.
+ */
+// ponytail: italic stays width-safe only while no italic Outfit is loaded (layout.tsx loads
+// the upright alone). Load one and the advances change; drop `italic` here if that happens.
+const MARK_CLASS: Record<MarkKind | "mention", string> = {
+  marker: "text-muted-foreground",
+  bold: "[text-shadow:0.35px_0_0_currentColor,-0.35px_0_0_currentColor]",
+  heading: "[text-shadow:0.35px_0_0_currentColor,-0.35px_0_0_currentColor]",
+  italic: "italic",
+  code: "rounded-[3px] bg-muted",
+  mention: MENTION_MARK,
+};
+
 export function ComposerHighlights({
   value,
   names,
   textareaRef,
   boxClassName = COMPOSER_TEXT_BOX,
+  markdown = false,
 }: {
   /** The whole field value, so wrapping matches the textarea exactly. */
   value: string;
@@ -51,6 +74,13 @@ export function ComposerHighlights({
    * to both.
    */
   boxClassName?: string;
+  /**
+   * Draw the glyphs here, styled as markdown, instead of leaving them to the field — the
+   * caller makes the field's own text transparent while this is on. The mirror technique,
+   * with the mirror's preconditions (no IME composition, fine pointer): see
+   * `composer-mirror.tsx`. `MentionComposer` decides; off, this layer is marks only.
+   */
+  markdown?: boolean;
 }) {
   const layerRef = useRef<HTMLDivElement>(null);
 
@@ -69,20 +99,21 @@ export function ComposerHighlights({
   }, [textareaRef, value]);
 
   const mentions = findMentions(value, names);
-  if (!mentions.length) return null;
+  if (!mentions.length && !markdown) return null;
 
-  const parts: React.ReactNode[] = [];
-  let cursor = 0;
-  mentions.forEach((m, i) => {
-    if (m.start > cursor) parts.push(value.slice(cursor, m.start));
-    parts.push(
-      <span key={`${m.start}-${i}`} className={MENTION_MARK}>
-        {value.slice(m.start, m.end)}
-      </span>,
+  const ranges = [
+    ...(markdown ? tokenizeMarkdown(value) : []),
+    ...mentions.map((m) => ({ start: m.start, end: m.end, kind: "mention" as const })),
+  ];
+  const parts = segmentMarks(value.length, ranges).map((seg) => {
+    const text = value.slice(seg.start, seg.end);
+    if (!seg.kinds.length) return text;
+    return (
+      <span key={seg.start} className={cn(seg.kinds.map((k) => MARK_CLASS[k]))}>
+        {text}
+      </span>
     );
-    cursor = m.end;
   });
-  parts.push(value.slice(cursor));
 
   return (
     <div
@@ -96,9 +127,10 @@ export function ComposerHighlights({
         "pointer-events-none absolute inset-0 z-0 overflow-hidden border-0",
         boxClassName,
         "whitespace-pre-wrap break-words",
-        // The glyphs are the textarea's job; this layer contributes only the marks. Drawing
-        // them here as well would double-strike every character against the real text.
-        "text-transparent",
+        // Normally the glyphs are the textarea's job and this layer contributes only the
+        // marks: drawing them here as well would double-strike every character. Live
+        // markdown flips that — the field goes transparent and the glyphs are drawn here.
+        markdown ? "text-foreground" : "text-transparent",
       )}
       style={{
         scrollbarGutter: "stable",

@@ -2,12 +2,15 @@
 
 import { useCallback, useState, useSyncExternalStore } from "react";
 import { format } from "date-fns";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { ChevronLeft, ChevronRight, Copy, Download, ExternalLink, FileText } from "lucide-react";
 import type { CaptureSourceKind } from "@/lib/note-batches";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { CAPTURE_SOURCE_META, capturePhotoSrc } from "@/components/capture/capture-source-meta";
+import { safeChatHref } from "@/lib/safe-links";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +23,39 @@ export type CaptureSourcePhoto = {
 
 /** Past this, the notes start collapsed — a long transcript would bury the results below. */
 const COLLAPSE_AT_CHARS = 700;
+
+/**
+ * Typed notes can carry markdown now (the notes box has shortcuts for it), so they render.
+ * Not `ChatMarkdown`: that one rewrites model output ("a. - b" into a list) and expands chat
+ * directives, which would tidy a person's own notes. Same type scale as the plain text it
+ * replaces — headings are emphasis here, not a size jump inside a small card.
+ */
+const NOTES_MARKDOWN: Components = {
+  // `pre-line` keeps a single Enter as a line break, as the plain text did; markdown alone
+  // would run two jotted lines into one sentence.
+  p: ({ children }) => <p className="mb-2 whitespace-pre-line last:mb-0">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  ul: ({ children }) => <ul className="mb-2 list-disc space-y-0.5 pl-5 last:mb-0">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-2 list-decimal space-y-0.5 pl-5 last:mb-0">{children}</ol>,
+  h1: ({ children }) => <p className="mb-1 font-semibold">{children}</p>,
+  h2: ({ children }) => <p className="mb-1 font-semibold">{children}</p>,
+  h3: ({ children }) => <p className="mb-1 font-semibold">{children}</p>,
+  code: ({ children }) => <code className="rounded bg-muted px-1 text-[0.9em]">{children}</code>,
+  // Notes are often pasted from mail or the web; a link goes through the same allowlist as
+  // chat's and opens out of the app, or stays text.
+  a: ({ href, children }) => {
+    const safe = safeChatHref(href);
+    if (!safe) return <span>{children}</span>;
+    return (
+      <a href={safe} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer" className="text-primary underline underline-offset-2">
+        {children}
+      </a>
+    );
+  },
+};
+/** Pasted markdown could point an image at any host, fetched the moment it renders. */
+const NO_IMAGES = ["img"];
+const REMARK_PLUGINS = [remarkGfm];
 
 /** False during SSR and the hydrating render, true afterwards. */
 function useHydrated() {
@@ -35,8 +71,8 @@ function useHydrated() {
  * transcribed from a voice note, or read out of the photos themselves.
  *
  * The rest of the results page is what Orbit *made* of the notes. This is the thing to
- * check it against, which is why it sits first and why the text is shown exactly as it was
- * parsed rather than tidied.
+ * check it against, which is why it sits first and why read text is shown exactly as it was
+ * parsed rather than tidied (typed notes render their own markdown — see `NOTES_MARKDOWN`).
  */
 export function CaptureSourceCard({
   createdAt,
@@ -53,6 +89,9 @@ export function CaptureSourceCard({
   const [expanded, setExpanded] = useState(sourceText.length <= COLLAPSE_AT_CHARS);
   const [viewing, setViewing] = useState<number | null>(null);
   const created = new Date(createdAt);
+  // Text read out of photos or a voice note is shown verbatim — it is the thing to check
+  // Orbit's reading against. Only typed notes are the person's own markdown.
+  const readText = photos.length > 0 || kinds.includes("voice");
 
   const step = useCallback(
     (delta: number) =>
@@ -122,7 +161,7 @@ export function CaptureSourceCard({
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-medium text-muted-foreground">
-              {photos.length > 0 || kinds.includes("voice")
+              {readText
                 ? "The text Orbit read"
                 : "Your notes"}
             </p>
@@ -137,9 +176,17 @@ export function CaptureSourceCard({
               !expanded && "max-h-56"
             )}
           >
-            <p className="text-sm leading-relaxed break-words whitespace-pre-wrap text-foreground">
-              {sourceText}
-            </p>
+            {readText ? (
+              <p className="text-sm leading-relaxed break-words whitespace-pre-wrap text-foreground">
+                {sourceText}
+              </p>
+            ) : (
+              <div className="text-sm leading-relaxed break-words text-foreground">
+                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={NOTES_MARKDOWN} disallowedElements={NO_IMAGES}>
+                  {sourceText}
+                </ReactMarkdown>
+              </div>
+            )}
             {!expanded && (
               <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-card to-transparent" />
             )}

@@ -126,9 +126,12 @@ export function captureNextStep(result: Pick<NoteBatchResult, "meeting" | "actio
   return (first && stripMarkdown(first)) || null;
 }
 
-/** The start of the notes, whitespace-collapsed and cut on a word boundary. */
+/**
+ * The start of the notes as plain prose, cut on a word boundary. Markdown markers come off:
+ * the notes box writes them now, and a row reading "# AWS - Met **Sarah**" is noise.
+ */
 export function captureExcerpt(sourceText: string, max = 160): string {
-  const flat = sourceText.replace(/\s+/g, " ").trim();
+  const flat = stripMarkdown(sourceText);
   if (flat.length <= max) return flat;
   const cut = flat.slice(0, max);
   const lastSpace = cut.lastIndexOf(" ");
