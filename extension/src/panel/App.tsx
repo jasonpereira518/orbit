@@ -3,7 +3,7 @@ import { CircleAlert, MousePointerClick, UserX, WifiOff } from "lucide-react";
 import type { MatchCandidate } from "@contract";
 import { APP_URL } from "@/lib/env";
 import { relativeTime } from "@/lib/format";
-import { isPersonPage } from "@/lib/page";
+import { isConnectionsPage, isPersonPage } from "@/lib/page";
 import {
   IdentityZone,
   PanelHeader,
@@ -16,6 +16,7 @@ import { Button, Meta, Skeleton } from "./components/ui";
 import { AmbiguousView } from "./views/AmbiguousView";
 import { CaptureView } from "./views/CaptureView";
 import { EventRosterView } from "./views/EventRosterView";
+import { LogConnectionsView } from "./views/LogConnectionsView";
 import { GrantAccessView } from "./views/GrantAccessView";
 import { KnownContactView } from "./views/KnownContactView";
 import { usePanel } from "./state/usePanel";
@@ -91,6 +92,7 @@ export function App() {
     }
     // An event page is about the room, not a person: no contact verdict to give.
     if (state.page?.roster) return <VerdictZone>Event guest list</VerdictZone>;
+    if (state.page && isConnectionsPage(state.page)) return <VerdictZone>Your connections</VerdictZone>;
     if (state.resolving || !state.resolved) return <VerdictSkeleton />;
 
     if (contact) {
@@ -204,6 +206,8 @@ export function App() {
 
     // A guest list needs nothing from resolve — it is ready the moment the page is read.
     if (state.page?.roster) return <EventRosterView page={state.page} api={api} />;
+    // Connections: "Log at an event" needs nothing from resolve either.
+    if (state.page && isConnectionsPage(state.page)) return <LogConnectionsView page={state.page} api={api} />;
 
     if (state.resolving || !state.resolved || !state.page) {
       return (
