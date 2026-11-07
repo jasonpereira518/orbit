@@ -1,7 +1,8 @@
 "use client";
 
 import { useId, useState, type ReactNode } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import { ChevronDown } from "lucide-react";
 
 export type FaqItem = { q: string; a: ReactNode };
@@ -21,7 +22,7 @@ export type FaqItem = { q: string; a: ReactNode };
 export function FaqList({ items, columns: count = 2 }: { items: readonly FaqItem[]; columns?: 1 | 2 }) {
   const baseId = useId();
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const reduced = useReducedMotion();
+  const reduced = useReducedMotionPreference();
 
   // Split in halves rather than alternating, so each column still reads top to
   // bottom and the single-column layout below lg keeps the authored order.

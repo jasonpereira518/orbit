@@ -1,5 +1,24 @@
 @custom-variant dark (&:is(.dark *));
 
+/* Reduced motion is the system preference OR Orbit's own Reduce motion setting
+ * (`html[data-motion="reduce"]`, lib/motion-preference.ts), so the two built-in variants are
+ * redefined to honour both. */
+@custom-variant motion-reduce {
+  @media (prefers-reduced-motion: reduce) {
+    @slot;
+  }
+  &:where([data-motion="reduce"], [data-motion="reduce"] *) {
+    @slot;
+  }
+}
+@custom-variant motion-safe {
+  @media (prefers-reduced-motion: no-preference) {
+    &:not(:where([data-motion="reduce"], [data-motion="reduce"] *)) {
+      @slot;
+    }
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -1715,6 +1734,12 @@
   -webkit-text-fill-color: transparent;
   animation: t-shimmer var(--shimmer-dur) var(--shimmer-ease) infinite;
 }
+/* The brand pair instead of grey-on-grey: teal text, a gold band sweeping over it. Both are
+ * theme tokens, so light and dark each get their own teal and gold with no extra block. */
+.t-shimmer-brand {
+  --shimmer-base: var(--primary);
+  --shimmer-highlight: var(--chart-4);
+}
 @keyframes t-shimmer {
   0% {
     background-position: 100% 0;
@@ -2597,6 +2622,37 @@ body:has(.landing-root) {
   }
 }
 
+/* The same clamp for Orbit's own Reduce motion setting (Settings → Appearance), which sets
+ * `html[data-motion="reduce"]` on this device whatever the system preference says. */
+html[data-motion="reduce"] *,
+html[data-motion="reduce"] ::before,
+html[data-motion="reduce"] ::after,
+html[data-motion="reduce"] ::backdrop {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+  scroll-behavior: auto !important;
+}
+html[data-motion="reduce"] {
+  scroll-behavior: auto !important;
+}
+html[data-motion="reduce"]::view-transition-old(*),
+html[data-motion="reduce"]::view-transition-new(*),
+html[data-motion="reduce"]::view-transition-group(*) {
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
+}
+html[data-motion="reduce"] .landing-credit-shimmer {
+  background: none;
+  color: #6d807c;
+  -webkit-text-fill-color: #6d807c;
+}
+html[data-motion="reduce"] .plan-badge-glint {
+  display: none;
+}
+
 /* ── Lift-off: app <-> /pricing ──
  *
  * The canvas stage (components/warp/liftoff-stage.tsx) paints the sky; this
@@ -3426,6 +3482,14 @@ body {
 @media (max-height: 500px) {
   [data-fill-route] {
     min-height: 30rem;
+  }
+}
+
+/* The landing page on a phone: the waitlist pill and social icons are fixed to the bottom
+ * edge over a fade, so a link focused or scrolled to stops above them (WCAG 2.4.11). */
+@media (width < 48rem) {
+  html:has([data-landing-bottom-fade]) {
+    scroll-padding-bottom: 5.5rem;
   }
 }
 

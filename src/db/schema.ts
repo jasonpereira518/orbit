@@ -2991,6 +2991,13 @@ export const memoryChunks = pgTable(
      */
     embeddedHash: text("embedded_hash"),
     embedding: jsonb("embedding").$type<number[]>(),
+    /**
+     * The embedding model that produced `embedding`, e.g. "text-embedding-3-small". Vectors
+     * from two models are not comparable, and nothing else records which one a row holds, so
+     * a backend switch used to leave old-space vectors silently queryable. NULL on rows that
+     * predate this column, which read as "unknown, re-embed".
+     */
+    embeddingModel: text("embedding_model"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -3014,6 +3021,8 @@ export const contactEmbeddings = pgTable(
     embedding: jsonb("embedding").$type<number[]>().notNull(),
     content: text("content").notNull(),
     contentHash: text("content_hash"),
+    /** The model that produced `embedding`; see `memoryChunks.embeddingModel`. NULL = unknown. */
+    embeddingModel: text("embedding_model"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -3728,6 +3737,11 @@ export const chatMessages = pgTable(
      * rows only; null on user rows and on answers stored before v182.
      */
     answerOutcome: text("answer_outcome").$type<"answered" | "partial" | "abstained">(),
+    /**
+     * The next questions this answer offered — rule-derived by `deriveFollowUps`, never
+     * model-written. Stored so the chips survive a reload; empty on rows from before v196.
+     */
+    followUps: jsonb("follow_ups").$type<string[]>().default([]),
     /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before

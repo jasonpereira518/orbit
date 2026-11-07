@@ -3,9 +3,11 @@
 import { useState, useSyncExternalStore } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { SettingsSection } from "@/components/settings/settings-section";
+import { AccountHeader, BrandStrip, FeatureRow } from "@/components/settings/account-page";
+import { PROVIDER_THEMES } from "@/components/settings/provider-themes";
+import { cn } from "@/lib/utils";
 import { SegmentedControl } from "@/components/settings/account-rows";
-import { ChatGptMark, ClaudeMark } from "@/components/settings/provider-marks";
+import { AssistantsMark, ChatGptMark, ClaudeMark } from "@/components/settings/provider-marks";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -18,27 +20,27 @@ const MARKS: Record<Assistant, (props: { className?: string }) => React.ReactEle
 
 const ASSISTANTS: Record<
   Assistant,
-  { label: string; settingsHref: string; settingsLabel: string; steps: readonly string[] }
+  {
+    label: string;
+    settingsHref: string;
+    settingsLabel: string;
+    /** Where the link goes, in the assistant's own menu names. */
+    addPath: string;
+    note?: string;
+  }
 > = {
   claude: {
     label: "Claude",
     settingsHref: "https://claude.ai/new#customize/connectors/yours",
     settingsLabel: "Open Claude",
-    steps: [
-      "Copy your Orbit link.",
-      "In Claude, open Customize, then Connectors. Press + and choose Add custom connector.",
-      "Paste the link and press Add, then sign in to Orbit on the page that opens.",
-    ],
+    addPath: "Customize → Connectors → + → Add custom connector",
   },
   chatgpt: {
     label: "ChatGPT",
     settingsHref: "https://chatgpt.com/plugins",
     settingsLabel: "Open ChatGPT",
-    steps: [
-      "Copy your Orbit link.",
-      "In ChatGPT, open Settings, then Apps. Under Advanced settings, turn on Developer mode — it needs a paid ChatGPT plan.",
-      "Choose Create and paste the link, then sign in to Orbit on the page that opens.",
-    ],
+    addPath: "Settings → Apps → Advanced settings → Developer mode, then Create",
+    note: "Developer mode needs a paid ChatGPT plan",
   },
 };
 
@@ -52,6 +54,10 @@ const getConnectorUrl = () => `${window.location.origin}/api/mcp`;
  * Settings → Integrations → Claude and ChatGPT: Orbit inside the assistant someone already
  * uses. The assistant signs in to Orbit, so there is no key; the one paste left is the link
  * itself, which only an assistant's own connector directory could remove.
+ *
+ * Wears the chosen assistant's brand the way an account page wears its provider's: the theme
+ * class re-points `--primary`, so the picker, the Copy button and the focus rings all swap
+ * between Claude's terracotta and ChatGPT's black as the person picks one.
  */
 export function AssistantsSettings() {
   const [assistant, setAssistant] = useState<Assistant>("claude");
@@ -59,6 +65,7 @@ export function AssistantsSettings() {
   // No subscription — the origin never changes — and null on the server, which has no window.
   const url = useSyncExternalStore(subscribeNever, getConnectorUrl, () => null);
   const chosen = ASSISTANTS[assistant];
+  const theme = PROVIDER_THEMES[assistant];
 
   async function copyLink() {
     if (!url) return;
@@ -71,57 +78,88 @@ export function AssistantsSettings() {
     }
   }
 
+  const step = (n: number) => <span className="text-xs font-semibold tabular-nums">{n}</span>;
+
   return (
-    <SettingsSection
-      title="Claude and ChatGPT"
-      description="Ask Claude or ChatGPT about your network, and let them log notes for you. They sign in to Orbit, so there’s no key to copy. Works on every plan."
-    >
-      <div>
-        <SegmentedControl
-          label="Which assistant do you use?"
-          options={ASSISTANT_IDS.map((id) => {
-            const Mark = MARKS[id];
-            return {
-              value: id,
-              label: (
-                <>
-                  <Mark className="size-4" />I use {ASSISTANTS[id].label}
-                </>
-              ),
-            };
-          })}
-          value={assistant}
-          onChange={setAssistant}
-        />
+    <div className={cn("space-y-4", theme.className)}>
+      <AccountHeader
+        name="Claude and ChatGPT"
+        mark={<AssistantsMark />}
+        accountLine={null}
+        status={{ state: "on", detail: "Works on every plan · no key needed" }}
+        menuItems={[]}
+      />
+      <div className="text-ink">
+        <BrandStrip theme={theme} />
       </div>
 
-      <ol className="list-decimal space-y-2 pl-5 text-sm text-foreground">
-        {chosen.steps.map((step) => (
-          <li key={step}>{step}</li>
-        ))}
-      </ol>
+      <SegmentedControl
+        label="Which assistant do you use?"
+        options={ASSISTANT_IDS.map((id) => {
+          const Mark = MARKS[id];
+          return {
+            value: id,
+            label: (
+              <>
+                <Mark className="size-4" />
+                {ASSISTANTS[id].label}
+              </>
+            ),
+          };
+        })}
+        value={assistant}
+        onChange={(next) => {
+          setAssistant(next);
+          setCopied(false);
+        }}
+      />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={copyLink} disabled={!url}>
-          {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-          {copied ? "Copied" : "Copy link"}
-        </Button>
-        <a
-          href={chosen.settingsHref}
-          target="_blank"
-          rel="noreferrer"
-          className={buttonVariants({ variant: "outline" })}
+      <ul>
+        <FeatureRow
+          icon={step(1)}
+          tone={theme.tone}
+          title="Copy your Orbit link"
+          description={url ? <span className="font-mono text-xs break-all">{url}</span> : "Your link appears here"}
+          control={{ kind: "none" }}
+          onAction={() => {}}
         >
-          {chosen.settingsLabel}
-          <ExternalLink aria-hidden />
-        </a>
-      </div>
-
-      {url ? (
-        <p className="text-xs break-all text-muted-foreground">
-          Your Orbit link: <span className="font-mono">{url}</span>
-        </p>
-      ) : null}
-    </SettingsSection>
+          <Button size="sm" onClick={copyLink} disabled={!url}>
+            {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+            {copied ? "Copied" : "Copy link"}
+          </Button>
+        </FeatureRow>
+        <FeatureRow
+          icon={step(2)}
+          tone={theme.tone}
+          title={`Add it in ${chosen.label}`}
+          description={
+            <>
+              {chosen.addPath}
+              {chosen.note ? <span className="block text-xs">{chosen.note}</span> : null}
+            </>
+          }
+          control={{ kind: "none" }}
+          onAction={() => {}}
+        >
+          <a
+            href={chosen.settingsHref}
+            target="_blank"
+            rel="noreferrer"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            {chosen.settingsLabel}
+            <ExternalLink aria-hidden />
+          </a>
+        </FeatureRow>
+        <FeatureRow
+          icon={step(3)}
+          tone={theme.tone}
+          title="Sign in to Orbit"
+          description={`On the page ${chosen.label} opens · then ask about your network`}
+          control={{ kind: "none" }}
+          onAction={() => {}}
+        />
+      </ul>
+    </div>
   );
 }

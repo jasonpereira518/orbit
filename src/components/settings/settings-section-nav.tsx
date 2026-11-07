@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SECTION_SCROLL_OFFSET } from "@/components/settings/sections";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /** A rail row: one settings group, and the id of the element that anchors it. */
 export type RailSection = { id: string; label: string };
@@ -25,7 +26,7 @@ function anchorLine() {
 }
 
 function reducedMotion() {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return prefersReducedMotion();
 }
 
 /**

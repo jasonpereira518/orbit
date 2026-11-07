@@ -17,6 +17,7 @@ import {
 import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
 import { preloadConstellation } from "@/components/graph/constellation-modules";
 import { cn } from "@/lib/utils";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /**
  * The warp intro's host, mounted as a SIBLING of the graph's Suspense boundary.
@@ -69,7 +70,7 @@ export function ConstellationIntro() {
     // enough to ship an animation to someone who asked for none.
     const reduced =
       typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      prefersReducedMotion();
 
     const forced =
       typeof window !== "undefined" &&

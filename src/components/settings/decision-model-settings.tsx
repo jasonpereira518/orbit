@@ -7,7 +7,6 @@ import { clearDecisionKey, getSettings, saveDecisionKey } from "@/actions/settin
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SettingsSection } from "@/components/settings/settings-section";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -34,19 +33,19 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
   // Orbit's own rules (keyword filters, name matching). So the copy says "as before", not
   // "on your chat model", which was only true of some of them.
   const status = state.switchedOff
-    ? "Switched off on this server — these steps run as they did before Jev"
+    ? "Off on this server — small yes-or-no steps run as before"
     : state.keySaved
-      ? "Your TypeSafe key is saved — Jev is handling these steps"
-      : "No key — these steps run as they always have";
+      ? "TypeSafe key saved · Jev handles small yes-or-no and ranking steps"
+      : "Add a TypeSafe key to let Jev handle small yes-or-no and ranking steps";
 
   return (
-    <SettingsSection
-      title="Decision model (optional)"
-      description="Jev is TypeSafe’s decision model — it handles small yes-or-no and ranking steps Orbit would otherwise do on your chat model. It’s optional, and nothing changes until you add a key below."
-    >
-      <p className="text-sm text-muted-foreground" role="status">
-        Status: {status}
-      </p>
+    <div className="space-y-3">
+      <div className="space-y-0.5">
+        <h4 className="text-sm font-medium text-ink">Decision model · optional</h4>
+        <p className="text-sm text-muted-foreground" role="status">
+          {status}
+        </p>
+      </div>
 
       <div className="space-y-1.5">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -88,8 +87,8 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
 
       <div className="flex flex-wrap gap-2">
         <Button
+          size="sm"
           disabled={pending || !apiKey.trim()}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
           onClick={() =>
             start(async () => {
               try {
@@ -111,6 +110,7 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
           Save key
         </Button>
         <Button
+          size="sm"
           variant="outline"
           disabled={pending || !state.keySaved}
           onClick={() =>
@@ -128,6 +128,6 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
           Clear key
         </Button>
       </div>
-    </SettingsSection>
+    </div>
   );
 }

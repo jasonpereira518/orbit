@@ -39,7 +39,7 @@ function parsed(text: string, names: string[], existing: Map<string, string>, re
       },
       opportunities: [], impliedSteps: [], cadence: null,
       duplicates: existing.has(name)
-        ? [{ id: existing.get(name)!, fullName: name, company: null, title: null, reason: "Same email", confidence: 0.95 }]
+        ? [{ id: existing.get(name)!, fullName: name, company: null, title: null, reason: "Same name + company", confidence: 0.9 }]
         : [],
       suggestedMergeId: existing.get(name) ?? null,
       sharedNoteTexts: [],

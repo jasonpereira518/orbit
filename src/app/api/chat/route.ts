@@ -31,10 +31,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * Streaming chat. The server action (`askNetwork`) returned the whole answer at once, so
- * the user watched a spinner for the full model latency; this streams the prose as the
- * model produces it and sends the recommendations once the stream ends. Retrieval and
- * persistence are shared with the action (`prepareChatContext`, `persistAssistantTurn`).
+ * Streaming chat, the one path every chat answer takes (the page and the ask bar). It streams
+ * the prose as the model produces it and sends the recommendations once the stream ends.
+ * Retrieval and persistence live in `prepareChatContext` and `persistAssistantTurn`.
  *
  * Retrieval runs inside the stream rather than before it, so each stage can narrate itself
  * as `step` events — see `@/lib/chat-steps`. That is also why the headers now flush almost
@@ -265,12 +264,6 @@ export async function POST(request: Request) {
         });
         const cited = citedIds(cleanAnswer);
         const citedEvidence = Object.fromEntries(cited.map((id) => [id, result.evidence[id]]));
-        if (strippedCount > 0) {
-          steps.done("verify", { label: `Removed ${plural(strippedCount, "unsupported citation")}` });
-        }
-        if (strayBlockIds > 0) {
-          steps.done("verify", { label: `Removed ${plural(strayBlockIds, "person or list", "people or lists")} not in your network` });
-        }
 
         const rawRecommendations = result.recommendations as ChatRecommendation[];
         const listed = ctx.filterRecommendations(rawRecommendations);
@@ -294,11 +287,16 @@ export async function POST(request: Request) {
         // Only worth a step when it actually caught something — a filter that passed
         // everything through did no work the user needs to hear about.
         const dropped = (rawRecommendations?.length ?? 0) - listed.length;
-        if (dropped > 0) {
-          steps.done("verify", {
-            label: `Dropped ${plural(dropped, "suggestion")} not in your network`,
-          });
-        }
+        // One step for every check: they share the `verify` id, so separate `done`s would
+        // leave only the last one standing.
+        const caught = [
+          strippedCount > 0 ? `Removed ${plural(strippedCount, "unsupported citation")}` : null,
+          strayBlockIds > 0
+            ? `Removed ${plural(strayBlockIds, "person or list", "people or lists")} not in your network`
+            : null,
+          dropped > 0 ? `Dropped ${plural(dropped, "suggestion")} not in your network` : null,
+        ].filter((line): line is string => line !== null);
+        if (caught.length > 0) steps.done("verify", { label: caught.join(" · ") });
         send({ type: "recommendations", items: recommendations });
         if (cited.length > 0) send({ type: "evidence", items: citedEvidence });
 
@@ -320,6 +318,19 @@ export async function POST(request: Request) {
         // A beat for a title that is nearly there, never longer: if it is not ready the thread
         // is named the old way (the first message, cut short) rather than holding the answer.
         const title = await settleWithin(titlePromise, TITLE_GRACE_MS);
+        // Once, for both the row and the `done` event, so a reload shows the chips this did.
+        const followUps = deriveFollowUps({
+          question: ctx.q,
+          // A company or school only: a filter roster is named "People in fintech", which
+          // reads as nonsense after "Who else do I know at".
+          topRosterCompany: ctx.orgRosters.find((r) => r.kind !== "filter")?.name ?? null,
+          firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
+          // Never for prep: the search's top hit is not the meeting's person. Never a handle
+          // ("calvintwong25").
+          topContactName: ctx.route?.prep
+            ? null
+            : ([ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n)) ?? null),
+        });
         // Persisted before `done` so the client learns the real message id and title. The
         // CLEANED text, not what streamed live — an invented citation was already visible
         // for that turn, but a reload should never show a dead `[e99]` nobody can resolve.
@@ -334,6 +345,7 @@ export async function POST(request: Request) {
           title,
           evidence: citedEvidence,
           proposedActions,
+          followUps,
           // Labelled on the text with its blocks still as directives, so a people or list
           // block counts as grounding — `expandLists` above has turned lists into tables.
           answerOutcome: labelAnswer(cleanAnswer, {
@@ -361,16 +373,7 @@ export async function POST(request: Request) {
           title: saved.title,
           version: versionTarget ? { slot: versionTarget.slot, version: versionTarget.nextVersion } : null,
           notice: ctx.searchNotice,
-          followUps: deriveFollowUps({
-            question: ctx.q,
-            topRosterCompany: ctx.orgRosters[0]?.name ?? null,
-            firstOverdueName: ctx.attention?.overdue[0]?.name ?? null,
-            // Never for prep: the search's top hit is not the meeting's person. Never a handle
-            // ("calvintwong25").
-            topContactName: ctx.route?.prep
-              ? null
-              : ([ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n)) ?? null),
-          }),
+          followUps,
           retrieved: ctx.retrieved.map((c) => ({
             id: c.id,
             fullName: c.fullName,
