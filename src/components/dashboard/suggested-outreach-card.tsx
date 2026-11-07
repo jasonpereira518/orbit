@@ -4,10 +4,11 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { getPeopleToMeet, saveResearchedPerson } from "@/actions/web-research";
-import { LINKEDIN_PROFILE, requestBrief } from "@/components/find/find-people";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { SuggestionRow } from "@/components/dashboard/suggestion-row";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LINKEDIN_PROFILE, requestBrief } from "@/lib/research-client";
 import { friendlyError } from "@/lib/errors";
 import type { PersonToMeet } from "@/lib/people-to-meet";
 import { toast } from "@/lib/toast";
@@ -61,6 +62,10 @@ function PersonToMeetRow({ person }: { person: PersonToMeet }) {
   const [summary, setSummary] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  // Find people is a paid feature: Free sees the row and the link, but /api/research and
+  // saveResearchedPerson would refuse it, so no buttons.
+  const { plan, planConfig } = useViewerPlan();
+  const canResearch = planConfig[plan].features.findPeople;
 
   // Save and Brief share one person brief (cached server-side), so Save never needs Brief first.
   const brief = async () => {
@@ -105,6 +110,7 @@ function PersonToMeetRow({ person }: { person: PersonToMeet }) {
       {person.headline && <p className="mt-0.5 text-xs text-muted-foreground">{person.headline}</p>}
       <p className="mt-1.5 text-sm text-ink/80">{person.whyMatches}</p>
       {summary && <p className="mt-1.5 text-xs text-muted-foreground">{summary}</p>}
+      {canResearch && (
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {saved ? (
           <Link href={`/contacts/${saved}`} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
@@ -129,6 +135,7 @@ function PersonToMeetRow({ person }: { person: PersonToMeet }) {
           </>
         )}
       </div>
+      )}
     </div>
   );
 }
