@@ -225,6 +225,7 @@
 @source "../lib/pass-invites.ts";
 @source "../lib/pass-seen.ts";
 @source "../lib/pgvector.ts";
+@source "../lib/plain-text.ts";
 @source "../lib/plan-limits.ts";
 @source "../lib/plan-upgrade-events.ts";
 @source "../lib/plans/plan-config.ts";
