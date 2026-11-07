@@ -403,7 +403,7 @@ stubbed providers; **nothing has been run against a live provider or the live ev
 | P0-4 truncation and refusal | `ai-finish.ts`; typed errors; truncated JSON retried once at 2x cap; chat notes a cut-off answer | Not the gather tool driver, Gemini audio transcription, or a `finish_reason` column (P3-4) |
 | P0-5 abandoned calls | Understand, title and refine cancel their request; 1.5 s soft deadline on the question's embedding | Gather tool execution still ignores Stop |
 | P0-6 logs | Starters warning logs a length; hygiene smoke scans for model-text logging; Resend/Twilio patterns | Deepgram/TypeSafe/Apollo keys have no distinctive shape |
-| P0-7 web search | `web_searches` recorded and priced; one web lookup per gather turn enforced; sweep limited to contacts active in 90 days | No per-call cap on OpenAI or Gemini (the installed OpenAI SDK has no request parameter; Gemini has none). **Fee rates are from memory: verify.** |
+| P0-7 web search | `web_searches` recorded and priced (main's metering; fee rates here corrected: OpenAI $10 per 1,000, Gemini 3 $14 per query, 2.5 and earlier $35 per grounded prompt, Anthropic $10, all checked against the providers' pricing pages on 2026-11-06); managed web search runs on Anthropic then OpenAI, never Orbit's Gemini key; the sweep skips cold contacts (main's rule) | No per-call cap on OpenAI or Gemini (the installed OpenAI SDK has no request parameter; Gemini has none). The one-web-lookup-per-gather-turn code was dropped when main retired the research step; the answer loop limits research tools by prompt. OpenAI's fixed 8,000-token search block for gpt-4o-mini is not in the fee. |
 
 ### P1, all done, several narrower than written
 
