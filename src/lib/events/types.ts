@@ -94,6 +94,8 @@ export type AttendeeSource =
   | "calendar"
   /** A guest list the user opened on Luma/Partiful and saved from the extension. */
   | "extension"
+  /** Somebody the user logged as met through "Log who you met" (a capture opened from the event). */
+  | "capture"
   | EventProviderId;
 export type AttendeeRole = "attendee" | "host" | "speaker";
 
@@ -149,17 +151,3 @@ export type RosterRow = {
   contactId: string | null;
 };
 
-/**
- * What a connect run did.
- *
- * `blockedByPlan` is carried all the way to the UI on purpose: it is the difference between
- * "we added everyone" and "we silently dropped people because your plan is full", and folding
- * it into a success count would make the second look like the first.
- */
-export type ConnectSummary = {
-  created: number;
-  matched: number;
-  interactionsLogged: number;
-  blockedByPlan: number;
-  unmatched: number;
-};
