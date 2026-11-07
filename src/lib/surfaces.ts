@@ -269,6 +269,8 @@ export const REPLY_INBOX_SURFACE_KEY = "feature.reply-inbox";
 export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
 /** Cloud notes: watch Drive/OneDrive for meeting notes, and the /capture Drive & OneDrive tab. */
 export const CLOUD_NOTES_SURFACE_KEY = "feature.cloud-notes";
+/** Notion: the settings page, the Capture picker and the people-database sync. */
+export const NOTION_SURFACE_KEY = "feature.notion";
 const FEATURES: Surface[] = [
   {
     key: COMPOSE_SURFACE_KEY,
@@ -308,6 +310,14 @@ const FEATURES: Surface[] = [
     description:
       "Finds meeting notes in Google Drive or OneDrive, offers to extract them, and adds the Drive & OneDrive tab on Capture.",
     // Google's drive.readonly is restricted: until CASA passes only consent-screen test users can grant it.
+    comingSoon: true,
+  },
+  {
+    key: NOTION_SURFACE_KEY,
+    kind: "feature",
+    label: "Notion",
+    description: "Connect Notion: pick pages to capture on Capture, and sync a people database into contacts.",
+    // Until /privacy says what Orbit reads from Notion and the public integration is approved.
     comingSoon: true,
   },
 ];

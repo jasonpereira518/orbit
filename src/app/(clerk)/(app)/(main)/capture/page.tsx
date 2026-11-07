@@ -17,7 +17,7 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 import { findEventById } from "@/lib/calendar-events";
 import { userTimeZone } from "@/lib/meeting-context";
 import { ymdInZone } from "@/lib/reminder-due-bucket";
-import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
+import { CLOUD_NOTES_SURFACE_KEY, NOTION_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 
 export const metadata = { title: "Capture" };
@@ -46,6 +46,7 @@ export default async function CapturePage({
   const importsLivePromise = userIdPromise.then((userId) => isSurfaceLive(userId, "page.imports")).catch(() => false);
   // Null hides the Drive & OneDrive tab: the surface is not live for this viewer, or the read failed.
   const cloudLivePromise = userIdPromise.then((userId) => isSurfaceLive(userId, CLOUD_NOTES_SURFACE_KEY)).catch(() => false);
+  const notionLivePromise = userIdPromise.then((userId) => isSurfaceLive(userId, NOTION_SURFACE_KEY)).catch(() => false);
 
   // The Imports tab renders on the server only when selected, so an ordinary capture visit
   // pays for none of the import hub's reads — and none of the capture reads below run here.
@@ -124,6 +125,7 @@ export default async function CapturePage({
   const ignoredCount = await ignoredPromise;
   const cloudNotes = await cloudNotesPromise;
   const showImports = await importsLivePromise;
+  const showNotion = await notionLivePromise;
   const defaultMode: CaptureMode = modeParam || "messy";
   // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Whisper or
   // Gemini — or Orbit's on Lifetime). Anthropic has no speech-to-text, so an Anthropic-only
@@ -154,6 +156,7 @@ export default async function CapturePage({
         cloudNotes={cloudNotes}
         openCloudReview={params.review === "1"}
         showImports={showImports}
+        showNotion={showNotion}
         drive={{
           apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
           appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,

@@ -4753,6 +4753,10 @@
       "granola": {
         "state": "off",
         "detail": "Not connected"
+      },
+      "notion": {
+        "state": "off",
+        "detail": "Not connected"
       }
     },
     "accounts": {
@@ -4809,6 +4813,10 @@
         "detail": "1 key"
       },
       "granola": {
+        "state": "off",
+        "detail": "Not connected"
+      },
+      "notion": {
         "state": "off",
         "detail": "Not connected"
       }

@@ -29,6 +29,7 @@ import {
 import { NotesSorterDialog } from "@/components/capture/notes-sorter-dialog";
 import { DriveCaptureButton, type DriveCaptureConfig } from "@/components/capture/drive-capture-button";
 import { GranolaCaptureButton } from "@/components/capture/granola-capture-button";
+import { NotionCaptureButton } from "@/components/capture/notion-capture-button";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { FanoutEntry } from "@/lib/capture/fanout";
@@ -55,6 +56,7 @@ export function NotesLibraryUpload({
   onQueued,
   drive = null,
   canUseSync = false,
+  showNotion = false,
 }: {
   hasApiKey: boolean;
   panelId: string;
@@ -63,6 +65,7 @@ export function NotesLibraryUpload({
   onQueued: (jobIds: string[]) => void;
   drive?: DriveCaptureConfig | null;
   canUseSync?: boolean;
+  showNotion?: boolean;
 }) {
   const filePickerRef = useRef<HTMLInputElement>(null);
   const folderPickerRef = useRef<HTMLInputElement>(null);
@@ -190,6 +193,7 @@ export function NotesLibraryUpload({
           </Button>
           <DriveCaptureButton drive={drive} canUseSync={canUseSync} disabled={busy || reading} onQueued={onQueued} />
           <GranolaCaptureButton canUseSync={canUseSync} disabled={busy || reading} onQueued={onQueued} />
+          <NotionCaptureButton show={showNotion} disabled={busy || reading} onQueued={onQueued} />
         </div>
 
         {reading && (
