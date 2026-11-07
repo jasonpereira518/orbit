@@ -205,8 +205,10 @@ function main() {
   console.log("\nfresh intros");
   {
     const met = ago(10);
-    check("met ten days ago with nothing since is a reach_out",
-      scoreOf(kinds(contact({ firstInteractionAt: met, lastInteractionAt: met })), "reach_out") !== null);
+    // Radar no longer scores a "recent intro": an importer stamps first and last interaction
+    // with the import time, so "met ten days ago" meant "imported ten days ago".
+    check("met ten days ago with nothing since is not a reach_out any more",
+      scoreOf(kinds(contact({ firstInteractionAt: met, lastInteractionAt: met })), "reach_out") === null);
     check("met ten days ago and spoke since is not",
       scoreOf(kinds(contact({ firstInteractionAt: met, lastInteractionAt: ago(8) })), "reach_out") === null);
     check("met thirty days ago is past the window",
