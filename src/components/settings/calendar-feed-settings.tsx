@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { Apple, CalendarDays, Link2, Mail, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   disableCalendarFeed,
@@ -11,11 +11,8 @@ import {
   type CalendarFeedStatus,
 } from "@/actions/calendar-feed";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { LoadError } from "@/components/settings/account-page";
-import { Input } from "@/components/ui/input";
+import { AccountHeader, FeatureRow, LoadError, whenLine } from "@/components/settings/account-page";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SettingsSection } from "@/components/settings/settings-section";
-import { Disclosure } from "@/components/settings/disclosure";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
@@ -61,7 +58,6 @@ export function CalendarFeedSettings() {
   const [status, setStatus] = useState<CalendarFeedStatus | null>(null);
   const [loadFailure, setLoadFailure] = useState<"timeout" | "error" | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
-  const [revealed, setRevealed] = useState(false);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
   const [pending, start] = useTransition();
   const regenFocus = useConfirmFocus(confirmingRegen ? "regen" : null);
@@ -96,7 +92,6 @@ export function CalendarFeedSettings() {
         const next = await withTimeout(fn(), LOAD_TIMEOUT_MS);
         setStatus(next);
         setConfirmingRegen(false);
-        setRevealed(false);
         toast.success(label);
       } catch (err) {
         const timedOut = err instanceof Error && err.message === TIMED_OUT;
@@ -109,163 +104,127 @@ export function CalendarFeedSettings() {
     });
   }
 
-  return (
-    <SettingsSection
-      title="Reminders in calendar"
-      description="Subscribe to your reminders in Google Calendar, Apple Calendar, or Outlook so they show up alongside everything else."
-    >
+  const header = (
+    <>
+      <AccountHeader
+        name="Reminders in calendar"
+        mark={<CalendarDays className="text-ink" />}
+        accountLine={null}
+        status={
+          !status
+            ? { state: "off", detail: loadFailure ? "Couldn’t check" : "Checking…", busy: !loadFailure }
+            : !status.enabled
+              ? { state: "off", detail: "Off" }
+              : status.lastFetchedAt
+                ? { state: "on", detail: `Fetched ${whenLine(status.lastFetchedAt)}` }
+                : { state: "partial", detail: "Waiting for your calendar’s first check" }
+        }
+        primaryAction={
+          status && !status.enabled
+            ? { label: "Create feed", disabled: pending, onClick: () => run("Calendar feed created", enableCalendarFeed) }
+            : undefined
+        }
+        menuItems={
+          status?.enabled
+            ? [
+                { label: "Replace link…", onSelect: () => setConfirmingRegen(true) },
+                { label: "Turn off", onSelect: () => run("Calendar feed turned off", disableCalendarFeed) },
+              ]
+            : []
+        }
+      />
+      <div aria-hidden className="h-1 rounded-full bg-muted" />
+    </>
+  );
 
+  return (
+    <div className="space-y-4">
+      {header}
       {loadFailure && !status ? (
         <LoadError what="calendar feed settings" onRetry={() => setReloadKey((k) => k + 1)} />
       ) : !status ? (
         <div className="space-y-2" aria-busy="true" aria-label="Loading calendar feed">
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-9 w-44 rounded-lg" />
+          <Skeleton className="h-12 w-full rounded-lg" />
+          <Skeleton className="h-12 w-full rounded-lg" />
         </div>
       ) : !status.enabled ? (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Creates a private link your calendar app checks periodically.
-          </p>
-          <Button disabled={pending} onClick={() => run("Calendar feed created", enableCalendarFeed)}>
-            Create calendar feed
-          </Button>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Your reminders with a due date, in Google, Apple or Outlook calendar
+        </p>
       ) : (
-        <div className="space-y-4">
-          {status.url ? (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                These open your calendar app’s add-calendar screen — finish subscribing there.
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <a href={status.webcalUrl!} className={buttonVariants({ variant: "outline", size: "sm" })}>
-                  Open in Apple Calendar
-                </a>
-                <a
-                  href={status.googleAddUrl!}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={buttonVariants({ variant: "outline", size: "sm" })}
-                >
-                  Open in Google Calendar
-                </a>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Outlook:{" "}
-                <a
-                  href={status.outlookOfficeAddUrl!}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline underline-offset-2 hover:text-foreground"
-                >
-                  work
-                </a>{" "}
-                ·{" "}
-                <a
-                  href={status.outlookLiveAddUrl!}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline underline-offset-2 hover:text-foreground"
-                >
-                  personal
-                </a>
-              </p>
+        <>
+          {confirmingRegen ? (
+            <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-warning-border bg-warning-surface p-3 text-sm">
+              <p className="min-w-0 flex-1">The old link stops working · re-subscribe on every device</p>
+              <Button
+                ref={regenFocus.confirmRef("regen")}
+                size="sm"
+                disabled={pending}
+                onClick={() => run("New link created", regenerateCalendarFeedToken)}
+              >
+                Replace link
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmingRegen(false)}>
+                Cancel
+              </Button>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Your reminders are already in your calendar. Orbit keeps only a fingerprint of
-              the link, so it can’t show it again — regenerating below replaces the current
-              link, and the existing subscription stops updating.
-            </p>
-          )}
+          ) : null}
 
-          <p className="text-xs text-muted-foreground">
-            {status.lastFetchedAt
-              ? `Last fetched by a calendar app ${formatDistanceToNow(
-                  new Date(status.lastFetchedAt),
-                  { addSuffix: true }
-                )}.`
-              : "Not fetched yet — calendar apps can take several hours to check the first time."}
-          </p>
-
-          <ul className="space-y-1 text-xs text-muted-foreground">
-            <li>
-              <strong className="text-foreground">Keep this link secret.</strong>{" "}
-              Anyone who has it can read your reminder titles, notes, and contact
-              names.
-            </li>
-            <li>
-              Google Calendar refreshes subscribed calendars on its own schedule
-              — often 8–24 hours — so new reminders may not appear right away.
-            </li>
-            <li>
-              In Google Calendar, add a notification to the subscribed calendar
-              in its settings. Google ignores the alerts inside the feed.
-            </li>
-            <li>
-              In Apple Calendar, set the subscription to refresh every hour and
-              leave &ldquo;Remove alerts&rdquo; unchecked.
-            </li>
-            <li>Only reminders with a due date appear in your calendar.</li>
-          </ul>
-
-          <Disclosure label="Advanced">
-            {status.url && (
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Copy this link now — Orbit won’t show it again.</p>
-                <Input
-                  readOnly
-                  value={revealed ? status.url : maskUrl(status.url)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  className="font-mono text-xs"
-                  aria-label="Calendar feed URL"
-                />
+          {status.url ? (
+            <ul className="-my-1">
+              <FeatureRow
+                icon={<Apple />}
+                title="Apple Calendar"
+                description="Set it to refresh every hour"
+                control={{ kind: "action", label: "Open" }}
+                onAction={() => {
+                  window.location.href = status.webcalUrl!;
+                }}
+              />
+              <FeatureRow
+                icon={<CalendarDays />}
+                title="Google Calendar"
+                description="Refreshes every 8–24 hours · add alerts in its settings"
+                control={{ kind: "action", label: "Open" }}
+                onAction={() => window.open(status.googleAddUrl!, "_blank", "noreferrer")}
+              />
+              <FeatureRow
+                icon={<Mail />}
+                title="Outlook"
+                description="Work or personal account"
+                control={{ kind: "none" }}
+                onAction={() => {}}
+              >
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setRevealed((v) => !v)}>
-                    {revealed ? "Hide" : "Reveal"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={async () => {
-                      await navigator.clipboard.writeText(status.url!);
-                      toast.success(TOAST_COPY.copied);
-                    }}
-                  >
-                    Copy link
-                  </Button>
+                  <a href={status.outlookOfficeAddUrl!} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                    Work
+                  </a>
+                  <a href={status.outlookLiveAddUrl!} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                    Personal
+                  </a>
                 </div>
-              </div>
-            )}
-
-            <div className="flex flex-wrap gap-2">
-              {confirmingRegen ? (
-                <>
-                  <Button
-                    ref={regenFocus.confirmRef("regen")}
-                    size="sm"
-                    variant="outline"
-                    disabled={pending}
-                    onClick={() =>
-                      run("New link created", regenerateCalendarFeedToken)
-                    }
-                  >
-                    Yes, replace the link
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setConfirmingRegen(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <p role="status" className="w-full text-xs text-muted-foreground">
-                    Your old link stops working immediately. You&apos;ll need to
-                    re-subscribe on every device.
-                  </p>
-                </>
-              ) : (
+              </FeatureRow>
+              <FeatureRow
+                icon={<Link2 />}
+                title="Copy the link"
+                description={<span className="font-mono text-xs break-all">{maskUrl(status.url)}</span>}
+                control={{ kind: "action", label: "Copy" }}
+                onAction={async () => {
+                  try {
+                    await navigator.clipboard.writeText(status.url!);
+                    toast.success(TOAST_COPY.copied);
+                  } catch {
+                    toast.error(TOAST_COPY.copyFailed);
+                  }
+                }}
+              />
+            </ul>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Subscribed · Orbit can’t show this link again · replace it to add another calendar
+              </p>
+              {confirmingRegen ? null : (
                 <Button
                   ref={regenFocus.triggerRef("regen")}
                   size="sm"
@@ -273,24 +232,18 @@ export function CalendarFeedSettings() {
                   disabled={pending}
                   onClick={() => setConfirmingRegen(true)}
                 >
-                  Regenerate link
+                  <RefreshCw aria-hidden />
+                  Replace link
                 </Button>
               )}
             </div>
-          </Disclosure>
+          )}
 
-          <div>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={pending}
-              onClick={() => run("Calendar feed turned off", disableCalendarFeed)}
-            >
-              Turn off
-            </Button>
-          </div>
-        </div>
+          <p className="text-xs text-muted-foreground">
+            Keep the link private · anyone with it can read your reminders
+          </p>
+        </>
       )}
-    </SettingsSection>
+    </div>
   );
 }

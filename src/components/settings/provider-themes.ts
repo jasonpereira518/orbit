@@ -1,5 +1,6 @@
 /**
- * Each account page's brand theme, in one place. `className` re-points `--primary` (buttons,
+ * Each account page's brand theme, in one place — plus Claude's and ChatGPT's, which the
+ * Assistants page swaps between as the person picks one. `className` re-points `--primary` (buttons,
  * switches, checkboxes) and `--ring` at the provider's own UI colour, so a page recolours its
  * controls without any control knowing; logos keep their exact published colours separately.
  *
@@ -7,7 +8,7 @@
  * checks both). Tailwind only compiles class names it can see whole, so each stays a literal.
  */
 
-export type ProviderThemeId = "google" | "microsoft" | "linkedin" | "granola";
+export type ProviderThemeId = "google" | "microsoft" | "linkedin" | "granola" | "claude" | "chatgpt";
 
 export type ProviderTheme = {
   className: string;
@@ -55,6 +56,26 @@ export const PROVIDER_THEMES: Record<ProviderThemeId, ProviderTheme> = {
     stripe: ["#B4C44A"],
     stripeVariant: "solid",
     tone: "#6B7A1A",
+  },
+  // Claude's terracotta. The published #D97757 under white text is 3.1:1, so light mode
+  // deepens it; dark mode keeps the real colour with dark text.
+  claude: {
+    className:
+      "[--primary:#B85A38] [--primary-foreground:#ffffff] [--ring:#B85A38] dark:[--primary:#D97757] dark:[--primary-foreground:#1a0f0a] dark:[--ring:#D97757]",
+    primary: { light: "#B85A38", dark: "#D97757", lightText: "#ffffff", darkText: "#1a0f0a" },
+    stripe: ["#D97757"],
+    stripeVariant: "solid",
+    tone: "#B85A38",
+  },
+  // ChatGPT is black on white, white on black. The strip is `currentColor` so it follows the
+  // text colour across themes rather than vanishing into the dark background.
+  chatgpt: {
+    className:
+      "[--primary:#0D0D0D] [--primary-foreground:#ffffff] [--ring:#0D0D0D] dark:[--primary:#ECECEC] dark:[--primary-foreground:#0D0D0D] dark:[--ring:#ECECEC]",
+    primary: { light: "#0D0D0D", dark: "#ECECEC", lightText: "#ffffff", darkText: "#0D0D0D" },
+    stripe: ["currentColor"],
+    stripeVariant: "solid",
+    tone: "currentColor",
   },
 };
 

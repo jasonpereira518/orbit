@@ -5,6 +5,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
 import { FeatureRow } from "@/components/settings/account-page";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
@@ -49,6 +50,38 @@ export function useSyncNow(
         }
       }),
   };
+}
+
+/**
+ * One number at a glance: a small label, the value, one short line under it, and room for a
+ * bar or a button. `value` undefined is still loading; null is a source that failed.
+ */
+export function StatTile({
+  label,
+  value,
+  sub,
+  title,
+  children,
+}: {
+  label: string;
+  value: React.ReactNode | null | undefined;
+  sub?: React.ReactNode;
+  /** The longer story behind the tile — a reset date, the full model name. */
+  title?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div title={title} className="flex min-w-0 flex-col gap-1 rounded-xl border border-border/70 p-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      {value === undefined ? (
+        <Skeleton className="my-1 h-6 w-16" />
+      ) : (
+        <p className="truncate font-heading text-xl text-ink tabular-nums">{value ?? "—"}</p>
+      )}
+      <p className="truncate text-xs text-muted-foreground">{value === null ? "Unavailable" : sub}</p>
+      {children ? <div className="mt-auto pt-1">{children}</div> : null}
+    </div>
+  );
 }
 
 /**

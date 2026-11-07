@@ -2,6 +2,8 @@
 
 import { useId } from "react";
 
+import { cn } from "@/lib/utils";
+
 /**
  * The Google, Microsoft, LinkedIn, Gemini, OpenAI, Claude and ChatGPT marks, in
  * the providers' own colours as their brand guidelines ask. Decorative: the provider's name
@@ -177,6 +179,24 @@ export function ChatGptMark({ className }: MarkProps) {
         transform="rotate(300 1203 1203)"
       />
     </svg>
+  );
+}
+
+/**
+ * Claude and ChatGPT together, for the page that covers both: Claude's asterisk top-left and
+ * ChatGPT's knot bottom-right, overlapping on the diagonal. The knot sits on a disc of the
+ * page background with a hairline ring, so the overlap reads as two marks rather than one
+ * smudge at the 16px the nav draws it. Sized entirely in percentages, so it follows whatever
+ * size class it is given.
+ */
+export function AssistantsMark({ className }: MarkProps) {
+  return (
+    <span aria-hidden className={cn("relative inline-block", className)}>
+      <ClaudeMark className="absolute top-0 left-0 size-[68%]" />
+      <span className="absolute right-0 bottom-0 flex size-[68%] items-center justify-center rounded-full bg-background ring-1 ring-border">
+        <ChatGptMark className="size-[76%] text-foreground" />
+      </span>
+    </span>
   );
 }
 
