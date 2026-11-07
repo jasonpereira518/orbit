@@ -402,7 +402,9 @@ export function MentionComposer({
       }
     }
 
-    if (markdown && !menuOpen && !composing && !e.nativeEvent.isComposing) {
+    // keyCode 229: Safari fires compositionend BEFORE the Enter that commits an IME
+    // candidate, so neither flag catches that Enter — without this it would add a bullet.
+    if (markdown && !menuOpen && !composing && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
       const el = e.currentTarget;
       const { selectionStart: start, selectionEnd: end } = el;
       const mod = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;

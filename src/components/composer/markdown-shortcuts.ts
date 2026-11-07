@@ -31,6 +31,9 @@ export type WrapMarker = "**" | "_";
  * Unwrapping accepts the markers just OUTSIDE the selection (select the word, press Cmd+B
  * again) or as the selection's own ends (select `**word**`). With nothing selected an empty
  * pair goes in and the caret lands between them, ready to type.
+ *
+ * Whitespace at the selection's ends is left outside the markers: `**Sarah **` is not bold in
+ * CommonMark, and a Windows double-click selects the trailing space.
  */
 export function toggleWrap(
   value: string,
@@ -38,6 +41,8 @@ export function toggleWrap(
   end: number,
   marker: WrapMarker,
 ): TextEdit {
+  while (start < end && /\s/.test(value[start]!)) start += 1;
+  while (end > start && /\s/.test(value[end - 1]!)) end -= 1;
   const m = marker.length;
   const inner = value.slice(start, end);
   const isItalicStar = (at: number) => value[at] === "*" && value[at - 1] !== "*" && value[at + 1] !== "*";
@@ -129,7 +134,8 @@ export type LineKind = "bullet" | "numbered" | "heading";
  * The toolbar's list and heading buttons. Toggles: when every selected line already is that
  * kind, the prefix comes off; otherwise each line becomes that kind, replacing any other
  * list or heading prefix it had (a bullet turns into `1.`, not `1. - `). Numbering restarts
- * at 1 for the selection.
+ * at 1 for the selection. Blank lines between are left blank and don't count, so a loose
+ * list (`- a\n\n- b`) toggles off too.
  */
 export function toggleLinePrefix(
   value: string,
@@ -144,9 +150,12 @@ export function toggleLinePrefix(
     return !!m && (kind === "numbered") === (m[3] !== undefined);
   };
   const strip = (line: string) => line.replace(HEADING, "").replace(LIST_ITEM, "$1");
-  const allOn = lines.every(isKind);
+  // A caret on an empty line still gets its prefix; blanks are skipped only beside content.
+  const skipBlank = lines.some((l) => l.trim());
+  const allOn = lines.filter((l) => !skipBlank || l.trim()).every(isKind);
   let n = 0;
   return rewriteLines(value, start, end, (line) => {
+    if (skipBlank && !line.trim()) return line;
     if (allOn) return kind === "heading" ? line.replace(HEADING, "") : line.replace(LIST_ITEM, "$1");
     const bare = strip(line);
     const indent = /^\s*/.exec(bare)![0];
@@ -177,12 +186,23 @@ export function continueList(value: string, caret: number): TextEdit | null {
   return { from: caret, to: caret, insert, selectionStart: caret + insert.length, selectionEnd: caret + insert.length };
 }
 
-const INDENT = "  ";
+/** The list items above the line starting at `lineFrom`, nearest first. */
+function* listItemsAbove(value: string, lineFrom: number) {
+  for (let at = lineFrom; at > 0; ) {
+    const prevFrom = lineStartOf(value, at - 1);
+    const m = LIST_ITEM.exec(value.slice(prevFrom, at - 1));
+    at = prevFrom;
+    if (m) yield m;
+  }
+}
 
 /**
- * Tab / Shift+Tab on list lines: two spaces in or out, every selected list line at once.
- * Lines that are not list items are left alone; `null` when nothing in the selection is a list
- * item, so Tab keeps moving focus out of the box everywhere else (a keyboard trap otherwise).
+ * Tab / Shift+Tab on list lines, every selected list line at once. Tab moves a line to the
+ * content column of the item above it at the same depth — 3 spaces under `1. `, 2 under `- ` —
+ * because CommonMark only nests a child that reaches that column. Shift+Tab moves it back to
+ * its parent's indent. Lines that are not list items are left alone; `null` when nothing in the
+ * selection is a list item, so Tab keeps moving focus out of the box everywhere else (a
+ * keyboard trap otherwise).
  */
 export function indentList(
   value: string,
@@ -190,12 +210,37 @@ export function indentList(
   end: number,
   outdent: boolean,
 ): TextEdit | null {
-  const { lines } = selectedLines(value, start, end);
+  const { from, lines } = selectedLines(value, start, end);
   if (!lines.some((l) => LIST_ITEM.test(l))) return null;
+  let lineFrom = from;
   return rewriteLines(value, start, end, (line) => {
-    if (!LIST_ITEM.test(line)) return line;
-    if (!outdent) return INDENT + line;
-    return line.replace(/^ {1,2}|^\t/, "");
+    const at = lineFrom;
+    lineFrom += line.length + 1;
+    const m = LIST_ITEM.exec(line);
+    if (!m) return line;
+    const depth = m[1]!.length;
+    if (line.startsWith("\t")) return outdent ? line.slice(1) : `\t${line}`;
+    if (outdent) {
+      if (depth === 0) return line;
+      let parent = 0;
+      for (const p of listItemsAbove(value, at)) {
+        if (p[1]!.length < depth) {
+          parent = p[1]!.length;
+          break;
+        }
+      }
+      return line.slice(depth - parent);
+    }
+    // No sibling above: the line's own marker width, which is what a later sibling will use.
+    let width = m[0].length - depth;
+    for (const p of listItemsAbove(value, at)) {
+      if (p[1]!.length === depth) {
+        width = p[0].length - depth;
+        break;
+      }
+      if (p[1]!.length < depth) break;
+    }
+    return " ".repeat(width) + line;
   });
 }
 

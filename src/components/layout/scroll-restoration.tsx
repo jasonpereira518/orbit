@@ -2,10 +2,9 @@
 
 import { useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { consumeTraversal, markTraversal, scrollKeySearch, shouldRestoreScroll } from "@/lib/scroll-restore";
+import { consumeTraversal, markTraversal, scrollKeySearch, scrollStorageKey, shouldRestoreScroll } from "@/lib/scroll-restore";
 
 const MAIN_SCROLL_ID = "app-main-scroll";
-const RESTORE_KEY_PREFIX = "orbit:scroll:";
 
 if (typeof window !== "undefined") {
   window.addEventListener("popstate", markTraversal);
@@ -27,14 +26,17 @@ export function ScrollRestoration() {
     const main = document.getElementById(MAIN_SCROLL_ID);
     if (!main) return;
 
+    // Read and write the same URL's key; the old page's listener is already gone, so the
+    // reset below can only record into this page's slot.
+    const key = scrollStorageKey(pathname, searchKey);
     const restore = shouldRestoreScroll(pathname, consumeTraversal());
-    const saved = restore ? sessionStorage.getItem(RESTORE_KEY_PREFIX + pathname) : null;
+    const saved = restore ? sessionStorage.getItem(key) : null;
     main.scrollTop = saved ? Number(saved) || 0 : 0;
 
     // Always record on /contacts, so a later back/forward has an offset to resume.
     if (pathname !== "/contacts") return;
     const handleScroll = () => {
-      sessionStorage.setItem(RESTORE_KEY_PREFIX + pathname, String(main.scrollTop));
+      sessionStorage.setItem(key, String(main.scrollTop));
     };
     main.addEventListener("scroll", handleScroll, { passive: true });
     return () => main.removeEventListener("scroll", handleScroll);

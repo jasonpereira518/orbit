@@ -21,3 +21,9 @@ export function consumeTraversal() {
 export function scrollKeySearch(pathname: string, search: string) {
   return pathname === "/contacts" ? search : "";
 }
+
+// One saved offset per URL, not per pathname: arriving at /contacts?followUp=due resets to 0,
+// and that reset's scroll event must land on the filtered list's key, not erase the plain list's.
+export function scrollStorageKey(pathname: string, searchKey: string) {
+  return `orbit:scroll:${pathname}?${searchKey}`;
+}

@@ -44,6 +44,9 @@ eq("empty selection drops an empty pair with the caret inside", apply("a ", togg
   next: "a ****",
   sel: [4, 4],
 });
+eq("trailing space stays outside the markers", apply("met Sarah today", toggleWrap("met Sarah today", 4, 10, "**"))?.next, "met **Sarah** today");
+eq("leading space stays outside too", apply("met Sarah today", toggleWrap("met Sarah today", 3, 9, "_"))?.next, "met _Sarah_ today");
+eq("newline-only selection wraps nothing across lines", apply("a\nb", toggleWrap("a\nb", 1, 2, "**"))?.next, "a\n****b");
 eq("italic wraps with underscores", apply("so cool", toggleWrap("so cool", 3, 7, "_")), { next: "so _cool_", sel: [4, 8] });
 eq("italic unwraps underscores", apply("so _cool_", toggleWrap("so _cool_", 4, 8, "_")), { next: "so cool", sel: [3, 7] });
 eq("italic unwraps a single-star italic", apply("so *cool*", toggleWrap("so *cool*", 4, 8, "_")), { next: "so cool", sel: [3, 7] });
@@ -64,6 +67,10 @@ t.check("caret inside the marker is left alone", continueList("- one", 1) === nu
 eq("Tab indents a list line, caret follows", apply("- a", indentList("- a", 3, 3, false)), { next: "  - a", sel: [5, 5] });
 eq("Shift+Tab outdents", apply("  - a", indentList("  - a", 5, 5, true)), { next: "- a", sel: [3, 3] });
 eq("indent covers every selected list line, skips prose", apply("- a\nprose\n- b", indentList("- a\nprose\n- b", 0, 13, false))?.next, "  - a\nprose\n  - b");
+eq("Tab under a numbered item indents 3", apply("1. a\n2. b", indentList("1. a\n2. b", 9, 9, false))?.next, "1. a\n   2. b");
+eq("a bullet under a numbered item indents 3", apply("1. a\n- b", indentList("1. a\n- b", 8, 8, false))?.next, "1. a\n   - b");
+eq("bullets under bullets keep 2", apply("- a\n- b", indentList("- a\n- b", 7, 7, false))?.next, "- a\n  - b");
+eq("Shift+Tab under a numbered item comes back to its parent", apply("1. a\n   2. b", indentList("1. a\n   2. b", 12, 12, true))?.next, "1. a\n2. b");
 t.check("Tab on prose is not claimed (focus can leave)", indentList("prose", 2, 2, false) === null);
 t.check("outdent at column 0 is a no-op", indentList("- a", 3, 3, true) === null);
 
@@ -71,6 +78,10 @@ t.check("outdent at column 0 is a no-op", indentList("- a", 3, 3, true) === null
 eq("bullet toggles on", apply("a\nb", toggleLinePrefix("a\nb", 0, 3, "bullet"))?.next, "- a\n- b");
 eq("bullet toggles off", apply("- a\n- b", toggleLinePrefix("- a\n- b", 0, 7, "bullet"))?.next, "a\nb");
 eq("numbered replaces bullets and counts", apply("- a\n- b", toggleLinePrefix("- a\n- b", 0, 7, "numbered"))?.next, "1. a\n2. b");
+eq("bullets skip blank lines", apply("a\n\nb", toggleLinePrefix("a\n\nb", 0, 4, "bullet"))?.next, "- a\n\n- b");
+eq("loose list toggles off", apply("- a\n\n- b", toggleLinePrefix("- a\n\n- b", 0, 8, "bullet"))?.next, "a\n\nb");
+eq("numbering skips blank lines", apply("a\n\nb", toggleLinePrefix("a\n\nb", 0, 4, "numbered"))?.next, "1. a\n\n2. b");
+eq("bullet on an empty line still inserts", apply("", toggleLinePrefix("", 0, 0, "bullet"))?.next, "- ");
 eq("heading on the caret line, caret follows", apply("x\nTitle", toggleLinePrefix("x\nTitle", 4, 4, "heading")), { next: "x\n# Title", sel: [6, 6] });
 eq("heading toggles off", apply("# Title", toggleLinePrefix("# Title", 3, 3, "heading")), { next: "Title", sel: [1, 1] });
 

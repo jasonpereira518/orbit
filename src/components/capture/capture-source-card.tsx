@@ -40,6 +40,8 @@ const NOTES_MARKDOWN: Components = {
   h1: ({ children }) => <p className="mb-1 font-semibold">{children}</p>,
   h2: ({ children }) => <p className="mb-1 font-semibold">{children}</p>,
   h3: ({ children }) => <p className="mb-1 font-semibold">{children}</p>,
+  // The card clips overflow, so a long fenced line scrolls instead of being cut off.
+  pre: ({ children }) => <pre className="mb-2 overflow-x-auto last:mb-0">{children}</pre>,
   code: ({ children }) => <code className="rounded bg-muted px-1 text-[0.9em]">{children}</code>,
   // Notes are often pasted from mail or the web; a link goes through the same allowlist as
   // chat's and opens out of the app, or stays text.
@@ -89,9 +91,10 @@ export function CaptureSourceCard({
   const [expanded, setExpanded] = useState(sourceText.length <= COLLAPSE_AT_CHARS);
   const [viewing, setViewing] = useState<number | null>(null);
   const created = new Date(createdAt);
-  // Text read out of photos or a voice note is shown verbatim — it is the thing to check
-  // Orbit's reading against. Only typed notes are the person's own markdown.
-  const readText = photos.length > 0 || kinds.includes("voice");
+  // Only typed notes are the person's own markdown. Everything else — photos, voice, imported
+  // mail, files, calendar bodies — is shown verbatim: it is the thing to check Orbit's reading
+  // against, and markdown would rewrite `> quotes`, `---` underlines and indents in it.
+  const readText = !(kinds.length > 0 && kinds.every((k) => k === "text"));
 
   const step = useCallback(
     (delta: number) =>
