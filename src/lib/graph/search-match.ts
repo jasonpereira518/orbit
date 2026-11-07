@@ -63,9 +63,22 @@ function contactSearchHaystack(c: GraphContact): string {
     .toLowerCase();
 }
 
-export function buildContactHaystackIndex(contacts: GraphContact[]): Map<string, string> {
-  const index = new Map<string, string>();
-  for (const c of contacts) index.set(c.id, contactSearchHaystack(c));
+export type ContactSearchRecord = {
+  haystack: string;
+  name: string;
+  words: string[];
+};
+
+export function buildContactHaystackIndex(
+  contacts: GraphContact[]
+): Map<string, ContactSearchRecord> {
+  const index = new Map<string, ContactSearchRecord>();
+  for (const c of contacts) {
+    const haystack = contactSearchHaystack(c);
+    const name = [c.fullName, c.preferredName].filter(Boolean).join(" ").toLowerCase();
+    const words = name ? name.split(/\s+/).filter(Boolean) : [];
+    index.set(c.id, { haystack, name, words });
+  }
   return index;
 }
 
@@ -165,7 +178,7 @@ export type GraphContactMatch = {
 export function matchGraphContacts(
   contacts: GraphContact[],
   query: string,
-  haystackById: Map<string, string>
+  haystackById: Map<string, string | ContactSearchRecord>
 ): GraphContactMatch {
   const phrase = query.trim().toLowerCase().replace(/\s+/g, " ");
   if (!phrase) return { ids: [], nameTier: false };
@@ -173,16 +186,37 @@ export function matchGraphContacts(
     .split(/[^a-z0-9+#.]+/i)
     .filter((t) => t.length > 1);
 
-  const nameOf = (c: GraphContact) =>
-    [c.fullName, c.preferredName].filter(Boolean).join(" ").toLowerCase();
+  const getRecord = (c: GraphContact): ContactSearchRecord => {
+    const hit = haystackById.get(c.id);
+    if (hit && typeof hit === "object") return hit;
+    const name = [c.fullName, c.preferredName].filter(Boolean).join(" ").toLowerCase();
+    return {
+      haystack: (typeof hit === "string" ? hit : undefined) ?? contactSearchHaystack(c),
+      name,
+      words: name ? name.split(/\s+/).filter(Boolean) : [],
+    };
+  };
 
   // Names take precedence: "Viktor Larsen" should land on Viktor Larsen,
   // not also on everyone whose notes mention a Viktor or a Larsen. Within a
   // name tier, one decisively-best fit wins alone.
-  const exactNameHits = contacts.filter((c) => nameOf(c).includes(phrase));
+  const exactNameHits: Array<{ contact: GraphContact; record: ContactSearchRecord }> = [];
+  for (let i = 0; i < contacts.length; i++) {
+    const c = contacts[i];
+    const rec = getRecord(c);
+    if (rec.name.includes(phrase)) {
+      exactNameHits.push({ contact: c, record: rec });
+    }
+  }
+
   if (exactNameHits.length > 0) {
+    const dominant = dominantNameHit(
+      exactNameHits,
+      (item) => item.record.name,
+      phrase
+    );
     return {
-      ids: dominantNameHit(exactNameHits, nameOf, phrase).map((c) => c.id),
+      ids: dominant.map((item) => item.contact.id),
       nameTier: true,
     };
   }
@@ -190,30 +224,60 @@ export function matchGraphContacts(
   // Typo-tolerant name pass: every token must fuzzily match one of the
   // contact's name words ("Victor Larson" still finds Viktor Larsen).
   if (tokens.length > 0) {
-    const fuzzyNameHits = contacts.filter((c) => {
-      const words = nameOf(c).split(/\s+/).filter(Boolean);
-      return tokens.every((t) => words.some((w) => fuzzyNameWordMatch(w, t)));
-    });
+    const fuzzyNameHits: Array<{ contact: GraphContact; record: ContactSearchRecord }> = [];
+    for (let i = 0; i < contacts.length; i++) {
+      const c = contacts[i];
+      const rec = getRecord(c);
+      const words = rec.words;
+      if (words.length > 0 && tokens.every((t) => words.some((w) => fuzzyNameWordMatch(w, t)))) {
+        fuzzyNameHits.push({ contact: c, record: rec });
+      }
+    }
     if (fuzzyNameHits.length > 0) {
+      const dominant = dominantNameHit(
+        fuzzyNameHits,
+        (item) => item.record.name,
+        phrase
+      );
       return {
-        ids: dominantNameHit(fuzzyNameHits, nameOf, phrase).map((c) => c.id),
+        ids: dominant.map((item) => item.contact.id),
         nameTier: true,
       };
     }
   }
 
-  const ids = contacts
-    .filter((c) => {
-      const hay = haystackById.get(c.id) ?? contactSearchHaystack(c);
-      if (hay.includes(phrase)) return true;
-      if (tokens.length === 0) return false;
-      if (tokens.length === 1) return hay.includes(tokens[0]);
-      // Multi-word: prefer all tokens; allow strong partial if ≥2 long tokens hit
-      if (tokens.every((t) => hay.includes(t))) return true;
-      const strong = tokens.filter((t) => t.length >= 4 && hay.includes(t));
-      return strong.length >= 2;
-    })
-    .map((c) => c.id);
+  const ids: string[] = [];
+  const tokenLen = tokens.length;
+  for (let i = 0; i < contacts.length; i++) {
+    const c = contacts[i];
+    const rec = getRecord(c);
+    const hay = rec.haystack;
+    if (hay.includes(phrase)) {
+      ids.push(c.id);
+      continue;
+    }
+    if (tokenLen === 0) continue;
+    if (tokenLen === 1) {
+      if (hay.includes(tokens[0])) ids.push(c.id);
+      continue;
+    }
+    // Multi-word: prefer all tokens; allow strong partial if ≥2 long tokens hit
+    if (tokens.every((t) => hay.includes(t))) {
+      ids.push(c.id);
+      continue;
+    }
+    let strongHits = 0;
+    for (let j = 0; j < tokenLen; j++) {
+      const t = tokens[j];
+      if (t.length >= 4 && hay.includes(t)) {
+        strongHits++;
+        if (strongHits >= 2) {
+          ids.push(c.id);
+          break;
+        }
+      }
+    }
+  }
   return { ids, nameTier: false };
 }
 

@@ -176,17 +176,8 @@ export function AppShell({
           className="flex min-h-0 flex-1 overflow-hidden bg-background dark:bg-transparent"
         >
           <ThemeSync theme={theme} />
-          {/*
-            Not on the phone-sized constellation. That route already paints a full sky
-            into its own canvas, and a second full-viewport canvas running its own rAF
-            loop — 700 arcs a frame, some with `shadowBlur`, one of the most expensive
-            Canvas2D operations on iOS — is exactly the pressure that was taking the tab
-            down. It costs a flatter background around the stage card on those devices.
-            On a larger constellation it stays, but still: one painted frame, no loop.
-          */}
-          {!(isConstellation && smallSky) && (
-            <AppStarfield still={isConstellation} />
-          )}
+          {/* On the constellation route, AppStarfield is still (one painted frame, no rAF loop) to serve as a deep dark sky backdrop. */}
+          <AppStarfield still={isConstellation} />
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <CloudNotesWatcher />

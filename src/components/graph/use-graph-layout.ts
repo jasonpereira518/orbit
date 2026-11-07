@@ -55,10 +55,19 @@ export function useGraphLayout(props: GraphChartProps) {
    * camera on it: a filter that swaps who is drawn deserves a fresh view, while a refresh
    * that only updates the people already there keeps the one you are looking at.
    */
-  const layoutKey = useMemo(
-    () => filteredContacts.map((c) => c.id).join(","),
-    [filteredContacts]
-  );
+  const layoutKey = useMemo(() => {
+    const len = filteredContacts.length;
+    if (len === 0) return "0";
+    let h = 0x811c9dc5;
+    for (let i = 0; i < len; i++) {
+      const id = filteredContacts[i].id;
+      for (let j = 0; j < id.length; j++) {
+        h ^= id.charCodeAt(j);
+        h = Math.imul(h, 0x01000193);
+      }
+    }
+    return `${len}:${(h >>> 0).toString(36)}`;
+  }, [filteredContacts]);
 
   return { filteredContacts, layout, layoutKey };
 }
