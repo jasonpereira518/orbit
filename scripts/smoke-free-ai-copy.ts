@@ -8,7 +8,8 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { FREE_STARTER_CREDITS, PLAN_CONFIG } from "../src/lib/plans/plan-config";
-import { AI_POSITIONING, EXTENSION_PUBLISHED, EXTENSION_STORE_URL, PLAN_COPY } from "../src/lib/plan-copy";
+import { AI_POSITIONING, EXTENSION_PUBLISHED, EXTENSION_STORE_URL, PLAN_COPY, planCopy } from "../src/lib/plan-copy";
+import { applyPlanOverrides, limitRuleRow, parsePlanRules } from "../src/lib/plans/plan-overrides";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -23,6 +24,8 @@ const free = PLAN_COPY.find((p) => p.id === "free")!;
 const line = `${PLAN_CONFIG.free.monthlyCredits} AI credits a month + ${FREE_STARTER_CREDITS} to start`;
 check("the Free card lists the allowance and the starter", free.features.some((f) => f.includes(line)), free.features);
 check("the Free card no longer says 'on your own AI key'", !free.features.some((f) => /own AI key/i.test(f)), free.features);
+const raised = applyPlanOverrides(PLAN_CONFIG, parsePlanRules([limitRuleRow("free", "monthlyCredits", 80)]));
+check("the Free card names the EFFECTIVE allowance", planCopy("free", raised).features.some((f) => f.includes(`80 AI credits a month + ${FREE_STARTER_CREDITS} to start`)));
 check("positioning no longer says Free is bring-your-own-key", !/Free: bring your own/i.test(AI_POSITIONING), AI_POSITIONING);
 
 const sources = [

@@ -14,12 +14,24 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-meetings-list";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
+  contacts,
+  interactions,
   meetingSessions,
   meetingTranscriptSegments,
+  noteBatches,
   type MeetingDigest,
   type MeetingSessionStatus,
 } from "../src/db/schema";
-import { excerptAround, likePattern, listMeetingsFor, searchMeetingPassagesFor, searchWords } from "../src/lib/meetings-list";
+import {
+  excerptAround,
+  getGranolaMeeting,
+  likePattern,
+  listMeetingsFor,
+  parseGranolaNote,
+  searchMeetingPassagesFor,
+  searchWords,
+} from "../src/lib/meetings-list";
+import { setMeetingUserNotes } from "../src/lib/meeting-sessions";
 
 const USER = "smoke-meetings-list-user";
 const OTHER = "smoke-meetings-list-other";
@@ -52,7 +64,63 @@ async function reset() {
   for (const user of [USER, OTHER]) {
     await db.delete(meetingTranscriptSegments).where(eq(meetingTranscriptSegments.userId, user));
     await db.delete(meetingSessions).where(eq(meetingSessions.userId, user));
+    await db.delete(interactions).where(eq(interactions.userId, user));
+    await db.delete(noteBatches).where(eq(noteBatches.userId, user));
+    await db.delete(contacts).where(eq(contacts.userId, user));
   }
+}
+
+/** One Granola note as the sync saves it: a batch, and one interaction per person it named. */
+async function seedGranola(
+  userId: string,
+  opts: { title: string; daysAgo: number; summary: string; people: string[]; myNotes?: string; at?: Date; status?: "saved" | "undone" }
+) {
+  const db = await getDb();
+  const at = opts.at ?? new Date(NOW - opts.daysAgo * DAY);
+  const sourceText = [
+    `Meeting: ${opts.title}`,
+    `When: ${at.toISOString()}`,
+    `Attendees: ${opts.people.join(", ")}`,
+    opts.summary,
+    opts.myNotes ? `My notes:\n${opts.myNotes}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const people = [];
+  for (const name of opts.people) {
+    const [c] = await db.insert(contacts).values({ userId, fullName: name }).returning();
+    people.push(c);
+  }
+  const [batch] = await db
+    .insert(noteBatches)
+    .values({
+      userId,
+      sourceHash: `smoke-${Math.random()}`,
+      sourceText,
+      anchorDate: at,
+      status: opts.status ?? "saved",
+      result: {
+        participants: people.map((c) => ({ contactId: c.id, interactionId: null, name: c.fullName, created: true, duplicate: false })),
+        mentions: [],
+        unresolvedMentions: [],
+        actionItems: [],
+        reminders: [],
+        skipped: { relative: 0, unverifiable: 0, past: 0, duplicate: 0 },
+      },
+    })
+    .returning();
+  for (const c of people) {
+    await db.insert(interactions).values({
+      userId,
+      contactId: c.id,
+      interactionType: "meeting",
+      interactionDate: at,
+      source: "granola",
+      externalId: `granola:note-${batch.id}:${c.id}`,
+      noteBatchId: batch.id,
+    });
+  }
+  return batch.id;
 }
 
 async function seed(
@@ -102,6 +170,10 @@ function pure() {
   check("names and topics are kept, deduped, lower-cased", searchWords("Priya pricing PRIYA").join() === "priya,pricing");
   check("short words are dropped", searchWords("is it ok").length === 0);
   check("an excerpt centres on the match", excerptAround("a ".repeat(100) + "pricing is per seat " + "b ".repeat(100), "pricing", 20).includes("pricing"));
+  const note = parseGranolaNote("Meeting: Acme kickoff\n\nWhen: 2026-11-01T15:00:00Z\n\nAttendees: Dana <d@x.co>\n\n## Summary\nScope agreed.\n\n- Ship v1\n\nMy notes:\nAsk about budget");
+  check("a Granola note splits into title, body and my notes", note.title === "Acme kickoff" && note.body === "## Summary\nScope agreed.\n\n- Ship v1" && note.myNotes === "Ask about budget" && note.attendees === "Dana <d@x.co>");
+  const bare = parseGranolaNote("Meeting: Quick sync\n\nWhen: 2026-11-01T15:00:00Z\n\nJust the summary.");
+  check("…and one with no attendees or notes keeps the summary", bare.title === "Quick sync" && bare.body === "Just the summary." && bare.myNotes === null && bare.attendees === null);
 }
 
 async function main() {
@@ -182,6 +254,56 @@ async function main() {
   const late = await searchMeetingPassagesFor(USER, { query: "legal", after: new Date(NOW - 2 * DAY) });
   check("a date window narrows it", early.length > 0 && early.every((p) => p.meetingId === pilot) && late.length > 0 && late.every((p) => p.meetingId === board));
   check("a question of only filler finds nothing", (await searchMeetingPassagesFor(USER, { query: "what did they say" })).length === 0);
+
+  console.log("\nYour notes");
+  check("notes save to your own meeting", await setMeetingUserNotes(USER, pilot, "Follow up on the procurement form"));
+  check("never to someone else's", !(await setMeetingUserNotes(USER, theirs, "hijack")));
+  check("a non-id is refused, not queried", !(await setMeetingUserNotes(USER, "nope", "x")));
+  check("a search finds words only in your notes", (await listMeetingsFor(USER, { q: "procurement" })).items[0]?.id === pilot);
+  const theirRow = (await getDb()).select().from(meetingSessions).where(eq(meetingSessions.id, theirs));
+  check("their notes were not touched", (await theirRow)[0]?.userNotes === null);
+
+  console.log("\nGranola alongside recordings");
+  // Between the two recordings (board 1 day ago, pilot 3), and one sharing the twins' instant.
+  const acme = await seedGranola(USER, { title: "Acme kickoff", daysAgo: 2, summary: "Scope agreed; Dana owns the rollout.", people: ["Dana Cole", "Eli Park"], myNotes: "Ask about budget" });
+  const granolaTwin = await seedGranola(USER, { title: "Twin Granola", daysAgo: 10, summary: "Same instant as the twins.", people: ["Fay Hu"], at: same });
+  const undone = await seedGranola(USER, { title: "Undone note", daysAgo: 4, summary: "Was undone.", people: ["Gus Ray"], status: "undone" });
+  const theirGranola = await seedGranola(OTHER, { title: "Their Granola", daysAgo: 2, summary: "Not yours.", people: ["Hal Ito"] });
+
+  const mixed = await listMeetingsFor(USER);
+  check("Granola rows interleave by date", mixed.items.slice(0, 3).map((m) => m.id).join() === [board, acme, pilot].join(), mixed.items.map((m) => m.title).join());
+  const acmeRow = mixed.items.find((m) => m.id === acme);
+  check("a Granola row is labelled, titled and lists its people", acmeRow?.source === "granola" && acmeRow.title === "Acme kickoff" && acmeRow.attendees.join() === "Dana Cole,Eli Park");
+  check("one row per note, not per person", mixed.items.filter((m) => m.id === acme).length === 1);
+  check("its summary is Granola's text, not the header lines", acmeRow?.summary === "Scope agreed; Dana owns the rollout.");
+  check("an undone batch is not listed", !mixed.items.some((m) => m.id === undone));
+  check("another user's Granola never shows", !mixed.items.some((m) => m.id === theirGranola));
+
+  const mixedSeen: string[] = [];
+  cursor = null;
+  pages = 0;
+  do {
+    const page = await listMeetingsFor(USER, { limit: 2, cursor });
+    mixedSeen.push(...page.items.map((m) => m.id));
+    cursor = page.nextCursor;
+    pages++;
+  } while (cursor && pages < 10);
+  check("paging crosses both sources with no repeats or gaps", mixedSeen.length === 7 && new Set(mixedSeen).size === 7, String(mixedSeen.length));
+  check("including a Granola note at the same instant as recordings", mixedSeen.includes(granolaTwin) && sameIds.every((id) => mixedSeen.includes(id)));
+
+  check("the Recorded filter leaves Granola out", (await listMeetingsFor(USER, { source: "orbit" })).items.every((m) => m.source === "orbit"));
+  const onlyGranola = await listMeetingsFor(USER, { source: "granola" });
+  check("the Granola filter leaves recordings out", onlyGranola.items.map((m) => m.id).join() === [acme, granolaTwin].join());
+  const rollout = await listMeetingsFor(USER, { q: "rollout" });
+  check("search reaches Granola's text, with the line that matched", rollout.items.length === 1 && rollout.items[0].id === acme && /rollout/i.test(rollout.items[0].match?.excerpt ?? ""));
+  check("…and its notes too", (await listMeetingsFor(USER, { q: "ask about budget" })).items.map((m) => m.id).join() === acme);
+  check("a Granola search never crosses users", !(await listMeetingsFor(USER, { q: "Not yours" })).items.length);
+
+  const detail = await getGranolaMeeting(USER, acme);
+  check("the detail read parses the note", detail?.note.title === "Acme kickoff" && detail.note.myNotes === "Ask about budget");
+  check("the detail read is scoped to its owner", (await getGranolaMeeting(OTHER, acme)) === null && (await getGranolaMeeting(USER, theirGranola)) === null);
+  check("a recording's id is not a Granola meeting", (await getGranolaMeeting(USER, pilot)) === null);
+  check("an undone batch has no detail page", (await getGranolaMeeting(USER, undone)) === null);
 
   await reset();
   console.log("\nsmoke-meetings-list: all checks passed");

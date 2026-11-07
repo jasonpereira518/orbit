@@ -14,6 +14,7 @@
  * construction: it has no action id, so it is not reachable by POST at all. It uses `@/db`
  * and no `next/server`, so both callers can import it.
  */
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { clearMemoryChunkVectors } from "@/lib/memory-chunks";
@@ -89,7 +90,7 @@ export function embeddingBackendFor(
 
 export async function managedEligibilityFor(userId: string): Promise<ManagedEligibility> {
   const { plan } = await getEntitlements(userId);
-  return managedEligibility(plan, isDemoAccount(userId));
+  return managedEligibility(plan, isDemoAccount(userId), await getEffectivePlanConfig());
 }
 
 /**

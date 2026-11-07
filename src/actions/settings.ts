@@ -15,6 +15,7 @@ import { normalizeSenderBio } from "@/lib/sender-profile";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
+import { saveChatAutoApplyFor } from "@/lib/chat-auto-apply";
 import { loadEmailSettings, saveDefaultSendProvider, saveEmailSignature } from "@/lib/email/settings";
 import { getSendCapability, type SendCapability } from "@/lib/email/sender";
 import { requireUserForSurface } from "@/lib/plan-guards";
@@ -26,6 +27,7 @@ import {
   type DataCategory,
 } from "@/lib/user-data";
 import { getEntitlements } from "@/lib/entitlements";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { userHasApolloKey } from "@/lib/apollo";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import {
@@ -107,6 +109,10 @@ export async function getSettings() {
      * this account's AI key. On unless switched off; see the column in schema.ts.
      */
     workHistoryAutoEnabled: (settings?.workHistoryAutoEnabled ?? 1) !== 0,
+    /** Email insights (opt-in). Off unless switched on; see `user_settings.email_intel_enabled`. */
+    emailIntelEnabled: (settings?.emailIntelEnabled ?? 0) !== 0,
+    /** Whether chat may apply its small, reversible changes itself. Off unless switched on. */
+    chatAutoApply: (settings?.chatAutoApply ?? 0) !== 0,
     /** Radar's Monday email. On unless switched off (Settings, or its one-click link). */
     radarDigestEnabled: (settings?.radarDigestEnabled ?? 1) !== 0,
     /**
@@ -217,6 +223,12 @@ export async function saveThemePreference(theme: ThemePreference) {
       target: userSettings.userId,
       set: { theme, updatedAt: new Date() },
     });
+}
+
+/** The "Let chat make small changes for you" switch on the AI settings page. */
+export async function saveChatAutoApply(enabled: boolean) {
+  const userId = await requireUserId();
+  await saveChatAutoApplyFor(userId, enabled);
 }
 
 /** The "Keep work history current" switch on the AI settings page. */
@@ -513,12 +525,14 @@ export async function deleteAllData(categories?: readonly DataCategory[]) {
 /** Everything the settings billing card needs, in one round trip. */
 export async function getPlanOverview() {
   const userId = await requireUserId();
-  const [entitlements, usage] = await Promise.all([
+  const [entitlements, usage, planConfig] = await Promise.all([
     getEntitlements(userId),
     contactUsageForUser(userId),
+    getEffectivePlanConfig(),
   ]);
 
-  return { entitlements, usage, demoAccount: demoAccountReason(userId) };
+  // `planConfig`: the effective plan table, so plan copy follows an admin's plan rules.
+  return { entitlements, usage, demoAccount: demoAccountReason(userId), planConfig };
 }
 
 

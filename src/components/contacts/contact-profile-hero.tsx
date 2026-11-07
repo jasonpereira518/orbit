@@ -1,6 +1,8 @@
 "use client";
 
 import { ExampleTag } from "@/components/onboarding/example-tag";
+import { ContactName } from "@/components/contacts/contact-name";
+import type { NameGuess } from "@/lib/contact-name-guess";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 
 import { ComposeButton } from "@/components/email/compose-button";
@@ -233,6 +235,7 @@ export function ContactProfileHero({
   channels,
   formInitial,
   source,
+  nameGuess,
 }: {
   contactId: string;
   displayName: string;
@@ -249,6 +252,8 @@ export function ContactProfileHero({
   linkedinUrl?: string | null;
   channels: ChannelProps;
   formInitial: Partial<ContactInput> & { tagNames?: string[] };
+  /** An unsure name read from a handle: the h1 gets a "?" (`openNameGuess`). */
+  nameGuess?: NameGuess | null;
 }) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
@@ -431,7 +436,9 @@ export function ContactProfileHero({
                   minimum width was its whole unbroken length, so a 120-character name
                   pushed the page 1,600px wider than a phone. */}
               <span className="min-w-0 max-w-full wrap-anywhere">
-                <bdi>{displayName}</bdi>
+                <ContactName contactId={contactId} name={displayName} guess={nameGuess}>
+                  <bdi>{displayName}</bdi>
+                </ContactName>
               </span>
               {isTourExampleSource(source) && <ExampleTag className="align-middle" />}
             </h1>

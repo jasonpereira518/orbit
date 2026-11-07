@@ -1,15 +1,7 @@
-import { AdminPageHeader, AdminPanel } from "@/components/admin/primitives";
-import {
-  PreviewUnreleasedButton,
-  SurfaceToggles,
-  UnhideAllButton,
-  ViewAsUserButton,
-} from "@/components/admin/surface-toggles";
+import { AdminPanel } from "@/components/admin/primitives";
+import { PreviewUnreleasedButton, ViewAsUserButton } from "@/components/admin/surface-toggles";
 import { requireAdminPage } from "@/lib/admin";
 import { PageStatusList } from "@/components/admin/page-status-list";
-import { ProductTabs } from "@/components/admin/product-tabs";
-import { ConstellationFilterPanel } from "@/components/admin/constellation-filter-panel";
-import { getConstellationConfig } from "@/lib/constellation-config";
 import {
   getComingSoonKeys,
   getHiddenSurfaceKeys,
@@ -18,27 +10,30 @@ import {
   isPreviewingUnreleased,
   isViewingAsUser,
 } from "@/lib/surface-visibility";
-import { surfacesOfKind } from "@/lib/surfaces";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
+import { plansWithFeature } from "@/lib/plans/plan-overrides";
+import { PAGE_FEATURE, surfacesOfKind } from "@/lib/surfaces";
+import { ProductHeader } from "./product-header";
 
 export const metadata = { title: "Admin · Product" };
 
 /**
- * What the product shows everybody.
+ * What the product shows everybody — the Pages tab, and the section's front door.
  *
- * The rest of the console answers questions about accounts; this screen is the one place
+ * The rest of the console answers questions about accounts; this section is the one place
  * that changes Orbit itself. Nothing here deletes anything — a hidden surface stops being
  * rendered and stops being reachable, and the rows behind it are untouched, so unhiding
  * restores it exactly.
  *
  * Operators are exempt from their own toggles, so that a half-finished page can be checked
- * before it is released. That exemption is also the trap this screen has to defend against:
+ * before it is released. That exemption is also the trap this section has to defend against:
  * the person who can undo a forgotten toggle is the only person who cannot see its effect.
- * Hence the count in the header, the "Hidden" tags in the product's own sidebar, and the
- * view-as-a-user button that drops the exemption on demand.
+ * Hence the count in the header and on each tab, the "Hidden" tags in the product's own
+ * sidebar, and the view-as-a-user button here that drops the exemption on demand.
  */
 export default async function AdminProductPage() {
   const adminUserId = await requireAdminPage();
-  const [hidden, comingSoon, navOrder, tierRules, viewingAsUser, previewingUnreleased, constellation] =
+  const [hidden, comingSoon, navOrder, tierRules, viewingAsUser, previewingUnreleased, planConfig] =
     await Promise.all([
       getHiddenSurfaceKeys(),
       getComingSoonKeys(),
@@ -46,35 +41,12 @@ export default async function AdminProductPage() {
       getTierRules(),
       isViewingAsUser(adminUserId),
       isPreviewingUnreleased(adminUserId),
-      getConstellationConfig(),
+      getEffectivePlanConfig(),
     ]);
-
-  const hiddenKeys = [...hidden];
-  const pageSurfaces = surfacesOfKind("page");
-  const pageKeys = new Set(pageSurfaces.map((p) => p.key));
-  const hiddenIn = (kinds: Array<Parameters<typeof surfacesOfKind>[0]>) =>
-    kinds.flatMap((k) => surfacesOfKind(k)).filter((s) => hidden.has(s.key)).length;
-  // A hidden page wins over coming-soon, so it is counted once, as hidden.
-  const soonCount = [...comingSoon].filter((k) => pageKeys.has(k) && !hidden.has(k)).length;
-  const count = hidden.size;
-
-  const summary = [
-    count > 0 && `${count} hidden`,
-    soonCount > 0 && `${soonCount} coming soon`,
-    tierRules.size > 0 && `${tierRules.size} limited to some plans`,
-  ].filter(Boolean);
 
   return (
     <>
-      <AdminPageHeader
-        title="Product"
-        subtitle={
-          summary.length === 0
-            ? "Every surface is live for every user."
-            : `${summary.join(" · ")} for all users. You still see hidden surfaces — use the preview below to check what they see.`
-        }
-        action={<UnhideAllButton hiddenKeys={hiddenKeys} />}
-      />
+      <ProductHeader />
 
       <div className="mb-6 grid gap-3 md:grid-cols-2">
         <div className="flex flex-col justify-between gap-3 rounded-xl border border-border/70 bg-card p-4">
@@ -83,7 +55,7 @@ export default async function AdminProductPage() {
             <p className="mt-1 text-xs text-muted-foreground">
               {viewingAsUser
                 ? "You are browsing Orbit as a general user. Hidden surfaces are gone for you too until you stop."
-                : "Opens the app with every change below applied to you as well. Lasts until you stop or close the browser; nobody else is affected."}
+                : "Opens the app with every change in this section applied to you as well. Lasts until you stop or close the browser; nobody else is affected."}
             </p>
           </div>
           <div>
@@ -105,63 +77,18 @@ export default async function AdminProductPage() {
         </div>
       </div>
 
-      <ProductTabs
-        tabs={[
-          {
-            id: "pages",
-            label: "Pages & sidebar",
-            flagged: hiddenIn(["page"]),
-            content: (
-              <AdminPanel title="Pages, in sidebar order">
-                <PageStatusList
-                  pages={pageSurfaces}
-                  order={navOrder}
-                  hidden={hiddenKeys}
-                  comingSoon={[...comingSoon]}
-                  tierRules={Object.fromEntries(tierRules)}
-                />
-              </AdminPanel>
-            ),
-          },
-          {
-            id: "dashboard",
-            label: "Dashboard, widgets & features",
-            flagged: hiddenIn(["dashboard", "widget", "feature"]),
-            content: (
-              <div className="space-y-6">
-                <AdminPanel title="Dashboard cards">
-                  <SurfaceToggles surfaces={surfacesOfKind("dashboard")} hidden={hiddenKeys} />
-                </AdminPanel>
-                <AdminPanel title="Widgets">
-                  <SurfaceToggles surfaces={surfacesOfKind("widget")} hidden={hiddenKeys} />
-                </AdminPanel>
-                <AdminPanel title="Features">
-                  <SurfaceToggles surfaces={surfacesOfKind("feature")} hidden={hiddenKeys} />
-                </AdminPanel>
-              </div>
-            ),
-          },
-          {
-            id: "settings",
-            label: "Settings sections",
-            flagged: hiddenIn(["settings"]),
-            content: (
-              <AdminPanel title="Settings sections">
-                <SurfaceToggles surfaces={surfacesOfKind("settings")} hidden={hiddenKeys} />
-              </AdminPanel>
-            ),
-          },
-          {
-            id: "constellation",
-            label: "Constellation",
-            content: (
-              <AdminPanel title="Constellation filter">
-                <ConstellationFilterPanel config={constellation} />
-              </AdminPanel>
-            ),
-          },
-        ]}
-      />
+      <AdminPanel title="Pages, in sidebar order">
+        <PageStatusList
+          pages={surfacesOfKind("page")}
+          order={navOrder}
+          hidden={[...hidden]}
+          comingSoon={[...comingSoon]}
+          tierRules={Object.fromEntries(tierRules)}
+          featurePlans={Object.fromEntries(
+            Object.entries(PAGE_FEATURE).map(([key, feature]) => [key, plansWithFeature(planConfig, feature)])
+          )}
+        />
+      </AdminPanel>
     </>
   );
 }

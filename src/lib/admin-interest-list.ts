@@ -667,7 +667,7 @@ export async function addManualInterestListSignup(
         utmSource: "admin",
         utmMedium: "event",
         utmCampaign: eventLabel,
-        landingPath: "/admin/growth/interest-list",
+        landingPath: "/admin/access",
         unsubscribeToken: generateUnsubscribeToken(),
         shareToken: generateShareToken(),
         welcomePlanet: planetForSignupNumber((before?.n ?? 0) + 1),

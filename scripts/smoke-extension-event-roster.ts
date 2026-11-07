@@ -8,7 +8,8 @@ import "./smoke/_env";
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, eventAliases, eventAttendees, events } from "../src/db/schema";
+import { contacts, eventAliases, eventAttendees, events, userSettings } from "../src/db/schema";
+import { isPaywallError } from "../src/lib/entitlements";
 import type { PageContext } from "../src/lib/extension/contract";
 import { eventRosterRequestSchema, MAX_ROSTER_GUESTS } from "../src/lib/extension/contract.schema";
 import { ExtensionRouteError } from "../src/lib/extension/http";
@@ -106,6 +107,15 @@ async function main() {
     (await refusal(() => saveEventRoster(USER, pageFor({ guests })))) === "not_found"
   );
   await setSurfaceComingSoon(ADMIN, "page.events", false);
+  // Released, Events is still a paid feature (`SURFACE_FEATURE`): a Free account is refused.
+  for (const u of [USER, OTHER]) {
+    await db.delete(userSettings).where(eq(userSettings.userId, u));
+    await db.insert(userSettings).values({ userId: u });
+  }
+  let paywall: unknown = null;
+  try { await saveEventRoster(USER, pageFor({ guests })); } catch (error) { paywall = error; }
+  check("a Free account is refused the Events feature", isPaywallError(paywall), String(paywall));
+  for (const u of [USER, OTHER]) await db.update(userSettings).set({ compedPlan: "orbit" }).where(eq(userSettings.userId, u));
 
   // --- the save ----------------------------------------------------------------------------
   const first = await saveEventRoster(USER, pageFor({ guests }));

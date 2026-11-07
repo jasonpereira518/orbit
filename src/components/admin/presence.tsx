@@ -17,7 +17,7 @@ import { useLivePoll } from "@/components/admin/use-live-poll";
  * hundreds of live rows this is the thing to revisit; today a poll is the honest choice.
  *
  * The polling itself — one interval no matter how many rows render, paused while the tab
- * is hidden — lives in `use-live-poll.ts`, shared with the Overview and Health screens.
+ * is hidden — lives in `use-live-poll.ts`, shared with the Overview screen.
  */
 
 const POLL_INTERVAL_MS = 15 * 1000;

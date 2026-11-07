@@ -398,7 +398,7 @@ async function prepare(cdp, base) {
     rec.sessionId
   );
 
-  await rec.goto(`${base}/capture?mode=meeting`);
+  await rec.goto(`${base}/meetings`);
   // The first visit compiles the route in dev; Start appears once hydrated.
   await rec.waitFor(`!!${rec.buttonExpr("Start listening")}`, 120000).catch(async (err) => {
     console.error((await rec.evaluate("document.body.innerText")).slice(0, 1500));

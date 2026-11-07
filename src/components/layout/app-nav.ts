@@ -3,7 +3,6 @@ import {
   LayoutDashboard,
   Users,
   Sparkles,
-  Upload,
   Send,
   MessageSquare,
   Network,
@@ -58,11 +57,6 @@ const CAPTURE: AppNavItem = {
   href: "/capture",
   label: "Capture",
   icon: Sparkles,
-};
-const IMPORTS: AppNavItem = {
-  href: "/imports",
-  label: "Imports",
-  icon: Upload,
 };
 const EVENTS: AppNavItem = {
   href: "/events",
@@ -119,9 +113,9 @@ export const APP_NAV_CORE: AppNavItem[] = [
   RADAR,
   CONTACTS,
   CAPTURE,
+  MEETINGS,
   REMINDERS,
   CHAT,
-  IMPORTS,
   CONSTELLATION,
 ];
 
@@ -133,7 +127,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
  * default order.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [MEETINGS, FIND, EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [FIND, EVENTS, OUTREACH, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -160,7 +154,6 @@ export const MOBILE_BOTTOM_NAV: Array<
 export const MOBILE_MORE_NAV = [
   RADAR,
   REMINDERS,
-  IMPORTS,
   CONSTELLATION,
   MEETINGS,
   FIND,

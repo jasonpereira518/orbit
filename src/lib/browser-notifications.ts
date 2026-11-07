@@ -6,6 +6,10 @@ import {
   mergeDesktopNotifiedIds,
   setDesktopNotificationsEnabled,
 } from "@/actions/notifications";
+import { sendClientEvent } from "@/lib/client-events";
+import type { NOTIFICATION_KINDS } from "@/lib/product-event-schemas";
+
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 const PREF_KEY = "orbit:desktop-notifications";
 const SENT_KEY = "orbit:notified-ids";
@@ -190,6 +194,8 @@ export async function registerNotificationServiceWorker() {
 
 export type OrbitNotificationPayload = {
   id: string;
+  /** What the notification is about, for `notification_shown` / `notification_clicked`. Never its text. */
+  kind: NotificationKind;
   title: string;
   body?: string;
   url?: string;
@@ -198,10 +204,13 @@ export type OrbitNotificationPayload = {
 function showPageNotification(
   title: string,
   options: NotificationOptions,
-  url: string
+  url: string,
+  kind: NotificationKind
 ) {
   const n = new Notification(title, options);
   n.onclick = () => {
+    // A service-worker notification reports its click from `public/orbit-sw.js` instead.
+    sendClientEvent("notification_clicked", { kind });
     window.focus();
     window.location.href = url;
     n.close();
@@ -234,7 +243,8 @@ export async function showDesktopNotification(
     renotify: force,
     requireInteraction: force,
     silent: false,
-    data: { url },
+    // `kind` rides along so the service worker can report the click (`public/orbit-sw.js`).
+    data: { url, kind: payload.kind },
   };
 
   try {
@@ -242,7 +252,8 @@ export async function showDesktopNotification(
     // click gesture and is more reliable while Orbit is focused. SW delivery
     // can succeed silently under macOS Focus / quiet notification settings.
     if (force) {
-      showPageNotification(payload.title, options, url);
+      showPageNotification(payload.title, options, url, payload.kind);
+      sendClientEvent("notification_shown", { kind: payload.kind });
       return true;
     }
 
@@ -261,10 +272,11 @@ export async function showDesktopNotification(
     }
 
     if (!delivered) {
-      showPageNotification(payload.title, options, url);
+      showPageNotification(payload.title, options, url, payload.kind);
     }
 
     markSent(payload.id);
+    sendClientEvent("notification_shown", { kind: payload.kind });
     return true;
   } catch {
     return false;
@@ -290,6 +302,7 @@ export async function sendTestDesktopNotification(): Promise<{
   const ok = await showDesktopNotification(
     {
       id: `orbit-test-${Date.now()}`,
+      kind: "test",
       title: "Orbit test notification",
       body: "If you can see this, desktop alerts are working.",
       url: "/dashboard",

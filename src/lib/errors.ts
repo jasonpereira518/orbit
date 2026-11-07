@@ -1,5 +1,5 @@
 import { isGooglePurpose, missingScopeMessage } from "@/lib/google-scopes";
-import { EXTRA_CONNECTION_DENIAL } from "@/lib/plans/plan-config";
+import { extraConnectionDenial, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 import {
   isMicrosoftPurpose,
   missingScopeMessage as missingMicrosoftScopeMessage,
@@ -367,7 +367,7 @@ export type ActionResult<T> = { ok: true; value: T } | { ok: false; error: strin
  *
  * A thrown message is replaced by a digest in production; a returned value is not. So a
  * `UserFacingError` becomes `{ ok: false, error }`, and so does a `PaywallError`: it is
- * already written for the person who hit it (`FEATURE_DENIAL`), so it earns the same rescue
+ * already written for the person who hit it (`featureDenial`), so it earns the same rescue
  * rather than being reduced to a digest and read as "try again?". Anything else is rethrown
  * untouched, so a genuine fault still surfaces as an error and still gets the caller's
  * friendly fallback — this only rescues the messages that were written to be read.
@@ -445,7 +445,7 @@ export function friendlyError(err: unknown, fallback: string): string {
     return typeof digest === "string" ? withReference(fallback, digest) : fallback;
   }
 
-  // A plan denial is already written for the person who hit it (`FEATURE_DENIAL`), and it is
+  // A plan denial is already written for the person who hit it (`featureDenial`), and it is
   // the one server-thrown message worth showing verbatim. Matched by name, not `instanceof`:
   // a second module instance would break the class check, and this file imports nothing.
   if (err instanceof Error && err.name === "PaywallError" && err.message) return err.message;
@@ -582,7 +582,9 @@ export function isRefreshRejection(status: number, body: string): boolean {
 export function describeOAuthReason(
   reason: string | null | undefined,
   provider: string,
-  purpose?: string | null
+  purpose?: string | null,
+  /** The effective plan table (`useViewerPlan().planConfig`), so a plan-limit refusal names the right plans. */
+  config?: Record<Plan, PlanConfig>
 ): { cancelled: boolean; message: string } {
   if (reason === "access_denied") {
     return {
@@ -591,7 +593,7 @@ export function describeOAuthReason(
     };
   }
   if (reason === "plan_limit") {
-    return { cancelled: false, message: EXTRA_CONNECTION_DENIAL };
+    return { cancelled: false, message: extraConnectionDenial(config) };
   }
   if (reason === "missing_scope") {
     // The purpose names overlap ("contacts", "calendar", "recruiter_scan"), so the provider

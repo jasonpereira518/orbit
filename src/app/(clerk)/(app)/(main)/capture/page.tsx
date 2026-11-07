@@ -1,5 +1,6 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import { getContactLabel } from "@/actions/contacts";
 import { getActiveCaptureJob, getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { getCloudNotesState } from "@/actions/cloud-notes";
@@ -7,10 +8,11 @@ import { countIgnoredPeople } from "@/actions/ignored-people";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
 import { CaptureHistory, CaptureHistorySkeleton } from "@/components/capture/capture-history";
+import { ImportsTabBar } from "@/components/capture/capture-tabs";
 import type { CaptureMode } from "@/components/capture/capture-tabs";
+import { ImportsPanel } from "@/components/imports/imports-panel";
 import { requireUserId } from "@/lib/auth";
-import { FEATURE_DENIAL, getEntitlements } from "@/lib/entitlements";
-import { getResumableMeeting } from "@/lib/meeting-sessions";
+import { getEntitlements } from "@/lib/entitlements";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { findEventById } from "@/lib/calendar-events";
 import { userTimeZone } from "@/lib/meeting-context";
@@ -20,9 +22,10 @@ import { isSurfaceLive } from "@/lib/surface-visibility";
 
 export const metadata = { title: "Capture" };
 
-// Page-level, because it governs the server actions called from this page: summarizing an
-// hour-long meeting is a map-reduce over several model calls. The (main) layout is 60, so
-// this page needs its own.
+// Page-level, because it governs the server actions called from this page: a long paste or
+// a stack of files is several model calls, and the Imports tab runs large connections imports
+// in `after()`. The (main) layout is 60, so this page needs its own. (/meetings carries the
+// same for summarizing a recording.)
 export const maxDuration = 300;
 
 export default async function CapturePage({
@@ -34,23 +37,46 @@ export default async function CapturePage({
   if (gate) return gate;
 
   const params = await searchParams;
+  // Recording moved to /meetings; old links (the nudge, bookmarks, notifications) follow it.
+  if (params.mode === "meeting") redirect("/meetings");
+
+  const userIdPromise = requireUserId();
+  // The Imports tab (the old /imports page) is its own surface: hidden, coming soon or
+  // tier-locked for this viewer, the tab is not shown and `?mode=imports` opens the notes box.
+  const importsLivePromise = userIdPromise.then((userId) => isSurfaceLive(userId, "page.imports")).catch(() => false);
+  // Null hides the Drive & OneDrive tab: the surface is not live for this viewer, or the read failed.
+  const cloudLivePromise = userIdPromise.then((userId) => isSurfaceLive(userId, CLOUD_NOTES_SURFACE_KEY)).catch(() => false);
+
+  // The Imports tab renders on the server only when selected, so an ordinary capture visit
+  // pays for none of the import hub's reads — and none of the capture reads below run here.
+  if (params.mode === "imports" && (await importsLivePromise)) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-6">
+        <RenderStamp />
+        <CaptureHeader contactName={null} />
+        <ImportsTabBar showCloud={await cloudLivePromise} />
+        {/* The Imports tab's `aria-controls` names this panel (`capturePanelId("imports")` and
+            `captureTabId("imports")` in capture-tabs.tsx, a client module a server page cannot
+            call): without it the tab points at nothing, a critical axe violation. */}
+        <div role="tabpanel" id="capture-panel-imports" aria-labelledby="capture-tab-imports">
+          <ImportsPanel userId={await userIdPromise} />
+        </div>
+      </div>
+    );
+  }
+
   const requestedContactId = params.contactId || null;
   // `structured` was the form tab Drive & OneDrive replaced; old links land on the notes box,
   // which takes the same contact.
   const modeParam: CaptureMode | null =
-    params.mode === "messy" || params.mode === "voice" || params.mode === "meeting" || params.mode === "cloud"
+    params.mode === "messy" || params.mode === "voice" || params.mode === "cloud" || params.mode === "library"
       ? params.mode
       : params.mode === "structured"
         ? "messy"
         : null;
 
-  const userIdPromise = requireUserId();
   const settingsPromise = getSettings();
   const planPromise = getPlanOverview();
-  const resumablePromise = requireUserId()
-    .then((userId) => getResumableMeeting(userId))
-    // The banner is a convenience; a failure to read it must never take capture down.
-    .catch(() => null);
   // Same for the job and the ignored count: the page must render without either.
   const jobPromise = getActiveCaptureJob().catch(() => null);
   // Every job still reachable, so a multi-file drop can render its queue. `.catch` because a
@@ -58,9 +84,7 @@ export default async function CapturePage({
   // the page actually needs to function.
   const jobsPromise = getActiveCaptureJobs().catch(() => []);
   const ignoredPromise = countIgnoredPeople().catch(() => 0);
-  // Null hides the Drive & OneDrive tab: the surface is not live for this viewer, or the read failed.
-  const cloudNotesPromise = userIdPromise
-    .then((userId) => isSurfaceLive(userId, CLOUD_NOTES_SURFACE_KEY))
+  const cloudNotesPromise = cloudLivePromise
     .then((live) => (live ? getCloudNotesState() : null))
     .catch(() => null);
 
@@ -94,16 +118,13 @@ export default async function CapturePage({
       }
     : null;
   const { usage } = await planPromise;
-  const { canUseMeetings, canUseSync } = await getEntitlements(userId);
-  const resumableMeeting = await resumablePromise;
+  const { canUseSync } = await getEntitlements(userId);
   const job = await jobPromise;
   const jobs = await jobsPromise;
   const ignoredCount = await ignoredPromise;
   const cloudNotes = await cloudNotesPromise;
-  // An unfinished meeting is the one thing on this page that can be lost by ignoring it,
-  // so it opens on the Meeting tab unless the link asked for something specific.
-  const defaultMode: CaptureMode =
-    modeParam || (resumableMeeting && !contactId && !initialMeeting ? "meeting" : "messy");
+  const showImports = await importsLivePromise;
+  const defaultMode: CaptureMode = modeParam || "messy";
   // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Whisper or
   // Gemini — or Orbit's on Lifetime). Anthropic has no speech-to-text, so an Anthropic-only
   // BYOK account can summarize but not transcribe.
@@ -112,14 +133,7 @@ export default async function CapturePage({
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
-      <div>
-        <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Capture</h1>
-        <p className="mt-1 text-muted-foreground">
-          {contactName
-            ? `Log an interaction with ${contactName} — or paste notes that mention others too.`
-            : "Notes, a voice memo, a meeting, or docs from your drive. Orbit pulls out each person; you review them one card at a time."}
-        </p>
-      </div>
+      <CaptureHeader contactName={contactName} />
       <CaptureFlowLazy
         // The toast's and the bell's Review link to this same page: a client navigation would
         // keep the flow's tab state and never open the dialog, so a review link remounts it.
@@ -133,15 +147,13 @@ export default async function CapturePage({
         hasApiKey={settings.hasApiKey}
         aiReason={settings.ai.reason}
         canTranscribe={canTranscribe}
-        canUseMeetings={canUseMeetings}
-        meetingsDeniedMessage={FEATURE_DENIAL.meetings}
-        resumableMeeting={resumableMeeting}
         ignoredCount={ignoredCount}
         quota={{ used: usage.used, limit: usage.limit }}
         userId={userId}
         canUseSync={canUseSync}
         cloudNotes={cloudNotes}
         openCloudReview={params.review === "1"}
+        showImports={showImports}
         drive={{
           apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
           appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,
@@ -159,6 +171,19 @@ export default async function CapturePage({
           ) : null
         }
       />
+    </div>
+  );
+}
+
+function CaptureHeader({ contactName }: { contactName: string | null }) {
+  return (
+    <div>
+      <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Capture</h1>
+      <p className="mt-1 text-muted-foreground">
+        {contactName
+          ? `Log an interaction with ${contactName} — or paste notes that mention others too.`
+          : "Notes, a voice memo, docs from your drive, or your exports. Orbit pulls out each person; you review them one card at a time."}
+      </p>
     </div>
   );
 }

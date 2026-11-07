@@ -3,11 +3,32 @@ import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import type { ParsedQuery } from "@/lib/chat-retrieval";
 import type { OrgRoster } from "@/lib/chat-roster";
-import type { NotePassage } from "@/lib/chat-gather";
 import { plural, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { hybridSearchContacts, listContactsMatching } from "@/lib/hybrid-search";
 import { searchMeetingPassagesFor } from "@/lib/meetings-list";
 import { searchMemories } from "@/lib/memory-search";
+
+/**
+ * One passage about a single interaction, meeting or email event, kept structured so the
+ * answer can cite it. Only those sources: a note_batch or brief passage has no single dated
+ * event to cite and no page to deep-link to.
+ */
+export type NotePassage = {
+  sourceId: string;
+  contactId: string | null;
+  date: string | null;
+  snippet: string;
+  /**
+   * Omitted for an interaction (the original and still the common case). An `email_event` is
+   * what the user's mail said, as the email-insights feature noted it.
+   */
+  kind?: "interaction" | "meeting" | "email_event";
+  /** A meeting passage: when in the call it was said (null for its summary), and its title. */
+  startMs?: number | null;
+  title?: string | null;
+  /** Who an interaction passage is about, when that contact is still the user's. */
+  contactName?: string;
+};
 
 /**
  * The retrieval lanes the question's shape picks (see `QuestionShape`), run beside the
@@ -19,7 +40,7 @@ import { searchMemories } from "@/lib/memory-search";
  *  - person → `personLane`: the name resolved to one contact, who then gets the focused
  *    contact's deeper slice;
  *  - fact, and a resolved person → `factLane`: passages from the notes (and, for a fact,
- *    recorded meetings), cited like the research step's.
+ *    recorded meetings), each citable in the answer.
  *
  * Each lane narrates itself and never throws: a lane that fails leaves the answer to the
  * search, exactly as before the lanes existed.
@@ -197,8 +218,10 @@ export async function factLane(
 
   const passages: NotePassage[] = [
     ...memories
-      .filter((m) => m.sourceKind === "interaction")
+      .filter((m) => m.sourceKind === "interaction" || m.sourceKind === "email_event")
       .map((m) => ({
+        // Omitted for a note, as before; set only for mail so the prompt and the chip can tell.
+        ...(m.sourceKind === "email_event" ? { kind: "email_event" as const } : {}),
         sourceId: m.sourceId,
         contactId: m.contactIds[0] ?? m.contactId ?? null,
         date: m.occurredAt ? new Date(m.occurredAt).toISOString().slice(0, 10) : null,

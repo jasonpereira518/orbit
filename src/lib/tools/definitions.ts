@@ -23,7 +23,7 @@ import { hybridSearchContacts } from "@/lib/hybrid-search";
 import { matchContactsByName } from "@/lib/chat-lanes";
 import { findOrgRosters } from "@/lib/chat-roster";
 import { loadDueFollowUps } from "@/lib/due-follow-ups";
-import { listActiveGoalTextsForUser } from "@/lib/user-goals";
+import { listActiveGoalTextsForUser, listActiveGoalsForUser } from "@/lib/user-goals";
 import { finalizeIngest, ingestEvents, openIngestContext } from "@/lib/ingest/events";
 import { getNetworkStats } from "@/lib/network-stats";
 import { queryRemindersPage } from "@/lib/reminders-page-query";
@@ -49,6 +49,8 @@ import {
   MAX_BODY_CHARS,
 } from "@/lib/agent-sends";
 import { toolError, type OrbitTool } from "@/lib/tools/registry";
+import { FEATURE_TOOLS } from "@/lib/tools/definitions-features";
+import { MCP_CHAT_WRITE_TOOLS } from "@/lib/tools/chat-writes";
 import { searchMemories } from "@/lib/memory-search";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { searchMeetingPassagesFor } from "@/lib/meetings-list";
@@ -56,7 +58,8 @@ import { listUpcomingEvents } from "@/lib/calendar-events";
 import { eventView, getMeetingContext, hhmmInZone, userTimeZone, type MeetingSelector } from "@/lib/meeting-context";
 import { addDaysYmd, ymdInZone } from "@/lib/reminder-due-bucket";
 import { freeSlots } from "@/lib/calendar-free";
-import { requireReleasedSurface } from "@/lib/surface-visibility";
+import { isPaywallError } from "@/lib/entitlements";
+import { requirePlanForSurface, requireReleasedSurface } from "@/lib/surface-visibility";
 import { discoverPeople, researchCompany, researchPerson } from "@/lib/web-research";
 
 const BOTH = ["mcp", "chat"] as const;
@@ -68,6 +71,21 @@ const MCP_ONLY = ["mcp"] as const;
  */
 const CHAT_ONLY = ["chat"] as const;
 
+/**
+ * A write tool's refusal when an operator limited `surfaceKey` to plans this account is not on
+ * (`requirePlanForSurface`, which also records the gate hit) — the same lock the page's own
+ * actions apply. Null when the account may write.
+ */
+async function pageLocked(userId: string, surfaceKey: string) {
+  try {
+    await requirePlanForSurface(userId, surfaceKey);
+    return null;
+  } catch (err) {
+    if (isPaywallError(err)) return toolError(err.message);
+    throw err;
+  }
+}
+
 /** A `YYYY-MM-DD` day, read as the start (or end) of that day in UTC. */
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
 function dayBound(day: string | undefined, end: boolean): Date | null {
@@ -77,8 +95,9 @@ function dayBound(day: string | undefined, end: boolean): Date | null {
 }
 
 /**
- * A web lookup's share of chat's research budget (`GATHER_MAX_MS` is 25s in chat-gather).
- * A search that needs longer is finished on /find, which has a 150s route.
+ * A web lookup's share of chat's lookup budget (lookups stop by `LOOKUPS_END_BY_MS`, 42s into
+ * the request, in @/lib/chat-agent-loop). A search that needs longer is finished on /find,
+ * which has a 150s route.
  */
 const RESEARCH_TOOL_TIMEOUT_MS = 20_000;
 const PREP_RESEARCH_TIMEOUT_MS = 15_000;
@@ -470,9 +489,14 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     surfaces: BOTH,
     scope: "read",
     resultLabel: "goals",
-    async run(userId) {
+    async run(userId, _args, ctx) {
       // The user's own words, typed into settings — not a field anything else writes, which
-      // is why this one crosses to MCP whole.
+      // is why this one crosses to MCP whole. Chat also gets each goal's id, which is how a
+      // `remove_goal` proposal names the one to remove.
+      if (ctx.surface === "chat") {
+        const items = await listActiveGoalsForUser(userId, { limit: 10 });
+        return { goals: items.map((g) => g.text), items };
+      }
       return { goals: await listActiveGoalTextsForUser(userId, { limit: 10 }) };
     },
   },
@@ -555,11 +579,13 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     name: "search_notes",
     title: "Search your notes",
     description:
-      "Search what the user has written — notes, meeting and call logs — by meaning and by " +
-      "words. Use it for what was discussed, said or promised, and when; for details that are " +
-      "not in a contact's summary; and for questions that name a topic rather than a person. " +
-      "Narrow by person with contactId and by date with after/before (YYYY-MM-DD). Returns " +
-      "dated passages with the people they mention.",
+      "Search what the user has written — notes, meeting and call logs — and the short notes " +
+      "Orbit keeps from their career email (hiring-process updates, job postings, news and " +
+      "events; kind \"email_event\"), by meaning and by words. Use it for what was discussed, " +
+      "said or promised, and when; for details that are not in a contact's summary; and for " +
+      "questions that name a topic rather than a person. Narrow by person with contactId and " +
+      "by date with after/before (YYYY-MM-DD). Returns dated passages with the people they " +
+      "mention.",
     inputSchema: {
       query: z.string().min(1).max(200).describe("What to look for, in plain words."),
       contactId: z.string().uuid().optional().describe("Only passages about this person."),
@@ -764,7 +790,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // Prep is worth a web search on who is coming: up to two people, cached per account.
       const found = await getMeetingContext(userId, args, new Date(), {
         research: true,
-        // Shorter than research_person's: the research step must end by GATHER_ENDS_BY_MS.
+        // Shorter than research_person's: chat's lookups must end by LOOKUPS_END_BY_MS.
         signal: AbortSignal.timeout(PREP_RESEARCH_TIMEOUT_MS),
       });
       if (!found) return toolError("No matching meeting on the calendar in the next two weeks.");
@@ -1104,6 +1130,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         externalId?: string;
       }
     ) {
+      const locked = await pageLocked(userId, "page.contacts");
+      if (locked) return locked;
       const contact = await ownedContact(userId, args.contactId);
       if (!contact) return toolError("No such contact.");
 
@@ -1245,6 +1273,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         howMet?: string;
       }
     ) {
+      const locked = await pageLocked(userId, "page.contacts");
+      if (locked) return locked;
       const { contactId, ...raw } = args;
       const existing = await ownedContact(userId, contactId);
       if (!existing) return toolError("No such contact.");
@@ -1301,6 +1331,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       userId,
       args: { contactId: string; note: string; occurredAt?: string; externalId?: string }
     ) {
+      const locked = await pageLocked(userId, "page.contacts");
+      if (locked) return locked;
       const contact = await ownedContact(userId, args.contactId);
       if (!contact) return toolError("No such contact.");
 
@@ -1344,6 +1376,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       userId,
       args: { title: string; description?: string; contactId?: string; dueDate?: string }
     ) {
+      const locked = await pageLocked(userId, "page.reminders");
+      if (locked) return locked;
       if (args.contactId) {
         const contact = await ownedContact(userId, args.contactId);
         if (!contact) return toolError("No such contact.");
@@ -1410,6 +1444,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     scope: "write",
     resultLabel: null,
     async run(userId, args: { contactId: string; days: number }) {
+      const locked = await pageLocked(userId, "page.reminders");
+      if (locked) return locked;
       try {
         const result = await scheduleContactFollowUpForUser(userId, args.contactId, args.days, {
           origin: "mcp",
@@ -1522,4 +1558,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       }
     },
   },
+
+  // Counts, breakdowns and every other feature's reads — see `definitions-features.ts`.
+  ...FEATURE_TOOLS,
+  ...MCP_CHAT_WRITE_TOOLS,
 ];

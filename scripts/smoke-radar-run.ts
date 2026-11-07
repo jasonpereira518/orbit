@@ -357,11 +357,12 @@ run(async () => {
   const biggerStatements = stopQueryCount();
   check("the run still succeeds", bigger.ok);
   check("the same statements at 312 contacts as at 12", biggerStatements === statements, `${biggerStatements} vs ${statements}`);
-  // 26: the outcome check (`detectRadarOutcomes`), the model's tallies
+  // 28: the outcome check (`detectRadarOutcomes`), the model's tallies
   // (`loadModelTallies`), the autopilot settings, the job-move read, the news probe and the
-  // posts read; see smoke-page-budgets.
-  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`).
-  check("and a bounded number of them", statements <= 27, String(statements));
+  // posts read (26); plus the one constant read of the user's imported skills/job titles
+  // (`loadUserFocus`) and the email-insights opt-in check (`produceEmailSignals`, one statement
+  // that returns nothing for an account that has not opted in); see smoke-page-budgets.
+  check("and a bounded number of them", statements <= 28, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);

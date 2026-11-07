@@ -48,7 +48,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ApiKeyScope } from "@/lib/api/keys";
 import { ORBIT_TOOLS } from "@/lib/tools/definitions";
-import { isToolError, runTool, toolError, toolsFor } from "@/lib/tools/registry";
+import { isToolError, releasedTools, runTool, toolError, toolsFor } from "@/lib/tools/registry";
 import { auditUntrustedWrite, recordAiSecurityEvent } from "@/lib/ai-security";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import type { McpClient } from "@/lib/mcp/client";
@@ -122,12 +122,18 @@ export function buildOrbitMcpServer(
     scopes: ApiKeyScope[];
     /** Which assistant is calling, for `mcp_tool_called`. Unknown callers are `other`. */
     client?: McpClient;
+    /**
+     * Whether a page-gated tool's page (`OrbitTool.releasedSurface`) is released to this
+     * user — from `releasedToolsFor`. Absent, every gated tool is left out: closed, not open.
+     */
+    isReleased?: (surfaceKey: string) => boolean;
   }
 ) {
   const client: McpClient = opts.client ?? "other";
   const server = new McpServer({ name: "orbit", version: "1.0.0" });
 
-  for (const tool of toolsFor(ORBIT_TOOLS, "mcp", opts.scopes)) {
+  const isReleased = opts.isReleased ?? (() => false);
+  for (const tool of releasedTools(toolsFor(ORBIT_TOOLS, "mcp", opts.scopes), isReleased)) {
     server.registerTool(
       tool.name,
       {

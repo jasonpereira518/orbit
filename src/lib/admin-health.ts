@@ -105,7 +105,7 @@ export type AdminHealth = {
 export type MissingKeyAccount = { userId: string; email: string | null; provider: string };
 
 /**
- * How many keyless accounts `/admin/health` lists. The page polls every twenty seconds, and
+ * How many keyless accounts `/admin/health` lists. The page is read on every refresh, and
  * on a BYOK product this set grows with every signup that never pastes a key; the tile
  * carries the full count, and the CSV export asks for every row.
  */

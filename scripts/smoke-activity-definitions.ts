@@ -117,7 +117,9 @@ run(async () => {
 
   await signup("two-captures", 10 * DAY);
   await contactRow("two-captures", "capture", ago(10 * DAY - HOUR));
-  await db.execute(sql`INSERT INTO capture_jobs (user_id, source_kind, status, created_at) VALUES (${P + "two-captures"}, 'text', 'saved', ${ago(10 * DAY - HOUR)}), (${P + "two-captures"}, 'text', 'saved', ${ago(9 * DAY)})`);
+  await db.execute(sql`INSERT INTO capture_jobs (user_id, source_kind, status, created_at) VALUES (${P + "two-captures"}, 'text', 'saved', ${ago(10 * DAY - HOUR)}), (${P + "two-captures"}, 'text', 'saved', ${ago(8 * DAY)})`);
+  // 47 hours apart, not 23: "different days" means UTC days, and 23 hours apart shared one
+  // whenever the suite ran between 23:00 and midnight UTC.
   check("captures on two different days is activated", await check7("two-captures"));
 
   // The same follow-up created by a calendar sync is not a person acting.

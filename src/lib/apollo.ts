@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { PLAN_CONFIG, type Plan } from "@/lib/plans/plan-config";
 import { consumePlanMeter, meterResetsAt } from "@/lib/plan-meters";
 import { recordGateHitThrottled } from "@/lib/gate-events";
@@ -151,7 +152,7 @@ async function resolveApolloKey(
   // Orbit's shared Apollo key: no plan includes it (`hostedEnrichment` is off everywhere), so
   // this returns null unless a plan turns the flag back on. `spendHostedApollo` still caps it.
   const { canUseHostedEnrichment } = loadedSettings
-    ? entitlementsFromSettings(userId, loadedSettings)
+    ? entitlementsFromSettings(userId, loadedSettings, await getEffectivePlanConfig())
     : await getEntitlements(userId);
   if (!canUseHostedEnrichment) return null;
   const hosted = process.env.APOLLO_API_KEY || null;

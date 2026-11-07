@@ -355,7 +355,7 @@ export default async function InterestPage({ searchParams }: { searchParams: Sea
           </Reveal>
         </section>
 
-        {/* An admin can hide the demo from /admin/growth/interest-list. */}
+        {/* An admin can hide the demo from /admin/access. */}
         {showDemo && (
           <>
             {/* Wide screens only (lg): the demo is a desktop-sized window, and narrower ones never fetch its chunk. */}

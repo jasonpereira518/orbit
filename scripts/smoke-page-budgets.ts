@@ -31,6 +31,7 @@ import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
+import { getEffectivePlanConfig } from "../src/lib/plans/plan-rules";
 import { contacts } from "../src/db/schema";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
@@ -266,15 +267,21 @@ async function main() {
   // windowed read of `contact_career_moves`), the news probe (one indexed read of the global
   // news tables with the account's company keys; a write only when it finds news), and the
   // posts read (recent `contact_signals` posts, one windowed read, LIMIT 200). The nightly
-  // post check itself runs on `schedule` runs only and is not counted here.
+  // post check itself runs on `schedule` runs only and is not counted here. 28, up from 26 by two reads:
+  // `loadUserFocus` and the email-insights opt-in check (`produceEmailSignals`), one statement that returns nothing
+  // for an account that has not opted in.
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
-  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`).
-  check("radar run issues ≤ 27 statements", radarRunCount <= 27, `got ${radarRunCount}`);
+  // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`) + the
+  // email-insights opt-in check above = 28.
+  check("radar run issues ≤ 28 statements", radarRunCount <= 28, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),
     radarRunQueries.find((q) => selectsBare(q, "notes"))?.slice(0, 200)
   );
+  // The app_surface_flags read (page flags + runtime plan rules) is memoized per instance for
+  // 15s and the app shell has always made it by the time a page loads; warm it, as a request has.
+  await getEffectivePlanConfig();
   startQueryCount();
   const radarPage = await loadRadarPage(USER);
   const radarPageCount = stopQueryCount();

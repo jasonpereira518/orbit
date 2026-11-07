@@ -23,7 +23,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { friendlyError } from "@/lib/errors";
-import { FREE_CONTACT_LIMIT, PLAN_LABELS, type PurchasablePlan } from "@/lib/plans/plan-config";
+import { PLAN_LABELS, type PurchasablePlan } from "@/lib/plans/plan-config";
+import { useViewerPlan } from "@/components/viewer-plan";
 import { SURVEY_DEFINITIONS } from "@/lib/surveys";
 import type { SubscriptionDetails } from "@/lib/subscription-management";
 
@@ -271,6 +272,22 @@ function CancelDialog({
   // as a `survey_answered` event after the cancellation has gone through.
   const [reason, setReason] = useState<string | null>(null);
   const cancellation = SURVEY_DEFINITIONS.cancellation;
+  // What Free lacks that this plan has, under the effective plan table.
+  const { plan, planConfig } = useViewerPlan();
+  const freeLimit = planConfig.free.contactLimit;
+  const paused = [
+    "Included AI",
+    ...(
+      [
+        ["recruiters", "recruiter tracking"],
+        ["meetings", "meetings"],
+        ["extraConnections", "a second Google or Microsoft account"],
+      ] as const
+    )
+      .filter(([f]) => planConfig[plan].features[f] && !planConfig.free.features[f])
+      .map(([, label]) => label),
+  ];
+  const pausedText = paused.length > 1 ? `${paused.slice(0, -1).join(", ")} and ${paused.at(-1)}` : paused[0];
 
   return (
     <Dialog
@@ -292,8 +309,10 @@ function CancelDialog({
         <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
           <li>Every contact, note and reminder stays exactly where it is.</li>
           <li>
-            Free adds new contacts up to {FREE_CONTACT_LIMIT.toLocaleString("en-US")}. Included AI, recruiter
-            tracking, meetings and a second Google or Microsoft account pause until you upgrade again.
+            {freeLimit === null
+              ? "Free keeps adding new contacts."
+              : `Free adds new contacts up to ${freeLimit.toLocaleString("en-US")}.`}{" "}
+            {pausedText} {paused.length > 1 ? "pause" : "pauses"} until you upgrade again.
           </li>
           <li>Credits from packs you bought are kept, frozen, and come back when you resubscribe.</li>
           <li>You can change your mind any time before then.</li>

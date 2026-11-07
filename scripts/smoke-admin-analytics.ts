@@ -1055,13 +1055,12 @@ async function main() {
   }
 
   const { default: TrafficPage } = await import(
-    "../src/app/(clerk)/(admin)/admin/analytics/page"
+    "../src/app/(clerk)/(admin)/admin/growth/page"
   );
-  const { default: FunnelPage } = await import(
-    "../src/app/(clerk)/(admin)/admin/analytics/funnel/page"
-  );
+  // The funnel is a panel on the Acquisition tab now, not its own page.
+  const FunnelPage = TrafficPage;
   const { default: EngagementPage } = await import(
-    "../src/app/(clerk)/(admin)/admin/analytics/engagement/page"
+    "../src/app/(clerk)/(admin)/admin/growth/features/page"
   );
 
   // Some traffic to render, since the fixtures above were cleaned up by the funnel block.
@@ -1086,11 +1085,6 @@ async function main() {
   check("it lists a country", trafficText.includes("US"), trafficText.slice(0, 600));
   check("it lists a referrer", trafficText.includes("news.ycombinator.com"));
 
-  check(
-    "it lists the most active accounts by name",
-    trafficText.includes("Most active accounts"),
-    trafficText.slice(-400)
-  );
 
   const ranged = await TrafficPage({ searchParams: Promise.resolve({ range: "7d" }) });
   check("an explicit range renders", ranged != null);
@@ -1104,10 +1098,10 @@ async function main() {
   check("it names what each rate is a fraction of", funnelText.includes("Conversion"));
   check(
     "it warns these are not one group of people",
-    funnelText.includes("These are not one group of people."),
+    funnelText.includes("not one group of people"),
     funnelText.slice(0, 400)
   );
-  check("it explains the Lifetime caveat", funnelText.includes("Paid includes Lifetime, net of refunds."));
+  check("it explains the Lifetime caveat", funnelText.includes("Lifetime included, net of"));
 
   const engagementPage = await EngagementPage({ searchParams: Promise.resolve({}) });
   const engagementText = textOf(engagementPage).join(" | ");
@@ -1121,6 +1115,11 @@ async function main() {
     "it labels captures by their friendly source name",
     engagementText.includes("Notes") && engagementText.includes("Voice"),
     engagementText.slice(0, 600)
+  );
+  check(
+    "it lists the most active accounts by name",
+    engagementText.includes("Most active accounts"),
+    engagementText.slice(-400)
   );
   check(
     "it says reaching /upgrade is intent, not revenue",

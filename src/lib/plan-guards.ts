@@ -1,6 +1,6 @@
 import { requireUserId } from "@/lib/auth";
 import { requireEntitlement } from "@/lib/entitlements";
-import { requireReleasedSurface, requireVisibleSurface } from "@/lib/surface-visibility";
+import { requirePlanForSurface, requireReleasedSurface, requireVisibleSurface } from "@/lib/surface-visibility";
 
 /**
  * Auth + plan + surface visibility in one call, so gated server actions keep the same
@@ -39,6 +39,15 @@ import { requireReleasedSurface, requireVisibleSurface } from "@/lib/surface-vis
  * protects something a user has not paid for; hiding takes a surface off the product for
  * everyone. The user's own data is not at stake either way, so the boundary that matters
  * is the route — which `(app)/(main)/layout.tsx` closes for every page unconditionally.
+ *
+ * A TIER LOCK on those pages is a paywall, though, so it does close their actions:
+ * `requirePageUser` checks the tier rule ONLY (`requirePlanForSurface`), never hidden or
+ * coming soon, and only on the actions that start new use — creating, editing, importing,
+ * capturing. Everything listed above stays open: reads (the dashboard, the bell, the import
+ * watcher), deletes and undo (a user's own data), and every path while an account is in
+ * first-run setup (onboarding, quick setup, the tour — see `surfaceTierLock`). Contact
+ * creation is also refused in `createContactForUser` itself, the path MCP, the REST API, the
+ * extension, imports and capture all share.
  */
 export async function requireOutreachUser(route = "action.outreach") {
   const userId = await requireUserId();
@@ -60,10 +69,21 @@ export async function requireSyncUser(route = "action.sync") {
   return userId;
 }
 
+/** Meetings has its own page (`/meetings`) now: hiding or tier-locking it takes recording down. */
 export async function requireMeetingsUser(route = "action.meetings") {
   const userId = await requireUserId();
   await requireEntitlement(userId, "meetings", { route });
-  await requireVisibleSurface(userId, "page.capture");
+  await requireVisibleSurface(userId, "page.meetings");
+  return userId;
+}
+
+/**
+ * Auth plus "this viewer's plan may use `surfaceKey`" — tier rule only (see above), for the
+ * actions of Contacts, Imports, Reminders, Capture and Meetings that start new use.
+ */
+export async function requirePageUser(surfaceKey: string) {
+  const userId = await requireUserId();
+  await requirePlanForSurface(userId, surfaceKey);
   return userId;
 }
 

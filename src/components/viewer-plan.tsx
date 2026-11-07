@@ -2,7 +2,7 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
-import type { Plan } from "@/lib/plans/plan-config";
+import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 
 /**
  * The signed-in account's plan, and whether this deployment can actually run included AI
@@ -21,9 +21,21 @@ export type ViewerPlan = {
   aiReason: AiAccessDenial | null;
   /** When this account's monthly credits refill (ISO), or null when the plan has none. */
   creditsResetAt: string | null;
+  /**
+   * The EFFECTIVE plan table (`getEffectivePlanConfig()`: code defaults plus the operator's
+   * plan rules), so client copy — "available on …", plan cards, upgrade pitches — says what
+   * the gates actually enforce. Not secret: it is what /pricing publishes.
+   */
+  planConfig: Record<Plan, PlanConfig>;
 };
 
-const ViewerPlanContext = createContext<ViewerPlan>({ plan: "free", includedAiAvailable: false, aiReason: null, creditsResetAt: null });
+const ViewerPlanContext = createContext<ViewerPlan>({
+  plan: "free",
+  includedAiAvailable: false,
+  aiReason: null,
+  creditsResetAt: null,
+  planConfig: PLAN_CONFIG,
+});
 
 export function ViewerPlanProvider({ value, children }: { value: ViewerPlan; children: ReactNode }) {
   return <ViewerPlanContext.Provider value={value}>{children}</ViewerPlanContext.Provider>;
