@@ -60,7 +60,7 @@ import { addDaysYmd, ymdInZone } from "@/lib/reminder-due-bucket";
 import { freeSlots } from "@/lib/calendar-free";
 import { isPaywallError } from "@/lib/entitlements";
 import { requirePlanForSurface, requireReleasedSurface } from "@/lib/surface-visibility";
-import { discoverPeople, researchCompany, researchPerson } from "@/lib/web-research";
+import { discoverPeople, LookupStillRunning, lookupKeepingLate, researchCompany, researchPerson } from "@/lib/web-research";
 
 const BOTH = ["mcp", "chat"] as const;
 const MCP_ONLY = ["mcp"] as const;
@@ -102,7 +102,7 @@ function dayBound(day: string | undefined, end: boolean): Date | null {
 const RESEARCH_TOOL_TIMEOUT_MS = 20_000;
 const PREP_RESEARCH_TIMEOUT_MS = 15_000;
 const RESEARCH_TIMEOUT_MESSAGE =
-  "The web search needs longer than chat allows. Tell the user to run it on Find people (/find), where it can finish.";
+  "The web search is still running. Tell the user to open Find people (/find) in a minute — the result will be there.";
 
 /** One contact the user owns, or nothing. The tenant check every contact-scoped tool starts with. */
 async function ownedContact(userId: string, contactId: string) {
@@ -790,8 +790,9 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // Prep is worth a web search on who is coming: up to two people, cached per account.
       const found = await getMeetingContext(userId, args, new Date(), {
         research: true,
-        // Shorter than research_person's: chat's lookups must end by LOOKUPS_END_BY_MS.
-        signal: AbortSignal.timeout(PREP_RESEARCH_TIMEOUT_MS),
+        // Shorter than research_person's: chat's lookups must end by LOOKUPS_END_BY_MS. A
+        // guest still being looked up then is finished in the background, into the cache.
+        researchWaitMs: PREP_RESEARCH_TIMEOUT_MS,
       });
       if (!found) return toolError("No matching meeting on the calendar in the next two weeks.");
       return {
@@ -867,13 +868,13 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       } catch {
         return toolError("research_person is not available here.");
       }
-      // Read the signal, not the error: `webSearchJson` rewraps a provider's abort.
-      const signal = AbortSignal.timeout(RESEARCH_TOOL_TIMEOUT_MS);
       try {
-        const res = await researchPerson(
-          userId,
-          { fullName: args.name, company: args.company, domain: args.domain, linkedinUrl: args.linkedinUrl },
-          { signal },
+        const res = await lookupKeepingLate(RESEARCH_TOOL_TIMEOUT_MS, (signal) =>
+          researchPerson(
+            userId,
+            { fullName: args.name, company: args.company, domain: args.domain, linkedinUrl: args.linkedinUrl },
+            { signal },
+          ),
         );
         if (!res.ok) return toolError(res.message);
         const d = res.dossier;
@@ -892,7 +893,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
           note: d.match === "confident" ? "From the public web; not in the user's network." : "Not confirmed to be this person — report no facts as theirs.",
         };
       } catch (err) {
-        if (signal.aborted) return toolError(RESEARCH_TIMEOUT_MESSAGE);
+        if (err instanceof LookupStillRunning) return toolError(RESEARCH_TIMEOUT_MESSAGE);
         throw err;
       }
     },
@@ -928,12 +929,9 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       } catch {
         return toolError("research_company is not available here.");
       }
-      const signal = AbortSignal.timeout(RESEARCH_TOOL_TIMEOUT_MS);
       try {
-        const res = await researchCompany(
-          userId,
-          { name: args.name, domain: args.domain },
-          { signal },
+        const res = await lookupKeepingLate(RESEARCH_TOOL_TIMEOUT_MS, (signal) =>
+          researchCompany(userId, { name: args.name, domain: args.domain }, { signal }),
         );
         if (!res.ok) return toolError(res.message);
         const d = res.dossier;
@@ -954,7 +952,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
               : "Not confirmed to be this company — report nothing as fact.",
         };
       } catch (err) {
-        if (signal.aborted) return toolError(RESEARCH_TIMEOUT_MESSAGE);
+        if (err instanceof LookupStillRunning) return toolError(RESEARCH_TIMEOUT_MESSAGE);
         throw err;
       }
     },
@@ -988,9 +986,10 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       } catch {
         return toolError("find_people is not available here.");
       }
-      const signal = AbortSignal.timeout(RESEARCH_TOOL_TIMEOUT_MS);
       try {
-        const res = await discoverPeople(userId, args.query, { signal });
+        const res = await lookupKeepingLate(RESEARCH_TOOL_TIMEOUT_MS, (signal) =>
+          discoverPeople(userId, args.query, { signal }),
+        );
         if (!res.ok) return toolError(res.message);
         return {
           query: res.result.query,
@@ -998,7 +997,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
           note: "Found on the public web; not a complete list, and none of these people are in the user's network.",
         };
       } catch (err) {
-        if (signal.aborted) return toolError(RESEARCH_TIMEOUT_MESSAGE);
+        if (err instanceof LookupStillRunning) return toolError(RESEARCH_TIMEOUT_MESSAGE);
         throw err;
       }
     },

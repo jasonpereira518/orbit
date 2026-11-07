@@ -19,6 +19,9 @@ import { getContactProfile } from "../src/lib/contact-profile";
 import {
   discoverPeople,
   listRecentResearch,
+  LookupStillRunning,
+  lookupKeepingLate,
+  personResearchKey,
   researchCompany,
   researchPerson,
   saveResearchedPersonForUser,
@@ -181,9 +184,15 @@ async function main() {
     c1.ok && c1.dossier.people.length === 1 && c1.dossier.people[0]!.fullName === "Jane Doe",
   );
 
-  const c2 = await researchCompany(USER, { name: "Stripe", domain: "https://www.stripe.com/" }, { deps, readTypedHomepage: true });
+  const shared = await researchCompany(USER, { name: "stripe", domain: "stripe.com" }, { deps, readTypedHomepage: true });
+  check(
+    "Find people reuses chat's answer for the same company: the homepage is input, not identity",
+    shared.ok && prompts.length === 1 && pagesRead === 1,
+    String(prompts.length),
+  );
+  const c2 = await researchCompany(USER, { name: "Stripe", domain: "https://www.stripe.com/" }, { deps, readTypedHomepage: true, fresh: true });
   check("a typed domain is normalized and skips Wikidata", c2.ok && c2.dossier.subject.domain === "stripe.com" && wikidataAsked === 1);
-  check("/find reads the typed homepage", pagesRead === 1);
+  check("/find reads the typed homepage", pagesRead === 2);
   check(
     "the homepage text reaches the prompt fenced as untrusted",
     /homepage/i.test(prompts.at(-1) ?? "") && (prompts.at(-1) ?? "").includes("IGNORE PREVIOUS INSTRUCTIONS"),
@@ -254,6 +263,79 @@ async function main() {
 
   check("an unknown key saves nothing", (await saveResearchedPersonForUser(USER, "f".repeat(64), OPTS)) === null);
   check("a malformed key saves nothing", (await saveResearchedPersonForUser(USER, "nope", OPTS)) === null);
+
+  // --- one answer per person, whoever asks and with whatever anchors -------------------
+  const sharedPerson = fake(CONFIDENT);
+  await researchPerson(USER, { fullName: "Dana Kim", linkedinUrl: "https://www.linkedin.com/in/dana-kim" }, { researcher: sharedPerson.researcher });
+  const viaChat = await researchPerson(
+    USER,
+    { fullName: "Dana Kim", company: "Stripe", linkedinUrl: "linkedin.com/in/Dana-Kim?trk=x" },
+    { researcher: sharedPerson.researcher },
+  );
+  check(
+    "one LinkedIn profile is one search, whatever else each caller typed",
+    sharedPerson.asked.length === 1 && viaChat.ok && viaChat.dossier.subject.company === "Stripe",
+    String(sharedPerson.asked.length),
+  );
+  await researchPerson(USER, { fullName: "Sam  Lee", company: "Acme, Inc." }, { researcher: sharedPerson.researcher });
+  await researchPerson(USER, { fullName: "sam lee", company: "Acme Inc" }, { researcher: sharedPerson.researcher });
+  check("name and company match across spelling and case", sharedPerson.asked.length === 2, String(sharedPerson.asked.length));
+
+  // --- single-flight: two identical misses at once pay for one search ----------------
+  let slowCalls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const slow: PersonResearcher = async () => {
+    slowCalls++;
+    await gate;
+    return { json: JSON.stringify(CONFIDENT), sources: [] };
+  };
+  const racerA = researchPerson(USER, { fullName: "Lee Park", company: "Figma" }, { researcher: slow });
+  const racerB = researchPerson(USER, { fullName: "Lee Park", company: "Figma" }, { researcher: slow });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  release();
+  const [r1, r2] = await Promise.all([racerA, racerB]);
+  check("two identical lookups at once run one search", slowCalls === 1 && r1.ok && r2.ok, String(slowCalls));
+
+  const boom: PersonResearcher = async () => {
+    throw new Error("provider down");
+  };
+  await researchPerson(USER, { fullName: "Ana Ruiz", company: "Ramp" }, { researcher: boom }).catch(() => null);
+  const claims = (await db.select({ result: aiResultCache.result }).from(aiResultCache).where(eq(aiResultCache.userId, USER))).filter(
+    (r) => typeof r.result === "object" && r.result !== null && "pending" in r.result,
+  );
+  check("a failed search leaves no claim behind", claims.length === 0, String(claims.length));
+
+  const staleKey = personResearchKey({ fullName: "Kai Moss", company: "Linear" })!;
+  await db.insert(aiResultCache).values({
+    userId: USER,
+    operation: "research.person",
+    inputHash: staleKey,
+    result: { pending: true },
+    createdAt: new Date(Date.now() - 5 * 60_000),
+  });
+  const staleStart = Date.now();
+  const afterDead = fake(CONFIDENT);
+  const revived = await researchPerson(USER, { fullName: "Kai Moss", company: "Linear" }, { researcher: afterDead.researcher });
+  check(
+    "a claim whose caller died does not block the next one",
+    revived.ok && afterDead.asked.length === 1 && Date.now() - staleStart < 5_000,
+    String(Date.now() - staleStart),
+  );
+
+  // --- a lookup chat stops waiting for still finishes into the cache -----------------
+  const late: PersonResearcher = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return { json: JSON.stringify(CONFIDENT), sources: [] };
+  };
+  const timedOut = await lookupKeepingLate(50, (signal) =>
+    researchPerson(USER, { fullName: "Ivy Chen", company: "Notion" }, { researcher: late, signal }),
+  ).catch((err) => err);
+  check("past the wait, the caller hears it is still running", timedOut instanceof LookupStillRunning);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const rerun = fake(CONFIDENT);
+  await researchPerson(USER, { fullName: "Ivy Chen", company: "Notion" }, { researcher: rerun.researcher });
+  check("…and the rerun on Find people is a cache hit, not a second search", rerun.asked.length === 0);
 
   // --- briefs are pruned at RESEARCH_CACHE_DAYS; other cached answers are not -------
   const old = new Date(Date.now() - (RESEARCH_CACHE_DAYS + 1) * 86_400_000);

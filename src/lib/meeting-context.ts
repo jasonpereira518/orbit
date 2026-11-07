@@ -25,6 +25,7 @@ import { updateContactForUser } from "@/lib/contact-writes";
 import {
   loadResearchedPeople,
   personResearchKey,
+  lookupKeepingLate,
   researchPerson,
   type PersonResearcher,
 } from "@/lib/web-research";
@@ -253,7 +254,7 @@ export async function getMeetingContext(
    * `research`: search the web for up to two people with nothing researched yet (chat's
    * prep). Off, only briefs already in the cache are read — the prep card never spends.
    */
-  opts: { research?: boolean; researcher?: PersonResearcher; signal?: AbortSignal } = {}
+  opts: { research?: boolean; researcher?: PersonResearcher; researchWaitMs?: number } = {}
 ): Promise<{
   event: CalendarEventRow;
   tz: string;
@@ -449,7 +450,8 @@ export async function getMeetingContext(
     const todo = subjects.filter((s) => s.key && !profiles.has(s.ref)).slice(0, MAX_PREP_RESEARCH);
     await Promise.all(
       todo.map(async (s) => {
-        const res = await researchPerson(userId, s.input!, { researcher: opts.researcher, signal: opts.signal }).catch(
+        const lookup = (signal?: AbortSignal) => researchPerson(userId, s.input!, { researcher: opts.researcher, signal });
+        const res = await (opts.researchWaitMs ? lookupKeepingLate(opts.researchWaitMs, lookup) : lookup()).catch(
           () => null
         );
         profiles.set(s.ref, res?.ok ? briefOf(res.key, res.dossier) : null);
