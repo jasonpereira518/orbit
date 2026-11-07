@@ -31,6 +31,9 @@ test("an empty account goes through quick setup and lands on the empty dashboard
   await expect(overview).toBeVisible();
   // The overview lists Capture (which needs a key) and the dashboard; the account has a key
   // via the stub, so no "Needs AI key" tag anywhere.
+  // The tour opens on the goals chapter; Capture is one rail click away.
+  await expect(page.getByRole("heading", { name: "People who fit your goals" })).toBeVisible();
+  await page.getByRole("button", { name: "Capture", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Capture people in seconds" })).toBeVisible();
   await expect(page.getByText("Needs AI key")).toHaveCount(0);
   await page.getByRole("button", { name: "Skip to the dashboard" }).click();
