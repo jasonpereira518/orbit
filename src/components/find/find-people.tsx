@@ -20,10 +20,10 @@ type DiscoveryBrief = { key: string; dossier: DiscoveryResult };
 type Mode = "person" | "company" | "discover";
 
 /** A LinkedIn profile page is the strongest anchor a brief can get. The server re-checks it. */
-const LINKEDIN_PROFILE = /^https?:\/\/([a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#\s]+\/?$/i;
+export const LINKEDIN_PROFILE = /^https?:\/\/([a-z]{2,3}\.)?linkedin\.com\/in\/[^/?#\s]+\/?$/i;
 
 /** POSTs to `/api/research` (a route, for its longer time limit than a server action's). */
-async function requestBrief(body: Record<string, unknown>): Promise<Brief> {
+export async function requestBrief(body: Record<string, unknown>): Promise<Brief> {
   const res = await fetch("/api/research", {
     method: "POST",
     headers: { "content-type": "application/json", "x-orbit-research": "1" },
