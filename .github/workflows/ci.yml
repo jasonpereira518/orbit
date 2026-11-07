@@ -215,11 +215,11 @@ jobs:
 
   # Supply chain and secrets. Three independent checks, each answering a different question:
   #
-  # - `npm audit` (production dependencies): is anything we ship CRITICALLY vulnerable right
-  #   now? Gated at critical only, because at the time of writing there are 15 high and 11
-  #   moderate advisories, all transitive and all fixable with `npm audit fix`; gating at
-  #   high would turn every PR red until that is done. Tighten to `--audit-level=high` once
-  #   it is (docs/TESTING.md tracks it).
+  # - `npm audit` (production dependencies): is anything we ship HIGH or CRITICALLY vulnerable
+  #   right now? Gated at high. The backlog that once made this impossible (15 high and 11
+  #   moderate transitive advisories, mostly `undici` under `@vercel/blob`) was cleared by
+  #   the dependency bumps and `overrides` in package.json, so a new high now means a new
+  #   problem rather than inherited debt.
   # - Dependency review (PRs only): does THIS PR add a dependency with a high advisory? That
   #   gates new risk without inheriting the backlog above.
   # - gitleaks: does any commit in this push or PR add a secret? Scans only the new commits
@@ -238,9 +238,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: npm audit (production dependencies)
-        run: |
-          npm audit --omit=dev --audit-level=high || true   # the full picture, in the log
-          npm audit --omit=dev --audit-level=critical
+        run: npm audit --omit=dev --audit-level=high
       # Needs Settings → Code security → Dependency graph, which is off on this repository
       # (the action errors out without it, failing every PR). Turn the graph on, then set the
       # repository variable DEPENDENCY_REVIEW=true to start enforcing this step.

@@ -1,7 +1,7 @@
 "use server";
 
 import { requirePageUser } from "@/lib/plan-guards";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
@@ -101,6 +101,7 @@ import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-imp
 import { UserFacingError } from "@/lib/errors";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoAddressBookPreview, recordDemoContactsImport } from "@/lib/demo-workspace-actions";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 function simpleHash(input: string) {
   let h = 0;
@@ -155,6 +156,78 @@ type PreviewRefusal = { error: string };
  */
 function refusal(message: string): PreviewRefusal {
   return { error: message };
+}
+
+// ------------------------------------------------------------ import limits
+
+/**
+ * Import actions parse the whole file in memory and then explode it into job rows, so the
+ * only thing standing between a signed-in account and a function OOM is this ceiling. A
+ * LinkedIn export is ~15 MB at the 30,000-connection maximum; 5M characters is a wide margin
+ * over that and far below what would threaten the instance.
+ */
+const MAX_IMPORT_TEXT_CHARS = 5_000_000;
+
+/**
+ * Rows one import will stage. Well above LinkedIn's 30,000-connection maximum and the size
+ * of any Address Book export, and low enough that a crafted CSV cannot create a job table
+ * row per byte.
+ */
+const MAX_IMPORT_ROWS = 50_000;
+
+/**
+ * A job that still says `processing` after this long is stalled, not in flight (the backstop
+ * resumes at six minutes). The window exists so a job that died without being reaped cannot
+ * block the account's next import forever.
+ */
+const IMPORT_CONCURRENCY_WINDOW_MS = 15 * 60_000;
+
+const IMPORT_TOO_LARGE = "That file is too large to import. Try splitting it into smaller files.";
+
+function assertImportTextFits(text: string): void {
+  if (typeof text !== "string" || text.length > MAX_IMPORT_TEXT_CHARS) {
+    throw new UserFacingError(IMPORT_TOO_LARGE);
+  }
+}
+
+function assertImportRowsFit(count: number): void {
+  if (count > MAX_IMPORT_ROWS) throw new UserFacingError(IMPORT_TOO_LARGE);
+}
+
+/**
+ * One server-owned import at a time. Two runs on the same account race the duplicate index
+ * and can double-write the same people; the rate limit bounds the count, this bounds the
+ * overlap. Demo workspaces return before this — they never create a job.
+ */
+async function assertNoImportInFlight(userId: string): Promise<void> {
+  const db = await getDb();
+  const active = await db.query.imports.findFirst({
+    where: and(
+      eq(imports.userId, userId),
+      eq(imports.status, "processing"),
+      gt(imports.updatedAt, new Date(Date.now() - IMPORT_CONCURRENCY_WINDOW_MS)),
+    ),
+    columns: { id: true },
+  });
+  if (active) {
+    throw new UserFacingError(
+      "An import is already running. Wait for it to finish before starting another.",
+    );
+  }
+}
+
+/** Charge a preview bucket, returning the refusal rather than throwing it at a form. */
+async function chargePreviewOrRefuse(
+  scope: "importPreview",
+  userId: string,
+): Promise<PreviewRefusal | null> {
+  try {
+    await consumeBucket(scope, userId, RATE_LIMITS[scope]);
+    return null;
+  } catch (err) {
+    if (isRateLimitedError(err)) return refusal(err.message);
+    throw err;
+  }
 }
 
 // ------------------------------------------------------------ the files about the user
@@ -212,6 +285,11 @@ export async function clearLinkedInYou() {
 
 export async function previewLinkedInCsv(csvText: string) {
   const userId = await requirePageUser("page.imports");
+  const limited = await chargePreviewOrRefuse("importPreview", userId);
+  if (limited) return limited;
+  if (typeof csvText !== "string" || csvText.length > MAX_IMPORT_TEXT_CHARS) {
+    return refusal(IMPORT_TOO_LARGE);
+  }
   // parseLinkedInConnectionsCsv throws for expected validation failures (empty
   // file, wrong export type, no rows found). Server Actions strip thrown error
   // messages in production, replacing them with a generic digest — so those
@@ -225,6 +303,7 @@ export async function previewLinkedInCsv(csvText: string) {
     );
   }
   const { columns, rows, warnings } = parsed;
+  if (rows.length > MAX_IMPORT_ROWS) return refusal(IMPORT_TOO_LARGE);
   if (hasEncodingArtifacts(rows)) warnings.push(ENCODING_ARTIFACTS_WARNING);
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
@@ -292,9 +371,12 @@ export async function startLinkedInImport(
   selectedIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requirePageUser("page.imports");
+  assertImportTextFits(csvText);
+  await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
   const db = await getDb();
 
   const { rows } = parseLinkedInConnectionsCsv(csvText);
+  assertImportRowsFit(rows.length);
   const selectedIndexes =
     selectedIds === undefined
       ? rows.map((_, i) => i)
@@ -305,6 +387,8 @@ export async function startLinkedInImport(
   if (selectedIndexes.length === 0) {
     throw new Error("No rows selected to import");
   }
+
+  await assertNoImportInFlight(userId);
 
   const [importRow] = await db
     .insert(imports)
@@ -634,6 +718,7 @@ export async function undoImport(importId: string): Promise<UndoResult> {
   const userId = await requireUserId();
   // What `performUndo` answers for an import it cannot find: nothing removed, nothing left.
   if (!isImportId(importId)) return { removed: 0, kept: 0, done: true, remaining: 0 };
+  await consumeBucket("importUndo", userId, RATE_LIMITS.importUndo);
   const startedAt = Date.now();
   let removed = 0;
   let result: UndoResult = { removed: 0, kept: 0, done: true, remaining: 0 };
@@ -731,6 +816,11 @@ async function storedSelfLinkedInUrl(userId: string): Promise<string | null> {
  */
 export async function previewLinkedInMessagesCsv(csvText: string) {
   const userId = await requirePageUser("page.imports");
+  const limited = await chargePreviewOrRefuse("importPreview", userId);
+  if (limited) return limited;
+  if (typeof csvText !== "string" || csvText.length > MAX_IMPORT_TEXT_CHARS) {
+    return refusal(IMPORT_TOO_LARGE);
+  }
   let parsed: ReturnType<typeof parseLinkedInMessagesCsv>;
   try {
     parsed = parseLinkedInMessagesCsv(csvText);
@@ -748,6 +838,7 @@ export async function previewLinkedInMessagesCsv(csvText: string) {
       "No messages found in that file — upload messages.csv from your LinkedIn data download",
     );
   }
+  if (messages.length > MAX_IMPORT_ROWS) return refusal(IMPORT_TOO_LARGE);
 
   const db = await getDb();
   const [existing, storedSelfUrl] = await Promise.all([
@@ -851,9 +942,12 @@ export async function startLinkedInMessagesImport(
   selectedConversationIds?: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requirePageUser("page.imports");
+  assertImportTextFits(csvText);
+  await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
   const db = await getDb();
 
   const { messages } = parseLinkedInMessagesCsv(csvText);
+  assertImportRowsFit(messages.length);
   // Same owner the preview resolved, from the same stored URL — see `storedSelfLinkedInUrl`.
   const self = resolveSelfIdentity(
     messages,
@@ -878,6 +972,8 @@ export async function startLinkedInMessagesImport(
     list.push(m);
     byConv.set(m.conversationId, list);
   }
+
+  await assertNoImportInFlight(userId);
 
   const [importRow] = await db
     .insert(imports)
@@ -1068,6 +1164,8 @@ export async function previewCalendarImport(payload: {
   text: string;
 }) {
   const userId = await requirePageUser("page.imports");
+  await consumeBucket("importPreview", userId, RATE_LIMITS.importPreview);
+  assertImportTextFits(payload.text);
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
     where: eq(contacts.userId, userId),
@@ -1118,6 +1216,7 @@ export async function previewCalendarImport(payload: {
 
   // One-time calendar upload: reach back CALENDAR_BACKFILL_DAYS.
   const windowed = windowCalendarEvents(events);
+  assertImportRowsFit(events.length);
 
   const duplicateIndex = buildDuplicateIndex(existing);
 
@@ -1180,6 +1279,8 @@ export async function confirmCalendarImport(payload: {
   createFollowUps?: boolean;
 }): Promise<{ importId: string; totalRows: number }> {
   const userId = await requirePageUser("page.imports");
+  assertImportTextFits(payload.text);
+  await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
   const db = await getDb();
   const createFollowUps = payload.createFollowUps !== false;
 
@@ -1240,6 +1341,9 @@ export async function confirmCalendarImport(payload: {
       });
     }
   }
+
+  assertImportRowsFit(rowPayloads.length);
+  await assertNoImportInFlight(userId);
 
   const [importRow] = await db
     .insert(imports)
@@ -1313,6 +1417,7 @@ export async function previewGoogleContacts(): Promise<{
     return { connected: true, contactsScopeGranted: false, people: [] };
   }
 
+  await consumeBucket("importPreview", userId, RATE_LIMITS.importPreview);
   const accessToken = await getValidAccessToken(userId);
   const googleContacts = await fetchGooglePeopleContacts(accessToken);
 
@@ -1380,6 +1485,8 @@ export async function confirmGoogleContactsImport(
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "google_contacts", selectedIds.length);
   }
+  assertImportRowsFit(selectedIds.length);
+  await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
   const db = await getDb();
 
   const accessToken = await getValidAccessToken(userId);
@@ -1387,6 +1494,8 @@ export async function confirmGoogleContactsImport(
   const selected = new Set(selectedIds);
   const rows = googleContacts.filter((p) => selected.has(p.resourceName));
   if (rows.length === 0) throw new Error("No contacts selected to import");
+  assertImportRowsFit(rows.length);
+  await assertNoImportInFlight(userId);
 
   const [importRow] = await db
     .insert(imports)
@@ -1468,6 +1577,7 @@ export async function previewOutlookContacts(): Promise<{
     return { connected: true, contactsScopeGranted: false, people: [] };
   }
 
+  await consumeBucket("importPreview", userId, RATE_LIMITS.importPreview);
   const accessToken = await getValidOutlookAccessToken(userId);
   const outlookContacts = await fetchOutlookContacts(accessToken);
 
@@ -1529,6 +1639,8 @@ export async function confirmOutlookContactsImport(
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
   }
+  assertImportRowsFit(selectedIds.length);
+  await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
   const db = await getDb();
 
   const conn = await db.query.outlookConnections.findFirst({
@@ -1543,6 +1655,8 @@ export async function confirmOutlookContactsImport(
   const selected = new Set(selectedIds);
   const rows = outlookContacts.filter((p) => selected.has(p.id));
   if (rows.length === 0) throw new Error("No contacts selected to import");
+  assertImportRowsFit(rows.length);
+  await assertNoImportInFlight(userId);
 
   const [importRow] = await db
     .insert(imports)
@@ -1625,6 +1739,11 @@ export async function previewContactsFile(
     }
 > {
   const userId = await requirePageUser("page.imports");
+  const limited = await chargePreviewOrRefuse("importPreview", userId);
+  if (limited) return limited;
+  if (typeof text !== "string" || text.length > MAX_IMPORT_TEXT_CHARS) {
+    return { error: IMPORT_TOO_LARGE };
+  }
   let parsed: ReturnType<typeof parseContactsFile>;
   try {
     parsed = parseContactsFile(text, fileName);
@@ -1641,6 +1760,8 @@ export async function previewContactsFile(
             ),
     };
   }
+
+  if (parsed.rows.length > MAX_IMPORT_ROWS) return { error: IMPORT_TOO_LARGE };
 
   const db = await getDb();
   const existing = await db.query.contacts.findMany({
@@ -1719,11 +1840,14 @@ export async function confirmContactsFileImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requirePageUser("page.imports");
+  assertImportTextFits(text);
+  await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
   const db = await getDb();
 
   // Throws on a file the preview would have refused — the client only gets here from a
   // successful preview of this same text, so reaching the throw means the text changed.
   const { rows } = parseContactsFile(text, fileName);
+  assertImportRowsFit(rows.length);
   const selectedIndexes = [
     ...new Set(
       selectedIds
@@ -1733,6 +1857,8 @@ export async function confirmContactsFileImport(
   ].sort((a, b) => a - b);
   if (selectedIndexes.length === 0)
     throw new Error("No contacts selected to import");
+
+  await assertNoImportInFlight(userId);
 
   const [importRow] = await db
     .insert(imports)
