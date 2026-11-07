@@ -11,6 +11,7 @@ import {
   Sparkles,
   Sun,
   Infinity as InfinityIcon,
+  ListTodo,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -53,6 +54,7 @@ const VIEWS: Array<{
   icon: ComponentType<{ className?: string }>;
   count: (c: ReminderRailCounts) => number;
 }> = [
+  { view: "all", label: "All", icon: ListTodo, count: (c) => c.all },
   { view: "today", label: "Today", icon: Sun, count: (c) => c.today },
   { view: "upcoming", label: "Upcoming", icon: CalendarClock, count: (c) => c.upcoming },
   { view: "anytime", label: "Anytime", icon: InfinityIcon, count: (c) => c.anytime },

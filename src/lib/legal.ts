@@ -28,8 +28,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // counts (never query text), and Resend delivery/open/click for outreach Orbit sends. A
 // suffix, not a new date: needsTermsAcceptance compares strings, and accounts that accepted
 // 2026-11-06 must be asked again.
-export const TERMS_VERSION = "2026-11-06.2";
-export const LEGAL_LAST_UPDATED = "November 6, 2026";
+// 2026-11-07: company logos on meeting rows — an organization's name or domain (a domain may
+// come from a contact's or guest's work email, never the address) goes to Wikidata and
+// Google's favicon service. The favicon lookup for brand colours was already true and unsaid.
+export const TERMS_VERSION = "2026-11-07";
+export const LEGAL_LAST_UPDATED = "November 7, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

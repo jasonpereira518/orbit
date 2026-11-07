@@ -13,7 +13,8 @@
  * `requireUserId()` wrapper around it.
  */
 
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, not, or, sql } from "drizzle-orm";
+import { nonPersonContactSql } from "@/lib/non-person-participant";
 import { getDb, rowsOf } from "@/db";
 import { contactTags, contacts, tags } from "@/db/schema";
 import { rankContacts } from "@/lib/contact-ranking";
@@ -64,7 +65,8 @@ export async function listContactsPage(
   // always returns its first (only) page.
   const cursor = sort === "relevance" ? null : decodeContactsCursor(filters?.cursor, sort, Boolean(filters?.q?.trim()));
 
-  const conditions = [eq(contacts.userId, userId)];
+  // Group calendars and rooms an older calendar sync saved as contacts stay out of the list.
+  const conditions = [eq(contacts.userId, userId), not(nonPersonContactSql())];
 
   const q = filters?.q?.trim();
   // Reused below by `contactsOrderBy` (relevance ranking) and by the match-reason map — one

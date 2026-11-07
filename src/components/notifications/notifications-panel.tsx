@@ -19,7 +19,12 @@ import {
   markKeptNotificationsRead,
   useKeptNotifications,
 } from "@/lib/kept-notifications";
-import { PANEL_ORIGIN_FALLBACK, originFromTrigger } from "@/lib/floating-panel";
+import { useCornerShift } from "@/lib/corner-clearance";
+import {
+  PANEL_CORNER_SHIFT_PX,
+  PANEL_ORIGIN_FALLBACK,
+  originFromTrigger,
+} from "@/lib/floating-panel";
 
 /**
  * The bell lives in every signed-in page; what the panel shows (and its actions, rows and
@@ -56,6 +61,8 @@ export function NotificationsPanelButton({
   tooltip?: boolean;
 } = {}) {
   const [open, setOpen] = useState(false);
+  // Toasts and the job stack slide to the window's left while it is open.
+  useCornerShift(PANEL_CORNER_SHIFT_PX, open);
   // Captured on click rather than read during render: there are two bells mounted (mobile
   // header and desktop fixed, hidden from each other by CSS), and this resolves to
   // whichever one the user actually pressed.

@@ -25,6 +25,7 @@ export type Brand = {
   domain?: string;
 };
 
+/** `domain`: the company's own website, for its logo. Explicit, never guessed from the name. */
 type BrandEntry = [kind: BrandKind, hex: string, names: readonly string[], domain?: string];
 
 const ENTRIES: readonly BrandEntry[] = [
@@ -183,7 +184,7 @@ const ENTRIES: readonly BrandEntry[] = [
   ["company", "#051C2C", ["McKinsey", "McKinsey & Company"], "mckinsey.com"],
   ["company", "#CC0000", ["Bain & Company", "Bain"], "bain.com"],
   ["company", "#29BA74", ["Boston Consulting Group", "BCG"], "bcg.com"],
-  ["company", "#6C5CE7", ["MetaProp"], "metaprop.vc"],
+  ["company", "#6C5CE7", ["MetaProp"]],
   ["company", "#F26625", ["Y Combinator", "YC"], "ycombinator.com"],
   ["company", "#FF5A00", ["Andreessen Horowitz", "a16z"], "a16z.com"],
   ["company", "#EE3224", ["Sequoia Capital", "Sequoia"], "sequoiacap.com"],
@@ -202,6 +203,31 @@ export function brandKey(name: string | null | undefined): string {
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }
+
+/**
+ * Company names that are also everyday words ("an apple", "meta discussion", "zoom in"): a
+ * free-text mention only counts written capitalised.
+ */
+const COMMON_WORD_COMPANIES = new Set([
+  "Amazon", "Meta", "Apple", "Oracle", "Intel", "Visa", "Snap", "Linear", "Notion", "Slack",
+  "Zoom", "Cursor", "Discord", "Stripe", "Snowflake", "Asana", "Bain", "Sequoia", "Tesla",
+  "Twitter", "Dell", "Goldman", "Citi", "Mistral", "Perplexity", "Cohere", "Robinhood", "Uber",
+]);
+
+export type CuratedCompany = {
+  name: string;
+  aliases: readonly string[];
+  domain: string;
+  /** The aliases that are everyday words, matched in free text only when written capitalised. */
+  capitalisedOnly: readonly string[];
+};
+
+/** The curated companies that have a domain, for finding them named in free text. */
+export const CURATED_COMPANIES: readonly CuratedCompany[] = ENTRIES.flatMap(([kind, , names, domain]) =>
+  kind === "company" && domain
+    ? [{ name: names[0]!, aliases: names, domain, capitalisedOnly: names.filter((n) => COMMON_WORD_COMPANIES.has(n)) }]
+    : []
+);
 
 /** Every alias key → the brands it names (one per kind at most in practice). */
 const INDEX = new Map<string, Brand[]>();

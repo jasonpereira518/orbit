@@ -37,7 +37,6 @@ import { WritingInstructionsField } from "@/components/chat/writing-instructions
 import { clearSendResume, peekSendResumeFor } from "@/lib/chat-send-resume";
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import {
-  askNetwork,
   createChatThread,
   deleteChatThread,
   getChatThread,
@@ -121,11 +120,6 @@ import { ANCHOR_INTERFERENCE, shiftAnchor, spliceSpan } from "@/lib/dictation";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { draftContactFollowUp } from "@/actions/contacts";
 import { useDictation } from "@/lib/use-dictation";
-
-type ChatResult = Extract<
-  Awaited<ReturnType<typeof askNetwork>>,
-  { ok: true }
->;
 
 export type ThreadSummary = {
   id: string;
@@ -765,6 +759,8 @@ export function ChatPanel({
             steps: row.activity ?? undefined,
             evidence: row.evidence ?? undefined,
             proposedActions: row.proposedActions ?? undefined,
+            // Stored since v196; older answers have none and show no chips.
+            followUps: row.followUps?.length ? row.followUps : undefined,
             feedback: row.feedback ?? null,
             // It came out of the database, so by definition there is a row to rate.
             persisted: true,
@@ -2157,27 +2153,16 @@ const AssistantBubble = memo(function AssistantBubble({
           </p>
         )}
         {gridRecs.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{gridRecs.map(renderCard)}</div>}
-        {/* Only once persisted: committing needs a real row to address. */}
-        {msg.persisted && (msg.proposedActions?.length ?? 0) > 0 && (
+        {/* As soon as they stream, beside the answer that proposed them; their controls wait
+            for the saved row, since committing needs its real id. */}
+        {(msg.proposedActions?.length ?? 0) > 0 && (
           <ProposedActionsList
             messageId={msg.id}
             actions={msg.proposedActions!}
             nameById={nameById}
+            pending={!msg.persisted}
             onSettled={(actionId, next) => onActionSettled?.(msg.id, actionId, next)}
           />
-        )}
-        {!msg.streaming && msg.answer && (
-          <div className="flex flex-wrap items-center gap-2">
-            <AnswerActions
-              messageId={msg.id}
-              answer={copyText}
-              persisted={Boolean(msg.persisted)}
-              initialFeedback={msg.feedback ?? null}
-              onRetry={onRetry && (() => onRetry(msg.id))}
-              retryLabel={retryLabel}
-            />
-            {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}
-          </div>
         )}
         {!msg.streaming && (msg.followUps?.length ?? 0) > 0 && (
           <div className="flex flex-wrap gap-1.5">
@@ -2191,6 +2176,19 @@ const AssistantBubble = memo(function AssistantBubble({
                 {q}
               </button>
             ))}
+          </div>
+        )}
+        {!msg.streaming && msg.answer && (
+          <div className="flex flex-wrap items-center gap-2">
+            <AnswerActions
+              messageId={msg.id}
+              answer={copyText}
+              persisted={Boolean(msg.persisted)}
+              initialFeedback={msg.feedback ?? null}
+              onRetry={onRetry && (() => onRetry(msg.id))}
+              retryLabel={retryLabel}
+            />
+            {versions.length > 1 && <VersionSwitcher versions={versions} currentId={msg.id} onSwitch={onSwitchVersion} />}
           </div>
         )}
       </div>
@@ -2247,7 +2245,7 @@ const RecommendationCard = memo(function RecommendationCard({
   messageId,
   sentAt,
 }: {
-  rec: ChatResult["recommendations"][number];
+  rec: ChatRecommendation;
   /** The question the answer was for — what a draft written on demand is about. */
   question?: string;
   /** Role and company from retrieval — absent on a reloaded thread, which is fine. */

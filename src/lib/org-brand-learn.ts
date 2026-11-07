@@ -134,6 +134,19 @@ export { toDomain };
 
 const WIKI = { userAgent: USER_AGENT, timeoutMs: FETCH_TIMEOUT_MS };
 
+/**
+ * A domain the logo route may hand Google's favicon service: exactly what `toDomain` makes
+ * (lowercase host, a real TLD, so no IP literal, port, path or bare "localhost"), and not a
+ * reserved or internal name.
+ */
+export function isLogoDomain(value: string): boolean {
+  return (
+    value.length <= 253 &&
+    toDomain(value) === value &&
+    !/\.(?:local|localhost|internal|intranet|lan|home|corp|arpa|test|invalid|example)$/.test(value)
+  );
+}
+
 /** The dominant color of a domain's icon, via Google's favicon service. */
 export async function iconColorForDomain(domain: string, fetchImpl: Fetch = fetch) {
   try {

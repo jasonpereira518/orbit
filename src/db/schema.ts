@@ -3750,6 +3750,11 @@ export const chatMessages = pgTable(
      */
     answerOutcome: text("answer_outcome").$type<"answered" | "partial" | "abstained">(),
     /**
+     * The next questions this answer offered — rule-derived by `deriveFollowUps`, never
+     * model-written. Stored so the chips survive a reload; empty on rows from before v196.
+     */
+    followUps: jsonb("follow_ups").$type<string[]>().default([]),
+    /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
      * that has `slot` null and is its own slot, backfilled the first time it is edited or

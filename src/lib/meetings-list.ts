@@ -16,9 +16,23 @@
  * a scan, bounded by one user's meetings — fine at this scale; a tsvector over the segment
  * text is the upgrade if it ever is not.
  */
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { getDb } from "@/db";
-import { interactions, meetingSessions, meetingTranscriptSegments, noteBatches, type MeetingSessionStatus } from "@/db/schema";
+import { and, desc, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
+import { getDb, rowsOf } from "@/db";
+import {
+  calendarEvents,
+  companies,
+  contacts,
+  interactions,
+  meetingSessions,
+  meetingTranscriptSegments,
+  noteBatches,
+  orgBrandColors,
+  type MeetingSessionStatus,
+} from "@/db/schema";
+import { brandKey, CURATED_COMPANIES, type CuratedCompany } from "@/lib/brand-colors";
+import { companyFromEmail } from "@/lib/guest-profiles";
+import { toDomain } from "@/lib/org-brand-learn";
+import { listSummary } from "@/lib/plain-text";
 
 export const MEETINGS_PAGE = 20;
 const LISTED: MeetingSessionStatus[] = ["analyzed", "saved"];
@@ -38,8 +52,14 @@ export type MeetingListItem = {
   durationMs: number;
   status: "analyzed" | "saved";
   attendees: string[];
-  /** The digest's summary, trimmed for a list. */
+  /** The digest's summary (or Granola's), as plain prose trimmed for a list. */
   summary: string | null;
+  /** The calendar event's video call ("meet", "zoom", "teams", "webex"), when it was recorded from one. */
+  call: string | null;
+  /** Recorded from a shared tab or screen rather than the room's mic. */
+  sharedScreen: boolean;
+  /** Up to two companies the meeting involved, for their logos (`/api/logos/[domain]`). */
+  companies: MeetingCompany[];
   noteBatchId: string | null;
   /** With a search: the first line of transcript that matched, and when it was said. */
   match: { startMs: number; excerpt: string } | null;
@@ -99,13 +119,20 @@ export async function listMeetingsFor(
   );
   const page = merged.slice(0, limit);
   const last = page[page.length - 1];
+  await addCallsAndCompanies(userId, page);
   return {
     items: page.map((r) => r.item),
     nextCursor: merged.length > limit && last ? `${last.atText}|${last.item.id}` : null,
   };
 }
 
-type Ranked = { atMs: number; atText: string; item: MeetingListItem };
+/** `hints` are what `addCallsAndCompanies` looks up for the page that is kept. */
+type Ranked = {
+  atMs: number;
+  atText: string;
+  item: MeetingListItem;
+  hints: { emails: string[]; contactIds: string[]; eventKey: string | null };
+};
 
 async function listRecorded(
   userId: string,
@@ -146,9 +173,11 @@ async function listRecorded(
       durationMs: meetingSessions.durationMs,
       status: meetingSessions.status,
       attendees: meetingSessions.attendees,
-      summary: sql<string | null>`left(${meetingSessions.digest}->>'summary', 400)`,
+      summary: sql<string | null>`left(${meetingSessions.digest}->>'summary', 600)`,
       digestTitle: sql<string | null>`${meetingSessions.digest}->>'title'`,
       noteBatchId: meetingSessions.noteBatchId,
+      captureSurface: meetingSessions.captureSurface,
+      calendarEventKey: meetingSessions.calendarEventKey,
     })
     .from(meetingSessions)
     .where(and(...conditions))
@@ -190,9 +219,17 @@ async function listRecorded(
       durationMs: r.durationMs,
       status: r.status as "analyzed" | "saved",
       attendees: (r.attendees ?? []).map((a) => a.name).filter(Boolean),
-      summary: r.summary,
+      summary: listSummary(r.summary),
+      call: null,
+      sharedScreen: Boolean(r.captureSurface),
+      companies: [],
       noteBatchId: r.noteBatchId,
       match: matches.get(r.id) ?? null,
+    },
+    hints: {
+      emails: (r.attendees ?? []).flatMap((a) => (a.email ? [a.email] : [])),
+      contactIds: [],
+      eventKey: r.calendarEventKey,
     },
   }));
 }
@@ -248,12 +285,195 @@ async function listGranola(
         durationMs: 0,
         status: "saved",
         attendees: r.result.participants.map((p) => p.name).filter(Boolean),
-        summary: note.body.replace(/\s+/g, " ").trim().slice(0, 400) || null,
+        summary: listSummary(note.body),
+        call: null,
+        sharedScreen: false,
+        companies: [],
         noteBatchId: r.id,
         match: q ? { startMs: 0, excerpt: excerptAround(r.sourceText, q) } : null,
       },
+      hints: { emails: [], contactIds: r.result.participants.map((p) => p.contactId), eventKey: null },
     };
   });
+}
+
+// ── Row details: plain summary, call kind, company logos ─────────────────────────────
+
+export type MeetingCompany = { name: string; domain: string };
+/** A company that may be named in free text: by any alias, some only when capitalised. */
+type NamedOrg = MeetingCompany & { aliases?: readonly string[]; capitalisedOnly?: readonly string[] };
+
+/** The curated company this name IS (not one it merely contains: "Apple Bank" is not Apple). */
+function curatedCompany(name: string): CuratedCompany | null {
+  const key = brandKey(name);
+  return key ? (CURATED_COMPANIES.find((c) => c.aliases.some((a) => brandKey(a) === key)) ?? null) : null;
+}
+
+/**
+ * Curated companies for free-text matching, minus the tools a meeting is held or followed up
+ * on, and with "Google Meet", "Google Doc" and the like blanked first (`withoutTools`): "ping
+ * on Slack" or "share the Google Doc" names how people work, not who the meeting was with.
+ * Attendee-derived logos are unaffected: someone at slack.com still shows Slack.
+ */
+const TOOL_COMPANIES = new Set(["Zoom", "Slack", "Notion", "Figma", "LinkedIn", "GitHub", "GitLab", "Atlassian", "Dropbox", "Discord", "Linear"]);
+const CURATED_ORGS: NamedOrg[] = CURATED_COMPANIES.filter((c) => !TOOL_COMPANIES.has(c.name));
+function withoutTools(text: string): string {
+  return text.replace(
+    /\b(?:Google (?:Meet|Docs?|Drive|Calendar|Sheets?|Slides|Forms?)|(?:Microsoft|MS) (?:Teams|Outlook|Word|Excel|PowerPoint|OneDrive))\b/gi,
+    " "
+  );
+}
+
+/** Where `org` is first named in `text` as a whole word, or -1. `hay` is ` ${brandKey(text)} `. */
+function mentionAt(org: NamedOrg, text: string, hay: string): number {
+  let best = -1;
+  for (const alias of org.aliases ?? [org.name]) {
+    const key = brandKey(alias);
+    if (key.length < 3) continue;
+    const at = hay.indexOf(` ${key} `);
+    if (at < 0) continue;
+    if (org.capitalisedOnly?.includes(alias)) {
+      const exact = new RegExp(`(?<![\\p{L}\\p{N}])${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u");
+      if (!exact.test(text)) continue;
+    }
+    if (best < 0 || at < best) best = at;
+  }
+  return best;
+}
+
+/**
+ * The companies a meeting involved, at most `max`, one per domain: its people's first, then
+ * the user's own companies its title or summary names, then curated companies it names — each
+ * group in the order mentioned. Names match as whole words, case-insensitively (an everyday-
+ * word brand like Apple only when capitalised); names under three characters never match.
+ */
+export function meetingCompanies(
+  people: MeetingCompany[],
+  text: string,
+  orgs: NamedOrg[],
+  curated: NamedOrg[] = CURATED_ORGS,
+  max = 2
+): MeetingCompany[] {
+  const out: MeetingCompany[] = [];
+  const add = (c: MeetingCompany) => {
+    if (out.length < max && !out.some((o) => o.domain === c.domain)) out.push({ name: c.name, domain: c.domain });
+  };
+  people.forEach(add);
+  const plain = withoutTools(text);
+  const hay = ` ${brandKey(plain)} `;
+  for (const group of [orgs, curated]) {
+    if (out.length >= max) break;
+    group
+      .map((o) => ({ o, at: mentionAt(o, plain, hay) }))
+      .filter((h) => h.at >= 0)
+      .sort((a, b) => a.at - b.at)
+      .forEach((h) => add(h.o));
+  }
+  return out;
+}
+
+/**
+ * Fills each kept row's `call` and `companies`, in four batched reads for the whole page:
+ * the calendar events it was recorded from, its Granola people's contacts, the user's
+ * companies whose names appear in any title or summary on it, and the user's own addresses
+ * (their domains are the user's own company, which would otherwise badge every row).
+ */
+async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<void> {
+  if (!page.length) return;
+  const db = await getDb();
+  const eventKeys = [...new Set(page.flatMap((r) => (r.hints.eventKey ? [r.hints.eventKey] : [])))];
+  const contactIds = [...new Set(page.flatMap((r) => r.hints.contactIds))];
+  const texts = new Map(page.map((r) => [r.item.id, `${r.item.title ?? ""} ${r.item.summary ?? ""}`]));
+  // `name_normalized` is lowercased with collapsed spaces; a substring hit here is narrowed
+  // to a whole-word one by `meetingCompanies`.
+  const hay = [...texts.values()].join(" \n ").toLowerCase().replace(/\s+/g, " ");
+
+  const [events, people, mentioned, selfRows] = await Promise.all([
+    eventKeys.length
+      ? db
+          .selectDistinctOn([calendarEvents.providerEventId], {
+            key: calendarEvents.providerEventId,
+            kind: calendarEvents.conferenceKind,
+          })
+          .from(calendarEvents)
+          .where(
+            and(
+              eq(calendarEvents.userId, userId),
+              inArray(calendarEvents.providerEventId, eventKeys),
+              isNotNull(calendarEvents.conferenceKind)
+            )
+          )
+          .orderBy(calendarEvents.providerEventId)
+      : [],
+    contactIds.length
+      ? db
+          .select({ id: contacts.id, company: contacts.company, email: contacts.email, domain: orgBrandColors.domain })
+          .from(contacts)
+          .leftJoin(companies, and(eq(companies.id, contacts.companyId), eq(companies.userId, userId)))
+          .leftJoin(
+            orgBrandColors,
+            and(eq(orgBrandColors.nameKey, companies.nameNormalized), eq(orgBrandColors.kind, "company"))
+          )
+          .where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)))
+      : [],
+    db
+      .select({ name: companies.name, domain: orgBrandColors.domain })
+      .from(companies)
+      .leftJoin(
+        orgBrandColors,
+        and(eq(orgBrandColors.nameKey, companies.nameNormalized), eq(orgBrandColors.kind, "company"))
+      )
+      .where(
+        and(
+          eq(companies.userId, userId),
+          sql`length(${companies.nameNormalized}) >= 3`,
+          sql`position(${companies.nameNormalized} in ${hay}) > 0`
+        )
+      )
+      .limit(200),
+    db.execute(sql`
+      SELECT email FROM user_settings WHERE user_id = ${userId}
+      UNION SELECT email_address FROM gmail_connections WHERE user_id = ${userId}
+      UNION SELECT email_address FROM outlook_connections WHERE user_id = ${userId}
+      UNION SELECT email_address FROM apple_connections WHERE user_id = ${userId}
+    `),
+  ]);
+
+  const selfDomains = new Set(rowsOf<{ email: string | null }>(selfRows).flatMap((r) => toDomain(r.email) ?? []));
+  const notSelf = (c: MeetingCompany) => !selfDomains.has(c.domain);
+  const callByKey = new Map(events.map((e) => [e.key, e.kind]));
+  const personCompany = new Map<string, MeetingCompany>();
+  for (const p of people) {
+    const company = p.company?.trim();
+    const fromEmail = companyFromEmail(p.email);
+    // Their email names the company only when it is the same one (not last job's address).
+    const emailFits = fromEmail && (!company || brandKey(fromEmail) === brandKey(company));
+    const name = company || fromEmail;
+    const domain = (company ? companyDomain(company, p.domain) : null) ?? (emailFits ? toDomain(p.email) : null);
+    if (name && domain) personCompany.set(p.id, { name, domain });
+  }
+  const orgs = mentioned.flatMap((o) => {
+    const domain = companyDomain(o.name, o.domain);
+    return domain ? [{ name: o.name, domain }] : [];
+  });
+
+  for (const r of page) {
+    const fromPeople = [
+      ...r.hints.contactIds.flatMap((id) => personCompany.get(id) ?? []),
+      ...r.hints.emails.flatMap((email) => {
+        const name = companyFromEmail(email);
+        const domain = name ? toDomain(email) : null;
+        return name && domain ? [{ name: curatedCompany(name)?.name ?? name, domain }] : [];
+      }),
+    ].filter(notSelf);
+    r.item.call = r.hints.eventKey ? (callByKey.get(r.hints.eventKey) ?? null) : null;
+    r.item.companies = meetingCompanies(fromPeople, texts.get(r.item.id) ?? "", orgs);
+  }
+}
+
+/** A company's website for its logo: what `org_brand_colors` learned, else a curated entry's own. */
+function companyDomain(name: string, learned: string | null | undefined): string | null {
+  return learned ? toDomain(learned) : (curatedCompany(name)?.domain ?? null);
 }
 
 export type GranolaNote = { title: string | null; attendees: string | null; body: string; myNotes: string | null };

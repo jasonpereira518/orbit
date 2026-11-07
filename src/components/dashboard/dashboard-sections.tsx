@@ -10,6 +10,7 @@ import type { fetchDashboard } from "@/actions/reminders";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { DashboardGraphPreview } from "@/components/dashboard/dashboard-graph-preview";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
@@ -67,6 +68,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
       name: "Unknown contact",
       title: null as string | null,
       company: null as string | null,
+      avatarUrl: null as string | null,
       lastInteractionAt: null as Date | null,
     };
   }
@@ -75,6 +77,7 @@ function contactMeta(data: BundleData, contactId: string | null | undefined) {
     name: data.contactNameById.get(contactId) || c?.fullName || "Contact",
     title: c?.title ?? null,
     company: c?.company ?? null,
+    avatarUrl: c?.avatarUrl ?? null,
     lastInteractionAt: c?.lastInteractionAt ?? null,
   };
 }
@@ -412,6 +415,7 @@ export async function SuggestedOutreachSection({
             contactName: meta.name,
             contactTitle: meta.title,
             contactCompany: meta.company,
+            contactAvatarUrl: meta.avatarUrl,
             lastInteractionAt: meta.lastInteractionAt,
             tier: contactId ? tierForContact(data, contactId) : undefined,
           };
@@ -446,7 +450,7 @@ async function OutreachReplyRate({ summary }: { summary: OutreachSummary }) {
 }
 
 /** Rows shown in the Due follow-ups card; the rest sit behind "See more". */
-const DUE_FOLLOW_UPS_PREVIEW = 6;
+const DUE_FOLLOW_UPS_PREVIEW = 3;
 
 export async function RemindersAndFollowUpsSection({
   bundle,
@@ -507,6 +511,7 @@ export async function RemindersAndFollowUpsSection({
                   fullName={c.fullName}
                   title={c.title}
                   company={c.company}
+                  profileImageUrl={c.profileImageUrl}
                   tier={tierForContact(data, c.id)}
                   nextFollowUpAt={c.nextFollowUpAt}
                   lastInteractionAt={c.lastInteractionAt}
@@ -591,6 +596,12 @@ export async function RecentlyUpdatedSection({
                   )}
                 >
                   <div className="flex min-w-0 items-center gap-2">
+                    <ContactAvatar
+                      contactId={c.id}
+                      fullName={c.fullName}
+                      profileImageUrl={c.avatarUrl}
+                      size="sm"
+                    />
                     {tier && <ClosenessTierBadge tier={tier} dotOnly />}
                     <div className="min-w-0">
                       <p className="font-medium">{c.fullName}</p>

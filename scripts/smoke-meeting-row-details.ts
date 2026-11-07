@@ -1,0 +1,64 @@
+/**
+ * Past-meetings row details, pure: the logo route's domain guard (only a public hostname
+ * ever reaches Google's favicon service) and which companies a row shows a logo for. The
+ * summary cleanup (`listSummary`) is covered by smoke-plain-text.
+ * Run: npx tsx scripts/smoke-meeting-row-details.ts
+ */
+import { checker } from "./smoke/check";
+import { isLogoDomain } from "../src/lib/org-brand-learn";
+import { meetingCompanies } from "../src/lib/meetings-list";
+import { CURATED_COMPANIES } from "../src/lib/brand-colors";
+
+const t = checker();
+
+console.log("Logo domain guard");
+for (const ok of ["nvidia.com", "harbor-health.co.uk", "a.io"]) t.check(`accepts ${ok}`, isLogoDomain(ok));
+for (const bad of [
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "a.b:8080",
+  "nvidia.com:8080",
+  "nvidia",
+  "nvidia.com/x",
+  "nvidia.com?x=1",
+  "user@nvidia.com",
+  "NVIDIA.com",
+  "printer.local",
+  "db.internal",
+  "app.localhost",
+  `${"a".repeat(250)}.com`,
+  "",
+]) {
+  t.check(`rejects ${JSON.stringify(bad).slice(0, 30)}`, !isLogoDomain(bad));
+}
+
+console.log("Companies");
+const nvidia = { name: "NVIDIA", domain: "nvidia.com" };
+const acme = { name: "Acme Corp", domain: "acme.com" };
+const hp = { name: "HP", domain: "hp.com" };
+const orgs = [acme, nvidia, hp];
+t.check("an org named as a whole word matches, case-insensitive", JSON.stringify(meetingCompanies([], "Call with nvidia about GPUs", orgs)) === JSON.stringify([nvidia]));
+t.check("not inside another word", meetingCompanies([], "Nvidiaish plans", orgs).length === 0);
+t.check("names under three characters never match", meetingCompanies([], "HP printers", orgs).length === 0);
+t.check("in the order they are mentioned", meetingCompanies([], "NVIDIA then acme corp", orgs).map((c) => c.domain).join() === "nvidia.com,acme.com");
+t.check("people's companies come first, at most two", meetingCompanies([acme], "NVIDIA and Acme Corp and more", [...orgs, { name: "Third Co", domain: "third.co" }]).map((c) => c.domain).join() === "acme.com,nvidia.com");
+t.check("one logo per domain", meetingCompanies([nvidia, nvidia], "NVIDIA", orgs).length === 1);
+
+
+console.log("Curated companies");
+const domains = (text: string, own: typeof orgs = []) => meetingCompanies([], text, own).map((c) => c.domain).join();
+t.check("every curated company's domain passes the logo guard", CURATED_COMPANIES.every((c) => isLogoDomain(c.domain)));
+t.check("NVIDIA named with no company of the user's still gets its logo", JSON.stringify(meetingCompanies([], "NVIDIA sync", [])) === JSON.stringify([nvidia]));
+t.check("an everyday-word brand only when capitalised: apple", domains("an apple a day") === "" && domains("Apple partnership") === "apple.com");
+t.check("…meta and intel too", domains("a meta discussion about intel") === "" && domains("Meta and Intel") === "meta.com,intel.com");
+t.check("the call tool is not a company: Zoom, Google Meet, Microsoft Teams", domains("Zoom call with Stripe") === "stripe.com" && domains("Google Meet: Microsoft Teams rollout") === "");
+t.check(
+  "tools named in a summary are not companies",
+  ["connect on LinkedIn", "ping on Slack", "the Google Doc", "the GitHub repo", "Notion page in Google Drive", "Microsoft Outlook invite"].every((x) => domains(x) === "")
+);
+t.check("…but NVIDIA still is", domains("ping NVIDIA on Slack about the Google Doc") === "nvidia.com");
+t.check("the user's own companies outrank curated ones", domains("NVIDIA and Acme Corp", [acme]) === "acme.com,nvidia.com");
+t.check("an alias finds its company", domains("Chat with AWS about credits") === "aws.amazon.com");
+
+t.done("meeting row details smoke");

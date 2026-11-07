@@ -46,6 +46,13 @@ import {
 } from "react";
 
 import { ComposerHighlights } from "@/components/composer/composer-highlights";
+import { useCoarsePointer } from "@/components/composer/composer-mirror";
+import {
+  continueList,
+  indentList,
+  toggleWrap,
+} from "@/components/composer/markdown-shortcuts";
+import { applyTextEdit } from "@/components/composer/markdown-toolbar";
 import {
   MentionAutocomplete,
   type CommandOption,
@@ -136,6 +143,7 @@ export function MentionComposer({
   menuPlacement = "above",
   menuEnabled = true,
   boxClassName = DEFAULT_FIELD_BOX,
+  markdown = false,
   className,
   textareaClassName,
   onKeyDown,
@@ -166,6 +174,12 @@ export function MentionComposer({
   menuEnabled?: boolean;
   /** Padding and type scale, shared with the highlight layer. */
   boxClassName?: string;
+  /**
+   * Markdown shortcuts (Cmd/Ctrl+B and +I, list continuation on Enter, Tab / Shift+Tab on
+   * list lines) and live styling in the highlight layer. The notes box only: chat's Enter
+   * sends and its Tab is the menu's.
+   */
+  markdown?: boolean;
   /** The field box. Made `relative` regardless — the marks are `absolute inset-0` of it. */
   className?: string;
   textareaClassName?: string;
@@ -223,6 +237,16 @@ export function MentionComposer({
    * "this is a real person", not "@".
    */
   const names = useMemo(() => pickNames(activePicks(value, picks)), [value, picks]);
+
+  /**
+   * Live styling swaps who draws the glyphs: the layer paints them, styled, and the field's
+   * own text goes transparent. That is the dictation mirror's trick, so it carries the
+   * mirror's preconditions (`composer-mirror.tsx`): mid-IME the field shows preedit the
+   * value may not hold yet, and a coarse pointer means predictive text and text-size-adjust.
+   * In either case the field draws its own text again and only the shortcuts stay on.
+   */
+  const coarsePointer = useCoarsePointer();
+  const liveMarkdown = markdown && !composing && !coarsePointer;
 
   const splice = useCallback(
     (from: number, to: number, text: string) => {
@@ -378,6 +402,31 @@ export function MentionComposer({
       }
     }
 
+    // keyCode 229: Safari fires compositionend BEFORE the Enter that commits an IME
+    // candidate, so neither flag catches that Enter — without this it would add a bullet.
+    if (markdown && !menuOpen && !composing && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
+      const el = e.currentTarget;
+      const { selectionStart: start, selectionEnd: end } = el;
+      const mod = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+      const key = e.key.toLowerCase();
+      const edit =
+        mod && key === "b"
+          ? toggleWrap(el.value, start, end, "**")
+          : mod && key === "i"
+            ? toggleWrap(el.value, start, end, "_")
+            : e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && start === end
+              ? continueList(el.value, start)
+              : e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey
+                ? indentList(el.value, start, end, e.shiftKey)
+                : null;
+      // `null` means the key is not ours — Tab off a list line still moves focus on.
+      if (edit) {
+        e.preventDefault();
+        applyTextEdit(el, edit);
+        return;
+      }
+    }
+
     onKeyDown?.(e);
   }
 
@@ -402,7 +451,10 @@ export function MentionComposer({
           value={value}
           names={names}
           textareaRef={textareaRef}
-          boxClassName={boxClassName}
+          // Dimmed with the field: while live the layer is the visible text, and the field's
+          // own `disabled:opacity-50` has nothing left to fade.
+          boxClassName={cn(boxClassName, liveMarkdown && field.disabled && "opacity-50")}
+          markdown={liveMarkdown}
         />
         <Textarea
           ref={textareaRef}
@@ -464,8 +516,17 @@ export function MentionComposer({
             "relative z-[1]",
             boxClassName,
             textareaClassName,
+            // The layer paints the glyphs while live; the caret stays the field's. A selection
+            // keeps its text transparent and only tints the background: repainting the glyphs
+            // drew them twice (plain over faux-bold/italic), which smudged selected words. The
+            // tint is translucent, so the layer's styled text shows through it.
+            liveMarkdown && "text-transparent caret-ink selection:bg-primary/20 selection:text-transparent",
           )}
           {...field}
+          // The layer always reserves a scrollbar gutter; the field must too, or a classic
+          // scrollbar narrows one and not the other and the lines wrap apart. Set whenever
+          // markdown is on, not just while live, so an IME composition cannot jog the width.
+          style={markdown ? { scrollbarGutter: "stable", ...field.style } : field.style}
         />
         {children}
       </div>
