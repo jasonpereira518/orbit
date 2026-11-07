@@ -30,6 +30,14 @@ run(async () => {
   check("empty ?token= → invalid", healthTokenState(req("?token=")) === "invalid");
   check("right bearer, no param → valid", healthTokenState(req("", `Bearer ${TOKEN}`)) === "valid");
   check("wrong bearer, no param → absent (unchanged)", healthTokenState(req("", "Bearer nope")) === "absent");
+  check(
+    "a query token is refused where query tokens are not allowed (production)",
+    healthTokenState(req(`?token=${TOKEN}`), { allowQuery: false }) === "invalid"
+  );
+  check(
+    "a bearer still opens the deep view where query tokens are not allowed",
+    healthTokenState(req("", `Bearer ${TOKEN}`), { allowQuery: false }) === "valid"
+  );
 
   console.log("\nThe route...");
   const wrong = await GET(req("?token=wrong"));

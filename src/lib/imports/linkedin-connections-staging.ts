@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, gt, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts, importJobRows, imports } from "@/db/schema";
@@ -10,6 +10,7 @@ import { isImportId } from "@/lib/imports/import-ids";
 import {
   CONNECTIONS_APPEND_MAX_ROWS,
   CONNECTIONS_MATCH_MAX_ROWS,
+  CONNECTIONS_TOTAL_MAX_ROWS,
   type ConnectionMatch,
   type ConnectionMatchRow,
   type StagedConnectionRow,
@@ -116,6 +117,11 @@ export async function appendConnectionsRows(
   const parsed = z.array(stagedRowSchema).min(1).max(CONNECTIONS_APPEND_MAX_ROWS).safeParse(rows);
   if (!parsed.success) throw new UserFacingError("Part of that file couldn’t be read — try exporting it again");
   if (!isImportId(importId) || !Number.isInteger(startIndex) || startIndex < 0) throw new UserFacingError(OUT_OF_STEP);
+  if (startIndex + parsed.data.length > CONNECTIONS_TOTAL_MAX_ROWS) {
+    throw new UserFacingError(
+      `That file has more rows than one import can take (${CONNECTIONS_TOTAL_MAX_ROWS.toLocaleString()}) — split it and import the parts separately`,
+    );
+  }
   const payloads = parsed.data;
 
   const db = await getDb();
@@ -158,6 +164,25 @@ export async function startConnectionsStaged(userId: string, importId: string): 
     .where(and(eq(importJobRows.importId, importId), eq(importJobRows.userId, userId)));
   const totalRows = Number(n);
   if (totalRows === 0) throw new UserFacingError("Pick at least one person to import");
+  if (totalRows > CONNECTIONS_TOTAL_MAX_ROWS) {
+    throw new UserFacingError(
+      `That file has more rows than one import can take (${CONNECTIONS_TOTAL_MAX_ROWS.toLocaleString()})`,
+    );
+  }
+  // One job at a time per account — the same guard the one-shot import actions apply. A job
+  // that has said `processing` for longer than the window is stalled, not in flight.
+  const active = await db.query.imports.findFirst({
+    where: and(
+      eq(imports.userId, userId),
+      eq(imports.status, "processing"),
+      ne(imports.id, importId),
+      gt(imports.updatedAt, new Date(Date.now() - 15 * 60_000)),
+    ),
+    columns: { id: true },
+  });
+  if (active) {
+    throw new UserFacingError("An import is already running — wait for it to finish before starting another");
+  }
   const updated = await db
     .update(imports)
     .set({ status: "processing", totalRows, updatedAt: new Date() })
