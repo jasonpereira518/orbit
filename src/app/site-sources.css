@@ -119,6 +119,7 @@
 @source "../lib/admin.ts";
 @source "../lib/ai-access-copy.ts";
 @source "../lib/ai-access.ts";
+@source "../lib/ai-finish.ts";
 @source "../lib/ai-models.ts";
 @source "../lib/ai-operations.ts";
 @source "../lib/ai-opportunity-schema.ts";
@@ -127,6 +128,7 @@
 @source "../lib/ai-request-options.ts";
 @source "../lib/ai-result-cache.ts";
 @source "../lib/ai-security.ts";
+@source "../lib/ai-structured.ts";
 @source "../lib/ai.ts";
 @source "../lib/analytics-internal.ts";
 @source "../lib/analytics-redact.ts";
