@@ -6,7 +6,8 @@ import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 15;
+// No maxDuration: a distinct value makes its own Vercel function, and Hobby caps a deployment
+// at 12. The Wikidata call carries its own 1.5s timeout, so the default limit never binds.
 
 /**
  * Organization suggestions as the person types (onboarding's dream companies & schools).

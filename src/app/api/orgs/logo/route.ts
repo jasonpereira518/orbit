@@ -3,7 +3,7 @@ import { isBareDomain } from "@/lib/wikidata";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 10;
+// No maxDuration: see the suggest route (Hobby's 12-function cap); TIMEOUT_MS bounds the fetch.
 
 /** A 64px favicon is a few KB; anything past this is not one. */
 const MAX_BYTES = 100_000;
