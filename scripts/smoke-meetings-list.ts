@@ -14,6 +14,8 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-meetings-list";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
+  calendarEvents,
+  calendarSources,
   contacts,
   interactions,
   meetingSessions,
@@ -67,6 +69,8 @@ async function reset() {
     await db.delete(interactions).where(eq(interactions.userId, user));
     await db.delete(noteBatches).where(eq(noteBatches.userId, user));
     await db.delete(contacts).where(eq(contacts.userId, user));
+    await db.delete(calendarEvents).where(eq(calendarEvents.userId, user));
+    await db.delete(calendarSources).where(eq(calendarSources.userId, user));
   }
 }
 
@@ -304,6 +308,43 @@ async function main() {
   check("the detail read is scoped to its owner", (await getGranolaMeeting(OTHER, acme)) === null && (await getGranolaMeeting(USER, theirGranola)) === null);
   check("a recording's id is not a Granola meeting", (await getGranolaMeeting(USER, pilot)) === null);
   check("an undone batch has no detail page", (await getGranolaMeeting(USER, undone)) === null);
+
+  console.log("\nRow details");
+  const db = await getDb();
+  const [nv] = await db
+    .insert(meetingSessions)
+    .values({
+      userId: USER,
+      title: "GPU roadmap",
+      status: "analyzed",
+      startedAt: new Date(NOW - 0.5 * DAY),
+      attendees: [{ name: "Jen Hsu", email: "jen@nvidia.com" }, { name: "Al Bo", email: "al@gmail.com" }],
+      digest: digest("## Overview\n- **Pricing** is per seat\n- Follow up Friday"),
+      durationMs: 600_000,
+    })
+    .returning();
+  const nvRow = (await listMeetingsFor(USER)).items.find((m) => m.id === nv.id);
+  check("a guest's work email gives the company logo, in the brand's own spelling", JSON.stringify(nvRow?.companies) === JSON.stringify([{ name: "NVIDIA", domain: "nvidia.com" }]), JSON.stringify(nvRow?.companies));
+  check("its summary is plain sentences, no markdown", nvRow?.summary === "Pricing is per seat. Follow up Friday.", nvRow?.summary ?? "");
+  check("a recording with no calendar call has no call kind", nvRow?.call === null && nvRow.sharedScreen === false);
+  const [src] = await db
+    .insert(calendarSources)
+    .values({ userId: USER, provider: "google", connectionId: crypto.randomUUID(), calendarId: "primary" })
+    .returning();
+  await db.insert(calendarEvents).values({ userId: USER, sourceId: src.id, providerEventId: "evt-zoom", title: "Zoom sync", startAt: new Date(NOW - 0.4 * DAY), conferenceKind: "zoom" });
+  await db.insert(calendarEvents).values({ userId: OTHER, sourceId: src.id, providerEventId: "evt-theirs", title: "Theirs", startAt: new Date(NOW - 0.4 * DAY), conferenceKind: "meet" });
+  const [zoomed] = await db
+    .insert(meetingSessions)
+    .values({ userId: USER, title: "Zoom sync", status: "analyzed", startedAt: new Date(NOW - 0.4 * DAY), calendarEventKey: "evt-zoom", captureSurface: "browser", durationMs: 1 })
+    .returning();
+  const [notMine] = await db
+    .insert(meetingSessions)
+    .values({ userId: USER, title: "Borrowed key", status: "analyzed", startedAt: new Date(NOW - 0.3 * DAY), calendarEventKey: "evt-theirs", durationMs: 1 })
+    .returning();
+  const withCalls = (await listMeetingsFor(USER)).items;
+  const zoomRow = withCalls.find((m) => m.id === zoomed.id);
+  check("a recording from a calendar event carries its call kind", zoomRow?.call === "zoom" && zoomRow.sharedScreen === true);
+  check("another user's event never names the call", withCalls.find((m) => m.id === notMine.id)?.call === null);
 
   await reset();
   console.log("\nsmoke-meetings-list: all checks passed");

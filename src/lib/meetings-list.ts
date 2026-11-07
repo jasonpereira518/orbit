@@ -16,9 +16,23 @@
  * a scan, bounded by one user's meetings — fine at this scale; a tsvector over the segment
  * text is the upgrade if it ever is not.
  */
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
-import { interactions, meetingSessions, meetingTranscriptSegments, noteBatches, type MeetingSessionStatus } from "@/db/schema";
+import {
+  calendarEvents,
+  companies,
+  contacts,
+  interactions,
+  meetingSessions,
+  meetingTranscriptSegments,
+  noteBatches,
+  orgBrandColors,
+  type MeetingSessionStatus,
+} from "@/db/schema";
+import { brandKey, lookupCuratedBrandByName } from "@/lib/brand-colors";
+import { companyFromEmail } from "@/lib/guest-profiles";
+import { toDomain } from "@/lib/org-brand-learn";
+import { stripMarkdown } from "@/lib/plain-text";
 
 export const MEETINGS_PAGE = 20;
 const LISTED: MeetingSessionStatus[] = ["analyzed", "saved"];
@@ -38,8 +52,14 @@ export type MeetingListItem = {
   durationMs: number;
   status: "analyzed" | "saved";
   attendees: string[];
-  /** The digest's summary, trimmed for a list. */
+  /** The digest's summary (or Granola's), as plain prose trimmed for a list. */
   summary: string | null;
+  /** The calendar event's video call ("meet", "zoom", "teams", "webex"), when it was recorded from one. */
+  call: string | null;
+  /** Recorded from a shared tab or screen rather than the room's mic. */
+  sharedScreen: boolean;
+  /** Up to two companies the meeting involved, for their logos (`/api/logos/[domain]`). */
+  companies: MeetingCompany[];
   noteBatchId: string | null;
   /** With a search: the first line of transcript that matched, and when it was said. */
   match: { startMs: number; excerpt: string } | null;
@@ -99,13 +119,20 @@ export async function listMeetingsFor(
   );
   const page = merged.slice(0, limit);
   const last = page[page.length - 1];
+  await addCallsAndCompanies(userId, page);
   return {
     items: page.map((r) => r.item),
     nextCursor: merged.length > limit && last ? `${last.atText}|${last.item.id}` : null,
   };
 }
 
-type Ranked = { atMs: number; atText: string; item: MeetingListItem };
+/** `hints` are what `addCallsAndCompanies` looks up for the page that is kept. */
+type Ranked = {
+  atMs: number;
+  atText: string;
+  item: MeetingListItem;
+  hints: { emails: string[]; contactIds: string[]; eventKey: string | null };
+};
 
 async function listRecorded(
   userId: string,
@@ -146,9 +173,11 @@ async function listRecorded(
       durationMs: meetingSessions.durationMs,
       status: meetingSessions.status,
       attendees: meetingSessions.attendees,
-      summary: sql<string | null>`left(${meetingSessions.digest}->>'summary', 400)`,
+      summary: sql<string | null>`left(${meetingSessions.digest}->>'summary', 600)`,
       digestTitle: sql<string | null>`${meetingSessions.digest}->>'title'`,
       noteBatchId: meetingSessions.noteBatchId,
+      captureSurface: meetingSessions.captureSurface,
+      calendarEventKey: meetingSessions.calendarEventKey,
     })
     .from(meetingSessions)
     .where(and(...conditions))
@@ -190,9 +219,17 @@ async function listRecorded(
       durationMs: r.durationMs,
       status: r.status as "analyzed" | "saved",
       attendees: (r.attendees ?? []).map((a) => a.name).filter(Boolean),
-      summary: r.summary,
+      summary: listSummary(r.summary),
+      call: null,
+      sharedScreen: Boolean(r.captureSurface),
+      companies: [],
       noteBatchId: r.noteBatchId,
       match: matches.get(r.id) ?? null,
+    },
+    hints: {
+      emails: (r.attendees ?? []).flatMap((a) => (a.email ? [a.email] : [])),
+      contactIds: [],
+      eventKey: r.calendarEventKey,
     },
   }));
 }
@@ -248,12 +285,183 @@ async function listGranola(
         durationMs: 0,
         status: "saved",
         attendees: r.result.participants.map((p) => p.name).filter(Boolean),
-        summary: note.body.replace(/\s+/g, " ").trim().slice(0, 400) || null,
+        summary: listSummary(note.body),
+        call: null,
+        sharedScreen: false,
+        companies: [],
         noteBatchId: r.id,
         match: q ? { startMs: 0, excerpt: excerptAround(r.sourceText, q) } : null,
       },
+      hints: { emails: [], contactIds: r.result.participants.map((p) => p.contactId), eventKey: null },
     };
   });
+}
+
+// ── Row details: plain summary, call kind, company logos ─────────────────────────────
+
+/** Metadata a note can open with ("Attendees: …"), which is not part of what was said. */
+const META_LINE = /^\s*(?:meeting|when|date|time|attendees|participants|guests|location|organizer)\s*:/i;
+/** A heading: `## …`, or a line that is nothing but bold (`**Overview**`). */
+const HEADING_LINE = /^\s{0,3}(?:#{1,6}\s|\*\*[^*]+\*\*:?\s*$|__[^_]+__:?\s*$)/;
+
+/**
+ * A summary as a list row shows it: plain sentences. Headings and leading metadata lines are
+ * dropped, markdown is stripped line by line, and each line ends as a sentence so bullets
+ * do not run together. Cut at a word near `max`.
+ */
+export function listSummary(text: string | null | undefined, max = 300): string | null {
+  if (!text) return null;
+  const lines = text.replace(/```[\s\S]*?```/g, "\n").split("\n");
+  while (lines.length && (!lines[0]!.trim() || META_LINE.test(lines[0]!))) lines.shift();
+  const flat = lines
+    .filter((l) => !HEADING_LINE.test(l))
+    .map(stripMarkdown)
+    .filter(Boolean)
+    .map((l) => (/[.!?;:…]$/.test(l) ? l : `${l}.`))
+    .join(" ");
+  if (!flat) return null;
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, "")}…`;
+}
+
+export type MeetingCompany = { name: string; domain: string };
+
+/**
+ * A company's website for its logo: what `org_brand_colors` learned, else — for the curated
+ * brands that table never stores (`learnOrgBrandColors` skips them) — the brand's name as a
+ * .com, so a NVIDIA mention finds nvidia.com.
+ * ponytail: the .com guess is a heuristic; store curated domains in brand-colors.ts if one misses.
+ */
+function companyDomain(name: string, learned: string | null | undefined): string | null {
+  if (learned) return toDomain(learned);
+  const curated = curatedCompany(name);
+  return curated ? toDomain(`${brandKey(curated).replace(/\s+/g, "")}.com`) : null;
+}
+
+/** The curated company this name IS (not one it merely contains: "Apple Bank" is not Apple). */
+function curatedCompany(name: string): string | null {
+  const brand = lookupCuratedBrandByName(name, "company");
+  return brand?.kind === "company" && brandKey(brand.name) === brandKey(name) ? brand.name : null;
+}
+
+/**
+ * The companies a meeting involved, at most `max`: its people's first, then the user's
+ * organizations its title or summary names as a whole word (case-insensitive; names under
+ * three characters never match), in the order they are mentioned. One logo per domain.
+ */
+export function meetingCompanies(
+  people: MeetingCompany[],
+  text: string,
+  orgs: MeetingCompany[],
+  max = 2
+): MeetingCompany[] {
+  const out: MeetingCompany[] = [];
+  const add = (c: MeetingCompany) => {
+    if (out.length < max && !out.some((o) => o.domain === c.domain)) out.push(c);
+  };
+  people.forEach(add);
+  const hay = ` ${brandKey(text)} `;
+  orgs
+    .map((o) => {
+      const key = brandKey(o.name);
+      return { o, at: key.length >= 3 ? hay.indexOf(` ${key} `) : -1 };
+    })
+    .filter((h) => h.at >= 0)
+    .sort((a, b) => a.at - b.at)
+    .forEach((h) => add(h.o));
+  return out;
+}
+
+/**
+ * Fills each kept row's `call` and `companies`, in three batched reads for the whole page:
+ * the calendar events it was recorded from, its Granola people's contacts, and the user's
+ * companies whose names appear in any title or summary on it.
+ */
+async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<void> {
+  if (!page.length) return;
+  const db = await getDb();
+  const eventKeys = [...new Set(page.flatMap((r) => (r.hints.eventKey ? [r.hints.eventKey] : [])))];
+  const contactIds = [...new Set(page.flatMap((r) => r.hints.contactIds))];
+  const texts = new Map(page.map((r) => [r.item.id, `${r.item.title ?? ""} ${r.item.summary ?? ""}`]));
+  // `name_normalized` is lowercased with collapsed spaces; a substring hit here is narrowed
+  // to a whole-word one by `meetingCompanies`.
+  const hay = [...texts.values()].join(" \n ").toLowerCase().replace(/\s+/g, " ");
+
+  const [events, people, mentioned] = await Promise.all([
+    eventKeys.length
+      ? db
+          .selectDistinctOn([calendarEvents.providerEventId], {
+            key: calendarEvents.providerEventId,
+            kind: calendarEvents.conferenceKind,
+          })
+          .from(calendarEvents)
+          .where(
+            and(
+              eq(calendarEvents.userId, userId),
+              inArray(calendarEvents.providerEventId, eventKeys),
+              isNotNull(calendarEvents.conferenceKind)
+            )
+          )
+          .orderBy(calendarEvents.providerEventId)
+      : [],
+    contactIds.length
+      ? db
+          .select({ id: contacts.id, company: contacts.company, email: contacts.email, domain: orgBrandColors.domain })
+          .from(contacts)
+          .leftJoin(companies, and(eq(companies.id, contacts.companyId), eq(companies.userId, userId)))
+          .leftJoin(
+            orgBrandColors,
+            and(eq(orgBrandColors.nameKey, companies.nameNormalized), eq(orgBrandColors.kind, "company"))
+          )
+          .where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)))
+      : [],
+    db
+      .select({ name: companies.name, domain: orgBrandColors.domain })
+      .from(companies)
+      .leftJoin(
+        orgBrandColors,
+        and(eq(orgBrandColors.nameKey, companies.nameNormalized), eq(orgBrandColors.kind, "company"))
+      )
+      .where(
+        and(
+          eq(companies.userId, userId),
+          sql`length(${companies.nameNormalized}) >= 3`,
+          sql`position(${companies.nameNormalized} in ${hay}) > 0`
+        )
+      )
+      .limit(200),
+  ]);
+
+  const callByKey = new Map(events.map((e) => [e.key, e.kind]));
+  const personCompany = new Map<string, MeetingCompany>();
+  for (const p of people) {
+    const company = p.company?.trim();
+    const fromEmail = companyFromEmail(p.email);
+    // Their email names the company only when it is the same one (not last job's address).
+    const emailFits = fromEmail && (!company || brandKey(fromEmail) === brandKey(company));
+    const name = company || fromEmail;
+    const domain = (company ? companyDomain(company, p.domain) : null) ?? (emailFits ? toDomain(p.email) : null);
+    if (name && domain) personCompany.set(p.id, { name, domain });
+  }
+  const orgs = mentioned.flatMap((o) => {
+    const domain = companyDomain(o.name, o.domain);
+    return domain ? [{ name: o.name, domain }] : [];
+  });
+
+  for (const r of page) {
+    const fromPeople = [
+      ...r.hints.contactIds.flatMap((id) => personCompany.get(id) ?? []),
+      ...r.hints.emails.flatMap((email) => {
+        const name = companyFromEmail(email);
+        const domain = name ? toDomain(email) : null;
+        return name && domain ? [{ name: curatedCompany(name) ?? name, domain }] : [];
+      }),
+    ];
+    r.item.call = r.hints.eventKey ? (callByKey.get(r.hints.eventKey) ?? null) : null;
+    r.item.companies = meetingCompanies(fromPeople, texts.get(r.item.id) ?? "", orgs);
+  }
 }
 
 export type GranolaNote = { title: string | null; attendees: string | null; body: string; myNotes: string | null };
