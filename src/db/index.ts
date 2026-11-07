@@ -1601,6 +1601,13 @@ CREATE TABLE IF NOT EXISTS linkedin_avatars (
   blocked_by text
 );
 CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at);
+CREATE TABLE IF NOT EXISTS public_work_history (
+  slug text PRIMARY KEY,
+  answer jsonb,
+  resolved_at timestamptz NOT NULL DEFAULT now(),
+  blocked_at timestamptz,
+  blocked_by text
+);
 CREATE TABLE IF NOT EXISTS cloud_note_sources (
   user_id text NOT NULL,
   provider text NOT NULL,
@@ -2945,7 +2952,12 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // only on the stream's `done` event. Renumbered 193 → 196 on Nov 6 2026 when merging main at 194:
 // a database stamped 194 would never run a 193. NOT 195: claude/gallant-ramanujan-hh5j0s claims it (it reached main
 // first, on Nov 7 2026, and keeps 195 above).
-export const SCHEMA_VERSION = 197;
+//
+// 200 = public_work_history: a confident work history found by a public web search, shared
+// across accounts by LinkedIn slug like linkedin_avatars (v159), so a second account with the
+// same connection pays no search. NOT 198/199: claude/duplicates-view-merge-training-7c9a92
+// holds 198 and claude/nifty-mendel-250e9b 199. Rescanned every ref on Nov 7 2026.
+export const SCHEMA_VERSION = 200;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -4694,6 +4706,9 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_source text`,
   `CREATE TABLE IF NOT EXISTS linkedin_avatars (slug text PRIMARY KEY, image_url text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now(), blocked_at timestamptz, blocked_by text)`,
   `CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at)`,
+  // Schema v200: confident public web-search work histories, shared across accounts by LinkedIn
+  // profile slug, the same way linkedin_avatars shares photos (src/lib/public-work-history.ts).
+  `CREATE TABLE IF NOT EXISTS public_work_history (slug text PRIMARY KEY, answer jsonb, resolved_at timestamptz NOT NULL DEFAULT now(), blocked_at timestamptz, blocked_by text)`,
   // Schema v164: cloud notes. One row per watched drive (its own change cursor — never
   // gmail_connections.sync_cursor, which calendar sync owns) and one per doc found or extracted,
   // which is the dedupe, the panel row and the review dialog. Plus the auto-extract switch.

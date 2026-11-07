@@ -5243,6 +5243,20 @@ export const linkedinAvatars = pgTable(
   (t) => [index("linkedin_avatars_resolved_at_idx").on(t.resolvedAt)]
 );
 
+/**
+ * Work history found by a public web search (`src/lib/public-work-history.ts`), shared across
+ * accounts by LinkedIn profile slug like `linkedinAvatars`: only confident web answers, never
+ * an extension capture, a typed field or an import. A blocked row (admin takedown) has no answer
+ * and stops the slug being shared or rewritten.
+ */
+export const publicWorkHistory = pgTable("public_work_history", {
+  slug: text("slug").primaryKey(),
+  answer: jsonb("answer").$type<{ headline: string | null; experiences: unknown[]; sources: Array<{ url: string; title: string | null }> }>(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
+  blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  blockedBy: text("blocked_by"),
+});
+
 export const siteSettings = pgTable("site_settings", {
   id: integer("id").primaryKey().default(1),
   stealthEnabled: boolean("stealth_enabled"),
