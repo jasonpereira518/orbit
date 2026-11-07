@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Fraunces, Outfit } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { SkipLink } from "@/components/ui/skip-link";
+import { MOTION_PREPAINT_SCRIPT } from "@/lib/motion-preference";
 import { ThemeProvider } from "@/components/theme-provider";
 import { WarpProvider } from "@/components/warp/warp-provider";
 import { PageviewBeacon } from "@/components/analytics/pageview-beacon";
@@ -89,6 +90,8 @@ export default function RootLayout({
       className={`${outfit.variable} ${fraunces.variable} ${frauncesItalic.variable} h-full`}
     >
       <body className="h-full min-h-full font-sans antialiased">
+        {/* Applies the in-app Reduce motion setting before first paint (lib/motion-preference). */}
+        <script dangerouslySetInnerHTML={{ __html: MOTION_PREPAINT_SCRIPT }} />
         {/* First in the document, so it is the first Tab on every page. */}
         <SkipLink />
         <ThemeProvider

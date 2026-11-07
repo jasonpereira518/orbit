@@ -98,6 +98,7 @@
 @source "../components/marketing/faq-list.tsx";
 @source "../components/marketing/marketing-doc.tsx";
 @source "../components/marketing/marketing-footer.tsx";
+@source "../components/motion/motion-preference-config.tsx";
 @source "../components/motion/reveal.tsx";
 @source "../components/orbit-logo.tsx";
 @source "../components/pricing/back-control.tsx";
@@ -214,6 +215,7 @@
 @source "../lib/memory-chunks.ts";
 @source "../lib/met-context.ts";
 @source "../lib/microsoft-scopes.ts";
+@source "../lib/motion-preference.ts";
 @source "../lib/motion.ts";
 @source "../lib/nav-timing.ts";
 @source "../lib/note-batches.ts";

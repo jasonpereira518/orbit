@@ -11,7 +11,8 @@
  */
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform, type PanInfo } from "motion/react";
+import { AnimatePresence, motion, useDragControls, useMotionValue, useTransform, type PanInfo } from "motion/react";
+import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import { ArrowLeft, Check, Clock, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DecisionStamp } from "@/components/capture/review/decision-stamp";
@@ -149,7 +150,7 @@ export function PersonDeck({
 }) {
   const people = peopleDecisions(decisions);
   const [drafts, setDrafts] = useState<Record<string, PersonDraft>>({});
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useReducedMotionPreference() ?? false;
   const [custom, setCustom] = useState<Custom>({ dir: 1, leaving: "back", reduced });
   /** The card whose stamp is forced on for its fly-out — only that card, never the next. */
   const [leaving, setLeaving] = useState<Leaving>(null);

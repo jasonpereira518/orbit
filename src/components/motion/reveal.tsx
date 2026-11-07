@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /** One shared observer for every <Reveal> on the page. */
 let observer: IntersectionObserver | null = null;
@@ -88,7 +89,7 @@ export function Reveal({
       !el ||
       !shouldStartHidden({
         hookReduced: reduced,
-        mediaReduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        mediaReduced: prefersReducedMotion(),
         top: el.getBoundingClientRect().top,
         viewportHeight: window.innerHeight,
       })
