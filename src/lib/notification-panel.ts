@@ -9,6 +9,7 @@ import {
   type AccountHealthContext,
 } from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
+import { alertableContactSql, alertableReminderSql } from "@/lib/met-contact";
 
 /** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
 const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
@@ -60,7 +61,13 @@ export async function loadNotificationPanel(
     cloudNoteRows,
   ] = await Promise.all([
     db.query.reminders.findMany({
-      where: and(eq(reminders.userId, userId), eq(reminders.status, "pending")),
+      // Only what is allowed to alert: the user's own reminders, and generated ones about
+      // people they have actually met or talked with (see `met-contact.ts`).
+      where: and(
+        eq(reminders.userId, userId),
+        eq(reminders.status, "pending"),
+        alertableReminderSql(userId)
+      ),
       orderBy: (r, { asc: ascOrder }) => [ascOrder(r.dueDate)],
       limit: 80,
     }),
@@ -71,7 +78,8 @@ export async function loadNotificationPanel(
       where: and(
         eq(contacts.userId, userId),
         isNotNull(contacts.nextFollowUpAt),
-        lte(contacts.nextFollowUpAt, new Date(now.getTime() + UPCOMING_WINDOW_MS))
+        lte(contacts.nextFollowUpAt, new Date(now.getTime() + UPCOMING_WINDOW_MS)),
+        alertableContactSql(sql`${contacts.id}`, userId)
       ),
       columns: {
         id: true,

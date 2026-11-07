@@ -8,7 +8,7 @@ import "./smoke/_env";
 
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, emailEvents, emailThreads, radarRuns, recommendations, userSettings } from "../src/db/schema";
+import { contacts, emailEvents, interactions, emailThreads, radarRuns, recommendations, userSettings } from "../src/db/schema";
 import { syncIdentitiesForContact } from "../src/lib/contact-identity";
 import { upsertThreadResult } from "../src/lib/email-intel/store";
 import { isEmailReasonCode } from "../src/lib/radar/email-text";
@@ -29,6 +29,8 @@ async function addContact(fullName: string, title: string | null, email: string 
   const db = await getDb();
   const [row] = await db.insert(contacts).values({ userId: U, fullName, company: "Northwind", title, email, closenessTier: tier }).returning();
   if (email) await syncIdentitiesForContact(U, row!.id, { email }, "smoke");
+  // Radar only reads people the user has met or talked with (`met-contact.ts`).
+  await db.insert(interactions).values({ userId: U, contactId: row!.id, interactionType: "meeting", interactionDate: new Date(NOW.getTime() - 100 * 86_400_000) });
   return row!.id;
 }
 

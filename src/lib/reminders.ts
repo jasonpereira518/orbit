@@ -14,6 +14,7 @@ import { track } from "@/lib/product-events";
 import { eventId } from "@/lib/product-event-ids";
 import type { FOLLOWUP_VIA } from "@/lib/product-event-schemas";
 import { isCometContact } from "@/lib/comet";
+import { metContactIds } from "@/lib/met-contact";
 import { clusterCountsFromTallies, clusterRefFor } from "@/lib/constellation-clusters";
 import { computeNetworkMetrics } from "@/lib/network-metrics";
 import { rememberedPeerLinkSummary } from "@/lib/network-metrics-memo";
@@ -326,27 +327,16 @@ async function buildOutreachSuggestions(userId: string) {
     });
   }
 
-  for (const c of all) {
-    if (!isDiscoveryEligible(c)) continue;
-    if (!c.firstInteractionAt) continue;
-    const days = daysAgo(c.firstInteractionAt);
-    if (days < 7 || days > 21) continue;
-    if (
-      c.lastInteractionAt &&
-      c.lastInteractionAt.getTime() !== c.firstInteractionAt.getTime()
-    ) {
-      continue;
-    }
-    upsertCandidate(c.id, {
-      suggestionType: "post_event",
-      title: `Reach out to ${contactDisplayName(c)}`,
-      description: `Recent intro ${days} day${days === 1 ? "" : "s"} ago — no follow-up logged yet`,
-      relatedContactIds: [c.id],
-      confidenceScore: 85,
-    });
-  }
+  // There is deliberately no "recent intro" suggestion any more. It fired for any contact whose
+  // first and last interaction matched 7-21 days ago, and creating a contact stamps both, so it
+  // meant "imported two weeks ago", not "you met". `post_event` stays in AUTO_SUGGESTION_TYPES
+  // only so a rebuild clears rows an earlier version wrote.
 
+  // Only people the user has actually met or talked with (`met-contact.ts`). Applied last, to
+  // the already-chosen candidates, so every rule above stays as it was.
+  const met = await metContactIds(userId);
   const suggestions = [...candidateByContact.values()]
+    .filter((s) => met.has(s.relatedContactIds[0]))
     .sort((a, b) => b.confidenceScore - a.confidenceScore)
     .slice(0, MAX_AUTO_SUGGESTIONS);
 
@@ -430,7 +420,12 @@ export async function generateDueFollowUps(userId: string, limit = 8) {
       .map((c) => c.id)
   );
 
+  // Only people the user has actually met or talked with: "Generate more" books a follow-up
+  // that is due now, which is a bell badge and a desktop alert (see `met-contact.ts`).
+  const met = await metContactIds(userId);
+
   const candidates = all
+    .filter((c) => met.has(c.id))
     .filter((c) => !alreadyDueIds.has(c.id))
     .filter((c) => {
       // Skip people with a future follow-up still more than a day away

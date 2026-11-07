@@ -32,7 +32,7 @@ import "./smoke/_env";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { getEffectivePlanConfig } from "../src/lib/plans/plan-rules";
-import { contacts } from "../src/db/schema";
+import { contacts, interactions } from "../src/db/schema";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
@@ -198,6 +198,15 @@ async function main() {
     })
   )?.id;
   check("fixture: the due-row contact exists", Boolean(dueId));
+  // Follow-ups only alert for people the user has met or talked with (`met-contact.ts`).
+  if (dueId) {
+    await db.insert(interactions).values({
+      userId: USER,
+      contactId: dueId,
+      interactionType: "meeting",
+      interactionDate: new Date(Date.now() - 30 * 86_400_000),
+    });
+  }
 
   // ---- Dashboard ---------------------------------------------------------------------
   console.log("\nDashboard (getDashboardData)…");
@@ -394,6 +403,10 @@ async function main() {
     "panel surfaces the due follow-up at row 2900",
     Boolean(dueId) && panel.items.some((i) => i.kind === "follow_up" && i.contactId === dueId)
   );
+  // The met-evidence row above is only for the follow-up assertions. Later budgets (the
+  // knowledge base reads interactions, and runs one more statement when any exist) were
+  // measured on a network with none.
+  if (dueId) await db.delete(interactions).where(eq(interactions.contactId, dueId));
 
   // ---- Contacts list projection ------------------------------------------------------
   // The hottest contacts scan in the app, and the one that was NOT guarded here — it

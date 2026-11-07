@@ -104,6 +104,19 @@ async function reset() {
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
 }
 
+/** A past meeting, so Radar (which reads only people the user has met: `met-contact.ts`) sees the contact. */
+async function haveMet(...contactIds: (string | undefined)[]) {
+  const db = await getDb();
+  await db.insert(interactions).values(
+    contactIds.filter((id): id is string => !!id).map((contactId) => ({
+      userId: USER,
+      contactId,
+      interactionType: "meeting" as const,
+      interactionDate: ago(100),
+    }))
+  );
+}
+
 async function seed() {
   const db = await getDb();
   await ensureUserSettings(USER);
@@ -145,6 +158,19 @@ async function seed() {
     { userId: USER, contactId: ids.inbound, interactionType: "linkedin_message", interactionDate: ago(9), direction: "in" },
     { userId: USER, contactId: ids.meeting, interactionType: "meeting", interactionDate: ahead(2), source: "calendar_sync", aiSummary: "Quarterly sync" },
   ]);
+  // Radar only reads people the user has met or talked with (`met-contact.ts`). Everyone gets a
+  // past meeting except the two this smoke needs to stay unmet or pinned out: Intro Ivan (an
+  // imported contact, "met" only in the sense that the import stamped him) and Pinned Pat.
+  await db.insert(interactions).values(
+    Object.entries(ids)
+      .filter(([key]) => key !== "intro" && key !== "pinned")
+      .map(([, contactId]) => ({
+        userId: USER,
+        contactId,
+        interactionType: "meeting" as const,
+        interactionDate: ago(100),
+      }))
+  );
   const [itemInteraction] = await db
     .insert(interactions)
     .values({ userId: USER, contactId: ids.item, interactionType: "note", interactionDate: ago(20) })
@@ -211,7 +237,7 @@ run(async () => {
   const rows = await pending();
   const kindOf = (id: string) => rows.filter((r) => r.contactId === id).map((r) => r.kind).join(",");
   check("a dormant close tie is a reconnect", kindOf(ids.dormant) === "reconnect", kindOf(ids.dormant));
-  check("a fresh intro is a reach_out", kindOf(ids.intro) === "reach_out", kindOf(ids.intro));
+  check("a fresh import is not a reach_out: first and last interaction are the import's, not a meeting", kindOf(ids.intro) === "", kindOf(ids.intro));
   check("an unanswered message is a reach_out", kindOf(ids.inbound) === "reach_out", kindOf(ids.inbound));
   check("a meeting on the calendar is prep", kindOf(ids.meeting) === "prep", kindOf(ids.meeting));
   check("an open action item is a follow_up", kindOf(ids.item) === "follow_up", kindOf(ids.item));
@@ -394,12 +420,12 @@ run(async () => {
   const [woken] = await db.select().from(recommendations).where(eq(recommendations.id, dormantRec.id));
   check("an ended snooze wakes the same row", woken?.status === "pending");
 
-  const introRec = (await pending()).find((r) => r.contactId === ids.intro)!;
-  await db.update(recommendations).set({ status: "dismissed", resolvedAt: later }).where(eq(recommendations.id, introRec.id));
-  await db.insert(recommendationFeedback).values({ userId: USER, contactId: ids.intro, recommendationId: introRec.id, kind: introRec.kind, action: "dismissed", createdAt: later });
+  const dismissedRec = (await pending()).find((r) => r.contactId === ids.dormant)!;
+  await db.update(recommendations).set({ status: "dismissed", resolvedAt: later }).where(eq(recommendations.id, dismissedRec.id));
+  await db.insert(recommendationFeedback).values({ userId: USER, contactId: ids.dormant, recommendationId: dismissedRec.id, kind: dismissedRec.kind, action: "dismissed", createdAt: later });
   await claimRadarLease(USER, later);
   await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
-  check("a dismissal is not re-raised the next night", !(await pending()).some((r) => r.contactId === ids.intro));
+  check("a dismissal is not re-raised the next night", !(await pending()).some((r) => r.contactId === ids.dormant));
 
   const itemRec = (await pending()).find((r) => r.contactId === ids.item)!;
   await db.update(contacts).set({ title: "Head of Platform" }).where(eq(contacts.id, ids.item));
@@ -522,6 +548,7 @@ run(async () => {
       .insert(contacts)
       .values({ userId: USER, fullName: "History Hal", firstInteractionAt: ago(400), lastInteractionAt: ago(20) })
       .returning();
+    await haveMet(learner!.id);
     // Six reconnect cards this account dismissed. Rows only, no feedback: they teach the
     // model without suppressing anyone.
     const learnAt = new Date(later.getTime() + 3 * DAY);
@@ -551,7 +578,8 @@ run(async () => {
     check("a reconnect scores below its base score for an account that dismisses them",
       lee?.kind === "reconnect" && lee.base !== null && lee.score < lee.base, JSON.stringify(lee));
     const [saved] = await db.select({ model: userSettings.radarModel }).from(userSettings).where(eq(userSettings.userId, USER));
-    check("the model is saved on the account", saved?.model?.kinds.reconnect?.d === 6 && saved.model.reasons.dormant?.d === 6,
+    // Six seeded above, plus the dormant card dismissed in "what the person does sticks".
+    check("the model is saved on the account", saved?.model?.kinds.reconnect?.d === 7 && saved.model.reasons.dormant?.d === 7,
       JSON.stringify(saved?.model));
     await db.delete(contacts).where(inArray(contacts.id, [learner!.id, history!.id]));
   }
@@ -562,6 +590,7 @@ run(async () => {
       .insert(contacts)
       .values({ userId: USER, fullName: "Mover Max", company: "Ramp", title: "Staff PM", firstInteractionAt: ago(400), lastInteractionAt: ago(40) })
       .returning();
+    await haveMet(mover!.id);
     await db.insert(contactCareerMoves).values({
       userId: USER,
       contactId: mover!.id,
@@ -588,6 +617,7 @@ run(async () => {
       .insert(contacts)
       .values({ userId: USER, fullName: "Late Lou", company: "Brex", title: "PM", firstInteractionAt: ago(400), lastInteractionAt: ago(40) })
       .returning();
+    await haveMet(late!.id);
     await db.insert(contactCareerMoves).values({
       userId: USER,
       contactId: late!.id,

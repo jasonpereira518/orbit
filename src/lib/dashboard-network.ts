@@ -5,6 +5,7 @@ import { ABSOLUTE_TIER_CUTOFFS } from "@/lib/closeness";
 import type { ClosenessScalars } from "@/lib/closeness-cohort";
 import { IMPORT_SOURCE_TAGS, type ConstellationThresholds } from "@/lib/constellation-eligibility";
 import { METRICS_MAX_CONTACTS } from "@/lib/network-metrics";
+import { alertableContactSql } from "@/lib/met-contact";
 
 /**
  * The dashboard's whole-network questions, answered by Postgres from the stored scores.
@@ -351,6 +352,7 @@ export async function loadDueCandidates(userId: string): Promise<DueCandidateRow
        where contacts.user_id = ${userId}
          and contacts.next_follow_up_at is not null
          and contacts.next_follow_up_at <= now() + interval '1 hour'
+         and ${alertableContactSql(sql`contacts.id`, userId)}
     `)
   );
 }

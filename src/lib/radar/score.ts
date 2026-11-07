@@ -535,21 +535,8 @@ export function scoreContactKinds(
     }
   }
 
-  // A fresh intro with nothing since: the one follow-up that decays fastest if skipped.
-  if (contact.firstInteractionAt) {
-    const days = daysSince(contact.firstInteractionAt, now) ?? 0;
-    const single =
-      !contact.lastInteractionAt ||
-      contact.lastInteractionAt.getTime() === contact.firstInteractionAt.getTime();
-    if (single && days >= RADAR_WINDOWS.recentIntroMin && days <= RADAR_WINDOWS.recentIntroMax) {
-      add(
-        drafts,
-        "reach_out",
-        { code: "recent_intro", label: `You met ${plural(days, "day")} ago and haven’t followed up`, points: W.recentIntro },
-        { label: "First met", at: iso(contact.firstInteractionAt) }
-      );
-    }
-  }
+  // No "recent intro" reason any more: first and last interaction both equal the import time for
+  // any contact an importer created, so it read "you met N days ago" about people never met.
 
   // Dormancy, against the rhythm the person stated or the default window. Unknown recency
   // is not dormancy: a contact with no touch on record is skipped rather than nagged about.
