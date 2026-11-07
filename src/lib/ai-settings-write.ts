@@ -17,6 +17,7 @@
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { clearMemoryChunkVectors } from "@/lib/memory-chunks";
 import { contactEmbeddings, userSettings } from "@/db/schema";
 import { resolveAiModel, resolveAiProvider, type AiProvider } from "@/lib/ai";
 import { managedKeysConfigured } from "@/lib/ai-access";
@@ -184,6 +185,7 @@ export async function applyAiKeyChange(input: {
   if (embeddingReset) {
     // Different embedding spaces can't be compared — clear stale vectors.
     await db.delete(contactEmbeddings).where(eq(contactEmbeddings.userId, userId));
+    await clearMemoryChunkVectors(userId);
   }
 
   return { embeddingReset };

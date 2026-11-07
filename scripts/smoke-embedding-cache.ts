@@ -68,6 +68,25 @@ async function main() {
   check("oldest entry evicted at capacity", calls === callsAfterFill + 1);
   await getQueryEmbedding("u1", "filler 499", stub, scopeStub);
   check("newest entry survives eviction", calls === callsAfterFill + 1);
+
+  // Soft deadline: a slow embedding fails fast for the caller, yet still lands in the cache.
+  __clearEmbeddingCacheForTests();
+  let slowCalls = 0;
+  const slow = async () => {
+    slowCalls++;
+    await new Promise((r) => setTimeout(r, 120));
+    return [0.5, 0.5];
+  };
+  let timedOut = false;
+  try {
+    await getQueryEmbedding("u1", "slow query", slow, scopeStub, { softTimeoutMs: 20 });
+  } catch (err) {
+    timedOut = err instanceof Error && /embedding timeout/.test(err.message);
+  }
+  check("a slow embedding fails fast once the soft deadline passes", timedOut);
+  await new Promise((r) => setTimeout(r, 200));
+  const late = await getQueryEmbedding("u1", "slow query", slow, scopeStub, { softTimeoutMs: 20 });
+  check("its late answer was cached for the next ask", slowCalls === 1 && late[0] === 0.5, String(slowCalls));
 }
 
 main()

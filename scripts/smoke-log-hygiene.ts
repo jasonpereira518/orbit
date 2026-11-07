@@ -29,6 +29,31 @@ check("interest-list join no longer logs the raw IP", !/ip:\s*ctx\.ip/.test(join
 const profile = readFileSync("src/lib/extension/parse-profile.ts", "utf8");
 check("parse-profile no longer logs model output", !/console\.\w+\([^)]*content\.slice\(/.test(profile));
 
+// No console call anywhere may print a slice of something that looks like a model response or
+// prompt: those carry profile, note and email text. Log a length (`{ chars }`) instead.
+import { readdirSync, statSync } from "node:fs";
+import { join as joinPath } from "node:path";
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const full = joinPath(dir, name);
+    if (statSync(full).isDirectory()) return sourceFiles(full);
+    return /\.(ts|tsx)$/.test(name) ? [full] : [];
+  });
+}
+const MODEL_TEXT = /\b(?:content|raw|rawText|completion|answer|output|prompt|responseText)\s*(?:\?\.)?\.slice\(/;
+const offenders = ["src/lib", "src/app", "src/actions"]
+  .flatMap(sourceFiles)
+  .filter((file) => {
+    const text = readFileSync(file, "utf8");
+    return [...text.matchAll(/console\.\w+\(([\s\S]*?)\);/g)].some((m) => MODEL_TEXT.test(m[1] ?? ""));
+  });
+check("no console call prints a slice of model output or a prompt", offenders.length === 0, offenders.join(", "));
+
+import { SECRET_PATTERNS } from "../src/lib/secret-patterns";
+const hit = (kind: string, sample: string) => SECRET_PATTERNS.some(([k, re]) => k === kind && new RegExp(re.source).test(sample));
+check("a Resend key is recognised as a secret", hit("resend_key", "re_AbCdEfGh_" + "x".repeat(24)));
+check("a Twilio API key SID is recognised as a secret", hit("twilio_api_key_sid", "SK" + "a1".repeat(16)));
+
 if (failures) {
   console.error(`\nsmoke-log-hygiene: ${failures} check(s) failed`);
   process.exit(1);
