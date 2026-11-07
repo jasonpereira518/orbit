@@ -216,6 +216,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-contact-profile-format": "pure",
   "smoke-contacts-file": "pure",
   "smoke-disconnect-categories": "pure",
+  "smoke-provider-themes": "pure",
   "smoke-dashboard-search": "pure",
   "smoke-date-commitments": "pure",
   "smoke-deepgram-params": "pure",

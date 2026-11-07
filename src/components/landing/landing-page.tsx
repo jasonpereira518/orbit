@@ -62,6 +62,15 @@ export function LandingPage({
         <SceneFinale {...authProps} />
       </LandingPageShell>
 
+      {/* Phones only: a fade behind the pill and the social icons below. Without it the page
+       * scrolled straight under them, and body text ran into the pill and the icons. The
+       * landing's scroll-padding (theme.css) keeps a focused link above it too. */}
+      <div
+        aria-hidden
+        data-landing-bottom-fade
+        className="pointer-events-none fixed inset-x-0 bottom-0 z-30 h-[calc(5rem+env(safe-area-inset-bottom))] bg-gradient-to-t from-[#03050c] via-[#03050c]/85 to-transparent md:hidden [[data-pass-seen]_&]:h-[calc(4rem+env(safe-area-inset-bottom))]"
+      />
+
       {/* Its own landmark: a fixed corner link outside <main>, which must stay a direct
        * child of this untransformed root. */}
       <aside aria-label="Early access">

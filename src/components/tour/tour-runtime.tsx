@@ -33,6 +33,7 @@ import { examplePerson } from "@/lib/onboarding-examples/cast";
 
 const TOUR_LEAD_NAME = examplePerson("priya").fullName;
 import { useMediaQuery } from "@/lib/use-media-query";
+import { prefersReducedMotion } from "@/lib/motion-preference";
 
 export type TourSeed = {
   stop: string | null;
@@ -330,7 +331,7 @@ export function TourRuntime({ seed, hidden }: { seed: TourSeed; hidden: Readonly
     if (partlyOff && getComputedStyle(el).position !== "fixed") {
       el.scrollIntoView({
         block: VIEWPORT_LOCKED.has(pathname) ? "nearest" : "center",
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
       });
     }
     if (stop.focusAnchor) {

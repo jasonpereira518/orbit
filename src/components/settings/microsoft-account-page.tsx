@@ -73,14 +73,17 @@ import {
 } from "@/actions/microsoft-settings";
 import { listImports, type ImportHistoryItem } from "@/actions/imports";
 import { getSendCapabilityAction } from "@/actions/email-sends";
-import { CalendarPicker, SwitchRow } from "@/components/settings/account-rows";
+import { CalendarPicker, SwitchRow, useSyncNow } from "@/components/settings/account-rows";
+import { PROVIDER_THEMES } from "@/components/settings/provider-themes";
+import { syncAccountNow } from "@/actions/sync-now";
+import { cn } from "@/lib/utils";
 import { IMPORT_HISTORY_LIMIT, ImportHistoryRow } from "@/components/settings/import-history-row";
 import { MicrosoftMark } from "@/components/settings/provider-marks";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
 import { Button } from "@/components/ui/button";
 import { ImportPeopleReview } from "@/components/imports/import-people-review";
 import { BusyHint } from "@/components/imports/import-utils";
-import { AccountPageShell, FeatureRow } from "@/components/settings/account-page";
+import { AccountPageShell, FeatureRow, syncStatusLine } from "@/components/settings/account-page";
 import { useContactsImport } from "@/components/settings/use-contacts-import";
 import { useMicrosoftConnection } from "@/components/settings/use-provider-connection";
 import { useLatestScan, useRecruiterScan } from "@/components/settings/use-recruiter-scan";
@@ -97,7 +100,6 @@ import { TOAST_COPY } from "@/lib/toast-copy";
 
 /** Microsoft's logo colours, exactly as `MicrosoftMark` draws them. */
 const MICROSOFT = { red: "#F25022", green: "#7FBA00", blue: "#00A4EF", yellow: "#FFB900" } as const;
-const MICROSOFT_STRIPE = [MICROSOFT.red, MICROSOFT.green, MICROSOFT.blue, MICROSOFT.yellow];
 const MICROSOFT_IMPORT_TYPES = ["outlook_contacts", OUTLOOK_SCAN_IMPORT_TYPE];
 
 type SendCapability = Awaited<ReturnType<typeof getSendCapabilityAction>>;
@@ -187,25 +189,40 @@ export function MicrosoftAccountPage({
     loadPanel();
   };
   const router = useRouter();
+  const syncNow = useSyncNow(() => syncAccountNow("microsoft"), status?.lastSyncedAt, connection.refresh);
 
   return (
     <AccountPageShell
-      provider="microsoft"
+      name="Microsoft"
+      mark={<MicrosoftMark className="size-6" />}
+      theme={PROVIDER_THEMES.microsoft}
       account={account}
       loading={connection.loading}
       failed={connection.failed}
       onRetry={connection.retry}
       onConnect={() => connection.connect()}
-      onDisconnect={(opts) =>
-        connection.disconnect(opts).then(
-          () => contacts.reset(),
-          (err) => toast.error(friendlyError(err, "Couldn’t disconnect that account — try again?"))
-        )
-      }
-      hasDeletableData={hasDeletableData}
-      mark={<MicrosoftMark className="size-6" />}
-      stripe={MICROSOFT_STRIPE}
-      stripeVariant="tiles"
+      status={syncStatusLine({
+        signedOut: account?.state === "needs_reauth",
+        syncing: syncNow.syncing,
+        lastSyncedAt: status?.lastSyncedAt,
+        error: status?.syncError,
+      })}
+      primaryAction={{
+        label: syncNow.syncing ? "Syncing…" : "Sync now",
+        icon: <RefreshCw aria-hidden className={cn(syncNow.syncing && "animate-spin")} />,
+        onClick: syncNow.sync,
+        disabled: syncNow.syncing || connection.busy,
+      }}
+      menuItems={[{ label: "Switch account", onSelect: () => connection.connect() }]}
+      disconnect={{
+        provider: "outlook",
+        hasDeletableData,
+        onConfirm: (opts) =>
+          connection.disconnect(opts).then(
+            () => contacts.reset(),
+            (err) => toast.error(friendlyError(err, "Couldn’t disconnect that account — try again?"))
+          ),
+      }}
     >
       <ContactsRow
         capability={capabilities.contacts}

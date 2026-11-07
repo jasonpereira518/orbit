@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { SettingsSection } from "@/components/settings/settings-section";
+import { StatusDot } from "@/components/settings/integration-ui";
 
 type OutreachSettingsState = {
   apollo: boolean;
@@ -45,9 +46,7 @@ export function OutreachSettings({
           value={apolloKey}
           onChange={(e) => setApolloKey(e.target.value)}
         />
-        <p className="text-xs text-muted-foreground">
-          Status: {state.apollo ? "configured" : "not set (demo prospects used)"}
-        </p>
+        <KeyStatus on={state.apollo} onText="Connected" offText="Not set up — Outreach shows sample prospects until you add a key" />
       </div>
 
       <div className="space-y-1.5">
@@ -90,14 +89,11 @@ export function OutreachSettings({
           value={twilioFrom}
           onChange={(e) => setTwilioFrom(e.target.value)}
         />
-        <p className="text-xs text-muted-foreground">
-          SMS auto-send: {state.twilio ? "ready" : "not configured"}
-        </p>
+        <KeyStatus on={state.twilio} onText="Text messages ready to send" offText="Not set up" />
       </div>
 
       <Button
         disabled={pending}
-        className="bg-primary text-primary-foreground hover:bg-primary/90"
         onClick={() =>
           start(async () => {
             try {
@@ -131,5 +127,15 @@ export function OutreachSettings({
         Save outreach settings
       </Button>
     </SettingsSection>
+  );
+}
+
+/** The same dot-and-words status line the account pages use. */
+function KeyStatus({ on, onText, offText }: { on: boolean; onText: string; offText: string }) {
+  return (
+    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <StatusDot status={{ state: on ? "on" : "off", detail: on ? onText : offText }} />
+      {on ? onText : offText}
+    </p>
   );
 }
