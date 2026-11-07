@@ -37,6 +37,8 @@ export type CloudFile = {
   /** ISO timestamp. */
   modifiedTime: string;
   webUrl: string | null;
+  /** Who owns it, "You" for the person's own docs. Listing only — the scan never reads it. */
+  owner?: string | null;
 };
 
 export type CloudCtx = { token: string; fetchImpl?: typeof fetch };
@@ -78,13 +80,29 @@ export async function cloudAccessToken(userId: string, provider: CloudProvider):
 
 // ── Google ────────────────────────────────────────────────────────────────────
 
-type GoogleFileJson = { id?: string; name?: string; mimeType?: string; modifiedTime?: string; webViewLink?: string; trashed?: boolean };
+type GoogleFileJson = {
+  id?: string;
+  name?: string;
+  mimeType?: string;
+  modifiedTime?: string;
+  webViewLink?: string;
+  trashed?: boolean;
+  owners?: { displayName?: string; me?: boolean }[];
+};
 
-const GOOGLE_FILE_FIELDS = "id,name,mimeType,modifiedTime,webViewLink,trashed";
+const GOOGLE_FILE_FIELDS = "id,name,mimeType,modifiedTime,webViewLink,trashed,owners(displayName,me)";
 
 function googleFile(f: GoogleFileJson | undefined): CloudFile | null {
   if (!f?.id || !f.name || f.trashed || f.mimeType !== DRIVE_MIME.doc) return null;
-  return { provider: "google", id: f.id, name: f.name, modifiedTime: f.modifiedTime ?? new Date(0).toISOString(), webUrl: f.webViewLink ?? null };
+  const owner = f.owners?.[0];
+  return {
+    provider: "google",
+    id: f.id,
+    name: f.name,
+    modifiedTime: f.modifiedTime ?? new Date(0).toISOString(),
+    webUrl: f.webViewLink ?? null,
+    owner: owner?.me ? "You" : (owner?.displayName ?? null),
+  };
 }
 
 async function googleJson<T>(ctx: CloudCtx, url: string): Promise<T> {
@@ -125,13 +143,21 @@ type GraphItemJson = {
   size?: number;
   file?: unknown;
   deleted?: unknown;
+  createdBy?: { user?: { displayName?: string } };
 };
 
 function graphFile(item: GraphItemJson | undefined): CloudFile | null {
   if (!item?.id || !item.name || !item.file || item.deleted) return null;
   if (!isReadableOneDriveName(item.name)) return null;
   if (typeof item.size === "number" && item.size > MAX_ONEDRIVE_BYTES) return null;
-  return { provider: "microsoft", id: item.id, name: item.name, modifiedTime: item.lastModifiedDateTime ?? new Date(0).toISOString(), webUrl: item.webUrl ?? null };
+  return {
+    provider: "microsoft",
+    id: item.id,
+    name: item.name,
+    modifiedTime: item.lastModifiedDateTime ?? new Date(0).toISOString(),
+    webUrl: item.webUrl ?? null,
+    owner: item.createdBy?.user?.displayName ?? null,
+  };
 }
 
 async function graphResponse(ctx: CloudCtx, url: string): Promise<Response> {
@@ -313,4 +339,63 @@ export async function readFileText(ctx: CloudCtx, provider: CloudProvider, file:
   text = text.replace(/^﻿/, "");
   if (text.length > DRIVE_EXPORT_MAX_CHARS) throw new DriveFileTooLargeError();
   return text;
+}
+
+// ── Previews ─────────────────────────────────────────────────────────────────
+
+const THUMB_MAX_BYTES = 512 * 1024;
+const THUMB_TYPES = /^image\/(png|jpeg|gif|webp)$/;
+/** Drive's thumbnail links all live here. The bearer token is only ever sent to this host. */
+const GOOGLE_THUMB_HOST = /(^|\.)googleusercontent\.com$/;
+
+function httpsUrl(value: unknown, host?: RegExp): URL | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || (host && !host.test(url.hostname))) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A doc's first-page thumbnail, ready for an `<img>`. Drive's link needs the token, so it is
+ * fetched here and handed back as a `data:` URL; OneDrive's is pre-authenticated, so its URL
+ * goes back as is. Null when the doc has none (OneDrive text files, a doc Drive hasn't rendered).
+ */
+export async function fileThumbnail(ctx: CloudCtx, provider: CloudProvider, file: { id: string; name: string }): Promise<string | null> {
+  if (provider === "google") {
+    const meta = await googleJson<{ thumbnailLink?: string }>(ctx, `${DRIVE_API}/files/${encodeURIComponent(file.id)}?fields=thumbnailLink`);
+    const link = httpsUrl(meta.thumbnailLink, GOOGLE_THUMB_HOST);
+    if (!link) return null;
+    const res = await (ctx.fetchImpl ?? fetch)(link.toString().replace(/=s\d+$/, "=s400"), {
+      headers: { authorization: `Bearer ${ctx.token}` },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim();
+    if (!res.ok || !THUMB_TYPES.test(type)) return null;
+    const bytes = await res.arrayBuffer();
+    if (bytes.byteLength > THUMB_MAX_BYTES) return null;
+    return `data:${type};base64,${Buffer.from(bytes).toString("base64")}`;
+  }
+  if (!file.name.toLowerCase().endsWith(".docx")) return null;
+  const json = await graphJson<{ url?: string }>(ctx, `${GRAPH_API}/me/drive/items/${encodeURIComponent(file.id)}/thumbnails/0/medium`);
+  return httpsUrl(json.url)?.toString() ?? null;
+}
+
+export const PREVIEW_MAX_CHARS = 1_500;
+
+/** The opening of a doc for the peek: blank-line runs and space runs squeezed, cut at a word. */
+export function previewText(text: string, max = PREVIEW_MAX_CHARS): { text: string; truncated: boolean } {
+  const clean = text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\u00a0]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (clean.length <= max) return { text: clean, truncated: false };
+  const cut = clean.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return { text: `${(space > max * 0.8 ? cut.slice(0, space) : cut).trimEnd()}…`, truncated: true };
 }
