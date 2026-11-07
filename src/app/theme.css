@@ -1742,6 +1742,12 @@
   -webkit-text-fill-color: transparent;
   animation: t-shimmer var(--shimmer-dur) var(--shimmer-ease) infinite;
 }
+/* The brand pair instead of grey-on-grey: teal text, a gold band sweeping over it. Both are
+ * theme tokens, so light and dark each get their own teal and gold with no extra block. */
+.t-shimmer-brand {
+  --shimmer-base: var(--primary);
+  --shimmer-highlight: var(--chart-4);
+}
 @keyframes t-shimmer {
   0% {
     background-position: 100% 0;

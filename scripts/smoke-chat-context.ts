@@ -23,7 +23,7 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 import { resolveAiAccess } from "../src/lib/ai-access";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { saveWritingInstructionsFor } from "../src/lib/writing-instructions-store";
-import { isoDay } from "../src/lib/dates";
+import { ymdInZone } from "../src/lib/reminder-due-bucket";
 import { factLane } from "../src/lib/chat-lanes";
 import { fallbackParsedQuery } from "../src/lib/chat-retrieval";
 import { NULL_STEPS } from "../src/lib/chat-steps";
@@ -96,8 +96,12 @@ async function main() {
   );
   check(
     "the question carries today's date, so relative dates are not guessed",
-    // Local day, as the prompt writes it: a UTC day failed this every evening after 8pm EDT.
-    ctx.scopedQuestion.startsWith(`[Today is ${isoDay(new Date())}. Now: `),
+    // The day in the zone the prompt names (the user's, UTC when unset), not this machine's:
+    // a UTC day failed this every evening after 8pm EDT, and a local day failed it every
+    // evening after 7pm EST on a machine whose user has no zone set.
+    ctx.scopedQuestion.startsWith(
+      `[Today is ${ymdInZone(new Date(), /in the user's time zone, ([^.\]]+)\.\]/.exec(ctx.scopedQuestion)?.[1] ?? "UTC")}. Now: `
+    ),
     ctx.scopedQuestion
   );
   check(
