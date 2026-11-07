@@ -462,6 +462,22 @@ export async function linkAttendeesToContacts(
   `);
 }
 
+/** The rows `upsertEventAttendees` wrote, by the identity keys it was given (it returns a count). */
+async function attendeeRowsByIdentityKey(userId: string, eventId: string, keys: string[]) {
+  if (keys.length === 0) return [];
+  const db = await getDb();
+  return db
+    .select({ id: eventAttendees.id, identityKey: eventAttendees.identityKey })
+    .from(eventAttendees)
+    .where(
+      and(eq(eventAttendees.userId, userId), eq(eventAttendees.eventId, eventId), inArray(eventAttendees.identityKey, keys))
+    );
+}
+
+export async function attendeeIdsByIdentityKey(userId: string, eventId: string, keys: string[]): Promise<string[]> {
+  return (await attendeeRowsByIdentityKey(userId, eventId, keys)).map((r) => r.id);
+}
+
 /**
  * "Log who you met": mark the contacts a capture just saved as met at this event.
  *
@@ -531,17 +547,9 @@ export async function recordMetAtEvent(userId: string, eventId: string, contactI
   }
   if (added.length) {
     await upsertEventAttendees(userId, eventId, added, "capture");
-    const rows = await db
-      .select({ id: eventAttendees.id, identityKey: eventAttendees.identityKey })
-      .from(eventAttendees)
-      .where(
-        and(
-          eq(eventAttendees.userId, userId),
-          eq(eventAttendees.eventId, eventId),
-          inArray(eventAttendees.identityKey, [...keyToContact.keys()])
-        )
-      );
-    for (const row of rows) links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
+    for (const row of await attendeeRowsByIdentityKey(userId, eventId, [...keyToContact.keys()])) {
+      links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
+    }
   }
   await linkAttendeesToContacts(userId, links);
   return links.length;
