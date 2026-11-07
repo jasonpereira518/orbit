@@ -421,9 +421,18 @@ async function main() {
   );
   const listJson = JSON.stringify(listRows);
   check("contacts list payload carries no inline base64", !listJson.includes("data:image/"));
+  // Asked of the hand-made inline row by id, not of whichever 50 rows the LIMIT returned: with
+  // no ORDER BY, which rows come back is the planner's choice (heap order after the cohort
+  // UPDATEs, or one of the many (user_id, …) indexes, picked from ANALYZE's random sample), and
+  // a run that drew 50 rows without an inline photo failed this check now and then in CI.
+  const [inlineRow] = await db
+    .select(contactsListSelection)
+    .from(contacts)
+    .where(eq(contacts.id, specialIds.inline));
   check(
     "contacts list still resolves an inline avatar to the avatar route",
-    listJson.includes("/api/avatars/")
+    inlineRow?.profileImageUrl === `/api/avatars/${specialIds.inline}`,
+    String(inlineRow?.profileImageUrl).slice(0, 80)
   );
 
   // ---- Composer suggestion signals ---------------------------------------------------
