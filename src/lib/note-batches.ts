@@ -3,7 +3,7 @@
  * the results page. No DB, no AI — everything here is unit-checkable.
  */
 import { atLocalNoon } from "@/lib/interaction-date";
-import { stripMarkdown } from "@/lib/plain-text";
+import { listSummary, stripMarkdown } from "@/lib/plain-text";
 import type { CaptureSourceKind, NoteBatchResult, ReminderDateBasis } from "@/db/schema";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
 import type { CaptureParseHints } from "@/lib/ai";
@@ -107,11 +107,14 @@ export function captureHistoryTitle(input: {
   return input.reminders[0]?.title.trim() || null;
 }
 
-/** The meeting's summary, else the first per-person summary the save wrote, as plain text. */
+/**
+ * The meeting's summary, else the first per-person summary the save wrote, as plain text.
+ * `listSummary`, so a meeting reads the same here as on /meetings.
+ */
 export function captureSummary(meetingSummary: string | null | undefined, personSummaries: readonly (string | null | undefined)[]): string | null {
   for (const s of [meetingSummary, ...personSummaries]) {
-    const plain = s ? stripMarkdown(s) : "";
-    if (plain) return plain.slice(0, 400);
+    const plain = listSummary(s);
+    if (plain) return plain;
   }
   return null;
 }

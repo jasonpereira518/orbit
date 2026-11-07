@@ -46,13 +46,18 @@ const jsRe = (pattern: string) => new RegExp(pattern.replaceAll("[:space:]", "\\
 
 /** Whether a participant (as calendar sync sees it) is a calendar, room or mailbox, not a person. */
 export function isNonPersonParticipant(name: string | null | undefined, email: string | null | undefined): boolean {
-  const e = (email ?? "").trim().toLowerCase();
-  // `ada+github@x.com` is still Ada, so the tag is dropped before the lookup.
-  const base = e.split("@")[0]!.split("+")[0]!;
-  if (e && (jsRe(CALENDAR_DOMAIN).test(e) || MACHINE_SET.has(base))) return true;
+  if (isNonPersonEmail(email)) return true;
   const n = (name ?? "").trim();
   if (jsRe(ROOM_PHRASE).test(n)) return true;
   return jsRe(CALENDAR_WORD).test(n) && jsRe(CALENDAR_CONTEXT).test(n);
+}
+
+/** The address alone says calendar or machine mailbox; a match on the name alone could be a person. */
+export function isNonPersonEmail(email: string | null | undefined): boolean {
+  const e = (email ?? "").trim().toLowerCase();
+  // `ada+github@x.com` is still Ada, so the tag is dropped before the lookup.
+  const base = e.split("@")[0]!.split("+")[0]!;
+  return !!e && (jsRe(CALENDAR_DOMAIN).test(e) || MACHINE_SET.has(base));
 }
 
 /** SQL twin of `isNonPersonParticipant` over `contacts`. */

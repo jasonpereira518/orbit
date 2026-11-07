@@ -8,9 +8,10 @@ import type { ReminderActionKind, ReminderOrigin } from "@/db/schema";
 export const REMINDERS_PAGE_SIZE = 50;
 
 /**
- * The rail's smart views. "all" is every pending reminder (overdue and undated included), so
- * it overlaps the others by design; its count is a total, not a share. Overdue is part of Today (its own section there) rather than a
- * view of its own, so no reminder is ever counted under two rail entries.
+ * The rail's smart views. Overdue is part of Today (its own section there) rather than a view
+ * of its own, so no reminder is counted under two of today/upcoming/anytime/done. "all" is
+ * every pending reminder (overdue and undated included): it overlaps those by design, and its
+ * count is a total, not a share.
  */
 export const REMINDER_VIEWS = ["all", "today", "upcoming", "anytime", "done"] as const;
 export type ReminderView = (typeof REMINDER_VIEWS)[number];

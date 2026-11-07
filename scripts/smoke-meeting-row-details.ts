@@ -1,12 +1,12 @@
 /**
  * Past-meetings row details, pure: the logo route's domain guard (only a public hostname
- * ever reaches Google's favicon service), the summary cleanup (no markdown, no headings or
- * metadata lines), and which companies a row shows a logo for.
+ * ever reaches Google's favicon service) and which companies a row shows a logo for. The
+ * summary cleanup (`listSummary`) is covered by smoke-plain-text.
  * Run: npx tsx scripts/smoke-meeting-row-details.ts
  */
 import { checker } from "./smoke/check";
 import { isLogoDomain } from "../src/lib/org-brand-learn";
-import { listSummary, meetingCompanies } from "../src/lib/meetings-list";
+import { meetingCompanies } from "../src/lib/meetings-list";
 import { CURATED_COMPANIES } from "../src/lib/brand-colors";
 
 const t = checker();
@@ -33,23 +33,6 @@ for (const bad of [
   t.check(`rejects ${JSON.stringify(bad).slice(0, 30)}`, !isLogoDomain(bad));
 }
 
-console.log("Summary cleanup");
-const cases: Array<[string | null, string | null]> = [
-  ["### Overview\n- **NVIDIA** is hiring\n- Follow up _Friday_", "NVIDIA is hiring. Follow up Friday."],
-  ["Attendees: Dana, Eli\nWhen: Monday\n\n**Key points**\nScope agreed; Dana owns the rollout.", "Scope agreed; Dana owns the rollout."],
-  ["Next steps:\n1. Send the deck\n2) Book a call", "Next steps: Send the deck. Book a call."],
-  ["We agreed pricing is per seat.", "We agreed pricing is per seat."],
-  ["## Only a heading", null],
-  ["", null],
-  [null, null],
-];
-for (const [input, want] of cases) {
-  const got = listSummary(input);
-  t.check(JSON.stringify(input).slice(0, 44), got === want, `got ${JSON.stringify(got)}`);
-}
-const long = listSummary("word ".repeat(200), 50) ?? "";
-t.check("a long summary is cut at a word, with an ellipsis", long.length <= 51 && long.endsWith("word…"), long);
-
 console.log("Companies");
 const nvidia = { name: "NVIDIA", domain: "nvidia.com" };
 const acme = { name: "Acme Corp", domain: "acme.com" };
@@ -70,6 +53,11 @@ t.check("NVIDIA named with no company of the user's still gets its logo", JSON.s
 t.check("an everyday-word brand only when capitalised: apple", domains("an apple a day") === "" && domains("Apple partnership") === "apple.com");
 t.check("…meta and intel too", domains("a meta discussion about intel") === "" && domains("Meta and Intel") === "meta.com,intel.com");
 t.check("the call tool is not a company: Zoom, Google Meet, Microsoft Teams", domains("Zoom call with Stripe") === "stripe.com" && domains("Google Meet: Microsoft Teams rollout") === "");
+t.check(
+  "tools named in a summary are not companies",
+  ["connect on LinkedIn", "ping on Slack", "the Google Doc", "the GitHub repo", "Notion page in Google Drive", "Microsoft Outlook invite"].every((x) => domains(x) === "")
+);
+t.check("…but NVIDIA still is", domains("ping NVIDIA on Slack about the Google Doc") === "nvidia.com");
 t.check("the user's own companies outrank curated ones", domains("NVIDIA and Acme Corp", [acme]) === "acme.com,nvidia.com");
 t.check("an alias finds its company", domains("Chat with AWS about credits") === "aws.amazon.com");
 

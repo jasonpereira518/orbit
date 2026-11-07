@@ -7,7 +7,8 @@
  * Dry run by default: prints every match with its id, name, email and interaction counts by
  * source. `--apply` deletes, through `deleteContactsForUser`, only a match that a calendar made
  * and nobody touched since: `contacts.source` is a calendar source, every interaction (if any)
- * is calendar-sourced, and it has no tags, reminders, LinkedIn URL or key facts. Every other
+ * is calendar-sourced, it has no tags, reminders, LinkedIn URL or key facts, and its email (not
+ * just its name) marks it as a calendar or machine mailbox. Every other
  * match is printed as "keep" with the reason, for a human to look at.
  *
  * Scans the whole `contacts` table (every user) with the predicate; there is no index on it,
@@ -21,7 +22,7 @@ import { inArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contactTags, contacts, interactions, reminders } from "../src/db/schema";
 import { deleteContactsForUser } from "../src/lib/contact-delete";
-import { nonPersonContactSql } from "../src/lib/non-person-participant";
+import { isNonPersonEmail, nonPersonContactSql } from "../src/lib/non-person-participant";
 
 /** Same list `embedding-backfill.ts` treats as calendar-sourced. */
 const CALENDAR_SOURCES = new Set(["calendar_import", "calendar_sync", "google_calendar", "microsoft_calendar", "apple_calendar"]);
@@ -88,6 +89,8 @@ export async function findNonPersonContacts(): Promise<NonPersonMatch[]> {
       reminderCounts.has(r.id) && "has reminders",
       r.linkedinUrl && "has LinkedIn URL",
       r.keyFacts?.length && "has key facts",
+      // "Mary Ann Calendar" <mary@acme.com> matches on the name alone; deletion can't be undone.
+      !isNonPersonEmail(r.email) && "name-only match",
     ].filter((x): x is string => typeof x === "string");
     return {
       id: r.id,

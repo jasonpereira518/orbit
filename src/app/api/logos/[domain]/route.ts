@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUserId } from "@/lib/auth";
+import { AccountSuspendedError, requireUserId, UnauthorizedError } from "@/lib/auth";
 import { isLogoDomain } from "@/lib/org-brand-learn";
 
 /**
@@ -28,8 +28,12 @@ function image(body: Uint8Array<ArrayBuffer>, contentType: string, maxAgeSec: nu
 export async function GET(_req: Request, { params }: { params: Promise<{ domain: string }> }) {
   try {
     await requireUserId();
-  } catch {
-    return new NextResponse(null, { status: 401 });
+  } catch (err) {
+    // Only "no usable account" is a 401; a DB outage in the settings bootstrap is a 500.
+    if (err instanceof UnauthorizedError || err instanceof AccountSuspendedError) {
+      return new NextResponse(null, { status: 401 });
+    }
+    throw err;
   }
   const domain = (await params).domain.toLowerCase();
   if (!isLogoDomain(domain)) return new NextResponse(null, { status: 400 });

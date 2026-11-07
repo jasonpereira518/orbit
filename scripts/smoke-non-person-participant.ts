@@ -104,21 +104,28 @@ run(async () => {
   await db.insert(reminders).values({ userId: CLEAN, contactId: reminded, title: "Follow up", dueDate: new Date() });
   const handMade = await add("Conference Room 4B", "room4b@acme.com", [], "manual");
   const person = await add("Calvin Dar", "calvin.dar@gmail.com", ["google_calendar"]);
+  const nameOnly = await add("Mary Ann Calendar", "mary@acme.com", ["google_calendar"]);
 
   const matches = (await findNonPersonContacts()).filter((m) => m.userId === CLEAN);
   const byId = new Map(matches.map((m) => [m.id, m]));
-  t.check("cleanup finds the five non-people, not the person", matches.length === 5 && !byId.has(person));
+  t.check("cleanup finds the six matches, not the person", matches.length === 6 && !byId.has(person));
   t.check("interaction counts by source are reported", byId.get(calOnly)?.sources.google_calendar === 2 && byId.get(noted)?.sources.capture === 1);
   t.check("calendar-only and bare calendar matches are deletable", byId.get(calOnly)?.deletable === true && byId.get(bare)?.deletable === true);
   t.check("a match with a non-calendar interaction is kept", byId.get(noted)?.deletable === false && byId.get(noted)!.keepReasons.includes("non-calendar interactions"));
   t.check("a calendar-only match with a reminder is kept", byId.get(reminded)?.deletable === false && byId.get(reminded)!.keepReasons.includes("has reminders"), JSON.stringify(byId.get(reminded)?.keepReasons));
   t.check("a match not made by a calendar is kept", byId.get(handMade)?.deletable === false && byId.get(handMade)!.keepReasons.includes("source manual"));
 
+  t.check(
+    "a name-only match with an ordinary email is kept",
+    byId.get(nameOnly)?.deletable === false && byId.get(nameOnly)!.keepReasons.join() === "name-only match",
+    JSON.stringify(byId.get(nameOnly)?.keepReasons)
+  );
+
   const deleted = await deleteNonPersonContacts(matches);
   const left = new Set((await db.select({ id: contacts.id }).from(contacts).where(eq(contacts.userId, CLEAN))).map((r) => r.id));
   t.check(
     "--apply deletes the deletable ones and keeps the rest",
-    deleted.length === 2 && left.size === 4 && [noted, reminded, handMade, person].every((id) => left.has(id)),
+    deleted.length === 2 && left.size === 5 && [noted, reminded, handMade, person, nameOnly].every((id) => left.has(id)),
     `${deleted.length} deleted`
   );
 

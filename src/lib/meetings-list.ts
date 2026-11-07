@@ -32,7 +32,7 @@ import {
 import { brandKey, CURATED_COMPANIES, type CuratedCompany } from "@/lib/brand-colors";
 import { companyFromEmail } from "@/lib/guest-profiles";
 import { toDomain } from "@/lib/org-brand-learn";
-import { stripMarkdown } from "@/lib/plain-text";
+import { listSummary } from "@/lib/plain-text";
 
 export const MEETINGS_PAGE = 20;
 const LISTED: MeetingSessionStatus[] = ["analyzed", "saved"];
@@ -299,33 +299,6 @@ async function listGranola(
 
 // ── Row details: plain summary, call kind, company logos ─────────────────────────────
 
-/** Metadata a note can open with ("Attendees: …"), which is not part of what was said. */
-const META_LINE = /^\s*(?:meeting|when|date|time|attendees|participants|guests|location|organizer)\s*:/i;
-/** A heading: `## …`, or a line that is nothing but bold (`**Overview**`). */
-const HEADING_LINE = /^\s{0,3}(?:#{1,6}\s|\*\*[^*]+\*\*:?\s*$|__[^_]+__:?\s*$)/;
-
-/**
- * A summary as a list row shows it: plain sentences. Headings and leading metadata lines are
- * dropped, markdown is stripped line by line, and each line ends as a sentence so bullets
- * do not run together. Cut at a word near `max`.
- */
-export function listSummary(text: string | null | undefined, max = 300): string | null {
-  if (!text) return null;
-  const lines = text.replace(/```[\s\S]*?```/g, "\n").split("\n");
-  while (lines.length && (!lines[0]!.trim() || META_LINE.test(lines[0]!))) lines.shift();
-  const flat = lines
-    .filter((l) => !HEADING_LINE.test(l))
-    .map(stripMarkdown)
-    .filter(Boolean)
-    .map((l) => (/[.!?;:…]$/.test(l) ? l : `${l}.`))
-    .join(" ");
-  if (!flat) return null;
-  if (flat.length <= max) return flat;
-  const cut = flat.slice(0, max);
-  const space = cut.lastIndexOf(" ");
-  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, "")}…`;
-}
-
 export type MeetingCompany = { name: string; domain: string };
 /** A company that may be named in free text: by any alias, some only when capitalised. */
 type NamedOrg = MeetingCompany & { aliases?: readonly string[]; capitalisedOnly?: readonly string[] };
@@ -337,13 +310,18 @@ function curatedCompany(name: string): CuratedCompany | null {
 }
 
 /**
- * Curated companies for free-text matching. Zoom is left out, and "Google Meet" / "Microsoft
- * Teams" are blanked before matching (`withoutCallTools`): a call tool named in a summary is
- * how the meeting was held, which the row's left tile already shows, not who it was with.
+ * Curated companies for free-text matching, minus the tools a meeting is held or followed up
+ * on, and with "Google Meet", "Google Doc" and the like blanked first (`withoutTools`): "ping
+ * on Slack" or "share the Google Doc" names how people work, not who the meeting was with.
+ * Attendee-derived logos are unaffected: someone at slack.com still shows Slack.
  */
-const CURATED_ORGS: NamedOrg[] = CURATED_COMPANIES.filter((c) => c.name !== "Zoom");
-function withoutCallTools(text: string): string {
-  return text.replace(/\b(?:Google Meet|Microsoft Teams|MS Teams)\b/gi, " ");
+const TOOL_COMPANIES = new Set(["Zoom", "Slack", "Notion", "Figma", "LinkedIn", "GitHub", "GitLab", "Atlassian", "Dropbox", "Discord", "Linear"]);
+const CURATED_ORGS: NamedOrg[] = CURATED_COMPANIES.filter((c) => !TOOL_COMPANIES.has(c.name));
+function withoutTools(text: string): string {
+  return text.replace(
+    /\b(?:Google (?:Meet|Docs?|Drive|Calendar|Sheets?|Slides|Forms?)|(?:Microsoft|MS) (?:Teams|Outlook|Word|Excel|PowerPoint|OneDrive))\b/gi,
+    " "
+  );
 }
 
 /** Where `org` is first named in `text` as a whole word, or -1. `hay` is ` ${brandKey(text)} `. */
@@ -381,7 +359,7 @@ export function meetingCompanies(
     if (out.length < max && !out.some((o) => o.domain === c.domain)) out.push({ name: c.name, domain: c.domain });
   };
   people.forEach(add);
-  const plain = withoutCallTools(text);
+  const plain = withoutTools(text);
   const hay = ` ${brandKey(plain)} `;
   for (const group of [orgs, curated]) {
     if (out.length >= max) break;

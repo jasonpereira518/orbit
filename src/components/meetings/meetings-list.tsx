@@ -8,7 +8,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { CalendarDays, Clock, Loader2, Mic, Monitor, Users, Video } from "lucide-react";
+import { CalendarDays, Clock, Loader2, Monitor, Users, Video } from "lucide-react";
 import { listMeetingsPage } from "@/actions/meetings";
 import { GranolaMark } from "@/components/settings/provider-marks";
 import { Button } from "@/components/ui/button";
@@ -60,10 +60,9 @@ function MeetingKind({ m }: { m: MeetingListItem }) {
         <GranolaMark className="size-5" />
       ) : m.call ? (
         <Video className="size-4" />
-      ) : m.sharedScreen ? (
-        <Monitor className="size-4" />
       ) : (
-        <Mic className="size-4" />
+        // Any recorded meeting, as on /capture; the tooltip says room or screen.
+        <Monitor className="size-4" />
       )}
     </span>
   );

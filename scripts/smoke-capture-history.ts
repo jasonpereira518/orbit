@@ -137,8 +137,9 @@ function pureChecks() {
     ].join() === "meeting,granola,phone,scan,calendar,notes"
   );
 
-  check("summary prefers the meeting's, as plain text", captureSummary("**Big** call", ["person"]) === "Big call");
-  check("  else the first person summary that has words", captureSummary(null, [null, "  ", "- Talked _roadmap_"]) === "Talked roadmap");
+  check("summary prefers the meeting's, as plain text", captureSummary("**Big** call", ["person"]) === "Big call.");
+  check("  else the first person summary that has words", captureSummary(null, [null, "  ", "- Talked _roadmap_"]) === "Talked roadmap.");
+  check("  read like /meetings: headings dropped, lines end as sentences", captureSummary("### Overview\n- Met Ana\n- Next: deck", []) === "Met Ana. Next: deck.");
   check("  else nothing", captureSummary("", []) === null);
 
   const steps = emptyNoteBatchResult();
@@ -289,7 +290,8 @@ async function main() {
   const granolaResult = emptyNoteBatchResult();
   granolaResult.participants = [{ contactId: ana!.id, interactionId: granolaNote!.id, name: "Ana Ruiz", created: false, duplicate: false }];
   const phoneResult = emptyNoteBatchResult();
-  phoneResult.participants = [{ contactId: ana!.id, interactionId: null, name: "Ana Ruiz", created: false, duplicate: false }];
+  // The same person twice: the count must agree with the deduped name line.
+  phoneResult.participants = [1, 2].map(() => ({ contactId: ana!.id, interactionId: null, name: "Ana Ruiz", created: false, duplicate: false }));
   const later = new Date(Date.now() + 60_000);
   const [granolaBatch, phoneBatch] = await db
     .insert(noteBatches)
@@ -303,12 +305,13 @@ async function main() {
   const g = details.items.find((i) => i.id === granolaBatch!.id)!;
   check("a batch whose interactions came from Granola reads as Granola", g.method === "granola", g.method);
   check("  titled by its Granola header", g.title === "Pricing sync", String(g.title));
-  check("  summarised from the person's interaction, markdown stripped", g.summary === "Recap Talked pricing", String(g.summary));
+  check("  summarised from the person's interaction, markdown stripped", g.summary === "Talked pricing.", String(g.summary));
   check("  with its attendees", g.names.join() === "Ana Ruiz");
   const ph = details.items.find((i) => i.id === phoneBatch!.id)!;
   check("a batch saved by a phone job reads as phone", ph.method === "phone", ph.method);
   check("  titled by who it was with", ph.title === "Chat with Ana Ruiz", String(ph.title));
   check("  no summary to show, so none", ph.summary === null);
+  check("  a person listed twice counts once", ph.peopleCount === 1, String(ph.peopleCount));
   check("a typed capture with no job reads as typed notes", details.items.find((i) => i.id === otherBatch.id)!.method === "notes");
   check(
     "a dates-only capture does not repeat its title as the next step",

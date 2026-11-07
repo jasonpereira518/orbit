@@ -19,3 +19,30 @@ export function stripMarkdown(input: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/** Metadata a note can open with ("Attendees: …"), which is not part of what was said. */
+const META_LINE = /^\s*(?:meeting|when|date|time|attendees|participants|guests|location|organizer)\s*:/i;
+/** A heading: `## …`, or a line that is nothing but bold (`**Overview**`). */
+const HEADING_LINE = /^\s{0,3}(?:#{1,6}\s|\*\*[^*]+\*\*:?\s*$|__[^_]+__:?\s*$)/;
+
+/**
+ * A summary as a list row shows it: plain sentences. Headings and leading metadata lines are
+ * dropped, markdown is stripped line by line, and each line ends as a sentence so bullets
+ * do not run together. Cut at a word near `max`.
+ */
+export function listSummary(text: string | null | undefined, max = 300): string | null {
+  if (!text) return null;
+  const lines = text.replace(/```[\s\S]*?```/g, "\n").split("\n");
+  while (lines.length && (!lines[0]!.trim() || META_LINE.test(lines[0]!))) lines.shift();
+  const flat = lines
+    .filter((l) => !HEADING_LINE.test(l))
+    .map(stripMarkdown)
+    .filter(Boolean)
+    .map((l) => (/[.!?;:…]$/.test(l) ? l : `${l}.`))
+    .join(" ");
+  if (!flat) return null;
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.]+$/, "")}…`;
+}

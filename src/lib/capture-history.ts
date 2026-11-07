@@ -196,7 +196,7 @@ export async function listCaptureHistoryFor(
       // A dates-only note is already titled by its reminder; don't repeat it underneath.
       nextSteps: nextSteps === title ? null : nextSteps,
       excerpt: captureExcerpt(row.head ?? ""),
-      peopleCount: participants.length,
+      peopleCount: names.length,
       reminderCount: reminders.length,
       photoCount: photoIds.length,
       thumbnailIds: photoIds.slice(0, ROW_THUMBNAILS),
