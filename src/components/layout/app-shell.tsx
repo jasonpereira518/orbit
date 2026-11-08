@@ -12,7 +12,6 @@ const AppStarfield = dynamic(
   { ssr: false }
 );
 import { MobileNav } from "@/components/layout/mobile-nav";
-import { useSmallSky } from "@/components/graph/use-small-sky";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
 import { ConnectivityBanner } from "@/components/layout/connectivity-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
@@ -121,7 +120,6 @@ export function AppShell({
   // that holds still, so it is locked to the viewport as well.
   const isKnowledge = pathname === "/knowledge";
   const isViewportLocked = isChat || isConstellation || isReminders || isKnowledge;
-  const smallSky = useSmallSky();
   // The ask bar is not a link to /chat — it streams answers from `/api/chat` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
   // from every screen, which is the whole thing hiding is supposed to prevent.
