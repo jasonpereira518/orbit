@@ -59,6 +59,11 @@ export type ToolLoopOptions = {
   maxResultChars: number;
   onCall?: (call: ToolCall) => void;
   now?: () => number;
+  /**
+   * A per-turn cap on a group of tools — the web lookups, each a paid search that can take
+   * twenty seconds. Calls past `max` are answered with `message` instead of running.
+   */
+  limited?: { tools: ReadonlySet<string>; max: number; message: string };
 };
 
 function capped(value: unknown, max: number): string {
@@ -79,6 +84,7 @@ export async function runToolLoop(
   const now = options.now ?? Date.now;
   const calls: ExecutedCall[] = [];
   const seen = new Map<string, ExecutedCall>();
+  let limitedRun = 0;
   let rounds = 0;
 
   while (true) {
@@ -120,10 +126,39 @@ export async function runToolLoop(
     const toRun = step.calls.slice(0, budget);
     const skipped = step.calls.slice(budget);
 
+    // Calls in one round run together, so a repeat inside the round waits on the first
+    // rather than running twice; `seen` alone only catches repeats of earlier rounds.
+    const inRound = new Map<string, Promise<ExecutedCall>>();
+    const runOne = async (call: ToolCall): Promise<ExecutedCall> => {
+      options.onCall?.(call);
+      try {
+        const { ok, result } = await execute(call);
+        const executed: ExecutedCall = {
+          call,
+          content: capped(result, options.maxResultChars),
+          result,
+          ok,
+          repeated: false,
+        };
+        seen.set(callKey(call), executed);
+        return executed;
+      } catch (err) {
+        // A tool that throws is reported to the model as an error it can route around,
+        // never as a reason to end the loop.
+        const message = err instanceof Error ? err.message : "The lookup failed.";
+        return {
+          call,
+          content: JSON.stringify({ error: message }),
+          result: { error: message },
+          ok: false,
+          repeated: false,
+        };
+      }
+    };
     const results = await Promise.all(
       toRun.map(async (call): Promise<ExecutedCall> => {
         const key = callKey(call);
-        const prior = seen.get(key);
+        const prior = seen.get(key) ?? (inRound.has(key) ? await inRound.get(key)! : undefined);
         if (prior) {
           // A repeat is answered without re-running, and said so, so the model stops asking.
           return {
@@ -134,30 +169,16 @@ export async function runToolLoop(
             repeated: true,
           };
         }
-        options.onCall?.(call);
-        try {
-          const { ok, result } = await execute(call);
-          const executed: ExecutedCall = {
-            call,
-            content: capped(result, options.maxResultChars),
-            result,
-            ok,
-            repeated: false,
-          };
-          seen.set(key, executed);
-          return executed;
-        } catch (err) {
-          // A tool that throws is reported to the model as an error it can route around,
-          // never as a reason to end the loop.
-          const message = err instanceof Error ? err.message : "The lookup failed.";
-          return {
-            call,
-            content: JSON.stringify({ error: message }),
-            result: { error: message },
-            ok: false,
-            repeated: false,
-          };
+        if (options.limited?.tools.has(call.name)) {
+          if (limitedRun >= options.limited.max) {
+            const message = options.limited.message;
+            return { call, content: JSON.stringify({ error: message }), result: { error: message }, ok: false, repeated: false };
+          }
+          limitedRun++;
         }
+        const pending = runOne(call);
+        inRound.set(key, pending);
+        return pending;
       })
     );
     calls.push(...results.filter((r) => !r.repeated));

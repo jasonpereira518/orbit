@@ -124,14 +124,15 @@ async function main() {
     restore();
   }
   {
-    // Confirms the exemption is NODE_ENV, not "no Clerk key" alone — a real Clerk-configured
-    // `next dev` (someone testing the real allowlist locally) keeps the strict rule.
+    // The exemption is NODE_ENV alone: a Clerk-configured `next dev` is open too, since the
+    // dev Clerk instance's ids never match the prod allowlist (Jason, Nov 7 2026). The
+    // production blocks above are what keep every deployed build on the allowlist.
     const { mod, restore } = await withEnv({
       clerkKey: "pk_test_fake",
       adminIds: "user_jason",
       nodeEnv: "development",
     });
-    check("a real id not on the allowlist is still denied under next dev", mod.isAdminUser("user_someone") === false);
+    check("a signed-in id off the allowlist is admin under next dev", mod.isAdminUser("user_someone") === true);
     restore();
   }
 
