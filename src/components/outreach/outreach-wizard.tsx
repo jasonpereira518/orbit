@@ -7,7 +7,7 @@ import {
   createCampaign,
   generateOutreachDrafts,
   getCampaign,
-  getOutreachApolloStatus,
+  getOutreachBrightDataStatus,
   searchProspects,
   updateCampaign,
 } from "@/actions/outreach";
@@ -131,7 +131,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
   const [name, setName] = useState("");
   const [audienceQuery, setAudienceQuery] = useState("");
   const [filters, setFilters] = useState<AudienceFilters>({});
-  const [hasApollo, setHasApollo] = useState<boolean | null>(null);
+  const [isLiveScraper, setIsLiveScraper] = useState<boolean | null>(null);
   const [messageIntent, setMessageIntent] = useState("");
   const [replyCta, setReplyCta] = useState<OutreachReplyCta>("book_intro");
   const [tone, setTone] = useState("friendly");
@@ -147,9 +147,9 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
   const [pending, start] = useTransition();
 
   useEffect(() => {
-    getOutreachApolloStatus()
-      .then((s) => setHasApollo(s.hasApollo))
-      .catch(() => setHasApollo(false));
+    getOutreachBrightDataStatus()
+      .then((s) => setIsLiveScraper(s.isConfigured))
+      .catch(() => setIsLiveScraper(false));
   }, []);
 
   async function loadCampaignData(id: string) {
@@ -294,12 +294,12 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           const isCurrent = i === step;
           const isDone = i < step;
           return (
-            <div key={label} role="listitem" className="min-w-0 space-y-1">
+            <div key={label} role="listitem" className="min-w-0 space-y-1.5">
               <div className="flex items-baseline justify-between text-xs">
                 <span
                   className={`font-medium ${
                     isCurrent
-                      ? "text-primary"
+                      ? "text-primary font-semibold"
                       : isDone
                         ? "text-foreground"
                         : "text-muted-foreground"
@@ -312,14 +312,14 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 </span>
               </div>
               <div
-                className="h-1 overflow-hidden rounded-full bg-muted"
+                className="h-1.5 overflow-hidden rounded-full bg-muted"
                 role="progressbar"
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={Math.round(value * 100)}
               >
                 <div
-                  className={`h-full rounded-full transition-all duration-200 ${
+                  className={`h-full rounded-full transition-all duration-300 ${
                     isCurrent || isDone ? "bg-primary" : "bg-muted-foreground/30"
                   }`}
                   style={{ width: `${Math.round(value * 100)}%` }}
@@ -332,13 +332,13 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
       {/* Step 0: Audience */}
       {step === 0 && (
-        <section className="space-y-5 rounded-xl border border-border/70 bg-card p-5">
+        <section className="space-y-5 rounded-3xl border border-border/70 bg-card p-6 shadow-xs">
           {/* Quick Presets */}
           <div className="space-y-2">
             <Label className="text-xs font-medium text-muted-foreground block">
               Quick template (optional)
             </Label>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               {STUDENT_PRESETS.map((preset) => {
                 const Icon = preset.icon;
                 const isSelected = selectedPreset === preset.id;
@@ -347,17 +347,17 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                     key={preset.id}
                     type="button"
                     onClick={() => applyPreset(preset)}
-                    className={`flex flex-col text-left rounded-lg border p-2.5 transition-all text-xs ${
+                    className={`flex flex-col text-left rounded-2xl border p-3 transition-all text-xs ${
                       isSelected
-                        ? "border-primary bg-primary/5 ring-1 ring-primary"
+                        ? "border-primary bg-primary/5 ring-1 ring-primary shadow-xs"
                         : "border-border/60 bg-muted/20 hover:border-border hover:bg-muted/40"
                     }`}
                   >
-                    <div className="flex items-center justify-between w-full mb-1">
+                    <div className="flex items-center justify-between w-full mb-1.5">
                       <Icon className="h-3.5 w-3.5 text-primary" />
-                      {isSelected && <Check className="h-3 w-3 text-primary" />}
+                      {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
                     </div>
-                    <span className="font-medium text-ink text-xs">{preset.title}</span>
+                    <span className="font-semibold text-ink text-xs">{preset.title}</span>
                     <span className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
                       {preset.subtitle}
                     </span>
@@ -377,7 +377,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Summer 2027 SWE Internships or Goldman Sachs Networking"
-                className="h-9 text-xs"
+                className="h-10 text-xs rounded-xl"
               />
             </div>
 
@@ -391,7 +391,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 onChange={(e) => setAudienceQuery(e.target.value)}
                 rows={2}
                 placeholder="e.g. Software engineers at Stripe, or Investment banking analysts at Goldman Sachs"
-                className="text-xs"
+                className="text-xs rounded-xl"
               />
             </div>
 
@@ -402,7 +402,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 </Label>
                 <select
                   id="reply-cta"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs"
+                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs"
                   value={replyCta}
                   onChange={(e) => setReplyCta(e.target.value as OutreachReplyCta)}
                 >
@@ -420,7 +420,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 </Label>
                 <select
                   id="channel-step0"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs"
+                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs"
                   value={channel}
                   onChange={(e) => setChannel(e.target.value as OutreachChannel)}
                 >
@@ -439,18 +439,18 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                   type="checkbox"
                   checked={enableSequence}
                   onChange={(e) => setEnableSequence(e.target.checked)}
-                  className="rounded border-border text-primary h-3.5 w-3.5"
+                  className="rounded-md border-border text-primary h-3.5 w-3.5"
                 />
                 Send a polite follow-up if no reply after 3 days
               </label>
             </div>
           </div>
 
-          <div className="flex justify-end pt-2 border-t border-border/40">
+          <div className="flex justify-end pt-3 border-t border-border/40">
             <Button
               onClick={handleAudienceNext}
               disabled={pending || !audienceQuery.trim()}
-              className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4 text-xs font-medium"
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-5 text-xs font-medium rounded-full shadow-xs"
             >
               Next: Find People
               <ArrowRight className="h-3.5 w-3.5" />
@@ -461,21 +461,21 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
       {/* Step 1: People */}
       {step === 1 && (
-        <section className="space-y-4 rounded-xl border border-border/70 bg-card p-5">
+        <section className="space-y-5 rounded-3xl border border-border/70 bg-card p-6 shadow-xs">
           <div className="flex items-center justify-between gap-2 border-b border-border/40 pb-3">
             <div>
               <h2 className="text-sm font-semibold text-ink">
                 Find People
               </h2>
               <p className="text-xs text-muted-foreground">
-                Search matching professionals and recruiters
+                Search matching professionals and recruiters with BrightData
               </p>
             </div>
             <Button
               onClick={handleSearch}
               disabled={pending}
               size="sm"
-              className="gap-1.5 h-8 px-3 text-xs"
+              className="gap-1.5 h-8 px-4 text-xs rounded-full shadow-2xs"
             >
               <Search className="h-3 w-3" />
               {pending ? "Searching..." : "Search People"}
@@ -485,14 +485,14 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           <AudienceFiltersEditor
             filters={filters}
             onChange={setFilters}
-            showDemoWarning={hasApollo === false}
+            showDemoWarning={isLiveScraper === false}
           />
 
           {/* People Found Preview */}
           {discoveredProspects.length > 0 ? (
-            <div className="space-y-2.5 pt-1">
+            <div className="space-y-3 pt-1">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span className="font-medium text-ink">
+                <span className="font-semibold text-ink">
                   {discoveredProspects.length} people found
                 </span>
                 {lastSearchSource && (
@@ -502,7 +502,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 )}
               </div>
 
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                 {discoveredProspects.slice(0, 6).map((prospect) => {
                   const enrichment = (prospect.enrichment || {}) as Record<string, unknown>;
                   const avatarUrl = (enrichment.avatarUrl as string) || null;
@@ -511,7 +511,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                   return (
                     <div
                       key={prospect.id}
-                      className="flex flex-col justify-between rounded-lg border border-border/60 bg-card p-3 text-xs"
+                      className="flex flex-col justify-between rounded-2xl border border-border/60 bg-card p-3.5 text-xs shadow-2xs"
                     >
                       <div className="flex items-start gap-2.5">
                         <div className="h-8 w-8 shrink-0 overflow-hidden rounded-full border border-border/60 bg-muted">
@@ -533,10 +533,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between gap-1">
-                            <span className="font-medium text-ink truncate">{prospect.fullName}</span>
+                            <span className="font-semibold text-ink truncate">{prospect.fullName}</span>
                             {score !== null && (
                               <span
-                                className={`shrink-0 rounded px-1.5 py-0.2 text-[10px] font-semibold tabular-nums border ${
+                                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums border ${
                                   score >= 80
                                     ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                                     : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
@@ -546,22 +546,22 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] text-muted-foreground truncate">
+                          <p className="text-[11px] text-muted-foreground truncate font-medium mt-0.5">
                             {prospect.title || "Target Role"}
                           </p>
-                          <p className="text-[11px] text-muted-foreground truncate font-medium">
+                          <p className="text-[11px] text-muted-foreground truncate">
                             {prospect.company || "Target Company"}
                           </p>
                         </div>
                       </div>
 
                       {prospect.linkedinUrl && (
-                        <div className="mt-2 pt-1 border-t border-border/30 flex justify-end">
+                        <div className="mt-2.5 pt-1.5 border-t border-border/30 flex justify-end">
                           <a
                             href={prospect.linkedinUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+                            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
                           >
                             LinkedIn
                             <ExternalLink className="h-2.5 w-2.5" />
@@ -574,18 +574,18 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
               </div>
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">
+            <div className="rounded-2xl border border-dashed border-border/70 p-6 text-center text-xs text-muted-foreground">
               Click &quot;Search People&quot; to preview matching professionals
             </div>
           )}
 
-          <div className="flex justify-between items-center pt-2 border-t border-border/40">
+          <div className="flex justify-between items-center pt-3 border-t border-border/40">
             <Button
               variant="outline"
               onClick={() => setStep(0)}
               disabled={pending}
               size="sm"
-              className="gap-1 h-9 px-3 text-xs"
+              className="gap-1.5 h-9 px-4 text-xs rounded-full"
             >
               <ArrowLeft className="h-3 w-3" />
               Back
@@ -593,7 +593,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             <Button
               onClick={() => setStep(2)}
               disabled={pending}
-              className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4 text-xs font-medium"
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-5 text-xs font-medium rounded-full shadow-xs"
             >
               Next: Draft Message
               <ArrowRight className="h-3.5 w-3.5" />
@@ -604,8 +604,8 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
       {/* Step 2: Message */}
       {step === 2 && (
-        <section className="space-y-4 rounded-xl border border-border/70 bg-card p-5">
-          <div className="border-b border-border/40 pb-2">
+        <section className="space-y-5 rounded-3xl border border-border/70 bg-card p-6 shadow-xs">
+          <div className="border-b border-border/40 pb-2.5">
             <h2 className="text-sm font-semibold text-ink">
               Message Strategy
             </h2>
@@ -614,7 +614,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             </p>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-3.5">
             <div className="space-y-1">
               <Label htmlFor="intent" className="text-xs font-medium text-ink">
                 What do you want to ask? (Message intent)
@@ -625,7 +625,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 onChange={(e) => setMessageIntent(e.target.value)}
                 rows={2}
                 placeholder="e.g. Ask for a 15-minute coffee chat about their team and recruiting advice"
-                className="text-xs"
+                className="text-xs rounded-xl"
               />
             </div>
 
@@ -636,7 +636,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 </Label>
                 <select
                   id="tone-step2"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs"
+                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs"
                   value={tone}
                   onChange={(e) => setTone(e.target.value)}
                 >
@@ -652,7 +652,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 </Label>
                 <select
                   id="channel-step2"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs"
+                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs"
                   value={channel}
                   onChange={(e) => setChannel(e.target.value as OutreachChannel)}
                 >
@@ -678,11 +678,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                         "Hi {{name}}, I'm a student interested in {{company}}'s work. If you have 15 minutes, I'd love to ask a couple of quick questions about your team over a virtual coffee chat!"
                       )
                     }
-                    className="text-[11px] text-primary hover:underline font-medium"
+                    className="rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted font-medium transition-colors"
                   >
                     Coffee Chat
                   </button>
-                  <span className="text-muted-foreground text-3xs">·</span>
                   <button
                     type="button"
                     onClick={() =>
@@ -690,11 +689,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                         "Hi {{name}}, I'm applying for upcoming internship roles at {{company}} and saw your work on the team. I would be grateful for any advice on the interview process if your schedule allows."
                       )
                     }
-                    className="text-[11px] text-primary hover:underline font-medium"
+                    className="rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted font-medium transition-colors"
                   >
                     Internship Advice
                   </button>
-                  <span className="text-muted-foreground text-3xs">·</span>
                   <button
                     type="button"
                     onClick={() =>
@@ -702,7 +700,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                         "Hi {{name}}, I noticed we share an alumni connection! As a student exploring careers in your field, I would love to hear what surprised you most about joining {{company}}."
                       )
                     }
-                    className="text-[11px] text-primary hover:underline font-medium"
+                    className="rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted font-medium transition-colors"
                   >
                     Alumni Connect
                   </button>
@@ -715,18 +713,18 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 onChange={(e) => setTemplateSeed(e.target.value)}
                 rows={2}
                 placeholder="Leave blank for automatic draft, or provide a template outline..."
-                className="text-xs"
+                className="text-xs rounded-xl"
               />
             </div>
           </div>
 
-          <div className="flex justify-between items-center pt-2 border-t border-border/40">
+          <div className="flex justify-between items-center pt-3 border-t border-border/40">
             <Button
               variant="outline"
               onClick={() => setStep(1)}
               disabled={pending}
               size="sm"
-              className="gap-1 h-9 px-3 text-xs"
+              className="gap-1.5 h-9 px-4 text-xs rounded-full"
             >
               <ArrowLeft className="h-3 w-3" />
               Back
@@ -734,7 +732,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             <Button
               onClick={handleMessageNext}
               disabled={pending || !messageIntent.trim()}
-              className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4 text-xs font-medium"
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-5 text-xs font-medium rounded-full shadow-xs"
             >
               {pending ? "Writing Drafts..." : "Generate Drafts & Open Campaign"}
               <Sparkles className="h-3.5 w-3.5" />

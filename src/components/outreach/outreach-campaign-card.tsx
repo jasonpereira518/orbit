@@ -31,7 +31,7 @@ export function OutreachCampaignCard({
         </Link>
         <div className="flex items-center gap-2">
           <CampaignEditor campaign={campaign} />
-          <Badge variant="outline">{campaign.status}</Badge>
+          <Badge variant="outline" className="rounded-full">{campaign.status}</Badge>
         </div>
       </div>
       <Link href={`/outreach/${campaign.id}`} className="mt-3 block">

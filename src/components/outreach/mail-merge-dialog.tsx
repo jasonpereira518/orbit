@@ -134,7 +134,7 @@ export function MailMergeDialog({
         size="sm"
         disabled={selectedProspects.length === 0}
         onClick={() => setOpen(true)}
-        className="h-8 text-xs gap-1.5"
+        className="h-8 text-xs gap-1.5 rounded-full"
       >
         <Mail className="h-3.5 w-3.5" />
         Mass Mail Merge

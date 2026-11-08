@@ -166,14 +166,14 @@ export function ProspectTable({
 
   if (!prospects.length) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 p-10 text-center text-sm text-muted-foreground">
+      <div className="rounded-3xl border border-dashed border-border/70 p-10 text-center text-sm text-muted-foreground">
         No prospects in this view. Adjust filters or run a search from the campaign wizard.
       </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-border/70 bg-card">
+    <div className="overflow-hidden rounded-3xl border border-border/70 bg-card">
       {/*
         A table from `md` up, and the same markup reflowed into stacked cards below it.
 
@@ -312,7 +312,7 @@ export function ProspectTable({
                           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <span
                               title={((prospect.enrichment as any)?.scoreReasons as string[])?.join(" • ") || "Effectiveness probability"}
-                              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums border ${
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums border ${
                                 (prospect.enrichment as any)?.effectivenessScore >= 80
                                   ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                                   : (prospect.enrichment as any)?.effectivenessScore >= 60
@@ -335,7 +335,7 @@ export function ProspectTable({
                         {Boolean((prospect.enrichment as any)?.newsContext) && (
                           <div className="mt-1 flex items-center gap-1">
                             <span
-                              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 max-w-sm truncate"
+                              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 max-w-sm truncate"
                               title={(prospect.enrichment as any)?.newsContext}
                             >
                               <TrendingUp className="h-3 w-3 text-emerald-500 shrink-0" />
@@ -348,7 +348,7 @@ export function ProspectTable({
                         {Array.isArray((prospect.enrichment as any)?.signals) && ((prospect.enrichment as any).signals.length > 0) && (
                           <div className="mt-1 flex flex-wrap gap-1">
                             {((prospect.enrichment as any).signals as string[]).slice(0, 2).map((sig: string) => (
-                              <span key={sig} className="inline-flex items-center rounded-md bg-muted/50 border border-border/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                              <span key={sig} className="inline-flex items-center rounded-full bg-muted/50 border border-border/40 px-2 py-0.5 text-[10px] text-muted-foreground">
                                 {sig}
                               </span>
                             ))}
@@ -356,21 +356,21 @@ export function ProspectTable({
                         )}
 
                         <div className="mt-1 flex flex-wrap gap-1">
-                          <Badge variant="outline">{prospect.status}</Badge>
-                          {prospect.isDemo && <Badge variant="outline">Demo</Badge>}
+                          <Badge variant="outline" className="rounded-full">{prospect.status}</Badge>
+                          {prospect.isDemo && <Badge variant="outline" className="rounded-full">Demo</Badge>}
                           {prospect.companyMismatch && (
-                            <Badge variant="outline">Company mismatch</Badge>
+                            <Badge variant="outline" className="rounded-full">Company mismatch</Badge>
                           )}
                           {prospect.pipeline && prospect.pipeline !== "all" && (
-                            <Badge variant="outline">
+                            <Badge variant="outline" className="rounded-full">
                               {prospect.pipeline.replaceAll("_", " ")}
                             </Badge>
                           )}
                           {message?.status && (
-                            <Badge variant="outline">{message.status}</Badge>
+                            <Badge variant="outline" className="rounded-full">{message.status}</Badge>
                           )}
                           {(message?.stepIndex ?? 0) > 0 && (
-                            <Badge variant="outline">Follow-up {message?.stepIndex}</Badge>
+                            <Badge variant="outline" className="rounded-full">Follow-up {message?.stepIndex}</Badge>
                           )}
                         </div>
                       </div>

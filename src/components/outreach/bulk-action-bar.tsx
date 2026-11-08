@@ -224,11 +224,11 @@ export function BulkActionBar({
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card p-2.5 shadow-xs">
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-card p-2.5 shadow-xs">
         <span className="text-xs text-muted-foreground mr-1 font-medium">
           {selectedProspectIds.length} selected
         </span>
-        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSelectAll} disabled={pending}>
+        <Button size="sm" variant="outline" className="h-8 text-xs rounded-full" onClick={handleSelectAll} disabled={pending}>
           Select all
         </Button>
         <MailMergeDialog
@@ -244,7 +244,7 @@ export function BulkActionBar({
         <Button
           size="sm"
           variant="outline"
-          className="h-8 text-xs"
+          className="h-8 text-xs rounded-full"
           onClick={handleCopyAll}
           disabled={pending || !activeRows.length}
         >
@@ -254,7 +254,7 @@ export function BulkActionBar({
         <Button
           size="sm"
           variant="outline"
-          className="h-8 text-xs"
+          className="h-8 text-xs rounded-full"
           onClick={handleOpenAll}
           disabled={pending || !activeRows.length}
         >
@@ -265,7 +265,7 @@ export function BulkActionBar({
           <Button
             size="sm"
             variant="outline"
-            className="h-8 text-xs border-destructive/40 text-destructive hover:bg-destructive/10"
+            className="h-8 text-xs rounded-full border-destructive/40 text-destructive hover:bg-destructive/10"
             onClick={openSendDialog}
             disabled={pending}
           >

@@ -55,9 +55,11 @@ import type { WarmPath } from "@/lib/warm-paths";
 import {
   BULK_SEND_LIMIT,
   OUTREACH_CHANNELS,
+  type NormalizedProspect,
   type OutreachChannel,
   type OutreachMessageOutcome,
   type OutreachMessageStatus,
+  type OutreachSearchSource,
   type SequenceStep,
 } from "@/lib/outreach-types";
 import { asActionResult, classifyAiError, UserFacingError } from "@/lib/errors";
@@ -500,7 +502,53 @@ async function searchProspectsCore(campaignId: string, page = 1) {
   const db = await getDb();
 
   const filters = (campaign.audienceFilters ?? {}) as AudienceFilters;
-  const { prospects, total, source } = await searchPeople(userId, filters, page);
+  const targetCompany = filters.organizationNames?.[0] || undefined;
+  const targetTitles = filters.titles?.length ? filters.titles : undefined;
+
+  // Primary campaign discovery powered by BrightData Web Scraper
+  const bdResult = await searchPeopleWithBrightData(userId, {
+    titles: targetTitles,
+    company: targetCompany,
+    locations: filters.locations,
+    industries: filters.industries,
+    skills: filters.keywords ? [filters.keywords] : undefined,
+    query: campaign.audienceQuery || undefined,
+    limit: 8,
+  });
+
+  const isDemo = !bdResult.isLive || bdResult.candidates.some((c) => c.source === "preview_simulation");
+  const source: OutreachSearchSource = isDemo ? "demo" : "brightdata";
+  const total = bdResult.candidates.length;
+
+  const prospects: NormalizedProspect[] = bdResult.candidates.map((c, i) => {
+    const cleanCompany = (c.company || "company").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const cleanName = c.fullName.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const email = isDemo
+      ? `${cleanName}@${cleanCompany}.example.com`
+      : (((c as any).email as string | undefined) ?? null);
+
+    return {
+      externalId: `bd-${c.id}-${i}`,
+      fullName: c.fullName,
+      title: c.title,
+      company: c.company,
+      email,
+      phone: null,
+      linkedinUrl: c.linkedinUrl,
+      location: c.location,
+      enrichment: {
+        avatarUrl: c.avatarUrl,
+        headline: c.summary,
+        summary: c.summary,
+        matchReason: c.matchReason,
+        recentNews: c.recentNews,
+        newsContext: c.recentNews || null,
+        signals: c.signals || [],
+        source: c.source,
+        demo: isDemo,
+      },
+    };
+  });
 
   let matched = 0;
   let mismatched = 0;
@@ -607,6 +655,14 @@ async function searchProspectsCore(campaignId: string, page = 1) {
     mismatched,
     total,
     source,
+  };
+}
+
+export async function getOutreachBrightDataStatus() {
+  const config = getBrightDataConfig();
+  return {
+    isConfigured: config.isConfigured,
+    zone: config.zone,
   };
 }
 

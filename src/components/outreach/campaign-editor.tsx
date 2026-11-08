@@ -99,7 +99,7 @@ export function CampaignEditor({
           trigger
             ? () => trigger as ReactElement
             : () => (
-                <Button variant="outline" size="sm">
+                <Button variant="outline" size="sm" className="rounded-full">
                   <Pencil className="mr-1 h-3.5 w-3.5" />
                   Edit campaign
                 </Button>

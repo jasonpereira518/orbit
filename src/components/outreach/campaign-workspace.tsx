@@ -296,13 +296,12 @@ export function CampaignWorkspace({
   return (
     <div className="space-y-4">
       {isDemo && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
-          <strong>Demo results.</strong> These prospects are fake placeholders, not live
-          Apollo people. Add an Apollo API key in{" "}
+        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-950 dark:text-amber-100">
+          <strong>Preview mode.</strong> Showing high-fidelity sample profiles. Enable live scraping with BrightData in{" "}
           <Link href="/settings" className="underline underline-offset-2">
-            Settings → Outreach
+            Settings
           </Link>{" "}
-          and re-run search for real Capital One (or other) recruiters.
+          for live web scraping.
         </div>
       )}
 
@@ -320,6 +319,7 @@ export function CampaignWorkspace({
             size="sm"
             onClick={() => setShowFilters((v) => !v)}
             disabled={pending}
+            className="rounded-full text-xs"
           >
             {showFilters ? "Hide filters" : "Edit filters & re-run search"}
           </Button>
@@ -328,6 +328,7 @@ export function CampaignWorkspace({
             size="sm"
             onClick={regenerateSelected}
             disabled={pending || !selectedIds.length}
+            className="rounded-full text-xs"
           >
             Regenerate selected drafts
           </Button>
@@ -336,6 +337,7 @@ export function CampaignWorkspace({
             size="sm"
             onClick={generateFollowUps}
             disabled={pending}
+            className="rounded-full text-xs"
           >
             Generate due follow-ups
             {campaign.metrics.pendingFollowUpCount
@@ -348,7 +350,7 @@ export function CampaignWorkspace({
           size="sm"
           onClick={handleDeepSearch}
           disabled={pending}
-          className="gap-1.5 shadow-xs"
+          className="gap-1.5 shadow-xs rounded-full text-xs"
         >
           <Sparkles className="h-3.5 w-3.5" />
           Deep Search Web News
@@ -362,7 +364,7 @@ export function CampaignWorkspace({
             onChange={setFilters}
             showDemoWarning={isDemo}
           />
-          <Button size="sm" onClick={rerunSearch} disabled={pending}>
+          <Button size="sm" onClick={rerunSearch} disabled={pending} className="rounded-full text-xs">
             Re-run search with these filters
           </Button>
         </div>
@@ -371,12 +373,12 @@ export function CampaignWorkspace({
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
         <PipelineFilters value={pipeline} counts={counts} onChange={setPipeline} />
 
-        <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card p-1 text-xs">
-          <span className="px-2 text-muted-foreground font-medium text-[11px]">Effectiveness:</span>
+        <div className="flex items-center gap-1 rounded-full border border-border/60 bg-card p-1 text-xs">
+          <span className="px-2 text-muted-foreground font-medium text-[11px]">Match:</span>
           <button
             type="button"
             onClick={() => setPriorityFilter("all")}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               priorityFilter === "all"
                 ? "bg-primary text-primary-foreground shadow-xs"
                 : "text-muted-foreground hover:text-foreground"
@@ -387,7 +389,7 @@ export function CampaignWorkspace({
           <button
             type="button"
             onClick={() => setPriorityFilter("strong")}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               priorityFilter === "strong"
                 ? "bg-primary text-primary-foreground shadow-xs"
                 : "text-muted-foreground hover:text-foreground"
@@ -398,7 +400,7 @@ export function CampaignWorkspace({
           <button
             type="button"
             onClick={() => setPriorityFilter("high")}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               priorityFilter === "high"
                 ? "bg-primary text-primary-foreground shadow-xs"
                 : "text-muted-foreground hover:text-foreground"

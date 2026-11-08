@@ -95,7 +95,7 @@ export function LinkedInBrowserUseDialog({
         size="sm"
         disabled={disabled || selectedProspectIds.length === 0}
         onClick={handleOpen}
-        className="h-8 text-xs gap-1.5 border-primary/40 bg-primary/5 hover:bg-primary/10 text-ink font-medium"
+        className="h-8 text-xs gap-1.5 border-primary/40 bg-primary/5 hover:bg-primary/10 text-ink font-medium rounded-full"
       >
         <Bot className="h-3.5 w-3.5 text-primary" />
         LinkedIn Connect

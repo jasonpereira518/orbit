@@ -78,23 +78,23 @@ export default async function OutreachCampaignPage({
             {campaign.audienceQuery}
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant="outline">{campaign.status}</Badge>
-            <Badge variant="outline">{campaign.defaultChannel || "email"}</Badge>
-            <Badge variant="outline">{campaign.tone || "professional"}</Badge>
+            <Badge variant="outline" className="rounded-full">{campaign.status}</Badge>
+            <Badge variant="outline" className="rounded-full">{campaign.defaultChannel || "email"}</Badge>
+            <Badge variant="outline" className="rounded-full">{campaign.tone || "professional"}</Badge>
             {campaign.replyCta && (
-              <Badge variant="outline">{campaign.replyCta.replaceAll("_", " ")}</Badge>
+              <Badge variant="outline" className="rounded-full">{campaign.replyCta.replaceAll("_", " ")}</Badge>
             )}
             {campaign.lastSearchSource === "demo" && (
-              <Badge variant="outline">Demo search</Badge>
+              <Badge variant="outline" className="rounded-full">Demo search</Badge>
             )}
-            <Badge variant="outline">
+            <Badge variant="outline" className="rounded-full">
               Reply rate {formatReplyRate(campaign.metrics.successfulReplyRate)}
             </Badge>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <CampaignEditor campaign={editorCampaign} />
-          <Link href="/outreach/new" className={buttonVariants({ variant: "outline" })}>
+          <Link href="/outreach/new" className={buttonVariants({ variant: "outline", className: "rounded-full" })}>
             New campaign
           </Link>
         </div>
