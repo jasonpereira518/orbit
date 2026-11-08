@@ -1,5 +1,6 @@
 "use server";
 
+import { recordAccountAudit } from "@/lib/account-audit";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { requireUserId } from "@/lib/auth";
@@ -56,5 +57,6 @@ export async function startOpenRouterConnect(input: {
 /** Disconnects OpenRouter — the same clear a pasted key gets, so More options stays in sync. */
 export async function disconnectOpenRouter(): Promise<void> {
   await clearApiKey("openrouter");
+  await recordAccountAudit({ userId: await requireUserId(), action: "integration.disconnect", resourceType: "openrouter" });
   revalidatePath("/settings");
 }

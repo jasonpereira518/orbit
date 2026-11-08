@@ -115,6 +115,7 @@
 @source "../components/warp/warp-provider.tsx";
 @source "../db/index.ts";
 @source "../db/schema.ts";
+@source "../lib/account-audit.ts";
 @source "../lib/action-items.ts";
 @source "../lib/admin-audit.ts";
 @source "../lib/admin.ts";
@@ -173,6 +174,7 @@
 @source "../lib/contact-writes.ts";
 @source "../lib/credits/grants.ts";
 @source "../lib/credits/ledger.ts";
+@source "../lib/crypto-rewrap.ts";
 @source "../lib/crypto.ts";
 @source "../lib/dates.ts";
 @source "../lib/decisions/catalog.ts";
@@ -213,6 +215,7 @@
 @source "../lib/interest-list-join.ts";
 @source "../lib/interest-list-schema.ts";
 @source "../lib/interest-list-ticket.ts";
+@source "../lib/interest-list-tokens.ts";
 @source "../lib/interest-list.ts";
 @source "../lib/interest-progress-store.ts";
 @source "../lib/job-changes.ts";
@@ -255,6 +258,7 @@
 @source "../lib/safe-links.ts";
 @source "../lib/search.ts";
 @source "../lib/secret-patterns.ts";
+@source "../lib/secrets.ts";
 @source "../lib/sentry-browser.ts";
 @source "../lib/sentry-lazy.ts";
 @source "../lib/sentry-scrub.ts";

@@ -22,12 +22,13 @@ import { getDb, rowsOf } from "@/db";
 import { encrypt, decryptOrNull } from "@/lib/crypto";
 import { track } from "@/lib/product-events";
 import { eventId } from "@/lib/product-event-ids";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
 import {
   MAX_SYNC_FAILURES,
   SYNC_LEASE_MS,
   backoffMs,
 } from "@/lib/provider-connections";
-import type { EventProviderSyncCursor } from "@/db/schema";
+import { eventProviderConnections, type EventProviderSyncCursor } from "@/db/schema";
 import type {
   EventConnectionAuthKind,
   EventConnectionProvider,
@@ -102,18 +103,28 @@ export async function claimDueEventConnections(
               api_key_encrypted, access_token_encrypted, sync_cursor, sync_failures
   `);
 
-  return rowsOf<ClaimRow>(claimed).map((row) => ({
+  // Re-encrypts a legacy or previous-secret ciphertext on the way past (audit L-06).
+  return Promise.all(rowsOf<ClaimRow>(claimed).map(async (row) => ({
     id: row.id,
     userId: row.user_id,
     provider: row.provider,
     authKind: row.auth_kind,
     accountRef: row.account_ref,
-    secret: decryptOrNull(
-      row.auth_kind === "api_key" ? row.api_key_encrypted : row.access_token_encrypted
+    secret: await decryptAndRewrap(
+      row.auth_kind === "api_key" ? row.api_key_encrypted : row.access_token_encrypted,
+      {
+        table: eventProviderConnections,
+        column:
+          row.auth_kind === "api_key"
+            ? eventProviderConnections.apiKeyEncrypted
+            : eventProviderConnections.accessTokenEncrypted,
+        idColumn: eventProviderConnections.id,
+        id: row.id,
+      }
     ),
     cursor: parseCursor(row.sync_cursor),
     syncFailures: Number(row.sync_failures ?? 0),
-  }));
+  })));
 }
 
 export type EventSyncOutcome =

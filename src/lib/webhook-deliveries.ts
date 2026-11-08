@@ -1,3 +1,4 @@
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { webhookDeliveries } from "@/db/schema";
 import { toUserFacingError } from "@/lib/errors";
@@ -35,6 +36,8 @@ export const WEBHOOK_REASONS = {
   noMovement: "no_movement",
   /** A subscription event older than the one already applied (launch Phase 2). */
   staleSubscriptionEvent: "stale_subscription_event",
+  /** A Clerk user event already handled (same svix-id), or older than the last one applied (audit L-07). */
+  staleUserEvent: "stale_user_event",
 } as const;
 
 export type WebhookOutcome = "handled" | "ignored" | "invalid" | "error";
@@ -77,5 +80,28 @@ export async function recordWebhookDelivery(
     });
   } catch {
     // Telemetry must never surface as a webhook failure.
+  }
+}
+
+/**
+ * Whether a delivery with this id was already handled. Svix redelivers on timeout and an
+ * operator can replay from the dashboard; both reuse the `svix-id`. False on any read error,
+ * so a failing ledger never blocks a real event.
+ */
+export async function wasDeliveryHandled(source: string, eventId: string | null): Promise<boolean> {
+  if (!eventId) return false;
+  try {
+    const db = await getDb();
+    const row = await db.query.webhookDeliveries.findFirst({
+      where: and(
+        eq(webhookDeliveries.source, source),
+        eq(webhookDeliveries.eventId, eventId),
+        eq(webhookDeliveries.outcome, "handled")
+      ),
+      columns: { id: true },
+    });
+    return Boolean(row);
+  } catch {
+    return false;
   }
 }

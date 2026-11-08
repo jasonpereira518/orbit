@@ -1,4 +1,5 @@
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
+import { unsubscribeTokenMatches } from "@/lib/interest-list-tokens";
 import { NextResponse, type NextRequest } from "next/server";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
@@ -81,7 +82,7 @@ async function unsubscribe(request: NextRequest) {
   const rows = await db
     .update(interestListSignups)
     .set({ unsubscribedAt: sql`coalesce(${interestListSignups.unsubscribedAt}, now())` })
-    .where(eq(interestListSignups.unsubscribeToken, token))
+    .where(unsubscribeTokenMatches(token))
     .returning();
 
   if (!rows[0]) {

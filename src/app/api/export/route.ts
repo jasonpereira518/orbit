@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/auth";
 import { userExportStream } from "@/lib/data-export";
+import { recordAccountAudit } from "@/lib/account-audit";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 /** A large network pages through every table; the stream keeps memory flat, not time short. */
@@ -28,6 +29,7 @@ export async function GET() {
     }
     throw err;
   }
+  await recordAccountAudit({ userId, action: "data.export", detail: { format: "json" } });
   const date = new Date().toISOString().slice(0, 10);
   return new Response(userExportStream(userId), {
     headers: {

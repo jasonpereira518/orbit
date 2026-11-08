@@ -31,7 +31,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { outboundWebhookDeliveries, webhookEndpoints } from "@/db/schema";
-import { decryptOrNull } from "@/lib/crypto";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
 import { buildEnvelope, signPayload, type WebhookEventType } from "@/lib/webhooks/sign";
 
 /** Per-attempt HTTP timeout. A slow endpoint must not consume the drain's budget. */
@@ -248,7 +248,13 @@ export async function attemptDelivery(row: DueRow, now: Date = new Date()): Prom
   let error: string | null = null;
 
   try {
-    const secret = decryptOrNull(row.secret_encrypted);
+    await assertDeliverable(row.url);
+    const secret = await decryptAndRewrap(row.secret_encrypted, {
+      table: webhookEndpoints,
+      column: webhookEndpoints.secretEncrypted,
+      idColumn: webhookEndpoints.id,
+      id: row.endpoint_id,
+    });
     if (!secret) throw new Error("Endpoint secret could not be read");
 
     // Resolve and pin: the address checked here is the address connected to, so a hostname
@@ -383,7 +389,13 @@ export async function verifyEndpoint(
   const body = JSON.stringify(envelope);
 
   try {
-    const secret = decryptOrNull(endpoint.secretEncrypted);
+    await assertDeliverable(endpoint.url);
+    const secret = await decryptAndRewrap(endpoint.secretEncrypted, {
+      table: webhookEndpoints,
+      column: webhookEndpoints.secretEncrypted,
+      idColumn: webhookEndpoints.id,
+      id: endpoint.id,
+    });
     if (!secret) throw new Error("Endpoint secret could not be read");
 
     const pinned = await pinDeliverable(endpoint.url);
