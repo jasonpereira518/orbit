@@ -9,6 +9,7 @@ import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureJobs, interactions, noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
+import { contactOrgLogos, type MeetingCompany } from "@/lib/meetings-list";
 import {
   captureAttendeeNames,
   captureExcerpt,
@@ -37,6 +38,8 @@ export type CaptureHistoryItem = {
   title: string | null;
   /** Everyone the capture saved, each once. */
   names: string[];
+  /** The same people, each with their company's (or school's) logo domain when one is known. */
+  people: { name: string; org: MeetingCompany | null }[];
   /** Plain text, never markdown. */
   summary: string | null;
   nextSteps: string | null;
@@ -109,7 +112,7 @@ export async function captureMethodFor(
     .filter((id): id is string => Boolean(id));
   const [jobs, granola] = await Promise.all([
     db
-      .select({ sourceKind: captureJobs.sourceKind })
+      .select({ sourceKind: captureJobs.sourceKind, sources: captureJobs.sources })
       .from(captureJobs)
       .where(and(eq(captureJobs.userId, userId), eq(captureJobs.noteBatchId, batch.id)))
       .limit(1),
@@ -131,6 +134,7 @@ export async function captureMethodFor(
     meeting: Boolean(batch.result.meeting),
     granola: granola.length > 0,
     jobSource: jobs[0]?.sourceKind,
+    jobTags: jobs[0]?.sources,
     kinds: batch.kinds,
   });
 }
@@ -175,11 +179,12 @@ export async function listCaptureHistoryFor(
   ];
   // One read per source for the whole page. Interactions are found by their primary key
   // (the snapshot names them) rather than by note_batch_id, which has no index.
-  const [photos, jobs, people] = await Promise.all([
+  const contactIds = [...new Set(page.flatMap((r) => (r.result?.participants ?? []).map((p) => p.contactId)))];
+  const [photos, jobs, people, orgs] = await Promise.all([
     listCapturePhotosForBatches(userId, batchIds),
     batchIds.length
       ? db
-          .select({ noteBatchId: captureJobs.noteBatchId, sourceKind: captureJobs.sourceKind })
+          .select({ noteBatchId: captureJobs.noteBatchId, sourceKind: captureJobs.sourceKind, sources: captureJobs.sources })
           .from(captureJobs)
           .where(and(eq(captureJobs.userId, userId), inArray(captureJobs.noteBatchId, batchIds)))
       : [],
@@ -193,6 +198,7 @@ export async function listCaptureHistoryFor(
           .from(interactions)
           .where(and(eq(interactions.userId, userId), inArray(interactions.id, interactionIds)))
       : [],
+    contactOrgLogos(userId, contactIds),
   ]);
   const photosByBatch = new Map<string, string[]>();
   for (const photo of photos) {
@@ -200,7 +206,7 @@ export async function listCaptureHistoryFor(
     list.push(photo.id);
     photosByBatch.set(photo.noteBatchId, list);
   }
-  const jobSourceByBatch = new Map(jobs.map((j) => [j.noteBatchId, j.sourceKind]));
+  const jobByBatch = new Map(jobs.map((j) => [j.noteBatchId, j]));
   const interactionById = new Map(people.map((p) => [p.id, p]));
 
   const items: CaptureHistoryItem[] = page.map((row) => {
@@ -228,11 +234,16 @@ export async function listCaptureHistoryFor(
       method: captureMethod({
         meeting: Boolean(meeting),
         granola: saved.some((i) => i?.source === "granola"),
-        jobSource: jobSourceByBatch.get(row.id),
+        jobSource: jobByBatch.get(row.id)?.sourceKind,
+        jobTags: jobByBatch.get(row.id)?.sources,
         kinds,
       }),
       title,
       names,
+      people: names.map((name) => {
+        const id = participants.find((p) => p.name.trim() === name)?.contactId;
+        return { name, org: (id && orgs.get(id)) || null };
+      }),
       summary: captureSummary(meeting?.summary, saved.map((i) => i?.summary)),
       // A dates-only note is already titled by its reminder; don't repeat it underneath.
       nextSteps: nextSteps === title ? null : nextSteps,

@@ -311,6 +311,8 @@ export type CreateCaptureJobInput = {
    * Typed loosely because it arrives from a browser; `cleanFileHashes` is the filter.
    */
   sourceFileHashes?: readonly unknown[] | null;
+  /** Provenance tags ("cloud:google"), not names. Server-set only: see `createCaptureFromText`. */
+  sources?: string[];
 };
 
 export async function createCaptureJob(userId: string, input: CreateCaptureJobInput): Promise<CaptureJobRow> {
@@ -365,6 +367,7 @@ function captureJobValues(userId: string, input: CreateCaptureJobInput) {
     mentionPicks: sanitizeMentionPicks(input.mentionPicks ?? []),
     result: input.result ?? null,
     sourceFileHashes: cleanFileHashes(input.sourceFileHashes),
+    sources: input.sources ?? [],
   } satisfies typeof captureJobs.$inferInsert;
 }
 
