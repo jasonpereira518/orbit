@@ -204,7 +204,7 @@ export async function POST(request: Request) {
         // model does, and the title is normally waiting by the time it lands. Only for a
         // thread with no title yet: a later turn must never rename the conversation.
         const titlePromise =
-          threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q, completeJsonOn(ctx.access)) : null;
+          threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q, completeJsonOn(ctx.access), request.signal) : null;
 
         // What the answer's `::people` / `::list` blocks may show, before its first word, so
         // a block renders the moment its line arrives. `let`: a lookup mid-answer can find

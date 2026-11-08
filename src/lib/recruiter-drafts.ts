@@ -1,5 +1,6 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
-import { fenceUntrusted } from "@/lib/ai-security";
+import { cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
+import { guardDraftOutput } from "@/lib/draft-output";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 
 /**
@@ -90,18 +91,23 @@ export async function generateRecruiterDraft(
 ): Promise<GeneratedRecruiterDraft> {
   const intent = RECRUITER_INTENTS[input.intent];
 
+  // The recruiter row is shared across accounts and its fields, like the companies and roles,
+  // came out of other people's emails: one fenced block of data, each value folded onto one
+  // line so a newline cannot open a row of its own (audit M-11 / M-16).
+  const line = (v: string) => cleanSingleLine(v, 200) ?? "";
+  const list = (vs: string[]) => vs.map(line).filter(Boolean).join(", ");
+  const recruiterBlock = [
+    `Recruiter: ${line(input.recruiter.fullName)}`,
+    `Firm: ${(input.recruiter.firm && line(input.recruiter.firm)) || "unknown"}`,
+    input.recruiter.specialty.length ? `Specialties: ${list(input.recruiter.specialty)}` : null,
+    input.companiesMentioned.length ? `Companies previously discussed: ${list(input.companiesMentioned)}` : null,
+    input.rolesDiscussed.length ? `Roles previously discussed: ${list(input.rolesDiscussed)}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
   const context = [
-    `Recruiter: ${input.recruiter.fullName}`,
-    `Firm: ${input.recruiter.firm || "unknown"}`,
-    input.recruiter.specialty.length
-      ? `Specialties: ${input.recruiter.specialty.join(", ")}`
-      : null,
-    input.companiesMentioned.length
-      ? `Companies previously discussed: ${input.companiesMentioned.join(", ")}`
-      : null,
-    input.rolesDiscussed.length
-      ? `Roles previously discussed: ${input.rolesDiscussed.join(", ")}`
-      : null,
+    fenceUntrusted("RECRUITER", recruiterBlock),
     describeGap(input.lastEmailAt),
     input.history ? `History with them:\n${fenceUntrusted("HISTORY", input.history)}` : "No prior history recorded.",
     input.userGoals.length
@@ -113,11 +119,7 @@ export async function generateRecruiterDraft(
     .filter(Boolean)
     .join("\n");
 
-  const content = await completeJson(userId, {
-    operation: "recruiter.draft",
-    temperature: 0.55,
-    maxOutputTokens: 600,
-    system: `You write short emails from a candidate to a recruiter they already know.
+  const system = `You write short emails from a candidate to a recruiter they already know.
 
 Goal for this message: ${intent.guidance}
 
@@ -129,15 +131,22 @@ Rules:
 - Never leave placeholders like [Your Name] or [Company]. If the sender's name is unknown, end without a signature line.
 - The subject line must be specific to this conversation, not generic ("Following up" is not acceptable).
 
-Return JSON: {"subject": string, "body": string}`,
+Return JSON: {"subject": string, "body": string}`;
+
+  const content = await completeJson(userId, {
+    operation: "recruiter.draft",
+    temperature: 0.55,
+    maxOutputTokens: 600,
+    system,
     user: `${context}
 
 ${input.variationHint ? `Vary phrasing from other drafts in this batch: ${input.variationHint}` : ""}`,
   });
 
-  const parsed = parseAiJson<{ subject?: string; body?: string }>(content);
-  const subject = scrubPlaceholders(parsed.subject?.trim() || "");
-  const body = scrubPlaceholders(parsed.body?.trim() || "");
+  // Schema-checked and scrubbed before anyone can send it (audit M-11).
+  const draft = guardDraftOutput(parseAiJson(content), { userId, surface: "recruiter.draft", system });
+  const subject = scrubPlaceholders(draft.subject?.trim() || "");
+  const body = scrubPlaceholders(draft.body.trim());
   if (!body) throw new Error("The model returned an empty draft");
   return { subject: subject || `Following up — ${input.recruiter.fullName}`, body };
 }
