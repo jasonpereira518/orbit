@@ -1,10 +1,10 @@
 # Onboarding, step by step
 
-Every screen of each onboarding path, taken on 2026-10-18 from this branch. Each path ran on a fresh account: `next dev`, an empty PGlite, `ORBIT_DEMO_DATA=off`, `ORBIT_DEMO_MANAGED_AI=off`, the Gemini stub, and a placeholder Google client so the connect screens show. Desktop is 1440×900. Phone is an iPhone 13, full page; it reloads `/onboarding`, so it shows the screen a person resuming on that step would see. The round "N" bottom-left is the Next.js dev badge.
+Every screen of each onboarding path, taken on 2026-11-08 from this branch after combining capture-first onboarding with the About you step. Each path ran on a fresh account: `next dev`, an empty PGlite, `ORBIT_DEMO_DATA=off`, `ORBIT_DEMO_MANAGED_AI=off`, the Anthropic e2e stub as Orbit's managed AI, and a placeholder Google client so the connect screens show. Desktop is 1440×900. Phone is an iPhone 13, full page; it reloads `/onboarding`, so it shows the screen a person resuming on that step would see. The round "N" bottom-left is the Next.js dev badge.
 
 ## Quick path, Orbit's AI on (the default)
 
-Welcome → Add someone you met → notes → Extract → review each person → save → first win, plus its side screens (connect, what else) → dashboard.
+Welcome → Add someone you met → notes → Extract → review → save → the first win, with its side screens (connect, what else) → Continue → About you (LinkedIn, goals, confirm) → dashboard. About you comes after the first win, never before it. On a phone, About you's screens 2 and 3 are walked in the phone's own tab: the step keeps its screens in memory, so a reload resumes on the first.
 
 ### 1. welcome
 
@@ -26,33 +26,49 @@ Welcome → Add someone you met → notes → Extract → review each person →
 
 <img src="1-quick-hosted-ai/05-desktop-review-person-1.jpg" width="560" alt="review person 1, desktop"> <img src="1-quick-hosted-ai/05-phone-review-person-1.jpg" width="200" alt="review person 1, phone">
 
-### 6. review person 2
+### 6. summary ready to save
 
-<img src="1-quick-hosted-ai/06-desktop-review-person-2.jpg" width="560" alt="review person 2, desktop">
+<img src="1-quick-hosted-ai/06-desktop-summary-ready-to-save.jpg" width="560" alt="summary ready to save, desktop"> <img src="1-quick-hosted-ai/06-phone-summary-ready-to-save.jpg" width="200" alt="summary ready to save, phone">
 
-### 7. summary ready to save
+### 7. first win
 
-<img src="1-quick-hosted-ai/07-desktop-summary-ready-to-save.jpg" width="560" alt="summary ready to save, desktop"> <img src="1-quick-hosted-ai/07-phone-summary-ready-to-save.jpg" width="200" alt="summary ready to save, phone">
+<img src="1-quick-hosted-ai/07-desktop-first-win.jpg" width="560" alt="first win, desktop"> <img src="1-quick-hosted-ai/07-phone-first-win.jpg" width="200" alt="first win, phone">
 
-### 8. first win
+### 8. connect from first win
 
-<img src="1-quick-hosted-ai/08-desktop-first-win.jpg" width="560" alt="first win, desktop"> <img src="1-quick-hosted-ai/08-phone-first-win.jpg" width="200" alt="first win, phone">
+<img src="1-quick-hosted-ai/08-desktop-connect-from-first-win.jpg" width="560" alt="connect from first win, desktop"> <img src="1-quick-hosted-ai/08-phone-connect-from-first-win.jpg" width="200" alt="connect from first win, phone">
 
-### 9. connect from first win
+### 9. overview what else
 
-<img src="1-quick-hosted-ai/09-desktop-connect-from-first-win.jpg" width="560" alt="connect from first win, desktop"> <img src="1-quick-hosted-ai/09-phone-connect-from-first-win.jpg" width="200" alt="connect from first win, phone">
+<img src="1-quick-hosted-ai/09-desktop-overview-what-else.jpg" width="560" alt="overview what else, desktop"> <img src="1-quick-hosted-ai/09-phone-overview-what-else.jpg" width="200" alt="overview what else, phone">
 
-### 10. overview what else
+### 10. about 1 linkedin
 
-<img src="1-quick-hosted-ai/10-desktop-overview-what-else.jpg" width="560" alt="overview what else, desktop"> <img src="1-quick-hosted-ai/10-phone-overview-what-else.jpg" width="200" alt="overview what else, phone">
+<img src="1-quick-hosted-ai/10-desktop-about-1-linkedin.jpg" width="560" alt="about 1 linkedin, desktop"> <img src="1-quick-hosted-ai/10-phone-about-1-linkedin.jpg" width="200" alt="about 1 linkedin, phone">
 
-### 11. dashboard after
+### 11. about 1 linkedin filled
 
-<img src="1-quick-hosted-ai/11-desktop-dashboard-after.jpg" width="560" alt="dashboard after, desktop"> <img src="1-quick-hosted-ai/11-phone-dashboard-after.jpg" width="200" alt="dashboard after, phone">
+<img src="1-quick-hosted-ai/11-desktop-about-1-linkedin-filled.jpg" width="560" alt="about 1 linkedin filled, desktop">
+
+### 12. about 2 goals
+
+<img src="1-quick-hosted-ai/12-desktop-about-2-goals.jpg" width="560" alt="about 2 goals, desktop">
+
+### 13. about 2 goals picked
+
+<img src="1-quick-hosted-ai/13-desktop-about-2-goals-picked.jpg" width="560" alt="about 2 goals picked, desktop"> <img src="1-quick-hosted-ai/13-phone-about-2-goals-picked.jpg" width="200" alt="about 2 goals picked, phone">
+
+### 14. about 3 confirm
+
+<img src="1-quick-hosted-ai/14-desktop-about-3-confirm.jpg" width="560" alt="about 3 confirm, desktop"> <img src="1-quick-hosted-ai/14-phone-about-3-confirm.jpg" width="200" alt="about 3 confirm, phone">
+
+### 15. dashboard after
+
+<img src="1-quick-hosted-ai/15-desktop-dashboard-after.jpg" width="560" alt="dashboard after, desktop"> <img src="1-quick-hosted-ai/15-phone-dashboard-after.jpg" width="200" alt="dashboard after, phone">
 
 ## Side branches: by hand, other ways, LinkedIn import, triage
 
-From the capture step: Type their details instead, Other ways to add people, Upload your LinkedIn export (33-person CSV). Then the closeness triage (shown when 8+ people need a rating) → first win → dashboard.
+From the capture step: Type their details instead, Other ways to add people, Upload your LinkedIn export (a 33-person CSV). Then the closeness rating (shown when 8+ people need one) → the first win → About you (skipped) → dashboard.
 
 ### 1. welcome
 
@@ -100,7 +116,7 @@ From the capture step: Type their details instead, Other ways to add people, Upl
 
 ## Adding nobody: I'll add people later
 
-Capture step → Other ways → I'll add people later → first win with nobody yet → dashboard.
+Capture step → Other ways → I'll add people later → the first win with nobody yet → About you (skipped) → dashboard.
 
 ### 1. welcome
 
@@ -130,9 +146,9 @@ Welcome → Skip for now → dashboard.
 
 <img src="4-skip/02-desktop-dashboard-after-skip.jpg" width="560" alt="dashboard after skip, desktop"> <img src="4-skip/02-phone-dashboard-after-skip.jpg" width="200" alt="dashboard after skip, phone">
 
-## Orbit's AI paused (production default)
+## Orbit's AI unavailable
 
-Run with VERCEL_ENV=production. Welcome (no credit line) → capture step with the paused notice and the by-hand form → Add them with a 2-week follow-up → first win → dashboard.
+Run with no Orbit-managed key, which shows the same notice as an admin pause (production no longer pauses by default). Welcome (no credit line) → capture step with the notice and the by-hand form → Add them with a 2-week follow-up → the first win → About you (skipped) → dashboard.
 
 ### 1. welcome
 
@@ -156,7 +172,7 @@ Run with VERCEL_ENV=production. Welcome (no credit line) → capture step with t
 
 ## Guided tour with example people
 
-Welcome → Show me around → connect → Setting the stage → each tour stop on the real pages → finish card → dashboard. Stop 6 did not appear in this run: the rail went from stop 5 to stop 7 after Capture was skipped.
+Welcome → Show me around → connect → Setting the stage → each tour stop on the real pages → finish card → dashboard. No About you step: it follows a first win, which the tour does not make; the dashboard's setup card asks instead. The rail went from stop 5 to 7 after Capture was skipped, so there is no stop 6.
 
 ### 1. welcome
 

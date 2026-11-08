@@ -15,7 +15,7 @@ Measured the same way as the audit: `next dev`, a fresh PGlite, `ORBIT_DEMO_DATA
 | R1 | Done | One `managedOutage()` read in the app layout, built on the 30-second cached pool state, tells paused apart from pools spent (with the refill date when a monthly cap is what ran out). Every notice now uses it: the paused copy no longer promises a return, and each names every provider a person can bring a key for. The checklist, ask bar, Settings and the tour's no-AI stops all read the same status. The Radar fallback names the right reason. The credits card puts credits "on hold" and hides "Buy a pack" while AI is paused. The credit-email toggle is hidden for Free. The Chat composer is disabled with a reason, the same way Capture disables Extract | – |
 | R2 | Done | When AI can't run, the onboarding capture step opens a by-hand form with "Follow up in: 3 days / 1 week / 2 weeks / Not now", which creates the reminder. /capture links to the same form at `/contacts/new?quick=1` | – |
 | R3 | Done | A three-step "Use your own AI key" guide recommending Gemini (D2 default), with a note on free-tier data terms. Every card links to its provider's key page. A key pasted into the wrong card is routed by its prefix. Since the merge, `main`'s own redesign hides OpenRouter everywhere and puts the decision model in Advanced, so those two parts of my change were dropped in favour of it | – |
-| R4 | Done | Welcome leads with "Add someone you met". The tour is the "Show me around with example people first" link, and "Skip for now" is new. The primary button sits above the fold on a phone (A06). Stages: Welcome → Your first person → All set | On a phone the capture step's notes box starts above the fold, but "Extract people" sits below it |
+| R4 | Done | Welcome leads with "Add someone you met". The tour is the "Show me around with example people first" link, and "Skip for now" is new. The primary button sits above the fold on a phone (A06). Stages: Welcome → Your first person → Your first win → About you (since the About you merge) | On a phone the capture step's notes box starts above the fold, but "Extract people" sits below it |
 | R5 | Done | An account that reached onboarding and left counts as onboarded (`onboardingSeen`) for the checklist, LinkedIn card, imports and account health. Nothing is written on a read path. Checklist dismissal is stored per account | – |
 | R6 | Partial | Settings is in the phone More sheet. On /capture and onboarding, the "ready to review" toast no longer appears over the review it points to | The phone Capture button still opens Voice. The code chose that on purpose ("walking out of the building" in `mobile-capture-button.tsx`), so I left it for you to decide |
 | R7 | Partial | Welcome credit line for Free with hosted AI: "Free includes 50 AI credits a month plus 25 to start. Adding someone uses about one". The plan card's credit claim now quotes the paid plan's monthly credits | The first-win credit line |
@@ -52,12 +52,18 @@ Measured the same way as the audit: `next dev`, a fresh PGlite, `ORBIT_DEMO_DATA
 - **Onboarding events** (`onboarding_step_completed`) were written for the old quick path (people → connect → overview). They now count by stage: any step inside "Your first person" (notes, by hand, other ways, LinkedIn import, triage) completes `capture` when the person reaches the first win. Going back, or moving within a stage, records nothing. `smoke-activation-events` checks the new path.
 - **Kept from `main` as is:** the contacts empty state, the imports page (now a tab on /capture), the dashboard's meetings and briefing row, and the provider cards' new short status lines.
 
-**Checks run (after the merge with `main`):**
+**Combined with the About you branch (2026-11-08).** `claude/linkedin-onboarding-integration` added an About you step (a LinkedIn URL with a background self-lookup, three goal taps, and a confirm screen), goal-aware dashboard suggestions, a purpose line on follow-up drafts, and a visual refresh of onboarding (the ringed-planet mark, a named stepper, icon tiles, pinned footers, no scrolling). It is merged here with one change of order:
+- **Quick setup:** Welcome → Your first person → Your first win → About you → dashboard. The branch had About you right after the welcome, on both paths. Here it comes after the first win, never before it. The first win's main button is now "Continue"; About you, finished or skipped, ends setup. Connect and the overview, offered from the first win, also lead on to it.
+- **Guided tour:** no About you step, because the tour makes no first win. The branch's dashboard checklist item "Tell Orbit what you're going for" (to Settings → Goals) covers tour users and anyone who skipped.
+- **Welcome:** the branch's mark and styling, but still one main action, "Add someone you met". The branch's two path cards (tour recommended) are replaced; its time estimates stay, as "About 2 minutes" under the main button and "About 5 minutes" under the tour link.
+- **Kept from the branch as is:** the About you screens and data layer, people to meet, follow-up purposes, organization suggestions, the stepper, StepLayout, and the restyled connect, people, launch and overview steps.
+
+**Checks run (after combining with About you):**
 - Typecheck is clean, and ESLint finds no errors in the changed files.
-- Smokes: 662 of 663 pass. `smoke-radar-run` failed once under full-suite load and passed alone, twice each, on this branch and on `main`.
-- Playwright: 77 pass, and 2 Stripe checkout specs are skipped without keys. That includes `main`'s new accessibility suite. It caught one problem from this batch: with AI unavailable, the disabled suggestion cards on /chat left a scroller with nothing to focus, so the cards are now hidden while AI cannot run.
-- `main` itself had gone red on 02-capture and 06-guided-tour when managed AI stopped using Gemini (8f7912cb), because the e2e stub only spoke Gemini. The fix from `security/audit-2026-11` (cb5ab7f2: the stub also answers Anthropic, and Playwright sets `ORBIT_MANAGED_ANTHROPIC_API_KEY`) is ported here. It becomes a no-op once that branch lands.
-- Earlier, before the merge: the rewritten onboarding spec caught a race in which the first-win buttons stayed disabled in about 40% of runs. The step now keeps its own flag, because AnimatePresence can hold a stale `pending` prop; the spec then passed 10 of 10 runs.
+- Smokes: 667 of 669 pass. `smoke-radar-run` failed under full-suite load and passes alone, as before. `smoke-behavior-golden` fails on one line (a zod-generated date-time regex in an MCP tool schema) and fails the same way on a clean `main` with the same packages, so its recorded snapshot needs re-recording on `main`.
+- Playwright: 77 pass, and 2 Stripe checkout specs are skipped without keys. The onboarding spec walks first win → Continue → About you (skipped) → dashboard; the tour spec runs without About you.
+- Two dev servers sharing one `.next` folder (a stopped run's leftover) put `/onboarding` into a Turbopack hot-reload loop that failed most specs at once. It is a local tooling hazard, not product behaviour; with one server the suite passes.
+- Before the merges: the rewritten onboarding spec caught a race in which the first-win buttons stayed disabled in about 40% of runs. The step now keeps its own flag, because AnimatePresence can hold a stale `pending` prop.
 
 **Not verified:** a real Clerk sign-up, Neon, and production's actual pause flag. As in the audit, the walks ran in demo mode.
 
@@ -464,6 +470,7 @@ The baseline for activation comes from the backfill query in §1.
 ## 8. Decisions I need from you
 
 **D1. Is hosted AI unpaused in production, and do you want it to be the default?**
+- **Update (2026-11-08):** `main` now defaults the admin pause to off everywhere (`managedAiPausedDefault()` returns false), so production runs managed AI unless someone pauses it. What remains of D1 is whether the managed keys are set in production.
 - Production reads paused until `site_settings.managed_ai_paused` is set false (`src/lib/ai-access.ts:181`). I can't see production.
 - If it is paused today, every Free user is in the F1 state right now.
 - **Recommendation:** confirm the switch and the managed keys this week. Whatever the answer, ship R1 + R2, because pools can run out.
@@ -509,7 +516,7 @@ The baseline for activation comes from the backfill query in §1.
 
 ## 9. Not proposing
 
-- **A goal or persona question at sign-up.** The end-of-session prompt (§6) gets the same signal without adding a step before value. Sprint B also put it out of scope.
+- **A goal or persona question at sign-up, before any value.** The About you step (below) asks for goals, but only after the first win, and it is skippable on every screen.
 - **Forcing a key, or any setup, before the user can look around.** Every page stays reachable.
 - **A longer guided tutorial, or more tour stops.** The tour is good as an opt-in, and it is already 11 stops.
 - **Gamified streaks, confetti or badges.** One quiet celebration, then reinforcement through real follow-ups.
