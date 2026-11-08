@@ -1,5 +1,7 @@
-# False positives: the linkedin-client-id rule reads `import { linkedinSlug, normalizePhone }` as a
-# key/value pair. The identifier is a function name, not a credential; the imports were reordered in
-# the next commit, but gitleaks scans every commit's diff, so the original lines stay flagged.
+# False positives. A rule meant for LinkedIn API credentials reads an import of a slug helper
+# function, followed by a comma, as a key/value pair. It is an identifier, not a credential.
+# The imports were reordered in a later commit, but gitleaks scans every commit's diff, so the
+# original lines stay flagged; the third entry is this file's own first version.
 ff7cd47ed26b16903b7090b2f4a56fa59d2c4685:scripts/smoke-warm-path.ts:linkedin-client-id:20
 ff7cd47ed26b16903b7090b2f4a56fa59d2c4685:docs/superpowers/plans/2026-09-22-leads-p2-teams.md:linkedin-client-id:1080
+bc837c40488f6ff6a14ec3554e5874a5033c9151:.gitleaksignore:linkedin-client-id:1
