@@ -96,7 +96,7 @@ export type ResolveOptions = ContactWriteOptions & {
  * the rows themselves, so that two concurrent writers racing in opposite directions reach
  * the same answer instead of each merging into the other.
  */
-async function pickWinner(userId: string, a: string, b: string): Promise<[string, string]> {
+export async function pickWinner(userId: string, a: string, b: string): Promise<[string, string]> {
   const db = await getDb();
   const rows = await db
     .select({ id: contacts.id, createdAt: contacts.createdAt })
@@ -364,7 +364,8 @@ export async function resolveOrCreateContact(
   //
   // `createContactForUser` can throw PaywallError before inserting anything, in which case
   // there is no row to clean up and nothing has been claimed — the error propagates as-is.
-  const created = await createContactForUser(userId, input, options);
+  // `settleClaims: false`: step 4 below settles a lost claim itself and reports it as `merged`.
+  const created = await createContactForUser(userId, input, { ...options, settleClaims: false });
   await holdForReview(created.id);
 
   if (!keys.length) {

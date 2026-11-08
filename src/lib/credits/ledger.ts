@@ -342,10 +342,24 @@ export async function settleCredits(input: { userId: string; operation: string; 
   ]);
 }
 
-/** Release a hold without charging (a batch that finished or failed, a refused call). */
-export async function releaseHold(userId: string, operation: string): Promise<void> {
+/**
+ * Release one hold without charging (a batch that finished or failed, a refused call): the one
+ * named by `holdId`, else the oldest live one for the operation (the one `settleCredits` would
+ * take), falling back to an expired one.
+ * Deleting every hold for the operation freed the reservations of concurrent calls still running,
+ * so the account could overspend while they finished.
+ */
+export async function releaseHold(userId: string, operation: string, holdId?: string): Promise<void> {
   const db = await getDb();
-  await db.delete(creditHolds).where(and(eq(creditHolds.userId, userId), eq(creditHolds.operation, operation)));
+  if (holdId) {
+    await db.delete(creditHolds).where(and(eq(creditHolds.id, holdId), eq(creditHolds.userId, userId)));
+    return;
+  }
+  await db.execute(sql`DELETE FROM credit_holds WHERE id = (
+      SELECT id FROM credit_holds
+       WHERE user_id = ${userId} AND operation = ${operation}
+       ORDER BY (expires_at > now()) DESC, created_at, id LIMIT 1
+    )`);
 }
 
 /** Drop holds that expired more than a day ago. Called from the process-stalled cron. */

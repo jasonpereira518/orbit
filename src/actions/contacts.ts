@@ -96,6 +96,7 @@ import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 import { trackSearchPerformed } from "@/lib/search-events";
+import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
 
 export type {
   ContactInput,
@@ -945,10 +946,11 @@ export async function updateInteraction(
   const [row] = await db
     .update(interactions)
     .set({
-      ...(input.rawNotes !== undefined ? { rawNotes: input.rawNotes } : {}),
-      ...(input.aiSummary !== undefined ? { aiSummary: input.aiSummary } : {}),
+      // Same cleaning as `logInteractionForUser` (audit M-05).
+      ...(input.rawNotes !== undefined ? { rawNotes: cleanOptionalText(input.rawNotes, TEXT_LIMITS.rawNotes) } : {}),
+      ...(input.aiSummary !== undefined ? { aiSummary: cleanOptionalText(input.aiSummary, TEXT_LIMITS.summary) } : {}),
       ...(input.actionItems !== undefined
-        ? { actionItems: input.actionItems }
+        ? { actionItems: cleanTextList(input.actionItems, TEXT_LIMITS.listItem) }
         : {}),
       ...(input.interactionType !== undefined
         ? { interactionType: input.interactionType }
