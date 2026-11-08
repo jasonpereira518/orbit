@@ -11,3 +11,11 @@ description = "identifier-style linkedin assignments, not credentials"
 targetRules = ["linkedin-client-id"]
 regexTarget = "match"
 regexes = ['''(?i)linkedin(slug|url|experience|profile|import|export|avatar|history|connection|cache|id)''', '''(?i)linkedin[_-](slug|url|experience|profile|import|export|avatar|history|connection|cache|id)''']
+
+# scripts/smoke-origin-checks.ts is a route -> auth-kind table whose values are prose labels
+# ("cron secret", "one-click unsubscribe, URL token"), which trip generic-api-key. It holds no
+# credentials. Scoped to this one file and this one rule; every other rule still scans it.
+[[allowlists]]
+description = "auth-kind labels in the origin-checks smoke table, not credentials"
+targetRules = ["generic-api-key"]
+paths = ['''scripts/smoke-origin-checks\.ts''']
