@@ -39,11 +39,17 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [main]
+  # GitHub's merge queue runs the required checks on the queued merge result. Needed before
+  # the queue can be switched on in Settings → Branches (the checks must report on this event).
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
+# Only PR runs are superseded by a newer push. A `main` run is never cancelled: back-to-back
+# merges used to cancel each other, so `main` was rarely verified and its caches stayed cold.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -64,7 +70,16 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.f.outputs.code }}
+      playwright: ${{ steps.pw.outputs.version }}
     steps:
+      # The e2e container image tag must equal @playwright/test (the image's browser build has
+      # to match the library); read it from package.json so a Dependabot bump can't split them.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: package.json
+          sparse-checkout-cone-mode: false
+      - id: pw
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test'].replace(/[^0-9.]/g, '')")" >> "$GITHUB_OUTPUT"
       - id: f
         env:
           GH_TOKEN: ${{ github.token }}
@@ -276,8 +291,9 @@ jobs:
 
   # Playwright's own image ships Chromium and its OS libraries, so there is no browser
   # download or apt step (`playwright install --with-deps` took 17s to 12 minutes on a bare
-  # runner, depending on the apt mirror). Keep the tag equal to @playwright/test in
-  # package.json: the image's browser build must match the library. `--ipc=host` is
+  # runner, depending on the apt mirror). The tag is read from @playwright/test in
+  # package.json (the `changes` job), because the image's browser build must match the
+  # library; nothing to keep in sync by hand. `--ipc=host` is
   # Playwright's own advice for Chromium in a container.
   #
   # Three runners each take a third of the spec files (`--shard`), with their own `next dev`
@@ -291,7 +307,7 @@ jobs:
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      image: mcr.microsoft.com/playwright:v${{ needs.changes.outputs.playwright }}-noble
       options: --ipc=host
     timeout-minutes: 30
     strategy:
