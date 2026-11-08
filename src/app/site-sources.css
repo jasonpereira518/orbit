@@ -165,6 +165,7 @@
 @source "../lib/contact-message.ts";
 @source "../lib/contact-profile-format.ts";
 @source "../lib/contact-profile.ts";
+@source "../lib/contact-search-rank.ts";
 @source "../lib/contact-writes.ts";
 @source "../lib/credits/grants.ts";
 @source "../lib/credits/ledger.ts";
