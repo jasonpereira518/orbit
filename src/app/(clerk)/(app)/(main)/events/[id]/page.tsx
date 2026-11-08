@@ -10,6 +10,7 @@ import { AttendeeRoster, type RosterMatch } from "@/components/events/attendee-r
 import { RosterImportPanel } from "@/components/events/roster-import-panel";
 import { EventCompaniesPanel } from "@/components/events/event-companies-panel";
 import { WhoToTalkToCard } from "@/components/events/who-to-talk-to-card";
+import { PeopleYouMet } from "@/components/events/people-you-met";
 import {
   getEvent,
   getEventCompanies,
@@ -19,6 +20,10 @@ import {
   matchRosterToNetwork,
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { requireUserId } from "@/lib/auth";
+import { userTimeZone } from "@/lib/meeting-context";
+import { ymdInZone } from "@/lib/reminder-due-bucket";
+import { offsetMinutes } from "@/lib/events/wall-clock";
 
 /** Request-memoized so `generateMetadata` and the page share one read. */
 const loadEvent = cache((id: string) => getEvent(id));
@@ -37,6 +42,11 @@ async function WhoToTalkTo({ eventId }: { eventId: string }) {
   const data = await getWhoToTalkTo(eventId);
   if (!data) return null;
   return <WhoToTalkToCard eventId={eventId} data={data} aiAvailable={data.aiAvailable} />;
+}
+
+async function Met({ eventId, rosterPromise }: { eventId: string; rosterPromise: Promise<RosterResult> }) {
+  const result = await rosterPromise;
+  return <PeopleYouMet eventId={eventId} rows={result.ok ? result.rows : []} />;
 }
 
 async function Companies({ eventId }: { eventId: string }) {
@@ -127,6 +137,18 @@ export default async function EventDetailPage({
   // Before any Suspense boundary, so the route returns a real 404 rather than streaming a
   // shell and then discovering there is nothing to put in it.
   if (!event) notFound();
+  // Started (or undated — added from memory, after the fact): the page leads with who was met.
+  // Before it starts, the prep pieces lead, as they always have.
+  // By calendar day, so an event logged as "today" leads with the debrief whatever hour it is
+  // stamped at. The event's day is its venue wall clock, shifted exactly as event-hero shows it;
+  // today is the user's.
+  const zone = await userTimeZone(await requireUserId());
+  const eventDay = event.startsAt
+    ? new Date(event.startsAt.getTime() + (offsetMinutes(event.timezone, event.startsAt) ?? 0) * 60_000)
+        .toISOString()
+        .slice(0, 10)
+    : null;
+  const past = !eventDay || eventDay <= ymdInZone(new Date(), zone);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 pb-8">
@@ -148,17 +170,28 @@ export default async function EventDetailPage({
         </p>
       ) : null}
 
+      {past ? (
+        <div className="reveal-mount" style={{ "--reveal-delay": "40ms" } as React.CSSProperties}>
+          <Suspense fallback={<Skeleton className="h-28 w-full rounded-2xl" />}>
+            <Met eventId={event.id} rosterPromise={rosterPromise} />
+          </Suspense>
+        </div>
+      ) : null}
+
       <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
         <RosterImportPanel eventId={event.id} />
       </div>
 
-      {/* The shortlist first: it is the answer, and the roster below it is the evidence.
-          `fallback={null}` because it renders nothing when the facts single nobody out. */}
-      <div className="reveal-mount" style={{ "--reveal-delay": "70ms" } as React.CSSProperties}>
-        <Suspense fallback={null}>
-          <WhoToTalkTo eventId={event.id} />
-        </Suspense>
-      </div>
+      {/* Before the event, the shortlist first: it is the answer, and the roster below it is the
+          evidence. Afterwards "People you met" has taken its place. `fallback={null}` because
+          it renders nothing when the facts single nobody out. */}
+      {past ? null : (
+        <div className="reveal-mount" style={{ "--reveal-delay": "70ms" } as React.CSSProperties}>
+          <Suspense fallback={null}>
+            <WhoToTalkTo eventId={event.id} />
+          </Suspense>
+        </div>
+      )}
 
       {/* Companies before the roster: at a career fair the booth list IS the event, and at a
           conference it is the shape that makes four hundred names navigable. */}

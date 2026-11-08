@@ -18,6 +18,8 @@ const cases: Array<[string, string, string]> = [
   ["MCP URL key", "/api/mcp/mcpk_live_abc", "/api/mcp/[redacted]"],
   ["health token query", "/api/health?token=s3cret&deep=1", "/api/health?token=[redacted]&deep=1"],
   ["OAuth code and state", "/api/gmail/callback?code=4/abc&state=xyz", "/api/gmail/callback?code=[redacted]&state=[redacted]"],
+  ["OAuth refresh token query", "/api/x?refresh_token=1//abc&id_token=eyJ", "/api/x?refresh_token=[redacted]&id_token=[redacted]"],
+  ["credential query params", "/api/x?api_key=k&client_secret=s&password=p", "/api/x?api_key=[redacted]&client_secret=[redacted]&password=[redacted]"],
   ["interest ticket link", "/interest?me=tkt_abc123&ref=x", "/interest?me=[redacted]&ref=x"],
 ];
 for (const [label, input, expected] of cases) {
@@ -39,7 +41,12 @@ check("error text: email addresses go", scrubText("send to ada@analytical.exampl
 // Key-shaped fixtures are assembled at runtime so secret scanners never see a literal.
 const FAKE_ANTHROPIC = ["sk", "ant", "api03", "A".repeat(24)].join("-");
 const FAKE_STRIPE = ["sk", "live", "A".repeat(24)].join("_");
+const FAKE_WEBHOOK = ["whsec", "B".repeat(24)].join("_");
+const FAKE_REFRESH = ["1//", "C".repeat(40)].join("");
 check("error text: key shapes go", !scrubText(`bad key ${FAKE_ANTHROPIC}`).includes("sk-ant"));
+check("error text: webhook signing secrets go", !scrubText(`endpoint ${FAKE_WEBHOOK}`).includes("whsec_"));
+check("error text: Google refresh tokens go", !scrubText(`grant ${FAKE_REFRESH}`).includes("1//"));
+check("error text: key/value credentials go", scrubText("password=hunter2 client_secret: abc123") === "password=[redacted] client_secret: [redacted]");
 check("error text: ordinary words stay", scrubText("Gmail returned 429") === "Gmail returned 429");
 const thrown = scrubSentryEvent({
   message: "Couldn't email grace@compiler.example",

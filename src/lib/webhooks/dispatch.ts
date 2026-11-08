@@ -22,9 +22,9 @@
  * Everything below fetches a URL a user supplied. Validation at registration is necessary but
  * NOT sufficient: a hostname that resolved to a public address when it was registered can
  * resolve to 169.254.169.254 by the time it is delivered to. So DNS is resolved immediately
- * before the request and the resulting address is checked, redirects are never followed, and
- * the response body is never echoed back beyond a short truncated snippet — because the
- * response is the channel an attacker would read secrets out of.
+ * before the request, the connection is pinned to the addresses that were checked, redirects
+ * are never followed, and the response body is discarded entirely — because the response is
+ * the channel an attacker would read secrets out of.
  */
 import { getEntitlements } from "@/lib/entitlements";
 import { randomUUID } from "node:crypto";
@@ -69,7 +69,7 @@ function backoffFor(attempt: number): number {
  * `src/actions/webhook-endpoints.ts`, `src/app/api/v1/webhook-endpoints/route.ts` and
  * `scripts/smoke-webhook-delivery.ts` all import it from this module.
  */
-import { assertDeliverable, isBlockedAddress } from "@/lib/net-guard";
+import { pinDeliverable, assertDeliverable, isBlockedAddress } from "@/lib/net-guard";
 import { reportError } from "@/lib/report-error";
 
 export { isBlockedAddress, assertDeliverable };
@@ -178,32 +178,42 @@ export async function attemptDelivery(row: DueRow, now: Date = new Date()): Prom
   let error: string | null = null;
 
   try {
-    await assertDeliverable(row.url);
     const secret = decryptOrNull(row.secret_encrypted);
     if (!secret) throw new Error("Endpoint secret could not be read");
 
+    // Resolve and pin: the address checked here is the address connected to, so a hostname
+    // repointed after registration cannot reach an internal service.
+    const pinned = await pinDeliverable(row.url);
+
     const timestamp = Math.floor(now.getTime() / 1000);
-    const res = await fetch(row.url, {
-      method: "POST",
-      // A 302 to the metadata endpoint must never be followed.
-      redirect: "manual",
-      signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
-      headers: {
-        "content-type": "application/json",
-        "user-agent": "Orbit-Webhooks/1",
-        "Orbit-Signature": signPayload(secret, body, timestamp),
-        "Orbit-Event-Id": String((row.payload as { id?: string })?.id ?? ""),
-        "Orbit-Delivery-Attempt": String(attempt),
-      },
-      body,
-    });
+    let res: Response;
+    try {
+      res = await fetch(row.url, {
+        method: "POST",
+        // A 302 to the metadata endpoint must never be followed.
+        redirect: "manual",
+        signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+        ...pinned.init,
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "Orbit-Webhooks/1",
+          "Orbit-Signature": signPayload(secret, body, timestamp),
+          "Orbit-Event-Id": String((row.payload as { id?: string })?.id ?? ""),
+          "Orbit-Delivery-Attempt": String(attempt),
+        },
+        body,
+      });
+    } finally {
+      void pinned.close();
+    }
     statusCode = res.status;
+    // Nothing in the response is ever read: the body is an exfiltration channel and this
+    // string is shown back in Settings, so it is discarded rather than truncated. Cancelling
+    // it also lets the pinned agent finish closing instead of holding the socket open.
+    await res.body?.cancel().catch(() => {});
     // Only 2xx is success. A 3xx is a misconfigured endpoint, not a delivery.
     if (res.status < 200 || res.status >= 300) {
-      const text = await res.text().catch(() => "");
-      // 200 characters, never more: the response body is an exfiltration channel, and this
-      // string is shown back to the user in Settings.
-      error = `HTTP ${res.status}: ${text.slice(0, 200)}`;
+      error = `HTTP ${res.status}`;
     }
   } catch (err) {
     error = err instanceof Error ? err.message.slice(0, 200) : "Delivery failed";
@@ -299,26 +309,36 @@ export async function verifyEndpoint(
   const body = JSON.stringify(envelope);
 
   try {
-    await assertDeliverable(endpoint.url);
     const secret = decryptOrNull(endpoint.secretEncrypted);
     if (!secret) throw new Error("Endpoint secret could not be read");
 
-    const res = await fetch(endpoint.url, {
-      method: "POST",
-      redirect: "manual",
-      signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
-      headers: {
-        "content-type": "application/json",
-        "user-agent": "Orbit-Webhooks/1",
-        "Orbit-Signature": signPayload(secret, body, Math.floor(now.getTime() / 1000)),
-        "Orbit-Event-Id": envelope.id,
-        "Orbit-Delivery-Attempt": "1",
-      },
-      body,
-    });
+    const pinned = await pinDeliverable(endpoint.url);
+
+    let res: Response;
+    try {
+      res = await fetch(endpoint.url, {
+        method: "POST",
+        redirect: "manual",
+        signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+        ...pinned.init,
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "Orbit-Webhooks/1",
+          "Orbit-Signature": signPayload(secret, body, Math.floor(now.getTime() / 1000)),
+          "Orbit-Event-Id": envelope.id,
+          "Orbit-Delivery-Attempt": "1",
+        },
+        body,
+      });
+    } finally {
+      void pinned.close();
+    }
     if (res.status < 200 || res.status >= 300) {
+      await res.body?.cancel().catch(() => {});
       return { ok: false, error: `Endpoint answered HTTP ${res.status}` };
     }
+    // Success discards the body too; the endpoint's answer is never read.
+    await res.body?.cancel().catch(() => {});
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message.slice(0, 200) : "Unreachable" };
   }

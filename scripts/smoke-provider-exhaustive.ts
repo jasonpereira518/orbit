@@ -210,27 +210,27 @@ const ALLOWLIST: Record<string, string> = {
     "the line above (it is deliberately left on prompt-only JSON), so this \"anthropic\" arm is " +
     "reached only by gemini, openai and anthropic; gemini and openai take the default `true`, " +
     "and anthropic alone needs a per-model allowlist. Exhaustive over AiProvider.",
-  "src/lib/ai.ts:652": OPENROUTER_ROUTED_AWAY + " (completeJson's gemini arm; openai and " +
+  "src/lib/ai.ts:657": OPENROUTER_ROUTED_AWAY + " (completeJson's gemini arm; openai and " +
     "openrouter both now take the isOpenAiShaped branch above the implicit Anthropic " +
     "fallback, which is what's unreachable for openrouter.)",
-  "src/lib/ai.ts:879": OPENROUTER_ROUTED_AWAY + " (completeMultimodalJsonInner's gemini arm; " +
-    "see ai.ts:652.)",
+  "src/lib/ai.ts:884": OPENROUTER_ROUTED_AWAY + " (completeMultimodalJsonInner's gemini arm; " +
+    "see ai.ts:657.)",
   // Fix round 1 reverted transcribeAudioWithAI's isOpenAiShaped widening: the SDK encodes
   // this call's params as multipart form data, where withOpenRouterRouting's nested
   // `provider: {...}` would serialise as "[object Object]" rather than a real field, and
   // "whisper-1" is not a valid OpenRouter model slug regardless — so this is back to a
   // bare openai literal, and openrouter is never granted here (access.transcription()
   // only ever returns openai/gemini), same reasoning as the original Task 2 allowlisting.
-  "src/lib/ai.ts:1166": "transcription() (ai-access.ts) only ever grants \"openai\" or " +
+  "src/lib/ai.ts:1171": "transcription() (ai-access.ts) only ever grants \"openai\" or " +
     "\"gemini\" — Anthropic has no speech-to-text and OpenRouter transcription is " +
     "deliberately not wired up (multipart body, no valid model slug); the two are " +
     "exhaustive for every grant transcribeAudioWithAI can receive today.",
   // webSearchJson: four explicit arms in order — gemini, openrouter, openai, then anthropic
   // as the fallthrough. OpenRouter has its own arm (its search is a request plugin, not the
   // Responses API tool the openai arm uses), so neither literal below can receive it.
-  "src/lib/ai.ts:2756": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
+  "src/lib/ai.ts:2761": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
     "arm follows it, so the four arms are exhaustive over AiProvider.",
-  "src/lib/ai.ts:2819": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
+  "src/lib/ai.ts:2824": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
     "above (plugin-based search, not the Responses API), so it never reaches this one.",
   "src/lib/errors.ts:37": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",

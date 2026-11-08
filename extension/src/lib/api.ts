@@ -3,11 +3,14 @@ import type {
   ExtensionResponse,
   FollowUpRequest,
   FollowUpResponse,
+  LogConnectionsRequest,
+  LogConnectionsResponse,
   LogInteractionRequest,
   LogInteractionResponse,
   MeResponse,
   PageContext,
   ParseResponse,
+  RecentEventsResponse,
   ResolveResponse,
   SaveActivityRequest,
   SaveActivityResponse,
@@ -145,6 +148,12 @@ export function createApi(getToken: TokenGetter) {
 
     saveEventRoster: (page: PageContext, signal?: AbortSignal) =>
       post<EventRosterResponse>("/event-roster", { page }, signal),
+
+    recentEvents: (signal?: AbortSignal) =>
+      request<RecentEventsResponse>("/events", { method: "GET" }, getToken, signal),
+
+    logConnections: (body: LogConnectionsRequest, signal?: AbortSignal) =>
+      post<LogConnectionsResponse>("/log-connections", body, signal),
 
     starters: (body: StartersRequest, signal?: AbortSignal) =>
       post<StartersResponse>("/starters", body, signal),
