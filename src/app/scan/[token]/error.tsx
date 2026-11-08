@@ -15,5 +15,12 @@ export default function ScanError({
   error: Error & { digest?: string };
   unstable_retry: () => void;
 }) {
-  return <ErrorFallback error={error} retry={unstable_retry} home={{ href: "/", label: "Go to Orbit" }} />;
+  return (
+    <ErrorFallback
+      error={error}
+      retry={unstable_retry}
+      home={{ href: "/", label: "Go to Orbit" }}
+      where="boundary.scan"
+    />
+  );
 }
