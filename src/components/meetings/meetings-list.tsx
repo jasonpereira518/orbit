@@ -10,7 +10,8 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { CalendarDays, Clock, Loader2, Monitor, Users, Video } from "lucide-react";
 import { listMeetingsPage } from "@/actions/meetings";
-import { GranolaMark } from "@/components/settings/provider-marks";
+import { NOTE_SOURCE_LABEL, NoteSourceMark } from "@/components/capture/note-source-mark";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { formatElapsed } from "@/lib/format-elapsed";
@@ -32,23 +33,24 @@ function guestsLabel(names: string[]): string {
   return names.length > 3 ? `${shown} +${names.length - 3}` : shown;
 }
 
-const CALL: Record<string, string> = {
-  meet: "Google Meet",
-  zoom: "Zoom",
-  teams: "Teams",
-  webex: "Webex",
+const CALL: Record<string, { name: string; domain: string }> = {
+  meet: { name: "Google Meet", domain: "meet.google.com" },
+  zoom: { name: "Zoom", domain: "zoom.us" },
+  teams: { name: "Teams", domain: "teams.microsoft.com" },
+  webex: { name: "Webex", domain: "webex.com" },
 };
 
-/** The row's left tile: where the meeting came from, named in its tooltip. */
+/** The row's left tile: what kind of meeting it was — the call app, a shared screen, or the room. */
 function MeetingKind({ m }: { m: MeetingListItem }) {
-  const label =
-    m.source === "granola"
-      ? "Granola note"
-      : m.call
-        ? `${CALL[m.call] ?? "Video"} call`
-        : m.sharedScreen
-          ? "Recorded from a shared tab or screen"
-          : "Recorded in the room";
+  const call = m.call ? CALL[m.call] : undefined;
+  const label = m.call
+    ? `${call?.name ?? "Video"} call`
+    : m.sharedScreen
+      ? "Recorded from a shared tab or screen"
+      : m.source === "granola"
+        ? "Meeting"
+        : "Recorded in the room";
+  const fallback = m.call ? <Video className="size-4" /> : m.sharedScreen ? <Monitor className="size-4" /> : <Users className="size-4" />;
   return (
     <span
       role="img"
@@ -56,20 +58,19 @@ function MeetingKind({ m }: { m: MeetingListItem }) {
       title={label}
       className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted/60 text-muted-foreground"
     >
-      {m.source === "granola" ? (
-        <GranolaMark className="size-5" />
-      ) : m.call ? (
-        <Video className="size-4" />
-      ) : (
-        // Any recorded meeting, as on /capture; the tooltip says room or screen.
-        <Monitor className="size-4" />
-      )}
+      {call ? <BrandLogo key={call.domain} domain={call.domain} name="" className="size-5" fallback={fallback} /> : fallback}
     </span>
   );
 }
 
-function hideIfBlank(img: HTMLImageElement | null) {
-  if (img?.complete && img.naturalWidth <= 1) img.hidden = true;
+/** Top right: who took the notes. */
+function NotesBy({ source }: { source: MeetingListItem["source"] }) {
+  const label = `Notes by ${NOTE_SOURCE_LABEL[source]}`;
+  return (
+    <span role="img" aria-label={label} title={label} className="ml-auto shrink-0 pl-2">
+      <NoteSourceMark source={source} className="size-4" />
+    </span>
+  );
 }
 
 function meetingHref(m: MeetingListItem, q: string): string {
@@ -138,25 +139,9 @@ export function MeetingsList({
                 <p className="flex items-center gap-2 font-medium text-foreground">
                   <span className="min-w-0 truncate">{m.title || "Untitled meeting"}</span>
                   {m.companies.map((c) => (
-                    // eslint-disable-next-line @next/next/no-img-element -- a 16px same-origin favicon; next/image buys nothing here.
-                    <img
-                      key={c.domain}
-                      src={`/api/logos/${c.domain}`}
-                      alt={c.name}
-                      title={c.name}
-                      width={16}
-                      height={16}
-                      loading="lazy"
-                      className="size-4 shrink-0 rounded-sm"
-                      // A miss is the route's 1×1 blank (or an error): drop it rather than keep an
-                      // empty 16px slot. The ref catches one that settled before hydration.
-                      ref={hideIfBlank}
-                      onLoad={(e) => hideIfBlank(e.currentTarget)}
-                      onError={(e) => {
-                        e.currentTarget.hidden = true;
-                      }}
-                    />
+                    <BrandLogo key={c.domain} domain={c.domain} name={c.name} />
                   ))}
+                  <NotesBy source={m.source} />
                 </p>
                 <p className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   <span className="inline-flex items-center gap-1.5">
