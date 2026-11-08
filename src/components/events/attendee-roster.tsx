@@ -1,20 +1,19 @@
 "use client";
 
 /**
- * The roster, and the "who did I actually speak to" checklist.
+ * The roster, and the "who did I actually meet" checklist.
  *
- * This is where the feature earns its keep: an attendee list is inert data until someone
- * marks the handful of people worth keeping. Connecting is deliberately a two-step —
- * preview, then commit — because a name-only match is genuinely ambiguous and the user is
- * the only one who can resolve it. See `src/lib/events/connect.ts` for why the threshold is
- * 0.85 rather than the calendar path's 0.6.
+ * Ticking people and pressing "Log these people" opens the event's debrief (/capture with the
+ * event and their ids), where the user adds a line about each and reviews the cards — the same
+ * path as typing names from memory, so every person met gets a note and a follow-up. There is
+ * no second write path from here; capture's review is where an ambiguous match is resolved.
  *
  * ## Three states, not two
  *
  * A row is one of: LINKED (connected to a contact from this event), MATCHED (already someone
  * in your network, but not yet attached to this event), or NEW. Before, matched and new were
  * indistinguishable — someone you have known for a year looked exactly like a stranger until
- * you connected them and found out. A matched row is still worth selecting: connecting it is
+ * you connected them and found out. A matched row is still worth selecting: logging it is
  * what puts this event on their timeline.
  *
  * Matches arrive with the rows rather than streaming in behind them, because "Hide people I
@@ -29,7 +28,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { IntentLink } from "@/components/ui/intent-link";
-import { Check, Loader2, MoreHorizontal, Pencil, Search, UserPlus, Users } from "lucide-react";
+import { Check, ExternalLink, Loader2, MoreHorizontal, NotebookPen, Pencil, Search, Sparkles, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -41,14 +40,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/lib/toast";
 import {
-  addSpokenToConnections,
-  previewConnectAttendees,
+  batchFindRosterLinkedInsAction,
+  findAttendeeLinkedInAction,
   removeSpokenToConnection,
 } from "@/actions/events";
-import type { ConnectSummary, RosterRow } from "@/lib/events/types";
-import { ConnectPreviewDialog, type PreviewRow } from "./connect-preview-dialog";
+import type { RosterRow } from "@/lib/events/types";
 import { EditAttendeeDialog } from "./edit-attendee-dialog";
-import { IngestResultCard } from "./ingest-result-card";
 import { friendlyError } from "@/lib/errors";
 
 /** "2nd", "3rd", "4th" — because "2 events together" reads as a count, not a streak. */
@@ -56,6 +53,9 @@ function ordinalSuffix(value: number): string {
   if (value % 100 >= 11 && value % 100 <= 13) return "th";
   return ["th", "st", "nd", "rd"][value % 10] ?? "th";
 }
+
+/** Matches MAX_DEBRIEF_GUESTS on /capture: the ids ride in the URL, and a debrief is a handful. */
+const MAX_LOGGED = 25;
 
 /** One roster row already recognised as somebody in your network. */
 export type RosterMatch = {
@@ -82,6 +82,7 @@ const SOURCE_LABEL: Record<RosterRow["source"], string> = {
   // and the badge has to make the difference visible.
   calendar: "Calendar invite",
   extension: "Guest list",
+  capture: "You met",
   luma: "Luma",
   eventbrite: "Eventbrite",
 };
@@ -99,14 +100,16 @@ export function AttendeeRoster({
   history?: Array<{ attendeeId: string; eventsTogether: number }>;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [, start] = useTransition();
   const [busyRow, setBusyRow] = useState<string | null>(null);
+  const [findingRow, setFindingRow] = useState<string | null>(null);
+  const [batchFinding, setBatchFinding] = useState(false);
+  const [onlyWithLinkedin, setOnlyWithLinkedin] = useState(false);
+  const [foundUrls, setFoundUrls] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
   const [hideKnown, setHideKnown] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [editing, setEditing] = useState<RosterRow | null>(null);
-  const [summary, setSummary] = useState<(ConnectSummary & { remaining: number }) | null>(null);
 
   const matchById = useMemo(
     () => new Map(matches.map((m) => [m.attendeeId, m])),
@@ -117,23 +120,72 @@ export function AttendeeRoster({
     [history]
   );
 
+  const missingLinkedInCount = useMemo(() => {
+    return rows.filter((r) => !r.linkedinUrl && !foundUrls[r.id]).length;
+  }, [rows, foundUrls]);
+
+  function findLinkedIn(attendeeId: string) {
+    setFindingRow(attendeeId);
+    start(async () => {
+      try {
+        const result = await findAttendeeLinkedInAction(eventId, attendeeId);
+        if (!result.ok) {
+          toast.error(friendlyError(result.error, "LinkedIn profile not found"));
+          return;
+        }
+        if (result.value.linkedinUrl) {
+          setFoundUrls((prev) => ({ ...prev, [attendeeId]: result.value.linkedinUrl! }));
+          toast.success("LinkedIn profile found & saved!");
+          router.refresh();
+        }
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t find LinkedIn"));
+      } finally {
+        setFindingRow(null);
+      }
+    });
+  }
+
+  function batchFindLinkedIns() {
+    setBatchFinding(true);
+    start(async () => {
+      try {
+        const result = await batchFindRosterLinkedInsAction(eventId);
+        if (!result.ok) {
+          toast.error(friendlyError(result.error, "Couldn’t look up LinkedIns"));
+          return;
+        }
+        toast.success(
+          result.value.found > 0
+            ? `Found ${result.value.found} new LinkedIn profile${result.value.found === 1 ? "" : "s"}!`
+            : "No additional LinkedIn profiles found"
+        );
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t look up LinkedIns"));
+      } finally {
+        setBatchFinding(false);
+      }
+    });
+  }
+
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return rows.filter((row) => {
+      const activeLinkedin = foundUrls[row.id] || row.linkedinUrl;
+      if (onlyWithLinkedin && !activeLinkedin) return false;
       // "People I know" is both senses of known: linked to this event, and already a contact.
       if (hideKnown && (row.contactId || matchById.has(row.id))) return false;
       if (!needle) return true;
-      return [row.fullName, row.email, row.company, row.title, row.linkedinUrl, row.xHandle]
+      return [row.fullName, row.email, row.company, row.title, activeLinkedin, row.xHandle]
         .filter(Boolean)
         .some((field) => field!.toLowerCase().includes(needle));
     });
-  }, [rows, query, hideKnown, matchById]);
+  }, [rows, query, hideKnown, onlyWithLinkedin, foundUrls, matchById]);
 
-  // Already-connected people are excluded from every bulk action: connecting them again is a
-  // no-op, so offering it would be a button that claims to do something and does not. A
-  // MATCHED row is not excluded — connecting it is what puts this event on their timeline.
-  const selectable = visible.filter((row) => !row.contactId);
-  const allSelected = selectable.length > 0 && selectable.every((r) => selected.has(r.id));
+  // Already-linked people cannot be ticked: logging them again would be a button that claims
+  // to do something and does not. A MATCHED row can — logging it puts this event on their
+  // timeline.
 
   /**
    * Only ever act on rows the user can currently see.
@@ -157,64 +209,19 @@ export function AttendeeRoster({
     });
   }
 
-  function toggleAll() {
-    setSelected((prev) => {
-      if (allSelected) {
-        const next = new Set(prev);
-        selectable.forEach((r) => next.delete(r.id));
-        return next;
-      }
-      return new Set([...prev, ...selectable.map((r) => r.id)]);
-    });
-  }
-
-  function openPreview() {
+  function logSelected() {
     if (actionable.length === 0) return;
-    // A result card describing the previous run must not sit above the next one.
-    setSummary(null);
-    start(async () => {
-      try {
-        setPreview(await previewConnectAttendees(eventId, actionable));
-      } catch (error) {
-        toast.error(friendlyError(error, "Couldn’t check those people — try again?"));
-      }
-    });
-  }
-
-  function commit() {
-    const ids = actionable;
-    start(async () => {
-      try {
-        const result = await addSpokenToConnections(eventId, ids);
-        setPreview(null);
-        // Keep the selection when the run was cut short by the time budget. The result card
-        // tells the user "they stay selected, so you can continue" — clearing here made that
-        // sentence false and left them re-picking hundreds of people by hand.
-        if (result.remaining > 0) {
-          const done = new Set(ids.slice(0, ids.length - result.remaining));
-          setSelected((prev) => new Set([...prev].filter((id) => !done.has(id))));
-        } else {
-          setSelected(new Set());
-        }
-        setSummary(result);
-        // Truthful headline: "added N" would be a lie when the plan cap bit part-way.
-        toast.success(
-          result.created + result.matched === 0
-            ? "No new connections to add"
-            : `${result.created} added — ${result.matched} already in your network`
-        );
-        router.refresh();
-      } catch (error) {
-        toast.error(friendlyError(error, "Couldn’t add those people — try again?"));
-      }
-    });
+    if (actionable.length > MAX_LOGGED) {
+      toast.error(`Pick up to ${MAX_LOGGED} people at a time`);
+      return;
+    }
+    router.push(`/capture?eventId=${eventId}&attendees=${actionable.join(",")}`);
   }
 
   function disconnect(attendeeId: string) {
     // Tracked per row: one shared flag disabled every other row's controls too, so unlinking
     // one person froze the whole list with no indication of which row was working.
     setBusyRow(attendeeId);
-    setSummary(null);
     start(async () => {
       try {
         await removeSpokenToConnection(eventId, attendeeId);
@@ -240,8 +247,6 @@ export function AttendeeRoster({
 
   return (
     <div className="space-y-4">
-      {summary ? <IngestResultCard summary={summary} /> : null}
-
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-56 flex-1">
           <Search
@@ -256,17 +261,48 @@ export function AttendeeRoster({
             aria-label="Search attendees"
           />
         </div>
+
+        {missingLinkedInCount > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={batchFindLinkedIns}
+            disabled={batchFinding}
+            className="h-9 gap-1.5 border-primary/40 text-primary hover:bg-primary/5 text-xs font-medium"
+          >
+            {batchFinding ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5 text-primary" />
+            )}
+            Find {missingLinkedInCount} Missing LinkedIns
+          </Button>
+        )}
+
+        <Button
+          variant={onlyWithLinkedin ? "secondary" : "ghost"}
+          size="sm"
+          onClick={() => setOnlyWithLinkedin((v) => !v)}
+          aria-pressed={onlyWithLinkedin}
+          className="text-xs"
+        >
+          {onlyWithLinkedin ? "All profiles" : "Has LinkedIn"}
+        </Button>
+
         <Button
           variant="ghost"
           size="sm"
           onClick={() => setHideKnown((v) => !v)}
           aria-pressed={hideKnown}
+          className="text-xs"
         >
           {hideKnown ? "Show everyone" : "Hide people I know"}
         </Button>
-        <Button variant="ghost" size="sm" onClick={toggleAll} disabled={selectable.length === 0}>
-          {allSelected ? "Clear selection" : "Select all"}
-        </Button>
+        {selected.size > 0 ? (
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())} className="text-xs">
+            Clear selection
+          </Button>
+        ) : null}
       </div>
 
       <ul className="divide-y divide-border/70 rounded-2xl border border-border/70 bg-card">
@@ -276,23 +312,58 @@ export function AttendeeRoster({
           const seenBefore = historyById.get(row.id) ?? 0;
           const busy = busyRow === row.id;
           const who = row.fullName ?? row.email ?? "this guest";
+          const linkedin = foundUrls[row.id] || row.linkedinUrl;
+          const isFindingLinkedIn = findingRow === row.id;
+
           return (
             <li key={row.id} className="flex items-center gap-3 px-4 py-3">
               <Checkbox
                 checked={selected.has(row.id)}
                 onCheckedChange={() => toggle(row.id)}
                 disabled={connected || busy}
-                aria-label={`I spoke to ${who}`}
+                aria-label={`I met ${who}`}
               />
               <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-1.5 truncate text-sm font-medium text-ink">
-                  <span className="truncate">{row.fullName ?? row.email ?? "Unnamed guest"}</span>
-                  {row.attendeeRole && ROLE_LABEL[row.attendeeRole] ? (
-                    <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-3xs font-normal text-muted-foreground">
-                      {ROLE_LABEL[row.attendeeRole]}
-                    </span>
-                  ) : null}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="flex items-center gap-1.5 truncate text-sm font-medium text-ink">
+                    <span className="truncate">{row.fullName ?? row.email ?? "Unnamed guest"}</span>
+                    {row.attendeeRole && ROLE_LABEL[row.attendeeRole] ? (
+                      <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-3xs font-normal text-muted-foreground">
+                        {ROLE_LABEL[row.attendeeRole]}
+                      </span>
+                    ) : null}
+                  </p>
+
+                  {/* LinkedIn Profile Badge / Automatic Finder */}
+                  {linkedin ? (
+                    <a
+                      href={linkedin}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Open ${who}'s LinkedIn profile`}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-3xs font-medium text-blue-600 transition-colors hover:bg-blue-500/20 dark:text-blue-400"
+                    >
+                      <ExternalLink className="size-2.5" aria-hidden />
+                      LinkedIn
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => findLinkedIn(row.id)}
+                      disabled={isFindingLinkedIn}
+                      title={`Find ${who}'s LinkedIn profile with AI`}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/70 px-1.5 py-0.5 text-3xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+                    >
+                      {isFindingLinkedIn ? (
+                        <Loader2 className="size-2.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="size-2.5 text-primary" />
+                      )}
+                      Find LinkedIn
+                    </button>
+                  )}
+                </div>
+
                 <p className="truncate text-xs text-muted-foreground">
                   {[row.title, row.company].filter(Boolean).join(" · ") ||
                     row.email ||
@@ -327,7 +398,7 @@ export function AttendeeRoster({
                   {ordinalSuffix(seenBefore)} event together
                 </span>
               ) : match ? (
-                // Known, but not yet attached to this event. Still selectable: connecting is
+                // Known, but not yet attached to this event. Still selectable: logging is
                 // what adds this event to the timeline you already have for them.
                 <IntentLink
                   href={`/contacts/${match.contactId}`}
@@ -372,13 +443,9 @@ export function AttendeeRoster({
           <p className="text-sm text-muted-foreground">
             {actionable.length} {actionable.length === 1 ? "person" : "people"} selected
           </p>
-          <Button onClick={openPreview} disabled={pending}>
-            {pending ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <UserPlus className="size-4" aria-hidden />
-            )}
-            Add to connections
+          <Button onClick={logSelected}>
+            <NotebookPen className="size-4" aria-hidden />
+            Log these people
           </Button>
         </div>
       ) : null}
@@ -396,14 +463,6 @@ export function AttendeeRoster({
         />
       ) : null}
 
-      {preview ? (
-        <ConnectPreviewDialog
-          rows={preview}
-          pending={pending}
-          onCancel={() => setPreview(null)}
-          onConfirm={commit}
-        />
-      ) : null}
     </div>
   );
 }

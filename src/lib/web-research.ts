@@ -34,6 +34,8 @@ import { resolveOrCreateContact, type ResolveOptions } from "@/lib/contact-resol
 import { wikidataOrg } from "@/lib/org-brand-learn";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
 import { readWebPage, type WebPage } from "@/lib/web/read-page";
+import { normalizeCompanyKey } from "@/lib/company-name";
+import { sharedAvatarSlug } from "@/lib/shared-avatars";
 
 const PERSON_OPERATION = "research.person" as const;
 const COMPANY_OPERATION = "research.company" as const;
@@ -274,9 +276,35 @@ export const researchPersonWithWebSearch: PersonResearcher = (userId, subject, s
 
 class NoAiError extends Error {}
 
-/** The cache key for a subject: the prompt itself, so a prompt edit is a miss by construction. */
+/**
+ * Research cache keys name WHO was asked about, not the prompt that asked. Chat, Find people,
+ * a meeting guest's Look up and capture each pass different anchors for the same person (or
+ * a homepage excerpt for the same company), and keying on the prompt paid for one search per
+ * caller. The prompt still carries every anchor; only the key is shared.
+ *
+ * Bump RESEARCH_KEY_VERSION when SYSTEM, COMPANY_SYSTEM or DISCOVER_SYSTEM changes in a way
+ * that should not reuse old answers — a prompt edit is no longer a miss by itself.
+ */
+const RESEARCH_KEY_VERSION = 2;
+
+const keyText = (value: string | null | undefined) => (value ? value.toLowerCase().replace(/\s+/g, " ").trim() : null);
+
+/** A LinkedIn profile is the person; without one, name plus whatever pins them down. */
 function personKeyParts(subject: PersonSubject) {
-  return { system: SYSTEM, user: subjectPrompt(subject) };
+  const slug = sharedAvatarSlug(subject.linkedinUrl);
+  if (slug) return { v: RESEARCH_KEY_VERSION, linkedin: slug };
+  return {
+    v: RESEARCH_KEY_VERSION,
+    name: keyText(subject.fullName),
+    company: subject.company ? normalizeCompanyKey(subject.company) : null,
+    domain: subject.domain,
+    context: keyText(subject.context),
+  };
+}
+
+/** The company by name and website; the homepage excerpt /find adds is input, not identity. */
+function companyKeyParts(subject: CompanySubject, website: string | null) {
+  return { v: RESEARCH_KEY_VERSION, company: normalizeCompanyKey(subject.name), website };
 }
 
 /**
@@ -307,9 +335,10 @@ export async function researchPerson(
         const { json, sources } = await research(userId, subject, options.signal);
         return toPersonDossier(subject, json, sources, now());
       },
-      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh },
+      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh, singleFlight: true, signal: options.signal },
     );
-    return { ok: true, key: aiResultCacheKey(PERSON_OPERATION, keyParts), dossier };
+    // A shared answer may have been filed by a caller with other anchors: report this one's.
+    return { ok: true, key: aiResultCacheKey(PERSON_OPERATION, keyParts), dossier: { ...dossier, subject } };
   } catch (err) {
     const expected = expectedFailure(err);
     if (expected) return expected;
@@ -695,7 +724,7 @@ export async function researchCompany(
         maxOutputTokens: MAX_COMPANY_OUTPUT_TOKENS,
         signal,
       }));
-  const keyParts = { system: COMPANY_SYSTEM, user };
+  const keyParts = companyKeyParts(subject, website);
 
   try {
     const dossier = await withAiResultCache(
@@ -708,9 +737,9 @@ export async function researchCompany(
         const { json, sources } = await research(userId, user, options.signal);
         return toCompanyDossier(subject, website, json, sources, now());
       },
-      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh },
+      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh, singleFlight: true, signal: options.signal },
     );
-    return { ok: true, key: aiResultCacheKey(COMPANY_OPERATION, keyParts), dossier };
+    return { ok: true, key: aiResultCacheKey(COMPANY_OPERATION, keyParts), dossier: { ...dossier, subject } };
   } catch (err) {
     const expected = expectedFailure(err);
     if (expected) return expected;
@@ -840,7 +869,7 @@ export async function discoverPeople(
         maxOutputTokens: MAX_DISCOVERY_OUTPUT_TOKENS,
         signal,
       }));
-  const keyParts = { system: DISCOVER_SYSTEM, user };
+  const keyParts = { v: RESEARCH_KEY_VERSION, query: keyText(query) };
 
   try {
     const result = await withAiResultCache(
@@ -853,7 +882,7 @@ export async function discoverPeople(
         const { json, sources } = await research(userId, user, options.signal);
         return toDiscoveryResult(query, json, sources, now());
       },
-      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh },
+      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh, singleFlight: true, signal: options.signal },
     );
     return { ok: true, key: aiResultCacheKey(DISCOVER_OPERATION, keyParts), result };
   } catch (err) {

@@ -10,7 +10,9 @@ import type { CaptureHistoryItem, CaptureHistoryPage } from "@/lib/capture-histo
 import { timelineDayLabel } from "@/lib/timeline-date";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CAPTURE_METHOD_META, capturePhotoSrc } from "@/components/capture/capture-source-meta";
+import { CAPTURE_METHOD_META } from "@/components/capture/capture-source-meta";
+import { NOTE_SOURCE_LABEL, NoteSourceMark } from "@/components/capture/note-source-mark";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
@@ -137,7 +139,6 @@ function CaptureHistoryRow({
 }) {
   const hydrated = useHydrated();
   const primary = CAPTURE_METHOD_META[item.method];
-  const Icon = primary.icon;
   const created = new Date(item.createdAt);
   const counts = [
     plural(item.peopleCount, "person", "people"),
@@ -155,28 +156,13 @@ function CaptureHistoryRow({
           href={`/capture/${item.id}`}
           className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-3 text-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
-          {item.thumbnailIds.length > 0 ? (
-            <span className="relative size-12 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted">
-              {/* eslint-disable-next-line @next/next/no-img-element -- served by an
-                  auth-gated API route, not a remote origin next/image can optimise. */}
-              <img
-                src={capturePhotoSrc(item.thumbnailIds[0]!)}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                className="size-full object-cover"
-              />
-              {item.photoCount > 1 && (
-                <span className="absolute right-0.5 bottom-0.5 rounded bg-black/60 px-1 text-3xs leading-4 font-medium text-white">
-                  +{item.photoCount - 1}
-                </span>
-              )}
-            </span>
-          ) : (
-            <span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Icon className="size-5" aria-hidden />
-            </span>
-          )}
+          {/* Where the notes were taken; the footer names it. */}
+          <span
+            title={NOTE_SOURCE_LABEL[primary.source]}
+            className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"
+          >
+            <NoteSourceMark source={primary.source} />
+          </span>
 
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">
@@ -189,8 +175,16 @@ function CaptureHistoryRow({
                 </Badge>
               )}
             </span>
-            {item.names.length > 0 && (
-              <span className="mt-0.5 block truncate text-xs text-ink/80">{item.names.join(", ")}</span>
+            {item.people.length > 0 && (
+              <span className="mt-0.5 flex min-w-0 items-center gap-1 truncate text-xs text-ink/80">
+                {item.people.map((p, i) => (
+                  <span key={p.name} className="inline-flex min-w-0 items-center gap-1">
+                    <span className="truncate">{p.name}</span>
+                    {p.org && <BrandLogo key={p.org.domain} domain={p.org.domain} name={p.org.name} className="size-3.5" />}
+                    {i < item.people.length - 1 && <span className="-ml-1">,</span>}
+                  </span>
+                ))}
+              </span>
             )}
             {description && (
               <span className="mt-0.5 line-clamp-2 block text-muted-foreground">{description}</span>

@@ -550,16 +550,14 @@ export async function setPreviewUnreleasedAction(input: {
   const adminUserId = await requireAdminUserId();
   const store = await cookies();
 
-  if (input.on) {
-    store.set(PREVIEW_UNRELEASED_COOKIE, "1", {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      secure: process.env.NODE_ENV === "production",
-    });
-  } else {
-    store.delete(PREVIEW_UNRELEASED_COOKIE);
-  }
+  // "0" rather than a delete: a local dev server previews by default, so off must be explicit.
+  // Deployed builds only ever treat "1" as on, so "0" reads as off there too.
+  store.set(PREVIEW_UNRELEASED_COOKIE, input.on ? "1" : "0", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: process.env.NODE_ENV === "production",
+  });
 
   await recordAdminAction({
     adminUserId,

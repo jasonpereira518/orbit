@@ -14,6 +14,13 @@ export const SECRET_PATTERNS: ReadonlyArray<[string, RegExp]> = [
   ["github_token", /\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{30,}/g],
   ["slack_token", /\bxox[abprs]-[A-Za-z0-9-]{10,}/g],
   ["stripe_key", /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}/g],
+  // Stripe's webhook signing secret. Verifies inbound events, so a leaked one lets anyone
+  // forge a billing event; it lives in the same env var block as the key above and gets
+  // pasted into the same support threads.
+  ["stripe_webhook_secret", /\bwhsec_[A-Za-z0-9]{20,}/g],
+  // Google OAuth refresh tokens (the long-lived half of the grant) and client secrets.
+  ["google_oauth_refresh", /\b1\/\/[0-9A-Za-z_-]{30,}/g],
+  ["google_client_secret", /\bGOCSPX-[A-Za-z0-9_-]{20,}/g],
   ["aws_access_key", /\bAKIA[0-9A-Z]{16}\b/g],
   ["resend_key", /\bre_[A-Za-z0-9]{8,}_[A-Za-z0-9]{20,}/g],
   ["twilio_api_key_sid", /\bSK[0-9a-f]{32}\b/g],

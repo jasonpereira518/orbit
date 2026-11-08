@@ -189,7 +189,7 @@ const nextConfig: NextConfig = {
     // walks up past the worktree's own package-lock.json, picks the main checkout's, and
     // makes THAT the project root: every worktree's dev server then covers all the others.
     // Pinned, a cold .next went from 1.6 GB to 280 MB and first compiles got ~20% faster.
-    root: import.meta.dirname,
+    root: process.env.TURBOPACK_ROOT || import.meta.dirname,
     resolveAlias: {
       "@clerk/shared/apiUrlFromPublishableKey":
         "./node_modules/@clerk/shared/dist/apiUrlFromPublishableKey.mjs",

@@ -51,6 +51,7 @@ export type ExtensionAction =
   | "log_interaction"
   | "open_profile"
   | "event_roster"
+  | "log_connections"
   | "starters"
   | "schedule_follow_up"
   | "save_activity";
