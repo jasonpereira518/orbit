@@ -14,6 +14,7 @@ import { eventGradient, eventThemeVars } from "@/lib/events/theme";
 import { offsetMinutes } from "@/lib/events/wall-clock";
 import { CoverPaletteProbe } from "./cover-palette-probe";
 import { EventActions } from "./event-actions";
+import { ThemePalettePicker } from "./theme-palette-picker";
 import type { EventRecord } from "@/db/schema";
 
 /**
@@ -105,6 +106,14 @@ export function EventHero({ event }: { event: EventRecord }) {
             <div className="event-hero-scrim absolute inset-0" aria-hidden />
           </>
         ) : null}
+
+        <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
+          <ThemePalettePicker
+            eventId={event.id}
+            currentColor={accent}
+            themeLocked={event.themeLocked === 1}
+          />
+        </div>
 
         <div className="relative w-full p-5">
           <div className="flex flex-wrap items-center gap-2">

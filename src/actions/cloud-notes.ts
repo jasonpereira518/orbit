@@ -11,7 +11,16 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { cloudNoteFiles, cloudNoteSources, gmailConnections, outlookConnections, userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
-import { cloudAccessToken, isCloudProvider, listRecentFiles, type CloudFile, type CloudProvider } from "@/lib/cloud-files";
+import {
+  cloudAccessToken,
+  fileThumbnail,
+  isCloudProvider,
+  listRecentFiles,
+  previewText,
+  readFileText,
+  type CloudFile,
+  type CloudProvider,
+} from "@/lib/cloud-files";
 import { cloudReadError, extractCloudFiles, startCaptureRuns, type CloudExtractResult } from "@/lib/cloud-notes/extract";
 import { OPEN_RESCAN_MS, scanCloudNotesForUser, scanStaleCloudNotesForUser } from "@/lib/cloud-notes/scan";
 import { grantCoversCloudNotes } from "@/lib/cloud-notes/sources";
@@ -156,6 +165,69 @@ export async function listCloudNoteFiles(input: {
       files: page.files.map((f) => ({ ...f, status: byId.get(f.id)?.status ?? null, reason: byId.get(f.id)?.reason ?? null })),
       next: page.next,
     };
+  });
+}
+
+const MAX_THUMBS = 30;
+const THUMB_CONCURRENCY = 6;
+
+function parseFileRef(value: unknown): { id: string; name: string } {
+  const f = value as { id?: unknown; name?: unknown } | null;
+  if (!f || typeof f.id !== "string" || !FILE_ID.test(f.id) || typeof f.name !== "string") {
+    throw new UserFacingError("Couldn’t find that doc — refresh and try again");
+  }
+  return { id: f.id, name: f.name.slice(0, 300) };
+}
+
+/**
+ * First-page thumbnails for one page of the picker, keyed by file id. A doc whose thumbnail
+ * can't be had maps to null — the card keeps its icon — so one bad doc never fails the page.
+ */
+export async function cloudNoteThumbnails(input: {
+  provider: CloudProvider;
+  files: { id: string; name: string }[];
+}): Promise<ActionResult<Record<string, string | null>>> {
+  const userId = await requireCloudNotesUser();
+  return asActionResult(async () => {
+    const provider = parseProvider(input.provider);
+    const files = (Array.isArray(input.files) ? input.files : []).slice(0, MAX_THUMBS).map(parseFileRef);
+    const out: Record<string, string | null> = Object.fromEntries(files.map((f) => [f.id, null]));
+    if (!files.length || (await isDemoWorkspace(userId))) return out;
+    let token: string;
+    try {
+      token = await cloudAccessToken(userId, provider);
+    } catch {
+      return out;
+    }
+    for (let i = 0; i < files.length; i += THUMB_CONCURRENCY) {
+      await Promise.all(
+        files.slice(i, i + THUMB_CONCURRENCY).map(async (f) => {
+          out[f.id] = await fileThumbnail({ token }, provider, f).catch(() => null);
+        }),
+      );
+    }
+    return out;
+  });
+}
+
+/**
+ * The opening of one doc, for the picker's peek. Read on demand and never stored — nothing
+ * here reaches capture or a model.
+ */
+export async function previewCloudNote(input: {
+  provider: CloudProvider;
+  file: { id: string; name: string };
+}): Promise<ActionResult<{ text: string; truncated: boolean }>> {
+  const userId = await requireCloudNotesUser();
+  return asActionResult(async () => {
+    const provider = parseProvider(input.provider);
+    const file = parseFileRef(input.file);
+    if (await isDemoWorkspace(userId)) return { text: "", truncated: false };
+    try {
+      return previewText(await readFileText({ token: await cloudAccessToken(userId, provider) }, provider, file));
+    } catch (err) {
+      throw cloudReadError(err, provider);
+    }
   });
 }
 

@@ -5,6 +5,7 @@ import { ArrowLeft, BellRing, Users } from "lucide-react";
 import { getNoteBatch } from "@/actions/note-batches";
 import { CaptureSourceCard, CapturedAt } from "@/components/capture/capture-source-card";
 import { CAPTURE_METHOD_META } from "@/components/capture/capture-source-meta";
+import { NoteSourceMark } from "@/components/capture/note-source-mark";
 import { NoteBatchResultView } from "@/components/capture/note-batch-result";
 import { Badge } from "@/components/ui/badge";
 import { requireUserId } from "@/lib/auth";
@@ -34,7 +35,6 @@ export default async function NoteBatchPage({
       : batch.inputSources
   );
   const method = CAPTURE_METHOD_META[await captureMethodFor(await requireUserId(), { id: batch.id, result: batch.result, kinds })];
-  const MethodIcon = method.icon;
   const names = captureAttendeeNames(batch.result.participants);
   // The same line its Recent captures row is recognised by, else the method label, as there.
   const title =
@@ -73,7 +73,7 @@ export default async function NoteBatchPage({
             <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
               <CapturedAt iso={new Date(batch.createdAt).toISOString()} />
               <span className="inline-flex items-center gap-1.5">
-                <MethodIcon className="size-4" aria-hidden /> {method.label}
+                <NoteSourceMark source={method.source} className="size-4" /> {method.label}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Users className="size-4" aria-hidden /> {plural(names.length, "person", "people")}

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { ensureOnboarded, fillUntilEnabled } from "./helpers";
 
-// Starts with the name: the Gemini stub returns the first "First Last" pair as the person.
+// Starts with the name: the AI stub returns the first "First Last" pair as the person.
 const NOTE =
   "Ada Lovelace runs analytics at Babbage Labs. We met at the AWS Summit afterparty and talked about difference engines.";
 

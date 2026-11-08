@@ -14,7 +14,7 @@ import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contactTags, contacts, interactions, tags } from "../src/db/schema";
+import { companies, contactTags, contacts, interactions, tags, targetCompanies } from "../src/db/schema";
 import { isCometContact } from "../src/lib/comet";
 import {
   getDashboardCounts,
@@ -34,6 +34,9 @@ function check(label: string, ok: boolean, detail?: string) {
     console.error(`  FAIL ${label}${detail ? `\n       ${detail}` : ""}`);
   }
 }
+
+const rowsPlan = (r: unknown) =>
+  JSON.stringify((r as { rows?: unknown[] }).rows ?? r);
 
 const ago = (days: number) => new Date(Date.now() - days * DAY);
 const ahead = (days: number) => new Date(Date.now() + days * DAY);
@@ -165,6 +168,47 @@ async function breakdownChecks() {
     `${JSON.stringify(tiedOrder.map((t) => t.id))} vs ${JSON.stringify(expectedTied)}`);
 
   await db.delete(contacts).where(eq(contacts.userId, user));
+
+  // Target-company arm: A (target, relevance 0), B (relevance 0.8, no target), C (neither),
+  // D (both, must appear once as target_company). Targets rank first, then by relevance.
+  console.log("\nTarget-company contacts…");
+  const [co] = await db.insert(companies).values({ userId: user, name: "Target Co", nameNormalized: "target co" }).returning();
+  await db.insert(targetCompanies).values({ userId: user, companyId: co.id, priority: 1 });
+  const mk = async (name: string, rel: number | null, companyId?: string) => {
+    const [row] = await db.insert(contacts).values({ userId: user, fullName: name, companyId: companyId ?? null }).returning();
+    if (rel !== null) {
+      await db.execute(sql`update contacts set closeness_breakdown = ${JSON.stringify({ raw: 0.3, goalRelevance: rel })}::jsonb where id = ${row.id}`);
+    }
+    return row.id;
+  };
+  const idA = await mk("Target A", 0, co.id);
+  const idB = await mk("Goal B", 0.8);
+  await mk("Neither C", 0);
+  const idD = await mk("Both D", 0.5, co.id);
+  const mixed = await getGoalAlignedContactIds(user, 10);
+  check("target contacts first, then goal matches; C absent; D once",
+    JSON.stringify(mixed.map((m) => m.id)) === JSON.stringify([idD, idA, idB]),
+    JSON.stringify(mixed));
+  check("reason and companyName are set",
+    mixed[0].reason === "target_company" && mixed[0].companyName === "Target Co" &&
+      mixed[1].reason === "target_company" && mixed[2].reason === "goal" && mixed[2].companyName === null,
+    JSON.stringify(mixed));
+  // Priority beats relevance: a priority-2 target contact with higher relevance ranks
+  // below a priority-1 one.
+  const [co2] = await db.insert(companies).values({ userId: user, name: "Second Co", nameNormalized: "second co" }).returning();
+  await db.insert(targetCompanies).values({ userId: user, companyId: co2.id, priority: 2 });
+  const idE = await mk("Priority two E", 0.99, co2.id);
+  const prio = await getGoalAlignedContactIds(user, 10);
+  check("priority-1 target ranks before a higher-relevance priority-2 target",
+    JSON.stringify(prio.map((m) => m.id)) === JSON.stringify([idD, idA, idE, idB]),
+    JSON.stringify(prio));
+  const plan = rowsPlan(await db.execute(sql`explain select c.id from contacts c where c.user_id = ${user} and c.closeness_breakdown is not null and (c.closeness_breakdown->>'goalRelevance')::float8 > 0 order by (c.closeness_breakdown->>'goalRelevance')::float8 desc, c.updated_at desc, c.id desc limit 5`));
+  console.log(`  note goal-arm plan mentions contacts_goal_relevance_idx: ${plan.includes("contacts_goal_relevance_idx")}`);
+  const cap = await getGoalAlignedContactIds(user, 2);
+  check("limit respected with the target arm", cap.length === 2 && cap.every((m) => m.reason === "target_company"), JSON.stringify(cap));
+  await db.delete(contacts).where(eq(contacts.userId, user));
+  await db.delete(targetCompanies).where(eq(targetCompanies.userId, user));
+  await db.delete(companies).where(eq(companies.userId, user));
 }
 
 async function main() {
