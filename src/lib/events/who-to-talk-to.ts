@@ -31,6 +31,7 @@ export type WhoToTalkToRow = {
   name: string;
   company: string | null;
   title: string | null;
+  linkedinUrl?: string | null;
   contactId: string | null;
   score: number;
   bucket: "must" | "good" | "maybe" | "skip";
@@ -49,6 +50,7 @@ type RosterRow = {
   full_name: string | null;
   company: string | null;
   title: string | null;
+  linkedin_url: string | null;
   attendee_role: "attendee" | "host" | "speaker" | null;
   contact_id: string | null;
   /** From the contact this row resolves to, directly or through `contact_identities`. */
@@ -74,7 +76,7 @@ export async function whoToTalkTo(
     db
       .execute(
         sql`
-          SELECT a.id, a.full_name, a.company, a.title, a.attendee_role, a.contact_id,
+          SELECT a.id, a.full_name, a.company, a.title, a.linkedin_url, a.attendee_role, a.contact_id,
                  COALESCE(a.contact_id, ci.contact_id) AS matched_contact_id,
                  c.closeness_tier, c.last_interaction_at,
                  c.company AS contact_company, c.title AS contact_title,
@@ -157,6 +159,7 @@ export async function whoToTalkTo(
       name: row.full_name ?? "Someone",
       company: row.company ?? row.contact_company,
       title: row.title ?? row.contact_title,
+      linkedinUrl: row.linkedin_url,
       contactId: row.matched_contact_id,
       score: result.score,
       bucket: result.bucket,

@@ -5,16 +5,19 @@ import { EventCard } from "@/components/events/event-card";
 import { AddEventDialog } from "@/components/events/add-event-dialog";
 import { EventConnectionsCard } from "@/components/events/event-connections-card";
 import { EventsTabs } from "@/components/events/events-tabs";
+import { RecommendedEventsTab } from "@/components/events/recommended-events-tab";
 import { RepeatPeoplePanel } from "@/components/events/repeat-people-panel";
 import { EventsListSkeleton } from "@/components/loading/page-skeletons";
 import type { EventListRow } from "@/lib/events/store";
 import {
   getEventConnections,
+  getRecommendedEvents,
   getRepeatCoAttendees,
   listEventsByTab,
   listHiddenEvents,
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { Calendar, CheckCircle2, Sparkles, Users } from "lucide-react";
 
 export const metadata = { title: "Events" };
 
@@ -91,9 +94,12 @@ function EventGrid({
 }
 
 async function EventsList() {
-  const { upcoming, past } = await listEventsByTab();
+  const [{ upcoming, past }, recommended] = await Promise.all([
+    listEventsByTab(),
+    getRecommendedEvents().catch(() => []),
+  ]);
 
-  if (upcoming.length === 0 && past.length === 0) {
+  if (upcoming.length === 0 && past.length === 0 && recommended.length === 0) {
     return (
       <EventGrid
         events={[]}
@@ -111,13 +117,21 @@ async function EventsList() {
     <EventsTabs
       upcomingCount={upcoming.length}
       pastCount={past.length}
+      recommendedCount={recommended.length}
       upcoming={
         <EventGrid
           events={upcoming}
-          empty="Nothing coming up. Events you RSVP to will appear here as soon as you're confirmed."
+          empty={
+            <>
+              Nothing coming up yet. Add an event by link, or check the{" "}
+              <strong>Recommended For You</strong> tab to find upcoming events matching your
+              history.
+            </>
+          }
         />
       }
       past={<EventGrid events={past} empty="No past events yet." past />}
+      recommended={<RecommendedEventsTab recommendations={recommended} />}
     />
   );
 }
@@ -128,12 +142,60 @@ export default async function EventsPage() {
   const gate = await pageVisibilityGate("page.events");
   if (gate) return gate;
 
+  const [{ upcoming, past }] = await Promise.all([
+    listEventsByTab().catch(() => ({ upcoming: [], past: [] })),
+  ]);
+
+  const totalMet = past.reduce((acc, ev) => acc + (ev.attendeeCount ?? 0), 0);
+  const totalConnected = past.reduce((acc, ev) => acc + (ev.connectedCount ?? 0), 0);
+
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6 pb-12">
       <RenderStamp />
-      <div className="flex flex-wrap items-start justify-between gap-2">
+
+      {/* Header & Primary Actions */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <EventsHeader />
-        <AddEventDialog />
+        <div className="flex flex-wrap items-center gap-2">
+          <AddEventDialog />
+        </div>
+      </div>
+
+      {/* Stats Summary Strip */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-border/70 bg-card p-3 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Calendar className="size-3.5 text-primary" aria-hidden />
+            <span>Events Tracked</span>
+          </div>
+          <p className="mt-1 text-xl font-semibold text-ink">
+            {past.length + upcoming.length}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-border/70 bg-card p-3 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Users className="size-3.5 text-indigo-500" aria-hidden />
+            <span>People In Rooms</span>
+          </div>
+          <p className="mt-1 text-xl font-semibold text-ink">{totalMet}</p>
+        </div>
+
+        <div className="rounded-xl border border-border/70 bg-card p-3 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <CheckCircle2 className="size-3.5 text-emerald-500" aria-hidden />
+            <span>Network Added</span>
+          </div>
+          <p className="mt-1 text-xl font-semibold text-ink">{totalConnected}</p>
+        </div>
+
+        <div className="rounded-xl border border-border/70 bg-card p-3 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Sparkles className="size-3.5 text-amber-500" aria-hidden />
+            <span>Upcoming RSVPs</span>
+          </div>
+          <p className="mt-1 text-xl font-semibold text-ink">{upcoming.length}</p>
+        </div>
       </div>
 
       {/* Above the list: the point of keeping rosters is the pattern across them, and a

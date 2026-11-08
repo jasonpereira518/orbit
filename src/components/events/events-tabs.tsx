@@ -1,50 +1,62 @@
 "use client";
 
 /**
- * Upcoming | Past on the events page.
+ * Upcoming | Past | Recommended on the events page.
  *
- * Both lists are rendered on the server and arrive together; this only chooses which one
+ * All lists are rendered on the server and arrive together; this only chooses which one
  * shows. Switching is therefore instant and needs no round trip, and the inactive panel keeps
- * its place (and its scroll-restored images) rather than being thrown away.
- *
- * The opening tab is Upcoming when there is anything coming up, and Past otherwise — a user
- * whose calendar is empty for the next month should land on the events they have been to,
- * not on an empty state.
- *
- * The segmented control is the one `people-list-shell.tsx` set: a sliding pill under the
- * selected label. Arrow keys move between the two tabs, as the ARIA tabs pattern expects.
+ * its place rather than being thrown away.
  */
 import { useId, useRef, useState } from "react";
 import { motion } from "motion/react";
+import { Sparkles } from "lucide-react";
 import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
-type TabKey = "upcoming" | "past";
+type TabKey = "upcoming" | "past" | "recommended";
 
 export function EventsTabs({
   upcomingCount,
   pastCount,
+  recommendedCount = 0,
   upcoming,
   past,
+  recommended,
 }: {
   upcomingCount: number;
   pastCount: number;
+  recommendedCount?: number;
   upcoming: React.ReactNode;
   past: React.ReactNode;
+  recommended?: React.ReactNode;
 }) {
-  const [tab, setTab] = useState<TabKey>(upcomingCount > 0 || pastCount === 0 ? "upcoming" : "past");
+  const [tab, setTab] = useState<TabKey>(
+    upcomingCount > 0 || pastCount === 0 ? "upcoming" : "past"
+  );
   const id = useId();
-  const refs = useRef<Record<TabKey, HTMLButtonElement | null>>({ upcoming: null, past: null });
+  const refs = useRef<Record<TabKey, HTMLButtonElement | null>>({
+    upcoming: null,
+    past: null,
+    recommended: null,
+  });
 
-  const tabs: { key: TabKey; label: string; count: number }[] = [
+  const tabs: { key: TabKey; label: string; count?: number; icon?: boolean }[] = [
     { key: "upcoming", label: "Upcoming", count: upcomingCount },
-    { key: "past", label: "Past", count: pastCount },
+    { key: "past", label: "Past Events", count: pastCount },
+    ...(recommended
+      ? [{ key: "recommended" as const, label: "Recommended For You", count: recommendedCount, icon: true }]
+      : []),
   ];
 
   function onKeyDown(event: React.KeyboardEvent) {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const next: TabKey = tab === "upcoming" ? "past" : "upcoming";
+    const curIdx = tabs.findIndex((t) => t.key === tab);
+    const nextIdx =
+      event.key === "ArrowRight"
+        ? (curIdx + 1) % tabs.length
+        : (curIdx - 1 + tabs.length) % tabs.length;
+    const next = tabs[nextIdx]!.key;
     setTab(next);
     refs.current[next]?.focus();
   }
@@ -55,7 +67,7 @@ export function EventsTabs({
         role="tablist"
         aria-label="Events"
         onKeyDown={onKeyDown}
-        className="relative flex w-fit rounded-lg border border-border/70 bg-card p-0.5 text-sm"
+        className="relative flex flex-wrap w-fit rounded-xl border border-border/70 bg-card p-1 text-sm shadow-sm"
       >
         {tabs.map((t) => {
           const selected = tab === t.key;
@@ -73,26 +85,29 @@ export function EventsTabs({
               tabIndex={selected ? 0 : -1}
               onClick={() => setTab(t.key)}
               className={cn(
-                "relative z-10 flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-colors duration-fast ease-house focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                "relative z-10 flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 font-medium transition-colors duration-fast ease-house focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                 selected ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground"
               )}
             >
               {selected && (
                 <motion.span
                   layoutId={`${id}-pill`}
-                  className="absolute inset-0 -z-10 rounded-md bg-primary shadow-sm"
+                  className="absolute inset-0 -z-10 rounded-lg bg-primary shadow-sm"
                   transition={SPRING_PILL}
                 />
               )}
+              {t.icon && <Sparkles className="size-3.5 text-amber-300" aria-hidden />}
               <span className="relative">{t.label}</span>
-              <span
-                className={cn(
-                  "relative text-xs tabular-nums",
-                  selected ? "text-primary-foreground/80" : "text-muted-foreground-subtle"
-                )}
-              >
-                {t.count}
-              </span>
+              {t.count !== undefined && (
+                <span
+                  className={cn(
+                    "relative text-xs tabular-nums",
+                    selected ? "text-primary-foreground/80" : "text-muted-foreground"
+                  )}
+                >
+                  {t.count}
+                </span>
+              )}
             </button>
           );
         })}
@@ -106,7 +121,7 @@ export function EventsTabs({
           aria-labelledby={`${id}-tab-${t.key}`}
           hidden={tab !== t.key}
         >
-          {t.key === "upcoming" ? upcoming : past}
+          {t.key === "upcoming" ? upcoming : t.key === "past" ? past : recommended}
         </div>
       ))}
     </div>
