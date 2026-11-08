@@ -28,7 +28,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { IntentLink } from "@/components/ui/intent-link";
-import { Check, Loader2, MoreHorizontal, NotebookPen, Pencil, Search, Users } from "lucide-react";
+import { Check, ExternalLink, Loader2, MoreHorizontal, NotebookPen, Pencil, Search, Sparkles, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -39,7 +39,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "@/lib/toast";
-import { removeSpokenToConnection } from "@/actions/events";
+import {
+  batchFindRosterLinkedInsAction,
+  findAttendeeLinkedInAction,
+  removeSpokenToConnection,
+} from "@/actions/events";
 import type { RosterRow } from "@/lib/events/types";
 import { EditAttendeeDialog } from "./edit-attendee-dialog";
 import { friendlyError } from "@/lib/errors";
@@ -98,6 +102,10 @@ export function AttendeeRoster({
   const router = useRouter();
   const [, start] = useTransition();
   const [busyRow, setBusyRow] = useState<string | null>(null);
+  const [findingRow, setFindingRow] = useState<string | null>(null);
+  const [batchFinding, setBatchFinding] = useState(false);
+  const [onlyWithLinkedin, setOnlyWithLinkedin] = useState(false);
+  const [foundUrls, setFoundUrls] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
   const [hideKnown, setHideKnown] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -112,17 +120,68 @@ export function AttendeeRoster({
     [history]
   );
 
+  const missingLinkedInCount = useMemo(() => {
+    return rows.filter((r) => !r.linkedinUrl && !foundUrls[r.id]).length;
+  }, [rows, foundUrls]);
+
+  function findLinkedIn(attendeeId: string) {
+    setFindingRow(attendeeId);
+    start(async () => {
+      try {
+        const result = await findAttendeeLinkedInAction(eventId, attendeeId);
+        if (!result.ok) {
+          toast.error(friendlyError(result.error, "LinkedIn profile not found"));
+          return;
+        }
+        if (result.value.linkedinUrl) {
+          setFoundUrls((prev) => ({ ...prev, [attendeeId]: result.value.linkedinUrl! }));
+          toast.success("LinkedIn profile found & saved!");
+          router.refresh();
+        }
+      } catch (err) {
+        toast.error(friendlyError(err, "Could not find LinkedIn"));
+      } finally {
+        setFindingRow(null);
+      }
+    });
+  }
+
+  function batchFindLinkedIns() {
+    setBatchFinding(true);
+    start(async () => {
+      try {
+        const result = await batchFindRosterLinkedInsAction(eventId);
+        if (!result.ok) {
+          toast.error(friendlyError(result.error, "Batch search failed"));
+          return;
+        }
+        toast.success(
+          result.value.found > 0
+            ? `Found ${result.value.found} new LinkedIn profile${result.value.found === 1 ? "" : "s"}!`
+            : "No additional LinkedIn profiles found."
+        );
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, "Batch search failed"));
+      } finally {
+        setBatchFinding(false);
+      }
+    });
+  }
+
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return rows.filter((row) => {
+      const activeLinkedin = foundUrls[row.id] || row.linkedinUrl;
+      if (onlyWithLinkedin && !activeLinkedin) return false;
       // "People I know" is both senses of known: linked to this event, and already a contact.
       if (hideKnown && (row.contactId || matchById.has(row.id))) return false;
       if (!needle) return true;
-      return [row.fullName, row.email, row.company, row.title, row.linkedinUrl, row.xHandle]
+      return [row.fullName, row.email, row.company, row.title, activeLinkedin, row.xHandle]
         .filter(Boolean)
         .some((field) => field!.toLowerCase().includes(needle));
     });
-  }, [rows, query, hideKnown, matchById]);
+  }, [rows, query, hideKnown, onlyWithLinkedin, foundUrls, matchById]);
 
   // Already-linked people cannot be ticked: logging them again would be a button that claims
   // to do something and does not. A MATCHED row can — logging it puts this event on their
@@ -202,16 +261,45 @@ export function AttendeeRoster({
             aria-label="Search attendees"
           />
         </div>
+
+        {missingLinkedInCount > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={batchFindLinkedIns}
+            disabled={batchFinding}
+            className="h-9 gap-1.5 border-primary/40 text-primary hover:bg-primary/5 text-xs font-medium"
+          >
+            {batchFinding ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5 text-primary" />
+            )}
+            Find {missingLinkedInCount} Missing LinkedIns
+          </Button>
+        )}
+
+        <Button
+          variant={onlyWithLinkedin ? "secondary" : "ghost"}
+          size="sm"
+          onClick={() => setOnlyWithLinkedin((v) => !v)}
+          aria-pressed={onlyWithLinkedin}
+          className="text-xs"
+        >
+          {onlyWithLinkedin ? "All profiles" : "Has LinkedIn"}
+        </Button>
+
         <Button
           variant="ghost"
           size="sm"
           onClick={() => setHideKnown((v) => !v)}
           aria-pressed={hideKnown}
+          className="text-xs"
         >
           {hideKnown ? "Show everyone" : "Hide people I know"}
         </Button>
         {selected.size > 0 ? (
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())} className="text-xs">
             Clear selection
           </Button>
         ) : null}
@@ -224,6 +312,9 @@ export function AttendeeRoster({
           const seenBefore = historyById.get(row.id) ?? 0;
           const busy = busyRow === row.id;
           const who = row.fullName ?? row.email ?? "this guest";
+          const linkedin = foundUrls[row.id] || row.linkedinUrl;
+          const isFindingLinkedIn = findingRow === row.id;
+
           return (
             <li key={row.id} className="flex items-center gap-3 px-4 py-3">
               <Checkbox
@@ -233,14 +324,46 @@ export function AttendeeRoster({
                 aria-label={`I met ${who}`}
               />
               <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-1.5 truncate text-sm font-medium text-ink">
-                  <span className="truncate">{row.fullName ?? row.email ?? "Unnamed guest"}</span>
-                  {row.attendeeRole && ROLE_LABEL[row.attendeeRole] ? (
-                    <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-3xs font-normal text-muted-foreground">
-                      {ROLE_LABEL[row.attendeeRole]}
-                    </span>
-                  ) : null}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="flex items-center gap-1.5 truncate text-sm font-medium text-ink">
+                    <span className="truncate">{row.fullName ?? row.email ?? "Unnamed guest"}</span>
+                    {row.attendeeRole && ROLE_LABEL[row.attendeeRole] ? (
+                      <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-3xs font-normal text-muted-foreground">
+                        {ROLE_LABEL[row.attendeeRole]}
+                      </span>
+                    ) : null}
+                  </p>
+
+                  {/* LinkedIn Profile Badge / Automatic Finder */}
+                  {linkedin ? (
+                    <a
+                      href={linkedin}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Open ${who}'s LinkedIn profile`}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-3xs font-medium text-blue-600 transition-colors hover:bg-blue-500/20 dark:text-blue-400"
+                    >
+                      <ExternalLink className="size-2.5" aria-hidden />
+                      LinkedIn
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => findLinkedIn(row.id)}
+                      disabled={isFindingLinkedIn}
+                      title={`Find ${who}'s LinkedIn profile with AI`}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/70 px-1.5 py-0.5 text-3xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+                    >
+                      {isFindingLinkedIn ? (
+                        <Loader2 className="size-2.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="size-2.5 text-primary" />
+                      )}
+                      Find LinkedIn
+                    </button>
+                  )}
+                </div>
+
                 <p className="truncate text-xs text-muted-foreground">
                   {[row.title, row.company].filter(Boolean).join(" · ") ||
                     row.email ||

@@ -77,11 +77,24 @@ import {
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
 import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
-import type {
+import {
   AttendeeRole,
   EventConnectionProvider,
   RosterRow,
 } from "@/lib/events/types";
+import {
+  getRecommendedUpcomingEvents,
+  type RecommendedEvent,
+} from "@/lib/events/recommendations";
+import { saveAndSyncEventNotes } from "@/lib/events/notes-sync";
+import {
+  findAttendeeLinkedIn,
+  batchFindRosterLinkedIns,
+} from "@/lib/events/linkedin-finder";
+import { getDb } from "@/db";
+import { eventProviderConnections } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
+import { decryptOrNull } from "@/lib/crypto";
 import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { GOOGLE_SCOPES, hasGmailReadScope, hasScope } from "@/lib/google-scopes";
@@ -908,3 +921,140 @@ export async function disconnectEventProvider(
   await deleteEventConnection(userId, provider);
   revalidateEvents();
 }
+
+/**
+ * Get personalized upcoming event recommendations relative to past event history.
+ */
+export async function getRecommendedEvents(): Promise<RecommendedEvent[]> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  return getRecommendedUpcomingEvents(userId);
+}
+
+/**
+ * Add a recommended event to the user's upcoming events.
+ */
+export async function addRecommendedEvent(
+  rec: RecommendedEvent
+): Promise<ActionResult<{ id: string; existing?: boolean }>> {
+  return asActionResult(async () => {
+    const userId = await requireUserForReleasedSurface(SURFACE);
+    const found = await findOrCreateEventByLink(
+      userId,
+      {
+        title: rec.title,
+        startsAt: rec.startsAt ? new Date(rec.startsAt) : null,
+        endsAt: rec.endsAt ? new Date(rec.endsAt) : null,
+        venue: rec.venue,
+        city: rec.city,
+        url: rec.url,
+        description: rec.description,
+        organizerName: rec.organizerName,
+        attendanceMode: rec.attendanceMode,
+        coverImageUrl: rec.coverImageUrl,
+        themeColor: rec.themeColor,
+        role: "attended",
+        rsvpStatus: "going",
+      },
+      "page"
+    );
+
+    revalidateEvents(found.id);
+    return { id: found.id, existing: found.existing };
+  });
+}
+
+/**
+ * Save notes for an event and sync them to Orbit's knowledge base and chat context.
+ */
+export async function saveEventNotes(
+  eventId: string,
+  notes: string
+): Promise<ActionResult<{ success: boolean; savedAt: string }>> {
+  return asActionResult(async () => {
+    const userId = await requireUserForReleasedSurface(SURFACE);
+    const result = await saveAndSyncEventNotes(userId, eventId, notes);
+    revalidateEvents(eventId);
+    revalidatePath("/knowledge");
+    return { success: result.ok, savedAt: result.savedAt.toISOString() };
+  });
+}
+
+/**
+ * Automatically locate and update the LinkedIn profile for an individual attendee.
+ */
+export async function findAttendeeLinkedInAction(
+  eventId: string,
+  attendeeId: string
+): Promise<ActionResult<{ linkedinUrl: string | null; source?: string }>> {
+  return asActionResult(async () => {
+    const userId = await requireUserForReleasedSurface(SURFACE);
+    const result = await findAttendeeLinkedIn(userId, eventId, attendeeId);
+    if (!result.ok) {
+      throw new UserFacingError(result.error ?? "Could not find a verified LinkedIn profile");
+    }
+    revalidateEvents(eventId);
+    return { linkedinUrl: result.linkedinUrl, source: result.source };
+  });
+}
+
+/**
+ * Batch resolve LinkedIn profiles for all attendees missing one on this roster.
+ */
+export async function batchFindRosterLinkedInsAction(
+  eventId: string
+): Promise<ActionResult<{ found: number; total: number }>> {
+  return asActionResult(async () => {
+    const userId = await requireUserForReleasedSurface(SURFACE);
+    const result = await batchFindRosterLinkedIns(userId, eventId);
+    revalidateEvents(eventId);
+    return result;
+  });
+}
+
+/**
+ * Trigger an immediate sync for a connected event provider (Luma, Partiful, Eventbrite).
+ */
+export async function triggerProviderSync(
+  provider: EventConnectionProvider
+): Promise<ActionResult<{ count: number }>> {
+  return asActionResult(async () => {
+    const userId = await requireSyncUser();
+    const db = await getDb();
+    const [row] = await db
+      .select({
+        provider: eventProviderConnections.provider,
+        apiKeyEncrypted: eventProviderConnections.apiKeyEncrypted,
+        accessTokenEncrypted: eventProviderConnections.accessTokenEncrypted,
+      })
+      .from(eventProviderConnections)
+      .where(
+        and(
+          eq(eventProviderConnections.userId, userId),
+          eq(eventProviderConnections.provider, provider)
+        )
+      )
+      .limit(1);
+
+    if (!row) {
+      throw new UserFacingError(`${provider} is not connected.`);
+    }
+
+    const secret = decryptOrNull(row.apiKeyEncrypted ?? row.accessTokenEncrypted);
+    if (!secret) {
+      throw new UserFacingError(`Connection credentials missing or expired.`);
+    }
+
+    let found = 0;
+    if (provider === "luma_ics" || provider === "partiful_ics") {
+      const stats = await syncIcsFeed(userId, secret, provider);
+      found = stats.created + stats.attached;
+    } else if (provider === "luma") {
+      const result = await listCalendarEvents(secret, null);
+      found = result.items.length;
+    }
+
+    revalidateEvents();
+    return { count: found };
+  });
+}
+

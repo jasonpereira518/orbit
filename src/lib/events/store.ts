@@ -263,6 +263,7 @@ export type CreateEventInput = {
   themeSource?: EventRecord["themeSource"];
   attendeeCount?: number | null;
   notes?: string | null;
+  rsvpStatus?: EventRecord["rsvpStatus"];
 };
 
 export async function createEventForUser(
@@ -295,6 +296,7 @@ export async function createEventForUser(
       themeSource: input.themeSource ?? null,
       attendeeCount: input.attendeeCount ?? null,
       notes: input.notes ?? null,
+      rsvpStatus: input.rsvpStatus ?? null,
     })
     .returning();
   return row!;
