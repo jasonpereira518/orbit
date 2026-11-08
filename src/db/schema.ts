@@ -3671,6 +3671,12 @@ export const chatThreads = pgTable(
     title: text("title"),
     /** Freeform context the user types for this conversation only — never extracted into contacts. */
     contextNote: text("context_note"),
+    /**
+     * The client turn id of the last answer the person stopped on purpose (audit L-25). A
+     * dropped connection and a Stop look the same to the server; this is how it tells them
+     * apart: only a stopped turn's question is discarded. See `markTurnStopped`.
+     */
+    stoppedTurnId: text("stopped_turn_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -3742,6 +3748,12 @@ export const chatMessages = pgTable(
      * model-written. Stored so the chips survive a reload; empty on rows from before v196.
      */
     followUps: jsonb("follow_ups").$type<string[]>().default([]),
+    /**
+     * The id the client minted for the turn that wrote this question, so a Stop that reaches
+     * the server after the question was saved can find and discard it. Null on assistant rows,
+     * versioned turns and every row from before SCHEMA_VERSION 174.
+     */
+    clientTurnId: text("client_turn_id"),
     /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
