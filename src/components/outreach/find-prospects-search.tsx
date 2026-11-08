@@ -41,26 +41,29 @@ const SEARCH_MODES = [
 ];
 
 const STARTER_PERSON_SUGGESTIONS = [
-  "Founders of AI startups in San Francisco",
-  "VP of Engineering at Series B developer tools",
-  "Product Managers at Stripe or Linear",
-  "Chief Technology Officers in New York",
+  "Software Engineers and Tech Leads at Google or Meta",
+  "Investment Banking Analysts at Goldman Sachs or Morgan Stanley",
+  "Management Consultants at McKinsey, BCG, or Bain",
+  "University Campus Recruiters for summer internships",
+  "Associate Product Managers (APM) and PMs at Stripe",
 ];
 
 const STARTER_COMPANY_SUGGESTIONS = [
+  "Google",
+  "Goldman Sachs",
+  "McKinsey & Company",
   "Stripe",
-  "Linear",
-  "Supabase",
-  "OpenAI",
-  "Figma",
+  "Morgan Stanley",
+  "Microsoft",
 ];
 
 const STARTER_ROLE_SUGGESTIONS = [
-  "AI Engineer",
-  "VP Engineering",
-  "Growth Lead",
-  "Product Designer",
-  "Head of Talent",
+  "Software Engineer",
+  "Investment Banking Analyst",
+  "Management Consultant",
+  "Product Manager",
+  "University Recruiter",
+  "Data Scientist",
 ];
 
 export function FindProspectsSearch({

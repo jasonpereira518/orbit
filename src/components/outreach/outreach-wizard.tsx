@@ -32,9 +32,14 @@ import { friendlyError } from "@/lib/errors";
 import {
   ArrowLeft,
   ArrowRight,
+  Briefcase,
   Check,
+  Code2,
+  Coffee,
+  Compass,
   ExternalLink,
   GraduationCap,
+  Lightbulb,
   Search,
   Sparkles,
   TrendingUp,
@@ -43,8 +48,18 @@ import {
 
 const STEPS = ["Target Audience", "Prospect Discovery", "Message Strategy"] as const;
 
-type ICPPreset = {
+type TrackId = "all" | "tech" | "business" | "alumni";
+
+const TRACKS = [
+  { id: "all" as TrackId, label: "🌟 All Goals" },
+  { id: "tech" as TrackId, label: "💻 Tech & Software" },
+  { id: "business" as TrackId, label: "💼 Business & Finance" },
+  { id: "alumni" as TrackId, label: "🎓 Alumni & Recruiters" },
+] as const;
+
+type StudentPreset = {
   id: string;
+  track: "tech" | "business" | "alumni";
   badge: string;
   icon: typeof Sparkles;
   title: string;
@@ -54,56 +69,110 @@ type ICPPreset = {
   replyCta: OutreachReplyCta;
   tone: string;
   channel: OutreachChannel;
+  templateSeed: string;
 };
 
-const ICP_PRESETS: ICPPreset[] = [
+const STUDENT_CAMPAIGN_PRESETS: StudentPreset[] = [
+  // Tech Track
   {
-    id: "investor",
-    badge: "Fundraising",
-    icon: Sparkles,
-    title: "Angel & Seed Investors",
-    name: "Angel & Seed Investor Outreach",
-    audience: "Angel investors and seed-stage VC partners investing in AI, fintech, and developer tools",
-    intent: "Introduce our product milestone and traction, and share a 2-minute deck intro",
-    replyCta: "book_intro",
-    tone: "founder",
-    channel: "email",
+    id: "swe_internship",
+    track: "tech",
+    badge: "Tech / SWE",
+    icon: Code2,
+    title: "SWE Internship & New Grad",
+    name: "Summer 2027 SWE Internship Outreach",
+    audience: "Software Engineers and Tech Leads at companies like Google, Stripe, Meta, or Microsoft",
+    intent: "Ask for a 15-minute coffee chat about their engineering team culture and advice on the summer SWE intern recruiting process",
+    replyCta: "ask_referral",
+    tone: "friendly",
+    channel: "linkedin",
+    templateSeed: "Hi {{name}}, I'm a student passionate about software engineering. Saw your recent work at {{company}} and would love to ask 2-3 quick questions about your team's tech stack and engineering culture if you have 15 minutes for a virtual coffee chat!",
   },
   {
-    id: "sales",
-    badge: "Enterprise",
+    id: "ai_data",
+    track: "tech",
+    badge: "Tech / AI & Data",
+    icon: Sparkles,
+    title: "AI, ML & Data Science",
+    name: "AI & Machine Learning Career Outreach",
+    audience: "Data Scientists and Machine Learning Engineers at AI and tech companies",
+    intent: "Inquire about applied AI project workflows, model deployment challenges, and advice for students breaking into ML",
+    replyCta: "book_intro",
+    tone: "friendly",
+    channel: "email",
+    templateSeed: "Hi {{name}}, I've been following {{company}}'s recent developments in AI. As a student building machine learning projects, I'd love to learn how your team approaches model evaluation in production if you have a brief moment.",
+  },
+  // Business Track
+  {
+    id: "finance_ib",
+    track: "business",
+    badge: "Business / Finance",
     icon: TrendingUp,
-    title: "Engineering Leaders",
-    name: "VP Engineering & CTO Growth Campaign",
-    audience: "VP of Engineering, CTO, and Head of Infrastructure at high-growth tech companies",
-    intent: "Ask about their current engineering workflow bottlenecks and offer a 10-minute demo",
+    title: "Investment Banking & Finance",
+    name: "Investment Banking & Finance Networking",
+    audience: "Investment Banking Analysts and Associates at Goldman Sachs, Morgan Stanley, or J.P. Morgan",
+    intent: "Conduct a 15-minute informational interview about deal flow, analyst experience, and recruiting timeline advice",
     replyCta: "book_intro",
     tone: "professional",
     channel: "email",
+    templateSeed: "Hi {{name}}, I hope you're having a great week. I'm a student studying finance and economics, and I've been closely following {{company}}'s advisory work. If your schedule permits, I would be grateful for a brief 15-minute conversation to hear about your analyst experience.",
   },
   {
-    id: "recruiting",
-    badge: "Talent",
-    icon: Users,
-    title: "Senior Engineers",
-    name: "Senior Fullstack & AI Engineers",
-    audience: "Staff and Senior Software Engineers specializing in React, Next.js, and TypeScript",
-    intent: "Invite them for a casual coffee chat about our engineering roadmap and open founding roles",
-    replyCta: "explore_partnership",
-    tone: "warm",
-    channel: "linkedin",
-  },
-  {
-    id: "campus",
-    badge: "Campus",
-    icon: GraduationCap,
-    title: "Tech Recruiters",
-    name: "University Tech Recruiters Outreach",
-    audience: "Technical University Recruiters and Campus Talent Leads at tier-1 tech companies",
-    intent: "Inquire about upcoming software engineering internship opportunities and referral next steps",
-    replyCta: "ask_referral",
-    tone: "humble",
+    id: "consulting",
+    track: "business",
+    badge: "Business / Consulting",
+    icon: Briefcase,
+    title: "Management Consulting & Strategy",
+    name: "Management Consulting Networking",
+    audience: "Business Analysts, Consultants, and Strategy Associates at McKinsey, BCG, or Bain",
+    intent: "Learn about their client engagement experiences and case interview preparation guidance",
+    replyCta: "book_intro",
+    tone: "professional",
     channel: "email",
+    templateSeed: "Hi {{name}}, I am a student interested in management consulting and strategic advisory. I saw your journey to {{company}} and would love to hear how you transitioned from university and what case problem types you enjoy most.",
+  },
+  {
+    id: "product_bizops",
+    track: "business",
+    badge: "Business & Tech",
+    icon: Compass,
+    title: "Product Management (APM)",
+    name: "Associate Product Manager (APM) Outreach",
+    audience: "Associate Product Managers (APM) and Product Managers at technology companies",
+    intent: "Ask about product prioritization, day-to-day cross-functional collaboration, and APM recruiting advice",
+    replyCta: "book_intro",
+    tone: "friendly",
+    channel: "linkedin",
+    templateSeed: "Hi {{name}}, I'm an aspiring product manager studying tech and business. I admire the user experience of {{company}}'s products and would love to ask how you break down user problems and what skills helped you most when starting out.",
+  },
+  // Alumni & Campus Track
+  {
+    id: "alumni_chat",
+    track: "alumni",
+    badge: "Alumni / All Majors",
+    icon: Coffee,
+    title: "Alumni Coffee Chat (Any Major)",
+    name: "University Alumni Coffee Chats",
+    audience: "Alumni from my university working in tech, finance, consulting, or marketing",
+    intent: "Connect as a fellow student/alumnus to learn about their career path post-graduation and ask for general advice",
+    replyCta: "book_intro",
+    tone: "friendly",
+    channel: "email",
+    templateSeed: "Hi {{name}}, I noticed you also attended our university! As a current student exploring career paths in {{company}}'s field, I'd love to hear about your transition after graduation over a quick 15-minute virtual chat.",
+  },
+  {
+    id: "campus_recruiters",
+    track: "alumni",
+    badge: "Recruiting",
+    icon: GraduationCap,
+    title: "University Campus Recruiters",
+    name: "Campus Talent & Recruiter Inquiries",
+    audience: "University Campus Recruiters and Early Talent Acquisition leads at target firms",
+    intent: "Inquire about upcoming university application deadlines, internship programs, and application next steps",
+    replyCta: "ask_referral",
+    tone: "professional",
+    channel: "email",
+    templateSeed: "Hi {{name}}, I'm a student applying for upcoming internship opportunities at {{company}}. I'm reaching out to confirm the best way to submit my application for consideration and would appreciate any guidance on the process.",
   },
 ];
 
@@ -122,6 +191,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [campaignId, setCampaignId] = useState(initialCampaignId || "");
+  const [selectedTrack, setSelectedTrack] = useState<TrackId>("all");
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [audienceQuery, setAudienceQuery] = useState("");
@@ -129,7 +199,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
   const [hasApollo, setHasApollo] = useState<boolean | null>(null);
   const [messageIntent, setMessageIntent] = useState("");
   const [replyCta, setReplyCta] = useState<OutreachReplyCta>("book_intro");
-  const [tone, setTone] = useState("professional");
+  const [tone, setTone] = useState("friendly");
   const [channel, setChannel] = useState<OutreachChannel>("email");
   const [templateSeed, setTemplateSeed] = useState("");
   const [enableSequence, setEnableSequence] = useState(true);
@@ -164,7 +234,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
     }
   }
 
-  function applyPreset(preset: ICPPreset) {
+  function applyPreset(preset: StudentPreset) {
     setSelectedPreset(preset.id);
     setName(preset.name);
     setAudienceQuery(preset.audience);
@@ -172,6 +242,8 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
     setReplyCta(preset.replyCta);
     setTone(preset.tone);
     setChannel(preset.channel);
+    setTemplateSeed(preset.templateSeed);
+    toast.success(`Loaded "${preset.title}" template — customize any detail below!`);
   }
 
   function goToCampaign(id: string) {
@@ -193,7 +265,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           setFilters((campaign.audienceFilters as AudienceFilters) || {});
           await loadCampaignData(campaign.id);
           setStep(1);
-          toast.success("Audience defined — review discovery criteria & search");
+          toast.success("Goal saved! Now discover people to reach out to.");
         } else {
           const updated = await updateCampaign(campaignId, {
             name,
@@ -206,7 +278,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           setStep(1);
         }
       } catch (err) {
-        toast.error(friendlyError(err, "Couldn’t save that audience — try again?"));
+        toast.error(friendlyError(err, "Couldn’t save that goal — try again?"));
       }
     });
   }
@@ -229,17 +301,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
         setLastSearchSource(result.source);
         await loadCampaignData(campaignId);
 
-        if (result.source === "demo") {
-          toast.success(
-            `Found ${result.matched} prospects` +
-              (result.mismatched ? `, ${result.mismatched} excluded` : "")
-          );
-        } else {
-          toast.success(
-            `Discovered ${result.matched} matching prospects` +
-              (result.mismatched ? ` (${result.mismatched} excluded)` : "")
-          );
-        }
+        toast.success(
+          `Found ${result.matched} matching professionals` +
+            (result.mismatched ? ` (${result.mismatched} filtered out)` : "")
+        );
       } catch (err) {
         toast.error(friendlyError(err, "Search failed — please try again"));
       }
@@ -263,13 +328,17 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           templateSeed: templateSeed || undefined,
           excludeLowSignal: true,
         });
-        toast.success("Drafts ready — opening campaign workspace");
+        toast.success("Personalized drafts generated — opening campaign!");
         goToCampaign(campaignId);
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t write those drafts — try again?"));
       }
     });
   }
+
+  const filteredPresets = selectedTrack === "all"
+    ? STUDENT_CAMPAIGN_PRESETS
+    : STUDENT_CAMPAIGN_PRESETS.filter((p) => p.track === selectedTrack);
 
   const stepProgress = STEPS.map((_, i) => {
     if (i < step) return 1;
@@ -294,7 +363,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
   return (
     <div className="space-y-6">
-      {/* Progress tracker */}
+      {/* Visual Step Progress Tracker */}
       <div
         className="grid gap-3"
         style={{ gridTemplateColumns: `repeat(${STEPS.length}, minmax(0, 1fr))` }}
@@ -343,19 +412,43 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
         })}
       </div>
 
-      {/* Step 0: Target Audience & ICP */}
+      {/* Step 0: Target Audience & Student Goal */}
       {step === 0 && (
         <section className="space-y-6 rounded-2xl border border-border/70 bg-card p-6 shadow-xs">
-          {/* Quick Presets */}
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-semibold text-ink uppercase tracking-wider">
-                Quick ICP Presets
-              </Label>
-              <span className="text-xs text-muted-foreground">Pick a template or define your own</span>
+          {/* Goal & Major Track Selector */}
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <Label className="text-xs font-semibold text-ink uppercase tracking-wider block">
+                  What is your campaign goal?
+                </Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Choose a starter template or describe your own target role and companies
+                </p>
+              </div>
+
+              {/* Major Track Filter Pills */}
+              <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border/60 bg-muted/40 p-1 text-xs">
+                {TRACKS.map((track) => (
+                  <button
+                    key={track.id}
+                    type="button"
+                    onClick={() => setSelectedTrack(track.id)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                      selectedTrack === track.id
+                        ? "bg-card text-foreground shadow-2xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {track.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-              {ICP_PRESETS.map((preset) => {
+
+            {/* Presets Grid */}
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredPresets.map((preset) => {
                 const Icon = preset.icon;
                 const isSelected = selectedPreset === preset.id;
                 return (
@@ -366,19 +459,19 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                     className={`flex flex-col text-left rounded-xl border p-3.5 transition-all text-xs ${
                       isSelected
                         ? "border-primary bg-primary/5 ring-1 ring-primary shadow-xs"
-                        : "border-border/60 bg-muted/20 hover:border-border hover:bg-muted/40"
+                        : "border-border/60 bg-muted/15 hover:border-border hover:bg-muted/30"
                     }`}
                   >
                     <div className="flex items-center justify-between w-full mb-1.5">
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary">
-                        <Icon className="h-3 w-3" />
+                        <Icon className="h-3.5 w-3.5" />
                         {preset.badge}
                       </span>
                       {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
                     </div>
-                    <span className="font-medium text-ink text-xs">{preset.title}</span>
-                    <span className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5">
-                      {preset.audience}
+                    <span className="font-semibold text-ink text-xs">{preset.title}</span>
+                    <span className="text-[11px] text-muted-foreground line-clamp-2 mt-1">
+                      {preset.intent}
                     </span>
                   </button>
                 );
@@ -386,7 +479,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             </div>
           </div>
 
-          <div className="space-y-4 pt-1">
+          <div className="space-y-4 pt-2 border-t border-border/40">
             <div className="space-y-1.5">
               <Label htmlFor="campaign-name" className="text-xs font-medium text-ink">
                 Campaign name
@@ -395,32 +488,38 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 id="campaign-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Series A Founders & Angel Outreach"
+                placeholder="e.g. Summer 2027 SWE Internships or Goldman Sachs IB Networking"
                 className="h-10 text-sm"
               />
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="audience" className="text-xs font-medium text-ink">
-                Target audience & ICP description
-              </Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="audience" className="text-xs font-medium text-ink">
+                  Who do you want to connect with?
+                </Label>
+                <span className="text-3xs text-muted-foreground">Target specific roles & firms</span>
+              </div>
               <Textarea
                 id="audience"
                 value={audienceQuery}
                 onChange={(e) => setAudienceQuery(e.target.value)}
                 rows={3}
-                placeholder="e.g. VP of Engineering and CTOs at Series A-C SaaS companies in San Francisco or Remote"
+                placeholder="e.g. Software engineers and engineering managers at Stripe in San Francisco or Remote, or Investment Banking Analysts at Goldman Sachs in New York"
                 className="text-sm"
               />
-              <p className="text-xs text-muted-foreground">
-                Orbit parses specific roles, company domains, seniority, and skills for targeted scraping.
-              </p>
+              <div className="flex items-start gap-1.5 rounded-lg border border-primary/20 bg-primary/5 p-2.5 text-xs text-muted-foreground">
+                <Lightbulb className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                <span>
+                  <strong>Tip for students:</strong> Reaching out to alumni, analysts, or campus recruiters who graduated 1–3 years ago gives the highest reply rates!
+                </span>
+              </div>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="reply-cta" className="text-xs font-medium text-ink">
-                  Desired reply CTA
+                  Desired next step / Call to action
                 </Label>
                 <select
                   id="reply-cta"
@@ -438,7 +537,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
               <div className="space-y-1.5">
                 <Label htmlFor="channel-step0" className="text-xs font-medium text-ink">
-                  Primary channel
+                  Preferred outreach channel
                 </Label>
                 <select
                   id="channel-step0"
@@ -448,7 +547,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 >
                   {OUTREACH_CHANNELS.map((c) => (
                     <option key={c} value={c}>
-                      {c.charAt(0).toUpperCase() + c.slice(1)}
+                      {c === "email" ? "Email (Gmail / Outlook)" : c === "linkedin" ? "LinkedIn (Connection & Message)" : "SMS"}
                     </option>
                   ))}
                 </select>
@@ -464,7 +563,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                   onChange={(e) => setEnableSequence(e.target.checked)}
                   className="rounded border-border text-primary focus:ring-primary h-4 w-4"
                 />
-                Enable automated multi-step sequence (typically improves reply rates 2-3x)
+                Enable automated friendly follow-up (busy professionals often appreciate a polite reminder after 3-4 days!)
               </label>
 
               {enableSequence && (
@@ -500,25 +599,25 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             <Button
               onClick={handleAudienceNext}
               disabled={pending || !audienceQuery.trim()}
-              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 shadow-xs"
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 shadow-xs text-xs font-medium"
             >
-              Continue to Prospect Discovery
+              Continue to Discover People
               <ArrowRight className="h-4 w-4" />
             </Button>
           </div>
         </section>
       )}
 
-      {/* Step 1: Prospect Discovery & Live Preview */}
+      {/* Step 1: Discover & Review Professionals */}
       {step === 1 && (
         <section className="space-y-5 rounded-2xl border border-border/70 bg-card p-6 shadow-xs">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 pb-3">
             <div>
               <h2 className="text-base font-semibold text-ink font-[family-name:var(--font-display)]">
-                Prospect Discovery Criteria
+                Discover Professionals
               </h2>
               <p className="text-xs text-muted-foreground">
-                Fine-tune target criteria, scrape live candidates with BrightData, and preview effectiveness scores
+                Orbit finds verified public profiles and company news so your message feels authentic and informed
               </p>
             </div>
             <Button
@@ -527,7 +626,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
               className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs text-xs h-9"
             >
               <Search className="h-3.5 w-3.5" />
-              {pending ? "Scraping & Discovering..." : "Search & Scrape Prospects"}
+              {pending ? "Finding Professionals..." : "Search & Find People"}
             </Button>
           </div>
 
@@ -543,16 +642,16 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-ink uppercase tracking-wider">
-                    Discovered Prospects Preview ({discoveredProspects.length})
+                    People Found ({discoveredProspects.length})
                   </span>
                   <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-[10px]">
                     <Sparkles className="mr-1 h-2.5 w-2.5 text-emerald-500 inline" />
-                    Scored & Verified
+                    Scored for Student Match
                   </Badge>
                 </div>
                 {lastSearchSource && (
                   <span className="text-xs text-muted-foreground">
-                    Engine: <strong className="text-ink capitalize">{lastSearchSource.replaceAll("_", " ")}</strong>
+                    Source: <strong className="text-ink capitalize">{lastSearchSource.replaceAll("_", " ")}</strong>
                   </span>
                 )}
               </div>
@@ -563,6 +662,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                   const avatarUrl = (enrichment.avatarUrl as string) || null;
                   const score = typeof enrichment.effectivenessScore === "number" ? enrichment.effectivenessScore : null;
                   const news = (enrichment.newsContext as string) || (enrichment.recentNews as string) || null;
+                  const reasons = (enrichment.scoreReasons as string[]) || [];
 
                   return (
                     <div
@@ -589,22 +689,25 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between gap-1">
-                            <span className="font-medium text-ink truncate">{prospect.fullName}</span>
+                            <span className="font-semibold text-ink truncate">{prospect.fullName}</span>
                             {score !== null && (
-                              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums border ${
-                                score >= 80
-                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                                  : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
-                              }`}>
+                              <span
+                                title={reasons.join(" • ") || "Match score"}
+                                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums border ${
+                                  score >= 80
+                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                    : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                                }`}
+                              >
                                 {score}% Match
                               </span>
                             )}
                           </div>
-                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                          <p className="text-[11px] text-muted-foreground truncate mt-0.5 font-medium">
                             {prospect.title || "Target Role"}
                           </p>
-                          <p className="text-[11px] text-muted-foreground font-medium truncate">
-                            {prospect.company || "Leading Tech Firm"}
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            {prospect.company || "Target Company"}
                           </p>
                         </div>
                       </div>
@@ -624,9 +727,9 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                             href={prospect.linkedinUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+                            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
                           >
-                            LinkedIn
+                            View on LinkedIn
                             <ExternalLink className="h-2.5 w-2.5" />
                           </a>
                         </div>
@@ -639,9 +742,9 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           ) : (
             <div className="rounded-xl border border-dashed border-border/80 bg-muted/15 p-8 text-center space-y-2">
               <Search className="mx-auto h-7 w-7 text-muted-foreground/60" />
-              <p className="text-sm font-medium text-ink">No prospects discovered yet</p>
+              <p className="text-sm font-semibold text-ink">No professionals discovered yet</p>
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                Click &quot;Search & Scrape Prospects&quot; to scan for real candidates matching your ICP criteria.
+                Click &quot;Search & Find People&quot; above to find real professionals and recruiters matching your criteria.
               </p>
             </div>
           )}
@@ -651,7 +754,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
               variant="outline"
               onClick={() => setStep(0)}
               disabled={pending}
-              className="gap-1.5 h-10 px-4 text-xs"
+              className="gap-1.5 h-10 px-4 text-xs font-medium"
             >
               <ArrowLeft className="h-4 w-4" />
               Back to Audience
@@ -659,7 +762,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             <Button
               onClick={() => setStep(2)}
               disabled={pending}
-              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 shadow-xs text-xs"
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 shadow-xs text-xs font-medium"
             >
               Continue to Message Strategy
               <ArrowRight className="h-4 w-4" />
@@ -668,7 +771,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
         </section>
       )}
 
-      {/* Step 2: Message Strategy & AI Personalization */}
+      {/* Step 2: Message Strategy & Personalized Drafts */}
       {step === 2 && (
         <section className="space-y-5 rounded-2xl border border-border/70 bg-card p-6 shadow-xs">
           <div>
@@ -676,32 +779,32 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
               Personalized Message Strategy
             </h2>
             <p className="text-xs text-muted-foreground">
-              Define the goal of your message. AI uses recent news catalysts and shared affinity to personalize each draft.
+              Define what you want to say. AI will write a unique, personalized note for each person referencing their role and company.
             </p>
           </div>
 
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="intent" className="text-xs font-medium text-ink">
-                Message intent & value proposition
+                What is your message goal? (Message intent)
               </Label>
               <Textarea
                 id="intent"
                 value={messageIntent}
                 onChange={(e) => setMessageIntent(e.target.value)}
                 rows={3}
-                placeholder="e.g. Inquire about current engineering roadmap priorities, highlight relevant case studies, and propose a quick 10-minute intro call"
+                placeholder="e.g. Introduce myself as a student interested in software engineering or consulting, ask for a 15-minute coffee chat to learn about their team, and see if they have recruiting advice"
                 className="text-sm"
               />
               <p className="text-xs text-muted-foreground">
-                Orbit weaves company news, funding milestones, and specific roles directly into the generated copy.
+                Orbit weaves in recent company milestones (deals, launches) and their specific role to make each message feel personal.
               </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="tone-step2" className="text-xs font-medium text-ink">
-                  Voice & Tone
+                  Tone
                 </Label>
                 <select
                   id="tone-step2"
@@ -709,17 +812,15 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                   value={tone}
                   onChange={(e) => setTone(e.target.value)}
                 >
-                  {OUTREACH_TONES.map((t) => (
-                    <option key={t} value={t}>
-                      {t.charAt(0).toUpperCase() + t.slice(1)}
-                    </option>
-                  ))}
+                  <option value="friendly">Friendly & Respectful (Recommended for students & alumni)</option>
+                  <option value="professional">Professional & Polished (Great for finance & consulting)</option>
+                  <option value="direct">Direct & Concise (Best for founders & busy engineers)</option>
                 </select>
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="channel-step2" className="text-xs font-medium text-ink">
-                  Default channel
+                  Default delivery channel
                 </Label>
                 <select
                   id="channel-step2"
@@ -729,27 +830,77 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 >
                   {OUTREACH_CHANNELS.map((c) => (
                     <option key={c} value={c}>
-                      {c.charAt(0).toUpperCase() + c.slice(1)}
+                      {c === "email" ? "Email (Gmail / Outlook)" : c === "linkedin" ? "LinkedIn" : "SMS"}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="seed" className="text-xs font-medium text-ink">
-                Optional template outline or prompt seed
-              </Label>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="seed" className="text-xs font-medium text-ink">
+                  Template outline or starter note (optional)
+                </Label>
+                <span className="text-3xs text-muted-foreground">Pick a starter or write your own</span>
+              </div>
+
+              {/* Starter Template Pills */}
+              <div className="flex flex-wrap gap-2 pb-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={() =>
+                    setTemplateSeed(
+                      "Hi {{name}}, I'm a student interested in {{company}}'s work. I'd love to ask 2-3 quick questions about your team and your career path over a brief 15-minute virtual coffee chat if you have time!"
+                    )
+                  }
+                  className="text-xs gap-1"
+                >
+                  <Coffee className="h-3 w-3 text-primary" />
+                  ☕ 15-Min Coffee Chat
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={() =>
+                    setTemplateSeed(
+                      "Hi {{name}}, I'm applying for upcoming internship roles at {{company}} and saw your impressive work on the team. If your schedule allows, I would be grateful for any advice on the team's interview process."
+                    )
+                  }
+                  className="text-xs gap-1"
+                >
+                  <GraduationCap className="h-3 w-3 text-primary" />
+                  📄 Internship Advice
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={() =>
+                    setTemplateSeed(
+                      "Hi {{name}}, I noticed we share an alumni connection! As a student exploring careers in your field, I would love to hear what surprised you most transitioning into {{company}}."
+                    )
+                  }
+                  className="text-xs gap-1"
+                >
+                  <Users className="h-3 w-3 text-primary" />
+                  🎓 Fellow Alum Connection
+                </Button>
+              </div>
+
               <Textarea
                 id="seed"
                 value={templateSeed}
                 onChange={(e) => setTemplateSeed(e.target.value)}
                 rows={3}
-                placeholder="e.g. Hi {{name}}, saw the exciting news regarding {{company}}'s recent launch..."
+                placeholder="Hi {{name}}, I'm reaching out because I saw your work at {{company}}..."
                 className="text-sm"
               />
               <p className="text-xs text-muted-foreground">
-                Leave blank for fully autonomous personalization, or provide key bullet points you want included.
+                Leave blank to let AI draft from scratch, or provide an outline you want customized for each recipient.
               </p>
             </div>
           </div>
@@ -759,7 +910,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
               variant="outline"
               onClick={() => setStep(1)}
               disabled={pending}
-              className="gap-1.5 h-10 px-4 text-xs"
+              className="gap-1.5 h-10 px-4 text-xs font-medium"
             >
               <ArrowLeft className="h-4 w-4" />
               Back to Prospects
@@ -767,7 +918,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
             <Button
               onClick={handleMessageNext}
               disabled={pending || !messageIntent.trim()}
-              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 shadow-xs text-xs"
+              className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-5 shadow-xs text-xs font-medium"
             >
               {pending ? "Writing personalized drafts..." : "Generate Drafts & Launch Campaign"}
               <Sparkles className="h-4 w-4" />
