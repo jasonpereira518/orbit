@@ -7,11 +7,10 @@
  *    and AI name guessing.
  */
 
-import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import {
-  downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
   isLinkedInProfilePhoto,
   isUnusableAvatarUrl,
