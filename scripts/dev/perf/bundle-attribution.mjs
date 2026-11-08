@@ -43,7 +43,7 @@ const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const val = new Map([...B64].map((c, i) => [c, i]));
 function decode(mappings) {
   const lines = [];
-  let src = 0, sl = 0, sc = 0, nm = 0;
+  let src = 0;
   for (const line of mappings.split(";")) {
     let gc = 0;
     const segs = [];
@@ -58,7 +58,7 @@ function decode(mappings) {
         else { f.push(v & 1 ? -(v >> 1) : v >> 1); v = 0; shift = 0; }
       }
       gc += f[0];
-      if (f.length > 1) { src += f[1]; sl += f[2]; sc += f[3]; if (f.length > 4) nm += f[4]; segs.push([gc, src]); }
+      if (f.length > 1) { src += f[1]; segs.push([gc, src]); }
       else segs.push([gc, -1]);
     }
     lines.push(segs);
