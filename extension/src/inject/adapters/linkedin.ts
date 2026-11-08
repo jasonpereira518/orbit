@@ -36,11 +36,21 @@ import {
   type SiteAdapter,
 } from "./types";
 
-const ADAPTER_VERSION = "linkedin-1";
+const ADAPTER_VERSION = "linkedin-2";
 const PROFILE_BLOB_CHARS = 10_000;
 const THREAD_BLOB_CHARS = 6_000;
 const POST_BLOB_CHARS = 4_000;
 const MAX_CANDIDATES = 10;
+/**
+ * On My Network → Connections (newest first): the people offered for "Log at an event". 25 is
+ * the event debrief's guest cap (MAX_LOGGED_CONNECTIONS on the server).
+ */
+const MAX_CONNECTIONS = 25;
+
+/** LinkedIn's own list of the user's connections, where "Log at an event" is offered. */
+function isConnectionsPath(path: string): boolean {
+  return /^\/mynetwork\/invite-connect\/connections/i.test(path);
+}
 
 function pageKind(url: URL): PageKind {
   const path = url.pathname;
@@ -237,7 +247,7 @@ function postCommentary(root: Element | null, warnings: string[]): string | unde
   );
 }
 
-function listCandidates(warnings: string[]) {
+function listCandidates(warnings: string[], max: number) {
   return (
     attempt(warnings, "list-candidates", () => {
       const links = Array.from(
@@ -247,14 +257,14 @@ function listCandidates(warnings: string[]) {
       for (const link of links) {
         // Only what is already rendered. No scrolling, no pagination — that is
         // the line between reading a page and scraping a site.
-        if (seen.size >= MAX_CANDIDATES) break;
+        if (seen.size >= max) break;
         const slug = linkedinSlug(link.href);
         if (!slug || seen.has(slug)) continue;
         const name = (link.textContent ?? "").trim().split("\n")[0].trim();
         if (!isLikelyPersonName(name)) continue;
-        const card = link.closest("li, .entity-result, [data-view-name]");
+        const card = link.closest("li, .entity-result, .mn-connection-card, [data-view-name]");
         const subtitle = card
-          ?.querySelector(".entity-result__primary-subtitle, .t-14")
+          ?.querySelector(".entity-result__primary-subtitle, .mn-connection-card__occupation, .t-14")
           ?.textContent?.trim();
         seen.set(slug, {
           name,
@@ -301,7 +311,7 @@ export const linkedinAdapter: SiteAdapter = {
       blobLimit = POST_BLOB_CHARS;
       postBody = postCommentary(blobRoot, warnings);
     } else if (kind === "list") {
-      candidates = listCandidates(warnings);
+      candidates = listCandidates(warnings, isConnectionsPath(url.pathname) ? MAX_CONNECTIONS : MAX_CANDIDATES);
       blobRoot = null;
     } else if (kind === "company") {
       identity.company = preferField(

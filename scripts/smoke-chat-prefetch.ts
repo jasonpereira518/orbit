@@ -74,7 +74,7 @@ async function main() {
   console.log("\nEvents carry ids and how much of each roster the user knows");
   {
     const row = (id: string, title: string, startsAt: Date | null, attendeeCount = 0, connectedCount = 0) => ({
-      id, title, startsAt, endsAt: null, venue: "Moscone", city: "San Francisco", url: null, role: "hosted" as const,
+      id, title, startsAt, endsAt: null, timezone: null, venue: "Moscone", city: "San Francisco", url: null, role: "hosted" as const,
       source: "manual" as const, coverImageUrl: null, themeColor: null, discoveredVia: null, rsvpStatus: null,
       attendeeCount, connectedCount,
     });
