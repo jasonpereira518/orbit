@@ -63,6 +63,7 @@ const CROSS_ORIGIN_ALLOWED: Record<string, string> = {
   "imports/[id]/continue": "internal secret",
   "jobs/feed/sweep": "cron secret",
   "linkedin/timeline-events/backfill": "internal secret",
+  "contacts/monthly-upkeep": "cron secret",
   "contacts/name-sweep": "cron secret",
   "email-intel/sweep": "cron secret",
   "ops/billing-reconcile": "cron secret",
