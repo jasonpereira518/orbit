@@ -1,25 +1,31 @@
 import Link from "next/link";
-import { CalendarDays, MapPin, Sparkles, Users } from "lucide-react";
+import { CalendarDays, MapPin, NotebookPen, Sparkles, Users } from "lucide-react";
 import { eventGradient } from "@/lib/events/theme";
 import { DISCOVERY_LABEL, RSVP_LABEL } from "@/components/events/event-provenance";
 import { DismissEventButton } from "@/components/events/dismiss-event-button";
 import type { EventListRow } from "@/lib/events/store";
+import { offsetMinutes } from "@/lib/events/wall-clock";
 
-function formatDate(date: Date | null): string {
+/** The venue's calendar day, by the same shift event-hero uses, so card and page agree. */
+function formatDate(date: Date | null, timezone: string | null): string {
   if (!date) return "Date not set";
-  return date.toLocaleDateString(undefined, {
+  return new Date(date.getTime() + (offsetMinutes(timezone, date) ?? 0) * 60_000).toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
 export function EventCard({
   event,
   hidden = false,
+  past = false,
 }: {
   event: EventListRow;
   hidden?: boolean;
+  /** On the Past tab: a card with nobody logged offers the debrief. */
+  past?: boolean;
 }) {
   const place = [event.venue, event.city].filter(Boolean).join(", ");
   const found = event.discoveredVia ? DISCOVERY_LABEL[event.discoveredVia] : null;
@@ -83,7 +89,7 @@ export function EventCard({
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <CalendarDays className="size-3.5" aria-hidden />
-            {formatDate(event.startsAt)}
+            {formatDate(event.startsAt, event.timezone)}
           </span>
           {place ? (
             <span className="inline-flex items-center gap-1.5">
@@ -104,6 +110,16 @@ export function EventCard({
           one of them read as "I'm not the host" — which is true of nearly all of them. An
           event that really is wrong has Delete on its own page. */}
       {hidden ? <DismissEventButton eventId={event.id} title={event.title} hidden /> : null}
+      {/* Beside the card's link, not inside it, for the same reason as the dismiss control. */}
+      {past && !hidden && event.connectedCount === 0 ? (
+        <Link
+          href={`/capture?eventId=${event.id}`}
+          className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-2xs font-medium text-white transition-colors hover:bg-black/70"
+        >
+          <NotebookPen className="size-3" aria-hidden />
+          Log who you met
+        </Link>
+      ) : null}
     </div>
   );
 }

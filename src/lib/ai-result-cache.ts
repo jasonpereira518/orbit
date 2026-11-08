@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, gt, like, lt, or } from "drizzle-orm";
+import { and, eq, gt, like, lt, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiResultCache } from "@/db/schema";
 import { completeJson } from "@/lib/ai";
@@ -47,7 +47,22 @@ type CacheOptions<T> = {
   fresh?: boolean;
   /** Only answers that pass are stored — a malformed reply must not be replayed for days. */
   accept?: (value: T) => boolean;
+  /**
+   * Claim the key before running, so two identical misses at once (two tabs, a double-click,
+   * chat and Find people together) pay for ONE call: the second waits for the first's answer.
+   * For calls that bill per use, like web search.
+   */
+  singleFlight?: boolean;
+  /** Stop waiting on another caller's claim when this fires. */
+  signal?: AbortSignal;
 };
+
+/** A claim younger than this is someone's call in flight; older, it died with its function. */
+const CLAIM_LIVE_MS = 60_000;
+/** How long a second caller waits for the first one's answer before running its own. */
+const CLAIM_WAIT_MS = 25_000;
+const CLAIM_POLL_MS = 1_000;
+const PENDING = { pending: true } as const;
 
 /** A validator that throws is a rejection, never a failure of the call it guards. */
 function acceptSafely<T>(accept: (value: T) => boolean, value: T): boolean {
@@ -112,6 +127,84 @@ export async function writeAiResult<T>(
   }
 }
 
+function keyWhere(userId: string, operation: AiOperationId, inputHash: string) {
+  return and(
+    eq(aiResultCache.userId, userId),
+    eq(aiResultCache.operation, operation),
+    eq(aiResultCache.inputHash, inputHash)
+  );
+}
+
+const isPending = sql`(${aiResultCache.result} ->> 'pending') IS NOT NULL`;
+
+/**
+ * Take the key for this call: a new row, or one that is not a live claim (an expired answer,
+ * a dead claim, or — for `fresh` — the answer being replaced). Readers see a claim as a miss:
+ * it has no `{ v }`. False when someone else holds a live claim. Never throws.
+ */
+async function claimKey(userId: string, operation: AiOperationId, inputHash: string): Promise<boolean> {
+  try {
+    const db = await getDb();
+    const inserted = await db
+      .insert(aiResultCache)
+      .values({ userId, operation, inputHash, result: PENDING })
+      .onConflictDoNothing()
+      .returning();
+    if (inserted.length) return true;
+    const taken = await db
+      .update(aiResultCache)
+      .set({ result: PENDING, createdAt: new Date() })
+      .where(
+        and(
+          keyWhere(userId, operation, inputHash),
+          or(sql`NOT ${isPending}`, lt(aiResultCache.createdAt, new Date(Date.now() - CLAIM_LIVE_MS)))
+        )
+      )
+      .returning();
+    return taken.length > 0;
+  } catch {
+    // Cannot claim: run uncoordinated, exactly as before single-flight existed.
+    return true;
+  }
+}
+
+/** Drop our claim after a failed or rejected call, so the next caller is not left waiting. */
+async function releaseClaim(userId: string, operation: AiOperationId, inputHash: string): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.delete(aiResultCache).where(and(keyWhere(userId, operation, inputHash), isPending));
+  } catch {
+    // A claim left behind goes dead after CLAIM_LIVE_MS.
+  }
+}
+
+/** Another caller holds the key: poll for its answer. Undefined when it never comes. */
+async function awaitClaim<T>(
+  userId: string,
+  operation: AiOperationId,
+  inputHash: string,
+  ttlDays: number,
+  signal?: AbortSignal
+): Promise<T | undefined> {
+  const deadline = Date.now() + CLAIM_WAIT_MS;
+  while (Date.now() < deadline && !signal?.aborted) {
+    await new Promise((resolve) => setTimeout(resolve, CLAIM_POLL_MS));
+    const hit = await readAiResult<T>(userId, operation, inputHash, ttlDays);
+    if (hit !== undefined) return hit;
+    try {
+      const db = await getDb();
+      const row = await db.query.aiResultCache.findFirst({
+        where: and(keyWhere(userId, operation, inputHash), isPending, gt(aiResultCache.createdAt, new Date(Date.now() - CLAIM_LIVE_MS))),
+        columns: { id: true },
+      });
+      if (!row) return undefined; // The claim was released or died: run our own.
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 export async function withAiResultCache<T>(
   userId: string,
   operation: AiOperationId,
@@ -125,8 +218,25 @@ export async function withAiResultCache<T>(
     const hit = await readAiResult<T>(userId, operation, inputHash, opts.ttlDays);
     if (hit !== undefined) return hit;
   }
-  const value = await run();
-  if (opts.accept && !acceptSafely(opts.accept, value)) return value;
+  let claimed = false;
+  if (opts.singleFlight) {
+    claimed = await claimKey(userId, operation, inputHash);
+    if (!claimed) {
+      const theirs = await awaitClaim<T>(userId, operation, inputHash, opts.ttlDays, opts.signal);
+      if (theirs !== undefined) return theirs;
+    }
+  }
+  let value: T;
+  try {
+    value = await run();
+  } catch (err) {
+    if (claimed) await releaseClaim(userId, operation, inputHash);
+    throw err;
+  }
+  if (opts.accept && !acceptSafely(opts.accept, value)) {
+    if (claimed) await releaseClaim(userId, operation, inputHash);
+    return value;
+  }
   await writeAiResult(userId, operation, inputHash, value);
   return value;
 }

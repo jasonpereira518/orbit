@@ -93,7 +93,6 @@ export const REQUIRED_IN_PREVIEW = [
  * (`src/lib/ai-access.ts`). Checked by presence only, here as everywhere.
  */
 const MANAGED_AI_KEYS = [
-  "ORBIT_MANAGED_GEMINI_API_KEY",
   "ORBIT_MANAGED_OPENAI_API_KEY",
   "ORBIT_MANAGED_ANTHROPIC_API_KEY",
 ] as const;
