@@ -33,6 +33,7 @@ import {
   type RemindersPage,
   type RemindersPageFilters,
 } from "@/lib/reminders-page";
+import { isUuid } from "@/lib/input/ids";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 
@@ -65,14 +66,22 @@ function encodeCursor(cursor: Cursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
+const PG_DAY = /^(?:\d{4}-\d{2}-\d{2}|infinity)$/;
+const PG_TS = /^(?:\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?|infinity)$/;
+
 function decodeCursor(raw: string | undefined, done: boolean): Cursor | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
     // A cursor from the other ordering describes a position that does not exist in this
     // one. Starting over beats silently skipping or repeating reminders.
-    if (!parsed || typeof parsed.id !== "string") return null;
+    if (!parsed || !isUuid(parsed.id)) return null;
     if (done ? parsed.v !== "d" : parsed.v !== "a") return null;
+    // Every field is cast in SQL (`::date`, `::timestamptz`, `::uuid`); a tampered or stale
+    // cursor whose value fails the cast was a 500. Shape-checked here, it starts over instead.
+    // These are Postgres' own text renderings (see `cursorDay`/`cursorDue` below), not ISO.
+    if (parsed.v === "a" && (!PG_DAY.test(String(parsed.d)) || !PG_TS.test(String(parsed.t)))) return null;
+    if (parsed.v === "d" && !PG_TS.test(String(parsed.c))) return null;
     return parsed as Cursor;
   } catch {
     return null;

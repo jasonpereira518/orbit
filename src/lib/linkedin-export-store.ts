@@ -18,6 +18,11 @@ import { LINKEDIN_EXPORT_IMPORT_TYPE } from "@/lib/linkedin-export-type";
 const MAX_EXPORT_FILES = 200;
 /** Decompression ceiling when a stored file is read back, so a crafted upload cannot balloon. */
 const MAX_EXPORT_FILE_BYTES = 64 * 1024 * 1024;
+/**
+ * Inflated bytes one read of a whole export may hold. A real export is a few MB; without a total,
+ * 200 files each just under the per-file ceiling would inflate to ~12 GB in one request.
+ */
+export const MAX_EXPORT_TOTAL_BYTES = 256 * 1024 * 1024;
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 
 export type ExportFileUpload = { path: string; byteSize: number; gz: string };
@@ -128,11 +133,17 @@ export async function readExportTexts(userId: string, importId: string): Promise
     .from(importFiles)
     .where(and(eq(importFiles.importId, importId), eq(importFiles.userId, userId)));
   const out = new Map<string, string>();
+  let budget = MAX_EXPORT_TOTAL_BYTES;
   for (const r of rows) {
+    if (budget <= 0) break;
     try {
-      out.set(r.path.toLowerCase(), gunzipExportFile(r.gz));
+      const raw = gunzipSync(Buffer.from(r.gz, "base64"), {
+        maxOutputLength: Math.min(MAX_EXPORT_FILE_BYTES, budget),
+      });
+      budget -= raw.byteLength;
+      out.set(r.path.toLowerCase(), raw.toString("utf8"));
     } catch {
-      // A corrupt upload reads as absent, never as an error for the whole export.
+      // A corrupt or over-budget upload reads as absent, never as an error for the whole export.
     }
   }
   return out;

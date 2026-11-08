@@ -38,7 +38,10 @@ import {
 import {
   discardEmptyThread,
   discardUnansweredQuestion,
+  markTurnStopped,
   persistAssistantTurn,
+  supersedeDanglingQuestion,
+  wasTurnStopped,
 } from "../src/lib/chat-persist";
 
 const USER = "smoke-data-loss-user";
@@ -270,6 +273,73 @@ async function main() {
     titled?.title === "Who do I know at AWS?",
     `got "${titled?.title}"`
   );
+
+  // Stop versus a dropped connection (audit L-25). Both reach the server as the same abort;
+  // a dropped one keeps the question, and only a Stop the client reports discards it, in
+  // whichever order the Stop and the route's own check arrive.
+  {
+    const ask = async (threadId: string, turnId: string, content = "Who do I know at Stripe?") =>
+      (await db
+        .insert(chatMessages)
+        .values({ threadId, userId: USER, role: "user", content, clientTurnId: turnId })
+        .returning())[0];
+    const rowsIn = async (threadId: string) =>
+      db.query.chatMessages.findMany({ where: eq(chatMessages.threadId, threadId) });
+
+    // Dropped: nobody marks the turn, so the route keeps it.
+    const [dropped] = await db.insert(chatThreads).values({ userId: USER }).returning();
+    await persistAssistantTurn(USER, dropped.id, null, "Earlier question", { answer: "Earlier answer.", recommendations: [] });
+    const droppedTurn = crypto.randomUUID();
+    await ask(dropped.id, droppedTurn);
+    check("a dropped connection is not read as a Stop", !(await wasTurnStopped(USER, dropped.id, droppedTurn)));
+    check("so the question the person typed is still in the thread",
+      (await rowsIn(dropped.id)).some((m) => m.role === "user" && m.content === "Who do I know at Stripe?"));
+
+    // Asking again replaces the kept copy instead of showing the question twice.
+    await supersedeDanglingQuestion(USER, dropped.id, "Who do I know at Stripe?");
+    const afterReask = await rowsIn(dropped.id);
+    check("asking again drops the unanswered copy, and only it",
+      !afterReask.some((m) => m.content === "Who do I know at Stripe?") && afterReask.length === 1,
+      `${afterReask.length} rows`);
+    await ask(dropped.id, crypto.randomUUID(), "Something else entirely");
+    await supersedeDanglingQuestion(USER, dropped.id, "Who do I know at Stripe?");
+    check("a different question is never superseded",
+      (await rowsIn(dropped.id)).some((m) => m.content === "Something else entirely"));
+
+    // Stop lands AFTER the route saved the question and kept it: the Stop removes it.
+    const [late] = await db.insert(chatThreads).values({ userId: USER }).returning();
+    await persistAssistantTurn(USER, late.id, null, "Earlier question", { answer: "Earlier answer.", recommendations: [] });
+    const lateTurn = crypto.randomUUID();
+    await ask(late.id, lateTurn);
+    await markTurnStopped(USER, late.id, lateTurn);
+    check("a Stop that arrives late still discards the question",
+      !(await rowsIn(late.id)).some((m) => m.content === "Who do I know at Stripe?"));
+
+    // Stop lands BEFORE the question is saved: the route's check sees the mark.
+    const [early] = await db.insert(chatThreads).values({ userId: USER }).returning();
+    await persistAssistantTurn(USER, early.id, null, "Earlier question", { answer: "Earlier answer.", recommendations: [] });
+    const earlyTurn = crypto.randomUUID();
+    await markTurnStopped(USER, early.id, earlyTurn);
+    await ask(early.id, earlyTurn);
+    check("a Stop that arrives first is seen by the route", await wasTurnStopped(USER, early.id, earlyTurn));
+    check("and a later turn is not mistaken for it", !(await wasTurnStopped(USER, early.id, crypto.randomUUID())));
+
+    // Stop on a first message empties the thread, which goes too.
+    const [first] = await db.insert(chatThreads).values({ userId: USER }).returning();
+    const firstTurn = crypto.randomUUID();
+    await ask(first.id, firstTurn);
+    await markTurnStopped(USER, first.id, firstTurn);
+    check("a Stop on the first message leaves no empty 'New chat'",
+      !(await db.query.chatThreads.findFirst({ where: eq(chatThreads.id, first.id) })));
+
+    // Someone else's Stop reaches nothing.
+    const [mine] = await db.insert(chatThreads).values({ userId: USER }).returning();
+    const mineTurn = crypto.randomUUID();
+    await ask(mine.id, mineTurn);
+    await markTurnStopped("someone-else", mine.id, mineTurn);
+    check("another account cannot stop (and delete) this question",
+      (await rowsIn(mine.id)).length === 1 && !(await wasTurnStopped(USER, mine.id, mineTurn)));
+  }
 
   // A thread with real content must never be swept up by the cleanup.
   await discardEmptyThread(USER, liveThread.id);

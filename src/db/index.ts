@@ -838,6 +838,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   user_id text NOT NULL,
   title text,
   context_note text,
+  stopped_turn_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -858,6 +859,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   feedback_note text,
   answer_outcome text,
   follow_ups jsonb DEFAULT '[]',
+  client_turn_id text,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -1187,6 +1189,8 @@ CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
   last_error text,
   last_attempted_at timestamptz,
   delivered_at timestamptz,
+  claimed_by text,
+  claimed_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id);
@@ -1406,6 +1410,7 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   join_session_id text,
   user_id text,
   converted_at timestamptz,
+  referral_tier_mailed integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
@@ -2954,7 +2959,17 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // Nov 7 2026 when main took 197: a database stamped 197 would never run this branch's DDL. NOT
 // 198: claude/duplicates-view-merge-training-7c9a92 claims it. Rescanned every remote ref and
 // worktree on Nov 7 2026: 198 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 199;
+//
+// 203 = the Phase 2 integrity fixes of the security audit (ported from #474, where they were 172
+// and 173): contacts_user_closeness_nl_idx (closeness sort NULLS LAST, M-12),
+// outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
+// interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
+// mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
+// L-20), and chat_threads.stopped_turn_id + chat_messages.client_turn_id (a dropped chat
+// connection keeps the person's question; only an explicit Stop discards it, L-25). NOT 201: #551 (audit Phase 1) claims it. NOT 202: the unpushed contact-relationship-engine
+// worktree claims it. Rescanned every remote ref and worktree on Nov 7 2026: 202 was the highest
+// claimed anywhere.
+export const SCHEMA_VERSION = 203;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3307,6 +3322,17 @@ export const SCALE_DDL: string[] = [
   // descending id. The cursor is a row-value comparison, which needs every element ordered
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
+  // v203: the contacts list's closeness sort is NULLS LAST (audit M-12), which the index
+  // above (DESC = NULLS FIRST) cannot serve. Kept alongside it: other readers order that way.
+  `CREATE INDEX IF NOT EXISTS contacts_user_closeness_nl_idx ON contacts(user_id, closeness DESC NULLS LAST, id DESC)`,
+  // v203: the outbound webhook drain's claim (audit M-03). See `claimDueDeliveries`.
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_by text`,
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
+  // v203: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
+  // v203: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
   // on "who have I actually spoken to lately" rather than whoever is alphabetically first

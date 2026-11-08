@@ -67,6 +67,7 @@ export async function GET(request: Request) {
         code_verifier: decoded.verifier,
         code_challenge_method: "S256",
       }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return errorRedirect(returnUrl, "exchange_failed");
     const body = (await res.json()) as { key?: unknown };
