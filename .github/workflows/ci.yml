@@ -23,11 +23,11 @@ name: ci
 #   GitHub scopes a PR's caches to that PR, so without it each PR's first run starts cold.
 # - Draft PRs are skipped. A PR runs CI when it is opened ready, or when a draft is marked
 #   ready for review, and on every push after that. A ready PR gets every job.
-# - Every ready PR runs, docs-only ones included. There used to be a `paths-ignore` that
-#   skipped docs, agent skills and the extension; it was dropped so these jobs can be
-#   required status checks on `main` (docs/TESTING.md → branch protection). With it, a
-#   docs-only PR would have waited forever on required checks that never started. The
-#   cost is one ~5-minute run on PRs that change nothing these jobs read.
+# - Every ready PR reports every check, but the slow ones (smoke, e2e) only do work when the PR
+#   touches something besides `docs/**` and `*.md` (the `changes` job). On a docs-only PR those
+#   jobs are skipped, which GitHub counts as passing for required checks, so they can stay
+#   required on `main` (docs/TESTING.md -> branch protection) without a docs PR waiting
+#   forever. `check` (typecheck, lint, build, security) always runs. `main` pushes run it all.
 #
 # The repository is public, so hosted runners are free. This workflow is written to stay
 # safe there: it triggers on `pull_request` (never `pull_request_target` or `workflow_run`),
@@ -53,6 +53,31 @@ permissions:
 # The root package has no install scripts, so a restored node_modules is exactly what
 # `npm ci` would have produced.
 jobs:
+  # Decides whether the slow jobs have anything to test. Fails open: any doubt means `code=true`.
+  changes:
+    name: detect code changes
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.f.outputs.code }}
+    steps:
+      - id: f
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" -q '.[].filename') || { echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          if echo "$files" | grep -qvE '^docs/|\.md$'; then code=true; else code=false; fi
+          echo "files changed:"; echo "$files"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   check:
     name: typecheck · lint · build
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -130,38 +155,49 @@ jobs:
           /tmp/gitleaks git --no-banner --redact --log-opts="$range" .
 
   # The smoke suite is ~400 scripts run one after another (PGlite is single-writer), about
-  # ten minutes serially and by far the slowest job. Three machines run exactly the same
+  # ten minutes serially and by far the slowest job. Four machines run exactly the same
   # scripts (scripts/run-smoke.ts --shard i/n covers each one once), each with its own
-  # PGlite directory, so the single-writer rule holds. Three rather than four: with the
-  # install cached, three shards finish alongside the build, and a fourth only added a check.
+  # PGlite directory, so the single-writer rule holds. Four: the suite
+  # is ~1,065s of scripts, so four shards put the slowest at ~4.5 min, under three's ~6.
   # `fail-fast: false` so one shard failing still reports the rest.
   #
-  # The job id stays `smoke`, and the matrix names read `smoke suite (PGlite) 1/3` …; the
-  # required check is `smoke-gate`'s bare `smoke suite (PGlite)`, which passes only if all do.
+  # Branch protection requires the single `smoke suite (PGlite)` check from `smoke-gate`
+  # below, not the shard names, so the shard count can change freely.
   smoke:
-    name: smoke suite (PGlite) ${{ matrix.shard }}/3
+    name: smoke suite (PGlite) ${{ matrix.shard }}/4
+    needs: changes
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
+    # The skip for docs-only PRs is per step, not per job: a job-level skip of a matrix reports
+    # under the unexpanded name, and `smoke-gate` needs every shard to report.
+    env:
+      RUN: ${{ needs.changes.outputs.code }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - if: env.RUN == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - if: env.RUN == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
       - id: deps
+        if: env.RUN == 'true'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: node_modules
           key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
-      - if: steps.deps.outputs.cache-hit != 'true'
+      - if: env.RUN == 'true' && steps.deps.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund
-      - run: npm test -- --shard ${{ matrix.shard }}/3
+      - if: env.RUN == 'true'
+        run: npm test -- --shard ${{ matrix.shard }}/4
 
-  # The bare name branch protection requires; see `e2e-gate` for why a gate job.
+  # The bare name branch protection requires; see `e2e-gate` for why a gate job. The shard
+  # count can change without touching the required checks. A docs-only PR skips the shards'
+  # steps, so they still succeed.
   smoke-gate:
     name: smoke suite (PGlite)
     needs: smoke
@@ -177,6 +213,7 @@ jobs:
   # ~13s plain), so gating on an instrumented run would make the gate flaky. Each shard keeps
   # only its Istanbul JSON (a few MB; the raw V8 dumps run to gigabytes) for `coverage` to
   # merge; a script failing here is reported by `smoke`, so it does not fail this job.
+
   coverage-shard:
     name: coverage shard ${{ matrix.shard }}/3
     if: github.event_name != 'pull_request'
@@ -250,7 +287,8 @@ jobs:
   # name `browser flows (Playwright)`, which the `e2e-gate` job below keeps alive.
   e2e:
     name: e2e shard ${{ matrix.shard }}/3
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-noble
@@ -291,9 +329,12 @@ jobs:
   # the shards on a draft PR, which GitHub counts as passing.
   e2e-gate:
     name: browser flows (Playwright)
-    needs: e2e
+    needs: [changes, e2e]
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - run: test "${{ needs.e2e.result }}" = success
+      # `skipped` is fine only when `changes` ran and found a docs-only PR.
+      - run: |
+          test "${{ needs.changes.result }}" = success
+          case "${{ needs.e2e.result }}" in success) ;; skipped) test "${{ needs.changes.outputs.code }}" = false ;; *) exit 1 ;; esac
