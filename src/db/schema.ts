@@ -5328,7 +5328,7 @@ export const linkedinAvatars = pgTable(
   {
     slug: text("slug").primaryKey(),
     imageUrl: text("image_url"),
-    source: text("source").$type<"unavatar" | "microlink">().notNull(),
+    source: text("source").$type<"linkedin_direct" | "unavatar" | "microlink" | "extension">().notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
     blockedAt: timestamp("blocked_at", { withTimezone: true }),
     blockedBy: text("blocked_by"),

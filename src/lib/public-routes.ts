@@ -72,6 +72,7 @@ export const PUBLIC_ROUTES = [
   "/api/work-history/research",
   "/api/work-history/sweep",
   "/api/email-intel/sweep",
+  "/api/contacts/monthly-upkeep",
   "/api/contacts/name-sweep",
   "/api/linkedin/timeline-events/backfill",
   "/api/relationships/run",

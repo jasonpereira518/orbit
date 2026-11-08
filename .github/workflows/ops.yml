@@ -70,6 +70,9 @@ on:
     # Once a day: the metrics rollup (metrics_daily) for today and the two days before it.
     # 00:31 UTC, just after the day closes, clear of every hourly minute above.
     - cron: "31 0 * * *"
+    # Monthly on the 1st: contact upkeep (audits avatars, replaces generic/stale photos from LinkedIn, fixes handles).
+    # 03:19 UTC, clear of all daily and hourly cron marks.
+    - cron: "19 3 1 * *"
   workflow_dispatch:
 
 # One group PER SCHEDULE, never one for the whole workflow. GitHub keeps at most one
@@ -423,6 +426,18 @@ jobs:
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/ops/speech-usage"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Contact monthly upkeep (1st of the month). Audits avatars for broken/generic/stale photos,
+      # scrapes authentic LinkedIn photos into shared pool, and repairs handle names.
+      - name: Run contact monthly upkeep (monthly)
+        if: (github.event.schedule == '19 3 1 * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/contacts/monthly-upkeep"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
