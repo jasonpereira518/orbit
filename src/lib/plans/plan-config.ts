@@ -173,7 +173,8 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
       creditPacks: true,
       extraConnections: false,
       radar: false,
-      events: false,
+      // Every plan (Jason, Oct 25 2026): Events is the "who did I meet" loop, not an upsell.
+      events: true,
       findPeople: false,
       compose: false,
       cloudNotes: false,

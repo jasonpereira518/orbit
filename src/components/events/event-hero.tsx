@@ -37,6 +37,11 @@ import type { EventRecord } from "@/db/schema";
  * writer is invisible: every edit would be stored at the wrong instant and rendered back
  * wrongly in the same direction, so the screen would look right.
  */
+/** A day the user typed with no time (the add dialog stores UTC midnight with no zone). */
+function isDateOnly(startsAt: Date, endsAt: Date | null, timezone: string | null): boolean {
+  return !timezone && !endsAt && startsAt.getUTCHours() === 0 && startsAt.getUTCMinutes() === 0;
+}
+
 function formatRange(startsAt: Date | null, endsAt: Date | null, timezone: string | null): string {
   if (!startsAt) return "Date not set";
   // Resolved per instant rather than once, so a conference spanning a clock change reads
@@ -54,6 +59,7 @@ function formatRange(startsAt: Date | null, endsAt: Date | null, timezone: strin
   const time = (d: Date) =>
     d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
 
+  if (isDateOnly(startsAt, endsAt, timezone)) return date;
   if (!endsAt || endsAt.getTime() <= startsAt.getTime()) return `${date} · ${time(start)}`;
 
   const end = at(endsAt);
@@ -129,7 +135,7 @@ export function EventHero({ event }: { event: EventRecord }) {
           {formatRange(event.startsAt, event.endsAt, event.timezone)}
           {/* The host published a wall-clock time with no zone, so the time above is their
               text taken at face value. Said plainly rather than shown as false precision. */}
-          {event.startsAt && !event.timezone ? (
+          {event.startsAt && !event.timezone && !isDateOnly(event.startsAt, event.endsAt, null) ? (
             <span className="text-xs opacity-70" title="The event page did not say which time zone this is in.">
               (time zone not stated)
             </span>

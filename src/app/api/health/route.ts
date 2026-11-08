@@ -9,8 +9,10 @@ const HEADERS = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" };
 
 /**
  * Liveness for the uptime monitor (shallow) and a diagnostic view for operators (deep,
- * with `?token=HEALTH_TOKEN` or a bearer). A wrong `?token=` is a 401. See
- * `src/lib/health.ts` for what each view says.
+ * with an `Authorization: Bearer $HEALTH_TOKEN` header). A `?token=` is accepted only
+ * outside production unless `HEALTH_TOKEN_ALLOW_QUERY=1`, and a presented-but-refused
+ * token is a 401 rather than a silent shallow 200. See `src/lib/health.ts` for what each
+ * view says.
  */
 export async function GET(request: Request) {
   const token = healthTokenState(request);
