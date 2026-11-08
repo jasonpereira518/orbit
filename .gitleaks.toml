@@ -1,0 +1,13 @@
+# gitleaks reads this automatically from the scan root (ci.yml's Secret scan step).
+[extend]
+useDefault = true
+
+# The default linkedin-client-id rule fires on "linkedin" + a 12-14 char token, so it hits
+# ordinary identifiers (linkedinSlug: "...", linkedin_url = "..."). Real LinkedIn client ids
+# live in env vars (.env.example), not in the repo. Scoped to that one rule, so every other
+# rule still scans these lines. Narrow the regex if it ever hides a real hit.
+[[allowlists]]
+description = "identifier-style linkedin assignments, not credentials"
+targetRules = ["linkedin-client-id"]
+regexTarget = "match"
+regexes = ['''(?i)linkedin(slug|url|experience|profile|import|export|avatar|history|connection|cache|id)''', '''(?i)linkedin[_-](slug|url|experience|profile|import|export|avatar|history|connection|cache|id)''']

@@ -32,6 +32,7 @@ import type {
   RecommendationKind,
   RecommendationStatus,
 } from "@/lib/radar/types";
+import type { AimKind, Field, Timeline } from "@/lib/about-you";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
@@ -275,8 +276,10 @@ export const userSettings = pgTable("user_settings", {
   senderBio: text("sender_bio"),
   /**
    * What the user's own LinkedIn export says about them: headline, industry, current role,
-   * skills and the job titles they have alerts for. Written only by the LinkedIn profile
-   * imports, one key per file, so re-importing Skills.csv never touches the headline.
+   * skills and the job titles they have alerts for. Written by the LinkedIn profile imports,
+   * one key per file, so re-importing Skills.csv never touches the headline. The onboarding
+   * About you step is the other writer: it owns `aim` (which the export's "remove" keeps), and
+   * fills `profile`, `role` and `roleKeywords` only where they are empty.
    *
    * Deliberately NOT `sender_bio`: that is what the person typed, and an import must not
    * overwrite it. It feeds ranking (who to reach out to) and a fenced "about you" prompt block,
@@ -1919,6 +1922,15 @@ export type CareerProfile = {
   skills?: string[];
   /** Job titles from saved job alerts, de-duplicated. */
   roleKeywords?: string[];
+  /** What the person said they want, from the onboarding About you step. */
+  aim?: {
+    kind: AimKind;
+    timeline: Timeline | null;
+    field: Field | null;
+    setAt: string;
+  };
+  /** The confirm screen's "Your major(s)", at most 3. A jsonb key, so no DDL. */
+  majors?: string[];
   importedAt?: string;
 };
 
@@ -5241,13 +5253,27 @@ export const linkedinAvatars = pgTable(
   {
     slug: text("slug").primaryKey(),
     imageUrl: text("image_url"),
-    source: text("source").$type<"unavatar" | "microlink">().notNull(),
+    source: text("source").$type<"linkedin_direct" | "unavatar" | "microlink" | "extension">().notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
     blockedAt: timestamp("blocked_at", { withTimezone: true }),
     blockedBy: text("blocked_by"),
   },
   (t) => [index("linkedin_avatars_resolved_at_idx").on(t.resolvedAt)]
 );
+
+/**
+ * Work history found by a public web search (`src/lib/public-work-history.ts`), shared across
+ * accounts by LinkedIn profile slug like `linkedinAvatars`: only confident web answers, never
+ * an extension capture, a typed field or an import. A blocked row (admin takedown) has no answer
+ * and stops the slug being shared or rewritten.
+ */
+export const publicWorkHistory = pgTable("public_work_history", {
+  slug: text("slug").primaryKey(),
+  answer: jsonb("answer").$type<{ headline: string | null; experiences: unknown[]; sources: Array<{ url: string; title: string | null }> }>(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
+  blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  blockedBy: text("blocked_by"),
+});
 
 export const siteSettings = pgTable("site_settings", {
   id: integer("id").primaryKey().default(1),

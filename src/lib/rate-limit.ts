@@ -74,6 +74,8 @@ const BUCKET_LABELS: Record<string, string> = {
   "email-intel-extract-daily": "email-insights reading",
   "web-search": "monthly web search",
   "web-search-all": "Orbit-wide web search",
+  "people-to-meet": "weekly people suggestion",
+  "org-suggest": "company and school suggestion",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -197,6 +199,12 @@ export const RATE_LIMITS = {
    * and on Orbit's managed key those fees are not in any credit count — this is the cap.
    */
   webResearch: { limit: 30, windowSec: 86_400 },
+  /**
+   * As-you-type organization suggestions (`/api/orgs/suggest`), per user per hour. Each miss
+   * is two Wikidata calls from Orbit's server; past this the route answers from the person's
+   * own companies and the curated table only.
+   */
+  orgSuggest: { limit: 120, windowSec: 3_600 },
   /**
    * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
    * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
@@ -395,6 +403,8 @@ export const RATE_LIMITS = {
    * and only the mail is skipped, since the welcome is best-effort by design.
    */
   interestWelcome: { limit: 200, windowSec: 3600 },
+  /** The dashboard's "People to meet": one Find-people discovery run per account per week. */
+  peopleToMeet: { limit: 1, windowSec: 7 * 86_400 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

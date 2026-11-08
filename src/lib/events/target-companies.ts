@@ -69,7 +69,9 @@ export async function addTargetCompany(
   userId: string,
   name: string,
   priority: TargetPriority = 2,
-  note?: string | null
+  note?: string | null,
+  /** `ifAbsent`: leave a company already on the list exactly as it is (onboarding's add). */
+  opts?: { ifAbsent?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
   const company = await resolveCompany(userId, name);
   if (!company) return { ok: false, error: "Give the company a name first" };
@@ -78,9 +80,13 @@ export async function addTargetCompany(
   await db.execute(sql`
     INSERT INTO target_companies (user_id, company_id, priority, note)
     VALUES (${userId}, ${company.id}::uuid, ${priority}, ${note ?? null})
-    ON CONFLICT (user_id, company_id) DO UPDATE SET
+    ON CONFLICT (user_id, company_id) ${
+      opts?.ifAbsent
+        ? sql`DO NOTHING`
+        : sql`DO UPDATE SET
       priority = excluded.priority,
-      note = COALESCE(excluded.note, target_companies.note)
+      note = COALESCE(excluded.note, target_companies.note)`
+    }
   `);
   return { ok: true };
 }
