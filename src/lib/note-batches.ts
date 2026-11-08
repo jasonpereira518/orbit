@@ -38,7 +38,18 @@ export function captureSourceKinds(labels: readonly unknown[] | null | undefined
 }
 
 /** How a capture arrived, as the history row's icon and label name it. */
-export type CaptureMethod = "notes" | "meeting" | "voice" | "scan" | "granola" | "file" | "calendar" | "email" | "phone";
+export type CaptureMethod =
+  | "notes"
+  | "meeting"
+  | "voice"
+  | "scan"
+  | "granola"
+  | "drive"
+  | "onedrive"
+  | "file"
+  | "calendar"
+  | "email"
+  | "phone";
 
 // "messy" and "api" are the typed-notes job; they say nothing the input labels do not.
 const METHOD_BY_JOB: Partial<Record<string, CaptureMethod>> = {
@@ -59,17 +70,21 @@ const METHOD_BY_KIND: Record<CaptureSourceKind, CaptureMethod> = {
 
 /**
  * Most specific evidence first: a stored meeting digest, then Granola provenance on the
- * saved interactions, then the job that produced the batch, then the input labels (the
+ * saved interactions, then a cloud drive the job read from, then the job that produced the batch, then the input labels (the
  * only record a batch saved before capture jobs has).
  */
 export function captureMethod(input: {
   meeting: boolean;
   granola: boolean;
   jobSource: string | null | undefined;
+  /** The job's provenance tags; "cloud:google" / "cloud:microsoft" mark a Drive / OneDrive doc. */
+  jobTags?: readonly string[] | null;
   kinds: readonly CaptureSourceKind[];
 }): CaptureMethod {
   if (input.meeting) return "meeting";
   if (input.granola) return "granola";
+  if (input.jobTags?.includes("cloud:google")) return "drive";
+  if (input.jobTags?.includes("cloud:microsoft")) return "onedrive";
   return (input.jobSource ? METHOD_BY_JOB[input.jobSource] : undefined) ?? METHOD_BY_KIND[input.kinds[0] ?? "text"];
 }
 

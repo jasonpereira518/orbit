@@ -198,7 +198,11 @@ export default function PrivacyPage() {
               platform&rsquo;s profile links where it shows them — and sends it to Orbit only when you
               press Save. The guests are kept on that event in Orbit, never sent to an AI provider,
               and none becomes a contact unless you add them one by one. Orbit&rsquo;s servers never
-              fetch a guest list themselves.
+              fetch a guest list themselves. On your LinkedIn Connections page, it offers to log the
+              people you connected with at one of your events: it sends Orbit only the names,
+              profile links and headlines of the connections you tick, when you press Log, and they
+              are added to that event&rsquo;s guest list. None becomes a contact until you review
+              and save them in Orbit.
             </li>
             <li>
               <strong>Secrets you provide</strong> — API keys for AI, enrichment, email, SMS and
@@ -297,17 +301,6 @@ export default function PrivacyPage() {
             on Google&rsquo;s side, remove Orbit from your Google Account&rsquo;s third-party access
             page.
           </p>
-          <DocCallout title="Confirmation emails">
-            <p>
-              If you turn on event discovery from confirmation emails, Orbit searches your Gmail for
-              mail from event platforms only — Luma, Partiful, Eventbrite, Meetup and Posh — and
-              opens a message only when Google&rsquo;s signature check confirms it came from one of
-              them. It keeps the event link, the subject line, the sender&rsquo;s domain and the
-              date; it stores no message bodies, reads no other mail, and never sends this mail to
-              an AI provider. Turning it off stops the scanning and removes what it recorded about
-              where each event was found.
-            </p>
-          </DocCallout>
           <DocCallout title="Email insights">
             <p>
               If you turn on Email insights in Settings, Orbit checks your Gmail every fifteen

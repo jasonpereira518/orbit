@@ -5,7 +5,7 @@ import { getDb } from "@/db";
 import { appSurfaceFlags } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-audit";
-import { isDemoAccount } from "@/lib/demo-account";
+import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { PaywallError, getEntitlements, requireEntitlement } from "@/lib/entitlements";
 import { recordGateHit } from "@/lib/gate-events";
@@ -185,12 +185,16 @@ export const isViewingAsUser = cache(async (userId: string): Promise<boolean> =>
   }
 });
 
-/** True when this request is an operator deliberately reaching past a coming-soon page. */
+/**
+ * True when this request is an operator deliberately reaching past a coming-soon page.
+ * On a local dev server it's on unless switched off (cookie "0"), so every worktree shows
+ * unreleased work by default; deployed builds keep it an explicit opt-in.
+ */
 export const isPreviewingUnreleased = cache(async (userId: string): Promise<boolean> => {
   if (!isAdminUser(userId)) return false;
   try {
-    const store = await cookies();
-    return store.get(PREVIEW_UNRELEASED_COOKIE)?.value === "1";
+    const value = (await cookies()).get(PREVIEW_UNRELEASED_COOKIE)?.value;
+    return isLocalhost() ? value !== "0" : value === "1";
   } catch {
     return false;
   }
@@ -385,6 +389,15 @@ export async function isSurfaceLive(userId: string, surfaceKey: string): Promise
     !tierLocked.has(surfaceKey) &&
     (await hasSurfaceFeature(userId, surfaceKey, exempt))
   );
+}
+
+/**
+ * Switched on and not coming-soon, and nothing else: no plan or feature check. For a card that
+ * is free on every plan but must stay dark until its page is released (People to meet).
+ */
+export async function isSurfaceReleased(userId: string, surfaceKey: string): Promise<boolean> {
+  const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+  return !hidden.has(surfaceKey) && !comingSoon.has(surfaceKey);
 }
 
 /** Throws `SurfaceHiddenError` (or `PaywallError` for a tier-locked page) unless this viewer may reach `surfaceKey`. */

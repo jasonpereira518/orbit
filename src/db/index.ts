@@ -2025,6 +2025,7 @@ CREATE TABLE IF NOT EXISTS capture_jobs (
   source_text text,
   source_hash text,
   meeting_session_id uuid,
+  event_id uuid,
   result jsonb,
   decisions jsonb NOT NULL DEFAULT '{}'::jsonb,
   claim_token text,
@@ -2953,10 +2954,18 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // a database stamped 194 would never run a 193. NOT 195: claude/gallant-ramanujan-hh5j0s claims it (it reached main
 // first, on Nov 7 2026, and keeps 195 above).
 //
+// 197 = main's security fixes (#529, the 2026-11 audit findings); bumped without an entry here.
+//
+// 199 (built as 184, then 197) = capture_jobs.event_id: the Event a capture debriefs ("log who
+// you met"), so the save can mark those people as met on the event. Renumbered 197 → 199 on
+// Nov 7 2026 when main took 197: a database stamped 197 would never run this branch's DDL. NOT
+// 198: claude/duplicates-view-merge-training-7c9a92 claims it. Rescanned every remote ref and
+// worktree on Nov 7 2026: 198 was the highest claimed anywhere.
+//
 // 200 = public_work_history: a confident work history found by a public web search, shared
 // across accounts by LinkedIn slug like linkedin_avatars (v159), so a second account with the
 // same connection pays no search. NOT 198/199: claude/duplicates-view-merge-training-7c9a92
-// holds 198 and claude/nifty-mendel-250e9b 199. Rescanned every ref on Nov 7 2026.
+// holds 198 and main 199; 201-206 are claimed by other branches. Rescanned every ref Nov 8 2026.
 export const SCHEMA_VERSION = 200;
 
 /**
@@ -4826,6 +4835,9 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS career_profile jsonb`,
+  // Schema v199: the Event a capture debriefs. Bare uuid like meeting_session_id; the save
+  // re-reads the event, so a deleted one only means nobody gets marked as met.
+  `ALTER TABLE capture_jobs ADD COLUMN IF NOT EXISTS event_id uuid`,
   // Schema v161: the calendar event a reminder or a recording belongs to — the provider's
   // per-instance id, not a calendar_events FK, because that table only holds a two-week window.
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS calendar_event_key text`,
