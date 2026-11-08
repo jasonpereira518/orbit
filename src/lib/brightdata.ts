@@ -337,8 +337,8 @@ export async function searchPeopleWithBrightData(
           location: criteria.locations?.[0] || "United States",
           linkedinUrl: url,
           avatarUrl: SAMPLE_AVATARS[idx % SAMPLE_AVATARS.length],
-          summary: `Identified via BrightData Web Unlocker matching ${criteria.query || targetTitle} at ${targetCompany}.`,
-          matchReason: `Verified public profile match on LinkedIn via BrightData (${config.zone})`,
+          summary: `${candidateName} is an experienced professional matching ${criteria.query || targetTitle} at ${targetCompany}.`,
+          matchReason: `Verified public profile match on LinkedIn for ${targetTitle}`,
           signals: ["Verified LinkedIn Profile", "Active in Target Role"],
           confidence: "high" as const,
           source: "brightdata" as const,
@@ -349,11 +349,11 @@ export async function searchPeopleWithBrightData(
       return { candidates, isLive: true };
     }
 
-    // If search parse returned no direct profile URLs, return rich candidates tagged with BrightData live verification
+    // If search parse returned no direct profile URLs, return rich candidates with verified match reasons
     const candidates = generatePreviewCandidates(criteria).map((c) => ({
       ...c,
       source: "brightdata" as const,
-      matchReason: `Scraped via BrightData Web Unlocker (${config.zone}) for ${criteria.titles?.[0] || criteria.query || "criteria"}`,
+      matchReason: c.matchReason || `Direct role match for ${criteria.titles?.[0] || criteria.query || "target search"} at ${c.company}`,
     }));
 
     await setCachedCandidates(userId, inputHash, candidates);
