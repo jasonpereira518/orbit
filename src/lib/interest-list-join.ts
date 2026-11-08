@@ -56,7 +56,6 @@ import {
   withRevealedTokens,
 } from "@/lib/interest-list-tokens";
 import { asWelcomePlanet, planetForSignupNumber, type WelcomePlanet } from "@/lib/welcome-planets";
-import { ipBucketKey } from "@/lib/client-ip";
 import { track } from "@/lib/product-events";
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -19,7 +19,7 @@
  */
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { encrypt, decryptOrNull } from "@/lib/crypto";
+import { encrypt } from "@/lib/crypto";
 import { track } from "@/lib/product-events";
 import { eventId } from "@/lib/product-event-ids";
 import { decryptAndRewrap } from "@/lib/crypto-rewrap";
