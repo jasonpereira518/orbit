@@ -16,8 +16,8 @@ import { join } from "node:path";
 import { chainTo, serverImportGraph } from "./lib/import-graph";
 
 const LAYOUT = "src/app/(clerk)/(app)/layout.tsx";
-/** Room to grow from 68 (Oct 2026), but not another tripling. Main reached 91 on Nov 5 2026 (LinkedIn page work); runtime plan rules (plan-rules + plan-overrides) took it to 93 on Nov 6, so 94. */
-const LAYOUT_MAX_FILES = 94;
+/** Room to grow from 68 (Oct 2026), but not another tripling. Main reached 91 on Nov 5 2026 (LinkedIn page work); runtime plan rules (plan-rules + plan-overrides) took it to 93 on Nov 6, so 94. Key derivation for rotatable secrets (user-settings reads the credit-email token through secrets.ts, audit 3.6) added two small modules, so 96. */
+const LAYOUT_MAX_FILES = 96;
 /** Modules that must never load on every page: heavy, and needed only by specific actions. */
 const LAYOUT_BANNED = [
   "src/lib/ai.ts",

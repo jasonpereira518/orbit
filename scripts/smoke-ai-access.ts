@@ -25,6 +25,9 @@ import "./smoke/_env";
 // Production's key rules: the local-dev key names are ignored on Vercel, so the only managed
 // key is the explicit one set here. Set BEFORE the gate is imported or first called.
 process.env.VERCEL = "1";
+// On Vercel a missing ENCRYPTION_SECRET is refused rather than defaulted (audit L-06). A
+// test value, so the BYOK keys below can be encrypted and read back.
+process.env.ENCRYPTION_SECRET ||= "smoke-ai-access-test-secret-not-a-real-one-000";
 for (const name of ["GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
   delete process.env[name];
   delete process.env[`ORBIT_MANAGED_${name}`];
