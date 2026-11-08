@@ -1516,6 +1516,8 @@ export async function draftContactFollowUp(
   options?: {
     channel?: "email" | "linkedin" | "sms";
     intent?: string;
+    /** The purpose line, verbatim — pass it only when the person edited the one Orbit picked. */
+    purpose?: string;
     /** The draft already written for this exact context, if any (see `draftFromContext`). */
     reuse?: boolean;
   }

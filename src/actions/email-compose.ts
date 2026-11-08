@@ -65,10 +65,10 @@ export async function sendComposedEmail(input: Omit<ComposeInput, "fromName">): 
   return result;
 }
 
-/** A first draft for this contact, from the same drafter follow-ups use. Body only. */
+/** A first draft for this contact, from the same drafter follow-ups use. The compose dialog shows the body only. */
 export async function draftComposeWithAi(
   contactId: string
-): Promise<{ ok: true; body: string } | { ok: false; message: string }> {
+): Promise<{ ok: true; body: string; purpose: string } | { ok: false; message: string }> {
   const userId = await requireUserForReleasedSurface(COMPOSE_SURFACE_KEY);
   try {
     const [goals, writingInstructions] = await Promise.all([
@@ -79,7 +79,7 @@ export async function draftComposeWithAi(
       channel: "email",
       writingInstructions,
     });
-    return { ok: true, body: draft.body };
+    return { ok: true, body: draft.body, purpose: draft.purpose };
   } catch (err) {
     return { ok: false, message: friendlyError(err, "Couldn’t draft that — write it yourself or try again?") };
   }

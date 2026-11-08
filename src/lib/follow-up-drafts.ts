@@ -8,32 +8,53 @@ import { isAiAccessError, type AiAccess } from "@/lib/ai-access";
 import type { AiOperationId } from "@/lib/ai-operations";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
+import { loadUserAim } from "@/lib/career-profile-server";
+import { AIM_LABELS, FIELD_LABELS, TIMELINE_LABELS } from "@/lib/about-you";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { withWritingPreferences } from "@/lib/writing-instructions";
 import { auditUntrustedWrite, fenceUntrusted, guardModelOutput, recordAiSecurityEvent } from "@/lib/ai-security";
 
 const draftSchema = z.object({
   body: z.string().min(1),
+  purpose: z.unknown().optional(),
 });
 
-function parseDraftBody(content: string): string {
+/** One line, at most 140 chars; "" for anything that is not a string. */
+export function normalizePurpose(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return (raw.trim().split(/\r?\n/)[0] ?? "").trim().slice(0, 140);
+}
+
+/** "Going for: internship, this year" from the About-you aim; null when none is set. */
+export function aimLine(aim: Awaited<ReturnType<typeof loadUserAim>>): string | null {
+  if (!aim) return null;
+  const parts = [
+    AIM_LABELS[aim.kind],
+    aim.timeline ? TIMELINE_LABELS[aim.timeline] : null,
+    aim.field ? FIELD_LABELS[aim.field] : null,
+  ].filter((p): p is string => Boolean(p));
+  return parts.length ? `Going for: ${parts.map((p) => p.toLowerCase()).join(", ")}` : null;
+}
+
+/** The body is the draft; a missing or garbled purpose must never cost it. */
+function parseDraft(content: string): { body: string; purpose: string } {
   try {
     const parsed = draftSchema.parse(parseAiJson(content));
-    return parsed.body.trim();
+    return { body: parsed.body.trim(), purpose: normalizePurpose(parsed.purpose) };
   } catch (err) {
     // Last resort: pull a body string even from truncated model output.
     const match = content.match(/"body"\s*:\s*"((?:\\.|[^"\\])*)/);
     if (match?.[1]) {
       try {
         const body = JSON.parse(`"${match[1]}"`) as string;
-        if (body.trim()) return body.trim();
+        if (body.trim()) return { body: body.trim(), purpose: "" };
       } catch {
         const loose = match[1]
           .replace(/\\n/g, "\n")
           .replace(/\\"/g, '"')
           .replace(/\\\\/g, "\\")
           .trim();
-        if (loose) return loose;
+        if (loose) return { body: loose, purpose: "" };
       }
     }
     throw err instanceof Error
@@ -48,6 +69,8 @@ function parseDraftBody(content: string): string {
 
 export type FollowUpDraft = {
   body: string;
+  /** The one thing this message is for: Orbit's pick, or the person's edit passed back in. */
+  purpose: string;
   contactId: string;
   contactName: string;
 };
@@ -164,6 +187,8 @@ async function draftFromContext(input: {
   reminderBlock?: string | null;
   channel?: "email" | "linkedin" | "sms";
   intent?: string | null;
+  /** A verbatim override: when given, the draft serves it and returns it unchanged. */
+  purpose?: string | null;
   /**
    * Return the draft already written for this exact context instead of a new one. Only the
    * sheet that drafts on OPEN asks for this: reopening it used to buy a fresh draft every
@@ -183,16 +208,22 @@ async function draftFromContext(input: {
   const operation = input.operation ?? "followup.draft";
   // Tripwire, never a block: the history is other people's mail, DMs and calendar invites.
   auditUntrustedWrite(input.userId, operation, "history", `${profileBlock}\n${transcript}`);
-  const goalsBlock =
-    input.userGoals.length > 0
-      ? `Your active goals: ${input.userGoals.join("; ")}`
-      : "Your active goals: (none specified)";
-
   // Who the message is from, beyond a first name. Loaded here rather than threaded through
   // every caller so no draft path can be left without it — that is exactly how the sign-off
   // name above ended up being fetched inline too. Omitted entirely when unset; see
-  // `senderProfileBlock` on why "unknown" is worse than absent.
-  const senderBlock = senderProfileBlock(await loadSenderBio(input.userId));
+  // `senderProfileBlock` on why "unknown" is worse than absent. Both reads are best-effort:
+  // a failure leaves the line out rather than costing the draft.
+  const [userAim, senderBio] = await Promise.all([
+    loadUserAim(input.userId).catch(() => null),
+    loadSenderBio(input.userId),
+  ]);
+  const aim = aimLine(userAim);
+  const goalsBlock =
+    (input.userGoals.length > 0
+      ? `Your active goals: ${input.userGoals.join("; ")}`
+      : "Your active goals: (none specified)") + (aim ? `\n${aim}` : "");
+  const givenPurpose = normalizePurpose(input.purpose);
+  const senderBlock = senderProfileBlock(senderBio);
 
   const channelLabel =
     input.channel === "email"
@@ -243,7 +274,7 @@ async function draftFromContext(input: {
     system: `You draft warm, specific follow-up messages for a personal networking CRM called Orbit.
 The user is following up with someone they already know — not cold outreach.
 
-Return strict JSON: { "body": string }
+Return strict JSON: { "purpose": string, "body": string }
 
 Rules:
 - Write in first person as the user, ready to send as a ${channelLabel}.
@@ -253,9 +284,10 @@ Rules:
 - Avoid spammy language, fake familiarity, exaggerated claims, and generic "just checking in".
 - Do not invent facts, meetings, or shared history that are not in the context.
 - If conversation history is thin, lean on the reminder title/notes and known profile details.
-- Prefer a soft, specific CTA (one ask) over a laundry list.
+- Pick ONE purpose: something to learn from them or one thing to ask them for, grounded in the user's goals and who this person is. State it in under 15 words.
+${givenPurpose ? `- The purpose of this message is: ${givenPurpose}. Use it as given.\n` : ""}- Prefer a soft, specific CTA (one ask) over a laundry list.
 ${senderBlock ? "- Write from the sender's own background where it makes the ask land. Never restate their bio back to the recipient.\n" : ""}- ${signOffRule}
-${intentBlock ? "- Honor the user's stated intent when drafting." : ""}`,
+${intentBlock ? "- Treat the user's stated intent as a hint about what they want, not as the purpose." : ""}`,
     user: composeDraftContext({
       goalsBlock: withWritingPreferences(goalsBlock, input.writingInstructions),
       senderBlock,
@@ -267,11 +299,12 @@ ${intentBlock ? "- Honor the user's stated intent when drafting." : ""}`,
   }, {
     ttlDays: 7,
     fresh: !input.reuse,
-    accept: (raw) => Boolean(parseDraftBody(raw)?.trim()),
+    accept: (raw) => Boolean(parseDraft(raw).body),
   });
 
   // Secrets the contact's notes held, and fence markers, never reach a draft someone sends.
-  const guarded = guardModelOutput(parseDraftBody(content));
+  const draft = parseDraft(content);
+  const guarded = guardModelOutput(draft.body);
   if (guarded.findings.length) {
     void recordAiSecurityEvent({
       kind: "output_scrubbed",
@@ -282,6 +315,7 @@ ${intentBlock ? "- Honor the user's stated intent when drafting." : ""}`,
   }
   return {
     body: guarded.text,
+    purpose: givenPurpose || guardModelOutput(draft.purpose).text,
     contactId: input.contact.id,
     contactName,
   };
@@ -295,7 +329,7 @@ export async function generateFollowUpDraft(
   userId: string,
   reminderId: string,
   userGoals: string[] = [],
-  options?: { writingInstructions?: string | null }
+  options?: { writingInstructions?: string | null; purpose?: string | null }
 ): Promise<FollowUpDraft> {
   const db = await getDb();
 
@@ -328,6 +362,7 @@ export async function generateFollowUpDraft(
     userGoals,
     reminderBlock,
     writingInstructions: options?.writingInstructions,
+    purpose: options?.purpose,
   });
 }
 
@@ -339,6 +374,7 @@ export async function generateContactFollowUpDraft(
   options?: {
     channel?: "email" | "linkedin" | "sms";
     intent?: string | null;
+    purpose?: string | null;
     reuse?: boolean;
     writingInstructions?: string | null;
     /**
@@ -360,6 +396,7 @@ export async function generateContactFollowUpDraft(
     reminderBlock: "Reminder: Warm follow-up from contact profile",
     channel: options?.channel,
     intent: options?.intent,
+    purpose: options?.purpose,
     reuse: options?.reuse,
     writingInstructions: options?.writingInstructions,
     operation: options?.operation,
