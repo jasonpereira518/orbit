@@ -129,6 +129,25 @@ export function DashboardCardSkeleton({ className }: { className?: string }) {
   return <Skeleton className={`rounded-2xl ${className ?? "h-64"}`} />;
 }
 
+/**
+ * The dashboard body below its header. The page keeps every data-dependent card and section
+ * inside one Suspense boundary so the body paints once, in its final arrangement: the
+ * optional leading cards used to mount late above already-painted content and shift it down
+ * ~219 px (CLS 0.141). This mirrors the first frame the page used to show — the stat row and
+ * the two chart cards — for the much shorter time until the whole body is ready.
+ */
+export function DashboardBodySkeleton() {
+  return (
+    <div className="space-y-8">
+      <DashboardStatRowSkeleton />
+      <div className="flex flex-col gap-6 lg:flex-row">
+        <DashboardCardSkeleton className="h-80 min-w-0 lg:flex-1" />
+        <DashboardCardSkeleton className="h-80 min-w-0 lg:flex-1" />
+      </div>
+    </div>
+  );
+}
+
 export function ContactsPageSkeleton() {
   return (
     <LoadingRegion label="Loading contacts" className="space-y-6">
