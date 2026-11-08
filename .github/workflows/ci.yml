@@ -136,10 +136,8 @@ jobs:
   # install cached, three shards finish alongside the build, and a fourth only added a check.
   # `fail-fast: false` so one shard failing still reports the rest.
   #
-  # The job id stays `smoke`, and the matrix names read `smoke suite (PGlite) 1/3` …; branch
-  # protection requires the stable name `smoke suite (PGlite)`, which `smoke-gate` below
-  # reports, so the shard count can change without leaving the PR waiting on a check that
-  # never starts.
+  # The job id stays `smoke`, and the matrix names read `smoke suite (PGlite) 1/3` …; the
+  # required check is `smoke-gate`'s bare `smoke suite (PGlite)`, which passes only if all do.
   smoke:
     name: smoke suite (PGlite) ${{ matrix.shard }}/3
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -163,12 +161,7 @@ jobs:
         run: npm ci --no-audit --no-fund
       - run: npm test -- --shard ${{ matrix.shard }}/3
 
-  # One stable check name for branch protection. The matrix names carry the shard number
-  # (`smoke suite (PGlite) 1/3`), so they cannot satisfy the required context
-  # `smoke suite (PGlite)` directly, and requiring each shard name would break the gate
-  # whenever the shard count changes. Runs even when a shard fails (`always()`), and fails
-  # unless every shard succeeded. Skipped with the shards on a draft PR, which GitHub counts
-  # as passing.
+  # The bare name branch protection requires; see `e2e-gate` for why a gate job.
   smoke-gate:
     name: smoke suite (PGlite)
     needs: smoke

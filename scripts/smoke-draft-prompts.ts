@@ -16,7 +16,11 @@ import "./smoke/_env";
 process.env.ORBIT_AI_RESULT_CACHE = "off";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { installPromptCapture, runDraftCases, seedCaseUser, type CaseResults } from "./lib/draft-prompt-cases";
+import { eq } from "drizzle-orm";
+import { getDb } from "../src/db";
+import { userSettings } from "../src/db/schema";
+import { generateContactFollowUpDraft } from "../src/lib/follow-up-drafts";
+import { CASE_USER, installPromptCapture, only, runDraftCases, seedCaseUser, type CaseResults } from "./lib/draft-prompt-cases";
 
 const FIXTURE = join(process.cwd(), "scripts/fixtures/draft-prompt-goldens.json");
 
@@ -47,6 +51,25 @@ async function main() {
     check(`${name}: system prompt`, g?.system === want[name]!.system, g ? firstDiff(want[name]!.system, g.system) : "missing");
     check(`${name}: user message`, g?.user === want[name]!.user, g ? firstDiff(want[name]!.user, g.user) : "missing");
   }
+
+  // Purpose: Orbit picks it, an edited one is a verbatim override, intent stays a hint.
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ careerProfile: { aim: { kind: "internship", timeline: "this_year", field: null, setAt: "2026-11-06T00:00:00.000Z" } } })
+    .where(eq(userSettings.userId, CASE_USER));
+  const picked = await only(() => generateContactFollowUpDraft(CASE_USER, contactId, [], { intent: "Say hi" }));
+  const pickedRes = await generateContactFollowUpDraft(CASE_USER, contactId, [], { intent: "Say hi" });
+  check("system prompt asks for { purpose, body }", picked.system.includes('{ "purpose": string, "body": string }'));
+  check("system prompt has the pick-one-purpose rule", picked.system.includes("Pick ONE purpose"));
+  check("goals block carries the aim line", picked.user.includes("Going for: internship, in the next year"), picked.user);
+  check("intent is a hint, no verbatim override", !picked.system.includes("Use it as given") && /hint/.test(picked.system));
+  check("purpose comes from the model when only intent is set", pickedRes.purpose === "Ask about the seed round", pickedRes.purpose);
+  const given = "Ask about the APM program";
+  const forced = await only(() => generateContactFollowUpDraft(CASE_USER, contactId, [], { purpose: given }));
+  const forcedRes = await generateContactFollowUpDraft(CASE_USER, contactId, [], { purpose: given });
+  check("a given purpose is used verbatim in the prompt", forced.system.includes(`The purpose of this message is: ${given}. Use it as given.`));
+  check("a given purpose is returned exactly", forcedRes.purpose === given, forcedRes.purpose);
 
   if (failures) {
     console.error(`\n${failures} check(s) failed`);
