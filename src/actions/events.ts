@@ -10,7 +10,6 @@
  * actions are reachable by direct POST, so a check anywhere else is not a check.
  */
 import { cookies } from "next/headers";
-import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireSyncUser, requireUserForReleasedSurface } from "@/lib/plan-guards";
 import { requireReleasedSurface } from "@/lib/surface-visibility";
@@ -64,7 +63,6 @@ import {
   type UpdateAttendeeResult,
 } from "@/lib/events/store";
 import {
-  connectAttendees,
   previewConnect,
   restampEventInteractions,
   type ConnectPreviewRow,
@@ -79,15 +77,15 @@ import {
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
 import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { listCalendarSources } from "@/lib/calendar-sources";
 import type {
   AttendeeRole,
-  ConnectSummary,
   EventConnectionProvider,
   RosterRow,
 } from "@/lib/events/types";
 import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
-import { GOOGLE_SCOPES, hasGmailReadScope, hasScope } from "@/lib/google-scopes";
+import { GOOGLE_SCOPES, hasScope } from "@/lib/google-scopes";
 import { actionFailure } from "@/lib/action-failure";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
@@ -210,15 +208,10 @@ export async function createEvent(input: {
       revalidateEvents(found.id);
       return { id: found.id, existing: true };
     }
-    const event = { id: found.id };
-
-    if (input.url) {
-      // Off the request path: the user should land on their event, not wait on someone
-      // else's web server. `enrich_status` on the row is how the UI shows this is in flight.
-      after(() => enrichEvent(userId, event.id, input.url!).catch(() => {}));
-    }
+    // No background page read here: the dialog awaits `enrichEventFromUrl` right after this,
+    // and a second read in `after()` fetched the same page twice for every link.
     revalidateEvents();
-    return { id: event.id };
+    return { id: found.id };
   });
 }
 
@@ -567,9 +560,8 @@ export async function deleteAttendee(eventId: string, attendeeId: string): Promi
  * Who on this roster is already in your network.
  *
  * Built on `previewConnect` rather than a second, cheaper matcher on purpose. The badge this
- * feeds and the connect preview must never disagree — "already a contact" above a preview
- * that says "create" reads as a bug — and reuse is the only way to guarantee they agree at
- * the same threshold against the same index.
+ * feeds and the old connect preview had to agree at the same threshold against the same index,
+ * and ingest still matches at that floor.
  *
  * Only unconnected rows are asked about: a row with a `contactId` is already known to be
  * linked, and asking would pay for a match we already have.
@@ -582,33 +574,6 @@ export async function matchRosterToNetwork(eventId: string): Promise<ConnectPrev
   const unlinked = roster.filter((r) => !r.contactId).map((r) => r.id);
   if (unlinked.length === 0) return [];
   return previewConnect(userId, event, unlinked);
-}
-
-/** A dry run, so the user sees who will merge and who will be created before committing. */
-export async function previewConnectAttendees(
-  eventId: string,
-  attendeeIds: string[]
-): Promise<ConnectPreviewRow[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) throw new Error("That event no longer exists.");
-  return previewConnect(userId, event, attendeeIds);
-}
-
-export async function addSpokenToConnections(
-  eventId: string,
-  attendeeIds: string[]
-): Promise<ConnectSummary & { remaining: number }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) throw new Error("That event no longer exists.");
-
-  const summary = await connectAttendees(userId, event, attendeeIds);
-  revalidateEvents(eventId);
-  // These people are now contacts, so the surfaces that count them are stale.
-  revalidatePath("/contacts");
-  revalidatePath("/dashboard");
-  return summary;
 }
 
 export async function removeSpokenToConnection(
@@ -735,35 +700,26 @@ export async function addTargetCompanyFromEvent(
 export async function getEventConnections(): Promise<{
   connections: EventConnectionSummary[];
   eventbriteConfigured: boolean;
-  /** Any active Google connection exists. */
-  googleConnected: boolean;
-  /** That connection may read mail — the confirmation-email scan can run. */
-  googleMailGranted: boolean;
-  /** That connection may read the calendar — meetings sync. */
-  googleCalendarGranted: boolean;
+  /**
+   * A calendar calendar-discovery reads: Google with the calendar scope, or an Outlook or iCloud
+   * calendar source.
+   */
+  calendarConnected: boolean;
 }> {
   const userId = await requireUserForReleasedSurface(SURFACE);
-  const [connections, grant, demo] = await Promise.all([
+  const [connections, grant, sources, demo] = await Promise.all([
     listEventConnections(userId),
     findGmailGrant(userId),
+    listCalendarSources(userId),
     isDemoWorkspace(userId),
   ]);
-  // The demo workspace stores no OAuth grant but reads as connected everywhere else.
-  if (demo) {
-    return {
-      connections,
-      eventbriteConfigured: eventbriteOAuthConfig().configured,
-      googleConnected: true,
-      googleMailGranted: true,
-      googleCalendarGranted: true,
-    };
-  }
   return {
-    connections,
+    // The gmail rows are the retired confirmation-email scan; nothing reads them any more.
+    connections: connections.filter((c) => c.provider !== "gmail"),
     eventbriteConfigured: eventbriteOAuthConfig().configured,
-    googleConnected: grant !== null,
-    googleMailGranted: hasGmailReadScope(grant?.scopes),
-    googleCalendarGranted: hasScope(grant?.scopes, GOOGLE_SCOPES.calendar),
+    // The demo workspace stores no OAuth grant but reads as connected everywhere else.
+    calendarConnected:
+      demo || hasScope(grant?.scopes, GOOGLE_SCOPES.calendar) || sources.some((s) => s.provider !== "google"),
   };
 }
 
@@ -857,52 +813,6 @@ export async function connectEventFeed(
       error: await actionFailure(error, "That calendar link couldn’t be read — check it and try again?", "events.connect-feed", { provider }),
     };
   }
-}
-
-/**
- * Turn the confirmation-email scan on or off.
- *
- * `gmail.readonly` is a Google RESTRICTED scope. The user granted it for calendar and contact
- * history; reading their mail for event confirmations is a different purpose, so it gets its
- * own explicit switch rather than riding along on a grant made for something else.
- *
- * The connection row IS the consent: no row, no scan. Turning it off deletes the row, which
- * takes the stored scan position with it — there is nothing else to delete, because the scan
- * keeps no message content anywhere.
- */
-export async function setGmailEventScan(
-  enabled: boolean
-): Promise<{ ok: boolean; error?: string; needsMailScope?: boolean }> {
-  const userId = await requireSyncUser();
-  await requireReleasedSurface(userId, SURFACE);
-
-  if (!enabled) {
-    await deleteEventConnection(userId, "gmail");
-    revalidateEvents();
-    return { ok: true };
-  }
-
-  const connection = await findGmailGrant(userId);
-  // This switch never widens a grant silently: without gmail.readonly it tells the card to
-  // send the person through Google's consent screen for exactly that scope.
-  if (!connection || !hasGmailReadScope(connection.scopes)) {
-    return {
-      ok: false,
-      needsMailScope: true,
-      error: "Allow mail access first — Orbit asks Google for it next",
-    };
-  }
-
-  await upsertEventConnection(userId, {
-    provider: "gmail",
-    authKind: "google_grant",
-    // No secret: the token comes from the Gmail connection at scan time, so nothing is
-    // duplicated here and revoking Google revokes this too.
-    secret: "",
-    label: connection.emailAddress ?? "Gmail",
-  });
-  revalidateEvents();
-  return { ok: true };
 }
 
 export async function startEventbriteOAuth(): Promise<{ url: string }> {

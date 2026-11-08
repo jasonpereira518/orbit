@@ -19,15 +19,12 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 export const metadata = { title: "Events" };
 
 async function ConnectionsSection() {
-  const { connections, eventbriteConfigured, googleConnected, googleMailGranted, googleCalendarGranted } =
-    await getEventConnections();
+  const { connections, eventbriteConfigured, calendarConnected } = await getEventConnections();
   return (
     <EventConnectionsCard
       connections={connections}
       eventbriteConfigured={eventbriteConfigured}
-      googleConnected={googleConnected}
-      googleMailGranted={googleMailGranted}
-      googleCalendarGranted={googleCalendarGranted}
+      calendarConnected={calendarConnected}
     />
   );
 }
@@ -68,7 +65,15 @@ async function HiddenList() {
   );
 }
 
-function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.ReactNode }) {
+function EventGrid({
+  events,
+  empty,
+  past = false,
+}: {
+  events: EventListRow[];
+  empty: React.ReactNode;
+  past?: boolean;
+}) {
   if (events.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
@@ -79,7 +84,7 @@ function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.Rea
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {events.map((event) => (
-        <EventCard key={event.id} event={event} />
+        <EventCard key={event.id} event={event} past={past} />
       ))}
     </div>
   );
@@ -94,10 +99,8 @@ async function EventsList() {
         events={[]}
         empty={
           <>
-            No events yet. Add one by pasting its link — the event page or your ticket, from
-            Luma, Eventbrite, Partiful and the rest — and Orbit will pull in the details. Or
-            connect your Luma or Partiful calendar below and the events you go to will arrive on
-            their own.
+            No events yet. Events on your calendar show up here on their own — or add one by
+            name or link, and log who you met there.
           </>
         }
       />
@@ -114,7 +117,7 @@ async function EventsList() {
           empty="Nothing coming up. Events you RSVP to will appear here as soon as you're confirmed."
         />
       }
-      past={<EventGrid events={past} empty="No past events yet." />}
+      past={<EventGrid events={past} empty="No past events yet." past />}
     />
   );
 }
@@ -154,11 +157,9 @@ export default async function EventsPage() {
         <HiddenList />
       </Suspense>
 
-      {/* Last, and collapsed: connecting a source is something you do once, and the page is
-          about the events themselves. It sat above them as the largest card on the page,
-          which put set-up between the user and the thing they came to look at. The collapsed
-          row still says when a connection needs attention. fallback={null} because a
-          skeleton for a one-line row is more noise than the row. */}
+      {/* Last: where events come from is one line (is a calendar connected?) and everything
+          optional is collapsed under More sources, which still says when a connection needs
+          attention. fallback={null} because a skeleton for one line is more noise than it. */}
       <Suspense fallback={null}>
         <ConnectionsSection />
       </Suspense>
