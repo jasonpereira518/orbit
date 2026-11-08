@@ -76,7 +76,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "leads",
     label: "Leads and team",
     description:
-      "Your place on your company's team. Teammates stop seeing whether you know the people they look up, and the team itself is removed once nobody is left in it.",
+      "The people you saved to reach, and your place on your company’s team. Teammates stop seeing whether you know the people they look up, and the team itself is removed once nobody is left in it.",
   },
   {
     id: "connections",

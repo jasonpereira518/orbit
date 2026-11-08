@@ -67,6 +67,7 @@ import { sql } from "drizzle-orm";
   "email_events",
   "teams",
   "team_members",
+  "leads",
 ] as const;
 
 async function main() {

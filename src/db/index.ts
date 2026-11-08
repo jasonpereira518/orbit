@@ -1938,6 +1938,32 @@ CREATE TABLE IF NOT EXISTS team_members (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS team_members_user_uidx ON team_members(user_id);
 CREATE INDEX IF NOT EXISTS team_members_team_sharing_idx ON team_members(team_id, share_network);
+CREATE TABLE IF NOT EXISTS leads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  display_name text NOT NULL,
+  email text,
+  email_normalized text,
+  linkedin_url text,
+  linkedin_slug text,
+  phone text,
+  phone_e164 text,
+  company_name text,
+  company_normalized text,
+  title text,
+  apollo_id text,
+  status text NOT NULL DEFAULT 'open',
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS leads_user_status_idx ON leads(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS leads_user_email_idx ON leads(user_id, email_normalized);
+CREATE INDEX IF NOT EXISTS leads_user_linkedin_idx ON leads(user_id, linkedin_slug);
+CREATE INDEX IF NOT EXISTS leads_contact_idx ON leads(contact_id);
+CREATE UNIQUE INDEX IF NOT EXISTS leads_user_apollo_uidx ON leads(user_id, apollo_id) WHERE apollo_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS contact_merges (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2985,7 +3011,13 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // claude/security-audit-phase1-port claim them. Rescanned every remote ref, local branch and
 // worktree on Nov 7 2026: 201 was the highest claimed anywhere. The rest of the Leads port
 // (P3 pipeline, P4 HubSpot, P5 Salesforce) takes the next numbers after a fresh rescan.
-export const SCHEMA_VERSION = 202;
+//
+// 204 = leads: the Leads pipeline — manual and Apollo targets, ranked by who on the team knows
+// them. P3 of docs/superpowers/specs/2026-09-22-leads-design.md, ported onto main from the
+// never-merged stack (#267): built as 92, then 122. NOT 203: claude/security-audit-phase2-port
+// (PR #554) claims it. Rescanned every remote ref, local branch and worktree on Nov 8 2026: 203
+// was the highest claimed anywhere.
+export const SCHEMA_VERSION = 204;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
