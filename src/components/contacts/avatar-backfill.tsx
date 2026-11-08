@@ -175,6 +175,7 @@ export function AvatarBackfill() {
           }
 
           if (result.rateLimitedUntil && result.rateLimitedUntil > Date.now()) {
+            idlePasses = 0; // A rate limit pause is not an idle failure — keep working through the network
             const wait = Math.min(
               MAX_WAIT_MS,
               Math.max(5_000, result.rateLimitedUntil - Date.now() + 1_000)

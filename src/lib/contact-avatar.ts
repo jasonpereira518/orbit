@@ -7,6 +7,11 @@ import { guardedFetch, readBodyCapped } from "@/lib/net-guard";
 import { reportError } from "@/lib/report-error";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
+  fetchLinkedInOgImageDirect,
+  isLinkedInDirectRateLimited,
+  LinkedInDirectRateLimitError,
+} from "@/lib/linkedin-scraper";
+import {
   isDurableAvatarUrl,
   isUnfetchableImageUrl,
 } from "@/lib/contact-avatar-url";
@@ -101,19 +106,19 @@ export class MicrolinkRateLimitError extends AvatarSourceRateLimitError {
   }
 }
 
-export type AvatarQuotaSource = "unavatar" | "microlink";
+export type AvatarQuotaSource = "linkedin_direct" | "unavatar" | "microlink" | "extension";
 
 /**
  * Takes one lookup from the user's daily slice and from the app-wide allowance for this
  * source. Returns the deferral to throw when either is spent, or null to go ahead.
- * `userId: null` is for tests and scripts only. A limiter that cannot count defers too:
- * spending quota we cannot see is exactly what this exists to stop.
+ * `userId: null` is for tests and scripts only. Direct scraping and extension captures
+ * are free and unmetered (concurrency-managed, not vendor-capped).
  */
 export async function claimAvatarSourceLookup(
   source: AvatarQuotaSource,
   userId: string | null
 ): Promise<AvatarSourceRateLimitError | null> {
-  if (userId === null) return null;
+  if (userId === null || source === "linkedin_direct" || source === "extension") return null;
   const label = source === "unavatar" ? "unavatar.io" : "microlink";
   try {
     await consumeBucket("avatarSource.user", `${source}:${userId}`, RATE_LIMITS.avatarSourceUser);
@@ -238,14 +243,14 @@ export async function fetchLinkedInPhotoUrl(
   return (await fetchLinkedInPhoto(linkedinUrl, userId, { contactId }))?.url ?? null;
 }
 
-/** An https `media.licdn.com` URL with a `/profile-displayphoto…` path segment: a LinkedIn profile photo. */
+/** An https `media.licdn.com` URL with a `/profile-displayphoto…` or `/profile-framedphoto…` path segment: a LinkedIn profile photo. */
 export function isLinkedInProfilePhoto(url: string): boolean {
   try {
     const parsed = new URL(url);
     return (
       parsed.protocol === "https:" &&
       parsed.hostname === "media.licdn.com" &&
-      parsed.pathname.split("/").some((seg) => seg.startsWith("profile-displayphoto"))
+      parsed.pathname.split("/").some((seg) => seg.startsWith("profile-displayphoto") || seg.startsWith("profile-framedphoto"))
     );
   } catch {
     return false;
@@ -266,9 +271,26 @@ export async function fetchLinkedInPhoto(
   const slug = "sharedSlug" in target ? target.sharedSlug : linkedinSlug(linkedinUrl);
   if (!slug) return null;
 
-  // Free tier, but quota'd: 25 anonymous lookups a day. Nothing stores this URL —
-  // `persistAvatar` returns inline/Blob bytes.
   let deferred: AvatarSourceRateLimitError | null = null;
+
+  // Tier 1: Direct LinkedIn public profile scrape (100% free, zero third-party quota)
+  if (!isLinkedInDirectRateLimited()) {
+    try {
+      const directImageUrl = await fetchLinkedInOgImageDirect(slug);
+      if (directImageUrl && ("contactId" in target || isLinkedInProfilePhoto(directImageUrl))) {
+        const photoUrl = await downloadAndPersist(target, directImageUrl);
+        if (photoUrl) return { url: photoUrl, source: "linkedin_direct" };
+      }
+    } catch (err) {
+      if (err instanceof LinkedInDirectRateLimitError) {
+        deferred = new AvatarSourceRateLimitError(err.resetAt, "linkedin_direct");
+      } else if (err instanceof AvatarStorageError) {
+        throw err;
+      }
+    }
+  }
+
+  // Tier 2: Free tier Unavatar (25 anonymous lookups a day)
   if (Date.now() < unavatarCooldownUntil) {
     deferred = new AvatarSourceRateLimitError(unavatarCooldownUntil, "unavatar.io");
   } else {
@@ -288,7 +310,7 @@ export async function fetchLinkedInPhoto(
     }
   }
 
-  // Metered tier. Report exhaustion rather than silently returning "no photo".
+  // Tier 3: Microlink fallback (metered tier)
   if (isMicrolinkRateLimited()) {
     throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
   }
@@ -314,7 +336,7 @@ export async function fetchLinkedInPhoto(
     if (err instanceof AvatarSourceRateLimitError) throw err;
   }
 
-  // Microlink found nothing, but Unavatar never got a real look: defer, don't fail.
+  // If higher tiers hit a rate limit and subsequent tiers found nothing, defer rather than failing.
   if (deferred) throw deferred;
   return null;
 }
@@ -372,7 +394,7 @@ async function downloadAndPersist(
 
   const downloaded = await downloadImageBytes(imageUrl, deps);
   if (!downloaded) return null;
-  return persistAvatar(target, downloaded.buf, downloaded.contentType);
+  return persistAvatar(target, downloaded.buf, downloaded.contentType, imageUrl);
 }
 
 /**
@@ -555,17 +577,25 @@ async function encodeAvatar(
 async function persistAvatar(
   target: AvatarTarget,
   buf: Buffer,
-  contentType: string
+  contentType: string,
+  rawImageUrl?: string
 ): Promise<string | null> {
   const encoded = await encodeAvatar(buf, contentType);
   if (!encoded) return null;
 
   if (!hasBlobStorage()) {
-    // The shared pool only ever holds https URLs; an inline photo has nowhere to go.
-    if ("sharedSlug" in target) return null;
-    warnMissingBlobOnce();
-    if (encoded.buf.byteLength > MAX_INLINE_BYTES) return null;
-    return `data:${encoded.contentType};base64,${encoded.buf.toString("base64")}`;
+    // When no Blob store is configured, the contact stores inline data URL.
+    if ("contactId" in target) {
+      warnMissingBlobOnce();
+      if (encoded.buf.byteLength > MAX_INLINE_BYTES) return null;
+      return `data:${encoded.contentType};base64,${encoded.buf.toString("base64")}`;
+    }
+    // For sharedSlug, if Blob is unconfigured but we have a valid https media.licdn.com image,
+    // return it so linkedin_avatars can store the https URL for other accounts to share.
+    if (rawImageUrl && rawImageUrl.startsWith("https://") && isLinkedInProfilePhoto(rawImageUrl)) {
+      return rawImageUrl;
+    }
+    return null;
   }
 
   try {
