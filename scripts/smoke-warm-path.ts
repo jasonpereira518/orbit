@@ -17,7 +17,7 @@ import {
 } from "../src/lib/team-domain";
 import { identityPairs, rankWarmth } from "../src/lib/leads/warm-path";
 import { parseTargetInput } from "../src/lib/leads/target-input";
-import { linkedinSlug, normalizePhone } from "../src/lib/duplicates";
+import { normalizePhone, linkedinSlug } from "../src/lib/duplicates";
 import { displayCompanyName, normalizeCompanyName } from "../src/lib/company-name";
 import { accountPathsStatement, directPathsStatement } from "../src/lib/leads/warm-path-sql";
 
