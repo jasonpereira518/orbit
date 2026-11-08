@@ -136,8 +136,8 @@ jobs:
   # install cached, three shards finish alongside the build, and a fourth only added a check.
   # `fail-fast: false` so one shard failing still reports the rest.
   #
-  # The job id stays `smoke`, and the matrix names read `smoke suite (PGlite) 1/3` …; if a
-  # required status check is ever added, require all three names.
+  # The job id stays `smoke`, and the matrix names read `smoke suite (PGlite) 1/3` …; the
+  # required check is `smoke-gate`'s bare `smoke suite (PGlite)`, which passes only if all do.
   smoke:
     name: smoke suite (PGlite) ${{ matrix.shard }}/3
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -160,6 +160,16 @@ jobs:
       - if: steps.deps.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund
       - run: npm test -- --shard ${{ matrix.shard }}/3
+
+  # The bare name branch protection requires; see `e2e-gate` for why a gate job.
+  smoke-gate:
+    name: smoke suite (PGlite)
+    needs: smoke
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: test "${{ needs.smoke.result }}" = success
 
   # The same suite again under c8, for coverage — on `main` and on demand, NOT on PRs, and
   # never as the gate. Instrumentation slows scripts several-fold, which is harmless for
