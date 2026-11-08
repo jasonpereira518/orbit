@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
 
 /**
- * The caller's IP from proxy headers: the first `x-forwarded-for` hop (the client; the rest
- * are proxies), then `x-real-ip`, else "unknown". Usable by any server action or core with
- * Next's `headers()` or a plain test object.
+ * The caller's IP from proxy headers.
+ *
+ * `x-real-ip` first: on Vercel it is the connecting client, set by the platform and not
+ * forwardable. The first `x-forwarded-for` hop is the fallback rather than the source —
+ * behind any other proxy a client can write that header, and with it choose its own rate-limit
+ * bucket. `src/app/api/p/v/route.ts` has the same order for the same reason.
  */
 export function clientIpFrom(headers: { get(name: string): string | null }): string {
   return (
-    headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     headers.get("x-real-ip")?.trim() ||
+    headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     "unknown"
   );
 }

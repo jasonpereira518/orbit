@@ -145,6 +145,11 @@ run(async () => {
     return null;
   });
   const legacyImport = legacy?.importId ?? (await db.query.imports.findFirst({ where: and(eq(imports.userId, USER), eq(imports.fileName, "Connections.csv")) }))!.id;
+  // `startLinkedInImport` stages rows and schedules its job with `after()`, which cannot run
+  // outside a request (the catch above). Nothing here executes that job, so mark it finished:
+  // the one-import-at-a-time guard in `assertNoImportInFlight` would otherwise refuse the
+  // next start. Staged rows — all this test compares — are unaffected by the status.
+  await db.update(imports).set({ status: "completed" }).where(eq(imports.id, legacyImport));
   const smallRows = parseLinkedInConnectionsCsv(small).rows;
   const viaChunks = await beginConnectionsStaging(USER, "chunked.csv");
   await appendConnectionsRows(USER, viaChunks.importId, 0, pick.map(Number).map((index) => ({ index, ...smallRows[index] })));

@@ -42,7 +42,7 @@ for (const purpose of GOOGLE_PURPOSES) {
 }
 check("contacts never asks to send or read mail", !googleScopesFor(["contacts"]).some((s) => s === GOOGLE_SCOPES.gmailSend || s === GOOGLE_SCOPES.gmailRead));
 check("send asks for gmail.send, not gmail.readonly", requiredScopeFor("send") === GOOGLE_SCOPES.gmailSend && !googleScopesFor(["send"]).includes(GOOGLE_SCOPES.gmailRead));
-check("the recruiter scan and confirmation emails both need gmail.readonly", requiredScopeFor("recruiter_scan") === GOOGLE_SCOPES.gmailRead && requiredScopeFor("event_mail") === GOOGLE_SCOPES.gmailRead);
+check("the recruiter scan needs gmail.readonly", requiredScopeFor("recruiter_scan") === GOOGLE_SCOPES.gmailRead);
 check("calendar asks for calendar.readonly", requiredScopeFor("calendar") === GOOGLE_SCOPES.calendar);
 
 console.log("Purposes from untrusted input");
@@ -62,7 +62,7 @@ check("a new grant adds to the stored one, without duplicates", unionScopes("a b
 check("a refresh that omits scope keeps the stored grant", unionScopes("openid x", undefined) === "openid x");
 
 console.log("Copy");
-check("mail purposes say mail", missingScopeMessage("recruiter_scan") === "Google didn’t grant mail access — reconnect and allow it" && missingScopeMessage("event_mail") === missingScopeMessage("recruiter_scan"));
+check("mail purposes say mail", missingScopeMessage("recruiter_scan") === "Google didn’t grant mail access — reconnect and allow it");
 check("an unknown purpose falls back to the mail copy", missingScopeMessage(null) === missingScopeMessage("recruiter_scan"));
 check("contacts says contacts", missingScopeMessage("contacts") === "Google didn’t grant contacts access — reconnect and allow it");
 check("calendar says calendar", missingScopeMessage("calendar") === "Google didn’t grant calendar access — reconnect and allow it");

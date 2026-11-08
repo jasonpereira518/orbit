@@ -14,7 +14,7 @@
  * it costs a model call against the user's own key, and the card is useful without it.
  */
 import { useState, useTransition } from "react";
-import { Link2, Loader2, Sparkles, Users } from "lucide-react";
+import { ExternalLink, Link2, Loader2, Sparkles, Users } from "lucide-react";
 import { IntentLink } from "@/components/ui/intent-link";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
@@ -77,15 +77,29 @@ export function WhoToTalkToCard({
             <li key={row.attendeeId} className="rounded-xl border border-border/60 p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-ink">
-                    {row.contactId ? (
-                      <IntentLink href={`/contacts/${row.contactId}`} className="hover:underline">
-                        {row.name}
-                      </IntentLink>
-                    ) : (
-                      row.name
-                    )}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-medium text-ink">
+                      {row.contactId ? (
+                        <IntentLink href={`/contacts/${row.contactId}`} className="hover:underline">
+                          {row.name}
+                        </IntentLink>
+                      ) : (
+                        row.name
+                      )}
+                    </p>
+                    {row.linkedinUrl ? (
+                      <a
+                        href={row.linkedinUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-3xs font-medium text-blue-600 transition-colors hover:bg-blue-500/20 dark:text-blue-400"
+                        title="View LinkedIn profile"
+                      >
+                        <ExternalLink className="size-2.5" />
+                        LinkedIn
+                      </a>
+                    ) : null}
+                  </div>
                   {detail ? (
                     <p className="truncate text-xs text-muted-foreground">{detail}</p>
                   ) : null}

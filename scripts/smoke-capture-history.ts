@@ -136,6 +136,14 @@ function pureChecks() {
       captureMethod({ meeting: false, granola: false, jobSource: null, kinds: [] }),
     ].join() === "meeting,granola,phone,scan,calendar,notes"
   );
+  check(
+    "a Drive / OneDrive doc is named by its drive, after Granola",
+    [
+      captureMethod({ meeting: false, granola: false, jobSource: "messy", jobTags: ["cloud:google"], kinds: ["text"] }),
+      captureMethod({ meeting: false, granola: false, jobSource: "messy", jobTags: ["cloud:microsoft"], kinds: ["text"] }),
+      captureMethod({ meeting: false, granola: true, jobSource: "messy", jobTags: ["cloud:google"], kinds: ["text"] }),
+    ].join() === "drive,onedrive,granola"
+  );
 
   check("summary prefers the meeting's, as plain text", captureSummary("**Big** call", ["person"]) === "Big call.");
   check("  else the first person summary that has words", captureSummary(null, [null, "  ", "- Talked _roadmap_"]) === "Talked roadmap.");

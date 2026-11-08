@@ -18,7 +18,7 @@
  */
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { eventAttendees, events, type EventRecord } from "@/db/schema";
+import { contacts, eventAttendees, events, type EventRecord } from "@/db/schema";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { personKeyOf } from "@/lib/events/people";
 import { UserFacingError } from "@/lib/errors";
@@ -38,6 +38,7 @@ export type EventListRow = Pick<
   | "title"
   | "startsAt"
   | "endsAt"
+  | "timezone"
   | "venue"
   | "city"
   | "url"
@@ -117,7 +118,7 @@ export async function listEventsForUser(
       ? sql`e.starts_at ASC NULLS LAST, e.id ASC`
       : sql`e.starts_at DESC NULLS LAST, e.id DESC`;
   const rows = await db.execute(sql`
-    SELECT e.id, e.title, e.starts_at, e.ends_at, e.venue, e.city, e.url, e.role, e.source,
+    SELECT e.id, e.title, e.starts_at, e.ends_at, e.timezone, e.venue, e.city, e.url, e.role, e.source,
            e.cover_image_url, e.theme_color, e.discovered_via, e.rsvp_status,
            COALESCE(a.total, 0)     AS attendee_count,
            COALESCE(a.connected, 0) AS connected_count
@@ -141,6 +142,7 @@ export async function listEventsForUser(
     title: string;
     starts_at: string | Date | null;
     ends_at: string | Date | null;
+    timezone: string | null;
     venue: string | null;
     city: string | null;
     url: string | null;
@@ -160,6 +162,7 @@ export async function listEventsForUser(
     title: r.title,
     startsAt: r.starts_at ? new Date(r.starts_at) : null,
     endsAt: r.ends_at ? new Date(r.ends_at) : null,
+    timezone: r.timezone,
     venue: r.venue,
     city: r.city,
     url: r.url,
@@ -263,6 +266,7 @@ export type CreateEventInput = {
   themeSource?: EventRecord["themeSource"];
   attendeeCount?: number | null;
   notes?: string | null;
+  rsvpStatus?: EventRecord["rsvpStatus"];
 };
 
 export async function createEventForUser(
@@ -295,6 +299,7 @@ export async function createEventForUser(
       themeSource: input.themeSource ?? null,
       attendeeCount: input.attendeeCount ?? null,
       notes: input.notes ?? null,
+      rsvpStatus: input.rsvpStatus ?? null,
     })
     .returning();
   return row!;
@@ -457,6 +462,99 @@ export async function linkAttendeesToContacts(
       FROM (VALUES ${sql.join(values, sql`, `)}) AS v(attendee_id, contact_id)
      WHERE a.id = v.attendee_id AND a.user_id = ${userId}
   `);
+}
+
+/** The rows `upsertEventAttendees` wrote, by the identity keys it was given (it returns a count). */
+async function attendeeRowsByIdentityKey(userId: string, eventId: string, keys: string[]) {
+  if (keys.length === 0) return [];
+  const db = await getDb();
+  return db
+    .select({ id: eventAttendees.id, identityKey: eventAttendees.identityKey })
+    .from(eventAttendees)
+    .where(
+      and(eq(eventAttendees.userId, userId), eq(eventAttendees.eventId, eventId), inArray(eventAttendees.identityKey, keys))
+    );
+}
+
+export async function attendeeIdsByIdentityKey(userId: string, eventId: string, keys: string[]): Promise<string[]> {
+  return (await attendeeRowsByIdentityKey(userId, eventId, keys)).map((r) => r.id);
+}
+
+/**
+ * "Log who you met": mark the contacts a capture just saved as met at this event.
+ *
+ * A contact already on the roster — linked to it, or sharing its LinkedIn URL, email or exact
+ * name with an unlinked row — is linked to that row, so a ticked guest never becomes a second
+ * line. Everyone else is added (source `capture`) and linked. Either way the row ends with
+ * `contact_id` set and `spoke_to = 1`, which is what "People you met", events-together and
+ * repeat people all read.
+ */
+export async function recordMetAtEvent(userId: string, eventId: string, contactIds: string[]): Promise<number> {
+  if (contactIds.length === 0) return 0;
+  await assertEventOwnedBy(userId, eventId);
+  const db = await getDb();
+  const people = await db
+    .select({
+      id: contacts.id,
+      fullName: contacts.fullName,
+      email: contacts.email,
+      linkedinUrl: contacts.linkedinUrl,
+      xHandle: contacts.xHandle,
+      company: contacts.company,
+      title: contacts.title,
+    })
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)));
+  const roster = await db
+    .select({
+      id: eventAttendees.id,
+      contactId: eventAttendees.contactId,
+      fullName: eventAttendees.fullName,
+      email: eventAttendees.email,
+      linkedinUrl: eventAttendees.linkedinUrl,
+    })
+    .from(eventAttendees)
+    .where(and(eq(eventAttendees.userId, userId), eq(eventAttendees.eventId, eventId)));
+
+  const norm = (v: string | null | undefined) => v?.trim().toLowerCase().replace(/\s+/g, " ") || null;
+  const taken = new Set<string>();
+  const links: Array<{ attendeeId: string; contactId: string }> = [];
+  const missing: typeof people = [];
+  for (const person of people) {
+    const row =
+      roster.find((r) => r.contactId === person.id) ??
+      roster.find(
+        (r) =>
+          !r.contactId &&
+          !taken.has(r.id) &&
+          ((norm(r.linkedinUrl) && norm(r.linkedinUrl) === norm(person.linkedinUrl)) ||
+            (norm(r.email) && norm(r.email) === norm(person.email)) ||
+            (norm(r.fullName) && norm(r.fullName) === norm(person.fullName)))
+      );
+    if (row) {
+      taken.add(row.id);
+      links.push({ attendeeId: row.id, contactId: person.id });
+    } else {
+      missing.push(person);
+    }
+  }
+
+  const added: ParsedAttendee[] = [];
+  const keyToContact = new Map<string, string>();
+  for (const person of missing) {
+    const identityKey = attendeeIdentityKey(person);
+    if (!identityKey) continue;
+    keyToContact.set(identityKey, person.id);
+    added.push({ ...person, identityKey });
+  }
+  if (added.length) {
+    await upsertEventAttendees(userId, eventId, added, "capture");
+    for (const row of await attendeeRowsByIdentityKey(userId, eventId, [...keyToContact.keys()])) {
+      links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
+    }
+  }
+  await linkAttendeesToContacts(userId, links);
+  return links.length;
 }
 
 /**
