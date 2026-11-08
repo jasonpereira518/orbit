@@ -284,6 +284,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-drive-reminder-rules": "pure",
   "smoke-drive-triage": "pure",
   "smoke-cloud-notes-detect": "pure",
+  "smoke-cloud-files-preview": "pure",
   "smoke-drive-client": "pure",
   "smoke-import-provenance": "pure",
   "smoke-import-finish": "pure",
