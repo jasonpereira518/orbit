@@ -98,10 +98,17 @@ export function companyBrandColor(company: string | null | undefined): string {
   return resolveBrand(company, "company", NEUTRAL_ORG);
 }
 
+/**
+ * Role clusters span companies, so no one brand speaks for them. A quiet silver until the
+ * galaxy phases tint each star by its own company.
+ */
+export const ROLE_CLUSTER_COLOR = "#c8d0dc";
+
 export function clusterBrandColor(
   name: string,
-  kind?: "company" | "school" | "other" | string
+  kind?: "company" | "role" | "school" | "other" | string
 ): string {
+  if (kind === "role") return ROLE_CLUSTER_COLOR;
   if (kind === "school") return schoolStarColor(name);
   if (kind === "company") return companyBrandColor(name);
   // Infer from the name: a known school tints as a school, anything else as a company.
