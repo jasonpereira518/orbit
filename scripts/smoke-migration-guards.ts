@@ -68,17 +68,19 @@ function targetChecks() {
     checkMigrationTarget({ DATABASE_URL: urlFor(PROD), PRODUCTION_DB_HOST: PROD }, { vercelEnv: undefined }).allowed === true
   );
 
-  // The deliberate non-fail-closed case: refusing every preview build until a new variable
-  // exists breaks previews to prevent a hypothetical, and a broken preview pipeline is how
-  // guards get deleted.
+  // Fail-closed: a non-production Vercel build that cannot prove what it points at refuses
+  // to migrate. Guessing here means DDL and backfills against live customer data.
   const unarmed = checkMigrationTarget({ VERCEL: "1", DATABASE_URL: urlFor(PROD) }, { vercelEnv: "preview" });
-  check("without PRODUCTION_DB_HOST it allows but reports itself unarmed",
-    unarmed.allowed === true && unarmed.unarmed === true && unarmed.reason.includes("PRODUCTION_DB_HOST"));
+  check("without PRODUCTION_DB_HOST a preview build is refused",
+    unarmed.allowed === false && unarmed.unarmed === true && unarmed.reason.includes("PRODUCTION_DB_HOST"));
+
+  check("an unparseable DATABASE_URL is refused",
+    checkMigrationTarget({ VERCEL: "1", DATABASE_URL: "not-a-url", PRODUCTION_DB_HOST: PROD }, { vercelEnv: "preview" }).allowed === false);
 
   check(
-    "check-env warns about the unarmed guard in preview",
+    "check-env errors about the unarmed guard in preview",
     validateEnv({ DATABASE_URL: urlFor(BRANCH), NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x", CLERK_SECRET_KEY: "sk_test_x", ENCRYPTION_SECRET: "x".repeat(40) }, { vercelEnv: "preview" })
-      .warnings.some((w) => w.includes("PRODUCTION_DB_HOST"))
+      .errors.some((e) => e.includes("PRODUCTION_DB_HOST"))
   );
 }
 

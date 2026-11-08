@@ -86,9 +86,8 @@ const PAGES: Surface[] = [
     key: "page.events",
     kind: "page",
     label: "Events",
-    description: "Events you attended, their attendee lists, and who you spoke to.",
+    description: "Events you went to, the people you met there, and who to follow up with.",
     href: "/events",
-    comingSoon: true,
   },
   {
     key: "page.contacts",

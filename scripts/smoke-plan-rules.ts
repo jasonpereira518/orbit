@@ -112,9 +112,10 @@ function pure() {
     /available on the Free Plan\./.test(featureDenial("recruiters", config)) && /Pro and Orbit Max/.test(featureDenial("recruiters")),
     featureDenial("recruiters", config)
   );
-  t.check("the five unreleased features default to the paid plans", (["radar", "events", "findPeople", "compose", "cloudNotes"] as const).every(
+  t.check("the four unreleased features default to the paid plans", (["radar", "findPeople", "compose", "cloudNotes"] as const).every(
     (f) => plansWithFeature(PLAN_CONFIG, f).join() === "orbit,max,lifetime"
   ));
+  t.check("events is on every plan", plansWithFeature(PLAN_CONFIG, "events").join() === "free,orbit,max,lifetime", plansWithFeature(PLAN_CONFIG, "events").join());
 }
 
 async function main() {

@@ -239,6 +239,7 @@ export async function runCaptureParse(
     eventDate: hints?.eventDate || detected.hints.eventDate || null,
     seedPeople: seedPeople.length ? seedPeople : undefined,
     interactionType: hints?.interactionType || detected.hints.interactionType || null,
+    metAt: hints?.metAt || null,
     goals: goals.length ? goals : undefined,
     self: self
       ? { name: [self.firstName, self.lastName].filter(Boolean).join(" ") || null, email: self.email }
@@ -438,7 +439,7 @@ export async function runCaptureParse(
       low_confidence_fields: emailCompany
         ? [...new Set([...(parsedBase.low_confidence_fields ?? []), "company"])]
         : parsedBase.low_confidence_fields,
-      met_at: parsedBase.met_at || sharedForPerson.find((s) => s.met_at)?.met_at || null,
+      met_at: parsedBase.met_at || sharedForPerson.find((s) => s.met_at)?.met_at || mergedHints.metAt || null,
       topics: mergeTopics(parsedBase.topics, sharedForPerson),
       interaction_date: parsedBase.interaction_date || defaultDate,
       // Cleaned and verified here, once, so the review card and the save path read the

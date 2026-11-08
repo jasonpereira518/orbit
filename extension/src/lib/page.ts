@@ -138,3 +138,16 @@ export function siteLabel(page: PageContext): string {
 export function isPersonPage(page: PageContext): boolean {
   return page.kind === "person" || page.kind === "thread" || page.kind === "post";
 }
+
+/**
+ * LinkedIn's list of the user's own connections, where "Log at an event" is offered. Same
+ * path rule as the LinkedIn adapter's `isConnectionsPath`, which reads 25 people there.
+ */
+export function isConnectionsPage(page: PageContext): boolean {
+  if (page.site !== "linkedin" || page.kind !== "list") return false;
+  try {
+    return /^\/mynetwork\/invite-connect\/connections/i.test(new URL(page.url).pathname);
+  } catch {
+    return false;
+  }
+}

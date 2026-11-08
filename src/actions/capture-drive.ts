@@ -67,6 +67,7 @@ export async function queueDriveCapture(input: {
       text,
       label: file.name,
       batchGroupId: input.batchGroupId,
+      provider: "google",
       force: input.force,
     });
     if (outcome.status === "queued") after(() => runCaptureJobById(outcome.jobId).catch(() => null));
