@@ -139,7 +139,7 @@ export function AttendeeRoster({
           router.refresh();
         }
       } catch (err) {
-        toast.error(friendlyError(err, "Could not find LinkedIn"));
+        toast.error(friendlyError(err, "Couldn’t find LinkedIn"));
       } finally {
         setFindingRow(null);
       }
@@ -152,17 +152,17 @@ export function AttendeeRoster({
       try {
         const result = await batchFindRosterLinkedInsAction(eventId);
         if (!result.ok) {
-          toast.error(friendlyError(result.error, "Batch search failed"));
+          toast.error(friendlyError(result.error, "Couldn’t look up LinkedIns"));
           return;
         }
         toast.success(
           result.value.found > 0
             ? `Found ${result.value.found} new LinkedIn profile${result.value.found === 1 ? "" : "s"}!`
-            : "No additional LinkedIn profiles found."
+            : "No additional LinkedIn profiles found"
         );
         router.refresh();
       } catch (err) {
-        toast.error(friendlyError(err, "Batch search failed"));
+        toast.error(friendlyError(err, "Couldn’t look up LinkedIns"));
       } finally {
         setBatchFinding(false);
       }

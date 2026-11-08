@@ -46,7 +46,7 @@ export function ThemePalettePicker({
         toast.success("Event theme updated & locked");
         setOpen(false);
       } catch {
-        toast.error("Could not update theme color");
+        toast.error("Couldn’t update theme color");
       }
     });
   }
@@ -78,6 +78,7 @@ export function ThemePalettePicker({
             <button
               type="button"
               onClick={() => setOpen(false)}
+              aria-label="Close"
               className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-ink"
             >
               <X className="size-3.5" />

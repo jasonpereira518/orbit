@@ -35,14 +35,14 @@ export function EventNotesPanel({
         const result = await saveEventNotes(eventId, content);
         if (!result.ok) {
           setSyncStatus("dirty");
-          toast.error(friendlyError(result.error, "Could not save notes"));
+          toast.error(friendlyError(result.error, "Couldn’t save notes"));
           return;
         }
         setSyncStatus("synced");
         setLastSavedAt(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
       } catch (err) {
         setSyncStatus("dirty");
-        toast.error(friendlyError(err, "Could not save notes"));
+        toast.error(friendlyError(err, "Couldn’t save notes"));
       }
     });
   }

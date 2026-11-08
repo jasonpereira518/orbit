@@ -70,7 +70,7 @@ export function RecommendedEventsTab({
       try {
         const result = await addRecommendedEvent(rec);
         if (!result.ok) {
-          toast.error(friendlyError(result.error, "Could not add event"));
+          toast.error(friendlyError(result.error, "Couldn’t add event"));
           return;
         }
         setAddedIds((prev) => new Set([...prev, rec.id]));
@@ -81,7 +81,7 @@ export function RecommendedEventsTab({
         );
         router.refresh();
       } catch (err) {
-        toast.error(friendlyError(err, "Could not add event"));
+        toast.error(friendlyError(err, "Couldn’t add event"));
       } finally {
         setAddingId(null);
       }

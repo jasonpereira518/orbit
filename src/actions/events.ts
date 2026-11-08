@@ -982,12 +982,12 @@ export async function triggerProviderSync(
       .limit(1);
 
     if (!row) {
-      throw new UserFacingError(`${provider} is not connected.`);
+      throw new UserFacingError(`${provider} is not connected`);
     }
 
     const secret = decryptOrNull(row.apiKeyEncrypted ?? row.accessTokenEncrypted);
     if (!secret) {
-      throw new UserFacingError(`Connection credentials missing or expired.`);
+      throw new UserFacingError(`Connection credentials missing or expired`);
     }
 
     let found = 0;
