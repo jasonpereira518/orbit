@@ -1077,7 +1077,7 @@ Add to `scripts/smoke-warm-path.ts` imports:
 ```ts
 import { identityPairs, rankWarmth } from "../src/lib/leads/warm-path";
 import { parseTargetInput } from "../src/lib/leads/target-input";
-import { linkedinSlug, normalizePhone } from "../src/lib/duplicates";
+import { normalizePhone, linkedinSlug } from "../src/lib/duplicates";
 import { displayCompanyName, normalizeCompanyName } from "../src/lib/company-name";
 ```
 
