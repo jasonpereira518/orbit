@@ -52,8 +52,9 @@ export default defineConfig({
         ORBIT_DEMO_DATA: "off",
         ORBIT_PGLITE_DIR: PGLITE_DIR,
         GEMINI_API_KEY: "e2e-stub-key",
+        ANTHROPIC_API_KEY: "e2e-stub-key",
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${AI_STUB_PORT}`,
         OPENAI_API_KEY: "",
-        ANTHROPIC_API_KEY: "",
         GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${AI_STUB_PORT}`,
         NEXT_TELEMETRY_DISABLED: "1",
         // From the shell only, never a checkout's .env.local, so a local run renders /upgrade
