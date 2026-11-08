@@ -197,23 +197,58 @@ export async function getDashboardVocabularies(userId: string): Promise<Dashboar
 export async function getGoalAlignedContactIds(
   userId: string,
   limit: number
-): Promise<Array<{ id: string; goalRelevance: number }>> {
+): Promise<
+  Array<{
+    id: string;
+    goalRelevance: number;
+    reason: "target_company" | "goal";
+    companyName: string | null;
+  }>
+> {
   const db = await getDb();
-  const relevance = sql`(closeness_breakdown->>'goalRelevance')::float8`;
+  // Every column is qualified: unqualified names inside sql`` render bare.
+  const raw = sql`(c.closeness_breakdown->>'goalRelevance')::float8`;
 
+  // One statement, two limited arms. The goal arm keeps the original WHERE/ORDER shape on
+  // the raw expression so the partial index `contacts_goal_relevance_idx` still matches
+  // (a coalesce() or an OR across the join would defeat it). The target arm is driven from
+  // the small target_companies table. A contact in both appears once, as target_company.
+  // ponytail: focus-fit is computed in JS from titles, so it stays out of this card.
   const result = await db.execute(sql`
-    select id, ${relevance} as goal_relevance
-    from contacts
-    where user_id = ${userId}
-      and closeness_breakdown is not null
-      and ${relevance} > 0
-    order by ${relevance} desc, updated_at desc, id desc
+    with t as (
+      select c.id, c.updated_at, tc.priority, ${raw} as rel, co.name as company_name, true as is_target
+      from target_companies tc
+      join contacts c on c.user_id = tc.user_id and c.company_id = tc.company_id
+      join companies co on co.id = tc.company_id
+      where tc.user_id = ${userId}
+      order by tc.priority asc, ${raw} desc nulls last, c.updated_at desc, c.id desc
+      limit ${limit}
+    ), g as (
+      select c.id, c.updated_at, null::int as priority, ${raw} as rel, null::text as company_name, false as is_target
+      from contacts c
+      where c.user_id = ${userId}
+        and c.closeness_breakdown is not null
+        and ${raw} > 0
+      order by ${raw} desc, c.updated_at desc, c.id desc
+      limit ${limit}
+    ), u as (
+      select * from t union all select * from g
+    ), d as (
+      select distinct on (id) * from u order by id, is_target desc
+    )
+    select id, coalesce(rel, 0) as goal_relevance, is_target, company_name
+    from d
+    order by is_target desc, priority asc nulls last, coalesce(rel, 0) desc, updated_at desc, id desc
     limit ${limit}
   `);
 
-  return rowsOf<{ id: string; goal_relevance: number }>(result).map((r) => ({
+  return rowsOf<{
+    id: string; goal_relevance: number; is_target: boolean; company_name: string | null;
+  }>(result).map((r) => ({
     id: r.id,
     goalRelevance: Number(r.goal_relevance),
+    reason: r.is_target ? ("target_company" as const) : ("goal" as const),
+    companyName: r.is_target ? r.company_name : null,
   }));
 }
 
