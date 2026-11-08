@@ -20,9 +20,11 @@ import { Button } from "@/components/ui/button";
 import {
   generateDueFollowUps,
   generateOutreachDrafts,
+  runCampaignDeepSearchAction,
   searchProspects,
   updateCampaign,
 } from "@/actions/outreach";
+import { Globe, Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { isDeliveredMessage, prospectPipelineBucket } from "@/lib/outreach-metrics";
 import type {
@@ -261,6 +263,19 @@ export function CampaignWorkspace({
     });
   }
 
+  function handleDeepSearch() {
+    start(async () => {
+      try {
+        toast.message("Scanning web news and discovering prospects with BrightData in background...");
+        const result = await runCampaignDeepSearchAction(campaign.id);
+        toast.success(result.message);
+        refresh();
+      } catch (err) {
+        toast.error("Deep search encountered an issue — try again in a moment");
+      }
+    });
+  }
+
   return (
     <div className="space-y-4">
       {isDemo && (
@@ -281,33 +296,45 @@ export function CampaignWorkspace({
         stepBreakdown={campaign.stepBreakdown}
       />
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowFilters((v) => !v)}
+            disabled={pending}
+          >
+            {showFilters ? "Hide filters" : "Edit filters & re-run search"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={regenerateSelected}
+            disabled={pending || !selectedIds.length}
+          >
+            Regenerate selected drafts
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={generateFollowUps}
+            disabled={pending}
+          >
+            Generate due follow-ups
+            {campaign.metrics.pendingFollowUpCount
+              ? ` (${campaign.metrics.pendingFollowUpCount})`
+              : ""}
+          </Button>
+        </div>
+
         <Button
-          variant="outline"
           size="sm"
-          onClick={() => setShowFilters((v) => !v)}
+          onClick={handleDeepSearch}
           disabled={pending}
+          className="gap-1.5 shadow-xs"
         >
-          {showFilters ? "Hide filters" : "Edit filters & re-run search"}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={regenerateSelected}
-          disabled={pending || !selectedIds.length}
-        >
-          Regenerate selected drafts
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={generateFollowUps}
-          disabled={pending}
-        >
-          Generate due follow-ups
-          {campaign.metrics.pendingFollowUpCount
-            ? ` (${campaign.metrics.pendingFollowUpCount})`
-            : ""}
+          <Sparkles className="h-3.5 w-3.5" />
+          Deep Search Web News
         </Button>
       </div>
 

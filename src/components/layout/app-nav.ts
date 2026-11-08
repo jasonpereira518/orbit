@@ -97,7 +97,7 @@ const MEETINGS: AppNavItem = {
   icon: AudioLines,
 };
 const FIND: AppNavItem = {
-  href: "/find",
+  href: "/outreach?tab=discover",
   label: "Find people",
   icon: UserSearch,
 };

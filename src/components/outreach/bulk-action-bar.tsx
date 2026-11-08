@@ -20,6 +20,9 @@ import {
 } from "@/lib/outreach-channels";
 import type { OutreachChannel } from "@/lib/outreach-types";
 import { DangerSendDialog } from "@/components/outreach/danger-send-dialog";
+import { MailMergeDialog } from "@/components/outreach/mail-merge-dialog";
+import { LinkedInBrowserUseDialog } from "@/components/outreach/linkedin-browser-use-dialog";
+import type { ProspectRow } from "@/components/outreach/prospect-table";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
@@ -200,43 +203,74 @@ export function BulkActionBar({
 
   if (!rows.length) return null;
 
+  const selectedProspectRows: ProspectRow[] = activeRows.map((r) => ({
+    id: r.prospectId,
+    fullName: r.prospectName || "Prospect",
+    title: null,
+    company: null,
+    email: r.email,
+    phone: r.phone,
+    linkedinUrl: r.linkedinUrl,
+    status: "selected",
+    contactId: null,
+    message: {
+      id: r.messageId,
+      channel: r.channel,
+      subject: r.subject,
+      body: r.body,
+      status: "draft",
+    },
+  }));
+
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-muted/30 p-3">
-        <span className="text-sm text-muted-foreground">
-          {selectedProspectIds.length} selected — review & personalize before sending
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card p-2.5 shadow-xs">
+        <span className="text-xs text-muted-foreground mr-1 font-medium">
+          {selectedProspectIds.length} selected
         </span>
-        <Button size="sm" variant="outline" onClick={handleSelectAll} disabled={pending}>
+        <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSelectAll} disabled={pending}>
           Select all
         </Button>
+        <MailMergeDialog
+          campaignId={campaignId}
+          selectedProspects={selectedProspectRows}
+          onSent={refresh}
+        />
+        <LinkedInBrowserUseDialog
+          campaignId={campaignId}
+          selectedProspectIds={selectedProspectIds}
+          disabled={pending}
+        />
         <Button
           size="sm"
           variant="outline"
+          className="h-8 text-xs"
           onClick={handleCopyAll}
           disabled={pending || !activeRows.length}
         >
           <Copy className="mr-1 h-3.5 w-3.5" />
-          Copy selected
+          Copy
         </Button>
         <Button
           size="sm"
           variant="outline"
+          className="h-8 text-xs"
           onClick={handleOpenAll}
           disabled={pending || !activeRows.length}
         >
           <ExternalLink className="mr-1 h-3.5 w-3.5" />
-          Open selected
+          Open apps
         </Button>
         {sendable.length > 0 && (
           <Button
             size="sm"
             variant="outline"
-            className="border-destructive text-destructive hover:bg-destructive/10"
+            className="h-8 text-xs border-destructive/40 text-destructive hover:bg-destructive/10"
             onClick={openSendDialog}
             disabled={pending}
           >
             <Send className="mr-1 h-3.5 w-3.5" />
-            Send selected ({sendable.length})
+            Quick send ({sendable.length})
           </Button>
         )}
       </div>

@@ -36,6 +36,8 @@ export type ProspectRow = {
   isDemo?: boolean;
   companyMismatch?: boolean;
   pipeline?: PipelineFilter;
+  avatarUrl?: string | null;
+  enrichment?: Record<string, unknown> | null;
   message?: {
     id: string;
     channel: OutreachChannel;
@@ -239,71 +241,100 @@ export function ProspectTable({
                     />
                   </td>
                   <td className="min-w-0 md:table-cell md:px-4 md:py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-ink">
-                        {prospect.fullName}
-                      </span>
-                      {profileUrl ? (
-                        <a
-                          href={profileUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
-                          title="Open LinkedIn profile"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          LinkedIn
-                        </a>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5">
-                          <a
-                            href={searchUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
-                            title="Search LinkedIn for this person"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                            Find on LinkedIn
-                          </a>
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled={pending}
-                            onClick={() => enrich(prospect.id)}
-                          >
-                            Enrich
-                          </Button>
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-muted-foreground">
-                      {prospect.title || "—"}
-                      {prospect.company ? ` @ ${prospect.company}` : ""}
-                    </div>
-                    {/* The warm path, directly under the company it belongs to.
-                        This is the whole point of the feature: the moment a person decides
-                        whether to send a cold email is the moment they need to know they do
-                        not have to. Putting it anywhere else on the page — a panel, a tab —
-                        would be putting it somewhere they are not looking. */}
-                    <WarmPathNote company={prospect.company} warmPaths={warmPaths} />
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      <Badge variant="outline">{prospect.status}</Badge>
-                      {prospect.isDemo && <Badge variant="outline">Demo</Badge>}
-                      {prospect.companyMismatch && (
-                        <Badge variant="outline">Company mismatch</Badge>
-                      )}
-                      {prospect.pipeline && prospect.pipeline !== "all" && (
-                        <Badge variant="outline">
-                          {prospect.pipeline.replaceAll("_", " ")}
-                        </Badge>
-                      )}
-                      {message?.status && (
-                        <Badge variant="outline">{message.status}</Badge>
-                      )}
-                      {(message?.stepIndex ?? 0) > 0 && (
-                        <Badge variant="outline">Follow-up {message?.stepIndex}</Badge>
-                      )}
+                    <div className="flex items-start gap-3">
+                      {/* Avatar */}
+                      <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden border border-border/60 bg-muted">
+                        {(prospect.avatarUrl || (prospect.enrichment as any)?.avatarUrl) ? (
+                          <img
+                            src={prospect.avatarUrl || ((prospect.enrichment as any)?.avatarUrl as string)}
+                            alt={prospect.fullName}
+                            className="h-full w-full object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <div className="h-full w-full flex items-center justify-center font-medium text-xs text-muted-foreground">
+                            {prospect.fullName.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-ink">
+                            {prospect.fullName}
+                          </span>
+                          {profileUrl ? (
+                            <a
+                              href={profileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
+                              title="Open LinkedIn profile"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              LinkedIn
+                            </a>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5">
+                              <a
+                                href={searchUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+                                title="Search LinkedIn for this person"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                Find on LinkedIn
+                              </a>
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                disabled={pending}
+                                onClick={() => enrich(prospect.id)}
+                              >
+                                Enrich
+                              </Button>
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-muted-foreground text-xs mt-0.5">
+                          {prospect.title || "—"}
+                          {prospect.company ? ` @ ${prospect.company}` : ""}
+                        </div>
+
+                        {/* Warm path note */}
+                        <WarmPathNote company={prospect.company} warmPaths={warmPaths} />
+
+                        {/* Recent News Catalyst if present */}
+                        {Boolean((prospect.enrichment as any)?.newsContext) && (
+                          <div className="mt-1">
+                            <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 text-[10px] truncate max-w-xs">
+                              {(prospect.enrichment as any)?.newsContext}
+                            </Badge>
+                          </div>
+                        )}
+
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          <Badge variant="outline">{prospect.status}</Badge>
+                          {prospect.isDemo && <Badge variant="outline">Demo</Badge>}
+                          {prospect.companyMismatch && (
+                            <Badge variant="outline">Company mismatch</Badge>
+                          )}
+                          {prospect.pipeline && prospect.pipeline !== "all" && (
+                            <Badge variant="outline">
+                              {prospect.pipeline.replaceAll("_", " ")}
+                            </Badge>
+                          )}
+                          {message?.status && (
+                            <Badge variant="outline">{message.status}</Badge>
+                          )}
+                          {(message?.stepIndex ?? 0) > 0 && (
+                            <Badge variant="outline">Follow-up {message?.stepIndex}</Badge>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </td>
                   <td className="col-start-2 min-w-0 text-muted-foreground md:table-cell md:px-4 md:py-3">

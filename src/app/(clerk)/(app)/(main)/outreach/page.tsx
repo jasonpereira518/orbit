@@ -1,34 +1,37 @@
-import Link from "next/link";
-import { Plus } from "lucide-react";
 import { listCampaigns } from "@/actions/outreach";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { OutreachLocked } from "@/components/locked-feature";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
-import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
-import { buttonVariants } from "@/components/ui/button";
-import { formatReplyRate } from "@/lib/outreach-metrics";
-import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { UnifiedOutreachHub } from "@/components/outreach/unified-outreach-hub";
+import { getBrightDataConfig } from "@/lib/brightdata";
+import { get5HourSendQuota } from "@/lib/outreach-send";
+import { gmailProvider } from "@/lib/email/providers/gmail";
+import { outlookProvider } from "@/lib/email/providers/outlook";
 
 export const metadata = { title: "Outreach" };
 
 export default async function OutreachPage() {
-  // Before the paywall on purpose: coming-soon is a stronger fact than "buy a plan to
-  // unlock this" — nobody can unlock a page that is not out yet. See `pageVisibilityGate`'s
-  // doc comment for why the layout-level check alone does not catch a click straight from a
-  // sibling route.
   const gate = await pageVisibilityGate("page.outreach");
   if (gate) return gate;
 
-  const { canUseOutreach } = await getEntitlements(await requireUserId());
+  const userId = await requireUserId();
+  const { canUseOutreach } = await getEntitlements(userId);
 
   if (!canUseOutreach) {
     return <OutreachLocked config={await getEffectivePlanConfig()} />;
   }
 
-  const campaigns = await listCampaigns();
+  const [campaigns, quota, gmailIdent, outlookIdent] = await Promise.all([
+    listCampaigns(),
+    get5HourSendQuota(userId).catch(() => null),
+    gmailProvider.identity(userId).catch(() => null),
+    outlookProvider.identity(userId).catch(() => null),
+  ]);
+
+  const brightDataConfig = getBrightDataConfig();
 
   const totals = campaigns.reduce(
     (acc, c) => {
@@ -54,76 +57,26 @@ export default async function OutreachPage() {
     return b.metrics.positiveReplyCount - a.metrics.positiveReplyCount;
   });
 
+  const quotaData = quota
+    ? {
+        quota,
+        providers: {
+          gmail: { connected: Boolean(gmailIdent), email: gmailIdent?.email || null },
+          outlook: { connected: Boolean(outlookIdent), email: outlookIdent?.email || null },
+        },
+      }
+    : null;
+
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <RenderStamp />
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
-            Outreach
-          </h1>
-          <p className="mt-1 text-muted-foreground">
-            Optimize for successful replies — quality ICP, personalized drafts, and logged outcomes
-          </p>
-        </div>
-        <Link
-          href="/outreach/new"
-          className={cn(
-            buttonVariants(),
-            "bg-primary text-primary-foreground hover:bg-primary/90"
-          )}
-        >
-          <Plus className="mr-1 h-4 w-4" />
-          New campaign
-        </Link>
-      </div>
-
-      {campaigns.length > 0 && (
-        <div className="rounded-2xl border border-border/70 bg-card px-5 py-4">
-          <div className="text-xs text-muted-foreground">Account successful reply rate</div>
-          <div className="mt-1 flex flex-wrap items-baseline gap-4">
-            <span className="font-[family-name:var(--font-display)] text-3xl text-ink">
-              {formatReplyRate(accountRate)}
-            </span>
-            <span className="text-sm text-muted-foreground">
-              {totals.positive} positive · {totals.sent} sent
-            </span>
-          </div>
-        </div>
-      )}
-
-      {ranked.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border/70 p-12 text-center">
-          <p className="text-muted-foreground">
-            No campaigns yet. Start with a tight ICP and a clear reply ask.
-          </p>
-          <Link
-            href="/outreach/new"
-            className={cn(buttonVariants({ variant: "outline" }), "mt-4 inline-flex")}
-          >
-            Start your first reply-optimized campaign
-          </Link>
-        </div>
-      ) : (
-        <div className="grid gap-4">
-          {ranked.map((campaign) => (
-            <OutreachCampaignCard
-              key={campaign.id}
-              campaign={{
-                id: campaign.id,
-                name: campaign.name,
-                audienceQuery: campaign.audienceQuery,
-                messageIntent: campaign.messageIntent,
-                tone: campaign.tone,
-                defaultChannel: campaign.defaultChannel,
-                status: campaign.status,
-                updatedAt: campaign.updatedAt,
-                metrics: campaign.metrics,
-              }}
-            />
-          ))}
-        </div>
-      )}
+      <UnifiedOutreachHub
+        campaigns={ranked}
+        accountRate={accountRate}
+        totals={totals}
+        isBrightDataLive={brightDataConfig.isConfigured}
+        quotaData={quotaData}
+      />
     </div>
   );
 }
