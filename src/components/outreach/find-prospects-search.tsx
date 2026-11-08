@@ -20,6 +20,13 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "@/lib/toast";
 import {
   searchPeopleWithBrightDataAction,
@@ -66,6 +73,24 @@ const STARTER_ROLE_SUGGESTIONS = [
   "Data Scientist",
 ];
 
+const SENIORITY_OPTIONS = [
+  "All Seniorities",
+  "Executive / C-Level",
+  "VP",
+  "Director",
+  "Senior / Lead",
+  "Founder",
+].map((s) => ({ value: s, label: s }));
+
+const INDUSTRY_OPTIONS = [
+  "All Industries",
+  "Artificial Intelligence",
+  "B2B SaaS",
+  "Developer Tools",
+  "Fintech",
+  "Healthtech",
+].map((i) => ({ value: i, label: i }));
+
 export function FindProspectsSearch({
   campaigns = [],
   isBrightDataLive = false,
@@ -95,6 +120,10 @@ export function FindProspectsSearch({
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>(
     campaigns[0]?.id || ""
   );
+  const campaignOptions = campaigns.map((c) => ({
+    value: c.id,
+    label: `Add to: ${c.name}`,
+  }));
   const [hasSearched, setHasSearched] = useState(false);
   const [savingContactId, setSavingContactId] = useState<string | null>(null);
 
@@ -410,38 +439,52 @@ export function FindProspectsSearch({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground block">
+                <Label id="seniority-label" className="text-xs font-medium text-muted-foreground block">
                   Seniority
                 </Label>
-                <select
+                <Select
                   value={seniorityInput}
-                  onChange={(e) => setSeniorityInput(e.target.value)}
+                  onValueChange={(v) => {
+                    if (v) setSeniorityInput(v);
+                  }}
+                  items={SENIORITY_OPTIONS}
                   disabled={pending}
-                  className="w-full rounded-xl border border-input bg-background px-3 text-sm shadow-xs h-10"
                 >
-                  {["All Seniorities", "Executive / C-Level", "VP", "Director", "Senior / Lead", "Founder"].map(
-                    (s) => (
-                      <option key={s} value={s}>{s}</option>
-                    )
-                  )}
-                </select>
+                  <SelectTrigger aria-labelledby="seniority-label" className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm shadow-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                    {SENIORITY_OPTIONS.map((s) => (
+                      <SelectItem key={s.value} value={s.value} className="py-1.5 pl-2 rounded-lg text-sm">
+                        {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-muted-foreground block">
+                <Label id="industry-label" className="text-xs font-medium text-muted-foreground block">
                   Industry
                 </Label>
-                <select
+                <Select
                   value={industryInput}
-                  onChange={(e) => setIndustryInput(e.target.value)}
+                  onValueChange={(v) => {
+                    if (v) setIndustryInput(v);
+                  }}
+                  items={INDUSTRY_OPTIONS}
                   disabled={pending}
-                  className="w-full rounded-xl border border-input bg-background px-3 text-sm shadow-xs h-10"
                 >
-                  {["All Industries", "Artificial Intelligence", "B2B SaaS", "Developer Tools", "Fintech", "Healthtech"].map(
-                    (i) => (
-                      <option key={i} value={i}>{i}</option>
-                    )
-                  )}
-                </select>
+                  <SelectTrigger aria-labelledby="industry-label" className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm shadow-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                    {INDUSTRY_OPTIONS.map((i) => (
+                      <SelectItem key={i.value} value={i.value} className="py-1.5 pl-2 rounded-lg text-sm">
+                        {i.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-muted-foreground block">
@@ -559,22 +602,29 @@ export function FindProspectsSearch({
             <div className="flex items-center gap-2">
               {campaigns.length > 0 ? (
                 <>
-                  <select
+                  <Select
                     value={selectedCampaignId}
-                    onChange={(e) => setSelectedCampaignId(e.target.value)}
-                    className="rounded-lg border border-input bg-background px-2.5 py-1 text-xs h-8"
+                    onValueChange={(v) => {
+                      if (v) setSelectedCampaignId(v);
+                    }}
+                    items={campaignOptions}
                   >
-                    {campaigns.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        Add to: {c.name}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger aria-label="Select campaign" className="h-8 rounded-full border border-input bg-background px-3 text-xs shadow-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                      {campaignOptions.map((c) => (
+                        <SelectItem key={c.value} value={c.value} className="py-1.5 pl-2 rounded-lg text-xs">
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Button
                     size="sm"
                     disabled={selectedCandidates.size === 0}
                     onClick={handleAddSelectedToCampaign}
-                    className="text-xs gap-1.5 h-8 px-3"
+                    className="text-xs gap-1.5 h-8 px-3 rounded-full"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     Add to Campaign

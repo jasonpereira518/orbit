@@ -18,6 +18,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   DEFAULT_SEQUENCE_STEPS,
   OUTREACH_CHANNELS,
   OUTREACH_REPLY_CTAS,
@@ -122,6 +129,23 @@ type DiscoveredProspect = {
   location: string | null;
   enrichment?: Record<string, unknown> | null;
 };
+
+const REPLY_CTA_OPTIONS = OUTREACH_REPLY_CTAS.map((cta) => ({
+  value: cta,
+  label: REPLY_CTA_LABELS[cta],
+}));
+
+const CHANNEL_OPTIONS: { value: OutreachChannel; label: string }[] = [
+  { value: "email", label: "Email" },
+  { value: "linkedin", label: "LinkedIn" },
+  { value: "sms", label: "SMS" },
+];
+
+const TONE_OPTIONS = [
+  { value: "friendly", label: "Friendly & Respectful" },
+  { value: "professional", label: "Professional" },
+  { value: "direct", label: "Direct & Short" },
+];
 
 export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?: string }) {
   const router = useRouter();
@@ -397,39 +421,51 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Label htmlFor="reply-cta" className="text-xs font-medium text-ink">
+                <Label id="reply-cta-label" className="text-xs font-medium text-ink">
                   Goal / Next step
                 </Label>
-                <select
-                  id="reply-cta"
-                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs"
+                <Select
                   value={replyCta}
-                  onChange={(e) => setReplyCta(e.target.value as OutreachReplyCta)}
+                  onValueChange={(v) => {
+                    if (v) setReplyCta(v as OutreachReplyCta);
+                  }}
+                  items={REPLY_CTA_OPTIONS}
                 >
-                  {OUTREACH_REPLY_CTAS.map((cta) => (
-                    <option key={cta} value={cta}>
-                      {REPLY_CTA_LABELS[cta]}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger aria-labelledby="reply-cta-label" className="h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                    {REPLY_CTA_OPTIONS.map((cta) => (
+                      <SelectItem key={cta.value} value={cta.value} className="py-1.5 pl-2 rounded-lg text-xs">
+                        {cta.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1">
-                <Label htmlFor="channel-step0" className="text-xs font-medium text-ink">
+                <Label id="channel-step0-label" className="text-xs font-medium text-ink">
                   Channel
                 </Label>
-                <select
-                  id="channel-step0"
-                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs"
+                <Select
                   value={channel}
-                  onChange={(e) => setChannel(e.target.value as OutreachChannel)}
+                  onValueChange={(v) => {
+                    if (v) setChannel(v as OutreachChannel);
+                  }}
+                  items={CHANNEL_OPTIONS}
                 >
-                  {OUTREACH_CHANNELS.map((c) => (
-                    <option key={c} value={c}>
-                      {c === "email" ? "Email" : c === "linkedin" ? "LinkedIn" : "SMS"}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger aria-labelledby="channel-step0-label" className="h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                    {CHANNEL_OPTIONS.map((c) => (
+                      <SelectItem key={c.value} value={c.value} className="py-1.5 pl-2 rounded-lg text-xs">
+                        {c.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -631,37 +667,51 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Label htmlFor="tone-step2" className="text-xs font-medium text-ink">
+                <Label id="tone-step2-label" className="text-xs font-medium text-ink">
                   Tone
                 </Label>
-                <select
-                  id="tone-step2"
-                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs"
+                <Select
                   value={tone}
-                  onChange={(e) => setTone(e.target.value)}
+                  onValueChange={(v) => {
+                    if (v) setTone(v);
+                  }}
+                  items={TONE_OPTIONS}
                 >
-                  <option value="friendly">Friendly & Respectful</option>
-                  <option value="professional">Professional</option>
-                  <option value="direct">Direct & Short</option>
-                </select>
+                  <SelectTrigger aria-labelledby="tone-step2-label" className="h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                    {TONE_OPTIONS.map((t) => (
+                      <SelectItem key={t.value} value={t.value} className="py-1.5 pl-2 rounded-lg text-xs">
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1">
-                <Label htmlFor="channel-step2" className="text-xs font-medium text-ink">
+                <Label id="channel-step2-label" className="text-xs font-medium text-ink">
                   Channel
                 </Label>
-                <select
-                  id="channel-step2"
-                  className="flex h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs"
+                <Select
                   value={channel}
-                  onChange={(e) => setChannel(e.target.value as OutreachChannel)}
+                  onValueChange={(v) => {
+                    if (v) setChannel(v as OutreachChannel);
+                  }}
+                  items={CHANNEL_OPTIONS}
                 >
-                  {OUTREACH_CHANNELS.map((c) => (
-                    <option key={c} value={c}>
-                      {c === "email" ? "Email" : c === "linkedin" ? "LinkedIn" : "SMS"}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger aria-labelledby="channel-step2-label" className="h-10 w-full rounded-xl border border-input bg-transparent px-3 py-1 text-xs shadow-2xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                    {CHANNEL_OPTIONS.map((c) => (
+                      <SelectItem key={c.value} value={c.value} className="py-1.5 pl-2 rounded-lg text-xs">
+                        {c.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
