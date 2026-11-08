@@ -41,13 +41,17 @@ import {
   prospectSearchStatus,
 } from "@/lib/outreach-quality";
 import { sendOutreachMessage, get5HourSendQuota, interpolateMailMerge, type OutreachSendProvider } from "@/lib/outreach-send";
-import { searchPeopleWithBrightData, scrapeCompanyNewsWithBrightData, type PeopleSearchCriteria, type BrightDataCandidate } from "@/lib/brightdata";
+import { searchPeopleWithBrightData, scrapeCompanyNewsWithBrightData, getBrightDataConfig, type PeopleSearchCriteria, type BrightDataCandidate } from "@/lib/brightdata";
 import { getOutreachFlowSuggestions } from "@/lib/outreach-suggestions";
 import { runCampaignDeepSearch } from "@/lib/campaign-deep-search";
 import { generateLinkedInBrowserUsePrompt, type LinkedInBrowserTarget } from "@/lib/browser-use";
 import { gmailProvider } from "@/lib/email/providers/gmail";
 import { outlookProvider } from "@/lib/email/providers/outlook";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
+import { calculateProspectEffectiveness } from "@/lib/outreach-scoring";
+import { findWarmPaths } from "@/lib/warm-paths-server";
+import { normalizeCompanyKey } from "@/lib/company-name";
+import type { WarmPath } from "@/lib/warm-paths";
 import {
   BULK_SEND_LIMIT,
   OUTREACH_CHANNELS,
@@ -88,6 +92,10 @@ function enrichmentSummary(enrichment: unknown): string | null {
     "seniority",
     "departments",
     "keywords",
+    "newsContext",
+    "recentNews",
+    "signals",
+    "matchReason",
   ]) {
     const value = record[key];
     if (typeof value === "string" && value.trim()) {
@@ -96,7 +104,7 @@ function enrichmentSummary(enrichment: unknown): string | null {
       parts.push(`${key}: ${value.slice(0, 5).join(", ")}`);
     }
   }
-  return parts.length ? parts.join("; ").slice(0, 500) : null;
+  return parts.length ? parts.join("; ").slice(0, 800) : null;
 }
 
 /**
@@ -219,12 +227,69 @@ export async function getCampaign(campaignId: string) {
   });
   if (!campaign) throw new Error("Campaign not found");
 
-  const metrics = computeCampaignMetrics(campaign.prospects);
+  // Load warm paths for all organizations in this campaign
+  const orgKeys = [
+    ...new Set(
+      campaign.prospects
+        .map((p) => (p.company ? normalizeCompanyKey(p.company) : null))
+        .filter((k): k is string => Boolean(k))
+    ),
+  ];
+  const warmPathsMap = await findWarmPaths(userId, orgKeys);
+  const warmPathsRecord: Record<string, WarmPath[]> = {};
+  for (const [key, paths] of warmPathsMap.entries()) {
+    warmPathsRecord[key] = paths;
+  }
+
+  // Ensure each prospect has calculated effectiveness score
+  const targetFilters = (campaign.audienceFilters || {}) as AudienceFilters;
+  const enrichedProspects = campaign.prospects.map((p) => {
+    const enrichment = (p.enrichment || {}) as Record<string, unknown>;
+    const orgKey = p.company ? normalizeCompanyKey(p.company) : "";
+    const paths = orgKey ? warmPathsRecord[orgKey] || [] : [];
+    const hasWarmPath = paths.length > 0;
+
+    let score = enrichment.effectivenessScore as number | undefined;
+    let tier = enrichment.priorityTier as "high" | "strong" | "standard" | undefined;
+    let reasons = enrichment.scoreReasons as string[] | undefined;
+
+    if (score === undefined || !tier) {
+      const breakdown = calculateProspectEffectiveness({
+        title: p.title,
+        company: p.company,
+        email: p.email,
+        linkedinUrl: p.linkedinUrl,
+        hasWarmPath,
+        warmPathCount: paths.length,
+        newsContext: (enrichment.newsContext as string) || (enrichment.recentNews as string) || null,
+        signals: (enrichment.signals as string[]) || [],
+        targetTitles: targetFilters.titles,
+        targetCompanies: targetFilters.organizationNames,
+      });
+      score = breakdown.score;
+      tier = breakdown.tier;
+      reasons = breakdown.reasons;
+    }
+
+    return {
+      ...p,
+      enrichment: {
+        ...enrichment,
+        effectivenessScore: score,
+        priorityTier: tier,
+        scoreReasons: reasons,
+      },
+    };
+  });
+
+  const metrics = computeCampaignMetrics(enrichedProspects);
   return {
     ...campaign,
+    prospects: enrichedProspects,
+    warmPaths: warmPathsRecord,
     metrics,
-    channelBreakdown: computeChannelBreakdown(campaign.prospects),
-    stepBreakdown: computeStepBreakdown(campaign.prospects),
+    channelBreakdown: computeChannelBreakdown(enrichedProspects),
+    stepBreakdown: computeStepBreakdown(enrichedProspects),
   };
 }
 
@@ -460,6 +525,17 @@ async function searchProspectsCore(campaignId: string, page = 1) {
     if (matchesOrg) matched += 1;
     else mismatched += 1;
 
+    const effectiveness = calculateProspectEffectiveness({
+      title: prospect.title,
+      company: prospect.company,
+      email: prospect.email,
+      linkedinUrl: prospect.linkedinUrl,
+      newsContext: (prospect.enrichment?.newsContext as string) || (prospect.enrichment?.recentNews as string) || null,
+      signals: (prospect.enrichment?.signals as string[]) || [],
+      targetTitles: filters.titles,
+      targetCompanies: filters.organizationNames,
+    });
+
     const slot = rowsByExternalId.get(prospect.externalId)?.slot ?? index;
     rowsByExternalId.set(prospect.externalId, {
       slot,
@@ -477,6 +553,9 @@ async function searchProspectsCore(campaignId: string, page = 1) {
           ...prospect.enrichment,
           demo: isDemo,
           companyMismatch: !matchesOrg,
+          effectivenessScore: effectiveness.score,
+          priorityTier: effectiveness.tier,
+          scoreReasons: effectiveness.reasons,
         },
         status,
       },

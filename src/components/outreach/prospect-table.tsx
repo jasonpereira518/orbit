@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { IntentLink } from "@/components/ui/intent-link";
-import { ExternalLink, UserPlus } from "lucide-react";
+import { ExternalLink, Sparkles, TrendingUp, UserPlus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   enrichProspect,
@@ -307,12 +307,51 @@ export function ProspectTable({
                         {/* Warm path note */}
                         <WarmPathNote company={prospect.company} warmPaths={warmPaths} />
 
+                        {/* Effectiveness Match Badge */}
+                        {typeof (prospect.enrichment as any)?.effectivenessScore === "number" && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                            <span
+                              title={((prospect.enrichment as any)?.scoreReasons as string[])?.join(" • ") || "Effectiveness probability"}
+                              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums border ${
+                                (prospect.enrichment as any)?.effectivenessScore >= 80
+                                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                  : (prospect.enrichment as any)?.effectivenessScore >= 60
+                                    ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                                    : "border-border/60 bg-muted/40 text-muted-foreground"
+                              }`}
+                            >
+                              <Sparkles className="h-2.5 w-2.5 text-emerald-500" />
+                              {(prospect.enrichment as any)?.effectivenessScore}% Match
+                            </span>
+                            {((prospect.enrichment as any)?.scoreReasons as string[])?.[0] && (
+                              <span className="text-[11px] text-muted-foreground truncate max-w-xs">
+                                · {((prospect.enrichment as any)?.scoreReasons as string[])[0]}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         {/* Recent News Catalyst if present */}
                         {Boolean((prospect.enrichment as any)?.newsContext) && (
-                          <div className="mt-1">
-                            <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 text-[10px] truncate max-w-xs">
-                              {(prospect.enrichment as any)?.newsContext}
-                            </Badge>
+                          <div className="mt-1 flex items-center gap-1">
+                            <span
+                              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 max-w-sm truncate"
+                              title={(prospect.enrichment as any)?.newsContext}
+                            >
+                              <TrendingUp className="h-3 w-3 text-emerald-500 shrink-0" />
+                              <span className="truncate">{(prospect.enrichment as any)?.newsContext}</span>
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Company Growth Signals */}
+                        {Array.isArray((prospect.enrichment as any)?.signals) && ((prospect.enrichment as any).signals.length > 0) && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {((prospect.enrichment as any).signals as string[]).slice(0, 2).map((sig: string) => (
+                              <span key={sig} className="inline-flex items-center rounded-md bg-muted/50 border border-border/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                {sig}
+                              </span>
+                            ))}
                           </div>
                         )}
 

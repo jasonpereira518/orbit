@@ -34,7 +34,7 @@ export type AudienceFilters = {
   organizationDomains?: string[];
 };
 
-export type OutreachSearchSource = "demo" | "apollo";
+export type OutreachSearchSource = "demo" | "apollo" | "brightdata" | "brightdata_deep_search";
 
 export type NormalizedProspect = {
   externalId: string;

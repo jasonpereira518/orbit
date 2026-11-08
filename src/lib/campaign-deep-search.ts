@@ -15,6 +15,7 @@ import { outreachCampaigns, outreachMessages, outreachProspects, type AudienceFi
 import { and, eq, sql } from "drizzle-orm";
 import { searchPeopleWithBrightData, scrapeCompanyNewsWithBrightData } from "@/lib/brightdata";
 import { generateOutreachDraftsBatch, type DraftInput } from "@/lib/outreach-drafts";
+import { calculateProspectEffectiveness } from "@/lib/outreach-scoring";
 import { listActiveGoalTexts } from "@/actions/goals";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import type { OutreachChannel } from "@/lib/outreach-types";
@@ -90,6 +91,19 @@ export async function runCampaignDeepSearch(
     const candidate = candidates[idx];
     const companyData = companyNewsCache.get(candidate.company);
     const externalId = `deep-search-${candidate.id}-${Date.now()}-${idx}`;
+    const email = `${candidate.fullName.toLowerCase().replace(/[^a-z]/g, "")}@${candidate.company.toLowerCase().replace(/[^a-z]/g, "")}.com`;
+    const newsContext = companyData?.headline || candidate.recentNews || null;
+    const signals = companyData?.signals || candidate.signals || [];
+
+    const effectiveness = calculateProspectEffectiveness({
+      title: candidate.title,
+      company: candidate.company,
+      email,
+      linkedinUrl: candidate.linkedinUrl,
+      newsContext,
+      signals,
+      targetTitles,
+    });
 
     const inserted = await db
       .insert(outreachProspects)
@@ -99,7 +113,7 @@ export async function runCampaignDeepSearch(
         fullName: candidate.fullName,
         title: candidate.title,
         company: candidate.company,
-        email: `${candidate.fullName.toLowerCase().replace(/[^a-z]/g, "")}@${candidate.company.toLowerCase().replace(/[^a-z]/g, "")}.com`,
+        email,
         linkedinUrl: candidate.linkedinUrl,
         location: candidate.location,
         status: "selected", // Ready for outreach
@@ -107,11 +121,14 @@ export async function runCampaignDeepSearch(
           avatarUrl: candidate.avatarUrl,
           headline: candidate.summary,
           summary: candidate.summary,
-          newsContext: companyData?.headline || candidate.recentNews || null,
-          signals: companyData?.signals || candidate.signals || [],
+          newsContext,
+          signals,
           matchReason: candidate.matchReason,
           source: candidate.source,
           deepSearchCatalogedAt: new Date().toISOString(),
+          effectivenessScore: effectiveness.score,
+          priorityTier: effectiveness.tier,
+          scoreReasons: effectiveness.reasons,
         },
       })
       .onConflictDoNothing()
@@ -128,22 +145,34 @@ export async function runCampaignDeepSearch(
       const userGoals = await listActiveGoalTexts();
       const writingInstructions = await loadWritingInstructions(userId);
 
-      const draftInputs: DraftInput[] = candidates.map((candidate) => ({
-        channel: ((campaign.defaultChannel as OutreachChannel) || "email"),
-        tone: campaign.tone || "professional",
-        messageIntent: campaign.messageIntent || "Reach out regarding company growth and partnerships",
-        audienceQuery: campaign.audienceQuery,
-        replyCta: (campaign.replyCta as any) || "book_intro",
-        userGoals,
-        writingInstructions,
-        prospect: {
-          fullName: candidate.fullName,
-          title: candidate.title,
-          company: candidate.company,
-          location: candidate.location,
-          enrichmentSummary: candidate.summary,
-        },
-      }));
+      const draftInputs: DraftInput[] = candidates.map((candidate) => {
+        const companyData = companyNewsCache.get(candidate.company);
+        const enrichedSummary = [
+          candidate.summary,
+          companyData?.headline ? `Recent News Catalyst: ${companyData.headline}` : null,
+          companyData?.signals?.length ? `Company Signals: ${companyData.signals.join(", ")}` : null,
+          candidate.matchReason ? `Match Reason: ${candidate.matchReason}` : null,
+        ]
+          .filter(Boolean)
+          .join(". ");
+
+        return {
+          channel: ((campaign.defaultChannel as OutreachChannel) || "email"),
+          tone: campaign.tone || "professional",
+          messageIntent: campaign.messageIntent || "Reach out regarding company growth and partnerships",
+          audienceQuery: campaign.audienceQuery,
+          replyCta: (campaign.replyCta as any) || "book_intro",
+          userGoals,
+          writingInstructions,
+          prospect: {
+            fullName: candidate.fullName,
+            title: candidate.title,
+            company: candidate.company,
+            location: candidate.location,
+            enrichmentSummary: enrichedSummary,
+          },
+        };
+      });
 
       const drafts = await generateOutreachDraftsBatch(userId, draftInputs);
 

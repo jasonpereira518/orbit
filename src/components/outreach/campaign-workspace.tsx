@@ -95,6 +95,7 @@ export function CampaignWorkspace({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [pipeline, setPipeline] = useState<PipelineFilter>("all");
+  const [priorityFilter, setPriorityFilter] = useState<"all" | "high" | "strong">("all");
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState<AudienceFilters>(
     (campaign.audienceFilters as AudienceFilters) || {}
@@ -134,6 +135,8 @@ export function CampaignWorkspace({
       contactId: p.contactId,
       isDemo: Boolean(p.enrichment?.demo),
       companyMismatch: Boolean(p.enrichment?.companyMismatch),
+      avatarUrl: ((p.enrichment as any)?.avatarUrl as string) || null,
+      enrichment: p.enrichment,
       pipeline: prospectPipelineBucket({
         id: p.id,
         status: p.status,
@@ -174,9 +177,23 @@ export function CampaignWorkspace({
   }, [prospects]);
 
   const filtered = useMemo(() => {
-    if (pipeline === "all") return prospects;
-    return prospects.filter((p) => p.pipeline === pipeline);
-  }, [pipeline, prospects]);
+    let result = pipeline === "all" ? prospects : prospects.filter((p) => p.pipeline === pipeline);
+    if (priorityFilter === "high") {
+      result = result.filter((p) => (p.enrichment as any)?.priorityTier === "high");
+    } else if (priorityFilter === "strong") {
+      result = result.filter(
+        (p) =>
+          (p.enrichment as any)?.priorityTier === "high" ||
+          (p.enrichment as any)?.priorityTier === "strong"
+      );
+    }
+    // Sort highest effectiveness first
+    return [...result].sort((a, b) => {
+      const aScore = ((a.enrichment as any)?.effectivenessScore as number) || 0;
+      const bScore = ((b.enrichment as any)?.effectivenessScore as number) || 0;
+      return bScore - aScore;
+    });
+  }, [pipeline, priorityFilter, prospects]);
 
   const selectedIds = useSelectedProspectIds(filtered);
 
@@ -351,7 +368,46 @@ export function CampaignWorkspace({
         </div>
       )}
 
-      <PipelineFilters value={pipeline} counts={counts} onChange={setPipeline} />
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+        <PipelineFilters value={pipeline} counts={counts} onChange={setPipeline} />
+
+        <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-card p-1 text-xs">
+          <span className="px-2 text-muted-foreground font-medium text-[11px]">Effectiveness:</span>
+          <button
+            type="button"
+            onClick={() => setPriorityFilter("all")}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              priorityFilter === "all"
+                ? "bg-primary text-primary-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            onClick={() => setPriorityFilter("strong")}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              priorityFilter === "strong"
+                ? "bg-primary text-primary-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Strong (60%+)
+          </button>
+          <button
+            type="button"
+            onClick={() => setPriorityFilter("high")}
+            className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+              priorityFilter === "high"
+                ? "bg-primary text-primary-foreground shadow-xs"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            🔥 High (80%+)
+          </button>
+        </div>
+      </div>
 
       <BulkActionBar
         campaignId={campaign.id}
