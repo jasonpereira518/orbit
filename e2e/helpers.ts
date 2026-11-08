@@ -5,11 +5,15 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * markup before React attaches and silently do nothing — a click that never navigates, a
  * fill the controlled input never hears. Repeat the action until its effect shows.
  */
-export async function untilHydrated(action: () => Promise<void>, effect: () => Promise<void>): Promise<void> {
+export async function untilHydrated(
+  action: () => Promise<void>,
+  effect: () => Promise<void>,
+  { timeout = 90_000 }: { timeout?: number } = {}
+): Promise<void> {
   await expect(async () => {
     await action();
     await effect();
-  }).toPass({ timeout: 90_000 });
+  }).toPass({ timeout });
 }
 
 /** Fills a controlled input and waits until React has the value (the button enables). */
@@ -39,20 +43,26 @@ export async function ensureOnboarded(page: Page): Promise<void> {
     const done = page.getByRole("button", { name: "Continue" });
     const consent = page.getByRole("checkbox", { name: /Terms of Service/ });
     const skipWelcome = page.getByRole("button", { name: "Skip for now" });
+    // Every way out ends in a full page load of /dashboard, which on a cold CI server is a
+    // first compile: wait for it rather than re-click, and keep each click short, because a
+    // click on a button disabled while that load runs would otherwise wait out the whole
+    // budget (the first spec of a shard meets this on a brand-new account).
+    const click = { timeout: 5_000 };
     await untilHydrated(
       async () => {
         if (await skip.isVisible()) {
-          await skip.click();
+          await skip.click(click);
           return;
         }
         if (await done.isVisible()) {
-          await done.click();
+          await done.click(click);
           return;
         }
-        if (await consent.isVisible()) await consent.check();
-        if (await skipWelcome.isVisible()) await skipWelcome.click();
+        if (await consent.isVisible()) await consent.check(click);
+        if (await skipWelcome.isVisible()) await skipWelcome.click(click);
       },
-      () => expect(page).toHaveURL(/\/dashboard$/, { timeout: 5_000 })
+      () => expect(page).toHaveURL(/\/dashboard$/, { timeout: 30_000 }),
+      { timeout: 150_000 }
     );
   }
 }
