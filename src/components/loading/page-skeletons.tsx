@@ -444,6 +444,33 @@ export function CaptureFormSkeleton() {
   );
 }
 
+/**
+ * The Meetings page's "Record a meeting" card, before its code arrives. The capture form's
+ * skeleton above is ~570px tall; this card is ~265px (356px with the AI-key notice), so using
+ * it here made everything under the card jump up ~220px when the chunk landed (CLS 0.03–0.05
+ * on /meetings). Same box model as the real card (`space-y-5`, `p-6`, the two-column field
+ * row that stacks below `sm`) so the swap does not move the page. `notice` is the AI-key
+ * banner row, shown only when the card will show one.
+ */
+export function MeetingCaptureSkeleton({ notice = false }: { notice?: boolean }) {
+  return (
+    <div className="space-y-5 rounded-2xl border border-border/70 bg-card p-6">
+      <Skeleton className="h-6 w-40" />
+      {notice && <Skeleton className="h-[70px] w-full rounded-xl" />}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <div key={i} className="space-y-1.5">
+            <Skeleton className="h-3.5 w-32" />
+            <Skeleton className="h-8 w-full rounded-lg" />
+          </div>
+        ))}
+      </div>
+      <Skeleton className="h-11 w-full rounded-xl" />
+      <Skeleton className="h-9 w-40 rounded-lg" />
+    </div>
+  );
+}
+
 /** Matches /capture: header (no back link, unlike FormPageSkeleton) at the page's own max-w-3xl. */
 export function CapturePageSkeleton() {
   return (
