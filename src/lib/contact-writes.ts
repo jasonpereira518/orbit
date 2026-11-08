@@ -562,6 +562,29 @@ function deferBriefRefresh(userId: string, contactId: string) {
   }
 }
 
+function deferAvatarResolution(userId: string, contactId: string) {
+  const task = async () => {
+    try {
+      const { resolveAvatarNow } = await import("@/lib/avatar-backfill");
+      const { downloadAndPersistAvatar, fetchGravatarPhotoUrl } = await import("@/lib/contact-avatar");
+      const { resolveLinkedInPhotoCached } = await import("@/lib/shared-avatars");
+      const db = await getDb();
+      await resolveAvatarNow(db, userId, contactId, {
+        persistRemote: downloadAndPersistAvatar,
+        resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
+        resolveGravatar: fetchGravatarPhotoUrl,
+      });
+    } catch {
+      // Swallowed: background backfill picks up if needed
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
+}
+
 /**
  * Rebuild a contact's semantic embedding AFTER the response, not before it.
  *
@@ -1144,6 +1167,10 @@ export async function updateContactForUser(
 
   if (significant && !options?.skipRevalidate && !options?.skipSummary) {
     deferBriefRefresh(userId, id);
+  }
+
+  if (contact && input.linkedinUrl !== undefined && input.linkedinUrl?.trim()) {
+    deferAvatarResolution(userId, id);
   }
 
   await scoreAfterWrite(userId, id, options);

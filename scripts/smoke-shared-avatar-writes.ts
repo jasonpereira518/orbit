@@ -301,6 +301,19 @@ run(async () => {
     );
     const keptRow = await contactRow(kept.id);
     check("an extension merge without a photo keeps the stored one", keptRow.profileImageUrl === "https://abc.public.blob.vercel-storage.com/avatars/kept.jpg" && keptRow.profileImageSource === "google", `${keptRow.profileImageUrl} ${keptRow.profileImageSource}`);
+
+    console.log("\nExtension captures pooled to shared database...");
+    const pooledSlug = `${P}ext-pooled`;
+    let pendingDefer: Promise<void> | null = null;
+    await saveContactFromExtension(
+      USER_A,
+      { mode: "create", force: true, page: page(li(pooledSlug)), fields: { fullName: "Pooled Extension Contact", linkedinUrl: li(pooledSlug), photoUrl: PROFILE_PHOTO } },
+      (fn) => { pendingDefer = fn(); }
+    );
+    if (pendingDefer) await pendingDefer;
+    const sharedRow = await row(pooledSlug);
+    check("extension LinkedIn photo is adopted into shared database", sharedRow !== null && sharedRow.imageUrl !== null && sharedRow.source === "extension");
+    check("…and Blob key was generated", Boolean(sharedRow?.imageUrl?.includes("avatars-shared/")));
   } finally {
     globalThis.fetch = realFetch;
     setAvatarBlobClientForTests(null);
