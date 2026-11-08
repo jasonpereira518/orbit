@@ -162,7 +162,7 @@ const PAGES: Surface[] = [
     key: "page.knowledge",
     kind: "page",
     label: "Knowledge",
-    description: "Saved notes and knowledge entries.",
+    description: "Everyone in your orbit and what Orbit knows about them.",
     href: "/knowledge",
   },
   {
