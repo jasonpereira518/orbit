@@ -1,16 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { fillUntilEnabled, skipConnectIfShown, untilHydrated } from "./helpers";
+import { fillUntilEnabled, skipAboutStep, skipConnectIfShown, untilHydrated } from "./helpers";
 
-// Starts with the name: the Gemini stub returns the first "First Last" pair as the person. A
+// Starts with the name: the AI stub returns the first "First Last" pair as the person. A
 // name no other spec uses, so the capture spec's own person stays new there.
 const NOTE =
   "Katherine Johnson leads flight research at Langley Labs. Met her at the career fair; she said to send my resume.";
 
 /**
  * Quick setup, end to end, on an empty account: the welcome's one action, a first person from
- * notes, and the first win shown back before the dashboard. The e2e account runs on the Gemini
- * stub key, so capture runs; no Google or Microsoft client is configured, so nothing offers to
- * connect. The guided tour has its own spec.
+ * notes, the first win shown back, then About you (skipped) before the dashboard. The e2e
+ * account runs on the Anthropic stub key, so capture runs; no Google or Microsoft client is
+ * configured, so nothing offers to connect. The guided tour has its own spec.
  */
 test("an empty account adds its first person and sees the first win", async ({ page }) => {
   await page.goto("/dashboard");
@@ -43,7 +43,9 @@ test("an empty account adds its first person and sees the first win", async ({ p
   await expect(page.getByRole("heading", { name: "Katherine is in your network" })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("Katherine Johnson").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Here’s what Orbit can do" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Go to my dashboard" }).click();
+  // Then About you, after the win and never before it; skipping it finishes setup.
+  await page.getByRole("button", { name: "Continue" }).click();
+  await skipAboutStep(page);
 
   await expect(page).toHaveURL(/\/dashboard$/, { timeout: 10_000 });
   await expect(page.getByText("Katherine Johnson").first()).toBeVisible();

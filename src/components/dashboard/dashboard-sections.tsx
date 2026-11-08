@@ -42,6 +42,7 @@ import { contactUsageForUser } from "@/lib/contact-writes";
 import { countTourExamples, hasOwnInteraction } from "@/lib/onboarding-examples/status";
 import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
 import { onboardingSeen } from "@/lib/onboarding-steps";
+import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { MorningBriefing } from "@/components/radar/morning-briefing";
 import type { RadarBriefing } from "@/lib/radar/page-data";
 
@@ -135,7 +136,7 @@ export async function SetupChecklistSection() {
   const settings = await ensureUserSettings(userId);
   if (!onboardingSeen(settings) || tourRailVisible(settings)) return null;
 
-  const [gmail, outlook, usage, examples, logged, outage] = await Promise.all([
+  const [gmail, outlook, usage, examples, logged, outage, goals] = await Promise.all([
     getGmailConnectionStatus(),
     getOutlookConnectionStatus(),
     contactUsageForUser(userId),
@@ -144,6 +145,7 @@ export async function SetupChecklistSection() {
     // The layout's own cached read: a paused or spent Orbit AI is why most accounts would need
     // a key, and key presence alone cannot see it.
     managedOutage().catch(() => null),
+    listActiveGoalTextsForUser(userId, { limit: 1 }),
   ]);
 
   const items: SetupChecklistItem[] = [];
@@ -159,6 +161,16 @@ export async function SetupChecklistSection() {
             ? `Orbit’s AI is out ${outage.refillsAt ? `until ${formatAllowanceReset(outage.refillsAt)}` : "for now"}, so capture, Chat and briefs need a key of your own meanwhile`
             : "Orbit’s AI is paused right now, so capture, Chat and briefs need a key of your own",
       href: integrationHref("ai"),
+    });
+  }
+  // The About you step was skipped, or finished without a goal. Settings, not /onboarding:
+  // the stage redirects a finished account straight back to the dashboard.
+  if (goals.length === 0 && !settings.careerProfile?.aim) {
+    items.push({
+      id: "about",
+      label: "Tell Orbit what you’re going for",
+      detail: "One goal, and Orbit’s suggestions and drafts start pointing at it.",
+      href: "/settings#settings-goals",
     });
   }
   // What onboarding set up, in its order: the AI key, Google/Microsoft, then the things the
@@ -680,6 +692,8 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
           company: c.company,
           title: c.title,
           goalRelevance: c.goalRelevance,
+          reason: c.reason,
+          companyName: c.companyName,
         }))}
       />
 

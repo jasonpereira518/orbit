@@ -26,8 +26,8 @@ export async function fillUntilEnabled(input: Locator, value: string, button: Lo
 /**
  * Past the onboarding gate: a new account is redirected from /dashboard to /onboarding.
  * The welcome has its own "Skip for now", behind the consent box an account without Clerk has
- * never ticked; past the welcome, "Skip setup" is in the header, and the first win (where
- * setup is already done) has "Go to my dashboard".
+ * never ticked; past the welcome, "Skip setup" is in the header, the first win has "Continue",
+ * and About you after it has its own "Skip for now", which finishes setup.
  */
 export async function ensureOnboarded(page: Page): Promise<void> {
   await page.goto("/dashboard");
@@ -35,7 +35,8 @@ export async function ensureOnboarded(page: Page): Promise<void> {
     // The stage resumes wherever the account left off (specs share one e2e database), so
     // this has to work from any step.
     const skip = page.getByRole("button", { name: "Skip setup" });
-    const done = page.getByRole("button", { name: "Go to my dashboard" });
+    // The first win's way on is About you, whose own "Skip for now" finishes setup.
+    const done = page.getByRole("button", { name: "Continue" });
     const consent = page.getByRole("checkbox", { name: /Terms of Service/ });
     const skipWelcome = page.getByRole("button", { name: "Skip for now" });
     await untilHydrated(
@@ -72,6 +73,12 @@ export async function createContact(page: Page, fullName: string): Promise<void>
       })
   );
   await expect(page.getByRole("heading", { level: 1, name: fullName })).toBeVisible();
+}
+
+/** The About you step follows the welcome on both paths; the specs that walk past it skip it. */
+export async function skipAboutStep(page: Page) {
+  await expect(page.getByRole("heading", { name: "Where can Orbit find you?" })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Skip for now" }).click();
 }
 
 /**

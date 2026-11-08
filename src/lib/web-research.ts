@@ -25,10 +25,11 @@
  */
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiResultCache } from "@/db/schema";
+import { aiResultCache, userSettings } from "@/db/schema";
 import { parseAiJson, userCanUseAi, webSearchJson, type WebSource } from "@/lib/ai";
 import { RESEARCH_CACHE_DAYS, aiResultCacheKey, withAiResultCache } from "@/lib/ai-result-cache";
 import { fenceUntrusted } from "@/lib/ai-security";
+import { linkedinSlug } from "@/lib/duplicates";
 import { saveContactProfile, sanitizeIncomingExperiences, type IncomingExperience } from "@/lib/contact-profile";
 import { resolveOrCreateContact, type ResolveOptions } from "@/lib/contact-resolve";
 import { wikidataOrg } from "@/lib/org-brand-learn";
@@ -395,12 +396,23 @@ export async function loadResearchedPeople(userId: string, keys: string[]): Prom
   }));
 }
 
-/** The account's recent briefs, people and companies, newest first — the /find "Recent" list. */
+/**
+ * The account's recent briefs, people and companies, newest first — the /find "Recent" list.
+ * The person's own brief (onboarding's self-lookup, anchored on their LinkedIn URL) is left
+ * off: it is not someone they are trying to meet.
+ */
 export async function listRecentResearch(
   userId: string,
   limit = 10,
 ): Promise<{ key: string; dossier: ResearchBrief }[]> {
   const db = await getDb();
+  const settings = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { socialLinks: true },
+  });
+  const ownSlug = linkedinSlug(settings?.socialLinks?.linkedin);
+  const isOwn = (brief: ResearchBrief) =>
+    !!ownSlug && brief.kind === "person" && linkedinSlug(brief.subject.linkedinUrl) === ownSlug;
   const rows = await db
     .select({ key: aiResultCache.inputHash, result: aiResultCache.result })
     .from(aiResultCache)
@@ -412,11 +424,13 @@ export async function listRecentResearch(
       ),
     )
     .orderBy(desc(aiResultCache.createdAt))
-    .limit(limit);
-  return rows.flatMap((r) => {
-    const dossier = asBrief(r.result);
-    return dossier ? [{ key: r.key, dossier }] : [];
-  });
+    .limit(limit + 1);
+  return rows
+    .flatMap((r) => {
+      const dossier = asBrief(r.result);
+      return dossier && !isOwn(dossier) ? [{ key: r.key, dossier }] : [];
+    })
+    .slice(0, limit);
 }
 
 /**
@@ -813,6 +827,47 @@ export function toDiscoveryResult(query: string, json: string, sources: WebSourc
   };
 }
 
+function discoveryKeyParts(query: string) {
+  return { system: DISCOVER_SYSTEM, user: `Find people who match this description:\n\n${fenceUntrusted("description", query)}` };
+}
+
+/**
+ * The cached `discoverPeople` answer for a description, without running a search; null when
+ * the description would be refused or nothing is cached within `RESEARCH_CACHE_DAYS`.
+ */
+export async function loadCachedDiscovery(userId: string, input: unknown): Promise<DiscoveryResult | null> {
+  const normalized = normalizeDiscoveryQuery(input);
+  if (!normalized.ok) return null;
+  const db = await getDb();
+  const row = await db.query.aiResultCache.findFirst({
+    where: and(
+      eq(aiResultCache.userId, userId),
+      eq(aiResultCache.operation, DISCOVER_OPERATION),
+      eq(aiResultCache.inputHash, aiResultCacheKey(DISCOVER_OPERATION, discoveryKeyParts(normalized.query))),
+      gt(aiResultCache.createdAt, freshSince()),
+    ),
+    columns: { result: true },
+  });
+  const brief = row ? asBrief(row.result) : null;
+  return brief?.kind === "discover" ? brief : null;
+}
+
+/** The account's newest cached discovery run (any query), while still within `RESEARCH_CACHE_DAYS`. */
+export async function loadLatestCachedDiscovery(userId: string): Promise<DiscoveryResult | null> {
+  const db = await getDb();
+  const row = await db.query.aiResultCache.findFirst({
+    where: and(
+      eq(aiResultCache.userId, userId),
+      eq(aiResultCache.operation, DISCOVER_OPERATION),
+      gt(aiResultCache.createdAt, freshSince()),
+    ),
+    orderBy: desc(aiResultCache.createdAt),
+    columns: { result: true },
+  });
+  const brief = row ? asBrief(row.result) : null;
+  return brief?.kind === "discover" ? brief : null;
+}
+
 /**
  * People who match a description ("product managers at Stripe who went to Michigan"),
  * found on the public web. Honest about its limits: a handful of cited candidates, never a
@@ -828,7 +883,8 @@ export async function discoverPeople(
   if (!normalized.ok) return normalized;
   const { query } = normalized;
   const now = options.now ?? (() => new Date());
-  const user = `Find people who match this description:\n\n${fenceUntrusted("description", query)}`;
+  const keyParts = discoveryKeyParts(query);
+  const { user } = keyParts;
   const research: DiscoveryResearcher =
     options.researcher ??
     ((uid, prompt, signal) =>
@@ -840,7 +896,6 @@ export async function discoverPeople(
         maxOutputTokens: MAX_DISCOVERY_OUTPUT_TOKENS,
         signal,
       }));
-  const keyParts = { system: DISCOVER_SYSTEM, user };
 
   try {
     const result = await withAiResultCache(

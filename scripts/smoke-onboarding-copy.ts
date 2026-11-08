@@ -71,6 +71,48 @@ const capturePage = readFileSync("src/components/capture/capture-flow.tsx", "utf
 check("/capture offers adding someone by hand while AI cannot run, never from inside onboarding",
   /manualHref=\{onSaved \? null : "\/contacts\/new\?quick=1"\}/.test(capturePage));
 
+// The About you step: skippable on every screen, never waits on the self-lookup, and only a
+// confident lookup prefills or is sent to the save.
+const about = readFileSync("src/components/onboarding/steps/about-step.tsx", "utf8");
+check("the stage renders the About you step", /step === "about" && \([\s\S]{0,400}<AboutStep/.test(flow));
+check("'Skip for now' is a Button that skips without saving", /<Button[^>]*onClick=\{onSkip\}[^>]*>\s*Skip for now/.test(about));
+check("there is a no-LinkedIn way through", about.includes("I don’t use LinkedIn"));
+check("an unconfirmed lookup says so", about.includes("We couldn’t confirm this is you"));
+check("the lookup is a fetch to the route, never awaited",
+  /void fetch\("\/api\/onboarding\/self-lookup"/.test(about) && !/await fetch\("\/api\/onboarding\/self-lookup"/.test(about));
+check("the step imports no lookup server action",
+  !/import[^;]*lookUp[^;]*from "@\/actions\//.test(about) && !readFileSync("src/actions/about-you.ts", "utf8").includes("lookUpSelfForUser"));
+check("Field chips wait for an aim (a field with no aim is not saved)",
+  /label="Field"[\s\S]{0,200}disabled=\{!aim\}/.test(about) && /if \(!next\) setField\(null\)/.test(about));
+check("only a confident lookup becomes the prefill", /status === "confident" \? lookup\.prefill : null/.test(about));
+const kit = readFileSync("src/components/onboarding/onboarding-ui.tsx", "utf8");
+check("chips are toggle buttons", /<button[\s\S]{0,120}aria-pressed=/.test(kit) && /<ToggleGroup\s+label="Your aim"/.test(about));
+check("the confirm row is majors for students, the headline for people already working",
+  /majorsRow \? \([\s\S]{0,120}Your major\(s\)[\s\S]{0,600}What you do now/.test(about) && about.includes("asksForMajors(aim)"));
+check("'When' is a segmented switch", /label="When"\s+look="segment"/.test(about));
+check("dream orgs take companies, schools and organizations, with suggestions",
+  about.includes("Dream companies &amp; schools") && about.includes("Companies, schools or organizations · up to ${MAX_COMPANIES}") && /<OrgCombobox\s+id="about-company"/.test(about));
+check("the URL field has a visible label", /<Field[^>]*label="Your LinkedIn profile"/.test(about));
+
+// The visual revision: path cards say how long each path takes, the mark replaces the app
+// logo inside onboarding only, and it moves by CSS (stopped by the reduced-motion clamp).
+check("the old 'about a minute' line is gone", !/About a minute/i.test(welcome));
+const launch = readFileSync("src/components/onboarding/steps/launch-step.tsx", "utf8");
+check("onboarding uses OnboardingMark, not OrbitLogo",
+  [flow, welcome, launch, firstWin].every((src) => src.includes("<OnboardingMark") && !src.includes("OrbitLogo")));
+const mark = readFileSync("src/components/onboarding/onboarding-mark.tsx", "utf8");
+check("the mark's moon is a CSS rotation, not SMIL", !/<animate/.test(mark) && /animate-\[spin_5s_linear_infinite\]/.test(mark));
+check("the mark is decorative", /aria-hidden/.test(mark));
+check("the goals chapter comes first", /HIGHLIGHT_CHAPTERS: HighlightChapter\[\] = \[[\s\S]{0,300}id: "goals"/.test(chapters));
+const dashboard = readFileSync("src/components/dashboard/dashboard-sections.tsx", "utf8");
+check("the setup checklist asks for a goal when none is set", /id: "about",\s*label: "Tell Orbit what you’re going for"/.test(dashboard));
+
+// Combined with About you: it follows the first win and finishes setup; the welcome keeps one
+// primary action and says how long each route takes.
+check("the first win continues to About you", /onDone=\{\(\) => advance\("first-win"\)\}/.test(flow) && firstWin.includes("Continue"));
+check("About you, done or skipped, finishes setup", /<AboutStep[\s\S]{0,300}onNext=\{\(\) => leave\(true\)\}[\s\S]{0,80}onSkip=\{\(\) => leave\(true\)\}/.test(flow));
+check("the welcome says how long each route takes", welcome.includes("About 2 minutes") && welcome.includes("About 5 minutes"));
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

@@ -5,7 +5,7 @@ import { motion, useReducedMotionConfig } from "motion/react";
 import { ArrowRight } from "lucide-react";
 import { getFirstWinSummary, type FirstWinPerson } from "@/actions/onboarding";
 import { scheduleContactFollowUp } from "@/actions/reminders";
-import { OrbitLogo } from "@/components/orbit-logo";
+import { OnboardingMark } from "@/components/onboarding/onboarding-mark";
 import { Stagger, StaggerItem } from "@/components/onboarding/onboarding-ui";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -107,8 +107,6 @@ export function FirstWinStep({
   return (
     <Stagger className="mx-auto flex w-full max-w-xl flex-col items-center text-center">
       <StaggerItem className="relative mb-4 flex size-20 items-center justify-center">
-        <span aria-hidden className="absolute inset-0 rounded-full border border-primary/15" />
-        <span aria-hidden className="absolute inset-3 rounded-full border border-dashed border-primary/10" />
         {people.length > 0 && (
           <motion.span
             aria-hidden
@@ -118,7 +116,7 @@ export function FirstWinStep({
             transition={{ duration: DUR.slow * 2.5, ease: EASE_HOUSE, delay: 0.15 }}
           />
         )}
-        <OrbitLogo size="lg" />
+        <OnboardingMark size={68} />
       </StaggerItem>
 
       <StaggerItem className="w-full">
@@ -204,8 +202,8 @@ export function FirstWinStep({
       )}
 
       <StaggerItem className="mt-6 flex w-full max-w-sm flex-col gap-2">
-        <Button type="button" size="lg" className="h-11 w-full text-[15px]" disabled={leaving} onClick={leaveVia(onDone)}>
-          Go to my dashboard
+        <Button type="button" size="lg" className="h-11 w-full text-[15px]" disabled={leaving} onClick={onDone}>
+          Continue
           <ArrowRight className="size-4" aria-hidden />
         </Button>
         <Button type="button" variant="outline" className="h-10 w-full" disabled={leaving} onClick={onAddAnother}>
