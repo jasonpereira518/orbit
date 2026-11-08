@@ -538,72 +538,128 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 )}
               </div>
 
-              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {discoveredProspects.slice(0, 6).map((prospect) => {
                   const enrichment = (prospect.enrichment || {}) as Record<string, unknown>;
                   const avatarUrl = (enrichment.avatarUrl as string) || null;
                   const score = typeof enrichment.effectivenessScore === "number" ? enrichment.effectivenessScore : null;
+                  const reasons = (enrichment.scoreReasons as string[]) || [];
+                  const matchReason = (enrichment.matchReason as string) || reasons[0] || null;
+                  const summary = (enrichment.summary as string) || (enrichment.headline as string) || null;
+                  const news = (enrichment.newsContext as string) || (enrichment.recentNews as string) || null;
+                  const signals = Array.isArray(enrichment.signals) ? (enrichment.signals as string[]) : [];
 
                   return (
                     <div
                       key={prospect.id}
-                      className="flex flex-col justify-between rounded-2xl border border-border/60 bg-card p-3.5 text-xs shadow-2xs"
+                      className="flex flex-col justify-between rounded-2xl border border-border/70 bg-card p-4 text-xs shadow-2xs hover:border-border transition-all gap-3"
                     >
-                      <div className="flex items-start gap-2.5">
-                        <div className="h-8 w-8 shrink-0 overflow-hidden rounded-full border border-border/60 bg-muted">
-                          {avatarUrl ? (
-                            <img
-                              src={avatarUrl}
-                              alt={prospect.fullName}
-                              className="h-full w-full object-cover"
-                              onError={(e) => {
-                                (e.target as HTMLElement).style.display = "none";
-                              }}
-                            />
-                          ) : (
-                            <div className="h-full w-full flex items-center justify-center font-medium text-3xs text-muted-foreground">
-                              {prospect.fullName.slice(0, 2).toUpperCase()}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="font-semibold text-ink truncate">{prospect.fullName}</span>
-                            {score !== null && (
-                              <span
-                                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums border ${
-                                  score >= 80
-                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                                    : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
-                                }`}
-                              >
-                                {score}%
-                              </span>
+                      <div className="space-y-2.5">
+                        <div className="flex items-start gap-3">
+                          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full border border-border/60 bg-muted">
+                            {avatarUrl ? (
+                              <img
+                                src={avatarUrl}
+                                alt={prospect.fullName}
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = "none";
+                                }}
+                              />
+                            ) : (
+                              <div className="h-full w-full flex items-center justify-center font-semibold text-xs text-muted-foreground">
+                                {prospect.fullName.slice(0, 2).toUpperCase()}
+                              </div>
                             )}
                           </div>
-                          <p className="text-[11px] text-muted-foreground truncate font-medium mt-0.5">
-                            {prospect.title || "Target Role"}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground truncate">
-                            {prospect.company || "Target Company"}
-                          </p>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-1.5">
+                              <span className="font-semibold text-ink truncate text-sm">{prospect.fullName}</span>
+                              {score !== null && (
+                                <span
+                                  title={reasons.join(" • ") || "Match score"}
+                                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums border ${
+                                    score >= 80
+                                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                      : score >= 60
+                                      ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                                      : "border-border/60 bg-muted/40 text-muted-foreground"
+                                  }`}
+                                >
+                                  <Sparkles className="h-2.5 w-2.5 inline mr-1 text-emerald-500" />
+                                  {score}% Match
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-ink/80 font-medium truncate mt-0.5">
+                              {prospect.title || "Target Role"}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground truncate">
+                              <span className="font-medium text-ink">{prospect.company || "Target Company"}</span>
+                              {prospect.location && (
+                                <>
+                                  <span className="mx-1 text-border">·</span>
+                                  <span>{prospect.location}</span>
+                                </>
+                              )}
+                            </p>
+                          </div>
                         </div>
+
+                        {/* Bio / Summary context */}
+                        {summary && (
+                          <p className="text-[11.5px] text-muted-foreground line-clamp-2 leading-relaxed">
+                            {summary}
+                          </p>
+                        )}
+
+                        {/* Match Reason and Growth Signals */}
+                        {(matchReason || signals.length > 0) && (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                            {matchReason && (
+                              <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
+                                {matchReason}
+                              </span>
+                            )}
+                            {signals.slice(0, 2).map((sig) => (
+                              <span key={sig} className="rounded-full border border-border/40 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">
+                                {sig}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Recent News Catalyst */}
+                        {news && (
+                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                            <TrendingUp className="h-3 w-3 text-emerald-500 shrink-0" />
+                            <span className="truncate">{news}</span>
+                          </div>
+                        )}
                       </div>
 
-                      {prospect.linkedinUrl && (
-                        <div className="mt-2.5 pt-1.5 border-t border-border/30 flex justify-end">
+                      {/* Footer: Details & LinkedIn links */}
+                      <div className="flex items-center justify-between pt-2 border-t border-border/40 text-[11px] text-muted-foreground">
+                        <span className="truncate max-w-[180px]">
+                          {prospect.email ? (
+                            <span className="text-ink font-mono text-[10px]">{prospect.email}</span>
+                          ) : (
+                            <span>Verified public profile</span>
+                          )}
+                        </span>
+                        {prospect.linkedinUrl && (
                           <a
                             href={prospect.linkedinUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
+                            className="inline-flex items-center gap-1 text-primary hover:underline font-medium shrink-0"
                           >
                             LinkedIn
                             <ExternalLink className="h-2.5 w-2.5" />
                           </a>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   );
                 })}

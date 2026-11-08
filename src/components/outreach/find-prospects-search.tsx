@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   Sparkles,
+  TrendingUp,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -708,12 +709,22 @@ export function FindProspectsSearch({
                     </p>
 
                     <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                      <span className="rounded-md border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
+                      <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
                         {candidate.matchReason}
                       </span>
+                      {Array.isArray(candidate.signals) &&
+                        candidate.signals.slice(0, 2).map((sig) => (
+                          <span
+                            key={sig}
+                            className="rounded-full border border-border/40 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground"
+                          >
+                            {sig}
+                          </span>
+                        ))}
                       {candidate.recentNews && (
-                        <span className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 truncate max-w-full">
-                          {candidate.recentNews}
+                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 truncate max-w-full inline-flex items-center gap-1">
+                          <TrendingUp className="h-2.5 w-2.5 shrink-0" />
+                          <span className="truncate">{candidate.recentNews}</span>
                         </span>
                       )}
                     </div>

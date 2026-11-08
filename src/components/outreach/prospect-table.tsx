@@ -28,6 +28,7 @@ export type ProspectRow = {
   fullName: string;
   title: string | null;
   company: string | null;
+  location?: string | null;
   email: string | null;
   phone: string | null;
   linkedinUrl: string | null;
@@ -302,7 +303,15 @@ export function ProspectTable({
                         <div className="text-muted-foreground text-xs mt-0.5">
                           {prospect.title || "—"}
                           {prospect.company ? ` @ ${prospect.company}` : ""}
+                          {prospect.location ? ` · ${prospect.location}` : ""}
                         </div>
+
+                        {/* Bio / Summary snippet if present */}
+                        {Boolean((prospect.enrichment as any)?.summary || (prospect.enrichment as any)?.headline) && (
+                          <p className="mt-1 text-[11px] text-muted-foreground line-clamp-1 max-w-md">
+                            {(prospect.enrichment as any)?.summary || (prospect.enrichment as any)?.headline}
+                          </p>
+                        )}
 
                         {/* Warm path note */}
                         <WarmPathNote company={prospect.company} warmPaths={warmPaths} />
