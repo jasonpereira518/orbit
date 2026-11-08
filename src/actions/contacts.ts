@@ -75,6 +75,7 @@ import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
   countAvatarBackfillCandidates,
   findAvatarBackfillCandidates,
+  resolveAvatarNow,
   runAvatarBackfillBatch,
 } from "@/lib/avatar-backfill";
 import { reindexInteractionPassages } from "@/lib/memory-backfill";
@@ -728,6 +729,23 @@ export async function createContactDetailed(
     options
   );
   const db = await getDb();
+
+  // Eagerly resolve avatar for newly created contacts if LinkedIn or email is provided
+  const hasLinkedIn = Boolean(input.linkedinUrl?.trim());
+  const hasEmail = Boolean(input.email?.trim());
+  if (hasLinkedIn || hasEmail) {
+    try {
+      await resolveAvatarNow(db, userId, contactId, {
+        persistRemote: downloadAndPersistAvatar,
+        resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
+        resolveGravatar: fetchGravatarPhotoUrl,
+        deadline: Date.now() + 2500,
+      });
+    } catch {
+      // Inline resolution is best-effort: background backfill finishes if timed out
+    }
+  }
+
   const [contact] = await db
     .select()
     .from(contacts)
@@ -1500,6 +1518,8 @@ export async function draftContactFollowUp(
   options?: {
     channel?: "email" | "linkedin" | "sms";
     intent?: string;
+    /** The purpose line, verbatim — pass it only when the person edited the one Orbit picked. */
+    purpose?: string;
     /** The draft already written for this exact context, if any (see `draftFromContext`). */
     reuse?: boolean;
   }

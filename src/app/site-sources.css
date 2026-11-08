@@ -137,7 +137,9 @@
 @source "../lib/app-url.ts";
 @source "../lib/attribution-parse.ts";
 @source "../lib/auth.ts";
+@source "../lib/avatar-backfill.ts";
 @source "../lib/avatar-blob.ts";
+@source "../lib/avatar-encode.ts";
 @source "../lib/big-dipper-figure.ts";
 @source "../lib/blob-lazy.ts";
 @source "../lib/bot-check.ts";
@@ -161,6 +163,9 @@
 @source "../lib/connectivity-store.ts";
 @source "../lib/connectivity.ts";
 @source "../lib/constellation-match.ts";
+@source "../lib/contact-avatar-sql.ts";
+@source "../lib/contact-avatar-url.ts";
+@source "../lib/contact-avatar.ts";
 @source "../lib/contact-brief.ts";
 @source "../lib/contact-identity.ts";
 @source "../lib/contact-input.ts";
@@ -215,9 +220,11 @@
 @source "../lib/interest-list-ticket.ts";
 @source "../lib/interest-list.ts";
 @source "../lib/interest-progress-store.ts";
+@source "../lib/internal-auth.ts";
 @source "../lib/job-changes.ts";
 @source "../lib/join-notify.ts";
 @source "../lib/legal.ts";
+@source "../lib/linkedin-scraper.ts";
 @source "../lib/log-redaction.ts";
 @source "../lib/managed-ai-policy.ts";
 @source "../lib/mcp/sanitize.ts";
@@ -228,6 +235,7 @@
 @source "../lib/motion-preference.ts";
 @source "../lib/motion.ts";
 @source "../lib/nav-timing.ts";
+@source "../lib/net-guard.ts";
 @source "../lib/note-batches.ts";
 @source "../lib/onboarding-examples/marker.ts";
 @source "../lib/onboarding-examples/sql.ts";
@@ -259,6 +267,7 @@
 @source "../lib/sentry-lazy.ts";
 @source "../lib/sentry-scrub.ts";
 @source "../lib/settled.ts";
+@source "../lib/shared-avatars.ts";
 @source "../lib/site-access.ts";
 @source "../lib/sky-figures.ts";
 @source "../lib/sky-palette.ts";
@@ -275,6 +284,7 @@
 @source "../lib/surfaces.ts";
 @source "../lib/tab-title-badge.ts";
 @source "../lib/throttle-latch.ts";
+@source "../lib/time-budget.ts";
 @source "../lib/timeline-cost.ts";
 @source "../lib/touch-kinds.ts";
 @source "../lib/tour/tour-state.ts";

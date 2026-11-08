@@ -36,6 +36,9 @@ import type {
 import { ExtensionRouteError } from "./http";
 import { scheduleContactFollowUp } from "./follow-ups";
 import { buildSnapshot, matchesForPage, toCandidate } from "./resolve";
+import { adoptPhotoIntoSharedPool, sharedPhotoSlug, resolveLinkedInPhotoCached } from "@/lib/shared-avatars";
+import { resolveAvatarNow } from "@/lib/avatar-backfill";
+import { downloadAndPersistAvatar, fetchGravatarPhotoUrl } from "@/lib/contact-avatar";
 
 /** Defer slow, non-essential work past the response. Routes pass `after`. */
 export type Defer = (fn: () => Promise<void>) => void;
@@ -102,11 +105,15 @@ function toContactInput(fields: SaveContactFields, source: string): ContactInput
 }
 
 function revalidateContactRoutes(contactId: string) {
-  revalidatePath("/");
-  revalidatePath("/dashboard");
-  revalidatePath("/contacts");
-  revalidatePath(`/contacts/${contactId}`);
-  revalidatePath("/graph");
+  try {
+    revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/contacts");
+    revalidatePath(`/contacts/${contactId}`);
+    revalidatePath("/graph");
+  } catch {
+    // Revalidation is a no-op outside a request scope (e.g. scripts/tests)
+  }
 }
 
 export const EXTENSION_SOURCE = "chrome_extension";
@@ -232,6 +239,19 @@ export async function saveContactFromExtension(
   const summaryManuallySet = input.fields.aiSummary !== undefined;
 
   defer(async () => {
+    const slug = sharedPhotoSlug(input.fields.linkedinUrl);
+    if (slug) {
+      if (input.fields.photoUrl) {
+        await adoptPhotoIntoSharedPool(slug, input.fields.photoUrl, "extension").catch(() => null);
+      } else {
+        const db = await getDb();
+        await resolveAvatarNow(db, userId, contactId, {
+          persistRemote: downloadAndPersistAvatar,
+          resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
+          resolveGravatar: fetchGravatarPhotoUrl,
+        }).catch(() => null);
+      }
+    }
     await rebuildContactEmbedding(userId, contactId).catch(() => null);
     if (!summaryManuallySet) {
       await generateAndStoreContactBrief(userId, contactId).catch(() => null);
