@@ -83,9 +83,12 @@ Deploy (or redeploy) after the Vercel variables change.
 1. **Neon database role.** *Local half done 2026-11-08:* development runs on the `dev`
    branch, so the production password is no longer in `.env.local`. What remains is the
    rotation itself.
-   - Rotate the password of the role used by production `DATABASE_URL`.
-   - Update Vercel: `DATABASE_URL` and `DATABASE_URL_UNPOOLED` (Production), plus the
-     `PG*` / `POSTGRES_*` preview variables that mirror them.
+   - Rotate the password of the role used by production `DATABASE_URL`
+     (`neondb_owner` on `br-winter-flower-aud7dsc2`).
+   - Update Vercel `DATABASE_URL` (Production) — that is the only variable that
+     carries the production role. The preview `PG*` / `POSTGRES_*` variables are
+     integration-managed and point at the separate preview database; they do not move
+     when the production role rotates.
    - Keep local development on the `dev` branch; never point it back at production.
    - Verify: `npm run dev` boots and `/api/health` is 200; a Vercel production
      redeploy succeeds; the post-deploy workflow goes green.
