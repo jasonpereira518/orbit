@@ -404,7 +404,7 @@ export function CampaignWorkspace({
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            🔥 High (80%+)
+            High (80%+)
           </button>
         </div>
       </div>
