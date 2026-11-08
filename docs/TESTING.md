@@ -190,7 +190,7 @@ above a real gate:
 1. **Require a pull request before merging**, with at least 1 approval, and dismiss stale approvals
    on new commits.
 2. **Require status checks to pass**, with "require branches to be up to date": `typecheck · lint ·
-   build`, `smoke suite (PGlite) 1/3`, `2/3`, `3/3`, `browser flows (Playwright)`. (The audit, dependency
+   build`, `smoke suite (PGlite)`, `browser flows (Playwright)`. (The audit, dependency
    review and secret scan run inside `typecheck · lint · build`.)
 3. `ci.yml` has no `paths-ignore`, so every PR reports these checks — docs-only ones too —
    and requiring them cannot leave a PR waiting on checks that never start.
