@@ -856,7 +856,7 @@ export function toDiscoveryResult(query: string, json: string, sources: WebSourc
   };
 }
 
-/** The cache key for a description: shared by `discoverPeople` and `loadCachedDiscovery`. */
+/** Shared by `discoverPeople` and `loadCachedDiscovery`, so a cached run is found again. */
 function discoveryKeyParts(query: string) {
   return { v: RESEARCH_KEY_VERSION, query: keyText(query) };
 }
