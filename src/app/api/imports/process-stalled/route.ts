@@ -19,6 +19,7 @@ import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { fillSharedAvatars, sweepOrphanedSharedAvatars } from "@/lib/shared-avatar-upkeep";
+import { sweepPublicWorkHistory } from "@/lib/public-work-history";
 import { sweepEmailAttachments } from "@/lib/email/attachments";
 import { runRetentionSweeps } from "@/lib/retention";
 import { backfillInterestListTokens } from "@/lib/interest-list-tokens";
@@ -163,6 +164,7 @@ export async function GET(request: Request) {
     sharedAvatarsMissed: 0,
     sharedAvatarFillDeferred: false,
     sharedAvatarsSwept: 0,
+    publicWorkHistorySwept: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
     embeddingsGenerated: 0,
@@ -473,6 +475,13 @@ export async function GET(request: Request) {
     } catch (err) {
       status = "partial";
       reportError(err, { where: "job.process-stalled.shared-avatar-sweep" });
+    }
+
+    if (stage("public-work-history-sweep")) try {
+      stats.publicWorkHistorySwept = await sweepPublicWorkHistory();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.public-work-history-sweep" });
     }
 
     stage(null);

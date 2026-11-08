@@ -16,8 +16,16 @@ import { join } from "node:path";
 import { chainTo, serverImportGraph } from "./lib/import-graph";
 
 const LAYOUT = "src/app/(clerk)/(app)/layout.tsx";
-/** Room to grow from 68 (Oct 2026), but not another tripling. Main reached 91 on Nov 5 2026 (LinkedIn page work); runtime plan rules (plan-rules + plan-overrides) took it to 93 on Nov 6, so 94. Key derivation for rotatable secrets (user-settings reads the credit-email token through secrets.ts, audit 3.6) added two small modules, so 96. */
-const LAYOUT_MAX_FILES = 96;
+/**
+ * Room to grow from 68 (Oct 2026), but not another tripling. Main reached 91 on Nov 5 2026
+ * (LinkedIn page work); runtime plan rules took it to 93 on Nov 6, and it sat at 94 on Nov 8.
+ * With a cap equal to the current size, every PR that adds one layout file fails, and parallel
+ * PRs each pass alone but break together. 104 leaves headroom; the real regressions (147 files)
+ * are caught by this being far from that and by LAYOUT_BANNED below. Raise it deliberately.
+ * Key derivation for rotatable secrets (user-settings reads the credit-email token through
+ * secrets.ts, audit 3.6) added two small modules, which fit inside that headroom.
+ */
+const LAYOUT_MAX_FILES = 104;
 /** Modules that must never load on every page: heavy, and needed only by specific actions. */
 const LAYOUT_BANNED = [
   "src/lib/ai.ts",

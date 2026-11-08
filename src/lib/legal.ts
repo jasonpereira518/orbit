@@ -34,8 +34,10 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // 2026-11-07.2 (same day, after company logos shipped as 2026-11-07): the extension can log the
 // LinkedIn connections you tick at one of your events (names, profile links, headlines, on your
 // click); and event discovery from confirmation emails is gone, so its description is removed.
-export const TERMS_VERSION = "2026-11-07.2";
-export const LEGAL_LAST_UPDATED = "November 7, 2026";
+// 2026-11-08: shared public work history — a confident web-search work history found from a
+// public LinkedIn profile is reused across accounts that have the same profile, like shared photos.
+export const TERMS_VERSION = "2026-11-08";
+export const LEGAL_LAST_UPDATED = "November 8, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
