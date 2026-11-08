@@ -5,13 +5,15 @@
  * Pure — no React, no icons — so `src/actions/onboarding.ts` can validate against it
  * without pulling a client component into the server bundle.
  *
- * Two paths: the **guided tour** (welcome → connect → a coach rail over the real pages) and
- * **quick setup** (welcome → your people → connect → a paged overview). People come first:
- * the person's own contacts are the easy win.
+ * Two paths: the **guided tour** (welcome → about you → connect → a coach rail over the real pages) and
+ * **quick setup** (welcome → about you → your people → connect → a paged overview). Both open
+ * with About you (a LinkedIn link and three taps, all skippable) so suggestions and drafts know
+ * the goal; on quick setup people come next, since the person's own contacts are the easy win.
  */
 
 export const ONBOARDING_STEPS = [
   "welcome",
+  "about",
   "linkedin",
   "import",
   "ai-key",
@@ -37,6 +39,7 @@ export type OnboardingPath = (typeof ONBOARDING_PATHS)[number];
  */
 const STEP_IDS: Record<OnboardingStep, true> = {
   welcome: true,
+  about: true,
   linkedin: true,
   import: true,
   "ai-key": true,
@@ -60,14 +63,14 @@ export function isOnboardingPath(value: string | null | undefined): value is Onb
 }
 
 /**
- * The two main lines. Quick setup goes straight to the person's own people; the tour shows
- * them around. `linkedin` and `ai-key` left both lines (Sprint B): the LinkedIn export is a
+ * The two main lines, both opening with About you. Quick setup then goes to the person's own
+ * people; the tour shows them around. `linkedin` and `ai-key` left both lines (Sprint B): the LinkedIn export is a
  * dashboard card now, and Free includes AI. Their ids stay in ONBOARDING_STEPS so a stored
  * step still parses, and `resumeStep` moves it onto the path's first step.
  */
 export const PATH_STAGES = {
-  tour: ["welcome", "connect", "launch"],
-  quick: ["welcome", "people", "connect", "overview"],
+  tour: ["welcome", "about", "connect", "launch"],
+  quick: ["welcome", "about", "people", "connect", "overview"],
 } as const satisfies Record<OnboardingPath, readonly OnboardingStep[]>;
 
 export type OnboardingStage = (typeof PATH_STAGES)[OnboardingPath][number];
@@ -76,6 +79,7 @@ export const RETIRED_STEPS: readonly OnboardingStep[] = ["linkedin", "ai-key"];
 
 export const STAGE_LABELS: Record<OnboardingStage, string> = {
   welcome: "Welcome",
+  about: "About you",
   people: "Your people",
   connect: "Your accounts",
   overview: "What Orbit does",
@@ -87,6 +91,7 @@ export function stageOf(step: OnboardingStep, path: OnboardingPath): OnboardingS
   void path;
   switch (step) {
     case "welcome":
+    case "about":
     case "connect":
     case "overview":
     case "launch":
@@ -106,7 +111,7 @@ export function stageOf(step: OnboardingStep, path: OnboardingPath): OnboardingS
 
 export function stepAllowedOnPath(step: OnboardingStep, path: OnboardingPath): boolean {
   if (RETIRED_STEPS.includes(step)) return false;
-  if (step === "welcome" || step === "connect") return true;
+  if (step === "welcome" || step === "about" || step === "connect") return true;
   return path === "quick" ? step !== "launch" : step === "launch";
 }
 

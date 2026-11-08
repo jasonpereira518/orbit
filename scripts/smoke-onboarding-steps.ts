@@ -70,29 +70,33 @@ function main() {
     check(`"${step}" lights the people node`, stageOf(step, "quick") === "people");
   }
   check("import lights people", stageOf("import", "quick") === "people");
-  check("quick goes people first", mainLine("quick", ALL).join(">") === "welcome>people>connect>overview");
-  check("the tour is welcome, connect, launch", mainLine("tour", ALL).join(">") === "welcome>connect>launch");
+  check("quick goes people first", mainLine("quick", ALL).join(">") === "welcome>about>people>connect>overview");
+  check("the tour is welcome, connect, launch", mainLine("tour", ALL).join(">") === "welcome>about>connect>launch");
   check("no configured provider skips connect", !mainLine("tour", BARE).includes("connect") && !mainLine("quick", BARE).includes("connect"));
-  check("quick starts on people", firstStep("quick", ALL) === "people");
-  check("the tour starts on connect, or launch without providers", firstStep("tour", ALL) === "connect" && firstStep("tour", BARE) === "launch");
+  for (const path of ONBOARDING_PATHS) {
+    for (const facts of [ALL, BARE]) check(`${path}: first step is about (${facts.connectConfigured})`, firstStep(path, facts) === "about");
+    check(`${path}: about is allowed, lights itself, resumes as itself, goes back to welcome`, stepAllowedOnPath("about", path) && stageOf("about", path) === "about" && resumeStep("about", path) === "about" && prevStep("about", path, ALL) === "welcome");
+  }
+  check("about leads to people on quick and connect on the tour", nextStep("about", "quick", ALL) === "people" && nextStep("about", "tour", ALL) === "connect");
+  check("STAGE_LABELS.about", STAGE_LABELS.about === "About you");
   check("quick: people → connect → overview", nextStep("people", "quick", ALL) === "connect" && nextStep("connect", "quick", ALL) === "overview");
   check("quick, bare: people goes straight to the overview", nextStep("people", "quick", BARE) === "overview");
   check("tour: after connect comes the launch", nextStep("connect", "tour", ALL) === "launch");
   check("the last step has no next", nextStep("launch", "tour", ALL) === null && nextStep("overview", "quick", ALL) === null);
   check("welcome has no previous", prevStep("welcome", "tour", ALL) === null);
-  check("a branch step's neighbours are its node's", nextStep("capture", "quick", ALL) === "connect" && prevStep("triage", "quick", ALL) === "welcome");
+  check("a branch step's neighbours are its node's", nextStep("capture", "quick", ALL) === "connect" && prevStep("triage", "quick", ALL) === "about");
   check("quick branch steps all lead to connect", (["triage", "capture", "manual", "import"] as const).every((b) => nextStep(b, "quick", ALL) === "connect"));
   check("quick branch steps skip to overview when bare", nextStep("triage", "quick", BARE) === "overview");
   const flow = readFileSync("src/components/onboarding/onboarding-flow.tsx", "utf8");
   check("the flow never jumps straight to overview", !/goTo\(\s*["']overview["']\s*\)/.test(flow));
   for (const retired of RETIRED_STEPS) {
-    check(`a stored "${retired}" resumes on quick's first step`, resumeStep(retired, "quick", ALL) === "people");
-    check(`a stored "${retired}" resumes on the tour's first step`, resumeStep(retired, "tour", ALL) === "connect");
-    check(`a stored "${retired}" resumes on launch when nothing is configured`, resumeStep(retired, "tour", BARE) === "launch");
+    check(`a stored "${retired}" resumes on quick's first step`, resumeStep(retired, "quick", ALL) === "about");
+    check(`a stored "${retired}" resumes on the tour's first step`, resumeStep(retired, "tour", ALL) === "about");
+    check(`a stored "${retired}" resumes on about when nothing is configured`, resumeStep(retired, "tour", BARE) === "about");
   }
-  check("a stored tour import resumes on the tour's first step", resumeStep("import", "tour", ALL) === "connect");
+  check("a stored tour import resumes on the tour's first step", resumeStep("import", "tour", ALL) === "about");
   check("a stored quick import still resumes as itself", resumeStep("import", "quick", ALL) === "import");
-  check("STAGE_LABELS covers exactly the stages", Object.keys(STAGE_LABELS).sort().join(",") === "connect,launch,overview,people,welcome");
+  check("STAGE_LABELS covers exactly the stages", Object.keys(STAGE_LABELS).sort().join(",") === "about,connect,launch,overview,people,welcome");
 
   console.log("\nAll onboarding step checks passed.");
 }
