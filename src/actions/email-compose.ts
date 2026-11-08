@@ -77,6 +77,7 @@ export async function draftComposeWithAi(
     ]);
     const draft = await generateContactFollowUpDraft(userId, String(contactId), goals, {
       channel: "email",
+      meter: "compose",
       writingInstructions,
     });
     return { ok: true, body: draft.body };
