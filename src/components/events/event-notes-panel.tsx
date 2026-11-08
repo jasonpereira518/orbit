@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   BookOpen,
   Check,
-  FileText,
   Loader2,
   NotebookPen,
   Save,

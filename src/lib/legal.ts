@@ -31,7 +31,10 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // 2026-11-07: company logos on meeting rows — an organization's name or domain (a domain may
 // come from a contact's or guest's work email, never the address) goes to Wikidata and
 // Google's favicon service. The favicon lookup for brand colours was already true and unsaid.
-export const TERMS_VERSION = "2026-11-07";
+// 2026-11-07.2 (same day, after company logos shipped as 2026-11-07): the extension can log the
+// LinkedIn connections you tick at one of your events (names, profile links, headlines, on your
+// click); and event discovery from confirmation emails is gone, so its description is removed.
+export const TERMS_VERSION = "2026-11-07.2";
 export const LEGAL_LAST_UPDATED = "November 7, 2026";
 
 /**

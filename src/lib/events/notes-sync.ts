@@ -14,7 +14,7 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { events, interactions } from "@/db/schema";
+import { interactions } from "@/db/schema";
 import { eventExternalIdBase } from "@/lib/ingest/external-id";
 import { getEventForUser, updateEventForUser } from "@/lib/events/store";
 

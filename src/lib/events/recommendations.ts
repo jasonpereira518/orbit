@@ -6,12 +6,12 @@
  * upcoming events with explainable match scores and rationale.
  */
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { events } from "@/db/schema";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadTargetKeys } from "@/lib/events/companies";
-import { eventGradient, resolveThemeColor } from "@/lib/events/theme";
+import { resolveThemeColor } from "@/lib/events/theme";
 
 export type RecommendedEvent = {
   id: string;
@@ -324,7 +324,6 @@ function scoreCandidateEvent(
   // 4. Goal alignment (up to +15 points)
   if (profile.goals.length > 0) {
     const goalText = profile.goals.join(" ").toLowerCase();
-    const eventCorpus = `${candidate.title} ${candidate.description}`.toLowerCase();
     const isAiGoal = goalText.includes("ai") || goalText.includes("engineer");
     const isFounderGoal = goalText.includes("raise") || goalText.includes("startup") || goalText.includes("co-founder");
 

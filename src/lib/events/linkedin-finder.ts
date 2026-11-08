@@ -13,7 +13,7 @@
  */
 
 import { and, eq, ilike, sql } from "drizzle-orm";
-import { getDb, rowsOf } from "@/db";
+import { getDb } from "@/db";
 import { contacts, eventAttendees, events } from "@/db/schema";
 import { parseAiJson, userCanUseAi, webSearchJson } from "@/lib/ai";
 import { updateAttendeeForUser } from "@/lib/events/store";

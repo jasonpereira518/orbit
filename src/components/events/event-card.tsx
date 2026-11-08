@@ -1,25 +1,31 @@
 import Link from "next/link";
-import { CalendarDays, FileText, MapPin, Sparkles, Users } from "lucide-react";
+import { CalendarDays, MapPin, NotebookPen, Sparkles, Users } from "lucide-react";
 import { eventGradient, eventThemeVars } from "@/lib/events/theme";
 import { DISCOVERY_LABEL, RSVP_LABEL } from "@/components/events/event-provenance";
 import { DismissEventButton } from "@/components/events/dismiss-event-button";
 import type { EventListRow } from "@/lib/events/store";
+import { offsetMinutes } from "@/lib/events/wall-clock";
 
-function formatDate(date: Date | null): string {
+/** The venue's calendar day, by the same shift event-hero uses, so card and page agree. */
+function formatDate(date: Date | null, timezone: string | null): string {
   if (!date) return "Date not set";
-  return date.toLocaleDateString(undefined, {
+  return new Date(date.getTime() + (offsetMinutes(timezone, date) ?? 0) * 60_000).toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
 export function EventCard({
   event,
   hidden = false,
+  past = false,
 }: {
   event: EventListRow;
   hidden?: boolean;
+  /** On the Past tab: a card with nobody logged offers the debrief. */
+  past?: boolean;
 }) {
   const accent = event.themeColor ?? "#6b7280";
   const place = [event.venue, event.city].filter(Boolean).join(", ");
@@ -28,6 +34,8 @@ export function EventCard({
   const themeVars = eventThemeVars(accent);
 
   return (
+    // `relative` so the dismiss control can sit above the link rather than inside it: a
+    // button nested in an anchor is not clickable without fighting the anchor for the event.
     <div className="relative">
       <Link
         href={`/events/${event.id}`}
@@ -35,7 +43,11 @@ export function EventCard({
         style={themeVars as React.CSSProperties}
       >
         <div
+          // 5:2 rather than a fixed 96px strip: platform covers are mostly square (Luma's
+          // always are), and a strip showed the middle sixth of one — half a word of its title.
           className="relative aspect-[5/2] w-full overflow-hidden bg-muted"
+          // Every event has a theme colour from creation (the hash rung guarantees it), so a
+          // card is never a grey rectangle waiting on enrichment.
           style={
             event.coverImageUrl
               ? undefined
@@ -43,7 +55,9 @@ export function EventCard({
           }
         >
           {event.coverImageUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
+            /* Covers are arbitrary remote or Blob URLs, which next/image's loader config
+               cannot enumerate, so a plain <img> is correct here. */
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={event.coverImageUrl}
               alt=""
@@ -51,23 +65,21 @@ export function EventCard({
               loading="lazy"
             />
           ) : null}
-
-          {/* Role badge */}
           {event.role === "hosted" ? (
-            <span className="absolute left-3 top-3 rounded-full bg-black/60 px-2 py-0.5 text-2xs font-medium text-white backdrop-blur-sm">
+            <span className="absolute left-2 top-2 rounded-full bg-black/55 px-2 py-0.5 text-2xs font-medium text-white">
               Hosted
             </span>
           ) : null}
         </div>
 
         <div className="p-4">
-          <h2 className="truncate font-medium text-ink transition-colors group-hover:text-[var(--event-accent)]">
+          <h2 className="truncate font-medium text-ink transition-colors group-hover:text-[var(--event-accent)] group-hover:underline">
             {event.title}
           </h2>
-
           {found || rsvp ? (
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {found ? (
+                // An event nobody added has to say so, in the place people look first.
                 <span className="inline-flex items-center gap-1 rounded-full bg-[var(--event-tint)] px-2 py-0.5 text-2xs text-[var(--event-accent)]">
                   <Sparkles className="size-3" aria-hidden />
                   {found}
@@ -80,11 +92,10 @@ export function EventCard({
               ) : null}
             </div>
           ) : null}
-
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <CalendarDays className="size-3.5 shrink-0" aria-hidden />
-              {formatDate(event.startsAt)}
+              {formatDate(event.startsAt, event.timezone)}
             </span>
             {place ? (
               <span className="inline-flex items-center gap-1.5">
@@ -100,8 +111,21 @@ export function EventCard({
           </div>
         </div>
       </Link>
-
+      {/* Restore only, and only in the hidden list. There is no "not mine" on a live card any
+          more: discovery adds only events the user is going to, and a hide control on every
+          one of them read as "I'm not the host" — which is true of nearly all of them. An
+          event that really is wrong has Delete on its own page. */}
       {hidden ? <DismissEventButton eventId={event.id} title={event.title} hidden /> : null}
+      {/* Beside the card's link, not inside it, for the same reason as the dismiss control. */}
+      {past && !hidden && event.connectedCount === 0 ? (
+        <Link
+          href={`/capture?eventId=${event.id}`}
+          className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-2xs font-medium text-white transition-colors hover:bg-black/70"
+        >
+          <NotebookPen className="size-3" aria-hidden />
+          Log who you met
+        </Link>
+      ) : null}
     </div>
   );
 }

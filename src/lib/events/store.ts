@@ -38,6 +38,7 @@ export type EventListRow = Pick<
   | "title"
   | "startsAt"
   | "endsAt"
+  | "timezone"
   | "venue"
   | "city"
   | "url"
@@ -117,7 +118,7 @@ export async function listEventsForUser(
       ? sql`e.starts_at ASC NULLS LAST, e.id ASC`
       : sql`e.starts_at DESC NULLS LAST, e.id DESC`;
   const rows = await db.execute(sql`
-    SELECT e.id, e.title, e.starts_at, e.ends_at, e.venue, e.city, e.url, e.role, e.source,
+    SELECT e.id, e.title, e.starts_at, e.ends_at, e.timezone, e.venue, e.city, e.url, e.role, e.source,
            e.cover_image_url, e.theme_color, e.discovered_via, e.rsvp_status,
            COALESCE(a.total, 0)     AS attendee_count,
            COALESCE(a.connected, 0) AS connected_count
@@ -141,6 +142,7 @@ export async function listEventsForUser(
     title: string;
     starts_at: string | Date | null;
     ends_at: string | Date | null;
+    timezone: string | null;
     venue: string | null;
     city: string | null;
     url: string | null;
@@ -160,6 +162,7 @@ export async function listEventsForUser(
     title: r.title,
     startsAt: r.starts_at ? new Date(r.starts_at) : null,
     endsAt: r.ends_at ? new Date(r.ends_at) : null,
+    timezone: r.timezone,
     venue: r.venue,
     city: r.city,
     url: r.url,
@@ -461,6 +464,22 @@ export async function linkAttendeesToContacts(
   `);
 }
 
+/** The rows `upsertEventAttendees` wrote, by the identity keys it was given (it returns a count). */
+async function attendeeRowsByIdentityKey(userId: string, eventId: string, keys: string[]) {
+  if (keys.length === 0) return [];
+  const db = await getDb();
+  return db
+    .select({ id: eventAttendees.id, identityKey: eventAttendees.identityKey })
+    .from(eventAttendees)
+    .where(
+      and(eq(eventAttendees.userId, userId), eq(eventAttendees.eventId, eventId), inArray(eventAttendees.identityKey, keys))
+    );
+}
+
+export async function attendeeIdsByIdentityKey(userId: string, eventId: string, keys: string[]): Promise<string[]> {
+  return (await attendeeRowsByIdentityKey(userId, eventId, keys)).map((r) => r.id);
+}
+
 /**
  * "Log who you met": mark the contacts a capture just saved as met at this event.
  *
@@ -530,17 +549,9 @@ export async function recordMetAtEvent(userId: string, eventId: string, contactI
   }
   if (added.length) {
     await upsertEventAttendees(userId, eventId, added, "capture");
-    const rows = await db
-      .select({ id: eventAttendees.id, identityKey: eventAttendees.identityKey })
-      .from(eventAttendees)
-      .where(
-        and(
-          eq(eventAttendees.userId, userId),
-          eq(eventAttendees.eventId, eventId),
-          inArray(eventAttendees.identityKey, [...keyToContact.keys()])
-        )
-      );
-    for (const row of rows) links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
+    for (const row of await attendeeRowsByIdentityKey(userId, eventId, [...keyToContact.keys()])) {
+      links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
+    }
   }
   await linkAttendeesToContacts(userId, links);
   return links.length;

@@ -3,7 +3,7 @@ import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { EventsHeader } from "@/components/events/events-header";
 import { EventCard } from "@/components/events/event-card";
 import { AddEventDialog } from "@/components/events/add-event-dialog";
-import { PlatformIntegrationsHub } from "@/components/events/platform-integrations-hub";
+import { EventConnectionsCard } from "@/components/events/event-connections-card";
 import { EventsTabs } from "@/components/events/events-tabs";
 import { RecommendedEventsTab } from "@/components/events/recommended-events-tab";
 import { RepeatPeoplePanel } from "@/components/events/repeat-people-panel";
@@ -17,52 +17,18 @@ import {
   listHiddenEvents,
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
-import { Calendar, CheckCircle2, Link2, Sparkles, Users } from "lucide-react";
+import { Calendar, CheckCircle2, Sparkles, Users } from "lucide-react";
 
 export const metadata = { title: "Events" };
 
 async function ConnectionsSection() {
-  const {
-    connections,
-    eventbriteConfigured,
-    googleConnected,
-    googleMailGranted,
-    googleCalendarGranted,
-  } = await getEventConnections();
-
-  const connectedCount = connections.filter((c) => c.status === "active").length;
-
+  const { connections, eventbriteConfigured, calendarConnected } = await getEventConnections();
   return (
-    <details className="group rounded-2xl border border-border/70 bg-card p-4 transition-all">
-      <summary className="flex cursor-pointer items-center justify-between text-sm font-medium text-ink">
-        <div className="flex items-center gap-2">
-          <Link2 className="size-4 text-primary" aria-hidden />
-          <span>Connected Platforms (Luma, Eventbrite, Partiful, Google)</span>
-          {connectedCount > 0 ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-3xs font-medium text-emerald-600 dark:text-emerald-400">
-              <CheckCircle2 className="size-2.5" />
-              {connectedCount} connected
-            </span>
-          ) : (
-            <span className="rounded-full bg-muted px-2 py-0.5 text-3xs text-muted-foreground">
-              Not connected
-            </span>
-          )}
-        </div>
-        <span className="text-xs text-muted-foreground group-open:rotate-180 transition-transform">
-          ▼
-        </span>
-      </summary>
-      <div className="mt-4 border-t border-border/60 pt-4">
-        <PlatformIntegrationsHub
-          connections={connections}
-          eventbriteConfigured={eventbriteConfigured}
-          googleConnected={googleConnected}
-          googleMailGranted={googleMailGranted}
-          googleCalendarGranted={googleCalendarGranted}
-        />
-      </div>
-    </details>
+    <EventConnectionsCard
+      connections={connections}
+      eventbriteConfigured={eventbriteConfigured}
+      calendarConnected={calendarConnected}
+    />
   );
 }
 
@@ -71,6 +37,16 @@ async function RepeatPeopleSection() {
   return <RepeatPeoplePanel people={people} />;
 }
 
+/**
+ * What the user hid, and nothing else.
+ *
+ * Rendered only when there IS something hidden — an empty "Hidden" heading on everybody
+ * else's page would be a permanent reminder of a feature they have not used. It exists
+ * because a hidden event is otherwise a trapdoor: a mis-click on a real event would be
+ * unrecoverable, and the user would have no way to know the event was ever there. Nothing
+ * hides events from the card any more — discovery now only adds the ones the user went to —
+ * but everything hidden before that is still here, one click from restored.
+ */
 async function HiddenList() {
   const hidden = await listHiddenEvents();
   if (hidden.length === 0) return null;
@@ -92,18 +68,26 @@ async function HiddenList() {
   );
 }
 
-function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.ReactNode }) {
+function EventGrid({
+  events,
+  empty,
+  past = false,
+}: {
+  events: EventListRow[];
+  empty: React.ReactNode;
+  past?: boolean;
+}) {
   if (events.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-border/70 px-4 py-12 text-center">
+      <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
         <p className="text-sm text-muted-foreground">{empty}</p>
       </div>
     );
   }
   return (
-    <div className="grid gap-5 sm:grid-cols-2">
+    <div className="grid gap-4 sm:grid-cols-2">
       {events.map((event) => (
-        <EventCard key={event.id} event={event} />
+        <EventCard key={event.id} event={event} past={past} />
       ))}
     </div>
   );
@@ -114,6 +98,20 @@ async function EventsList() {
     listEventsByTab(),
     getRecommendedEvents().catch(() => []),
   ]);
+
+  if (upcoming.length === 0 && past.length === 0 && recommended.length === 0) {
+    return (
+      <EventGrid
+        events={[]}
+        empty={
+          <>
+            No events yet. Events on your calendar show up here on their own — or add one by
+            name or link, and log who you met there.
+          </>
+        }
+      />
+    );
+  }
 
   return (
     <EventsTabs
@@ -132,19 +130,20 @@ async function EventsList() {
           }
         />
       }
-      past={<EventGrid events={past} empty="No past events logged yet." />}
+      past={<EventGrid events={past} empty="No past events yet." past />}
       recommended={<RecommendedEventsTab recommendations={recommended} />}
     />
   );
 }
 
 export default async function EventsPage() {
+  // See `pageVisibilityGate`'s doc comment: the layout-level check does not catch a click
+  // straight from a sibling route, so this page re-checks itself.
   const gate = await pageVisibilityGate("page.events");
   if (gate) return gate;
 
-  const [{ upcoming, past }, { connections }] = await Promise.all([
+  const [{ upcoming, past }] = await Promise.all([
     listEventsByTab().catch(() => ({ upcoming: [], past: [] })),
-    getEventConnections().catch(() => ({ connections: [] })),
   ]);
 
   const totalMet = past.reduce((acc, ev) => acc + (ev.attendeeCount ?? 0), 0);
@@ -199,28 +198,32 @@ export default async function EventsPage() {
         </div>
       </div>
 
-      {/* Platform Integrations Hub */}
-      <Suspense fallback={null}>
-        <ConnectionsSection />
-      </Suspense>
-
-      {/* Repeat Co-Attendees Panel */}
+      {/* Above the list: the point of keeping rosters is the pattern across them, and a
+          panel below four screens of events is a panel nobody reads. `fallback={null}`
+          because it renders nothing at all until there IS a pattern. */}
       <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>
         <Suspense fallback={null}>
           <RepeatPeopleSection />
         </Suspense>
       </div>
 
-      {/* Tabs with Upcoming, Past, and Recommended */}
       <div className="reveal-mount" style={{ "--reveal-delay": "120ms" } as React.CSSProperties}>
         <Suspense fallback={<EventsListSkeleton />}>
           <EventsList />
         </Suspense>
       </div>
 
-      {/* Hidden Events */}
+      {/* fallback={null} and no skeleton: this section is usually absent entirely, and a
+          placeholder for something that will not appear is worse than a late arrival. */}
       <Suspense fallback={null}>
         <HiddenList />
+      </Suspense>
+
+      {/* Last: where events come from is one line (is a calendar connected?) and everything
+          optional is collapsed under More sources, which still says when a connection needs
+          attention. fallback={null} because a skeleton for one line is more noise than it. */}
+      <Suspense fallback={null}>
+        <ConnectionsSection />
       </Suspense>
     </div>
   );

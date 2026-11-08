@@ -77,7 +77,8 @@ import {
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
 import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
-import {
+import { listCalendarSources } from "@/lib/calendar-sources";
+import type {
   AttendeeRole,
   EventConnectionProvider,
   RosterRow,
@@ -97,7 +98,7 @@ import { and, eq } from "drizzle-orm";
 import { decryptOrNull } from "@/lib/crypto";
 import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
-import { GOOGLE_SCOPES, hasGmailReadScope, hasScope } from "@/lib/google-scopes";
+import { GOOGLE_SCOPES, hasScope } from "@/lib/google-scopes";
 import { actionFailure } from "@/lib/action-failure";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
@@ -712,35 +713,26 @@ export async function addTargetCompanyFromEvent(
 export async function getEventConnections(): Promise<{
   connections: EventConnectionSummary[];
   eventbriteConfigured: boolean;
-  /** Any active Google connection exists. */
-  googleConnected: boolean;
-  /** That connection may read mail — the confirmation-email scan can run. */
-  googleMailGranted: boolean;
-  /** That connection may read the calendar — meetings sync. */
-  googleCalendarGranted: boolean;
+  /**
+   * A calendar calendar-discovery reads: Google with the calendar scope, or an Outlook or iCloud
+   * calendar source.
+   */
+  calendarConnected: boolean;
 }> {
   const userId = await requireUserForReleasedSurface(SURFACE);
-  const [connections, grant, demo] = await Promise.all([
+  const [connections, grant, sources, demo] = await Promise.all([
     listEventConnections(userId),
     findGmailGrant(userId),
+    listCalendarSources(userId),
     isDemoWorkspace(userId),
   ]);
-  // The demo workspace stores no OAuth grant but reads as connected everywhere else.
-  if (demo) {
-    return {
-      connections,
-      eventbriteConfigured: eventbriteOAuthConfig().configured,
-      googleConnected: true,
-      googleMailGranted: true,
-      googleCalendarGranted: true,
-    };
-  }
   return {
-    connections,
+    // The gmail rows are the retired confirmation-email scan; nothing reads them any more.
+    connections: connections.filter((c) => c.provider !== "gmail"),
     eventbriteConfigured: eventbriteOAuthConfig().configured,
-    googleConnected: grant !== null,
-    googleMailGranted: hasGmailReadScope(grant?.scopes),
-    googleCalendarGranted: hasScope(grant?.scopes, GOOGLE_SCOPES.calendar),
+    // The demo workspace stores no OAuth grant but reads as connected everywhere else.
+    calendarConnected:
+      demo || hasScope(grant?.scopes, GOOGLE_SCOPES.calendar) || sources.some((s) => s.provider !== "google"),
   };
 }
 
@@ -834,52 +826,6 @@ export async function connectEventFeed(
       error: await actionFailure(error, "That calendar link couldn’t be read — check it and try again?", "events.connect-feed", { provider }),
     };
   }
-}
-
-/**
- * Turn the confirmation-email scan on or off.
- *
- * `gmail.readonly` is a Google RESTRICTED scope. The user granted it for calendar and contact
- * history; reading their mail for event confirmations is a different purpose, so it gets its
- * own explicit switch rather than riding along on a grant made for something else.
- *
- * The connection row IS the consent: no row, no scan. Turning it off deletes the row, which
- * takes the stored scan position with it — there is nothing else to delete, because the scan
- * keeps no message content anywhere.
- */
-export async function setGmailEventScan(
-  enabled: boolean
-): Promise<{ ok: boolean; error?: string; needsMailScope?: boolean }> {
-  const userId = await requireSyncUser();
-  await requireReleasedSurface(userId, SURFACE);
-
-  if (!enabled) {
-    await deleteEventConnection(userId, "gmail");
-    revalidateEvents();
-    return { ok: true };
-  }
-
-  const connection = await findGmailGrant(userId);
-  // This switch never widens a grant silently: without gmail.readonly it tells the card to
-  // send the person through Google's consent screen for exactly that scope.
-  if (!connection || !hasGmailReadScope(connection.scopes)) {
-    return {
-      ok: false,
-      needsMailScope: true,
-      error: "Allow mail access first — Orbit asks Google for it next",
-    };
-  }
-
-  await upsertEventConnection(userId, {
-    provider: "gmail",
-    authKind: "google_grant",
-    // No secret: the token comes from the Gmail connection at scan time, so nothing is
-    // duplicated here and revoking Google revokes this too.
-    secret: "",
-    label: connection.emailAddress ?? "Gmail",
-  });
-  revalidateEvents();
-  return { ok: true };
 }
 
 export async function startEventbriteOAuth(): Promise<{ url: string }> {

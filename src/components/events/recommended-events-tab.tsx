@@ -11,8 +11,6 @@ import {
   MapPin,
   Plus,
   Sparkles,
-  Ticket,
-  Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
