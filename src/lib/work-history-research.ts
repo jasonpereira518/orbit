@@ -28,6 +28,11 @@ import { getDb } from "@/db";
 import { contactProfiles, contacts } from "@/db/schema";
 import { userCanUseAi, webSearchJson, parseAiJson, type WebSource } from "@/lib/ai";
 import { legacyWebSearch, searchOnceThenVerify } from "@/lib/web-research";
+import {
+  PUBLIC_WORK_HISTORY_DAYS,
+  readPublicWorkHistory,
+  writePublicWorkHistory,
+} from "@/lib/public-work-history";
 import { auditUntrustedWrite, cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import {
   sanitizeIncomingExperiences,
@@ -395,6 +400,7 @@ async function researchOnce(
       location: true,
       school: true,
       linkedinUrl: true,
+      linkedinSlug: true,
       closenessTier: true,
       lastInteractionAt: true,
       statedCloseness: true,
@@ -420,56 +426,70 @@ async function researchOnce(
     return { outcome: "fresh", cadence, freshFrom: stored.capturedAt };
   }
 
-  if (!options.researcher && !(await userCanUseAi(userId))) return { outcome: "no_ai", cadence };
-  if (options.spend && !(await options.spend())) return { outcome: "rate_limited", cadence };
+  // Another account's confident search of the same public profile, recent enough: reused with
+  // no search, no allowance spent and no miss counted (public-work-history.ts). The profile's
+  // own button always searches — it is how someone asks for a fresher answer, and its search
+  // refreshes the shared one.
+  const shared = options.force ? null : await readPublicWorkHistory(contact.linkedinSlug, PUBLIC_WORK_HISTORY_DAYS, now);
+  let answer: WorkHistoryAnswer;
+  if (shared) {
+    answer = { confident: true, ...shared };
+  } else {
+    if (!options.researcher && !(await userCanUseAi(userId))) return { outcome: "no_ai", cadence };
+    if (options.spend && !(await options.spend())) return { outcome: "rate_limited", cadence };
 
-  try {
-    await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
-  } catch (err) {
-    if (isRateLimitedError(err)) return { outcome: "rate_limited", cadence };
-    throw err;
-  }
+    try {
+      await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
+    } catch (err) {
+      if (isRateLimitedError(err)) return { outcome: "rate_limited", cadence };
+      throw err;
+    }
 
-  const subject: WorkHistorySubject = {
-    fullName: contact.fullName,
-    title: contact.title,
-    company: contact.company,
-    location: contact.location,
-    school: contact.school,
-    linkedinUrl: contact.linkedinUrl,
-  };
+    const subject: WorkHistorySubject = {
+      fullName: contact.fullName,
+      title: contact.title,
+      company: contact.company,
+      location: contact.location,
+      school: contact.school,
+      linkedinUrl: contact.linkedinUrl,
+    };
 
-  // A re-check of a history Orbit already found: ask the cheap question first. Most people
-  // have not moved since the last look, and confirming that costs one search and a few
-  // dozen tokens — the full history (two searches and a list) runs only when the answer
-  // differs. A forced search (the profile's button) always does the full history.
-  if (!options.force && stored?.source === "web") {
-    const storedRoles = (await loadJobBaseline(userId, contactId, now)).roles;
-    if (storedRoles.some((r) => r.isCurrent)) {
-      const check = await (options.checker ?? checkCurrentRoleWithWebSearch)(userId, subject);
-      // Nothing clear enough to act on. Not worth the full search to find out: the next
-      // scheduled check asks again.
-      if (!check.confident || !check.current) return { outcome: "not_found", cadence };
-      if (isStoredCurrentRole(check.current, storedRoles)) {
-        // Still true. Record that it was checked — the provenance line reads this date.
-        await db
-          .update(contactProfiles)
-          .set({ capturedAt: now, updatedAt: now })
-          .where(and(eq(contactProfiles.userId, userId), eq(contactProfiles.contactId, contactId)));
-        return { outcome: "unchanged", cadence };
-      }
-      // Something moved: the full history is worth its cost now. It is a second search, so
-      // it spends a second lookup from the account's allowance.
-      try {
-        await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
-      } catch (err) {
-        if (isRateLimitedError(err)) return { outcome: "rate_limited", cadence };
-        throw err;
+    // A re-check of a history Orbit already found: ask the cheap question first. Most people
+    // have not moved since the last look, and confirming that costs one search and a few
+    // dozen tokens — the full history (two searches and a list) runs only when the answer
+    // differs. A forced search (the profile's button) always does the full history.
+    if (!options.force && stored?.source === "web") {
+      const storedRoles = (await loadJobBaseline(userId, contactId, now)).roles;
+      if (storedRoles.some((r) => r.isCurrent)) {
+        const check = await (options.checker ?? checkCurrentRoleWithWebSearch)(userId, subject);
+        // Nothing clear enough to act on. Not worth the full search to find out: the next
+        // scheduled check asks again.
+        if (!check.confident || !check.current) return { outcome: "not_found", cadence };
+        if (isStoredCurrentRole(check.current, storedRoles)) {
+          // Still true. Record that it was checked — the provenance line reads this date.
+          await db
+            .update(contactProfiles)
+            .set({ capturedAt: now, updatedAt: now })
+            .where(and(eq(contactProfiles.userId, userId), eq(contactProfiles.contactId, contactId)));
+          return { outcome: "unchanged", cadence };
+        }
+        // Something moved: the full history is worth its cost now. It is a second search, so
+        // it spends a second lookup from the account's allowance.
+        try {
+          await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
+        } catch (err) {
+          if (isRateLimitedError(err)) return { outcome: "rate_limited", cadence };
+          throw err;
+        }
       }
     }
-  }
 
-  const answer = await research(userId, subject);
+    answer = await research(userId, subject);
+    // Only a confident answer from the public web is shared; the next account reuses it.
+    if (answer.confident && answer.experiences.length) {
+      await writePublicWorkHistory(contact.linkedinSlug, answer, now);
+    }
+  }
   if (!answer.confident) {
     return { outcome: answer.experiences.length ? "unsure" : "not_found", cadence };
   }
