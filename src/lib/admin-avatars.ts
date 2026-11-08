@@ -1,6 +1,6 @@
 import { and, eq, ilike, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, linkedinAvatars } from "@/db/schema";
+import { contacts, linkedinAvatars, publicWorkHistory } from "@/db/schema";
 import { recordAdminAction, requireReason } from "@/lib/admin-operations";
 import { deleteAvatarBlobs, deleteSharedAvatarBlob } from "@/lib/avatar-blob";
 import { UserFacingError } from "@/lib/errors";
@@ -68,6 +68,12 @@ export async function blockSharedAvatar(
   }
   await deleteAvatarBlobs(publicCopies.map((c) => c.url));
   await deleteSharedAvatarBlob(previous?.imageUrl);
+  // One takedown covers everything Orbit shares about the profile: its shared work history too.
+  const blockedHistory = { answer: null, blockedAt: new Date(), blockedBy: adminUserId };
+  await db
+    .insert(publicWorkHistory)
+    .values({ slug, ...blockedHistory })
+    .onConflictDoUpdate({ target: publicWorkHistory.slug, set: blockedHistory });
 }
 
 /** Lift a block. The row goes, so the next lookup resolves the person afresh. */
@@ -88,6 +94,9 @@ export async function unblockSharedAvatar(
   await db
     .delete(linkedinAvatars)
     .where(and(eq(linkedinAvatars.slug, slug), isNotNull(linkedinAvatars.blockedAt)));
+  await db
+    .delete(publicWorkHistory)
+    .where(and(eq(publicWorkHistory.slug, slug), isNotNull(publicWorkHistory.blockedAt)));
 }
 
 /** Blocked slugs; with `q`, every shared row whose slug contains it. */
