@@ -42,6 +42,10 @@ const BUCKET_LABELS: Record<string, string> = {
   apiRead: "API read",
   apiWrite: "API write",
   apiIngest: "event import",
+  importPreview: "import preview",
+  importStart: "import",
+  importAppend: "import upload",
+  importUndo: "import undo",
   mcp: "MCP tool call",
   mcpWrite: "MCP write",
   providerSync: "sync",
@@ -70,6 +74,8 @@ const BUCKET_LABELS: Record<string, string> = {
   "email-intel-extract-daily": "email-insights reading",
   "web-search": "monthly web search",
   "web-search-all": "Orbit-wide web search",
+  "people-to-meet": "weekly people suggestion",
+  "org-suggest": "company and school suggestion",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -194,6 +200,12 @@ export const RATE_LIMITS = {
    */
   webResearch: { limit: 30, windowSec: 86_400 },
   /**
+   * As-you-type organization suggestions (`/api/orgs/suggest`), per user per hour. Each miss
+   * is two Wikidata calls from Orbit's server; past this the route answers from the person's
+   * own companies and the curated table only.
+   */
+  orgSuggest: { limit: 120, windowSec: 3_600 },
+  /**
    * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
    * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
    * up the lookups a person clicks for; every sweep search also counts against that one,
@@ -284,6 +296,27 @@ export const RATE_LIMITS = {
   /** Event ingestion. Fewer, because each request carries a batch of up to 500 events. */
   apiIngest: { limit: 30, windowSec: 60 },
   /**
+   * Import previews: parse a file, load every contact and build a duplicate index over it.
+   * An unbounded loop here is a CPU and memory amplifier in a server action, not just a
+   * repeated query, so even a legitimate "try a few files" session has a ceiling.
+   */
+  importPreview: { limit: 20, windowSec: 3600 },
+  /**
+   * Starting a server-owned import. Each one snapshots rows and drives a background job, so
+   * the limit is per import rather than per chunk; ten an hour is several re-uploads' worth.
+   */
+  importStart: { limit: 10, windowSec: 3600 },
+  /**
+   * Staged uploads of a chunked import (`begin`/`append` on LinkedIn connections). Fifty
+   * chunks of 2,000 rows is a 100k-row file; 600 leaves ample room for retries inside that.
+   */
+  importAppend: { limit: 600, windowSec: 3600 },
+  /**
+   * Undo re-walks an import's rows and can take two minutes. Six an hour is far above normal
+   * use and bounds a client that retries a slow undo without waiting.
+   */
+  importUndo: { limit: 6, windowSec: 3600 },
+  /**
    * MCP tool calls on a paid plan. An agent can loop far faster than a person can click, and
    * a single chat turn now fans out over several tools — search, then a contact, then a
    * reminder — so the ceiling is per conversation rather than per question.
@@ -370,6 +403,8 @@ export const RATE_LIMITS = {
    * and only the mail is skipped, since the welcome is best-effort by design.
    */
   interestWelcome: { limit: 200, windowSec: 3600 },
+  /** The dashboard's "People to meet": one Find-people discovery run per account per week. */
+  peopleToMeet: { limit: 1, windowSec: 7 * 86_400 },
 } as const satisfies Record<string, BucketPolicy>;
 
 /**

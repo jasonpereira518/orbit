@@ -32,6 +32,7 @@ import type {
   RecommendationKind,
   RecommendationStatus,
 } from "@/lib/radar/types";
+import type { AimKind, Field, Timeline } from "@/lib/about-you";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
@@ -275,8 +276,10 @@ export const userSettings = pgTable("user_settings", {
   senderBio: text("sender_bio"),
   /**
    * What the user's own LinkedIn export says about them: headline, industry, current role,
-   * skills and the job titles they have alerts for. Written only by the LinkedIn profile
-   * imports, one key per file, so re-importing Skills.csv never touches the headline.
+   * skills and the job titles they have alerts for. Written by the LinkedIn profile imports,
+   * one key per file, so re-importing Skills.csv never touches the headline. The onboarding
+   * About you step is the other writer: it owns `aim` (which the export's "remove" keeps), and
+   * fills `profile`, `role` and `roleKeywords` only where they are empty.
    *
    * Deliberately NOT `sender_bio`: that is what the person typed, and an import must not
    * overwrite it. It feeds ranking (who to reach out to) and a fenced "about you" prompt block,
@@ -1919,6 +1922,15 @@ export type CareerProfile = {
   skills?: string[];
   /** Job titles from saved job alerts, de-duplicated. */
   roleKeywords?: string[];
+  /** What the person said they want, from the onboarding About you step. */
+  aim?: {
+    kind: AimKind;
+    timeline: Timeline | null;
+    field: Field | null;
+    setAt: string;
+  };
+  /** The confirm screen's "Your major(s)", at most 3. A jsonb key, so no DDL. */
+  majors?: string[];
   importedAt?: string;
 };
 
@@ -4185,6 +4197,12 @@ export const captureJobs = pgTable(
     sourceText: text("source_text"),
     sourceHash: text("source_hash"),
     meetingSessionId: uuid("meeting_session_id"),
+    /**
+     * The `events` row this capture debriefs — set when it was opened from an event ("Log who
+     * you met"). The save marks every saved person as met on that event. Not in `input_hints`
+     * for the same reason as `mentionPicks`; a bare uuid, re-checked against the user at save.
+     */
+    eventId: uuid("event_id"),
     result: jsonb("result").$type<CaptureJobResult>(),
     decisions: jsonb("decisions").$type<CaptureDecisions>().default({}).notNull(),
     claimToken: text("claim_token"),

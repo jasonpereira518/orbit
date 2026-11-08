@@ -21,6 +21,7 @@ import {
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
+  orgBrandColors,
   userSettings,
   type MeetingDigest,
   type MeetingSessionStatus,
@@ -29,12 +30,15 @@ import {
   excerptAround,
   getGranolaMeeting,
   likePattern,
+  contactOrgLogos,
   listMeetingsFor,
+  nearestCall,
   parseGranolaNote,
   searchMeetingPassagesFor,
   searchWords,
 } from "../src/lib/meetings-list";
 import { setMeetingUserNotes } from "../src/lib/meeting-sessions";
+import { callFromSurface, callKindFromLabel, packSurface } from "../src/lib/call-kind";
 
 const USER = "smoke-meetings-list-user";
 const OTHER = "smoke-meetings-list-other";
@@ -175,6 +179,13 @@ function pure() {
   check("filler is dropped from a question", searchWords("What did they say about pricing?").join() === "pricing");
   check("names and topics are kept, deduped, lower-cased", searchWords("Priya pricing PRIYA").join() === "priya,pricing");
   check("short words are dropped", searchWords("is it ok").length === 0);
+  check(
+    "a shared window's title names its call app",
+    [callKindFromLabel("Zoom Meeting"), callKindFromLabel("Chat | Microsoft Teams"), callKindFromLabel("Meet - abc-defg-hij"), callKindFromLabel("Webex"), callKindFromLabel("web-contents-media-stream://1:2"), callKindFromLabel(undefined)].join() === "zoom,teams,meet,webex,,"
+  );
+  check("the call rides on the surface and back", callFromSurface(packSurface("window", "zoom")) === "zoom" && packSurface("window", null) === "window" && callFromSurface("browser") === null);
+  const ev = [{ atMs: 0, kind: "zoom" }, { atMs: 4 * 60_000, kind: "teams" }, { atMs: 60 * 60_000, kind: "meet" }];
+  check("a Granola note takes the nearest invite's call", nearestCall(5 * 60_000, ev) === "teams" && nearestCall(30 * 60_000, ev) === null && nearestCall(0, [{ atMs: 0, kind: "other" }]) === null);
   check("an excerpt centres on the match", excerptAround("a ".repeat(100) + "pricing is per seat " + "b ".repeat(100), "pricing", 20).includes("pricing"));
   const note = parseGranolaNote("Meeting: Acme kickoff\n\nWhen: 2026-11-01T15:00:00Z\n\nAttendees: Dana <d@x.co>\n\n## Summary\nScope agreed.\n\n- Ship v1\n\nMy notes:\nAsk about budget");
   check("a Granola note splits into title, body and my notes", note.title === "Acme kickoff" && note.body === "## Summary\nScope agreed.\n\n- Ship v1" && note.myNotes === "Ask about budget" && note.attendees === "Dana <d@x.co>");
@@ -369,6 +380,18 @@ async function main() {
   const zoomRow = withCalls.find((m) => m.id === zoomed.id);
   check("a recording from a calendar event carries its call kind", zoomRow?.call === "zoom" && zoomRow.sharedScreen === true);
   check("another user's event never names the call", withCalls.find((m) => m.id === notMine.id)?.call === null);
+
+  // A contact with no company gets their school's logo; the key matches across case and spaces.
+  await db
+    .insert(orgBrandColors)
+    .values({ nameKey: "smoke state  university".replace(/\s+/g, " "), kind: "school", name: "Smoke State University", domain: "smokestate.edu", source: "icon" })
+    .onConflictDoNothing();
+  const [student] = await db.insert(contacts).values({ userId: USER, fullName: "Sam Student", school: "  Smoke  State University " }).returning();
+  const [nobody] = await db.insert(contacts).values({ userId: USER, fullName: "No Org" }).returning();
+  const logos = await contactOrgLogos(USER, [student.id, nobody.id]);
+  check("a contact with only a school gets the school's logo", logos.get(student.id)?.domain === "smokestate.edu", JSON.stringify([...logos]));
+  check("a contact with nothing logo-able is left out", !logos.has(nobody.id));
+  await db.delete(orgBrandColors).where(eq(orgBrandColors.nameKey, "smoke state university"));
 
   await reset();
   console.log("\nsmoke-meetings-list: all checks passed");

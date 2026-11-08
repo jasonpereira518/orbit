@@ -88,6 +88,15 @@ export function buildCalendarFeedWebcalUrl(token: string) {
 }
 
 /**
+ * A feed token is a bearer credential in a URL — the places calendar URLs get copied
+ * (subscription settings, forwarded mail, screenshots, access logs) are exactly the places a
+ * secret leaks. Rotate the link by minting a new one; `regenerateCalendarFeedToken` in
+ * `src/actions/calendar-feed.ts` is the button, and this is the ceiling on a leak that was
+ * never noticed.
+ */
+export const MAX_FEED_TOKEN_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+
+/**
  * Resolves a feed token to its owner. Returns null rather than throwing so the route can
  * answer 404 without revealing whether the token merely expired.
  */
@@ -101,11 +110,20 @@ export async function findUserByFeedToken(rawToken: string) {
     where: eq(userSettings.calendarFeedToken, hashCalendarFeedToken(token)),
     columns: {
       userId: true,
+      calendarFeedTokenCreatedAt: true,
       calendarFeedLastFetchedAt: true,
       suspendedAt: true,
     },
   });
   if (!row) return null;
+
+  // Minting has always written this. A row without it predates the column (or was written
+  // by hand), and a token nobody can date is a token nobody can retire — refuse it so the
+  // account regenerates rather than keeping an immortal credential.
+  if (!row.calendarFeedTokenCreatedAt) return null;
+  if (Date.now() - row.calendarFeedTokenCreatedAt.getTime() > MAX_FEED_TOKEN_AGE_MS) {
+    return null;
+  }
 
   // This route is authenticated by the token alone and never calls `requireUserId()`, so
   // the suspension gate there does not cover it. Returning null makes the route's existing

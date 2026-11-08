@@ -4,7 +4,7 @@
  */
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { userSettings } from "@/db/schema";
+import { userSettings, type CareerProfile } from "@/db/schema";
 import type { YouCurrent, YouPatch } from "@/lib/career-profile";
 import type { UserFocus } from "@/lib/focus-fit";
 import { setSchools } from "@/lib/events/target-companies";
@@ -33,6 +33,12 @@ export async function loadUserFocus(userId: string): Promise<UserFocus | null> {
   return { skills, roleKeywords, role: career.role ?? null };
 }
 
+/** The aim the person set in About you, or null. */
+export async function loadUserAim(userId: string): Promise<NonNullable<CareerProfile["aim"]> | null> {
+  const { career } = await loadYouCurrent(userId);
+  return career?.aim ?? null;
+}
+
 /**
  * Apply a patch. `career_profile` is merged one top-level key at a time (`||` replaces whole
  * keys), so importing Skills never disturbs the headline. `sender_bio` is written only when the
@@ -52,11 +58,17 @@ export async function saveCareerPatch(userId: string, patch: YouPatch): Promise<
   if (patch.schools) await setSchools(userId, patch.schools);
 }
 
-/** Forget what was imported. Leaves `sender_bio` and everything else the person typed alone. */
+/**
+ * Forget what was imported. Leaves `sender_bio` and everything else the person typed alone,
+ * including `aim`: that came from the onboarding About you step, not from an export.
+ */
 export async function clearCareerProfile(userId: string): Promise<void> {
   const db = await getDb();
-  await db
-    .update(userSettings)
-    .set({ careerProfile: null, updatedAt: new Date() })
-    .where(eq(userSettings.userId, userId));
+  await db.execute(sql`
+    UPDATE user_settings SET
+      career_profile = NULLIF(jsonb_strip_nulls(jsonb_build_object(
+        'aim', career_profile->'aim', 'majors', career_profile->'majors')), '{}'::jsonb),
+      updated_at = now()
+    WHERE user_id = ${userId}
+  `);
 }
