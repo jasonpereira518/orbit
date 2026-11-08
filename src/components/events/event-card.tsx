@@ -111,16 +111,13 @@ export function EventCard({
           </div>
         </div>
       </Link>
-      {/* Restore only, and only in the hidden list. There is no "not mine" on a live card any
-          more: discovery adds only events the user is going to, and a hide control on every
-          one of them read as "I'm not the host" — which is true of nearly all of them. An
-          event that really is wrong has Delete on its own page. */}
-      {hidden ? <DismissEventButton eventId={event.id} title={event.title} hidden /> : null}
-      {/* Beside the card's link, not inside it, for the same reason as the dismiss control. */}
+      {/* Click the 'X' at top right to hide an event; click 'Add back' on a hidden card to restore it. */}
+      <DismissEventButton eventId={event.id} title={event.title} hidden={hidden} />
+      {/* Beside the card's link, placed left of the hide button so both actions are accessible. */}
       {past && !hidden && event.connectedCount === 0 ? (
         <Link
           href={`/capture?eventId=${event.id}`}
-          className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-2xs font-medium text-white transition-colors hover:bg-black/70"
+          className="absolute right-9 top-2 z-10 inline-flex items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-2xs font-medium text-white transition-colors hover:bg-black/70"
         >
           <NotebookPen className="size-3" aria-hidden />
           Log who you met
