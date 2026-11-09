@@ -30,6 +30,7 @@ import {
   type InterestTicket,
 } from "@/lib/interest-list";
 import { asWelcomePlanet, type WelcomePlanet } from "@/lib/welcome-planets";
+import { shareTokenMatches } from "@/lib/interest-list-tokens";
 
 export type InterestProof = {
   /** People on the waitlist now — what the proof line shows, and the line's length. */
@@ -253,15 +254,15 @@ export const getTicketByShareToken = cache(
         referralSlug: interestListSignups.referralSlug,
         createdAt: interestListSignups.createdAt,
         welcomePlanet: interestListSignups.welcomePlanet,
-        shareToken: interestListSignups.shareToken,
       })
       .from(interestListSignups)
       // Someone who left the waitlist has no pass: their old link shows the form, and
       // joining again restores their row (and their place) through the rejoin branch.
-      .where(and(eq(interestListSignups.shareToken, token), isNull(interestListSignups.unsubscribedAt)))
+      .where(and(shareTokenMatches(token), isNull(interestListSignups.unsubscribedAt)))
       .limit(1);
-    if (!row?.shareToken) return null;
-    return ticketForRow({ ...row, shareToken: row.shareToken });
+    if (!row) return null;
+    // The presented token IS the row's token (matched by its hash), so nothing is decrypted.
+    return ticketForRow({ ...row, shareToken: token });
   }
 );
 
@@ -295,7 +296,7 @@ export async function getProgressByShareToken(token: string): Promise<ProgressSn
   const [row] = await db
     .select({ id: interestListSignups.id })
     .from(interestListSignups)
-    .where(and(eq(interestListSignups.shareToken, token), isNull(interestListSignups.unsubscribedAt)))
+    .where(and(shareTokenMatches(token), isNull(interestListSignups.unsubscribedAt)))
     .limit(1);
   const value = row
     ? await Promise.all([standingFor(row), friendPlanetsFor(db, row.id)]).then(([s, friendPlanets]) => ({
@@ -327,7 +328,7 @@ export function invalidateProgress(token: string) {
 
 /** The row a `ref` names: by slug (always lowercase) or by share token (case-sensitive). */
 export function refMatch(ref: string) {
-  return or(eq(interestListSignups.referralSlug, ref.toLowerCase()), eq(interestListSignups.shareToken, ref));
+  return or(eq(interestListSignups.referralSlug, ref.toLowerCase()), shareTokenMatches(ref));
 }
 
 /**
@@ -412,7 +413,7 @@ export async function recordPassCheck(shareToken: string): Promise<void> {
     })
     .where(
       and(
-        eq(interestListSignups.shareToken, shareToken),
+        shareTokenMatches(shareToken),
         isNull(interestListSignups.unsubscribedAt),
         or(isNull(interestListSignups.passLastCheckedAt), lt(interestListSignups.passLastCheckedAt, cutoff))
       )

@@ -52,6 +52,8 @@ Set in route segment configs, not `vercel.json`. Hobby's ceiling with Fluid Comp
 
 ## Measuring
 
+- Latest audit, with the harness, the baseline per route and what was tried and reverted: `docs/audits/2026-11-07-performance-audit.md`.
+
 - At account sizes from empty to 100k contacts: `scripts/dev/perf/` (see its README) — seeding, per-statement profiles with real-parameter EXPLAINs, import throughput. `PERFORMANCE_AUDIT.md` is the baseline it produced.
 - Statement shape and count: `DEBUG_QUERIES=1 npx tsx scripts/smoke-page-budgets.ts` lists every statement a page issues.
 - Real plans: enable Drizzle's `logger: true` locally, paste the SQL into Neon's SQL editor with `EXPLAIN (ANALYZE, BUFFERS)`, and read `shared read` — that is the cold-storage cost.

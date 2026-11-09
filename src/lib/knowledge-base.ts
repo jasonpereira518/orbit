@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, interactions } from "@/db/schema";
+import { escapeLike } from "@/lib/contact-search-rank";
 import {
   knownInteractionTypeValues,
   normalizeInteractionType,
@@ -82,7 +83,7 @@ export async function loadKnowledgeBase(
   const db = await getDb();
 
   const q = options?.q?.trim() ?? "";
-  const like = q ? `%${q}%` : null;
+  const like = q ? `%${escapeLike(q)}%` : null;
   const kindFilter = options?.kind && options.kind !== "all" ? options.kind : null;
   const messageTypes = rawTypesFor("message");
   const meetingTypes = rawTypesFor("meeting");

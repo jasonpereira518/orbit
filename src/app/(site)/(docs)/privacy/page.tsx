@@ -136,6 +136,15 @@ export default function PrivacyPage() {
               stay with your account.
             </li>
             <li>
+              <strong>Contact work history</strong> — when a web search finds a contact&rsquo;s work
+              history from their public LinkedIn profile and is confident it is them, that history is
+              kept in a shared set for up to 30 days and reused for any Orbit user who has the same
+              profile, so it is not searched again. Only what a public web search found is shared:
+              never anything you typed or imported, nothing the Orbit browser extension captures, and
+              nothing a search was unsure about. It is deleted within a day once no Orbit account has
+              that person, and after 90 days at most.
+            </li>
+            <li>
               <strong>Voice and meetings</strong> — audio you record is sent to be transcribed and is
               not kept. The transcript is: a voice note becomes the text of your note, and a meeting
               keeps its transcript until you delete the meeting.
@@ -629,8 +638,9 @@ export default function PrivacyPage() {
             your account.
           </p>
           <p>
-            A shared LinkedIn photo is deleted within a day once no Orbit account has that person.
-            To have one removed sooner, email us through the <Link href="/contact">contact page</Link>.
+            A shared LinkedIn photo or shared work history is deleted within a day once no Orbit
+            account has that person, and a shared work history after 90 days at most. To have one
+            removed sooner, email us through the <Link href="/contact">contact page</Link>.
           </p>
           <p>
             When you delete your account, every table holding your data is cleared, including your
@@ -689,7 +699,7 @@ export default function PrivacyPage() {
           </ul>
           <p>
             The operator can comp or revoke a plan, suspend or delete an account, retry or cancel an
-            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, remove a shared LinkedIn photo, and
+            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, remove a shared LinkedIn photo (which also removes that profile&rsquo;s shared work history), and
             create a one-time link that signs in as your account (for support, and for the demo
             account). Each of these requires a written reason, recorded in an audit log. Opening your
             account is recorded, and so is every individual contact record opened, by its id.

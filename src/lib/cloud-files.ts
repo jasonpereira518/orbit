@@ -22,6 +22,7 @@ import { ReauthRequiredError } from "@/lib/errors";
 import { googleFetchWithRetry } from "@/lib/google-fetch";
 import { assertGraphUrl as assertGraphLink, GRAPH_API, graphFetchWithRetry } from "@/lib/graph-fetch";
 import { DRIVE_MIME } from "@/lib/imports/drive-triage";
+import { readBodyCapped } from "@/lib/net-guard";
 
 export type CloudProvider = "google" | "microsoft";
 export const CLOUD_PROVIDERS: readonly CloudProvider[] = ["google", "microsoft"];
@@ -357,10 +358,13 @@ export async function readFileText(ctx: CloudCtx, provider: CloudProvider, file:
   const declared = Number(res.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_ONEDRIVE_BYTES) throw new DriveFileTooLargeError();
   const lower = file.name.toLowerCase();
+  // A chunked body has no Content-Length to refuse up front, so cap it while it streams.
+  const body = await readBodyCapped(res, MAX_ONEDRIVE_BYTES);
+  if (!body) throw new DriveFileTooLargeError();
   let text: string;
-  if (lower.endsWith(".docx")) text = await docxToText(await res.arrayBuffer());
-  else if (lower.endsWith(".vtt")) text = vttToText(await res.text());
-  else text = await res.text();
+  if (lower.endsWith(".docx")) text = await docxToText(body);
+  else if (lower.endsWith(".vtt")) text = vttToText(body.toString("utf8"));
+  else text = body.toString("utf8");
   text = text.replace(/^﻿/, "");
   if (text.length > DRIVE_EXPORT_MAX_CHARS) throw new DriveFileTooLargeError();
   return text;
@@ -400,8 +404,8 @@ export async function fileThumbnail(ctx: CloudCtx, provider: CloudProvider, file
     });
     const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim();
     if (!res.ok || !THUMB_TYPES.test(type)) return null;
-    const bytes = await res.arrayBuffer();
-    if (bytes.byteLength > THUMB_MAX_BYTES) return null;
+    const bytes = await readBodyCapped(res, THUMB_MAX_BYTES);
+    if (!bytes) return null;
     return `data:${type};base64,${Buffer.from(bytes).toString("base64")}`;
   }
   if (!file.name.toLowerCase().endsWith(".docx")) return null;
