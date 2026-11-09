@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
-import { SettingsRow } from "@/components/settings/settings-section";
 import type { OnboardingPath } from "@/lib/onboarding-steps";
 
 export function HelpSettings({
@@ -32,12 +31,10 @@ export function HelpSettings({
       }
     });
 
+  // The card and its heading are the page's (`settings/page.tsx`): it also holds Credits,
+  // which has to stay on the page when an operator hides this.
   return (
-    <SettingsRow
-      id="settings-help"
-      title="Help"
-      description="Walk through setup again, take the page-by-page tour, or tell us what isn’t working."
-    >
+    <div id="settings-help" className="scroll-mt-8">
       <div className="flex flex-wrap gap-2">
         {tourResumable && (
           <Button size="sm" disabled={pending} onClick={() => go(resumeTour)}>
@@ -65,6 +62,6 @@ export function HelpSettings({
           </Button>
         )}
       </div>
-    </SettingsRow>
+    </div>
   );
 }

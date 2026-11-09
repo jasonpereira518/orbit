@@ -269,7 +269,7 @@ const ALLOWLIST: Record<string, string> = {
   "src/lib/ai-settings-write.ts:135": "same independent-ternary shape as line 127 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
-  "src/components/settings/ai-settings.tsx:330": "the standalone \"Anthropic has no " +
+  "src/components/settings/ai-settings.tsx:323": "the standalone \"Anthropic has no " +
     "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +

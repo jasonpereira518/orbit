@@ -102,37 +102,16 @@ type SocialLinks = {
   website: string;
 };
 
-export function ProfileSettings({
+/** Who is signed in, and the way out. */
+export function AccountSettings({
   profile,
   clerkEnabled,
-  initialSocialLinks,
-  initialSenderBio,
-  initialCareer,
 }: {
   profile: ProfileData | null;
   clerkEnabled: boolean;
-  initialSocialLinks: SocialLinks;
-  initialSenderBio: string;
-  initialCareer: CareerProfile | null;
 }) {
-  const [socials, setSocials] = useState(initialSocialLinks);
-  const [bio, setBio] = useState(initialSenderBio);
-  const [career, setCareer] = useState(initialCareer);
-  const [clearing, startClear] = useTransition();
-  const [pending, start] = useTransition();
-  const [bioPending, startBio] = useTransition();
-  // A failed save stays next to its button until the next attempt; the toast alone could
-  // time out before it was read.
-  const [bioError, setBioError] = useState<string | null>(null);
-  const [clearError, setClearError] = useState<string | null>(null);
-  const [socialsError, setSocialsError] = useState<string | null>(null);
-
   return (
-    <SettingsSection
-      title="Profile and account"
-      description="Your identity and sign-in for Orbit."
-    >
-
+    <SettingsSection title="Account" description="Your identity and sign-in for Orbit.">
       {profile ? (
         <div className="flex flex-wrap items-center gap-4">
           {/* One face, and it is also the account menu. Clerk's UserButton
@@ -182,11 +161,33 @@ export function ProfileSettings({
           )}
         </div>
       )}
+    </SettingsSection>
+  );
+}
 
+/** What Orbit knows about you: the bio you wrote, and what came in from LinkedIn. */
+export function AboutYouSettings({
+  initialSenderBio,
+  initialCareer,
+}: {
+  initialSenderBio: string;
+  initialCareer: CareerProfile | null;
+}) {
+  const [bio, setBio] = useState(initialSenderBio);
+  const [career, setCareer] = useState(initialCareer);
+  const [clearing, startClear] = useTransition();
+  const [bioPending, startBio] = useTransition();
+  // A failed save stays next to its button until the next attempt; the toast alone could
+  // time out before it was read.
+  const [bioError, setBioError] = useState<string | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
+
+  return (
+    <SettingsSection title="About you">
       <SettingsRow
-        title="About you"
+        title="Bio"
         labelFor="sender-bio"
-        description="One or two sentences: what you do, and what you are looking for. Orbit puts this in every message it drafts for you — without it, drafts have a name to sign off with and nothing to introduce."
+        description="One or two sentences on what you do and what you’re looking for. Orbit adds it to every draft."
       >
         <Textarea
           id="sender-bio"
@@ -325,11 +326,19 @@ export function ProfileSettings({
           </div>
         )}
       </SettingsRow>
+    </SettingsSection>
+  );
+}
 
-      <SettingsRow
-        title="Your socials"
-        description="Shown when you click the sun in Constellation."
-      >
+/** The links on your own star in Constellation. */
+export function SocialLinksSettings({ initialSocialLinks }: { initialSocialLinks: SocialLinks }) {
+  const [socials, setSocials] = useState(initialSocialLinks);
+  const [pending, start] = useTransition();
+  const [socialsError, setSocialsError] = useState<string | null>(null);
+
+  return (
+    <SettingsSection title="Your socials" description="Shown when you click the sun in Constellation.">
+      <div className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-2">
           {(
             [
@@ -386,7 +395,7 @@ export function ProfileSettings({
           {pending ? "Saving…" : "Save socials"}
         </Button>
         <FormError className="mt-2">{socialsError}</FormError>
-      </SettingsRow>
+      </div>
     </SettingsSection>
   );
 }

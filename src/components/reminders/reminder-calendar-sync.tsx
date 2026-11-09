@@ -189,7 +189,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
         )}
 
         <Link
-          href={integrationHref("reminders")}
+          href="/settings#settings-calendar"
           className="block text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           Manage or turn off in Settings →

@@ -1,19 +1,13 @@
-import {
-  CalendarCheck,
-  Check,
-  Globe,
-  Infinity as InfinityIcon,
-  Megaphone,
-  MessageCircle,
-  Network,
-  ScanText,
-  Sparkles,
-  UserSearch,
-  Users,
-  type LucideIcon,
-} from "lucide-react";
+import { Check, Sparkles } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { CreditsUsage } from "@/components/credits/credits-card";
 import { SubscriptionManager } from "@/components/settings/subscription-manager";
+import {
+  SpeechDetails,
+  formatMinutes,
+  speechTotals,
+  type SpeechAllowances,
+} from "@/components/settings/speech-usage-card";
 import { cn } from "@/lib/utils";
 import { WarpLink } from "@/components/warp/warp-link";
 import { planCopy, unlimitedContactsLine } from "@/lib/plan-copy";
@@ -36,14 +30,13 @@ const SOURCE_NOTE: Record<PlanSource, string | null> = {
  * The pricing page uses the fixed "night" values because it only ever sits on a dark
  * starfield. This card sits on `--card` in either theme, so it splits each metal in two: as
  * a *surface* (the badge's sheen) it can be the bright metal, because the text on it is
- * near-black; as *text* (the ticks) it uses the theme-aware `--tier-*`, which clears 4.5:1.
+ * near-black; as *text* it uses the theme-aware `--tier-*`, which clears 4.5:1.
  */
 const PAID = {
   ring: "border-tier-border",
   wash: "bg-tier-surface",
   badge: "bg-gradient-to-b from-tier-sheen-from to-tier-sheen-to text-tier-sheen-ink shadow-sm",
   ink: "text-tier-accent",
-  chip: "bg-tier-accent/15",
   meter: "bg-tier-accent",
   glint: true,
 };
@@ -57,10 +50,8 @@ const TIER_ACCENT: Record<
     wash: string | null;
     /** Filled pill carrying the plan name. */
     badge: string;
-    /** Ticks and other accent marks. */
+    /** Accent marks and an at-limit count. */
     ink: string;
-    /** Tinted tile behind each feature's symbol. */
-    chip: string;
     /** Usage meter fill. */
     meter: string;
     /** Whether the badge catches a travelling highlight. */
@@ -72,7 +63,6 @@ const TIER_ACCENT: Record<
     wash: null,
     badge: "border border-border/70 text-muted-foreground",
     ink: "text-muted-foreground",
-    chip: "bg-muted",
     meter: "bg-muted-foreground/70",
     glint: false,
   },
@@ -85,65 +75,63 @@ const TIER_ACCENT: Record<
   lifetime: PAID,
 };
 
-/**
- * How one feature line is dressed here: a symbol, and the phrase to bold. Matched on the
- * shared copy from `plan-copy.ts` rather than stored beside it, because the marketing page
- * renders the same strings and has no use for either. A line nothing matches keeps the plain
- * tick and no bold, so new copy degrades to the old look instead of breaking.
- */
-const FEATURE_STYLE: ReadonlyArray<{
-  test: RegExp;
-  icon: LucideIcon;
-  bold: RegExp;
-}> = [
-  { test: /^Everything in/i, icon: Check, bold: /^Everything in the Free Plan/i },
-  { test: /contacts/i, icon: Users, bold: /(Up to \d+|Unlimited) contacts/i },
-  { test: /AI extraction/i, icon: ScanText, bold: /AI extraction/i },
-  { test: /^Chat with/i, icon: MessageCircle, bold: /^Chat with your network/i },
-  { test: /Constellation/i, icon: Network, bold: /Constellation map/i },
-  { test: /LinkedIn/i, icon: Network, bold: /LinkedIn import/i },
-  { test: /Reminders/i, icon: Check, bold: /Reminders and follow-up feed/i },
-  { test: /Knowledge/i, icon: Check, bold: /Knowledge base/i },
-  { test: /^Export/i, icon: Check, bold: /^Export your data/i },
-  { test: /Outreach/i, icon: Megaphone, bold: /Outreach campaigns/i },
-  { test: /Recruiter/i, icon: UserSearch, bold: /Recruiter tracking/i },
-  { test: /Calendar/i, icon: CalendarCheck, bold: /Calendar links/i },
-  { test: /Chrome/i, icon: Globe, bold: /Chrome extension/i },
-];
-
-function styleFeature(feature: string) {
-  const match = FEATURE_STYLE.find((f) => f.test.test(feature));
-  const icon: LucideIcon = /forever/i.test(feature) ? InfinityIcon : (match?.icon ?? Check);
-  const bold = match ? feature.match(match.bold)?.[0] : undefined;
-  return { icon, bold };
-}
-
-/** The feature's text with its key phrase bold and in the plan colour. */
-function FeatureText({ feature, ink }: { feature: string; ink: string }) {
-  const { bold } = styleFeature(feature);
-  const at = bold ? feature.indexOf(bold) : -1;
-  if (!bold || at < 0) return <span>{feature}</span>;
+/** One labelled bar, the shape every meter on this card shares. */
+function Meter({
+  label,
+  value,
+  percent,
+  meterClassName,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  percent: number;
+  meterClassName: string;
+  /** Tints the value: the meter is full. */
+  emphasis?: string;
+}) {
   return (
-    <span>
-      {feature.slice(0, at)}
-      <strong className={cn("font-semibold", ink)}>{bold}</strong>
-      {feature.slice(at + bold.length)}
-    </span>
+    <>
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className={cn("tabular-nums", emphasis)}>{value}</span>
+      </div>
+      <div
+        className="h-1.5 overflow-hidden rounded-full bg-muted"
+        role="meter"
+        aria-label={`${label} used`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(percent)}
+      >
+        <div
+          className={cn("h-full rounded-full transition-[width]", meterClassName)}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </>
   );
 }
 
+/**
+ * Your plan and everything it meters, in one place: contacts, AI credits and voice minutes.
+ * What each plan includes lives on the pricing page, one click away.
+ */
 export function PlanSettings({
   entitlements,
   usage,
   demoAccount,
   config,
+  speech,
 }: {
-  /** The effective plan table, so "What's included" follows an admin's plan rules. */
+  /** The effective plan table, so the name and tagline follow an admin's plan rules. */
   config?: Record<Plan, PlanConfig>;
   entitlements: Entitlements;
   usage: { used: number; limit: number | null; remaining: number | null };
   /** Set when plan limits are lifted because this is a demo account, not because of the plan. */
   demoAccount: DemoAccountReason | null;
+  /** Voice transcription this month — Orbit's own allowance, never the person's key. */
+  speech: SpeechAllowances;
 }) {
   const copy = planCopy(entitlements.plan, config);
   const note = SOURCE_NOTE[entitlements.source];
@@ -155,6 +143,7 @@ export function PlanSettings({
   const atLimit = usage.limit !== null && usage.used >= usage.limit;
   const pct =
     usage.limit === null ? 0 : Math.min(100, (usage.used / usage.limit) * 100);
+  const voice = speechTotals(speech);
 
   return (
     <section
@@ -178,7 +167,7 @@ export function PlanSettings({
       <div className="relative space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-lg font-medium text-ink">Pricing Plan</h3>
+            <h3 className="text-lg font-medium text-ink">Plan and usage</h3>
             <p className="mt-1 text-sm text-muted-foreground">{copy.tagline}</p>
           </div>
           <span
@@ -204,82 +193,48 @@ export function PlanSettings({
 
         {note && <p className="text-sm text-muted-foreground">{note}</p>}
 
-        {usage.limit !== null ? (
-          <div className="space-y-2">
-            <div className="flex items-baseline justify-between text-sm">
-              <span className="text-muted-foreground">Contacts</span>
-              <span
-                className={cn("tabular-nums", atLimit ? accent.ink : undefined)}
-              >
-                {usage.used} / {usage.limit}
-              </span>
-            </div>
-            <div
-              className="h-1.5 overflow-hidden rounded-full bg-muted"
-              role="progressbar"
-              aria-valuenow={usage.used}
-              aria-valuemin={0}
-              aria-valuemax={usage.limit}
-              aria-label="Contacts used"
-            >
-              <div
-                className={cn(
-                  "h-full rounded-full transition-[width]",
-                  accent.meter
-                )}
-                style={{ width: `${pct}%` }}
+        <div className="space-y-5">
+          {usage.limit !== null ? (
+            <div className="space-y-2">
+              <Meter
+                label="Contacts"
+                value={`${usage.used} / ${usage.limit}`}
+                percent={pct}
+                meterClassName={accent.meter}
+                emphasis={atLimit ? accent.ink : undefined}
               />
+              {atLimit && (
+                <p className="text-sm text-muted-foreground">
+                  You&apos;ve reached the limit, so new contacts can&apos;t be
+                  added. Everything already in your orbit stays exactly as it is.
+                </p>
+              )}
             </div>
-            {atLimit && (
-              <p className="text-sm text-muted-foreground">
-                You&apos;ve reached the limit, so new contacts can&apos;t be
-                added. Everything already in your orbit stays exactly as it is.
-              </p>
-            )}
-          </div>
-        ) : (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Check className={cn("size-4", accent.ink)} aria-hidden="true" />
-            {unlimitedContactsLine(usage.used, demoAccount)}
-          </p>
-        )}
+          ) : (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Check className={cn("size-4", accent.ink)} aria-hidden="true" />
+              {unlimitedContactsLine(usage.used, demoAccount)}
+            </p>
+          )}
 
-        {/* The card used to name the plan and say nothing about what it buys.
-            Read from the same copy the pricing page renders, so the two cannot
-            describe a tier differently. */}
-        <div className="border-t border-border/60 pt-4">
-          <h4 className="text-sm font-medium text-ink">
-            What&apos;s included
-          </h4>
-          {/* Columns, not a two-column grid. A grid ties both cells of a row to
-              the tallest of them, so a feature that wraps to two lines opened a
-              double gap under its short neighbour. Columns flow independently,
-              so every row sits the same distance from the last. */}
-          <ul className="-mb-2.5 mt-3 sm:columns-2 sm:gap-x-6">
-            {copy.features.map((feature) => {
-              const { icon: Icon } = styleFeature(feature);
-              return (
-                <li
-                  key={feature}
-                  className="flex break-inside-avoid items-start gap-2.5 pb-2.5 text-sm text-ink"
-                >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "flex size-6 shrink-0 items-center justify-center rounded-lg",
-                      accent.chip,
-                      accent.ink
-                    )}
-                  >
-                    <Icon className="size-3.5" strokeWidth={2.25} />
-                  </span>
-                  <span className="pt-0.5">
-                    <FeatureText feature={feature} ink={accent.ink} />
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
+          <CreditsUsage meterClassName={accent.meter} />
+
+          {voice.limit > 0 ? (
+            <div className="space-y-2">
+              <Meter
+                label="Voice minutes"
+                value={`${formatMinutes(voice.used)} of ${formatMinutes(voice.limit)}`}
+                percent={Math.min(100, (voice.used / voice.limit) * 100)}
+                meterClassName={accent.meter}
+              />
+              <SpeechDetails speech={speech} />
+            </div>
+          ) : (
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span className="text-muted-foreground">Voice minutes</span>
+              <span className="text-muted-foreground">Not on this plan</span>
+            </div>
+          )}
         </div>
 
         {entitlements.source === "subscription" && (
