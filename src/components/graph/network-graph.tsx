@@ -36,7 +36,8 @@ import {
   ContactInspectPanel,
   type InspectSelection,
 } from "@/components/graph/contact-inspect-panel";
-import type { GraphNodeData } from "@/lib/graph-layout";
+import { contactStarData, type GraphNodeData } from "@/lib/graph-layout";
+import { selectionForContact } from "@/lib/graph/sky-selection";
 import { Starfield } from "@/components/graph/constellation-starfield";
 import { useSmallSky } from "@/components/graph/use-small-sky";
 import { useSkyRenderer } from "@/components/graph/use-sky-renderer";
@@ -660,6 +661,48 @@ export function NetworkGraph({
     (picked: InspectSelection) => {
       setSelection(picked);
       if (picked) emitTourEvent("graph.star-selected");
+    },
+    []
+  );
+
+  // The card's network row: the selected star's cluster, and its closest neighbours in
+  // it. Both read data the sky already has, so opening a star costs no request.
+  const contactById = useMemo(
+    () => new Map((data?.contacts ?? []).map((c) => [c.id, c])),
+    [data]
+  );
+  const selectedContact = selection?.type === "contact" ? selection : null;
+  const inspectCluster = useMemo(() => {
+    const d = selectedContact?.data;
+    if (!d?.clusterId || !d.clusterName) return null;
+    return { id: d.clusterId, name: d.clusterName, color: d.clusterColor };
+  }, [selectedContact]);
+  const inspectNearby = useMemo(() => {
+    if (!selectedContact || !inspectCluster || !data) return [];
+    const members = data.clusters.find((c) => c.id === inspectCluster.id)?.contactIds ?? [];
+    return members
+      .filter((id) => id !== selectedContact.id)
+      .map((id) => contactById.get(id))
+      .filter((c): c is NonNullable<typeof c> => Boolean(c))
+      .sort((a, b) => (b.closeness ?? 0) - (a.closeness ?? 0))
+      .slice(0, 5)
+      .map((c) => ({
+        id: c.id,
+        data: {
+          ...contactStarData(c),
+          clusterId: inspectCluster.id,
+          clusterName: inspectCluster.name,
+          clusterColor: inspectCluster.color,
+        },
+      }));
+  }, [selectedContact, inspectCluster, data, contactById]);
+
+  /** A neighbour picked from the card: open it and swing the camera to its star. */
+  const selectNeighbour = useCallback(
+    (id: string, nodeData: GraphNodeData) => {
+      setSelection(selectionForContact(id, nodeData));
+      setPeekPersonId(id);
+      setPeekToken((t) => t + 1);
     },
     []
   );
@@ -1363,36 +1406,40 @@ export function NetworkGraph({
           onFocusCluster={focusClusterById}
           compact={compact}
         />}
-      </div>
 
-      {!compact && (
-        <ContactInspectPanel
-          selection={selection}
-          onClose={() => setSelection(null)}
-          onContactPatch={(id, patch) => {
-            if (patch.aiSummary !== undefined) {
-              setData((prev) => {
-                if (!prev) return prev;
+        {!compact && (
+          <ContactInspectPanel
+            selection={selection}
+            onClose={() => setSelection(null)}
+            cluster={inspectCluster}
+            nearby={inspectNearby}
+            onFocusCluster={focusClusterById}
+            onSelectContact={selectNeighbour}
+            onContactPatch={(id, patch) => {
+              if (patch.aiSummary !== undefined) {
+                setData((prev) => {
+                  if (!prev) return prev;
+                  return {
+                    ...prev,
+                    contacts: prev.contacts.map((c) =>
+                      c.id === id ? { ...c, aiSummary: patch.aiSummary ?? null } : c
+                    ),
+                  };
+                });
+              }
+              setSelection((prev) => {
+                if (!prev || prev.type !== "contact" || prev.id !== id) {
+                  return prev;
+                }
                 return {
                   ...prev,
-                  contacts: prev.contacts.map((c) =>
-                    c.id === id ? { ...c, aiSummary: patch.aiSummary ?? null } : c
-                  ),
+                  data: { ...prev.data, ...patch },
                 };
               });
-            }
-            setSelection((prev) => {
-              if (!prev || prev.type !== "contact" || prev.id !== id) {
-                return prev;
-              }
-              return {
-                ...prev,
-                data: { ...prev.data, ...patch },
-              };
-            });
-          }}
-        />
-      )}
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }
