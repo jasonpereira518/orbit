@@ -9,10 +9,12 @@ import {
   type RecentDiscussion,
 } from "@/lib/contact-brief";
 import { getCareerLines } from "@/lib/contact-profile";
-import { listEventsTogetherForContact, type EventTogether } from "@/lib/events/people-store";
 import { getRecentMoveLines } from "@/lib/job-changes";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { listActiveGoalsForUser } from "@/lib/user-goals";
+
+/** Characters of the profile's notes the dossier shows; the contact page has the rest. */
+const NOTES_CHARS = 1200;
 
 export type DossierGoalFit = {
   goalId: string;
@@ -36,6 +38,12 @@ export type KnowledgeDossier = {
     keyFacts: string[];
     howMet: string | null;
   };
+  /**
+   * The profile's free-text notes, cut to {@link NOTES_CHARS} in SQL. Top level on purpose:
+   * the `get_dossier` tool passes whole keys (`contact`, `brief`, ...) to the model and to MCP
+   * clients, and raw notes are not part of what that tool has ever shown.
+   */
+  profileNotes: string | null;
   /** Null when no brief has been written yet. */
   brief: {
     standing: string | null;
@@ -57,7 +65,6 @@ export type KnowledgeDossier = {
     tags: string[];
     career: string | null;
     recentMoves: string | null;
-    events: EventTogether[];
   };
   /** An interaction is newer than the brief. Regenerating helps with or without an AI key. */
   stale: boolean;
@@ -78,8 +85,9 @@ export type KnowledgeDossier = {
  * calls it alongside this so the two reads run together.
  *
  * Read-only by design (the Knowledge page is for understanding; editing lives on the
- * contact's own page), and it reads no `notes`, no photo and no full interaction history —
- * the brief's `recentDiscussions` already carries the recent thread, one line each.
+ * contact's own page), and it reads no photo and no interaction history: the history is
+ * `loadKnowledgeTimeline`, which the page streams in beside this. The profile `notes` come
+ * cut in SQL, never whole.
  */
 export async function loadKnowledgeDossier(
   userId: string,
@@ -103,6 +111,7 @@ export async function loadKnowledgeDossier(
       howMet: contacts.howMet,
       metContext: contacts.metContext,
       dateMet: contacts.dateMet,
+      notes: sql<string | null>`left(${contacts.notes}::text, ${NOTES_CHARS})`,
       hasPhoto: sql<boolean>`((${contacts.profileImageUrl} IS NOT NULL AND ${contacts.profileImageUrl} <> '') OR ${sharedAvatarUrlSql} IS NOT NULL)`,
     })
     .from(contacts)
@@ -110,7 +119,7 @@ export async function loadKnowledgeDossier(
     .limit(1);
   if (!row) return null;
 
-  const [brief, goals, tagRows, careerLines, moveLines, events] = await Promise.all([
+  const [brief, goals, tagRows, careerLines, moveLines] = await Promise.all([
     getContactBrief(userId, contactId).catch(() => null),
     listActiveGoalsForUser(userId).catch(() => []),
     db
@@ -121,7 +130,6 @@ export async function loadKnowledgeDossier(
       .catch(() => []),
     getCareerLines(userId, [contactId]).catch(() => new Map<string, string>()),
     getRecentMoveLines(userId, [contactId]).catch(() => new Map<string, string>()),
-    listEventsTogetherForContact(userId, contactId, 8).catch(() => []),
   ]);
 
   const goalById = new Map(goals.map((g) => [g.id, g.text]));
@@ -148,6 +156,7 @@ export async function loadKnowledgeDossier(
       howMet:
         formatHowMetSummary({ metContext: row.metContext, dateMet: row.dateMet, howMet: row.howMet }) || null,
     },
+    profileNotes: row.notes?.trim() || null,
     brief: brief
       ? {
           standing: brief.standing,
@@ -166,7 +175,6 @@ export async function loadKnowledgeDossier(
       tags: tagRows.map((t) => t.name),
       career: careerLines.get(contactId) ?? null,
       recentMoves: moveLines.get(contactId) ?? null,
-      events,
     },
     stale: isBriefStale(brief, row.lastInteractionAt),
     goalsUnjudged: goalFitOutOfDate(goals, brief?.goalFit ?? null),
