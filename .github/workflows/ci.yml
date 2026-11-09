@@ -39,11 +39,17 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [main]
+  # GitHub's merge queue runs the required checks on the queued merge result. Needed before
+  # the queue can be switched on in Settings → Branches (the checks must report on this event).
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
+# Only PR runs are superseded by a newer push. A `main` run is never cancelled: back-to-back
+# merges used to cancel each other, so `main` was rarely verified and its caches stayed cold.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -64,7 +70,16 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.f.outputs.code }}
+      playwright: ${{ steps.pw.outputs.version }}
     steps:
+      # The e2e container image tag must equal @playwright/test (the image's browser build has
+      # to match the library); read it from package.json so a Dependabot bump can't split them.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: package.json
+          sparse-checkout-cone-mode: false
+      - id: pw
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test'].replace(/[^0-9.]/g, '')")" >> "$GITHUB_OUTPUT"
       - id: f
         env:
           GH_TOKEN: ${{ github.token }}
@@ -135,9 +150,14 @@ jobs:
           fail-on-severity: high
           fail-on-scopes: runtime
       - name: Install gitleaks (pinned, checksum-verified)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -sSfL -o /tmp/gitleaks.tgz \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          # `github.com/…/releases/download` has served 504s (Nov 8 2026), failing this step on
+          # every PR. `gh release download` asks the API for the asset and follows the signed
+          # object URL instead, which stayed up; the checksum below still pins the exact bytes.
+          gh release download v8.30.1 --repo gitleaks/gitleaks \
+            --pattern gitleaks_8.30.1_linux_x64.tar.gz --output /tmp/gitleaks.tgz --clobber
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
       - name: Secret scan (new commits only)
@@ -152,7 +172,9 @@ jobs:
             range="$BASE..$HEAD"
           fi
           echo "scanning $range"
-          /tmp/gitleaks git --no-banner --redact --log-opts="$range" .
+          # --verbose prints each finding (rule, file, line, commit); --redact keeps the secret
+          # itself out of the log. Without it a failure only says "leaks found: N".
+          /tmp/gitleaks git --no-banner --redact --verbose --log-opts="$range" .
 
   # The smoke suite is ~400 scripts run one after another (PGlite is single-writer), about
   # ten minutes serially and by far the slowest job. Four machines run exactly the same
@@ -276,8 +298,9 @@ jobs:
 
   # Playwright's own image ships Chromium and its OS libraries, so there is no browser
   # download or apt step (`playwright install --with-deps` took 17s to 12 minutes on a bare
-  # runner, depending on the apt mirror). Keep the tag equal to @playwright/test in
-  # package.json: the image's browser build must match the library. `--ipc=host` is
+  # runner, depending on the apt mirror). The tag is read from @playwright/test in
+  # package.json (the `changes` job), because the image's browser build must match the
+  # library; nothing to keep in sync by hand. `--ipc=host` is
   # Playwright's own advice for Chromium in a container.
   #
   # Three runners each take a third of the spec files (`--shard`), with their own `next dev`
@@ -291,7 +314,7 @@ jobs:
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      image: mcr.microsoft.com/playwright:v${{ needs.changes.outputs.playwright }}-noble
       options: --ipc=host
     timeout-minutes: 30
     strategy:

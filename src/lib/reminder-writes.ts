@@ -10,6 +10,7 @@
  * Nothing about the writes changed in the move; the comments explaining *why* each write
  * looks the way it does travelled with the code.
  */
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, reminders, type ReminderActionKind } from "@/db/schema";
@@ -91,6 +92,8 @@ export async function createReminderForUser(
   input: CreateReminderInput,
   tracking: ReminderWriteTracking = {}
 ) {
+  // Hand-made, chat and agent reminders share one daily ceiling (L-22, `reminderDaily`).
+  await consumeDailyCap("reminderDaily", userId);
   const db = await getDb();
   // Moved in from the MCP tool's own ad hoc version of it: a caller that reaches this
   // function some other way — the proposed-action commit in `chat-actions.ts`, today — must
@@ -206,6 +209,7 @@ export async function scheduleContactFollowUpForUser(
       .returning();
     row = updated;
   } else {
+    await consumeDailyCap("reminderDaily", userId);
     const [created] = await db
       .insert(reminders)
       .values({
