@@ -189,6 +189,7 @@
 @source "../lib/decisions/llm.ts";
 @source "../lib/deepgram-params.ts";
 @source "../lib/deepgram.ts";
+@source "../lib/deleted-account.ts";
 @source "../lib/demo-account.ts";
 @source "../lib/demo-data/ensure.ts";
 @source "../lib/demo-data/gillings-real.ts";

@@ -100,3 +100,13 @@ export async function requireUserForReleasedSurface(surfaceKey: string) {
   await requireReleasedSurface(userId, surfaceKey);
   return userId;
 }
+
+/**
+ * Auth plus "Leads is switched on and released". No plan gate: joining a team and looking
+ * up warm paths are free (the CRM connection is the paid part, gated separately later).
+ */
+export async function requireLeadsUser() {
+  const userId = await requireUserId();
+  await requireReleasedSurface(userId, "page.leads");
+  return userId;
+}

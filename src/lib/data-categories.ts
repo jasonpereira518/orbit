@@ -10,13 +10,15 @@
  * are `on delete set null` rather than `cascade`, so a step placed after the thing it points
  * at would rewrite every one of its rows on the way to deleting them: `suggested_reminders`
  * before `reminders` and `contacts`, `event_attendees` before `contacts`,
- * `recruiter_messages` before `user_recruiter_links`.
+ * `recruiter_messages` before `user_recruiter_links`, `leads` before `connections` and
+ * `contacts` (its later tables point at both with set-null keys).
  */
 export type DataCategory =
   | "insights"
   | "notes"
   | "reminders"
   | "imports"
+  | "leads"
   | "connections"
   | "events"
   | "goals"
@@ -69,6 +71,12 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     label: "Import history",
     description:
       "The record of every CSV, LinkedIn archive and mailbox scan you ran, including any that stalled part-way. Contacts they created stay.",
+  },
+  {
+    id: "leads",
+    label: "Leads and team",
+    description:
+      "Your place on your company's team. Teammates stop seeing whether you know the people they look up, and the team itself is removed once nobody is left in it.",
   },
   {
     id: "connections",

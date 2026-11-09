@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS companies (
 );
 CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized);
+CREATE INDEX IF NOT EXISTS companies_name_normalized_idx ON companies(name_normalized);
 CREATE TABLE IF NOT EXISTS contacts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -190,6 +191,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   source text,
   industry text,
   constellation_pin text,
+  team_shared integer NOT NULL DEFAULT 1,
   met_context text,
   date_met timestamptz,
   how_met text,
@@ -1949,6 +1951,26 @@ CREATE TABLE IF NOT EXISTS contact_identities (
   source text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS teams (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  domain text NOT NULL,
+  name text NOT NULL,
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS teams_domain_uidx ON teams(domain);
+CREATE TABLE IF NOT EXISTS team_members (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  team_id uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  share_network integer NOT NULL DEFAULT 0,
+  email_domain text NOT NULL,
+  joined_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS team_members_user_uidx ON team_members(user_id);
+CREATE INDEX IF NOT EXISTS team_members_team_sharing_idx ON team_members(team_id, share_network);
 CREATE TABLE IF NOT EXISTS contact_merges (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3021,7 +3043,14 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // and share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). Renumbered
 // 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
-export const SCHEMA_VERSION = 208;
+//
+// 209 = teams, team_members, contacts.team_shared, contact_identities(kind, value) and
+// companies(name_normalized): the Leads team model and the who-knows-whom index, P2 of
+// docs/superpowers/specs/2026-09-22-leads-design.md. Ported onto main from the never-merged
+// stack (#266); built as 90, then 121, then 202 against the old base, and renumbered to 209
+// when main reached 208 — a database stamped above the old number would skip this DDL in
+// silence. The rest of the Leads port takes the next numbers after a fresh rescan.
+export const SCHEMA_VERSION = 209;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3564,6 +3593,10 @@ export const SCALE_DDL: string[] = [
   // delete from scanning this table (the omission contacts_company_id_idx was added for).
   `CREATE INDEX IF NOT EXISTS contact_identities_contact_idx
      ON contact_identities(contact_id)`,
+  // The who-knows-whom lookup: a teammate's identity, matched across every user's contacts.
+  // The unique index above leads with user_id and cannot serve a cross-user probe.
+  `CREATE INDEX IF NOT EXISTS contact_identities_kind_value_idx
+     ON contact_identities(kind, value)`,
 
   // Alias lookup: a stale contact id in, the surviving contact id out. Unique because a
   // contact can only be merged away once -- attempting it twice is a bug, not a no-op.
@@ -4070,6 +4103,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "chat_messages", "follow_ups", "jsonb DEFAULT '[]'");
   await ensureColumn(client, "user_settings", "chat_auto_apply", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "contacts", "team_shared", "integer NOT NULL DEFAULT 1");
   await ensureColumn(
     client,
     "interactions",
@@ -4810,6 +4844,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
   `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized)`,
+  `CREATE INDEX IF NOT EXISTS companies_name_normalized_idx ON companies(name_normalized)`,
   `CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id)`,
   `CREATE INDEX IF NOT EXISTS contacts_company_idx ON contacts(user_id, company)`,
   `CREATE INDEX IF NOT EXISTS contacts_follow_up_idx ON contacts(user_id, next_follow_up_at)`,
@@ -5413,6 +5448,9 @@ const alters = [
   `ALTER TABLE interest_list_signups ALTER COLUMN unsubscribe_token DROP NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_unsub_hash_uidx ON interest_list_signups(unsubscribe_token_hash)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_hash_uidx ON interest_list_signups(share_token_hash)`,
+  // v209 (first shipped as v90, then v121/v202): the Leads team model column on
+  // tables older databases already have (docs/superpowers/specs/2026-09-22-leads-design.md, P2).
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS team_shared integer NOT NULL DEFAULT 1`,
 ];
 
 /**
