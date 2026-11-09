@@ -280,6 +280,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-outlook-calendar-map": "pure",
   "smoke-recurrence": "pure",
   "smoke-graph-scope": "pure",
+  "smoke-graph-wire": "pure",
   "smoke-ics-feed": "pure",
   "smoke-icon-button-names": "pure",
   "smoke-chat-handoff": "pure",

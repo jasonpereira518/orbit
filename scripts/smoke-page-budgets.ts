@@ -35,6 +35,7 @@ import { getEffectivePlanConfig } from "../src/lib/plans/plan-rules";
 import { contacts, interactions } from "../src/db/schema";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
+import { encodeGraphPayload } from "../src/lib/graph-wire";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
 import { loadSuggestionSignals } from "../src/lib/chat-suggestions-data";
 import {
@@ -376,6 +377,23 @@ async function main() {
       ` (${((1 - engagedBytes / allBytes) * 100).toFixed(0)}% smaller)`
   );
   check("graph still resolves an inline avatar to the avatar route", graphJson.includes("/api/avatars/"));
+
+  // What actually crosses the server-action boundary is the columnar wire form (lib/graph-wire).
+  // Asserting only the object size above would let the encoding regress to a no-op unnoticed.
+  const graphWire = JSON.stringify(encodeGraphPayload(graphAll));
+  const graphAllJson = JSON.stringify(graphAll);
+  // Printed, not just asserted: the headline number belongs in the run log next to the one it
+  // replaced, so a future regression reads as a delta rather than a bare pass.
+  console.log(
+    `  wire    ${(graphWire.length / 1024).toFixed(0)} KB for ${graphAll.contacts.length} contacts ` +
+      `(${(100 * (1 - graphWire.length / graphAllJson.length)).toFixed(0)}% smaller than the object form)`
+  );
+  check(
+    "graph wire under 1.2 MB",
+    graphWire.length < 1_200_000,
+    `${(graphWire.length / 1024).toFixed(0)} KB for ${graphAll.contacts.length} contacts ` +
+      `(${(100 * (1 - graphWire.length / graphAllJson.length)).toFixed(0)}% smaller)`
+  );
 
   // ---- Notifications panel -----------------------------------------------------------
   console.log("\nNotifications panel (loadNotificationPanel)…");
