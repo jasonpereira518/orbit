@@ -9,6 +9,7 @@ import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureJobs, interactions, noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
+import { findActiveCaptureJobs } from "@/lib/capture-jobs";
 import { contactOrgLogos, type MeetingCompany } from "@/lib/meetings-list";
 import {
   captureAttendeeNames,
@@ -50,8 +51,134 @@ export type CaptureHistoryItem = {
   thumbnailIds: string[];
 };
 
+export type PendingStatus = "extracting" | "ready" | "saving" | "failed";
+
+/** One job in the queue: its own review, or one file of a drop. */
+export type CaptureHistoryPendingFile = {
+  id: string;
+  status: PendingStatus;
+  /** The doc's or file's name, when the job was given one. */
+  title: string | null;
+  peopleCount: number;
+  error: string | null;
+  /** Where its review lives: the meeting page for a recording, else this job on /capture. */
+  href: string;
+};
+
+/**
+ * An extraction that has not been saved yet. Cloud docs (picked or auto-extracted by the
+ * drive scan), Granola and Notion picks and multi-file drops all wait here until someone
+ * reviews them, and until then no note batch exists — so without these the history never
+ * shows them.
+ *
+ * A drop (several files read together, one `batchGroupId`) is one entry with a row per
+ * file: it is reviewed as one deck, so it is listed as one thing to do.
+ */
+export type CaptureHistoryPending =
+  | ({ kind: "job"; createdAt: string; method: CaptureMethod } & CaptureHistoryPendingFile)
+  | {
+      kind: "drop";
+      /** The `batchGroupId`, or the folded job's id once the drop is one review. */
+      id: string;
+      /** Set once the drop is folded into one review: discard that job, not a batch. */
+      jobId: string | null;
+      /** ISO; the newest file's. */
+      createdAt: string;
+      method: CaptureMethod;
+      files: CaptureHistoryPendingFile[];
+      /** Opens the drop's review: any of its files does, the flow folds the rest in. */
+      href: string;
+    };
+
+/** Jobs read for the queue; they are not paged. ponytail: the finder's own 50 cap, page it if anyone hits it. */
+const PENDING_LIMIT = 50;
+
+const PENDING_STATUS: Partial<Record<string, PendingStatus>> = {
+  queued: "extracting",
+  extracting: "extracting",
+  ready: "ready",
+  reviewing: "ready",
+  saving: "saving",
+  failed: "failed",
+};
+
+/** A drop's files are still being uploaded and read while `ingesting`; a lone one is a draft. */
+const DROP_READING: Partial<Record<string, PendingStatus>> = { ingesting: "extracting", transcribed: "extracting" };
+
+/**
+ * Everything still waiting, newest first, drops folded into one entry. Drafts (a lone job
+ * still `ingesting` / `transcribed`: notes being typed or uploaded into the box) are not
+ * extractions yet and stay out.
+ */
+export async function listPendingCapturesFor(userId: string): Promise<CaptureHistoryPending[]> {
+  const jobs = await findActiveCaptureJobs(userId, PENDING_LIMIT);
+  const out: CaptureHistoryPending[] = [];
+  const drops = new Map<string, Extract<CaptureHistoryPending, { kind: "drop" }>>();
+  const fileCreated = new Map<string, string>();
+  for (const job of jobs) {
+    const status = PENDING_STATUS[job.status] ?? (job.batchGroupId ? DROP_READING[job.status] : undefined);
+    if (!status || job.noteBatchId) continue;
+    const method = captureMethod({
+      meeting: false,
+      granola: job.sourceKind === "granola",
+      jobSource: job.sourceKind,
+      jobTags: job.sources,
+      kinds: [],
+    });
+    const file: CaptureHistoryPendingFile = {
+      id: job.id,
+      status,
+      title: job.sourceLabel,
+      peopleCount: job.result?.items.length ?? 0,
+      error: status === "failed" ? job.error : null,
+      href: job.meetingSessionId ? `/meetings/${job.meetingSessionId}` : `/capture?job=${job.id}`,
+    };
+    const createdAt = new Date(job.createdAt).toISOString();
+    // A drop already folded into one review: still listed file by file, from the label every
+    // card keeps (`combineCaptureResults`), so the files never read as one blob of notes.
+    if (!job.batchGroupId && job.result?.parts?.length) {
+      const byNote = new Map<string, number>();
+      for (const item of job.result.items) {
+        const label = item.noteLabel ?? "Untitled note";
+        byNote.set(label, (byNote.get(label) ?? 0) + 1);
+      }
+      out.push({
+        kind: "drop",
+        id: job.id,
+        jobId: job.id,
+        createdAt,
+        method,
+        files: [...byNote].map(([title, peopleCount], i) => ({ ...file, id: `${job.id}:${i}`, title, peopleCount })),
+        href: file.href,
+      });
+      continue;
+    }
+    if (!job.batchGroupId) {
+      out.push({ kind: "job", createdAt, method, ...file });
+      continue;
+    }
+    let drop = drops.get(job.batchGroupId);
+    if (!drop) {
+      drop = { kind: "drop", id: job.batchGroupId, jobId: null, createdAt, method, files: [], href: file.href };
+      drops.set(job.batchGroupId, drop);
+      out.push(drop);
+    }
+    drop.files.push(file);
+    fileCreated.set(file.id, createdAt);
+    if (createdAt > drop.createdAt) drop.createdAt = createdAt;
+  }
+  for (const drop of drops.values()) {
+    // Oldest file first, the order they were dropped; open on a file that has been read.
+    drop.files.sort((a, b) => fileCreated.get(a.id)!.localeCompare(fileCreated.get(b.id)!));
+    drop.href = (drop.files.find((f) => f.status === "ready") ?? drop.files[0]!).href;
+  }
+  return out;
+}
+
 export type CaptureHistoryPage = {
   items: CaptureHistoryItem[];
+  /** Unsaved extractions, on the first page only (empty on every later one). */
+  pending: CaptureHistoryPending[];
   /** Opaque; hand it back to get the next page. Null when there is nothing older. */
   nextCursor: string | null;
 };
@@ -148,6 +275,8 @@ export async function listCaptureHistoryFor(
   const limit = Math.min(Math.max(opts.limit ?? CAPTURE_HISTORY_PAGE, 1), 50);
   const after = decodeCursor(opts.cursor);
   const db = await getDb();
+  // A side read: the saved history still renders if it fails.
+  const pendingPromise = after ? Promise.resolve([]) : listPendingCapturesFor(userId).catch(() => []);
 
   const rows = await db
     .select({
@@ -262,6 +391,7 @@ export async function listCaptureHistoryFor(
   const last = page[page.length - 1];
   return {
     items,
+    pending: await pendingPromise,
     nextCursor: rows.length > limit && last ? encodeCursor(last.createdAtText, last.id) : null,
   };
 }

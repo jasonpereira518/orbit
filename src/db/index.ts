@@ -3035,14 +3035,13 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // and share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). Renumbered
 // 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
+// 209 = outreach_campaigns.background_job (asynchronous campaign execution & scout runner)
 //
-// 209 = feedback.triage (jsonb): the AI triage pass's one-line summary, severity and
-// duplicate-of for each feedback report, read by the Slack DM and the admin console. See
-// src/lib/feedback-triage.ts.
-//
-// 210 = the feedback conversation: feedback_messages (new table — reporter and operator
-// messages on one report) and feedback.thanks_credits / user_read_at / operator_read_at (the
-// once-per-report credit thank-you and each side's read marker). See src/lib/feedback-thread.ts.
+// 210 = the feedback rework, both halves in one bump (built as 209 + 210 on this branch, then
+// renumbered on Nov 9 2026 when outreach's 209 reached main first):
+// feedback.triage (jsonb) — the AI triage pass's summary, severity and duplicate-of, see
+// src/lib/feedback-triage.ts; and the feedback conversation — feedback_messages (new table)
+// plus feedback.thanks_credits / user_read_at / operator_read_at, see src/lib/feedback-thread.ts.
 export const SCHEMA_VERSION = 210;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
@@ -4168,6 +4167,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "jsonb DEFAULT '[]'"
   );
   await ensureColumn(client, "outreach_campaigns", "last_search_source", "text");
+  await ensureColumn(client, "outreach_campaigns", "background_job", "jsonb");
   await ensureColumn(
     client,
     "outreach_messages",
@@ -4852,6 +4852,7 @@ const alters = [
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS reply_cta text`,
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sequence_steps jsonb DEFAULT '[]'`,
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS last_search_source text`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS background_job jsonb`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS parent_message_id uuid`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS scheduled_for timestamptz`,

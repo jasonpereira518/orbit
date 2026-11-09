@@ -40,6 +40,7 @@ import { companyBrandText } from "@/lib/company-brand";
 import { playDing } from "@/lib/ding";
 import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import { AccountAlerts } from "@/components/notifications/account-alerts";
+import { RowBubble } from "@/components/notifications/row-bubble";
 import {
   dismissBackgroundJob,
   useBackgroundJobs,
@@ -361,6 +362,7 @@ function KeptRow({
   onAct: () => void;
 }) {
   const actionable = !!entry.actionLabel && hasLiveAction(entry.id);
+  const detail = `${formatDistanceToNow(entry.at, { addSuffix: true })}${entry.description ? ` · ${entry.description}` : ""}`;
 
   return (
     <div className={ROW}>
@@ -371,15 +373,10 @@ function KeptRow({
           <Clock className="h-4 w-4 text-muted-foreground" />
         )}
       </IconDisc>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-ink" title={entry.title}>
-          {entry.title}
-        </p>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {formatDistanceToNow(entry.at, { addSuffix: true })}
-          {entry.description ? ` · ${entry.description}` : ""}
-        </p>
-      </div>
+      <RowBubble lines={[entry.title, detail]} render={<div className="min-w-0 flex-1" />}>
+        <p className="truncate text-sm font-medium text-ink">{entry.title}</p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</p>
+      </RowBubble>
       {actionable && (
         <Button
           type="button"
@@ -409,6 +406,15 @@ function JobRow({ job }: { job: BackgroundJob }) {
   const determinate = job.total > 0;
   const pct = determinate ? Math.min(100, Math.round((job.done / job.total) * 100)) : null;
   const running = job.status === "running";
+  const headline = running
+    ? job.cancelling
+      ? "Stopping…"
+      : job.label
+    : job.status === "completed"
+      ? job.resultMessage || `${job.label} — done`
+      : job.status === "failed"
+        ? job.error || `${job.label} failed`
+        : job.resultMessage || `${job.label} stopped`;
 
   return (
     <div className={ROW}>
@@ -423,18 +429,8 @@ function JobRow({ job }: { job: BackgroundJob }) {
         <XCircle className="h-4 w-4 text-muted-foreground" />
       )}
       </IconDisc>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-ink">
-          {running
-            ? job.cancelling
-              ? "Stopping…"
-              : job.label
-            : job.status === "completed"
-              ? job.resultMessage || `${job.label} — done`
-              : job.status === "failed"
-                ? job.error || `${job.label} failed`
-                : job.resultMessage || `${job.label} stopped`}
-        </p>
+      <RowBubble lines={[headline]} render={<div className="min-w-0 flex-1" />}>
+        <p className="truncate text-sm font-medium text-ink">{headline}</p>
         {running && (
           <div className="mt-1 flex items-center gap-2">
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-border/80">
@@ -453,7 +449,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
             )}
           </div>
         )}
-      </div>
+      </RowBubble>
       {running && job.onCancel && (
         <Button
           size="sm"
@@ -496,21 +492,20 @@ function RadarRow({
 }) {
   const shown = names.slice(0, 3);
   const rest = count - shown.length;
+  const headline = `${drafts > 0 ? `${drafts} ${drafts === 1 ? "draft" : "drafts"} ready · ` : ""}${count} ${count === 1 ? "person" : "people"} worth a message`;
+  const detail = `${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}`;
   return (
     <div className={cn(ROW, "bg-popover")}>
       <IconDisc>
         <Radar className="h-4 w-4 text-muted-foreground" />
       </IconDisc>
-      <Link href="/radar" onClick={onNavigate} className="min-w-0 flex-1 hover:underline">
-        <span className="block truncate text-sm font-medium text-ink">
-          {drafts > 0 ? `${drafts} ${drafts === 1 ? "draft" : "drafts"} ready · ` : ""}
-          {count} {count === 1 ? "person" : "people"} worth a message
-        </span>
-        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-          {shown.join(", ")}
-          {rest > 0 ? ` and ${rest} more` : ""}
-        </span>
-      </Link>
+      <RowBubble
+        lines={[headline, detail]}
+        render={<Link href="/radar" onClick={onNavigate} className="min-w-0 flex-1 hover:underline" />}
+      >
+        <span className="block truncate text-sm font-medium text-ink">{headline}</span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">{detail}</span>
+      </RowBubble>
     </div>
   );
 }
@@ -543,16 +538,22 @@ function NotificationRow({
     : item.kind === "capture_review" || item.kind === "cloud_notes"
       ? "Waiting on you"
       : "No due date";
+  // The subtitle as plain text, for the hover bubble (the on-screen one tints the company).
+  const detail = [
+    when,
+    item.company ? [item.contactTitle, item.company].filter(Boolean).join(" · ") : item.body,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className={cn(ROW, "border-primary/15 bg-popover")}>
       <IconDisc>
         <Icon className="h-4 w-4 text-muted-foreground" />
       </IconDisc>
-      <Link
-        href={item.url}
-        onClick={onNavigate}
-        className="min-w-0 flex-1 hover:underline"
+      <RowBubble
+        lines={[item.title, detail]}
+        render={<Link href={item.url} onClick={onNavigate} className="min-w-0 flex-1 hover:underline" />}
       >
         <span className="block truncate text-sm font-medium text-ink">
           {item.title}
@@ -575,7 +576,7 @@ function NotificationRow({
             ""
           )}
         </span>
-      </Link>
+      </RowBubble>
       {item.kind === "reminder" && onSnooze && (
         <Button
           size="icon"
