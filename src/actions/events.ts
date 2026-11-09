@@ -1028,7 +1028,7 @@ export async function findAttendeeLinkedInAction(
     const userId = await requireUserForReleasedSurface(SURFACE);
     const result = await findAttendeeLinkedIn(userId, eventId, attendeeId);
     if (!result.ok) {
-      throw new UserFacingError(result.error ?? "Could not find a verified LinkedIn profile");
+      throw new UserFacingError(result.error ?? "Couldn’t find a verified LinkedIn profile");
     }
     revalidateEvents(eventId);
     return { linkedinUrl: result.linkedinUrl, source: result.source };
@@ -1040,7 +1040,7 @@ export async function findAttendeeLinkedInAction(
  */
 export async function batchFindRosterLinkedInsAction(
   eventId: string
-): Promise<ActionResult<{ found: number; total: number }>> {
+): Promise<ActionResult<{ found: number; total: number; urls: Record<string, string> }>> {
   return asActionResult(async () => {
     const userId = await requireUserForReleasedSurface(SURFACE);
     const result = await batchFindRosterLinkedIns(userId, eventId);
