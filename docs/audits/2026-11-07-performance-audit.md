@@ -216,8 +216,10 @@ queueing on PGlite's single connection.
 - `npx tsc --noEmit`, `eslint` on the changed files, and `next build`: clean, on the committed code (the
   measurement-only edits are not in it).
 - `npx tsx scripts/run-smoke.ts --ci`: **661 of 663 passed** (664 s). The two failures are not from this change:
-  - `smoke-growth-trends` ("a cohort with a three-day-old member draws no week 0") fails the same way on the untouched
-    baseline worktree. It looks date-dependent.
+  - `smoke-growth-trends` ("a cohort with a three-day-old member draws no week 0") failed the same way on the untouched
+    baseline worktree. Root cause found later: `retentionCurves` stepped months with `generate_series` over a
+    `timestamptz`, so in a non-UTC session every cohort landed a day early and the current month fell out of the
+    series. It was a real product bug, not a flake; fixed in #571.
   - `smoke-radar-run` ("after release, both are") failed once in the full run and passed 3 of 3 alone on this branch and
     on the baseline. The branch touches nothing in radar; I read it as a load or ordering flake, but did not rerun the
     whole suite to confirm.
