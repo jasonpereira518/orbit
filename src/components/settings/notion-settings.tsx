@@ -61,8 +61,9 @@ export function NotionSettings() {
   const connect = () =>
     start(async () => {
       try {
-        const { url } = await startNotionConnect();
-        window.location.assign(url);
+        const res = await startNotionConnect();
+        if (!res.ok) return void toast.error(res.error);
+        window.location.assign(res.value.url);
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t reach Notion — try again?"));
       }

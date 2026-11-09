@@ -48,15 +48,21 @@ async function callbackUrl(): Promise<string> {
  * Notion's consent screen, where the person also picks which pages and databases Orbit may
  * read. Reconnecting is how they change that choice. `returnTo`: an in-app path to land on.
  */
-export async function startNotionConnect(returnTo?: string | null): Promise<{ url: string }> {
+export async function startNotionConnect(returnTo?: string | null): Promise<ActionResult<{ url: string }>> {
   const userId = await requireNotionUser();
-  const url = buildAuthorizeUrl("notion", {
-    userId,
-    redirectUri: await callbackUrl(),
-    scopes: [],
-    returnTo: safeReturnPath(returnTo) ?? integrationHref("notion"),
+  return asActionResult(async () => {
+    // Said plainly, not as "couldn't reach Notion": the fix is on this server, not at Notion.
+    if (!process.env.NOTION_CLIENT_ID || !process.env.NOTION_CLIENT_SECRET) {
+      throw new UserFacingError("Notion isn’t set up on this server yet: add NOTION_CLIENT_ID and NOTION_CLIENT_SECRET");
+    }
+    const url = buildAuthorizeUrl("notion", {
+      userId,
+      redirectUri: await callbackUrl(),
+      scopes: [],
+      returnTo: safeReturnPath(returnTo) ?? integrationHref("notion"),
+    });
+    return { url };
   });
-  return { url };
 }
 
 export type NotionPanel = {
