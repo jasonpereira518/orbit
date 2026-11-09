@@ -2,17 +2,27 @@
 
 import { Sparkles, Upload, UserPlus, type LucideIcon } from "lucide-react";
 import {
-  BackButton,
+  CARD,
+  ChoiceRow,
+  RecommendedTag,
   Stagger,
   StaggerItem,
-  StepHeading,
+  StepFooter,
+  StepLayout,
 } from "@/components/onboarding/onboarding-ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type PeoplePath = "capture" | "manual" | "import";
 
-const PATHS: Array<{ id: PeoplePath; icon: LucideIcon; title: string; body: string; recommended?: boolean }> = [
+const PATHS: Array<{
+  id: PeoplePath;
+  icon: LucideIcon;
+  tone?: "gold";
+  title: string;
+  body: string;
+  recommended?: boolean;
+}> = [
   {
     id: "capture",
     icon: Sparkles,
@@ -23,6 +33,7 @@ const PATHS: Array<{ id: PeoplePath; icon: LucideIcon; title: string; body: stri
   {
     id: "manual",
     icon: UserPlus,
+    tone: "gold",
     title: "Add someone by hand",
     body: "A name, where they work, and how you know them.",
   },
@@ -44,55 +55,47 @@ export function PeopleStep({
   onBack: () => void;
 }) {
   return (
-    <Stagger className="mx-auto max-w-3xl space-y-8">
-      <div className="space-y-4">
-        <StaggerItem>
-          <BackButton onClick={onBack} />
-        </StaggerItem>
-        <StepHeading eyebrow="Your people" title="Add your first people">
-          Start with whatever you have on hand. Adding more later is just as easy.
-        </StepHeading>
-      </div>
-
-      <Stagger as="ul" className="grid gap-3 sm:grid-cols-3">
-        {PATHS.map((path) => {
-          const Icon = path.icon;
-          return (
-            <StaggerItem as="li" key={path.id}>
-              <button
-                type="button"
-                onClick={() => onChoose(path.id)}
-                className={cn(
-                  "group flex h-full w-full flex-col items-start gap-3 rounded-2xl border border-border/70 bg-card p-5 text-left",
-                  "transition-[border-color,background-color,box-shadow,transform] duration-200 active:scale-[0.98]",
-                  "hover:border-primary/30 hover:shadow-md focus-visible:border-primary focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
-                )}
+    <StepLayout
+      onBack={onBack}
+      eyebrow="Your people"
+      title="Add your first people"
+      description="Start with whatever you have on hand. Adding more later is just as easy."
+      footer={
+        <StepFooter
+          left={
+            <Button type="button" variant="ghost" className="h-10 text-muted-foreground" onClick={onLater}>
+              I’ll add people later
+            </Button>
+          }
+        />
+      }
+    >
+      <Stagger as="ul" className="space-y-2.5">
+        {PATHS.map((path) => (
+          <StaggerItem as="li" key={path.id}>
+            <button
+              type="button"
+              onClick={() => onChoose(path.id)}
+              className={cn(
+                CARD,
+                "flex w-full p-4 text-left",
+                "transition-[border-color,box-shadow,transform] duration-200 active:scale-[0.99]",
+                "hover:border-primary/40 hover:shadow-md focus-visible:border-primary focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                path.recommended && "border-primary",
+              )}
+            >
+              <ChoiceRow
+                icon={path.icon}
+                tone={path.tone}
+                title={path.title}
+                tag={path.recommended ? <RecommendedTag /> : undefined}
               >
-                <span className="flex size-11 items-center justify-center rounded-xl bg-accent text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
-                  <Icon className="size-5" aria-hidden />
-                </span>
-                <span>
-                  <span className="block font-medium text-ink">
-                    {path.title}
-                    {path.recommended && (
-                      <span className="ml-2 inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-px text-2xs font-medium text-primary">
-                        Recommended
-                      </span>
-                    )}
-                  </span>
-                  <span className="mt-1 block text-sm text-muted-foreground">{path.body}</span>
-                </span>
-              </button>
-            </StaggerItem>
-          );
-        })}
+                {path.body}
+              </ChoiceRow>
+            </button>
+          </StaggerItem>
+        ))}
       </Stagger>
-
-      <StaggerItem className="text-center">
-        <Button type="button" variant="outline" onClick={onLater}>
-          I’ll add people later
-        </Button>
-      </StaggerItem>
-    </Stagger>
+    </StepLayout>
   );
 }

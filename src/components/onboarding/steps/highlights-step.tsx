@@ -10,7 +10,8 @@ import {
   SoonTag,
   Stagger,
   StaggerItem,
-  StepHeading,
+  StepFooter,
+  StepLayout,
 } from "@/components/onboarding/onboarding-ui";
 import {
   unlockTagPlan,
@@ -124,18 +125,43 @@ export function HighlightsStep({
   }
 
   return (
-    <Stagger className="space-y-5">
-      <div className="space-y-3">
-        <StaggerItem>
-          <BackButton onClick={onBack} />
-        </StaggerItem>
-        <StepHeading eyebrow="You’re set up" title="Here’s what Orbit can do">
-          Everything here is one click from the sidebar. The tags show what uses AI credits, waits
-          on an import or comes with Pro
-        </StepHeading>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-10">
+    <StepLayout
+      onBack={onBack}
+      eyebrow="You’re set up"
+      title="Here’s what Orbit can do"
+      description="Tags show what uses AI credits, needs an import or comes with Pro."
+      className="max-w-5xl"
+      footer={
+        <StepFooter
+          left={
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                className="h-10"
+                disabled={index === 0}
+                onClick={prev}
+                aria-label="Previous feature"
+              >
+                <ArrowLeft className="size-4" aria-hidden />
+                <span className="max-sm:sr-only">Previous</span>
+              </Button>
+              <p className="px-1 text-xs tabular-nums text-muted-foreground" aria-live="polite">
+                {index + 1} / {chapters.length}
+              </p>
+            </>
+          }
+          right={
+            <Button type="button" size="lg" className="h-10 px-4" onClick={next}>
+              {index >= last ? "Go to dashboard" : "Next"}
+              <ArrowRight className="size-4" aria-hidden />
+            </Button>
+          }
+        />
+      }
+    >
+      <div className="grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-8">
         {/* min-w-0: on a phone the rail is one nowrap strip, and a grid item's default
             min-width is its content — without this the strip widened the whole column and
             pushed Next off the right edge of the screen. */}
@@ -153,7 +179,7 @@ export function HighlightsStep({
           <section
             aria-roledescription="carousel"
             aria-label="Orbit features"
-            className="relative overflow-hidden rounded-3xl border border-border/60 bg-card/60"
+            className="relative overflow-hidden rounded-2xl border border-border/70 bg-card"
           >
             {/* The frame never moves: the two panes and the divider between them are static,
                 and only what is inside them changes. The preview crossfades in its fixed-height
@@ -169,7 +195,7 @@ export function HighlightsStep({
               aria-roledescription="slide"
               aria-label={`${index + 1} of ${chapters.length}: ${chapter.title}`}
             >
-              <div className="relative h-[19rem] overflow-hidden border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent md:h-auto md:min-h-[19rem] md:border-r md:border-b-0">
+              <div className="relative h-[19rem] overflow-hidden border-b border-border/60 bg-gradient-to-b from-muted/40 to-transparent md:h-auto md:min-h-[18rem] md:border-r md:border-b-0">
                 <AnimatePresence initial={false}>
                   <motion.div
                     key={chapter.id}
@@ -203,29 +229,7 @@ export function HighlightsStep({
             </motion.div>
           </section>
 
-          {/* Three columns, so the counter stays centred when Next becomes Go to dashboard. */}
-          <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              size="lg"
-              className="h-10 justify-self-start"
-              disabled={index === 0}
-              onClick={prev}
-              aria-label="Previous feature"
-            >
-              <ArrowLeft className="size-4" aria-hidden />
-              <span className="max-sm:sr-only">Previous</span>
-            </Button>
-            <p className="text-xs tabular-nums text-muted-foreground" aria-live="polite">
-              {index + 1} / {chapters.length}
-            </p>
-            <Button type="button" size="lg" className="h-10 justify-self-end px-4" onClick={next}>
-              {index >= last ? "Go to dashboard" : "Next"}
-              <ArrowRight className="size-4" aria-hidden />
-            </Button>
-          </div>
-          <p className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-center text-xs text-muted-foreground lg:justify-end">
+          <p className="mt-2 flex flex-wrap items-center justify-center gap-x-4 text-center text-[0.8125rem] text-muted-foreground lg:justify-end">
             {/* Kept in place (just hidden) on the last chapter, so nothing below the card moves. */}
             <button
               type="button"
@@ -233,7 +237,7 @@ export function HighlightsStep({
               tabIndex={index < last ? 0 : -1}
               aria-hidden={index >= last}
               className={cn(
-                "underline-offset-4 hover:text-foreground hover:underline",
+                "inline-flex min-h-9 items-center underline-offset-4 hover:text-foreground hover:underline",
                 index >= last && "invisible",
               )}
             >
@@ -243,7 +247,7 @@ export function HighlightsStep({
               <button
                 type="button"
                 onClick={onTour}
-                className="underline-offset-4 hover:text-foreground hover:underline"
+                className="inline-flex min-h-9 items-center underline-offset-4 hover:text-foreground hover:underline"
               >
                 Take the guided tour instead
               </button>
@@ -251,7 +255,7 @@ export function HighlightsStep({
           </p>
         </StaggerItem>
       </div>
-    </Stagger>
+    </StepLayout>
   );
 }
 
@@ -286,7 +290,7 @@ function ChapterRail({
   return (
     <ol
       ref={railRef}
-      className="-mx-4 flex snap-x gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0"
+      className="flex snap-x gap-1 overflow-x-auto pb-1 max-md:-mx-4 max-md:px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0"
       aria-label="Features"
     >
       {chapters.map((c, i) => {
@@ -303,7 +307,7 @@ function ChapterRail({
               onClick={() => onSelect(i)}
               aria-current={active ? "step" : undefined}
               className={cn(
-                "relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm transition-colors",
+                "relative flex min-h-9 w-full items-center gap-2.5 rounded-xl px-3 py-1 text-left text-sm transition-colors",
                 active ? "text-ink" : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -363,8 +367,8 @@ function ChapterCopy({
   return (
     <Stagger className="flex flex-col gap-3 p-5">
       <StaggerItem className="flex flex-wrap items-center gap-2">
-        <span className="flex size-9 items-center justify-center rounded-xl bg-accent text-primary">
-          <Icon className="size-4.5" aria-hidden />
+        <span aria-hidden className="flex size-12 items-center justify-center rounded-2xl bg-accent text-primary">
+          <Icon className="size-6" />
         </span>
         {soon && <SoonTag />}
         {(soon || chapterLocked) && <ProTag plan={unlockTagPlan(chapter.entitlement, planConfig)} />}
@@ -374,12 +378,12 @@ function ChapterCopy({
         <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight text-ink text-balance">
           {chapter.title}
         </h2>
-        <p className="mt-2 text-sm text-muted-foreground text-pretty">{chapter.blurb}</p>
+        <p className="mt-1.5 text-sm text-muted-foreground text-pretty">{chapter.blurb}</p>
       </StaggerItem>
       <Stagger as="ul" className="space-y-2">
         {chapter.bullets.map((b) => (
           <StaggerItem as="li" key={b.label} className="flex items-start gap-2 text-sm text-foreground">
-            <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+            <Check className="mt-0.5 size-4 shrink-0 text-gold" aria-hidden />
             <span className="min-w-0">
               {b.labelFor?.(planConfig) ?? b.label}
               {b.soon && <SoonTag className="ml-1.5 align-[1px]" />}

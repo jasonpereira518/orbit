@@ -498,7 +498,7 @@ export function MobileNav({
                 const displayActive = myIndex === highlightIndex;
                 const Icon = item.icon;
                 return (
-                  <li key="more" className="flex-1">
+                  <li key="more" className="flex min-w-0 justify-center">
                     <button
                       type="button"
                       ref={(el) => {
@@ -537,7 +537,7 @@ export function MobileNav({
 
               if (isCapture) {
                 return (
-                  <li key={navItem.href} className="flex-1">
+                  <li key={navItem.href} className="flex min-w-0 justify-center">
                     {/* Tap opens the Voice tab; hold records a note straight from here. */}
                     <MobileCaptureButton
                       label={navItem.label}
@@ -551,7 +551,7 @@ export function MobileNav({
               const displayActive = myIndex === highlightIndex;
 
               return (
-                <li key={navItem.href} className="flex-1">
+                <li key={navItem.href} className="flex min-w-0 justify-center">
                   <IntentLink
                     href={navItem.href}
                     // Touch-start upgrades it to a full prefetch ~100 ms before the tap's click.

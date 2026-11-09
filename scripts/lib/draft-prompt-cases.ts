@@ -10,9 +10,9 @@
  *
  * Callers must have imported `./smoke/_env` first (local PGlite, no real provider keys).
  */
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../../src/db";
-import { contacts, interactions, userSettings } from "../../src/db/schema";
+import { contacts, interactions, rateLimitBuckets, userSettings } from "../../src/db/schema";
 import { encrypt } from "../../src/lib/crypto";
 import { generateOutreachDraft } from "../../src/lib/outreach-drafts";
 import { generateContactFollowUpDraft } from "../../src/lib/follow-up-drafts";
@@ -26,6 +26,7 @@ export type CaseResults = Record<string, SentPrompt>;
 
 /** What the stubbed model answers, valid for every one of the four operations. */
 const REPLY = JSON.stringify({
+  purpose: "Ask about the seed round",
   subject: "A subject",
   body: "A body.",
   starters: [{ text: "Ask about the launch.", kind: "recent", basis: "Their last note" }],
@@ -58,7 +59,7 @@ export function installPromptCapture() {
   }) as typeof fetch;
 }
 
-async function only(run: () => Promise<unknown>): Promise<SentPrompt> {
+export async function only(run: () => Promise<unknown>): Promise<SentPrompt> {
   captured = [];
   await run();
   if (captured.length !== 1) throw new Error(`expected one model call, saw ${captured.length}`);
@@ -67,6 +68,13 @@ async function only(run: () => Promise<unknown>): Promise<SentPrompt> {
 
 export async function seedCaseUser(): Promise<{ contactId: string }> {
   const db = await getDb();
+  // The click-driven draft ops are metered (audit M-07), and every `pglite` smoke script in a
+  // shard shares one database, so a script that ran earlier in the shard may already have spent
+  // this user's `draft` window. Start each caller from a clean bucket, as the other rate-limited
+  // smokes do.
+  await db
+    .delete(rateLimitBuckets)
+    .where(inArray(rateLimitBuckets.bucket, [`draft:${CASE_USER}`, `compose:${CASE_USER}`]));
   await db.delete(userSettings).where(eq(userSettings.userId, CASE_USER));
   await db.insert(userSettings).values({
     userId: CASE_USER,
