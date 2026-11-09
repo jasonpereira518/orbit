@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
@@ -19,6 +19,8 @@ import { learnOrgBrandColors, loadOrgBrandColors } from "@/lib/org-brand-learn";
 import { OfflineSync } from "@/components/layout/offline-sync";
 import { MeetingSessionProvider } from "@/components/capture/meeting-session";
 import { captureAttribution } from "@/lib/attribution-capture";
+import { captureRadarTimeZone } from "@/lib/radar/digest";
+import { TZ_COOKIE, isValidTimeZone } from "@/lib/reminder-due-bucket";
 import {
   bootstrapAuthenticatedUser,
   isClerkConfigured,
@@ -89,6 +91,14 @@ export default async function AppLayout({
   // sets one) and swallows its own failures, which is what makes it safe to run after the
   // response is flushed.
   after(() => captureAttribution(userId));
+
+  // The user's zone for everything that runs without a browser in front of it (MCP, capture
+  // jobs, cron): `PresenceHeartbeat` keeps the cookie on this browser's zone, and the saved
+  // copy follows it here. Compared in memory first, so a settled zone costs no statement.
+  const browserTz = (await cookies()).get(TZ_COOKIE)?.value;
+  if (isValidTimeZone(browserTz) && browserTz !== settings.radarDigestTz) {
+    after(() => captureRadarTimeZone(userId, browserTz).catch(() => undefined));
+  }
 
   // The real gate is `requireUserId()`, which throws `AccountSuspendedError` and covers
   // Server Action POSTs that never re-run this layout. This is only the friendly surface:

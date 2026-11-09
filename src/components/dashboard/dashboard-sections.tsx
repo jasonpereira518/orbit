@@ -1,4 +1,5 @@
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -40,6 +41,7 @@ import { aiDenialFromSettings } from "@/lib/ai-access";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import { countTourExamples, hasOwnInteraction } from "@/lib/onboarding-examples/status";
 import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
+import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { MorningBriefing } from "@/components/radar/morning-briefing";
 import type { RadarBriefing } from "@/lib/radar/page-data";
 
@@ -133,12 +135,13 @@ export async function SetupChecklistSection() {
   const settings = await ensureUserSettings(userId);
   if (!settings.onboardingCompletedAt || tourRailVisible(settings)) return null;
 
-  const [gmail, outlook, usage, examples, logged] = await Promise.all([
+  const [gmail, outlook, usage, examples, logged, goals] = await Promise.all([
     getGmailConnectionStatus(),
     getOutlookConnectionStatus(),
     contactUsageForUser(userId),
     countTourExamples(userId),
     hasOwnInteraction(userId),
+    listActiveGoalTextsForUser(userId, { limit: 1 }),
   ]);
 
   const items: SetupChecklistItem[] = [];
@@ -152,6 +155,16 @@ export async function SetupChecklistSection() {
           ? "Capture from notes, Chat and profile briefs run on it."
           : "Orbit’s AI isn’t available right now, so capture, Chat and briefs need a key of your own",
       href: integrationHref("ai"),
+    });
+  }
+  // The About you step was skipped, or finished without a goal. Settings, not /onboarding:
+  // the stage redirects a finished account straight back to the dashboard.
+  if (goals.length === 0 && !settings.careerProfile?.aim) {
+    items.push({
+      id: "about",
+      label: "Tell Orbit what you’re going for",
+      detail: "One goal, and Orbit’s suggestions and drafts start pointing at it.",
+      href: "/settings#settings-goals",
     });
   }
   // What onboarding set up, in its order: the AI key, Google/Microsoft, then the things the
@@ -445,7 +458,7 @@ export async function RemindersAndFollowUpsSection({
 }: {
   bundle: DashboardBundle;
 }) {
-  const { data } = await bundle;
+  const [{ data }, timeZone] = await Promise.all([bundle, viewerTimeZone()]);
   return (
     <>
       <div className="reveal-mount min-w-0 [&>*]:h-full" style={revealDelay(0)}>
@@ -503,6 +516,7 @@ export async function RemindersAndFollowUpsSection({
                   tier={tierForContact(data, c.id)}
                   nextFollowUpAt={c.nextFollowUpAt}
                   lastInteractionAt={c.lastInteractionAt}
+                  timeZone={timeZone}
                 />
               ))
             )}
@@ -666,6 +680,8 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
           company: c.company,
           title: c.title,
           goalRelevance: c.goalRelevance,
+          reason: c.reason,
+          companyName: c.companyName,
         }))}
       />
 

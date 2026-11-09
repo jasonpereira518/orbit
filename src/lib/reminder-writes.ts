@@ -10,6 +10,7 @@
  * Nothing about the writes changed in the move; the comments explaining *why* each write
  * looks the way it does travelled with the code.
  */
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, reminders, type ReminderActionKind } from "@/db/schema";
@@ -21,6 +22,9 @@ import { findReminderListForUser, getInboxListId } from "@/lib/reminder-lists";
 import { revalidatePathIfRequestScoped, revalidateReminderPaths } from "@/lib/reminder-paths";
 import { completeReminder, reopenReminder, type CompletionSnapshot } from "@/lib/reminders";
 import { settle, unwrap } from "@/lib/settled";
+import { optionalClientDate } from "@/lib/input/dates";
+import { TEXT_LIMITS, cleanOptionalText, cleanText } from "@/lib/input/text";
+import { UserFacingError } from "@/lib/errors";
 import { track, type TrackOptions } from "@/lib/product-events";
 import { eventId } from "@/lib/product-event-ids";
 import type { FOLLOWUP_ORIGINS, FOLLOWUP_VIA } from "@/lib/product-event-schemas";
@@ -82,6 +86,16 @@ export async function assertReminderContactOwned(userId: string, contactId: stri
 }
 
 /**
+ * A reminder title, made storable (audit M-05): NUL and control characters stripped, capped,
+ * and never blank. Exported so the edit path in `actions/reminders.ts` applies the same rule.
+ */
+export function requireReminderTitle(title: unknown): string {
+  const clean = typeof title === "string" ? cleanText(title, TEXT_LIMITS.title).trim() : "";
+  if (!clean) throw new UserFacingError("Give the reminder a title first");
+  return clean;
+}
+
+/**
  * Every caller today is a person (the form, the ask bar, a chat card they accepted, an
  * assistant acting for them), so this records `followup_set` unless told otherwise:
  * `origin` defaults to "manual"; pass `null` to record nothing.
@@ -91,6 +105,8 @@ export async function createReminderForUser(
   input: CreateReminderInput,
   tracking: ReminderWriteTracking = {}
 ) {
+  // Hand-made, chat and agent reminders share one daily ceiling (L-22, `reminderDaily`).
+  await consumeDailyCap("reminderDaily", userId);
   const db = await getDb();
   // Moved in from the MCP tool's own ad hoc version of it: a caller that reaches this
   // function some other way — the proposed-action commit in `chat-actions.ts`, today — must
@@ -121,9 +137,9 @@ export async function createReminderForUser(
       userId,
       contactId: input.contactId,
       listId,
-      title: input.title,
-      description: input.description,
-      dueDate: input.dueDate ? new Date(input.dueDate) : null,
+      title: requireReminderTitle(input.title),
+      description: cleanOptionalText(input.description, TEXT_LIMITS.description),
+      dueDate: optionalClientDate(input.dueDate, "due date"),
       reminderType: input.reminderType || "manual",
       actionKind,
       createdBy: "user",
@@ -206,6 +222,7 @@ export async function scheduleContactFollowUpForUser(
       .returning();
     row = updated;
   } else {
+    await consumeDailyCap("reminderDaily", userId);
     const [created] = await db
       .insert(reminders)
       .values({

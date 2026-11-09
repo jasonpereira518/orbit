@@ -10,7 +10,7 @@ import { contacts } from "../../src/db/schema";
 import { getDashboardData } from "../../src/lib/reminders";
 import { loadGraphData } from "../../src/lib/graph-data";
 import { loadNotificationPanel } from "../../src/lib/notification-panel";
-import { loadKnowledgeBase } from "../../src/lib/knowledge-base";
+import { searchKnowledgeContent } from "../../src/lib/knowledge-search";
 import { listContactsPage } from "../../src/lib/contacts-page-query";
 import { POST as MCP_POST } from "../../src/app/api/mcp/route";
 import { GET as EXT_ME } from "../../src/app/api/extension/me/route";
@@ -65,7 +65,7 @@ export async function benchOps(): Promise<BenchOp[]> {
     { name: "dashboard", run: () => getDashboardData(BENCH_USER) },
     { name: "graph", run: () => loadGraphData(BENCH_USER, { profile: null }) },
     { name: "notification panel", run: () => loadNotificationPanel(BENCH_USER, new Date(), { withAlerts: true }) },
-    { name: "knowledge base", run: () => loadKnowledgeBase(BENCH_USER) },
+    { name: "knowledge search", run: () => searchKnowledgeContent(BENCH_USER, "dinner") },
     { name: "contacts page", run: () => listContactsPage(BENCH_USER, { limit: 50 }) },
     { name: "contacts search", run: () => listContactsPage(BENCH_USER, { q: "hopper", limit: 50 }) },
     { name: "mcp search_contacts", run: tool("search_contacts", { query: "Acme engineer", limit: 10 }) },

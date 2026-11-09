@@ -11,7 +11,7 @@ What to do when something is wrong, and how the routine things are done. Short o
 | A known condition opened / recovered | ops sweep → `#orbit-ops` (critical also → `#orbit-ops-critical`) |
 | An exception nobody anticipated | Sentry (linked from `/admin/health`) |
 | What is open right now | `/admin/health` → System status strip and Open alerts |
-| Deep probe | `GET /api/health?token=$HEALTH_TOKEN` — a wrong token answers 401 |
+| Deep probe | `curl -H "Authorization: Bearer $HEALTH_TOKEN" /api/health` — a wrong bearer answers 401; `?token=` is refused in production |
 | Which code is live | `/api/health` → `sha` (compare with `main`) |
 
 ## Deploy
@@ -89,7 +89,7 @@ above. Vercel Pro crons remove the rule entirely.
 | `emailintel.schedule_missed` | The email-insights sweep started once and then went quiet for over two hours (it runs every fifteen minutes), so new application updates are not being noticed. Check the ops workflow ran the `5,20,35,50 * * * *` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/email-intel/sweep`. Never having run is not an alert: the feature is opt-in. |
 | `emailintel.run_failed` | The last email-insights run failed or was killed. Read its `cron_runs` row (job `email-intel.sweep`) and the `email-intel.sweep` errors. One account failing, running out of its daily allowance, or out of time marks the run `partial`, which is not an alert. |
 | `backfill.failed` | `/admin/health` → error events, source `backfill.failed`: `kind` names the backfill, `message` says why. Two or more accounts means it is not one user's key — check the provider status panel and `ai.provider_outage`. |
-| `config.statement_timeout_unbounded` | Run `ALTER ROLE <app role> SET statement_timeout = '20s';` (Neon one-time settings below), then confirm `GET /api/health?token=$HEALTH_TOKEN` shows `config.statementTimeout: "20s"`. It clears on the next sweep. |
+| `config.statement_timeout_unbounded` | Run `ALTER ROLE <app role> SET statement_timeout = '20s';` (Neon one-time settings below), then confirm `curl -H "Authorization: Bearer $HEALTH_TOKEN" /api/health` shows `config.statementTimeout: "20s"`. It clears on the next sweep. |
 | `embedding.backlog` | Check `backfill.failed`, `embedding.unembeddable` and `ai.provider_outage` first. One account: usually that user's key (they already see an account alert). Several: `/admin/health` → Nightly job stats — `embeddingsGenerated` 0 with `embeddingBackfillsKicked` > 0 means every kick is failing. |
 | `sync.lagging` | More connections are due than a run syncs (20 per run, 4 at a time). `sync.run` stats: `budgetExhausted` true on every run means the budget is the limit — raise `CONNECTIONS_PER_RUN` in `src/lib/sync-scheduler.ts` or schedule more often (Vercel Pro crons); many `failed` means a provider problem. |
 | `embedding.unembeddable` | `SELECT error_kind, source_type, count(*) FROM embedding_failures WHERE failed_at > now() - interval '1 day' GROUP BY 1, 2;`. One kind on one provider across users is a provider change (check its status page and changelog); the rows retry once the bisect in `src/lib/embedding-backfill.ts` can embed them. |
@@ -215,7 +215,7 @@ smallest first:
 
 Every plan includes a monthly AI allowance on Orbit's own provider keys, metered in credits (1 credit = $0.01 of model cost): `monthlyCredits` in `src/lib/plans/plan-config.ts` (Free 50 + a one-time 25 starter, Pro 300, Max 650, Lifetime 150). Only `src/lib/ai-access.ts` can issue a key (`scripts/smoke-ai-access.ts` fails the suite if anything else reads an AI key or builds a provider client). An account with its own key can prefer it in Settings; own-key calls never use credits.
 
-- **Keys:** `ORBIT_MANAGED_ANTHROPIC_API_KEY` and `ORBIT_MANAGED_OPENAI_API_KEY`. No managed Gemini key in production. Orbit picks the route on its own key, whatever provider the account selected: `MANAGED_PROVIDER_ORDER` is Anthropic → OpenAI → Gemini, at `MANAGED_DEFAULT_MODELS` (Claude Haiku 5.5, sent at effort `low`; OpenAI `gpt-4o-mini`, `gpt-4.1-nano` for fast-tier work). Embeddings and Whisper run on OpenAI only — Anthropic has neither. Own-key calls keep the account's provider and model.
+- **Keys:** `ORBIT_MANAGED_ANTHROPIC_API_KEY` and `ORBIT_MANAGED_OPENAI_API_KEY`. No managed Gemini key in production. Orbit picks the route on its own key, whatever provider the account selected: `MANAGED_PROVIDER_ORDER` is Anthropic ($190/month pool) → OpenAI; Orbit never uses a managed Gemini key, and with both pools spent the user is told to add their own key, at `MANAGED_DEFAULT_MODELS` (Claude Haiku 5.5, sent at effort `low`; OpenAI `gpt-4o-mini`, `gpt-4.1-nano` for fast-tier work). Embeddings and Whisper run on OpenAI only — Anthropic has neither. Own-key calls keep the account's provider and model.
 - **The pools:** `MANAGED_AI_POOLS` in `src/lib/managed-ai-policy.ts`, one per provider, summing Orbit-paid spend on that provider since its window opened (Deepgram excluded). Anthropic: $190 cap on the $200/month credit, the window restarts on the 15th (`monthlyResetDay`), so it refills by itself. OpenAI: $950 cap on the $1,000 prepaid credit, no reset — after a top-up raise `capMicros` and deploy. A spent pool drops its provider and the next one takes over; with every pool spent, included AI refuses ("Orbit's AI isn't available right now"). Checked in the same 30s-cached read as the admin switch. `/admin/billing` shows one line per pool; `ai.managed_pool:<provider>` warns at 75% (a spent monthly pool stays a warning, a spent prepaid pool is critical).
 - **Admin switch:** `/admin/billing` → included AI on/paused (`site_settings.managed_ai_paused`). Never set reads as PAUSED on production — the reason users see "Orbit’s AI isn’t available right now" until someone turns it on.
 - **Kill switch:** `ORBIT_MANAGED_AI=off`. Every account falls back to its own key, with that same notice.
@@ -288,7 +288,7 @@ the delivery detail when it happened.
 |---|---|
 | `CRON_SECRET` | Update Vercel AND the GitHub `ops` workflow secret. |
 | `CLERK_WEBHOOK_SIGNING_SECRET`, `STRIPE_WEBHOOK_SECRET` | Roll in the dashboard, paste into Vercel, redeploy. |
-| `ENCRYPTION_SECRET` | Do not rotate casually: it decrypts every user's BYOK key and OAuth token. Rotation means re-encrypting them all. |
+| `ENCRYPTION_SECRET` | In Vercel (Production and Preview): set `ENCRYPTION_SECRET_PREVIOUS` to the current value and `ENCRYPTION_SECRET` to a new 32+ character one, then redeploy. Both are accepted from then on: stored keys and tokens are re-encrypted under the new secret as they are read, and unsubscribe links, OAuth states and rate-limit keys made with the old one keep verifying. Leave `ENCRYPTION_SECRET_PREVIOUS` set until rows that are rarely read have been touched (weeks, not days); removing it makes anything still under the old secret unreadable and old unsubscribe links stop working. |
 
 ## Restore the database
 
@@ -298,7 +298,7 @@ be downloaded by anyone signed in to GitHub. Take a fresh one first with **Run w
 the database is still readable.
 
 You need `age` and a `pg_restore` at least as new as the `pg_dump` that wrote the file
-(`PG_MAJOR` in `backup.yml`, 18 today — an older one stops with "unsupported version in file
+(`PG_MAJOR` in the ops repository's `backup.yml`, 18 today — an older one stops with "unsupported version in file
 header"). On a Mac: `brew install age postgresql@18`, then use
 `$(brew --prefix postgresql@18)/bin/pg_restore`.
 
@@ -311,13 +311,13 @@ pg_restore --clean --if-exists --no-owner --no-privileges -d "$BRANCH_URL" orbit
 Check `select count(*) from contacts;`, point a preview at the branch, then promote the
 branch in Neon (or set `DATABASE_URL` to it) once it looks right.
 
-When Neon upgrades the project's Postgres major, raise `PG_MAJOR` in `backup.yml` the same
+When Neon upgrades the project's Postgres major, raise `PG_MAJOR` in the ops repository's `backup.yml` the same
 day: pg_dump refuses a server newer than itself, and the backup fails (and pages) until then.
 
 ### Restore drill log
 
 A backup you have never restored is a hope. Run the restore above into a throwaway Neon
-branch after any change to `backup.yml` and at least once a quarter, then delete the branch.
+branch after any change to the ops repository's `backup.yml` and at least once a quarter, then delete the branch.
 Check the same three counts against production each time:
 
 ```sql
@@ -338,7 +338,7 @@ runner. The first real drill needs the secrets set.
 ## Neon one-time settings
 
 - `ALTER ROLE <app role> SET statement_timeout = '20s';` — bounds a runaway query; the
-  HTTP driver cannot set this per session. **Verify it**: `GET /api/health?token=$HEALTH_TOKEN`
+  HTTP driver cannot set this per session. **Verify it**: `curl -H "Authorization: Bearer $HEALTH_TOKEN" /api/health`
   reports `config.statementTimeout`. `"0"` means unbounded — the ALTER ROLE never ran, or ran
   on the wrong role.
 - Verify the restore window under Project → Settings.

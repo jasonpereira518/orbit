@@ -14,7 +14,6 @@ import {
   subscribe,
   suppressIntro,
 } from "@/lib/graph/intro-signal";
-import { SMALL_SKY_QUERY } from "@/components/graph/use-small-sky";
 import { preloadConstellation } from "@/components/graph/constellation-modules";
 import { cn } from "@/lib/utils";
 import { prefersReducedMotion } from "@/lib/motion-preference";
@@ -85,11 +84,7 @@ export function ConstellationIntro() {
      * failure `scripts/smoke-graph-intro.ts` already guards against. Suppressed rather
      * than skipped, because suppression also kills the late fallback.
      */
-    const smallSky =
-      typeof window !== "undefined" &&
-      window.matchMedia(SMALL_SKY_QUERY).matches;
-
-    if (forced === "off" || (smallSky && forced !== "force")) {
+    if (forced === "off") {
       // Must also kill the late fallback, or "off" only turns off the predictive triggers
       // and the safety net still fires 1.2s later.
       suppressIntro();

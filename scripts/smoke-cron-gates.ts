@@ -99,7 +99,7 @@ const INTENTIONALLY_OPEN: Record<string, { reason: string; mustContain?: RegExp 
   "interest-list/unsubscribe#GET": { reason: "renders a confirmation button only; the POST does the work, behind the token" },
   "interest-list/unsubscribe#POST": {
     reason: "the token IS the WHERE clause of the only write: an unknown token matches no row",
-    mustContain: /\.where\(eq\(interestListSignups\.unsubscribeToken, token\)\)/,
+    mustContain: /\.where\(unsubscribeTokenMatches\(token\)\)/,
   },
 };
 /** CORS preflight for the extension: answers headers, touches nothing. */
@@ -112,6 +112,7 @@ const COVERED_BY_INTERNAL_AUTH = new Set([
   "embeddings/backfill",
   "work-history/research",
   "work-history/sweep",
+  "contacts/monthly-upkeep",
   "contacts/name-sweep",
   "email-intel/sweep",
   "linkedin/timeline-events/backfill",

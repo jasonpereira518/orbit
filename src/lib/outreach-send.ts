@@ -1,3 +1,5 @@
+import { startOfUserDay } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { outreachFromAddress } from "@/lib/outreach-sender";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
@@ -10,7 +12,8 @@ import {
   userSettings,
 } from "@/db/schema";
 import { countAgentSendsToday } from "@/lib/agent-sends";
-import { decryptOrNull } from "@/lib/crypto";
+import type { PgColumn } from "drizzle-orm/pg-core";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
 import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
 import { entitlementsFromSettings } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
@@ -42,7 +45,14 @@ export async function getOutreachSendConfig(
   const { canUseHostedSending: hosted } = entitlementsFromSettings(userId, settings ?? {}, await getEffectivePlanConfig());
   const envKey = (value: string | undefined) => (hosted ? value || null : null);
 
-  const ownResendKey = decryptOrNull(settings?.resendApiKeyEncrypted);
+  // Re-encrypts a legacy or previous-secret ciphertext on the way past (audit L-06).
+  const own = (stored: string | null | undefined, column: PgColumn) =>
+    decryptAndRewrap(stored, { table: userSettings, column, idColumn: userSettings.userId, id: userId });
+  const [ownResendKey, ownTwilioSid, ownTwilioToken] = await Promise.all([
+    own(settings?.resendApiKeyEncrypted, userSettings.resendApiKeyEncrypted),
+    own(settings?.twilioAccountSidEncrypted, userSettings.twilioAccountSidEncrypted),
+    own(settings?.twilioAuthTokenEncrypted, userSettings.twilioAuthTokenEncrypted),
+  ]);
   const hostedResendKey = envKey(process.env.RESEND_API_KEY);
 
   return {
@@ -50,10 +60,10 @@ export async function getOutreachSendConfig(
     /** Whose Resend account a send goes through — only Orbit's refusals are Orbit's alarm. */
     resendKeyOwner: ownResendKey ? ("user" as const) : hostedResendKey ? ("orbit" as const) : null,
     twilioAccountSid:
-      decryptOrNull(settings?.twilioAccountSidEncrypted) ||
+      ownTwilioSid ||
       envKey(process.env.TWILIO_ACCOUNT_SID),
     twilioAuthToken:
-      decryptOrNull(settings?.twilioAuthTokenEncrypted) ||
+      ownTwilioToken ||
       envKey(process.env.TWILIO_AUTH_TOKEN),
     twilioFromNumber:
       settings?.twilioFromNumber?.trim() ||
@@ -77,8 +87,8 @@ export async function getOutreachSendConfig(
  */
 export async function countSendsToday(userId: string) {
   const db = await getDb();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
+  // The user's midnight, not the server's (UTC): the cap resets when their day does.
+  const start = startOfUserDay(await viewerTimeZone(userId));
 
   const rows = await db
     .select({ count: sql<number>`count(*)::int` })

@@ -16,6 +16,8 @@
  * worse than none, because it teaches the user to stop trusting the feature.
  */
 
+import { promptNow } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { z } from "zod";
 import type {
   ConversationStarter,
@@ -511,9 +513,14 @@ const startersResponseSchema = z.object({
  */
 const PAGE_DELIMITER_LINE = /^[ \t]*(?:<<<[ \t]*)?PAGE[ \t]*$/gim;
 
+/** Page text sent to the model. The extension's payload is client-supplied, so its size is too. */
+export const MAX_PAGE_BLOB_CHARS = 40_000;
+
 export function untrustedPageBlock(page: PageContext): string {
-  const blob = page.text.blob
-     
+  const blob = Array.from(String(page.text.blob ?? "").slice(0, MAX_PAGE_BLOB_CHARS * 2))
+    .slice(0, MAX_PAGE_BLOB_CHARS)
+    .join("")
+    .replace(/[\uD800-\uDBFF]$/, "")
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
@@ -699,7 +706,8 @@ export async function generateConversationStarters(
         operation: "extension.starters",
         // See extension/parse-profile.ts: the route's 30 s limit, so end before it.
         signal: AbortSignal.timeout(EXTENSION_AI_DEADLINE_MS),
-        system: systemPrompt(ctx.mode, limit),
+        // Date only: cached per page, so a clock here would defeat the cache.
+        system: `${promptNow(await viewerTimeZone(userId), new Date(), { time: false })}\n${systemPrompt(ctx.mode, limit)}`,
         user: userPrompt(ctx, limit),
         temperature: 0.6,
         // Matches the house default. A tighter budget looks generous for three

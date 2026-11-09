@@ -28,6 +28,11 @@ export const REQUIRED_IN_PRODUCTION = [
   "ADMIN_USER_IDS",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  // Not read by the app. It arms `checkMigrationTarget` below, which refuses a build whose
+  // DATABASE_URL points at production from a non-production environment. Required rather
+  // than expected: without it a preview build cannot tell its own Neon branch from
+  // production, and the build must fail rather than guess.
+  "PRODUCTION_DB_HOST",
 ] as const;
 
 /** Absent → a feature is quietly off. Worth a warning, not a failed build. */
@@ -44,9 +49,6 @@ export const EXPECTED_IN_PRODUCTION = [
   // and /admin/analytics says so — deliberately not REQUIRED, because that list fails the
   // production build, and an analytics secret must never be able to block a deploy.
   "ANALYTICS_SALT",
-  // Not read by the app at all — it exists so `checkMigrationTarget` below can tell a
-  // preview build pointed at its own Neon branch from one pointed at production.
-  "PRODUCTION_DB_HOST",
   // Critical alerts also go here (the channel with push on); unset, criticals only reach #orbit-ops.
   "SLACK_OPS_CRITICAL_WEBHOOK_URL",
   // The only detector for a dead scheduler: the sweep pings it, the monitor pages on silence.
@@ -74,6 +76,10 @@ export const REQUIRED_IN_PREVIEW = [
   "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY",
   "ENCRYPTION_SECRET",
+  // A preview build runs `db:migrate` too (see `vercel.json`). Without this, a preview
+  // pointed at the production DATABASE_URL is indistinguishable from one on its own Neon
+  // branch, so the guard refuses the build instead of risking live customer data.
+  "PRODUCTION_DB_HOST",
 ] as const;
 
 /**
@@ -87,7 +93,6 @@ export const REQUIRED_IN_PREVIEW = [
  * (`src/lib/ai-access.ts`). Checked by presence only, here as everywhere.
  */
 const MANAGED_AI_KEYS = [
-  "ORBIT_MANAGED_GEMINI_API_KEY",
   "ORBIT_MANAGED_OPENAI_API_KEY",
   "ORBIT_MANAGED_ANTHROPIC_API_KEY",
 ] as const;
@@ -142,6 +147,17 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       const secret = env.ENCRYPTION_SECRET!.trim();
       if (secret.length < 32 || secret === ENCRYPTION_PLACEHOLDER) {
         errors.push("ENCRYPTION_SECRET must be at least 32 characters and not the .env.example placeholder");
+      }
+    }
+    // Set only while rotating ENCRYPTION_SECRET: the old value, still accepted for decrypting
+    // and verifying (src/lib/secrets.ts). Same strength rule; the same value as the current
+    // one means the rotation has not actually happened.
+    if (has(env, "ENCRYPTION_SECRET_PREVIOUS")) {
+      const previous = env.ENCRYPTION_SECRET_PREVIOUS!.trim();
+      if (previous.length < 32 || previous === ENCRYPTION_PLACEHOLDER) {
+        errors.push("ENCRYPTION_SECRET_PREVIOUS must be at least 32 characters and not the .env.example placeholder");
+      } else if (previous === env.ENCRYPTION_SECRET?.trim()) {
+        warnings.push("ENCRYPTION_SECRET_PREVIOUS equals ENCRYPTION_SECRET — remove it, or set ENCRYPTION_SECRET to the new value");
       }
     }
     // A short salt is worse than none: the hash it produces is a plain digest of an IP,
@@ -234,10 +250,25 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
         warnings.push(`${name} is unset (required in production)`);
       }
     }
-    // A preview build runs db:migrate too. Without this, nothing can tell whether it is
-    // about to write to its own Neon branch or to production. See `checkMigrationTarget`.
-    if (!has(env, "PRODUCTION_DB_HOST")) {
-      warnings.push("PRODUCTION_DB_HOST is unset; the preview-migration guard is unarmed");
+    // A preview must never carry production's credentials. Variables added in Vercel without
+    // picking an environment land on "All Environments", so a live Clerk or Stripe key on a
+    // preview is the common mistake, not an exotic one — and a preview signed into the
+    // production Clerk instance, or charging real cards, is production with a test label.
+    if (has(env, "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY") && !env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!.startsWith("pk_test_")) {
+      errors.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must be a test-instance key (pk_test_) in preview deployments");
+    }
+    if (has(env, "CLERK_SECRET_KEY") && !env.CLERK_SECRET_KEY!.startsWith("sk_test_")) {
+      errors.push("CLERK_SECRET_KEY must be a test-instance key (sk_test_) in preview deployments");
+    }
+    if (has(env, "STRIPE_SECRET_KEY") && !env.STRIPE_SECRET_KEY!.startsWith("sk_test_")) {
+      errors.push("STRIPE_SECRET_KEY must be a test-mode key (sk_test_) in preview deployments");
+    }
+    // The showcase account is comped Lifetime on a keypress (`triggerDemoCelebration`). That
+    // is fine against a preview's own branch and a real grant against production's rows.
+    const target = databaseHost(env.DATABASE_URL);
+    const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
+    if (has(env, "DEMO_ACCOUNT_USER_ID") && target && production && target === production) {
+      errors.push("DEMO_ACCOUNT_USER_ID must not be set on a preview whose DATABASE_URL is the production database");
     }
     return { errors, warnings, missingRequired, missingExpected };
   }
@@ -291,10 +322,10 @@ export type MigrationTargetVerdict = {
  * credential, so it is safe to set on all environments, which is exactly what makes it
  * readable from a preview build.
  *
- * Deliberately NOT fail-closed when `PRODUCTION_DB_HOST` is unset: refusing every preview
- * build until someone sets a new variable breaks previews to prevent a hypothetical, and a
- * broken preview pipeline is how guards get deleted. It reports `unarmed` instead, and
- * `check-env` warns.
+ * Fail-closed in every non-production Vercel build: an unset `PRODUCTION_DB_HOST` or an
+ * unparseable `DATABASE_URL` refuses the build rather than migrating a database it cannot
+ * identify. `check-env` requires the variable in preview, so the refusal happens before
+ * `db:migrate` rather than inside it.
  */
 export function checkMigrationTarget(
   env: EnvBag,
@@ -310,17 +341,25 @@ export function checkMigrationTarget(
   const target = databaseHost(env.DATABASE_URL);
   const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
 
+  if (!target) {
+    return {
+      allowed: false,
+      reason:
+        `VERCEL_ENV=${options.vercelEnv ?? "unset"} but DATABASE_URL is missing or unparseable, ` +
+        "so this build cannot tell what it would migrate. Refusing rather than guessing.",
+    };
+  }
   if (!production) {
     return {
-      allowed: true,
+      allowed: false,
       unarmed: true,
       reason:
         "PRODUCTION_DB_HOST is unset, so a preview build pointed at production cannot be told " +
-        "from one pointed at its own branch. Set it (to the production database hostname) on " +
-        "all environments to arm this check.",
+        "from one pointed at its own branch. Refusing the build. Set it (to the production " +
+        "database hostname) on all environments.",
     };
   }
-  if (target && target === production) {
+  if (target === production) {
     return {
       allowed: false,
       reason:
@@ -330,7 +369,7 @@ export function checkMigrationTarget(
         "previews their own Neon branch.",
     };
   }
-  return { allowed: true, reason: `target ${target ?? "(unparseable)"} is not the production host` };
+  return { allowed: true, reason: `target ${target} is not the production host` };
 }
 
 /** drizzle-kit subcommands that write schema to the database the config points at. */

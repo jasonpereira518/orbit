@@ -15,6 +15,7 @@
  * applied by the caller (`@/lib/tools/registry`), because they differ by surface and a tool
  * that decided its own presentation would have to know who was asking.
  */
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -61,6 +62,7 @@ import { freeSlots } from "@/lib/calendar-free";
 import { isPaywallError } from "@/lib/entitlements";
 import { requirePlanForSurface, requireReleasedSurface } from "@/lib/surface-visibility";
 import { discoverPeople, researchCompany, researchPerson } from "@/lib/web-research";
+import { LookupStillRunning, lookupKeepingLate } from "@/lib/web-research-late";
 
 const BOTH = ["mcp", "chat"] as const;
 const MCP_ONLY = ["mcp"] as const;
@@ -102,7 +104,7 @@ function dayBound(day: string | undefined, end: boolean): Date | null {
 const RESEARCH_TOOL_TIMEOUT_MS = 20_000;
 const PREP_RESEARCH_TIMEOUT_MS = 15_000;
 const RESEARCH_TIMEOUT_MESSAGE =
-  "The web search needs longer than chat allows. Tell the user to run it on Find people (/find), where it can finish.";
+  "The web search is still running. Tell the user to open Find people (/find) in a minute — the result will be there.";
 
 /** One contact the user owns, or nothing. The tenant check every contact-scoped tool starts with. */
 async function ownedContact(userId: string, contactId: string) {
@@ -338,9 +340,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     ) {
       const db = await getDb();
       const inboxId = await getInboxListId(userId);
-      // UTC, not the user's zone: an assistant request carries no `orbit-tz` cookie, and
-      // guessing a zone would put a reminder in the wrong day rather than admit it. Every
-      // row carries its own `dueDate`, so a model can say "tomorrow" correctly anyway.
+      // The user's day: the cookie in chat, the zone the app last saved for an assistant
+      // (UTC only for an account that has never opened the app).
       const page = await queryRemindersPage(
         db,
         userId,
@@ -350,7 +351,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
           contactId: args.contactId,
           q: args.query,
           limit: args.limit,
-          tz: "UTC",
+          tz: await viewerTimeZone(userId),
         },
         { inboxId }
       );
@@ -790,8 +791,9 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // Prep is worth a web search on who is coming: up to two people, cached per account.
       const found = await getMeetingContext(userId, args, new Date(), {
         research: true,
-        // Shorter than research_person's: chat's lookups must end by LOOKUPS_END_BY_MS.
-        signal: AbortSignal.timeout(PREP_RESEARCH_TIMEOUT_MS),
+        // Shorter than research_person's: chat's lookups must end by LOOKUPS_END_BY_MS. A
+        // guest still being looked up then is finished in the background, into the cache.
+        researchWaitMs: PREP_RESEARCH_TIMEOUT_MS,
       });
       if (!found) return toolError("No matching meeting on the calendar in the next two weeks.");
       return {
@@ -867,13 +869,13 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       } catch {
         return toolError("research_person is not available here.");
       }
-      // Read the signal, not the error: `webSearchJson` rewraps a provider's abort.
-      const signal = AbortSignal.timeout(RESEARCH_TOOL_TIMEOUT_MS);
       try {
-        const res = await researchPerson(
-          userId,
-          { fullName: args.name, company: args.company, domain: args.domain, linkedinUrl: args.linkedinUrl },
-          { signal },
+        const res = await lookupKeepingLate(RESEARCH_TOOL_TIMEOUT_MS, (signal) =>
+          researchPerson(
+            userId,
+            { fullName: args.name, company: args.company, domain: args.domain, linkedinUrl: args.linkedinUrl },
+            { signal },
+          ),
         );
         if (!res.ok) return toolError(res.message);
         const d = res.dossier;
@@ -892,7 +894,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
           note: d.match === "confident" ? "From the public web; not in the user's network." : "Not confirmed to be this person — report no facts as theirs.",
         };
       } catch (err) {
-        if (signal.aborted) return toolError(RESEARCH_TIMEOUT_MESSAGE);
+        if (err instanceof LookupStillRunning) return toolError(RESEARCH_TIMEOUT_MESSAGE);
         throw err;
       }
     },
@@ -928,12 +930,9 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       } catch {
         return toolError("research_company is not available here.");
       }
-      const signal = AbortSignal.timeout(RESEARCH_TOOL_TIMEOUT_MS);
       try {
-        const res = await researchCompany(
-          userId,
-          { name: args.name, domain: args.domain },
-          { signal },
+        const res = await lookupKeepingLate(RESEARCH_TOOL_TIMEOUT_MS, (signal) =>
+          researchCompany(userId, { name: args.name, domain: args.domain }, { signal }),
         );
         if (!res.ok) return toolError(res.message);
         const d = res.dossier;
@@ -954,7 +953,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
               : "Not confirmed to be this company — report nothing as fact.",
         };
       } catch (err) {
-        if (signal.aborted) return toolError(RESEARCH_TIMEOUT_MESSAGE);
+        if (err instanceof LookupStillRunning) return toolError(RESEARCH_TIMEOUT_MESSAGE);
         throw err;
       }
     },
@@ -988,9 +987,10 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       } catch {
         return toolError("find_people is not available here.");
       }
-      const signal = AbortSignal.timeout(RESEARCH_TOOL_TIMEOUT_MS);
       try {
-        const res = await discoverPeople(userId, args.query, { signal });
+        const res = await lookupKeepingLate(RESEARCH_TOOL_TIMEOUT_MS, (signal) =>
+          discoverPeople(userId, args.query, { signal }),
+        );
         if (!res.ok) return toolError(res.message);
         return {
           query: res.result.query,
@@ -998,7 +998,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
           note: "Found on the public web; not a complete list, and none of these people are in the user's network.",
         };
       } catch (err) {
-        if (signal.aborted) return toolError(RESEARCH_TIMEOUT_MESSAGE);
+        if (err instanceof LookupStillRunning) return toolError(RESEARCH_TIMEOUT_MESSAGE);
         throw err;
       }
     },
@@ -1036,11 +1036,12 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // "today" is overdue AND today; "anytime" is the undated pile. Both are things the
       // user is already late on or has never scheduled — which is what "owe" means. What is
       // merely coming up is `list_reminders`, and it is a different question.
+      const tz = await viewerTimeZone(userId);
       const page = (view: "today" | "anytime") =>
         queryRemindersPage(
           db,
           userId,
-          { view, listId: null, contactId: args.contactId, limit: args.limit, tz: "UTC" },
+          { view, listId: null, contactId: args.contactId, limit: args.limit, tz },
           { inboxId }
         );
 

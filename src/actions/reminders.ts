@@ -36,7 +36,7 @@ import {
   inboxIdFromLists,
   normalizeListName,
 } from "@/lib/reminder-lists";
-import { resolveTimeZone, TZ_COOKIE } from "@/lib/reminder-due-bucket";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import {
   assertReminderContactOwned,
   createReminderForUser,
@@ -44,6 +44,7 @@ import {
   clearContactFollowUpForUser,
   trackFollowUpSet,
   undoClearContactFollowUpForUser,
+  requireReminderTitle,
   type ClearFollowUpSnapshot,
 } from "@/lib/reminder-writes";
 import { isListColor, isListIcon } from "@/lib/reminder-list-style";
@@ -79,6 +80,8 @@ import {
   type DismissSnapshot,
   type SnoozeSnapshot,
 } from "@/lib/reminders";
+import { optionalClientDate } from "@/lib/input/dates";
+import { TEXT_LIMITS, cleanOptionalText } from "@/lib/input/text";
 
 /*
  * Undo snapshots come back from the client, so they are input like any other. Every
@@ -182,17 +185,6 @@ export async function fetchDashboard() {
   return { data, networkStats };
 }
 
-async function viewerTimeZone() {
-  const { cookies } = await import("next/headers");
-  try {
-    return resolveTimeZone((await cookies()).get(TZ_COOKIE)?.value);
-  } catch {
-    // No request scope (a script or smoke test calling the action directly): UTC, the same
-    // fallback as a request without the cookie.
-    return resolveTimeZone(null);
-  }
-}
-
 /**
  * `ensureReminderLists`, deduplicated within one server render. The /reminders page loads
  * the rail and the first page in parallel and each needs the lists, so on a render they
@@ -219,7 +211,7 @@ export async function loadReminderRail(): Promise<{
   const db = await getDb();
   const [lists, tz] = await Promise.all([
     ensureReminderListsForRender(userId),
-    viewerTimeZone(),
+    viewerTimeZone(userId),
   ]);
   const inboxId =
     lists.find((l) => l.isInbox === 1)?.id ?? lists[0]?.id ?? null;
@@ -255,7 +247,7 @@ export async function loadRemindersPage(
   const [inboxId, tz] = await Promise.all([
     // `getInboxListId`, over the render-shared lists read (see above).
     ensureReminderListsForRender(userId).then(inboxIdFromLists),
-    viewerTimeZone(),
+    viewerTimeZone(userId),
   ]);
 
   let listId: string | null = null;
@@ -342,10 +334,10 @@ export async function updateReminder(
 
   const patch: Partial<typeof reminders.$inferInsert> = {};
 
-  if (input.title !== undefined) patch.title = input.title.trim();
-  if (input.description !== undefined) patch.description = input.description;
+  if (input.title !== undefined) patch.title = requireReminderTitle(input.title);
+  if (input.description !== undefined) patch.description = cleanOptionalText(input.description, TEXT_LIMITS.description);
   if (input.dueDate !== undefined) {
-    patch.dueDate = input.dueDate ? new Date(input.dueDate) : null;
+    patch.dueDate = optionalClientDate(input.dueDate, "due date");
   }
   if (input.contactId !== undefined) {
     await assertReminderContactOwned(userId, input.contactId);

@@ -6,13 +6,16 @@
  * the webhook tables, and `scripts/run-smoke.ts` fails any `pure`-tier smoke script that
  * reaches `../src/db`. A second consumer arrived (fetching a user-supplied event page in
  * `src/lib/events/fetch-page.ts`) whose test has no business booting a database, so the guard
- * lives here, importing nothing but `node:dns`.
+ * lives here, importing only `node:dns`, `node:net` and the `undici` agent used to pin a
+ * request to the addresses it just vetted.
  *
  * There must stay exactly ONE copy of this logic. Two copies is how one of them quietly stops
  * blocking something the other still does.
  */
 import { lookup } from "node:dns/promises";
+import type { LookupFunction } from "node:net";
 import { isIPv6 } from "node:net";
+import { Agent } from "undici";
 
 /**
  * Whether an IP literal is somewhere Orbit must never be made to talk to.
@@ -92,14 +95,11 @@ function parseIPv6(ip: string): number[] | null {
 }
 
 /**
- * Resolve the URL's host and refuse anything internal.
- *
- * Called immediately before the fetch, deliberately. Checking only at registration is
- * defeated by DNS rebinding: the attacker registers a hostname that resolves publicly, then
- * repoints it. This narrows that window to the gap between this lookup and the request —
- * genuinely narrowed, not closed; fully closing it needs a fetch pinned to the resolved IP.
+ * Resolve the URL's host and refuse anything internal. Returns the vetted addresses so the
+ * caller can pin its connection to exactly those; an empty array means the URL host was an IP
+ * literal, which needs no resolution and cannot be rebound.
  */
-export async function assertDeliverable(url: string): Promise<void> {
+async function resolveDeliverable(url: string): Promise<Array<{ address: string; family: number }>> {
   const parsed = new URL(url);
   if (parsed.protocol !== "https:") throw new Error("Only https:// endpoints are allowed");
   if (parsed.username || parsed.password) throw new Error("Credentials in URL are not allowed");
@@ -112,7 +112,7 @@ export async function assertDeliverable(url: string): Promise<void> {
   // A bare IP literal never needs DNS; check it directly.
   if (/^[\d.]+$/.test(host) || host.includes(":")) {
     if (isBlockedAddress(host)) throw new Error("That address is not allowed");
-    return;
+    return [];
   }
 
   const resolved = await lookup(host, { all: true });
@@ -122,11 +122,69 @@ export async function assertDeliverable(url: string): Promise<void> {
       throw new Error("That host resolves to an internal address");
     }
   }
+  return resolved.map((entry) => ({ address: entry.address, family: entry.family }));
+}
+
+/**
+ * Resolve the URL's host and refuse anything internal.
+ *
+ * Called immediately before the fetch, deliberately. Checking only at registration is
+ * defeated by DNS rebinding: the attacker registers a hostname that resolves publicly, then
+ * repoints it. `pinDeliverable` below closes that window for callers that can pass a
+ * dispatcher; `fetch` has no way to accept one, so this remains the check for them.
+ */
+export async function assertDeliverable(url: string): Promise<void> {
+  await resolveDeliverable(url);
+}
+
+/**
+ * Vet the URL and pin the connection to the addresses that were vetted, closing the
+ * resolve-then-connect window `assertDeliverable` leaves open.
+ *
+ * The returned `init` carries an `undici` `dispatcher` whose DNS lookup ignores the resolver
+ * and answers with the addresses checked a moment ago, so a hostname repointed between the
+ * check and the connection cannot send the request somewhere internal. `close()` releases the
+ * agent; call it after the response body has been consumed.
+ *
+ * A caller that cannot honour `dispatcher` (a test double, `fetch` in an older runtime) still
+ * gets the `assertDeliverable` check, so an ignored dispatcher never regresses the guard below
+ * what it was.
+ */
+export async function pinDeliverable(url: string): Promise<{
+  init: { dispatcher?: unknown };
+  close: () => Promise<void>;
+}> {
+  const addresses = await resolveDeliverable(url);
+  if (addresses.length === 0) {
+    // IP literal: there is no lookup to poison, so the plain fetch is already pinned.
+    return { init: {}, close: async () => {} };
+  }
+
+  const lookupPinned: LookupFunction = (_hostname, options, callback) => {
+    // Honour a requested family the way `dns.lookup` would: a client that asked for IPv4
+    // must not be handed an AAAA record back, or the connect fails for a host that has both.
+    const wanted =
+      options.family === 4 || options.family === 6
+        ? addresses.filter((entry) => entry.family === options.family)
+        : addresses;
+    if (wanted.length === 0) {
+      callback(new Error("Host did not resolve for the requested address family"), "");
+      return;
+    }
+    if (options.all) {
+      callback(null, wanted);
+      return;
+    }
+    callback(null, wanted[0]!.address, wanted[0]!.family);
+  };
+
+  const agent = new Agent({ connect: { lookup: lookupPinned } });
+  return { init: { dispatcher: agent }, close: () => agent.close() };
 }
 
 /**
  * `fetch` a URL a user influenced, following at most `maxHops` redirects by hand so
- * `assertDeliverable` runs before EVERY hop. `redirect: "follow"` would check only the
+ * `pinDeliverable` vets and pins before EVERY hop. `redirect: "follow"` would check only the
  * first URL, and a public host answering 302 to `http://169.254.169.254/` walks straight
  * past it. Throws on a refused address; resolves to null when the chain runs too long or a
  * redirect has no `Location`.
@@ -142,8 +200,17 @@ export async function guardedFetch(
 ): Promise<Response | null> {
   let url = startUrl;
   for (let hop = 0; hop <= maxHops; hop++) {
-    await assertDeliverable(url);
-    const res = await fetch(url, { ...init, redirect: "manual" });
+    const pinned = await pinDeliverable(url);
+    let res: Response;
+    try {
+      res = await fetch(url, { ...init, redirect: "manual", ...pinned.init });
+    } catch (error) {
+      await pinned.close();
+      throw error;
+    }
+    // The connection is pinned for this hop only; `close()` lets the in-flight body finish
+    // and then shuts the agent down, so the next hop resolves and pins afresh.
+    void pinned.close();
     if (res.status < 300 || res.status >= 400 || res.status === 304) return res;
     await res.body?.cancel().catch(() => {});
     const location = res.headers.get("location");

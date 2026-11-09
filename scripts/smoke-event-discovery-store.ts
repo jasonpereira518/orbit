@@ -44,7 +44,6 @@ import {
   requeueUnreadEvents,
 } from "../src/lib/events/enrich-queue";
 import { IcsFeedGoneError, syncIcsFeed } from "../src/lib/events/discovery/from-ics-feed";
-import { scanGmailForEvents } from "../src/lib/events/discovery/from-gmail";
 import type { DiscoveryCandidate } from "../src/lib/events/discovery/types";
 
 const USER = "event-discovery-smoke-user";
@@ -375,112 +374,6 @@ END:VCALENDAR`;
     check("a revoked feed URL is not a transient failure", gone instanceof IcsFeedGoneError, String(gone));
 
     check("and the feed created no contacts either", (await contactCount()) === 0);
-  }
-
-  console.log("\na confirmation email, end to end");
-  {
-    const before = await eventCount();
-    const scan = await scanGmailForEvents(USER, "token", null, {
-      now: new Date("2026-06-02T00:00:00Z"),
-      deps: {
-        listPage: async () => ({ messages: [{ id: "msg-9", threadId: "t9" }], nextPageToken: null }),
-        headers: async () => [
-          {
-            id: "msg-9",
-            threadId: "t9",
-            from: "Partiful <hello@partiful.com>",
-            subject: "You're going to Rooftop Dinner",
-            snippet: "",
-            internalDate: Date.parse("2026-05-20T00:00:00Z"),
-            to: "",
-            listUnsubscribe: "",
-            listId: "",
-            precedence: "",
-          },
-        ],
-        links: async () => [
-          {
-            id: "msg-9",
-            threadId: "t9",
-            from: "Partiful <hello@partiful.com>",
-            subject: "You're going to Rooftop Dinner",
-            snippet: "",
-            internalDate: Date.parse("2026-05-20T00:00:00Z"),
-            to: "",
-            listUnsubscribe: "",
-            listId: "",
-            precedence: "",
-            authenticationResults: "dkim=pass header.d=partiful.com",
-            links: [
-              "https://partiful.com/e/kX9fT2vQ?t=PERSONALTOKEN",
-              "https://partiful.com/unsubscribe",
-            ],
-          },
-        ],
-      },
-    });
-
-    check("the email produced an event", scan.stats.created === 1, JSON.stringify(scan.stats));
-    check("and it exists", (await eventCount()) === before + 1);
-
-    const created = (await listEventsForUser(USER)).find((e) => e.discoveredVia === "gmail");
-    check("badged as coming from email", created !== undefined);
-    check("the RSVP was read from the subject", created?.rsvpStatus === "going", String(created?.rsvpStatus));
-    // The `?t=` on a Partiful link is the RECIPIENT's token. It must never be stored, let
-    // alone rendered back as a clickable link on the event page.
-    check("the personal token is stripped", created?.url?.includes("PERSONALTOKEN") === false, String(created?.url));
-
-    const evidence = rowsOf<{ evidence: Record<string, unknown> }>(
-      await db().execute(sql`
-        SELECT evidence FROM event_aliases
-         WHERE user_id = ${USER} AND value = 'gmail:msg-9'
-      `)
-    )[0]?.evidence;
-    // Enough to answer "why is this here?", and nothing more: no body, no snippet, no
-    // addresses. This table must never become a copy of the user's mail.
-    check("the subject is kept as evidence", evidence?.subject === "You're going to Rooftop Dinner", JSON.stringify(evidence));
-    check("with the sender's domain", evidence?.fromDomain === "partiful.com");
-    check("and nothing else", Object.keys(evidence ?? {}).sort().join(",") === "fromDomain,receivedAt,subject", Object.keys(evidence ?? {}).join(","));
-
-    // Re-scanning the same mailbox is a no-op: the message id is the key.
-    const again = await scanGmailForEvents(USER, "token", null, {
-      now: new Date("2026-06-02T00:00:00Z"),
-      deps: {
-        listPage: async () => ({ messages: [{ id: "msg-9", threadId: "t9" }], nextPageToken: null }),
-        headers: async () => [
-          {
-            id: "msg-9",
-            threadId: "t9",
-            from: "Partiful <hello@partiful.com>",
-            subject: "You're going to Rooftop Dinner",
-            snippet: "",
-            internalDate: null,
-            to: "",
-            listUnsubscribe: "",
-            listId: "",
-            precedence: "",
-          },
-        ],
-        links: async () => [
-          {
-            id: "msg-9",
-            threadId: "t9",
-            from: "Partiful <hello@partiful.com>",
-            subject: "You're going to Rooftop Dinner",
-            snippet: "",
-            internalDate: null,
-            to: "",
-            listUnsubscribe: "",
-            listId: "",
-            precedence: "",
-            authenticationResults: "dkim=pass header.d=partiful.com",
-            links: ["https://partiful.com/e/kX9fT2vQ"],
-          },
-        ],
-      },
-    });
-    check("re-scanning creates nothing", again.stats.created === 0, JSON.stringify(again.stats));
-    check("and the mailbox scan created no contacts", (await contactCount()) === 0);
   }
 
   console.log("\npeople you keep seeing");

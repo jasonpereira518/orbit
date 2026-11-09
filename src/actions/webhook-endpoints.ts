@@ -21,6 +21,7 @@ import { generateWebhookSecret } from "@/lib/webhooks/sign";
 import { assertDeliverable, verifyEndpoint } from "@/lib/webhooks/dispatch";
 import { hasWebhookEndpointCapacity, WEBHOOK_ENDPOINT_LIMIT_MESSAGE } from "@/lib/webhooks/limits";
 import { webhookEndpointBody } from "@/lib/api/schemas";
+import { rotateWebhookEndpointSecret as rotateEndpointSecret, type RotateWebhookSecretResult } from "@/lib/webhooks/rotate";
 
 export type WebhookEndpointSummary = {
   id: string;
@@ -148,6 +149,13 @@ export async function retryWebhookEndpoint(
   });
   if (!owned) return { ok: false, error: "No such endpoint" };
   const result = await verifyEndpoint(id);
+  revalidatePath("/settings");
+  return result;
+}
+
+/** New signing secret for one of your endpoints, shown once (audit L-19). */
+export async function rotateWebhookEndpointSecret(id: string): Promise<RotateWebhookSecretResult> {
+  const result = await rotateEndpointSecret(await requireUserId(), id);
   revalidatePath("/settings");
   return result;
 }

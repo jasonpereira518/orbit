@@ -1,6 +1,7 @@
-# The PR gate: typecheck, lint, a production build, the smoke suite, the known-bug suite,
-# the Playwright browser flows, and a security pass (dependency audit,
-# dependency review, secret scan). The Chrome extension has its own workflow
+# The PR gate: typecheck, lint, a production build and a security pass (dependency audit,
+# dependency review, secret scan) in one job, the smoke suite, and the Playwright browser
+# flows. The known-bug suite (`npm run test:bugs`) is not in CI: it has no scripts until the
+# next bug is filed, so a job for it only burned a runner. The Chrome extension has its own workflow
 # (extension.yml) that runs only when a PR touches it. On `main` and on demand it also
 # measures the smoke suite's coverage (report only). docs/TESTING.md describes the layers
 # and the branch-protection settings that make these a real gate.
@@ -22,11 +23,11 @@ name: ci
 #   GitHub scopes a PR's caches to that PR, so without it each PR's first run starts cold.
 # - Draft PRs are skipped. A PR runs CI when it is opened ready, or when a draft is marked
 #   ready for review, and on every push after that. A ready PR gets every job.
-# - Every ready PR runs, docs-only ones included. There used to be a `paths-ignore` that
-#   skipped docs, agent skills and the extension; it was dropped so these jobs can be
-#   required status checks on `main` (docs/TESTING.md → branch protection). With it, a
-#   docs-only PR would have waited forever on required checks that never started. The
-#   cost is one ~5-minute run on PRs that change nothing these jobs read.
+# - Every ready PR reports every check, but the slow ones (smoke, e2e) only do work when the PR
+#   touches something besides `docs/**` and `*.md` (the `changes` job). On a docs-only PR those
+#   jobs are skipped, which GitHub counts as passing for required checks, so they can stay
+#   required on `main` (docs/TESTING.md -> branch protection) without a docs PR waiting
+#   forever. `check` (typecheck, lint, build, security) always runs. `main` pushes run it all.
 #
 # The repository is public, so hosted runners are free. This workflow is written to stay
 # safe there: it triggers on `pull_request` (never `pull_request_target` or `workflow_run`),
@@ -38,11 +39,17 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [main]
+  # GitHub's merge queue runs the required checks on the queued merge result. Needed before
+  # the queue can be switched on in Settings → Branches (the checks must report on this event).
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
+# Only PR runs are superseded by a newer push. A `main` run is never cancelled: back-to-back
+# merges used to cancel each other, so `main` was rarely verified and its caches stayed cold.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -52,6 +59,40 @@ permissions:
 # The root package has no install scripts, so a restored node_modules is exactly what
 # `npm ci` would have produced.
 jobs:
+  # Decides whether the slow jobs have anything to test. Fails open: any doubt means `code=true`.
+  changes:
+    name: detect code changes
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.f.outputs.code }}
+      playwright: ${{ steps.pw.outputs.version }}
+    steps:
+      # The e2e container image tag must equal @playwright/test (the image's browser build has
+      # to match the library); read it from package.json so a Dependabot bump can't split them.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: package.json
+          sparse-checkout-cone-mode: false
+      - id: pw
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test'].replace(/[^0-9.]/g, '')")" >> "$GITHUB_OUTPUT"
+      - id: f
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" -q '.[].filename') || { echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          if echo "$files" | grep -qvE '^docs/|\.md$'; then code=true; else code=false; fi
+          echo "files changed:"; echo "$files"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   check:
     name: typecheck · lint · build
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -59,6 +100,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # gitleaks below scans a commit range
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
@@ -92,37 +135,99 @@ jobs:
       - name: bundle budget
         run: node scripts/check-bundle-budget.mjs
 
+      # Supply chain and secrets, folded in here (23s, off the critical path) rather than
+      # a runner of its own. npm audit: high/critical prod advisories. Dependency review (PRs):
+      # does THIS PR add a high advisory. gitleaks: does any NEW commit add a secret.
+      - name: npm audit (production dependencies)
+        run: npm audit --omit=dev --audit-level=high
+      # Needs Settings → Code security → Dependency graph, which is off on this repository
+      # (the action errors out without it, failing every PR). Turn the graph on, then set the
+      # repository variable DEPENDENCY_REVIEW=true to start enforcing this step.
+      - name: Dependency review
+        if: github.event_name == 'pull_request' && vars.DEPENDENCY_REVIEW == 'true'
+        uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime
+      - name: Install gitleaks (pinned, checksum-verified)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # `github.com/…/releases/download` has served 504s (Nov 8 2026), failing this step on
+          # every PR. `gh release download` asks the API for the asset and follows the signed
+          # object URL instead, which stayed up; the checksum below still pins the exact bytes.
+          gh release download v8.30.1 --repo gitleaks/gitleaks \
+            --pattern gitleaks_8.30.1_linux_x64.tar.gz --output /tmp/gitleaks.tgz --clobber
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+      - name: Secret scan (new commits only)
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # A new branch's push has no `before`; fall back to the last commit alone.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            range="$HEAD~1..$HEAD"
+          else
+            range="$BASE..$HEAD"
+          fi
+          echo "scanning $range"
+          # --verbose prints each finding (rule, file, line, commit); --redact keeps the secret
+          # itself out of the log. Without it a failure only says "leaks found: N".
+          /tmp/gitleaks git --no-banner --redact --verbose --log-opts="$range" .
+
   # The smoke suite is ~400 scripts run one after another (PGlite is single-writer), about
-  # ten minutes serially and by far the slowest job. Three machines run exactly the same
+  # ten minutes serially and by far the slowest job. Four machines run exactly the same
   # scripts (scripts/run-smoke.ts --shard i/n covers each one once), each with its own
-  # PGlite directory, so the single-writer rule holds. Three rather than four: with the
-  # install cached, three shards finish alongside the build, and a fourth only added a check.
+  # PGlite directory, so the single-writer rule holds. Four: the suite
+  # is ~1,065s of scripts, so four shards put the slowest at ~4.5 min, under three's ~6.
   # `fail-fast: false` so one shard failing still reports the rest.
   #
-  # The job id stays `smoke`, and the matrix names read `smoke suite (PGlite) 1/3` …; if a
-  # required status check is ever added, require all three names.
+  # Branch protection requires the single `smoke suite (PGlite)` check from `smoke-gate`
+  # below, not the shard names, so the shard count can change freely.
   smoke:
-    name: smoke suite (PGlite) ${{ matrix.shard }}/3
+    name: smoke suite (PGlite) ${{ matrix.shard }}/4
+    needs: changes
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
+    # The skip for docs-only PRs is per step, not per job: a job-level skip of a matrix reports
+    # under the unexpanded name, and `smoke-gate` needs every shard to report.
+    env:
+      RUN: ${{ needs.changes.outputs.code }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - if: env.RUN == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - if: env.RUN == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
       - id: deps
+        if: env.RUN == 'true'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: node_modules
           key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
-      - if: steps.deps.outputs.cache-hit != 'true'
+      - if: env.RUN == 'true' && steps.deps.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund
-      - run: npm test -- --shard ${{ matrix.shard }}/3
+      - if: env.RUN == 'true'
+        run: npm test -- --shard ${{ matrix.shard }}/4
+
+  # The bare name branch protection requires; see `e2e-gate` for why a gate job. The shard
+  # count can change without touching the required checks. A docs-only PR skips the shards'
+  # steps, so they still succeed.
+  smoke-gate:
+    name: smoke suite (PGlite)
+    needs: smoke
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: test "${{ needs.smoke.result }}" = success
 
   # The same suite again under c8, for coverage — on `main` and on demand, NOT on PRs, and
   # never as the gate. Instrumentation slows scripts several-fold, which is harmless for
@@ -130,6 +235,7 @@ jobs:
   # ~13s plain), so gating on an instrumented run would make the gate flaky. Each shard keeps
   # only its Istanbul JSON (a few MB; the raw V8 dumps run to gigabytes) for `coverage` to
   # merge; a script failing here is reported by `smoke`, so it does not fail this job.
+
   coverage-shard:
     name: coverage shard ${{ matrix.shard }}/3
     if: github.event_name != 'pull_request'
@@ -190,90 +296,11 @@ jobs:
           path: coverage/merged/
           retention-days: 14
 
-  # Documented-but-unfixed bugs (scripts/smoke-bug-*.ts). Each asserts the correct behaviour,
-  # so it fails while its bug is there; `--bugs` inverts the verdict. This job goes red in
-  # exactly two cases, both worth a look: a bug got FIXED (promote the script to an ordinary
-  # tier), or a bug script broke in some other way.
-  known-bugs:
-    name: known bugs (expected failures)
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-      - id: deps
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: node_modules
-          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
-      - if: steps.deps.outputs.cache-hit != 'true'
-        run: npm ci --no-audit --no-fund
-      - run: npm run test:bugs
-
-  # Supply chain and secrets. Three independent checks, each answering a different question:
-  #
-  # - `npm audit` (production dependencies): is anything we ship CRITICALLY vulnerable right
-  #   now? Gated at critical only, because at the time of writing there are 15 high and 11
-  #   moderate advisories, all transitive and all fixable with `npm audit fix`; gating at
-  #   high would turn every PR red until that is done. Tighten to `--audit-level=high` once
-  #   it is (docs/TESTING.md tracks it).
-  # - Dependency review (PRs only): does THIS PR add a dependency with a high advisory? That
-  #   gates new risk without inheriting the backlog above.
-  # - gitleaks: does any commit in this push or PR add a secret? Scans only the new commits
-  #   (the history has pre-existing hits to triage, listed in docs/TESTING.md), so the gate
-  #   is "no new secrets", and a finding names the commit and file without printing the value.
-  security:
-    name: audit · dependency review · secret scan
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-      - name: npm audit (production dependencies)
-        run: |
-          npm audit --omit=dev --audit-level=high || true   # the full picture, in the log
-          npm audit --omit=dev --audit-level=critical
-      # Needs Settings → Code security → Dependency graph, which is off on this repository
-      # (the action errors out without it, failing every PR). Turn the graph on, then set the
-      # repository variable DEPENDENCY_REVIEW=true to start enforcing this step.
-      - name: Dependency review
-        if: github.event_name == 'pull_request' && vars.DEPENDENCY_REVIEW == 'true'
-        uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
-        with:
-          fail-on-severity: high
-          fail-on-scopes: runtime
-      - name: Install gitleaks (pinned, checksum-verified)
-        run: |
-          curl -sSfL -o /tmp/gitleaks.tgz \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
-          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
-          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
-      - name: Secret scan (new commits only)
-        env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-        run: |
-          # A new branch's push has no `before`; fall back to the last commit alone.
-          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
-            range="$HEAD~1..$HEAD"
-          else
-            range="$BASE..$HEAD"
-          fi
-          echo "scanning $range"
-          /tmp/gitleaks git --no-banner --redact --log-opts="$range" .
-
   # Playwright's own image ships Chromium and its OS libraries, so there is no browser
   # download or apt step (`playwright install --with-deps` took 17s to 12 minutes on a bare
-  # runner, depending on the apt mirror). Keep the tag equal to @playwright/test in
-  # package.json: the image's browser build must match the library. `--ipc=host` is
+  # runner, depending on the apt mirror). The tag is read from @playwright/test in
+  # package.json (the `changes` job), because the image's browser build must match the
+  # library; nothing to keep in sync by hand. `--ipc=host` is
   # Playwright's own advice for Chromium in a container.
   #
   # Three runners each take a third of the spec files (`--shard`), with their own `next dev`
@@ -283,10 +310,11 @@ jobs:
   # name `browser flows (Playwright)`, which the `e2e-gate` job below keeps alive.
   e2e:
     name: e2e shard ${{ matrix.shard }}/3
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: changes
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      image: mcr.microsoft.com/playwright:v${{ needs.changes.outputs.playwright }}-noble
       options: --ipc=host
     timeout-minutes: 30
     strategy:
@@ -324,9 +352,12 @@ jobs:
   # the shards on a draft PR, which GitHub counts as passing.
   e2e-gate:
     name: browser flows (Playwright)
-    needs: e2e
+    needs: [changes, e2e]
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - run: test "${{ needs.e2e.result }}" = success
+      # `skipped` is fine only when `changes` ran and found a docs-only PR.
+      - run: |
+          test "${{ needs.changes.result }}" = success
+          case "${{ needs.e2e.result }}" in success) ;; skipped) test "${{ needs.changes.outputs.code }}" = false ;; *) exit 1 ;; esac
