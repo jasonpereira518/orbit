@@ -37,6 +37,8 @@ export type BrightDataCandidate = {
   matchReason: string;
   recentNews?: string;
   signals?: string[];
+  education?: string;
+  almaMater?: string;
   confidence: "high" | "medium";
   source: "brightdata" | "preview_simulation";
 };
@@ -186,6 +188,8 @@ function generatePreviewCandidates(criteria: PeopleSearchCriteria): BrightDataCa
       title: criteria.titles?.[0] || "VP of Engineering",
       company: targetCompany,
       location: targetLocation,
+      education: "UC Berkeley, B.S. EECS '18",
+      almaMater: "UC Berkeley",
       summary: `Leading engineering and infrastructure teams at ${targetCompany}. Previously built distributed systems at Uber and Stripe.`,
       matchReason: `Direct title match for ${targetTitle} at ${targetCompany}`,
       recentNews: `${targetCompany} announced $25M expansion and new AI developer platform`,
@@ -196,6 +200,8 @@ function generatePreviewCandidates(criteria: PeopleSearchCriteria): BrightDataCa
       title: criteria.titles?.[1] || "Head of Growth & Partnerships",
       company: targetCompany,
       location: targetLocation,
+      education: "UNC Chapel Hill, B.S. Business Administration '19",
+      almaMater: "UNC Chapel Hill",
       summary: `Oversees enterprise partnerships, outbound growth, and go-to-market strategies. Focus on developer ecosystems and integrations.`,
       matchReason: `Matches growth & executive leadership profile in ${criteria.industries?.[0] || "B2B SaaS"}`,
       recentNews: `Published deep dive on scaling self-serve developer pipelines`,
@@ -206,6 +212,8 @@ function generatePreviewCandidates(criteria: PeopleSearchCriteria): BrightDataCa
       title: "Founding Engineer & Tech Lead",
       company: targetCompany,
       location: criteria.locations?.[1] || "New York, NY",
+      education: "Carnegie Mellon University, M.S. Software Engineering '20",
+      almaMater: "Carnegie Mellon University",
       summary: `Core contributor to high-throughput workflow engines. Passionate about AI agents, TypeScript, and developer tooling.`,
       matchReason: `High technical relevance for keywords: ${(criteria.skills || ["AI", "Infrastructure"]).join(", ")}`,
       recentNews: `Open-sourced benchmark tool featured on Hacker News`,
@@ -216,6 +224,8 @@ function generatePreviewCandidates(criteria: PeopleSearchCriteria): BrightDataCa
       title: "Director of Product Management",
       company: targetCompany,
       location: targetLocation,
+      education: "Duke University, B.A. Economics '17",
+      almaMater: "Duke University",
       summary: `Directs product strategy across automation, integrations, and core user workflows. 10+ years in product leadership.`,
       matchReason: `Key decision maker for integrations and new software evaluation`,
       recentNews: `${targetCompany} launched 3 major enterprise workflow features last quarter`,
@@ -226,6 +236,8 @@ function generatePreviewCandidates(criteria: PeopleSearchCriteria): BrightDataCa
       title: "Chief Technology Officer",
       company: criteria.company ? `${targetCompany} Labs` : "Vercel",
       location: "San Francisco, CA",
+      education: "Stanford University, B.S. Computer Science '16",
+      almaMater: "Stanford University",
       summary: `Scaling engineering architecture, AI inference infrastructure, and developer experience. Former Google Staff Engineer.`,
       matchReason: `Executive leadership match for technical and engineering search criteria`,
       recentNews: `Announced keynote on agentic orchestration frameworks`,
@@ -236,6 +248,8 @@ function generatePreviewCandidates(criteria: PeopleSearchCriteria): BrightDataCa
       title: "Head of Talent & People",
       company: targetCompany,
       location: "Remote / London",
+      education: "University of Michigan, B.A. Organizational Studies '18",
+      almaMater: "University of Michigan",
       summary: `Leads global talent acquisition, executive hiring, and culture for rapidly scaling tech teams.`,
       matchReason: `Primary contact for hiring pipeline and team expansion intelligence`,
       recentNews: `Scaling team from 45 to 120 over next 12 months`,
@@ -255,6 +269,8 @@ function generatePreviewCandidates(criteria: PeopleSearchCriteria): BrightDataCa
     matchReason: c.matchReason,
     recentNews: c.recentNews,
     signals: c.signals,
+    education: c.education,
+    almaMater: c.almaMater,
     confidence: "high" as const,
     source: "preview_simulation" as const,
   }));

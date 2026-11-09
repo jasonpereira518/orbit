@@ -9,6 +9,7 @@ import {
   Compass,
   ExternalLink,
   Filter,
+  GraduationCap,
   Loader2,
   Plus,
   Search,
@@ -712,6 +713,12 @@ export function FindProspectsSearch({
                       <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
                         {candidate.matchReason}
                       </span>
+                      {Boolean(candidate.education || candidate.almaMater) && (
+                        <span className="rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:text-indigo-300 inline-flex items-center gap-1">
+                          <GraduationCap className="h-2.5 w-2.5 shrink-0" />
+                          <span className="truncate">{candidate.education || candidate.almaMater}</span>
+                        </span>
+                      )}
                       {Array.isArray(candidate.signals) &&
                         candidate.signals.slice(0, 2).map((sig) => (
                           <span

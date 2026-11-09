@@ -175,6 +175,8 @@ export async function runCampaignDeepSearch(
             newsContext,
             signals,
             matchReason: candidate.matchReason,
+            education: candidate.education || null,
+            almaMater: candidate.almaMater || null,
             source: candidate.source,
             demo: isDemo,
             deepSearchCatalogedAt: new Date().toISOString(),

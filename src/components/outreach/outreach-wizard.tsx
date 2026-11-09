@@ -807,6 +807,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                   const summary = (enrichment.summary as string) || (enrichment.headline as string) || null;
                   const news = (enrichment.newsContext as string) || (enrichment.recentNews as string) || null;
                   const signals = Array.isArray(enrichment.signals) ? (enrichment.signals as string[]) : [];
+                  const education = (enrichment.education as string) || (enrichment.almaMater as string) || null;
 
                   return (
                     <div
@@ -886,11 +887,17 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                         )}
 
                         {/* Match Reason and Growth Signals */}
-                        {(matchReason || signals.length > 0) && (
+                        {(matchReason || signals.length > 0 || education) && (
                           <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                             {matchReason && (
                               <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
                                 {matchReason}
+                              </span>
+                            )}
+                            {education && (
+                              <span className="rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:text-indigo-300 inline-flex items-center gap-1">
+                                <GraduationCap className="h-2.5 w-2.5 shrink-0" />
+                                <span className="truncate">{education}</span>
                               </span>
                             )}
                             {signals.slice(0, 2).map((sig) => (

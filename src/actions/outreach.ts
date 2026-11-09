@@ -9,6 +9,7 @@ import {
   outreachCampaigns,
   outreachMessages,
   outreachProspects,
+  userSettings,
   type AudienceFilters,
   type OutreachSequenceStep,
 } from "@/db/schema";
@@ -244,6 +245,13 @@ export async function getCampaign(campaignId: string) {
     warmPathsRecord[key] = paths;
   }
 
+  // Load user's schools for alumni matching signal
+  const userSettingsRow = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { schools: true },
+  });
+  const userSchools: string[] = (userSettingsRow?.schools || []).filter(Boolean);
+
   // Ensure each prospect has calculated effectiveness score
   const targetFilters = (campaign.audienceFilters || {}) as AudienceFilters;
   const enrichedProspects = campaign.prospects.map((p) => {
@@ -251,6 +259,15 @@ export async function getCampaign(campaignId: string) {
     const orgKey = p.company ? normalizeCompanyKey(p.company) : "";
     const paths = orgKey ? warmPathsRecord[orgKey] || [] : [];
     const hasWarmPath = paths.length > 0;
+
+    const prospectAlma = (enrichment.almaMater as string) || "";
+    const prospectEdu = (enrichment.education as string) || "";
+    const matchedSchool = userSchools.find(
+      (s) =>
+        s &&
+        (prospectAlma.toLowerCase().includes(s.toLowerCase()) ||
+          prospectEdu.toLowerCase().includes(s.toLowerCase()))
+    );
 
     let score = enrichment.effectivenessScore as number | undefined;
     let tier = enrichment.priorityTier as "high" | "strong" | "standard" | undefined;
@@ -281,6 +298,8 @@ export async function getCampaign(campaignId: string) {
         effectivenessScore: score,
         priorityTier: tier,
         scoreReasons: reasons,
+        isAlumniMatch: Boolean(matchedSchool),
+        matchedSchool: matchedSchool || null,
       },
     };
   });
@@ -288,6 +307,7 @@ export async function getCampaign(campaignId: string) {
   const metrics = computeCampaignMetrics(enrichedProspects);
   return {
     ...campaign,
+    userSchools,
     prospects: enrichedProspects,
     warmPaths: warmPathsRecord,
     metrics,
@@ -545,6 +565,8 @@ async function searchProspectsCore(campaignId: string, page = 1) {
         recentNews: c.recentNews,
         newsContext: c.recentNews || null,
         signals: c.signals || [],
+        education: c.education || null,
+        almaMater: c.almaMater || null,
         source: c.source,
         demo: isDemo,
       },

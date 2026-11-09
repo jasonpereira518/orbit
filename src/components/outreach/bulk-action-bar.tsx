@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Copy, ExternalLink, Send } from "lucide-react";
+import { Copy, Download, ExternalLink, Send } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { copyText } from "@/lib/clipboard";
 import {
@@ -22,6 +22,7 @@ import type { OutreachChannel } from "@/lib/outreach-types";
 import { DangerSendDialog } from "@/components/outreach/danger-send-dialog";
 import { MailMergeDialog } from "@/components/outreach/mail-merge-dialog";
 import { LinkedInBrowserUseDialog } from "@/components/outreach/linkedin-browser-use-dialog";
+import { CampaignExportDialog } from "@/components/outreach/campaign-export-dialog";
 import type { ProspectRow } from "@/components/outreach/prospect-table";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
@@ -51,6 +52,7 @@ export function BulkActionBar({
 }) {
   const [pending, start] = useTransition();
   const [dangerOpen, setDangerOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [qualityNote, setQualityNote] = useState<string | null>(null);
   const [ignoreWarnings, setIgnoreWarnings] = useState(false);
 
@@ -261,6 +263,16 @@ export function BulkActionBar({
           <ExternalLink className="mr-1 h-3.5 w-3.5" />
           Open apps
         </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 text-xs rounded-full"
+          onClick={() => setExportOpen(true)}
+          disabled={pending || !activeRows.length}
+        >
+          <Download className="mr-1 h-3.5 w-3.5" />
+          Export
+        </Button>
         {sendable.length > 0 && (
           <Button
             size="sm"
@@ -286,6 +298,13 @@ export function BulkActionBar({
       {dangerOpen && qualityNote && (
         <p className="text-xs text-amber-700 dark:text-warning">{qualityNote}</p>
       )}
+
+      <CampaignExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        campaignName="Selected Outreach"
+        prospects={selectedProspectRows}
+      />
     </div>
   );
 }

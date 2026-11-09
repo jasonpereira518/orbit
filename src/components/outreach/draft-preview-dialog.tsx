@@ -53,6 +53,9 @@ export function DraftPreviewDialog({
   const newsHook = (enrichment.newsContext as string) || (enrichment.recentNews as string);
   const signals = Array.isArray(enrichment.signals) ? (enrichment.signals as string[]) : [];
   const matchReason = enrichment.matchReason as string | undefined;
+  const education = (enrichment.education as string) || (enrichment.almaMater as string) || undefined;
+  const isAlumniMatch = Boolean(enrichment.isAlumniMatch);
+  const matchedSchool = (enrichment.matchedSchool as string) || null;
   const channel = message?.channel || "email";
 
   const hasHiringSignal = signals.some((s) => /hir|grow|scale|expan/i.test(s));
@@ -164,6 +167,20 @@ export function DraftPreviewDialog({
               </span>
             )}
 
+            {isAlumniMatch && matchedSchool && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-0.5 text-xs font-semibold text-indigo-800 dark:text-indigo-200 shadow-xs">
+                <GraduationCap className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-300" />
+                Alumni Match: {matchedSchool}
+              </span>
+            )}
+
+            {education && !isAlumniMatch && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                <GraduationCap className="h-3 w-3 text-indigo-500" />
+                {education}
+              </span>
+            )}
+
             {newsHook && (
               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
                 <TrendingUp className="h-3 w-3 text-emerald-500" />
@@ -188,16 +205,18 @@ export function DraftPreviewDialog({
 
         <div className="space-y-4 py-2">
           {/* Smart Talking Point / Why this was written */}
-          {(newsHook || matchReason) && (
+          {(newsHook || matchReason || isAlumniMatch) && (
             <div className="rounded-2xl border border-sky-500/30 bg-sky-500/5 p-3.5 text-xs dark:bg-sky-500/10">
               <span className="font-semibold text-sky-950 dark:text-sky-100 flex items-center gap-1.5">
                 <Sparkles className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
                 Personalized Icebreaker Hook
               </span>
               <p className="mt-1 text-sky-900/90 dark:text-sky-200/90 leading-relaxed">
-                {newsHook
-                  ? `References: "${newsHook}". This shows you researched their current momentum before reaching out.`
-                  : matchReason}
+                {isAlumniMatch && matchedSchool
+                  ? `Shared School Connection: Mentions your mutual ties to ${matchedSchool}. Alumni outreach generates up to 3x higher response rates for students.`
+                  : newsHook
+                    ? `References: "${newsHook}". Demonstrates you actively researched their recent momentum before reaching out.`
+                    : matchReason}
               </p>
             </div>
           )}

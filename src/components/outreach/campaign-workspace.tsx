@@ -26,7 +26,8 @@ import {
   triggerCampaignBackgroundSearchAction,
   updateCampaign,
 } from "@/actions/outreach";
-import { AlertCircle, Activity, CheckCircle2, ChevronDown, ChevronUp, Globe, Loader2, Radio, ShieldCheck, Sparkles, Terminal, X } from "lucide-react";
+import { AlertCircle, Activity, CheckCircle2, ChevronDown, ChevronUp, Download, Globe, Loader2, Radio, ShieldCheck, Sparkles, Terminal, X } from "lucide-react";
+import { CampaignExportDialog } from "@/components/outreach/campaign-export-dialog";
 import { toast } from "@/lib/toast";
 import { isDeliveredMessage, prospectPipelineBucket } from "@/lib/outreach-metrics";
 import type {
@@ -107,6 +108,7 @@ export function CampaignWorkspace({
   const [bgJob, setBgJob] = useState<CampaignBackgroundJob | null>(campaign.backgroundJob || null);
   const [showDismissedBgAlert, setShowDismissedBgAlert] = useState(false);
   const [showActivityDrawer, setShowActivityDrawer] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   // Poll background job when active
   useEffect(() => {
@@ -529,24 +531,36 @@ export function CampaignWorkspace({
           </Button>
         </div>
 
-        <Button
-          size="sm"
-          onClick={handleDeepSearch}
-          disabled={pending || bgJob?.status === "running"}
-          className="gap-1.5 shadow-xs rounded-full text-xs"
-        >
-          {bgJob?.status === "running" ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Scouting in Background...
-            </>
-          ) : (
-            <>
-              <Sparkles className="h-3.5 w-3.5" />
-              Scout Web in Background
-            </>
-          )}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setExportOpen(true)}
+            className="gap-1.5 shadow-xs rounded-full text-xs"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={handleDeepSearch}
+            disabled={pending || bgJob?.status === "running"}
+            className="gap-1.5 shadow-xs rounded-full text-xs"
+          >
+            {bgJob?.status === "running" ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Scouting in Background...
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-3.5 w-3.5" />
+                Scout Web in Background
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       {showFilters && (
@@ -616,6 +630,13 @@ export function CampaignWorkspace({
         warmPaths={campaign.warmPaths}
         defaultChannel={defaultChannel}
         onUpdated={refresh}
+      />
+
+      <CampaignExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        campaignName={campaign.name}
+        prospects={filtered}
       />
     </div>
   );
