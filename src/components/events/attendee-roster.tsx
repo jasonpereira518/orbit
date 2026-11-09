@@ -44,6 +44,7 @@ import {
   findAttendeeLinkedInAction,
   removeSpokenToConnection,
 } from "@/actions/events";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import type { RosterRow } from "@/lib/events/types";
 import { EditAttendeeDialog } from "./edit-attendee-dialog";
 import { friendlyError } from "@/lib/errors";
@@ -322,6 +323,13 @@ export function AttendeeRoster({
                 onCheckedChange={() => toggle(row.id)}
                 disabled={connected || busy}
                 aria-label={`I met ${who}`}
+              />
+              <ContactAvatar
+                contactId={row.contactId ?? match?.contactId}
+                fullName={row.fullName ?? row.email ?? "Guest"}
+                profileImageUrl={row.profileImageUrl}
+                size="sm"
+                className="size-8 shrink-0"
               />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
