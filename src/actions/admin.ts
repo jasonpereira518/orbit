@@ -1069,7 +1069,7 @@ export async function logFeedbackAction(input: {
   area: string | null;
 }): Promise<{ ok: true; id: string }> {
   const adminUserId = await requireAdminUserId();
-  if (!isFeedbackSource(input.source)) throw new UserFacingError("Pick where it came from.");
+  if (!isFeedbackSource(input.source)) throw new UserFacingError("Pick where it came from");
   const area = input.area && adminFeedback.isFeedbackArea(input.area) ? input.area : null;
 
   const logged = await logDirectFeedback({
@@ -1122,9 +1122,9 @@ export async function replyToFeedbackAction(input: {
 }): Promise<{ ok: true; thread: FeedbackThread; emailed: boolean; credited: boolean }> {
   const adminUserId = await requireAdminUserId();
   const body = input.body.trim();
-  if (!body) throw new UserFacingError("Write a reply first.");
+  if (!body) throw new UserFacingError("Write a reply first");
   if (body.length > MAX_THREAD_MESSAGE) {
-    throw new UserFacingError(`Keep it under ${MAX_THREAD_MESSAGE} characters.`);
+    throw new UserFacingError(`Keep it under ${MAX_THREAD_MESSAGE} characters`);
   }
   const credits =
     input.thankCredits == null
@@ -1132,11 +1132,11 @@ export async function replyToFeedbackAction(input: {
       : (THANKS_CREDIT_OPTIONS as readonly number[]).includes(input.thankCredits)
         ? input.thankCredits
         : (() => {
-            throw new UserFacingError("Pick 25, 50 or 100 credits.");
+            throw new UserFacingError("Pick 25, 50 or 100 credits");
           })();
 
   const posted = await postThreadMessage({ feedbackId: input.id, author: "operator", body });
-  if (!posted) throw new UserFacingError("Only feedback sent from the app can be replied to.");
+  if (!posted) throw new UserFacingError("Only feedback sent from the app can be replied to");
 
   const credited = credits
     ? await grantFeedbackThanks({ feedbackId: input.id, userId: posted.reporterId, credits })
@@ -1175,7 +1175,7 @@ export async function replyToFeedbackAction(input: {
 
   revalidateFeedback();
   const thread = await loadThread(input.id, "operator");
-  if (!thread) throw new UserFacingError("That feedback entry no longer exists.");
+  if (!thread) throw new UserFacingError("That feedback entry no longer exists");
   return { ok: true, thread, emailed, credited };
 }
 

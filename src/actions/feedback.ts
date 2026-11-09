@@ -17,10 +17,12 @@ import {
 import { notifyFeedbackReply, notifyFeedbackSubmitted } from "@/lib/feedback-notify";
 import { MAX_THREAD_MESSAGE } from "@/lib/feedback-report";
 import {
+  listMyFeedback,
   loadThread,
   markThreadRead,
   postThreadMessage,
   type FeedbackThread,
+  type MyFeedbackRow,
 } from "@/lib/feedback-thread";
 import { triageFeedback } from "@/lib/feedback-triage";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
@@ -202,4 +204,10 @@ export async function sendFeedbackMessage(
 
   const thread = await loadThread(feedbackId, { userId });
   return thread ? { ok: true, thread } : { ok: false, message: "That conversation is gone." };
+}
+
+/** The caller's own reports, for the feedback panel's "Your feedback" tab. */
+export async function listMyFeedbackAction(): Promise<MyFeedbackRow[]> {
+  const userId = await requireUserId();
+  return listMyFeedback(userId);
 }

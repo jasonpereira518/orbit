@@ -1,10 +1,12 @@
 "use client";
 
-import { Camera, X } from "lucide-react";
+import { ArrowLeft, Camera, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { submitFeedback } from "@/actions/feedback";
+import { getMyFeedbackThread, listMyFeedbackAction, submitFeedback } from "@/actions/feedback";
+import { FeedbackChat } from "@/components/feedback/feedback-chat";
+import { FeedbackList } from "@/components/feedback/feedback-list";
 import type { DraftShot } from "@/components/feedback/feedback-widget";
 import { SendButton } from "@/components/feedback/send-button";
 import { Button } from "@/components/ui/button";
@@ -26,25 +28,38 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   AREA_LABELS,
   AREA_OPTIONS,
+  FEEDBACK_CATEGORIES,
   FEEDBACK_RECIPIENT,
   MAX_FEEDBACK_TEXT,
   MAX_SCREENSHOTS,
-  clampPanelOffset,
   featureAreaForPath,
   readClientContext,
   type FeedbackArea,
+  type FeedbackCategory,
 } from "@/lib/feedback-report";
+import type { FeedbackPanelTarget } from "@/lib/feedback-events";
+import type { FeedbackThread, MyFeedbackRow } from "@/lib/feedback-thread";
 import { useCornerShift } from "@/lib/corner-clearance";
-import { PANEL_CORNER_SHIFT_PX, type PanelAnchor } from "@/lib/floating-panel";
+import { PANEL_CORNER_SHIFT_PX } from "@/lib/floating-panel";
+import { cn } from "@/lib/utils";
 import { blobToDataUrl } from "@/lib/screenshot-capture";
 import { toast } from "@/lib/toast";
+
+/** The four kinds, worded the way someone would say them. One line, all optional. */
+const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
+  bug: "Something's broken",
+  idea: "I have an idea",
+  confusing: "This confused me",
+  praise: "This worked well",
+};
 
 export function FeedbackPanel({
   open,
   sent,
-  anchor,
-  offset,
-  onOffsetChange,
+  target,
+  onTargetChange,
+  category,
+  onCategoryChange,
   message,
   onMessageChange,
   area,
@@ -73,15 +88,12 @@ export function FeedbackPanel({
    * mounted. This component reads it and never sets it.
    */
   sent: boolean;
-  /** Where the window sits and what it grows out of — see `anchorBelowTrigger`. */
-  anchor: PanelAnchor;
-  /**
-   * How far the person has dragged the window from that anchor. Owned by the widget rather
-   * than by this component, so it survives the panel unmounting for a screenshot — and is
-   * cleared when the panel actually closes, which is what puts it back where it started.
-   */
-  offset: { x: number; y: number };
-  onOffsetChange: (next: { x: number; y: number }) => void;
+  /** Which view is showing — the form, your past feedback, or one conversation. */
+  target: FeedbackPanelTarget;
+  onTargetChange: (next: FeedbackPanelTarget) => void;
+  /** The kind they picked, or null to let triage read it from the words. */
+  category: FeedbackCategory | null;
+  onCategoryChange: (next: FeedbackCategory | null) => void;
   message: string;
   onMessageChange: (value: string) => void;
   /** `null` = follow the current page. Owned by the widget so it survives a dismissal. */
@@ -235,96 +247,22 @@ export function FeedbackPanel({
     if (sheetOpen) hasEntered.current = true;
   }, [sheetOpen]);
 
-  const panelRef = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState(false);
   /**
-   * The pointer and panel positions at the moment the drag began.
-   *
-   * Measured once, so a move is arithmetic on numbers already in hand rather than a
-   * `getBoundingClientRect()` per pointermove — that call forces layout, and it would run
-   * far more often than the screen refreshes.
+   * Their past feedback, for the "Your feedback" tab and its unread count. Read when the
+   * panel opens and again whenever that tab is shown, so a reply that arrived meanwhile shows.
    */
-  const dragFrom = useRef<{
-    px: number;
-    py: number;
-    ox: number;
-    oy: number;
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  /** The live offset during a drag, which React does not see until the pointer is released. */
-  const liveOffset = useRef(offset);
-
-  function startDrag(e: React.PointerEvent) {
-    if (e.button !== 0) return;
-    // The window is on its way out; grabbing it now would only fight the collapse.
-    if (sent) return;
-    // The close button lives in this header, and the title is selectable text. Neither
-    // should be a drag handle.
-    if ((e.target as HTMLElement).closest("button, a, input, textarea, select")) return;
-    const rect = panelRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    e.preventDefault();
-    try {
-      // Keeps the drag alive when the pointer outruns the header, which it will — the
-      // handle is a strip and the window follows the cursor anywhere. Wrapped because it
-      // throws for a pointer id the browser is not currently tracking, and losing capture
-      // is a degraded drag rather than a reason not to start one.
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // Ignored on purpose — see above.
-    }
-    liveOffset.current = offset;
-    dragFrom.current = {
-      px: e.clientX,
-      py: e.clientY,
-      ox: offset.x,
-      oy: offset.y,
-      left: rect.left,
-      top: rect.top,
-      width: rect.width,
-      height: rect.height,
+  const [mine, setMine] = useState<MyFeedbackRow[] | null>(null);
+  useEffect(() => {
+    if (!open || target.view === "thread") return;
+    let live = true;
+    listMyFeedbackAction()
+      .then((rows) => live && setMine(rows))
+      .catch(() => live && setMine((prev) => prev ?? []));
+    return () => {
+      live = false;
     };
-    setDragging(true);
-  }
-
-  /**
-   * Move the window by writing the transform straight to the node.
-   *
-   * Deliberately NOT React state. The panel holds a textarea, a select and the screenshot
-   * thumbnails, and re-rendering all of it on every pointermove is what made the drag feel
-   * heavy. Setting `translate` touches no layout — the compositor takes it — so this stays
-   * smooth however fast the pointer moves, and the state is reconciled once on release.
-   *
-   * It also drops the rAF this used to coalesce through: the browser already delivers
-   * pointermove at most once per frame, and a style write is far cheaper than the render
-   * the coalescing existed to avoid.
-   */
-  function moveDrag(e: React.PointerEvent) {
-    const start = dragFrom.current;
-    const node = panelRef.current;
-    if (!start || !node) return;
-
-    const next = clampPanelOffset({
-      start: { left: start.left, top: start.top, width: start.width, height: start.height },
-      startOffset: { x: start.ox, y: start.oy },
-      delta: { x: e.clientX - start.px, y: e.clientY - start.py },
-      viewport: { width: window.innerWidth, height: window.innerHeight },
-    });
-    liveOffset.current = next;
-    node.style.translate = `${next.x}px ${next.y}px`;
-  }
-
-  function endDrag() {
-    if (!dragFrom.current) return;
-    dragFrom.current = null;
-    setDragging(false);
-    // Hand the final position to React so the style prop and the DOM agree. Re-rendering
-    // writes the same `translate` that is already on the node, so nothing moves.
-    onOffsetChange(liveOffset.current);
-  }
+  }, [open, target.view]);
+  const unread = mine?.filter((r) => r.unread).length ?? 0;
 
   async function send() {
     if (!canSend) return;
@@ -345,6 +283,7 @@ export function FeedbackPanel({
       const result = await submitFeedback({
         text: message,
         area: effectiveArea,
+        category: category ?? undefined,
         path: client.path,
         viewport: client.viewport,
         devicePixelRatio: client.devicePixelRatio,
@@ -396,60 +335,99 @@ export function FeedbackPanel({
       }}
     >
       <SheetContent
-        side="floating"
-        // The notifications window's treatment, and for the same reasons documented on
-        // `.liquid-glass-panel` in globals.css: it carries the radius, the lifted shadow,
-        // and — the part that matters here — a full re-declaration of the transition with
-        // an ease-OUT arriving and an ease-IN leaving. One curve in both directions is what
-        // made closing feel like it stopped dead rather than being drawn back into the
-        // button. `.liquid-glass` on its own would not match those selectors.
-        className="liquid-glass liquid-glass-panel gap-5 overflow-y-auto p-6"
-        // Lighter than the shared default, exactly as the notifications window does it: the
-        // page behind stays legible instead of being dimmed to a modal.
+        // Docked to the right edge and full height: a place to read past conversations as
+        // well as write a new one, which a small floating window never was.
+        side="right"
+        // The sheet's own surface, like the other right-side panels. Not `.liquid-glass`: that
+        // class pins the element to `position: relative`, which un-docks a fixed sheet.
+        // `sm:max-w-[34rem]` so the four kinds fit on one line beside the message box.
+        className="gap-5 overflow-y-auto p-6 data-[side=right]:sm:max-w-[34rem]"
+        // Lighter than the shared default: the page behind stays legible.
         overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
-        // `top` overrides the floating side's `inset-y-4` so the window opens BELOW the
-        // trigger rail. The notifications window is full height and lands on top of its own
-        // bell — it is pretending to BE that bell. This one shares the rail rather than
-        // replacing it, so everything above it, the bell included, stays visible and usable.
-        //
-        // `transformOrigin` aims the panel's 0.28 scale at the button rather than at its
-        // own centre, so it still reads as the button unfolding.
-        // `translate` rather than `top`/`left`: the panel is positioned against the right
-        // edge, so moving it by its inset would fight that anchoring. It also composites
-        // without relayout, which is what keeps a drag smooth.
-        //
-        // The transition is suppressed WHILE dragging: `.liquid-glass-panel` transitions
-        // `translate` over 0.32s, so without this the window would ease toward the cursor
-        // a third of a second behind it.
-        style={{
-          transformOrigin: anchor.origin,
-          top: anchor.top,
-          translate: `${offset.x}px ${offset.y}px`,
-          // `&& !sent`: a pointer still held on the header when the send lands would
-          // otherwise leave `transition: none` in place and the collapse would jump rather
-          // than travel.
-          ...(dragging && !sent ? { transition: "none" } : {}),
-        }}
-        ref={panelRef}
         showCloseButton
       >
-        {/* The header is the handle. Not the whole panel: a drag that starts anywhere
-            would fight text selection in the message field and the screenshot thumbnails. */}
-        <SheetHeader
-          className="shrink-0 p-0 select-none"
-          style={{ cursor: dragging ? "grabbing" : "grab", touchAction: "none" }}
-          onPointerDown={startDrag}
-          onPointerMove={moveDrag}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-        >
+        <SheetHeader className="shrink-0 gap-3 p-0 pr-8">
           <SheetTitle className="font-[family-name:var(--font-display)] text-lg">
-            Message {FEEDBACK_RECIPIENT}
+            {target.view === "compose"
+              ? `Message ${FEEDBACK_RECIPIENT}`
+              : target.view === "thread"
+                ? `Conversation with ${FEEDBACK_RECIPIENT}`
+                : "Your feedback"}
           </SheetTitle>
-          <SheetDescription>
+          <SheetDescription className={target.view === "compose" ? undefined : "sr-only"}>
             I read every one. Useful reports can earn bonus AI credits.
           </SheetDescription>
+          <div className="flex gap-1 rounded-full bg-muted/60 p-1 text-sm" role="tablist" aria-label="Feedback">
+            {(
+              [
+                { view: "compose", label: `Message ${FEEDBACK_RECIPIENT}` },
+                { view: "list", label: "Your feedback" },
+              ] as const
+            ).map((tab) => {
+              const active = tab.view === "compose" ? target.view === "compose" : target.view !== "compose";
+              return (
+                <button
+                  key={tab.view}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => onTargetChange({ view: tab.view })}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 transition-colors",
+                    active ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {tab.label}
+                  {tab.view === "list" && unread > 0 && (
+                    <span className="rounded-full bg-primary px-1.5 text-[0.65rem] font-medium text-primary-foreground">
+                      {unread} new
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </SheetHeader>
+
+        {target.view === "list" ? (
+          mine === null ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : mine.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nothing yet. Anything you send {FEEDBACK_RECIPIENT} shows up here, with his replies.
+            </p>
+          ) : (
+            <FeedbackList rows={mine} onOpen={(id) => onTargetChange({ view: "thread", id })} />
+          )
+        ) : target.view === "thread" ? (
+          <PanelThread id={target.id} onBack={() => onTargetChange({ view: "list" })} />
+        ) : (
+        <>
+        {/* The four kinds, on one line, all optional. Scrolls sideways on a narrow phone
+            rather than wrapping into a block that reads as a form to fill in. */}
+        <div
+          className="-mx-1 flex shrink-0 flex-nowrap gap-1.5 overflow-x-auto px-1 pb-0.5"
+          role="group"
+          aria-label="Kind of feedback (optional)"
+        >
+          {FEEDBACK_CATEGORIES.map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={category === value}
+              onClick={() => onCategoryChange(category === value ? null : value)}
+              className={cn(
+                "shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs transition-colors",
+                category === value
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border/70 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+              )}
+            >
+              {CATEGORY_LABELS[value]}
+            </button>
+          ))}
+        </div>
+
 
         {/* The one block that gives, so that everything else always fits on screen.
  *
@@ -694,15 +672,12 @@ export function FeedbackPanel({
         </div>
         {confirming && (
           <div
-            // See the matching rule in globals.css: `.liquid-glass > *` pins every direct
-            // child to `position: relative`, and it is unlayered, so `absolute` here would
-            // be ignored. `inset-0` with an inherited radius covers the window exactly,
-            // corners included.
+            // Covers the whole panel, corners included (`inset-0`, inherited radius).
             data-slot="feedback-discard"
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="feedback-discard-title"
-            className="inset-0 flex items-center justify-center rounded-[inherit] bg-popover/85 p-6 supports-backdrop-filter:backdrop-blur-[2px]"
+            className="absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-popover/85 p-6 supports-backdrop-filter:backdrop-blur-[2px]"
           >
             <div className="w-full max-w-[17rem] rounded-2xl border border-border/70 bg-popover p-4 text-center shadow-lg">
               <p
@@ -742,6 +717,8 @@ export function FeedbackPanel({
             </div>
           </div>
         )}
+        </>
+        )}
       </SheetContent>
     </Sheet>
   );
@@ -754,4 +731,41 @@ function describeDraft(message: string, shots: number): string {
   if (hasText && shots > 0) return `Your message and ${pictures} will be deleted.`;
   if (shots > 0) return `Your ${pictures} will be deleted.`;
   return "Your message will be deleted.";
+}
+
+/**
+ * One conversation inside the panel. Reading it marks it read (the action does), and
+ * `FeedbackChat` keeps it live and asks the bell to re-read.
+ */
+function PanelThread({ id, onBack }: { id: string; onBack: () => void }) {
+  const [thread, setThread] = useState<FeedbackThread | null | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    getMyFeedbackThread(id)
+      .then((t) => live && setThread(t))
+      .catch(() => live && setThread(null));
+    return () => {
+      live = false;
+    };
+  }, [id]);
+
+  return (
+    <div className="grid gap-3">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="size-3.5" aria-hidden />
+        Your feedback
+      </button>
+      {thread === undefined ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : thread === null ? (
+        <p className="text-sm text-muted-foreground">That conversation isn’t available.</p>
+      ) : (
+        <FeedbackChat key={thread.id} initial={thread} />
+      )}
+    </div>
+  );
 }

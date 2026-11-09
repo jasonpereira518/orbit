@@ -5,12 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { cn } from "@/lib/utils";
 import {
-  FEEDBACK_ANCHOR_FALLBACK,
   setFeedbackPanelState,
   subscribeFeedbackOpen,
   takeFeedbackOpenRequest,
 } from "@/lib/feedback-events";
-import type { PanelAnchor } from "@/lib/floating-panel";
+import type { FeedbackPanelTarget } from "@/lib/feedback-events";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import {
   MAX_SCREENSHOTS,
@@ -18,6 +17,7 @@ import {
   MAX_SUBMISSION_BYTES,
   FEEDBACK_RECIPIENT,
   type FeedbackArea,
+  type FeedbackCategory,
 } from "@/lib/feedback-report";
 import { toast } from "@/lib/toast";
 import {
@@ -113,15 +113,16 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * release now, so the annotator is a second look rather than a gate on the way in.
    */
   const [editingShotId, setEditingShotId] = useState<string | null>(null);
-  const [anchor, setAnchor] = useState<PanelAnchor>(FEEDBACK_ANCHOR_FALLBACK);
   /**
-   * How far the window has been dragged from its anchor.
-   *
-   * Lives here rather than in the panel so it survives the panel unmounting to take a
-   * screenshot — coming back somewhere else after attaching one would be baffling. Cleared
-   * on close, which is what makes the window reopen where it belongs.
+   * Which view the side panel shows: the message form, your past feedback, or one
+   * conversation. Up here so it survives the panel unmounting for a screenshot.
    */
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [target, setTarget] = useState<FeedbackPanelTarget>({ view: "compose" });
+  /**
+   * The kind, if they picked one. Optional: left blank, the triage pass reads it from the
+   * words (`src/lib/feedback-triage.ts` only fills a kind that is still empty).
+   */
+  const [category, setCategory] = useState<FeedbackCategory | null>(null);
   /**
    * Whether this close is following a successful send.
    *
@@ -217,9 +218,6 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * window any other way — Escape, the backdrop, the X — keeps it: half a paragraph and
    * two screenshots is real work, and losing it to a stray click outside a floating panel
    * is what stops someone reporting anything a second time.
-   *
-   * The drag position resets either way. Where the window sits is not part of the draft;
-   * it should always come back where it belongs.
    */
   const endSession = useCallback(() => {
     const wasSent = sentBeatRef.current;
@@ -232,10 +230,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     // screen. The button's check is the acknowledgement while the panel is still up; this
     // is what remains once it has gone, and it is also how the success reaches a screen
     // reader, through sonner's live region.
-    if (wasSent) toast.success(`Sent to ${FEEDBACK_RECIPIENT}. Replies show up in your notifications.`);
+    if (wasSent) toast.success(`Sent to ${FEEDBACK_RECIPIENT} — replies show up in your notifications`);
 
     setSentBeat(false);
-    setOffset({ x: 0, y: 0 });
     setPhase("closed");
 
     if (!wasSent && !discarded) return;
@@ -244,6 +241,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     setShots([]);
     setMessage("");
     setArea(null);
+    setCategory(null);
     setCaret(null);
   }, []);
 
@@ -258,7 +256,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     const consume = () => {
       const requested = takeFeedbackOpenRequest();
       if (requested === null) return;
-      setAnchor(requested);
+      // A docked panel has no anchor to sit under; only the view matters. A plain press of
+      // the button opens the form; the bell and "Your feedback" open a conversation.
+      setTarget(requested.target ?? { view: "compose" });
       // From `sent`, hand back a BLANK form. The message and screenshots are still in
       // state — `endSession` only runs at the end of the collapse — so reopening without
       // this would return a draft the person has already sent. Both setStates batch into
@@ -512,9 +512,10 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           // side of it.
           open={phase === "composing" || phase === "sent"}
           sent={sentBeat}
-          anchor={anchor}
-          offset={offset}
-          onOffsetChange={setOffset}
+          target={target}
+          onTargetChange={setTarget}
+          category={category}
+          onCategoryChange={setCategory}
           message={message}
           onMessageChange={setMessage}
           shots={shots}

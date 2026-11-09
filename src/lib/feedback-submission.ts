@@ -308,10 +308,10 @@ export async function logDirectFeedback(input: {
 }): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   const email = input.email.trim();
   const text = input.text.trim();
-  if (!email) return { ok: false, message: "Add their email." };
-  if (!text) return { ok: false, message: "Add what they said." };
+  if (!email) return { ok: false, message: "Add their email" };
+  if (!text) return { ok: false, message: "Add what they said" };
   if (text.length > MAX_FEEDBACK_TEXT) {
-    return { ok: false, message: `Keep it under ${MAX_FEEDBACK_TEXT} characters.` };
+    return { ok: false, message: `Keep it under ${MAX_FEEDBACK_TEXT} characters` };
   }
 
   const db = await getDb();
@@ -320,7 +320,7 @@ export async function logDirectFeedback(input: {
     .from(userSettings)
     .where(sql`lower(${userSettings.email}) = lower(${email})`)
     .limit(1);
-  if (!person) return { ok: false, message: "No Orbit account with that email." };
+  if (!person) return { ok: false, message: "No Orbit account with that email" };
 
   const created = await createFeedbackSubmission({
     userId: person.userId,

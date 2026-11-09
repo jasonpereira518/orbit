@@ -38,6 +38,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { companyBrandText } from "@/lib/company-brand";
 import { playDing } from "@/lib/ding";
+import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import { AccountAlerts } from "@/components/notifications/account-alerts";
 import { RowBubble } from "@/components/notifications/row-bubble";
@@ -523,6 +524,16 @@ function NotificationRow({
   onSnooze?: () => void;
   onNavigate: () => void;
 }) {
+  // A feedback reply opens in the feedback side panel, over the page you're on, rather than
+  // taking you away from it. The href stays for a new tab or a modifier-click.
+  const openItem = (e: React.MouseEvent) => {
+    if (item.kind === "feedback_reply" && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+      e.preventDefault();
+      const id = item.url.split("/").pop();
+      if (id) requestFeedbackOpen(FEEDBACK_ANCHOR_FALLBACK, { view: "thread", id });
+    }
+    onNavigate();
+  };
   const Icon =
     item.kind === "follow_up"
       ? UserRound
@@ -553,7 +564,7 @@ function NotificationRow({
       </IconDisc>
       <RowBubble
         lines={[item.title, detail]}
-        render={<Link href={item.url} onClick={onNavigate} className="min-w-0 flex-1 hover:underline" />}
+        render={<Link href={item.url} onClick={(e) => openItem(e)} className="min-w-0 flex-1 hover:underline" />}
       >
         <span className="block truncate text-sm font-medium text-ink">
           {item.title}

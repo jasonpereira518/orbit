@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FeedbackChat } from "@/components/feedback/feedback-chat";
+import { RenderStamp } from "@/components/layout/render-stamp";
 import { requireUserId } from "@/lib/auth";
 import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
 import { loadThread, markThreadRead } from "@/lib/feedback-thread";
@@ -24,6 +25,7 @@ export default async function FeedbackThreadPage({
 
   return (
     <div className="mx-auto grid w-full max-w-2xl gap-6 px-4 py-8">
+      <RenderStamp />
       <div className="grid gap-1">
         <Link
           href="/settings#your-feedback"
