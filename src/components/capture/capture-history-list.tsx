@@ -6,7 +6,7 @@ import { format } from "date-fns";
 import { ChevronRight, History, Trash2 } from "lucide-react";
 import { listCaptureHistory } from "@/actions/capture";
 import { deleteNoteBatch } from "@/actions/note-batches";
-import type { CaptureHistoryItem, CaptureHistoryPage } from "@/lib/capture-history";
+import type { CaptureHistoryItem, CaptureHistoryPage, CaptureHistoryPending } from "@/lib/capture-history";
 import { timelineDayLabel } from "@/lib/timeline-date";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -86,13 +86,18 @@ export function CaptureHistoryList({ initial }: { initial: CaptureHistoryPage })
         </h2>
       </div>
 
-      {items.length === 0 ? (
+      {items.length === 0 && initial.pending.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-border/70 px-4 py-5 text-sm text-muted-foreground">
           Nothing captured yet. Every capture you save lands here, with the notes and
           photos it came from, so you can always go back to the original.
         </p>
       ) : (
         <ul className="space-y-2">
+          {/* Unsaved extractions first: they are the ones waiting on you. Only the first page
+              carries them, so "See more" never repeats one. */}
+          {initial.pending.map((item) => (
+            <PendingCaptureRow key={item.id} item={item} />
+          ))}
           {items.map((item) => (
             <CaptureHistoryRow
               key={item.id}
@@ -115,6 +120,64 @@ export function CaptureHistoryList({ initial }: { initial: CaptureHistoryPage })
         </Button>
       )}
     </section>
+  );
+}
+
+const PENDING_BADGE: Record<CaptureHistoryPending["status"], string> = {
+  extracting: "Extracting…",
+  ready: "Ready to review",
+  saving: "Saving…",
+  failed: "Couldn’t read it",
+};
+
+/** An extraction not saved yet (a drive doc the scan picked up, a Granola or Notion pick…): opens its review. */
+function PendingCaptureRow({ item }: { item: CaptureHistoryPending }) {
+  const hydrated = useHydrated();
+  const meta = CAPTURE_METHOD_META[item.method];
+  const created = new Date(item.createdAt);
+  return (
+    <li className="rounded-xl border border-dashed border-primary/40 bg-card transition-colors has-[a:hover]:border-primary/60 has-[a:focus-visible]:border-ring">
+      <Link
+        href={item.href}
+        className="group flex min-w-0 items-center gap-3 rounded-xl px-3 py-3 text-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        <span
+          title={NOTE_SOURCE_LABEL[meta.source]}
+          className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"
+        >
+          <NoteSourceMark source={meta.source} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="line-clamp-2 font-medium text-ink">{item.title ?? meta.label}</span>
+            <Badge variant={item.status === "failed" ? "destructive" : "secondary"} className="shrink-0 text-3xs">
+              {PENDING_BADGE[item.status]}
+            </Badge>
+          </span>
+          <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+            {hydrated && (
+              <>
+                <time dateTime={item.createdAt} title={format(created, "PPpp")}>
+                  {format(created, "EEE, MMM d, h:mm a")} · {timelineDayLabel(created)}
+                </time>
+                <span aria-hidden>·</span>
+              </>
+            )}
+            <span>{meta.label}</span>
+            {item.status === "ready" && item.peopleCount > 0 && (
+              <>
+                <span aria-hidden>·</span>
+                <span>{plural(item.peopleCount, "person", "people")} found</span>
+              </>
+            )}
+          </span>
+        </span>
+        <ChevronRight
+          className="size-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5"
+          aria-hidden
+        />
+      </Link>
+    </li>
   );
 }
 

@@ -121,7 +121,11 @@ export function CaptureFlow({
   quota?: { used: number; limit: number | null } | null;
   /** For the notes box's localStorage draft key. */
   userId?: string | null;
-  /** The capture history feed, shown under the input UI only. */
+  /**
+   * The capture history feed, shown under the input UI and under the "N people ready to
+   * review" notice — opening /capture with drive docs waiting lands on that notice for one of
+   * them, and the history is where the others are listed.
+   */
   history?: React.ReactNode;
   /** Drive import is part of sync; with no plan for it the Drive button is not shown. */
   canUseSync?: boolean;
@@ -749,7 +753,7 @@ export function CaptureFlow({
         )}
       </AnimatePresence>
 
-      {phase === "input" && history}
+      {(phase === "input" || phase === "resume") && history}
       {phase !== "review" && !onSaved && !meetingsHost && <IgnoredPeopleSection initialCount={ignoredCount} />}
     </div>
   );

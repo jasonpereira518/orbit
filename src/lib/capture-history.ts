@@ -9,6 +9,7 @@ import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureJobs, interactions, noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { listCapturePhotosForBatches } from "@/lib/capture-photos";
+import { findActiveCaptureJobs } from "@/lib/capture-jobs";
 import { contactOrgLogos, type MeetingCompany } from "@/lib/meetings-list";
 import {
   captureAttendeeNames,
@@ -50,8 +51,70 @@ export type CaptureHistoryItem = {
   thumbnailIds: string[];
 };
 
+/**
+ * An extraction that has not been saved yet: a capture job still being read, waiting for
+ * review, or failed. Cloud docs (picked or auto-extracted by the drive scan), Granola and
+ * Notion picks and multi-file drops all stop here until someone reviews them, and until
+ * then no note batch exists — so without these the history never shows them.
+ */
+export type CaptureHistoryPending = {
+  id: string;
+  /** ISO. */
+  createdAt: string;
+  status: "extracting" | "ready" | "saving" | "failed";
+  method: CaptureMethod;
+  /** The doc's or file's name, when the job was given one. */
+  title: string | null;
+  peopleCount: number;
+  /** Where its review lives: the meeting page for a recording, else this job on /capture. */
+  href: string;
+};
+
+/** Pending rows on the first page; they are not paged. ponytail: a flat cap, page them if anyone hits it. */
+const PENDING_LIMIT = 20;
+
+const PENDING_STATUS: Partial<Record<string, CaptureHistoryPending["status"]>> = {
+  queued: "extracting",
+  extracting: "extracting",
+  ready: "ready",
+  reviewing: "ready",
+  saving: "saving",
+  failed: "failed",
+};
+
+/**
+ * Every extraction still waiting, newest first. Drafts (`ingesting` / `transcribed`: notes
+ * still being typed or uploaded) are not extractions yet and stay out.
+ */
+export async function listPendingCapturesFor(userId: string): Promise<CaptureHistoryPending[]> {
+  const jobs = await findActiveCaptureJobs(userId, PENDING_LIMIT);
+  return jobs.flatMap((job) => {
+    const status = PENDING_STATUS[job.status];
+    if (!status || job.noteBatchId) return [];
+    return [
+      {
+        id: job.id,
+        createdAt: new Date(job.createdAt).toISOString(),
+        status,
+        method: captureMethod({
+          meeting: false,
+          granola: job.sourceKind === "granola",
+          jobSource: job.sourceKind,
+          jobTags: job.sources,
+          kinds: [],
+        }),
+        title: job.sourceLabel,
+        peopleCount: job.result?.items.length ?? 0,
+        href: job.meetingSessionId ? `/meetings/${job.meetingSessionId}` : `/capture?job=${job.id}`,
+      },
+    ];
+  });
+}
+
 export type CaptureHistoryPage = {
   items: CaptureHistoryItem[];
+  /** Unsaved extractions, on the first page only (empty on every later one). */
+  pending: CaptureHistoryPending[];
   /** Opaque; hand it back to get the next page. Null when there is nothing older. */
   nextCursor: string | null;
 };
@@ -148,6 +211,8 @@ export async function listCaptureHistoryFor(
   const limit = Math.min(Math.max(opts.limit ?? CAPTURE_HISTORY_PAGE, 1), 50);
   const after = decodeCursor(opts.cursor);
   const db = await getDb();
+  // A side read: the saved history still renders if it fails.
+  const pendingPromise = after ? Promise.resolve([]) : listPendingCapturesFor(userId).catch(() => []);
 
   const rows = await db
     .select({
@@ -262,6 +327,7 @@ export async function listCaptureHistoryFor(
   const last = page[page.length - 1];
   return {
     items,
+    pending: await pendingPromise,
     nextCursor: rows.length > limit && last ? encodeCursor(last.createdAtText, last.id) : null,
   };
 }

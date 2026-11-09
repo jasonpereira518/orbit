@@ -142,7 +142,8 @@ function pureChecks() {
       captureMethod({ meeting: false, granola: false, jobSource: "messy", jobTags: ["cloud:google"], kinds: ["text"] }),
       captureMethod({ meeting: false, granola: false, jobSource: "messy", jobTags: ["cloud:microsoft"], kinds: ["text"] }),
       captureMethod({ meeting: false, granola: true, jobSource: "messy", jobTags: ["cloud:google"], kinds: ["text"] }),
-    ].join() === "drive,onedrive,granola"
+      captureMethod({ meeting: false, granola: false, jobSource: "messy", jobTags: ["cloud:notion"], kinds: ["text"] }),
+    ].join() === "drive,onedrive,granola,notion"
   );
 
   check("summary prefers the meeting's, as plain text", captureSummary("**Big** call", ["person"]) === "Big call.");
@@ -318,6 +319,40 @@ async function main() {
   const ph = details.items.find((i) => i.id === phoneBatch!.id)!;
   check("a batch saved by a phone job reads as phone", ph.method === "phone", ph.method);
   check("  titled by who it was with", ph.title === "Chat with Ana Ruiz", String(ph.title));
+  check("a job that saved a batch is not also pending", !details.pending.length, JSON.stringify(details.pending));
+
+  console.log("\nUnsaved extractions");
+  // What the drive scan's auto-extract leaves: one doc per job, in a drop of its own, waiting
+  // for review. None of these has a note batch yet.
+  const [driveJob, notionJob] = await db
+    .insert(captureJobs)
+    .values([
+      {
+        userId: USER,
+        sourceKind: "messy",
+        status: "ready",
+        sources: ["cloud:google"],
+        batchGroupId: crypto.randomUUID(),
+        sourceLabel: "Weekly sync notes",
+        // Only `items` is read for the count.
+        result: { items: [{}, {}] } as never,
+      },
+      { userId: USER, sourceKind: "messy", status: "queued", sources: ["cloud:notion"], sourceLabel: "Coffee chats" },
+      // A draft still being typed, and a finished one: neither is a pending extraction.
+      { userId: USER, sourceKind: "messy", status: "ingesting", inputText: "half a thought" },
+      { userId: USER, sourceKind: "messy", status: "saved", sources: ["cloud:google"], sourceLabel: "Done doc" },
+    ])
+    .returning();
+  const withPending = await listCaptureHistoryFor(USER, { limit: 2 });
+  const byId = new Map(withPending.pending.map((p) => [p.id, p]));
+  check("the first page lists exactly the two unsaved extractions", withPending.pending.length === 2 && byId.has(driveJob!.id) && byId.has(notionJob!.id), JSON.stringify(withPending.pending));
+  const drive = byId.get(driveJob!.id)!;
+  check("  the Drive doc reads as Drive, ready, with its people", drive.method === "drive" && drive.status === "ready" && drive.peopleCount === 2, JSON.stringify(drive));
+  check("  named by its file and opening its own review", drive.title === "Weekly sync notes" && drive.href === `/capture?job=${driveJob!.id}`);
+  const notion = byId.get(notionJob!.id)!;
+  check("  the Notion page reads as Notion, still extracting", notion.method === "notion" && notion.status === "extracting", JSON.stringify(notion));
+  check("later pages carry no pending rows", (await listCaptureHistoryFor(USER, { cursor: withPending.nextCursor, limit: 2 })).pending.length === 0);
+  check("another user sees none of them", (await listCaptureHistoryFor(OTHER)).pending.length === 0);
   check("  no summary to show, so none", ph.summary === null);
   check("  a person listed twice counts once", ph.peopleCount === 1, String(ph.peopleCount));
   check(

@@ -31,6 +31,7 @@ import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
+import { ACTIVE_CAPTURE_JOB_STATUSES } from "@/lib/capture/types";
 import type {
   CaptureDecision,
   CaptureDecisions,
@@ -71,9 +72,23 @@ function kick(id: string) {
   after(() => runCaptureJobById(id).catch(() => null));
 }
 
-/** What the page hydrates from. `null` means "show the input UI". */
-export async function getActiveCaptureJob(): Promise<CaptureJobView | null> {
+const JOB_ID = /^[0-9a-f-]{36}$/i;
+
+/**
+ * What the page hydrates from. `null` means "show the input UI".
+ *
+ * `preferId` (`/capture?job=`, a Recent captures row) opens that job when it is the caller's
+ * and still open — including one file of a multi-file drop, which the newest-first resume
+ * skips; the flow then shows its drop's queue and folds it into one review.
+ */
+export async function getActiveCaptureJob(preferId?: string | null): Promise<CaptureJobView | null> {
   const userId = await requireUserId();
+  if (typeof preferId === "string" && JOB_ID.test(preferId)) {
+    const picked = await getCaptureJobRow(userId, preferId);
+    if (picked && (ACTIVE_CAPTURE_JOB_STATUSES.includes(picked.status) || picked.status === "failed")) {
+      return toCaptureJobView(picked);
+    }
+  }
   const row = await findActiveCaptureJob(userId);
   return row ? toCaptureJobView(row) : null;
 }
