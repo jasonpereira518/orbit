@@ -9,6 +9,7 @@ import { UserFacingError } from "@/lib/errors";
 import { track } from "@/lib/product-events";
 import { reportError } from "@/lib/report-error";
 import { purgeUserData } from "@/lib/user-data";
+import { recordAccountAudit } from "@/lib/account-audit";
 
 /**
  * Deleting your own account, from Settings.
@@ -196,6 +197,9 @@ export async function deleteOwnAccount(
   // and neither may ever stop the deletion: each swallows its own failure.
   await bookChurnOnDeletion(userId);
   await trackAccountDeleted(userId);
+  // Written before the purge and outside it (`account_audit_log` is keyed so the purge leaves
+  // it), so the deletion itself stays on record (audit L-23).
+  await recordAccountAudit({ userId, action: "account.delete", detail: { via: "settings" } });
 
   await purgeUserData(userId, { keepSettings: false });
 
