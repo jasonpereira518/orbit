@@ -21,7 +21,7 @@ export type Brand = {
   kind: BrandKind;
   /** The brand's own color, `#RRGGBB`. */
   hex: string;
-  /** Its website's bare host, for a logo. Curated entries only. */
+  /** Its website's bare host, for a logo: curated, or what `org_brand_colors` learned. */
   domain?: string;
 };
 
@@ -364,7 +364,7 @@ export const FALLBACK_SATURATION = 0.58;
 export const FALLBACK_LIGHTNESS = 0.42;
 
 /** A brand color learned at runtime for an organization the curated table does not know. */
-export type LearnedBrand = { name: string; kind: BrandKind; hex: string };
+export type LearnedBrand = { name: string; kind: BrandKind; hex: string; domain?: string };
 
 /** Learned brands by `brandKey`, exact names only — no partial matching on learned names. */
 const LEARNED = new Map<string, Brand[]>();
@@ -384,7 +384,7 @@ export function registerLearnedBrands(entries: readonly LearnedBrand[]): void {
     const key = brandKey(entry.name);
     if (!key) continue;
     const list = (LEARNED.get(key) ?? []).filter((b) => b.kind !== entry.kind);
-    list.push({ name: entry.name, kind: entry.kind, hex: entry.hex });
+    list.push({ name: entry.name, kind: entry.kind, hex: entry.hex, ...(entry.domain ? { domain: entry.domain } : {}) });
     LEARNED.set(key, list);
   }
 }

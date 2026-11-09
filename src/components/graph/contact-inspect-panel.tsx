@@ -25,6 +25,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { BrandLogo } from "@/components/ui/brand-logo";
+import { lookupBrand } from "@/lib/brand-colors";
 import { avatarRouteUrl } from "@/lib/contact-avatar-url";
 import { safeHttpUrl, safeProfileUrl } from "@/lib/safe-links";
 import { formatHowMetSummary } from "@/lib/met-context";
@@ -538,6 +540,8 @@ function ContactPanelBody({
       [data.fullName || data.label, data.company].filter(Boolean).join(" "),
     )}`;
   const website = safeHttpUrl(data.website);
+  /** Curated or learned companies only: a domain guessed from the name would show wrong logos. */
+  const companyDomain = lookupBrand(data.company, "company")?.domain ?? null;
   const photoSrc =
     !photoFailed && (Boolean(data.profileImageUrl?.trim()) || canResolvePhoto)
       ? avatarRouteUrl(id, data.profileImageUrl)
@@ -618,8 +622,22 @@ function ContactPanelBody({
                 </p>
               )}
             <p className="text-sm break-words text-muted-foreground">
-              {[data.title, data.company].filter(Boolean).join(" · ") ||
-                "Contact in your network"}
+              {data.title}
+              {data.title && data.company && " · "}
+              {data.company && (
+                <span className="inline-flex items-baseline gap-1">
+                  {companyDomain && (
+                    <BrandLogo
+                      key={companyDomain}
+                      domain={companyDomain}
+                      name=""
+                      className="size-3.5 self-center"
+                    />
+                  )}
+                  {data.company}
+                </span>
+              )}
+              {!data.title && !data.company && "Contact in your network"}
             </p>
             {data.school && (
               <p className="text-xs text-muted-foreground">{data.school}</p>
