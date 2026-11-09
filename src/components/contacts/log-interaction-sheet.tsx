@@ -10,6 +10,7 @@ import { confirmBulkCapture, parseBulkCaptureNotes } from "@/actions/capture";
 import { logInteraction } from "@/actions/contacts";
 import { undoNoteBatch } from "@/actions/note-batches";
 import { Button } from "@/components/ui/button";
+import { TaskSheetHeader } from "@/components/ui/task-sheet-header";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -20,8 +21,6 @@ import {
 import {
   Sheet,
   SheetContent,
-  SheetHeader,
-  SheetTitle,
 } from "@/components/ui/sheet";
 import {
   SELECTABLE_INTERACTION_TYPES,
@@ -303,10 +302,8 @@ export function LogInteractionSheet({
         if (!next) reset();
       }}
     >
-      <SheetContent className="flex flex-col overflow-y-auto sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>Log an interaction</SheetTitle>
-        </SheetHeader>
+      <SheetContent showCloseButton={false} className="flex flex-col overflow-y-auto max-sm:!inset-0 max-sm:!w-full max-sm:!rounded-none sm:max-w-md">
+        <TaskSheetHeader title="Log an interaction" onClose={() => { onOpenChange(false); reset(); }} disabled={pending} />
 
         {/* `px-4` matches the header's own inset — without it the fields sat flush against
             the panel edge while the title did not. No `mt`: the sheet's `gap-4` already

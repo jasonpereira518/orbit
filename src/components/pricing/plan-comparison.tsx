@@ -55,12 +55,21 @@ export function PlanComparison({
 }) {
   const rows = comparisonRows(config, tierRules);
   return (
-    // Wide content scrolls inside its own container so the page body never scrolls
-    // sideways on a phone — and that container joins the tab order while it overflows, so a
-    // keyboard can reach the columns past the edge.
+    <>
+    <div className="space-y-3 sm:hidden" aria-label="Compare plans">
+      {COLUMNS.map((plan, index) => (
+        <details key={plan} className="rounded-2xl border border-[#e8f3f1]/10 bg-[#05070f]/50 p-4">
+          <summary className={cn("min-h-11 cursor-pointer py-2 text-base font-medium", COLUMN_ACCENT[plan].heading)}>{PLAN_LABELS[plan]} features</summary>
+          <dl className="mt-3 divide-y divide-[#e8f3f1]/10">
+            {rows.map((row) => <div key={row.label} className="flex items-center justify-between gap-4 py-3"><dt className="text-sm text-[#cfdcd8]">{row.label}</dt><dd className="min-w-0 max-w-[55%] break-words text-right"><CellValue value={row.cells[index]} plan={plan} /></dd></div>)}
+          </dl>
+        </details>
+      ))}
+    </div>
+    {/* Keep the complete comparison in a contained scroller on larger screens. */}
     <ScrollRegion
       label="Plan comparison"
-      className="rounded-3xl border border-[#e8f3f1]/[0.10] bg-[#05070f]/50 backdrop-blur-sm"
+      className="hidden rounded-3xl border border-[#e8f3f1]/[0.10] bg-[#05070f]/50 backdrop-blur-sm sm:block"
     >
       <table className="w-full min-w-[34rem] border-collapse text-left">
         <caption className="sr-only">Feature comparison across Orbit plans</caption>
@@ -112,5 +121,6 @@ export function PlanComparison({
         </tbody>
       </table>
     </ScrollRegion>
+    </>
   );
 }

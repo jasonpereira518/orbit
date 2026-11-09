@@ -42,7 +42,7 @@ console.log("Client: no second render after a revalidating action...");
 {
   const filters = read("src/components/contacts/contacts-filters.tsx");
   const apply = fnBody(filters, "apply");
-  check("contacts search navigates with router.replace", /router\.replace\(href\)/.test(apply));
+  check("contacts search navigates with router.replace", /router\.replace\(href(?:,\s*\{\s*scroll:\s*false\s*\})?\)/.test(apply));
   check("and does not follow it with router.refresh()", !/router\.refresh\(\)/.test(apply));
   check("the contacts page still renders FreshOnArrival (re-reads a cached search URL)", /<RenderStamp\s*\/>/.test(read("src/app/(clerk)/(app)/(main)/contacts/page.tsx")));
 

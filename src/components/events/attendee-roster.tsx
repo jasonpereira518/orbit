@@ -316,7 +316,7 @@ export function AttendeeRoster({
       ) : null}
 
       {actionable.length > 0 ? (
-        <div className="sticky bottom-4 flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-lg">
+        <div className="sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] md:bottom-4 flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card p-3 shadow-lg">
           <p className="text-sm text-muted-foreground">
             {actionable.length} {actionable.length === 1 ? "person" : "people"} selected
           </p>

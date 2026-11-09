@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 
 const FILES: Record<string, number> = {
-  "src/components/contacts/contacts-list.tsx": 3,
+  "src/components/contacts/contacts-list.tsx": 4,
   "src/components/capture/capture-summary.tsx": 1,
   "src/components/capture/capture-source-card.tsx": 2,
   "src/components/capture/ignored-people-section.tsx": 1,

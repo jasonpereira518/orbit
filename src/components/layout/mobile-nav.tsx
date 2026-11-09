@@ -630,7 +630,7 @@ export function MobileNav({
           // The container takes focus on touch opens (see `initialFocus`); an outline
           // around a non-interactive dialog frame conveys nothing, so it has none. The
           // rows inside keep their own focus styles.
-          className="gap-0 pb-[max(0.5rem,env(safe-area-inset-bottom))] outline-none"
+          className="max-h-[calc(100dvh-2rem)] gap-0 overflow-y-auto overscroll-contain pb-[max(0.5rem,env(safe-area-inset-bottom))] outline-none"
         >
           {/* A grabber, not a title bar.
            *
@@ -678,7 +678,16 @@ export function MobileNav({
               Send feedback
             </button>
             )}
-            {moreNav.map((item) => {
+            {[
+              { label: "Act", hrefs: ["/radar", "/reminders", "/meetings", "/outreach"] },
+              { label: "Explore", hrefs: ["/graph", "/find", "/events", "/knowledge"] },
+              { label: "Manage", hrefs: ["/settings"] },
+            ].map((group) => {
+              const items = moreNav.filter((item) => group.hrefs.includes(item.href));
+              if (!items.length) return null;
+              return <div key={group.label} className="space-y-1">
+              <p className="px-3 pt-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">{group.label}</p>
+              {items.map((item) => {
               const active = isNavActive(pathname, item.href);
               const Icon = item.icon;
               return (
@@ -709,6 +718,8 @@ export function MobileNav({
                   <NavPendingDot className="top-1/2 right-3 -translate-y-1/2" />
                 </IntentLink>
               );
+              })}
+              </div>;
             })}
           </nav>
 

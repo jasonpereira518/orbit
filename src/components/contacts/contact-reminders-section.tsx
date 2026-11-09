@@ -68,7 +68,7 @@ export function ContactRemindersSection({
 
   return (
     <>
-      <Card className="border-border/70 shadow-none">
+      <Card id="reminders" className="scroll-mt-24 border-border/70 shadow-none">
         <CardHeader>
           <CardTitle as="h2">Reminders</CardTitle>
         </CardHeader>

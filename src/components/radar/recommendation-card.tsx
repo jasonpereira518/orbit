@@ -86,6 +86,7 @@ export function RecommendationCard({
   const actions = useRecommendationActions(rec);
   const { draftOpen, setDraftOpen } = actions;
   const [writing, start] = useTransition();
+  const [whyOpen, setWhyOpen] = useState(false);
   const pending = actions.pending || writing;
   const [note, setNote] = useState<{ why: string; opener: string } | null>(rec.aiNote);
   // Kept with the `aiAvailable` it was seen under, so the notice resets when access changes
@@ -181,8 +182,9 @@ export function RecommendationCard({
                 </p>
               ))}
 
+              {(context.length > 0 || evidence) && <Button type="button" variant="ghost" className="mt-1 min-h-11 px-0 text-xs md:hidden" aria-expanded={whyOpen} onClick={() => setWhyOpen((open) => !open)}>{whyOpen ? "Hide reasons" : "Why this person?"}</Button>}
               {(context.length > 0 || evidence) && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                <div className={cn("mt-2 flex-wrap items-center gap-1.5 text-xs text-muted-foreground md:flex", whyOpen ? "flex" : "hidden")}>
                   {context.map((r) => (
                     <span key={r.code} className="rounded-full bg-muted px-2 py-0.5">
                       {r.label}
@@ -311,6 +313,7 @@ export function RecommendationCard({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-52">
                     <DropdownMenuItem render={<Link href={`/contacts/${rec.contactId}`} />}>Open contact</DropdownMenuItem>
+                    <DropdownMenuItem className="sm:hidden" onClick={actions.dismiss}>Dismiss suggestion</DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem variant="destructive" onClick={actions.never}>
                       Not for this person
@@ -324,7 +327,7 @@ export function RecommendationCard({
               variant="ghost"
               aria-label={`Dismiss the suggestion about ${rec.contactName}`}
               disabled={pending}
-              className="shrink-0"
+              className="hidden shrink-0 sm:inline-flex"
               onClick={actions.dismiss}
             >
               <X className="size-4" aria-hidden />

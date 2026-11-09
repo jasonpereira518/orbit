@@ -16,10 +16,8 @@ import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
 } from "@/components/ui/sheet";
+import { TaskSheetHeader } from "@/components/ui/task-sheet-header";
 import { FollowUpDraftComposer } from "@/components/follow-up/follow-up-draft-composer";
 import { showUndoSendToast } from "@/components/email/undo-send-toast";
 import { AiKeyNotice } from "@/components/ai-key-notice";
@@ -195,15 +193,10 @@ export function FollowUpDraftSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md"
+        showCloseButton={false}
+        className="flex w-full flex-col gap-0 overflow-y-auto max-sm:!inset-0 max-sm:!w-full max-sm:!rounded-none sm:max-w-md"
       >
-        <SheetHeader>
-          <SheetTitle>{title ?? `Follow up with ${contactName}`}</SheetTitle>
-          <SheetDescription>
-            {description ??
-              "Draft a warm message, then send or mark it sent to clear this due item."}
-          </SheetDescription>
-        </SheetHeader>
+        <TaskSheetHeader title={title ?? `Follow up with ${contactName}`} description={description ?? "Draft a warm message, then send or mark it sent to clear this due item."} onClose={() => onOpenChange(false)} disabled={sending || marking} />
         <div className="flex flex-1 flex-col gap-4 px-4 pb-6">
           <div className="flex justify-end">
             <Button

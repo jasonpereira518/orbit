@@ -136,14 +136,14 @@ export function PeopleIndex({
                       ) : null}
                     </div>
                     {role ? <p className="truncate text-xs text-muted-foreground">{role}</p> : null}
-                    <p
+                    {r.gist && r.gist.trim() !== `${r.fullName} is ${r.title} at ${r.company}.` && <p
                       className={cn(
                         "mt-1 line-clamp-2 text-xs leading-relaxed",
                         r.gist ? "text-foreground/80" : "italic text-muted-foreground"
                       )}
                     >
-                      {r.gist ?? "No summary yet"}
-                    </p>
+                      {r.gist}
+                    </p>}
                   </div>
                 </IntentLink>
               </li>

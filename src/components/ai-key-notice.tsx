@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import { BuyPackButton } from "@/components/credits/buy-pack-button";
 import { integrationHref } from "@/components/settings/sections";
 import { useViewerPlan } from "@/components/viewer-plan";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { noticeCopyFor } from "@/lib/ai-access-copy";
 import { PLAN_SHORT_LABELS, PURCHASABLE_PLANS } from "@/lib/plans/plan-config";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
@@ -33,6 +36,10 @@ export function AiKeyNotice({
   reason?: AiAccessDenial | null;
   compact?: boolean;
 }) {
+  const pathname = usePathname();
+  const query = useSearchParams().toString();
+  const task = `${pathname}${query ? `?${query}` : ""}`;
+  const setupHref = pathname.startsWith("/settings") ? integrationHref("ai") : `${integrationHref("ai")}&returnTo=${encodeURIComponent(task)}`;
   const { plan, includedAiAvailable, creditsResetAt, planConfig } = useViewerPlan();
   const copy = noticeCopyFor(reason ?? null, plan, creditsResetAt, planConfig);
   // Free at zero keeps everything on phones too: the refill date is the point of that state.
@@ -65,9 +72,9 @@ export function AiKeyNotice({
       <p className="mt-1 text-muted-foreground">
         <span className={extra}>{copy.body} </span>
         {copy.linkToKeys && (
-          <>
+          <span className="hidden sm:inline">
             {offerCredits ? "Or use your own key under " : copy.offer === "upgrade" ? "Add one under " : "Keys live under "}
-            <Link href={integrationHref("ai")} className={link}>
+            <Link href={setupHref} className={cn(link, "hidden sm:inline")}>
               Settings → Integrations → AI provider
             </Link>
             {offerUpgrade ? (
@@ -80,9 +87,11 @@ export function AiKeyNotice({
               </span>
             ) : null}
             .
-          </>
+          </span>
         )}
       </p>
+      {copy.linkToKeys && <Link href={setupHref} className={cn(buttonVariants({ variant: "outline" }), "mt-2 flex min-h-11 w-full sm:hidden")}>Set up AI</Link>}
+      {offerUpgrade && <Link href="/pricing" className={cn(link, "mt-2 block sm:hidden")}>Compare plans with included AI</Link>}
       {offerCredits && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <BuyPackButton />

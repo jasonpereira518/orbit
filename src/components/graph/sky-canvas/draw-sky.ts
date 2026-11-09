@@ -315,8 +315,11 @@ export function drawSky(ctx: CanvasRenderingContext2D, frame: SkyFrame) {
       }
       const anchor = worldToScreen({ x: label.x, y: label.y }, camera);
       // The anchor is the name's bottom edge, above the cluster's top star; text draws from its top.
+      // Shorten edge labels without moving their interactive anchor away from the hit grid.
+      const edgeWidth = 2 * Math.min(anchor.x - 12, width - anchor.x - 12);
+      if (edgeWidth < 24 || anchor.y < 28 || anchor.y > height - 8) continue;
+      const fitted = fitText(ctx, label.label, Math.min(LABEL_MAX_WIDTH, edgeWidth));
       const p = { x: anchor.x, y: anchor.y - 16 };
-      const fitted = fitText(ctx, label.label, LABEL_MAX_WIDTH);
       // Wide gaps between cluster names, as on desktop: a few well-spaced names, not a wall.
       const rect = { x: p.x - fitted.width / 2 - 20, y: p.y - 8, w: fitted.width + 40, h: 32 };
       if (label.label !== frame.focusCompany && placed.some((r) => overlaps(rect, r))) continue;

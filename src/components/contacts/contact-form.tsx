@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { toast } from "@/lib/toast";
 import {
   createContact,
@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { readContactEntryDraft, saveContactEntryDraft } from "@/lib/contact-entry-draft";
 
 const EMPTY_SUGGESTIONS: ContactFieldSuggestions = {
   locations: [],
@@ -50,6 +51,7 @@ export function ContactForm({
   onSuccess,
   redirectOnSuccess = true,
   compact = false,
+  draftKey,
 }: {
   initial?: Partial<ContactInput> & { tags?: string[] };
   contactId?: string;
@@ -62,8 +64,15 @@ export function ContactForm({
    * has to fit one screen. Everything else is on the profile afterwards.
    */
   compact?: boolean;
+  /** Only new manual entries opt in; edits must never restore over fresh profile data. */
+  draftKey?: string;
 }) {
   const router = useRouter();
+  const detailsId = useId();
+  const [detailsOpen, setDetailsOpen] = useState(Boolean(contactId));
+  const draftLoaded = useRef(false);
+  const saved = useRef(false);
+  const [draftRestored, setDraftRestored] = useState(false);
   const [pending, start] = useTransition();
   const [lookingUp, setLookingUp] = useState(false);
   // A save that failed on the server. The toast can time out or be missed; this stays by the
@@ -122,6 +131,36 @@ export function ContactForm({
   const [strengthRated, setStrengthRated] = useState(
     initial?.statedCloseness != null
   );
+
+  useEffect(() => {
+    if (!draftKey || contactId) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        const restored = readContactEntryDraft(window.sessionStorage, draftKey, { ...form, strengthRated });
+        if (restored) {
+          const { strengthRated: restoredRating, ...fields } = restored;
+          setForm(fields); setStrengthRated(restoredRating); setDraftRestored(true);
+        }
+      } catch { /* Storage may be unavailable in private browsing. */ }
+      draftLoaded.current = true;
+    });
+    return () => { cancelled = true; };
+    // Restore once at mount, never over the user's subsequent keystrokes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, contactId]);
+
+  useEffect(() => {
+    if (!draftKey || contactId || !draftLoaded.current || saved.current) return;
+    const flush = () => {
+      if (saved.current) return;
+      try { saveContactEntryDraft(window.sessionStorage, draftKey, { ...form, strengthRated }); } catch { /* optional */ }
+    };
+    const timer = window.setTimeout(flush, 300);
+    window.addEventListener("pagehide", flush);
+    return () => { window.clearTimeout(timer); window.removeEventListener("pagehide", flush); flush(); };
+  }, [draftKey, contactId, form, strengthRated]);
 
   useEffect(() => {
     let cancelled = false;
@@ -227,6 +266,14 @@ export function ContactForm({
         "space-y-4 rounded-2xl border border-border/70 bg-card p-6",
         className
       )}
+      onInvalidCapture={(event) => {
+        const control = event.target as HTMLInputElement;
+        if (control.getClientRects().length === 0) {
+          event.preventDefault();
+          setDetailsOpen(true);
+          requestAnimationFrame(() => { control.focus(); control.reportValidity(); });
+        }
+      }}
       onSubmit={(e) => {
         e.preventDefault();
         setFormError(null);
@@ -277,6 +324,8 @@ export function ContactForm({
               if (redirectOnSuccess) router.push(`/contacts/${contactId}`);
             } else {
               const c = await createContact(payload);
+              saved.current = true;
+              if (draftKey) { try { window.sessionStorage.removeItem(draftKey); } catch { /* optional */ } }
               await queueWorkHistory(c.id, payload.linkedinUrl);
               toast.success("Added to your orbit");
               onSuccess?.({ id: c.id });
@@ -294,6 +343,7 @@ export function ContactForm({
         });
       }}
     >
+      {draftRestored && <p role="status" className="text-sm text-muted-foreground">Your unsaved contact has been restored in this tab.</p>}
       {compact ? (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -362,7 +412,7 @@ export function ContactForm({
               placeholder="Jason Pereira"
             />
           </Field>
-          <Field label="Preferred name">
+          <Field label="Preferred name" className={cn(!detailsOpen && "hidden sm:block")}>
             <Input
               autoComplete="off"
               value={form.preferredName}
@@ -371,6 +421,10 @@ export function ContactForm({
             />
           </Field>
         </div>
+        <Button type="button" variant="outline" className="min-h-11 w-full sm:hidden" aria-expanded={detailsOpen} aria-controls={detailsId} onClick={() => setDetailsOpen((value) => !value)}>
+          {detailsOpen ? "Hide optional details" : "Add details (optional)"}
+        </Button>
+        <div id={detailsId} className={cn("space-y-4 sm:block", !detailsOpen && "hidden")}>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field
             label="LinkedIn URL"
@@ -583,16 +637,19 @@ export function ContactForm({
             onChange={(e) => set("notes", e.target.value)}
           />
         </Field>
+        </div>
         </>
       )}
+      <div className="sticky bottom-0 z-10 -mx-1 rounded-xl border-t border-border/60 bg-card/95 px-1 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:pb-0">
       <FormError>{formError}</FormError>
       <Button
         type="submit"
         disabled={pending || lookingUp}
-        className="bg-primary text-primary-foreground hover:bg-primary/90"
+        className="min-h-11 w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:min-h-8 sm:w-auto"
       >
         {pending ? "Saving…" : contactId ? "Save changes" : "Create contact"}
       </Button>
+      </div>
     </form>
   );
 }

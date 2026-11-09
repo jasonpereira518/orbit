@@ -36,6 +36,8 @@ import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { speechAllowance } from "@/lib/speech-quota";
 import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { MobileSettingsIndex } from "@/components/settings/mobile-settings-index";
+import { SettingsTaskReturn } from "@/components/settings/settings-task-return";
 import { cookies } from "next/headers";
 import { after } from "next/server";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
@@ -88,7 +90,7 @@ function Group({
   if (!visible) return null;
   const { id, label } = GROUP[group];
   return (
-    <section id={id} aria-labelledby={`${id}-label`} className="scroll-mt-8 space-y-4">
+    <section id={id} aria-labelledby={`${id}-label`} className="scroll-mt-28 space-y-4 xl:scroll-mt-8">
       <h2
         id={`${id}-label`}
         className="px-1 text-[0.8125rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase"
@@ -172,6 +174,7 @@ export default async function SettingsPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-10">
       <RenderStamp />
+      <SettingsTaskReturn />
       <div>
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">
           Settings
@@ -181,6 +184,7 @@ export default async function SettingsPage() {
         </p>
       </div>
 
+      <MobileSettingsIndex sections={railSections} />
       <Group group="account" visible={groupVisible("account")}>
         <Section id="settings-profile" hidden={hidden}>
           <ProfileSettings

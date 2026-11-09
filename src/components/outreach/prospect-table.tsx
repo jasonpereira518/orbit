@@ -118,6 +118,7 @@ export function ProspectTable({
 }) {
   const [pending, start] = useTransition();
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [mobileOpen, setMobileOpen] = useState<Set<string>>(() => new Set());
 
   function toggleSelection(prospectId: string, checked: boolean) {
     start(async () => {
@@ -231,6 +232,7 @@ export function ProspectTable({
                 >
                   <td className="pt-0.5 md:table-cell md:px-4 md:py-3">
                     <Checkbox
+                      aria-label={`Select ${prospect.fullName}`}
                       checked={isSelected}
                       onCheckedChange={(checked) =>
                         toggleSelection(prospect.id, Boolean(checked))
@@ -287,6 +289,9 @@ export function ProspectTable({
                         not have to. Putting it anywhere else on the page — a panel, a tab —
                         would be putting it somewhere they are not looking. */}
                     <WarmPathNote company={prospect.company} warmPaths={warmPaths} />
+                    <Button type="button" variant="outline" className="mt-3 min-h-11 w-full md:hidden" aria-expanded={mobileOpen.has(prospect.id)} aria-controls={`prospect-contact-${prospect.id} prospect-draft-${prospect.id} prospect-actions-${prospect.id}`} onClick={() => setMobileOpen((open) => { const next = new Set(open); if (next.has(prospect.id)) next.delete(prospect.id); else next.add(prospect.id); return next; })}>
+                      {mobileOpen.has(prospect.id) ? "Hide details" : message ? "Review draft and actions" : "Details and actions"}
+                    </Button>
                     <div className="mt-1 flex flex-wrap gap-1">
                       <Badge variant="outline">{prospect.status}</Badge>
                       {prospect.isDemo && <Badge variant="outline">Demo</Badge>}
@@ -306,7 +311,7 @@ export function ProspectTable({
                       )}
                     </div>
                   </td>
-                  <td className="col-start-2 min-w-0 text-muted-foreground md:table-cell md:px-4 md:py-3">
+                  <td id={`prospect-contact-${prospect.id}`} className={`col-start-2 min-w-0 text-muted-foreground md:table-cell md:px-4 md:py-3 ${mobileOpen.has(prospect.id) ? "block" : "hidden"}`}>
                     <span className={CELL_LABEL}>Contact</span>
                     <div>{prospect.email || "—"}</div>
                     <div>{prospect.phone || "—"}</div>
@@ -331,7 +336,7 @@ export function ProspectTable({
                       )}
                     </div>
                   </td>
-                  <td className="col-start-2 min-w-0 md:table-cell md:px-4 md:py-3">
+                  <td id={`prospect-draft-${prospect.id}`} className={`col-start-2 min-w-0 md:table-cell md:px-4 md:py-3 ${mobileOpen.has(prospect.id) ? "block" : "hidden"}`}>
                     <span className={CELL_LABEL}>Draft</span>
                     {message ? (
                       <div className="space-y-2">
@@ -360,7 +365,7 @@ export function ProspectTable({
                       <span className="text-muted-foreground">No draft</span>
                     )}
                   </td>
-                  <td className="col-start-2 min-w-0 max-md:has-[>div:empty]:hidden md:table-cell md:px-4 md:py-3">
+                  <td id={`prospect-actions-${prospect.id}`} className={`col-start-2 min-w-0 max-md:has-[>div:empty]:hidden md:table-cell md:px-4 md:py-3 ${mobileOpen.has(prospect.id) ? "block" : "hidden"}`}>
                     <div className="space-y-3">
                       {message && !delivered && (
                         <OutreachActions

@@ -166,6 +166,7 @@ export function RemindersStage({
 
   // ── Selection, focus, open panels. ──
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [mobileSelecting, setMobileSelecting] = useState(false);
   const [anchorId, setAnchorId] = useState<string | null>(null);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -640,6 +641,10 @@ export function RemindersStage({
         {/* Calendar sync lives at the foot of the rail now, with its status. */}
         <h1 className="font-[family-name:var(--font-display)] text-3xl text-ink">Reminders</h1>
         <div className="flex items-center gap-1">
+          {!isSuggested && <Button variant="outline" className="min-h-11 sm:hidden" aria-pressed={mobileSelecting || selectedIds.length > 0} onClick={() => {
+            if (mobileSelecting || selectedIds.length > 0) { setSelected(new Set()); setMobileSelecting(false); }
+            else setMobileSelecting(true);
+          }}>{mobileSelecting || selectedIds.length > 0 ? "Cancel selection" : "Select"}</Button>}
           <RemindersShortcutsHelp open={helpOpen} onOpenChange={setHelpOpen} />
         </div>
       </header>
@@ -709,6 +714,7 @@ export function RemindersStage({
             </div>
           ) : (
             <>
+              <div className={cn("shrink-0 sm:block", !mobileSelecting && selectedIds.length === 0 && "hidden")}>
               <ReminderBulkBar
                 count={selectedIds.length}
                 visibleCount={visible.length}
@@ -737,6 +743,7 @@ export function RemindersStage({
                   </span>
                 }
               />
+              </div>
               <div
                 ref={scrollerRef}
                 className={cn(
@@ -802,6 +809,7 @@ export function RemindersStage({
                             today={today}
                             lists={listOptions}
                             selected={selected.has(item.id)}
+                            mobileSelecting={mobileSelecting || selectedIds.length > 0}
                             focused={focusedId ? focusedId === item.id : item.id === visible[0]?.id}
                             active={detailId === item.id}
                             exiting={exiting.has(item.id)}

@@ -88,6 +88,20 @@ export function WelcomeStep({
       <Stagger as="ul" className="mt-6 grid w-full gap-3 text-left sm:grid-cols-[1.15fr_1fr]">
         <StaggerItem as="li">
           <PathCard
+            title="Quick setup"
+            time="About a minute."
+            action="Set up quickly"
+            disabled={blocked}
+            onClick={() => onChoose("quick")}
+          >
+            <p className="text-sm text-muted-foreground">
+              Your people first, then your accounts, then a quick look at what Orbit can do. The
+              tour is always in Settings → Help if you want it later.
+            </p>
+          </PathCard>
+        </StaggerItem>
+        <StaggerItem as="li" className="sm:order-first">
+          <PathCard
             primary
             eyebrow="Recommended"
             title="Guided tour"
@@ -104,20 +118,6 @@ export function WelcomeStep({
                 </li>
               ))}
             </ul>
-          </PathCard>
-        </StaggerItem>
-        <StaggerItem as="li">
-          <PathCard
-            title="Quick setup"
-            time="About a minute."
-            action="Set up quickly"
-            disabled={blocked}
-            onClick={() => onChoose("quick")}
-          >
-            <p className="text-sm text-muted-foreground">
-              Your people first, then your accounts, then a quick look at what Orbit can do. The
-              tour is always in Settings → Help if you want it later.
-            </p>
           </PathCard>
         </StaggerItem>
       </Stagger>
@@ -169,7 +169,7 @@ function PathCard({
         type="button"
         size="lg"
         variant={primary ? "default" : "outline"}
-        className="h-10 w-full text-[15px]"
+        className="min-h-11 w-full text-[15px]"
         disabled={disabled}
         onClick={onClick}
       >

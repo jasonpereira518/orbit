@@ -19,6 +19,7 @@ import Link from "next/link";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ContactChannelIcons } from "@/components/contacts/contact-profile-icons";
 import { ContactEditSheet } from "@/components/contacts/contact-edit-sheet";
+import { MobileContactActions } from "@/components/contacts/mobile-contact-actions";
 import {
   avatarRouteUrl,
   isUnusableAvatarUrl,
@@ -390,7 +391,7 @@ export function ContactProfileHero({
 
         <div
           className={cn(
-            "col-start-2 row-start-1 flex shrink-0 items-center gap-2 sm:row-start-2",
+            "col-span-2 col-start-1 row-start-3 mt-3 flex flex-wrap items-center gap-3 sm:col-span-1 sm:col-start-2 sm:row-start-2 sm:mt-0 sm:gap-2",
             compact && "invisible"
           )}
           aria-hidden={compact}
@@ -422,7 +423,7 @@ export function ContactProfileHero({
               profileImageUrl={profileImageUrl}
               resolveOnDemand
               size="lg"
-              className="size-24 sm:size-36"
+              className="size-16 sm:size-36"
             />
           </AvatarHoverPreview>
 
@@ -431,7 +432,7 @@ export function ContactProfileHero({
             <div ref={sentinelRef} className="h-px w-px" aria-hidden />
             {/* `break-words` so a pasted URL or an over-long name wraps instead of
                 running off the right edge, past the Edit button and out of the card. */}
-            <h1 className="flex flex-wrap items-center gap-x-2 font-[family-name:var(--font-display)] text-3xl break-words text-ink sm:text-4xl">
+            <h1 className="flex flex-wrap items-center gap-x-2 font-[family-name:var(--font-display)] text-2xl break-words text-ink sm:text-4xl">
               {/* Its own box with `min-w-0` + `wrap-anywhere`: as a bare flex item the name's
                   minimum width was its whole unbroken length, so a 120-character name
                   pushed the page 1,600px wider than a phone. */}
@@ -470,6 +471,7 @@ export function ContactProfileHero({
           </div>
         </div>
       </div>
+      <MobileContactActions contactId={contactId} name={displayName} />
     </div>
   );
 }

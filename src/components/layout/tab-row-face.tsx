@@ -26,7 +26,7 @@ export function tabItemClass(active: boolean) {
 }
 
 export const TAB_OVAL_CLASS =
-  "relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5";
+  "relative flex w-full max-w-[66px] min-w-0 flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5";
 
 export const TAB_CONTENT_CLASS =
   "relative z-10 flex flex-col items-center gap-0.5 transition-transform duration-150 ease-out";

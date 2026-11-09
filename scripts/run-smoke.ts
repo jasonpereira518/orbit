@@ -120,6 +120,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-reminder-dedupe": "pure",
   "smoke-last-touch": "pure",
   "smoke-capture-draft": "pure",
+  "smoke-contact-entry-draft": "pure",
   "smoke-capture-file-date": "pure",
   "smoke-capture-fanout": "pure",
   "smoke-capture-fanout-hook": "pure",

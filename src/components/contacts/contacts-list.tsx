@@ -18,7 +18,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { CalendarClock, Trash2, Users } from "lucide-react";
+import { CalendarClock, MoreHorizontal, Trash2, Users } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { DUR_MS } from "@/lib/motion";
 import { toast } from "@/lib/toast";
 import { deleteContact, listContactsPage } from "@/actions/contacts";
@@ -865,6 +866,21 @@ const ContactRow = memo(function ContactRow({
               closenessTier={c.closenessTier}
             />
 
+            <div className="md:hidden">
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-11 tap-target" aria-label={`Actions for ${c.fullName}`} />}>
+                  <MoreHorizontal aria-hidden className="size-4" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-52">
+                  <DropdownMenuItem onClick={() => onOpenDraft({ id: c.id, name: c.preferredName || c.fullName })}>Follow up</DropdownMenuItem>
+                  <DropdownMenuItem render={<Link href={`/capture?contactId=${c.id}`} />}>Log interaction</DropdownMenuItem>
+                  <DropdownMenuItem render={<Link href={`${href}#reminders`} />}>Reminders</DropdownMenuItem>
+                  {c.linkedinUrl && <DropdownMenuItem render={<a href={buildLinkedInUrl(c.linkedinUrl)} target="_blank" rel="noopener noreferrer" />}>Open LinkedIn</DropdownMenuItem>}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" disabled={deleteDisabled} onClick={() => onRequestDelete(c.id)}>Delete contact…</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             {/* Phones give this width to the name: LinkedIn, follow-up and delete all
                 live on the contact page, one tap away. */}
             <div className="hidden items-center gap-1 pointer-coarse:gap-4 md:flex">

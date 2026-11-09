@@ -243,7 +243,7 @@ export function ComposeDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (sending && !next ? undefined : onOpenChange(next))}>
-      <DialogContent className="gap-3 sm:max-h-[calc(100dvh-2rem)] sm:max-w-xl sm:overflow-y-auto max-sm:top-auto max-sm:bottom-3 max-sm:max-h-[85dvh] max-sm:translate-y-0 max-sm:overflow-y-auto max-sm:rounded-3xl">
+      <DialogContent className="gap-3 sm:max-h-[calc(100dvh-2rem)] sm:max-w-xl sm:overflow-y-auto max-sm:inset-0 max-sm:h-dvh max-sm:max-h-dvh max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:overflow-y-auto max-sm:rounded-none max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>Sends from your own email after a 10-second undo window.</DialogDescription>

@@ -6,6 +6,8 @@ import { LockedFeature } from "@/components/locked-feature";
 import { getPlanOverview } from "@/actions/settings";
 import { availableOn } from "@/lib/plans/plan-config";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { requireUserId } from "@/lib/auth";
+import { contactEntryDraftKey } from "@/lib/contact-entry-draft";
 
 export const metadata = { title: "Add contact" };
 
@@ -71,7 +73,7 @@ export default async function NewContactPage({
         </p>
       </div>
       <ContactQuotaNotice used={usage.used} limit={usage.limit} />
-      <ContactForm initial={initial} />
+      <ContactForm initial={initial} draftKey={contactEntryDraftKey(await requireUserId(), initial?.email || initial?.fullName || "new")} />
     </div>
   );
 }

@@ -6,10 +6,8 @@ import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
 } from "@/components/ui/sheet";
+import { TaskSheetHeader } from "@/components/ui/task-sheet-header";
 import { ContactForm } from "@/components/contacts/contact-form";
 import { DeleteContactButton } from "@/components/contacts/delete-contact-button";
 import { MergeContactButton } from "@/components/contacts/merge-contact-button";
@@ -40,14 +38,10 @@ export function ContactEditSheet({
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
           side="right"
-          className="w-full overflow-y-auto sm:max-w-lg"
+          showCloseButton={false}
+          className="w-full overflow-y-auto max-sm:!inset-0 max-sm:!w-full max-sm:!rounded-none sm:max-w-lg"
         >
-          <SheetHeader>
-            <SheetTitle>Edit {name}</SheetTitle>
-            <SheetDescription>
-              Update profile details, strength, tags, and notes.
-            </SheetDescription>
-          </SheetHeader>
+          <TaskSheetHeader title={`Edit ${name}`} description="Update profile details, strength, tags, and notes." onClose={() => setOpen(false)} />
           <div className="flex flex-col gap-6 px-4 pb-6">
             <ContactForm
               contactId={contactId}

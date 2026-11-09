@@ -40,7 +40,7 @@ async function requestBrief(body: Record<string, unknown>): Promise<Brief> {
 }
 
 export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Brief[] }) {
-  const [mode, setMode] = useState<Mode>("person");
+  const [mode, setMode] = useState<Mode>("discover");
   const [fullName, setFullName] = useState("");
   const [company, setCompany] = useState("");
   const [domain, setDomain] = useState("");
@@ -93,13 +93,13 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <KeyRound className="size-4 shrink-0" aria-hidden />
           <p className="min-w-0 flex-1">Research runs a web search on your AI provider. Add a key to start.</p>
-          <Link href="/settings?section=ai" className="font-medium underline underline-offset-4">
+          <Link href="/settings?integration=ai" className="font-medium underline underline-offset-4">
             Add AI key
           </Link>
         </div>
       )}
 
-      <div role="tablist" aria-label="What to research" className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-1">
+      <div role="tablist" aria-label="What to research" className="flex flex-wrap gap-1 rounded-lg border border-border/60 bg-muted/30 p-1 sm:inline-flex">
         {(
           [
             ["person", "A person", UserSearch],
@@ -114,7 +114,7 @@ export function FindPeople({ canUseAi, recent }: { canUseAi: boolean; recent: Br
             aria-selected={mode === value}
             onClick={() => setMode(value)}
             className={cn(
-              "inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
+              "inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors sm:min-h-0 sm:flex-none sm:px-3",
               mode === value ? "bg-background text-ink shadow-sm" : "text-muted-foreground hover:text-ink"
             )}
           >

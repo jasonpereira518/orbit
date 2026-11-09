@@ -153,7 +153,7 @@ export const HeroPin = forwardRef<
   }
 
   return (
-    <section ref={setWrapRef} className={reduced ? "relative" : "relative h-[260svh]"}>
+    <section ref={setWrapRef} className={reduced ? "relative" : "relative h-[160svh] md:h-[260svh]"}>
       <div
         ref={frameRef}
         className={cn(

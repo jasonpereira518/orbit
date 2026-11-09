@@ -470,6 +470,19 @@ function PanelBody({
     );
   }
 
+  // Unsupported devices still have useful ways to remember the conversation.
+  if (!canRecord && !resumable) {
+    return <div className="space-y-3 rounded-2xl border border-border/70 bg-card p-4">
+      <h2 className="font-medium text-ink">Keep your meeting notes</h2>
+      <p className="text-sm text-muted-foreground">Recording is unavailable in this browser. Add a note or photo now, or browse your past meetings below.</p>
+      <div className="flex flex-wrap gap-3">
+        <Link href="/capture?mode=messy" className="inline-flex min-h-11 items-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground">Add meeting notes</Link>
+        <Link href="/capture?mode=library" className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-medium">Upload notes</Link>
+      </div>
+      <details className="text-sm text-muted-foreground"><summary className="cursor-pointer py-2">How to record a call</summary><p>{ERROR_COPY.unsupported.detail} Microphone recording is also available in browsers that support it.</p></details>
+    </div>;
+  }
+
   // ── Setup ──────────────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4">

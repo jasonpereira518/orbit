@@ -5,6 +5,7 @@ import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Building2, ChevronDown, GraduationCap, X } from "lucide-react";
+import { MobileContactsFilters } from "@/components/contacts/mobile-contacts-filters";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -103,7 +104,7 @@ export function ContactsFilters({
     };
   }, []);
 
-  function apply(next?: Partial<FilterState>) {
+  function apply(next?: Partial<FilterState>, clearScope = false) {
     const params = new URLSearchParams();
     const qq = (next?.q ?? q).trim();
     const cc = (next?.company ?? company).trim();
@@ -123,15 +124,15 @@ export function ContactsFilters({
     // the query string from scratch without them meant that touching any filter here threw
     // away the active tag and the A-Z letter — the list jumped back to "everyone, from A"
     // and nothing said why.
-    if (initialTag) params.set("tag", initialTag);
-    if (initialLetter) params.set("letter", initialLetter);
+    if (initialTag && !clearScope) params.set("tag", initialTag);
+    if (initialLetter && !clearScope) params.set("letter", initialLetter);
     if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";
     // A new query string is a fresh server render already, and a revisited one served from
     // the router cache is re-read by the page's `FreshOnArrival`. The `router.refresh()` that
     // used to follow rendered the whole page a second time per search (LATENCY_PLAN CLI-3).
-    router.replace(href);
+    router.replace(href, { scroll: false });
   }
 
   function scheduleSearch(value: string) {
@@ -162,6 +163,7 @@ export function ContactsFilters({
     apply({ school: next });
   };
   const closenessActive = minScore !== "any";
+  const filterCount = [companyActive, closenessActive, quietActive, schoolActive, followUp === "due", Boolean(initialTag), Boolean(initialLetter)].filter(Boolean).length;
 
   return (
     <div className="space-y-6">
@@ -185,7 +187,35 @@ export function ContactsFilters({
         </div>
       )}
 
-      <div className="mx-auto w-full max-w-xl">
+      <MobileContactsFilters
+        value={{ q, company, minScore, followUp, sort, quiet, school }}
+        count={filterCount}
+        closenessOptions={CLOSENESS_OPTIONS}
+        schoolOptions={schoolOptions}
+        onSearch={(query) => {
+          setQ(query);
+          scheduleSearch(query);
+          if (query.trim()) emitTourEvent("contacts.searched");
+        }}
+        onApply={(next) => {
+          if (debounceRef.current) window.clearTimeout(debounceRef.current);
+          setCompany(next.company);
+          setMinScore(next.minScore);
+          setFollowUp(next.followUp);
+          setSort(next.sort);
+          setQuiet(next.quiet);
+          setSchool(next.school);
+          apply(next);
+        }}
+        onReset={() => {
+          if (debounceRef.current) window.clearTimeout(debounceRef.current);
+          const reset = { company: "", minScore: "any", followUp: "", sort: "name", quiet: "", school: "" };
+          setCompany(""); setMinScore("any"); setFollowUp(""); setSort("name"); setQuiet(""); setSchool("");
+          apply(reset, true);
+        }}
+      />
+      {filterCount > 0 && <p className="mx-auto max-w-xl text-xs text-muted-foreground sm:hidden" role="status">{filterCount} active filter{filterCount === 1 ? "" : "s"}. {companyActive ? `${company}. ` : ""}{schoolActive ? `${schoolLabel}. ` : ""}{quietActive ? `Quiet ${quietLabel}. ` : ""}</p>}
+      <div className="mx-auto hidden w-full max-w-xl sm:block">
         <SearchPill
           q={q}
           company={company}
@@ -231,7 +261,7 @@ export function ContactsFilters({
           "which people", these answer "in what order" and "how stale". The sorts existed for
           a while with no control at all — they could only be reached by typing ?sort= into
           the address bar. */}
-      <div className="mx-auto flex w-full max-w-xl flex-wrap items-center justify-center gap-2">
+      <div className="mx-auto hidden w-full max-w-xl flex-wrap items-center justify-center gap-2 sm:flex">
         <DropdownMenu>
           <DropdownMenuTrigger
             render={

@@ -16,7 +16,7 @@ import type { ListOption } from "@/components/reminders/reminder-row";
 import { cn } from "@/lib/utils";
 
 const BAR_BUTTON =
-  "tap-target relative inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
+  "tap-target relative inline-flex h-7 pointer-coarse:min-h-11 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
 
 /**
  * Select-all and the bulk actions for a selection.
@@ -68,7 +68,7 @@ export function ReminderBulkBar({
 }) {
   const selecting = count > 0;
   return (
-    <div className="flex min-h-10 shrink-0 items-center gap-1 border-b border-border/60 px-3 sm:px-4">
+    <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-3 border-b border-border/60 px-3 py-2 sm:gap-1 sm:px-4 sm:py-0">
       <div className="flex h-6 w-4 items-center">
         <Checkbox
           checked={allVisibleSelected && visibleCount > 0}

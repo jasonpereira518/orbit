@@ -82,6 +82,7 @@ export const ReminderRow = memo(function ReminderRow({
   today,
   lists,
   selected,
+  mobileSelecting = false,
   focused,
   active,
   exiting,
@@ -94,6 +95,7 @@ export const ReminderRow = memo(function ReminderRow({
   today: string;
   lists: Array<ListOption>;
   selected: boolean;
+  mobileSelecting?: boolean;
   focused: boolean;
   /** Its details are open in the pane. */
   active: boolean;
@@ -176,7 +178,7 @@ export const ReminderRow = memo(function ReminderRow({
               active ? "opacity-100" : "opacity-0"
             )}
           />
-          <div className="flex h-6 items-center" onClick={stop}>
+          <div className={cn("h-6 items-center sm:flex", mobileSelecting ? "flex" : "hidden")} onClick={stop}>
             <Checkbox
               checked={selected}
               onCheckedChange={() => handlers.onToggleSelect(item.id, false)}
@@ -222,7 +224,7 @@ export const ReminderRow = memo(function ReminderRow({
           <div className="min-w-0 flex-1">
             <p
               className={cn(
-                "truncate text-sm font-medium leading-6 text-foreground",
+                "line-clamp-2 text-sm font-medium leading-6 text-foreground sm:line-clamp-none sm:truncate",
                 isDone && "text-muted-foreground line-through decoration-muted-foreground/50"
               )}
             >

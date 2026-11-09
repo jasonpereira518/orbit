@@ -160,6 +160,7 @@ export const MOBILE_MORE_NAV = [
   EVENTS,
   OUTREACH,
   KNOWLEDGE,
+  APP_NAV_SETTINGS,
 ];
 
 /**

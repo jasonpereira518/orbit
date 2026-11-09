@@ -5,6 +5,8 @@ import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
 import { SPRING_PILL } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 
 export type CaptureMode = "messy" | "voice" | "meeting" | "library" | "cloud";
 /**
@@ -64,9 +66,9 @@ export function capturePanelId(mode: CaptureTab) {
  * The ways in, as a pill tab bar. The same `layoutId` pill every segmented control in the
  * app uses, plus the tab/tabpanel wiring the old bar lacked.
  *
- * Five tabs is tight on a narrow phone: the bar is `inline-flex w-full` with `flex-1`
- * children whose labels never wrap, and it scrolls sideways once they cannot fit.
- * Verify at 360px before adding another.
+ * Phones show Notes and Voice first, with secondary sources behind a labelled menu.
+ * The active secondary source remains a real, selected tab. Larger screens keep all tabs.
+ * Arrow keys move through visible enabled tabs; no duplicate tab or panel IDs are rendered.
  */
 export function CaptureTabs({
   mode,
@@ -85,10 +87,20 @@ export function CaptureTabs({
   showImports?: boolean;
 }) {
   return (
+    <div className="space-y-2">
     <div
       role="tablist"
       aria-label="Capture mode"
-      className="inline-flex w-full overflow-x-auto rounded-lg bg-muted p-[3px] sm:w-auto"
+      className="grid w-full grid-cols-2 gap-1 rounded-lg bg-muted p-[3px] sm:inline-flex sm:w-auto"
+      onKeyDown={(event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')).filter((tab) => !tab.disabled && tab.getClientRects().length > 0);
+        const current = tabs.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        event.preventDefault();
+        tabs[next]?.focus();
+        tabs[next]?.click();
+      }}
     >
       {CAPTURE_MODES.filter((m) => (showCloud || m.id !== "cloud") && (showImports || m.id !== "imports")).map((m) => (
         <ModeTab
@@ -99,10 +111,22 @@ export function CaptureTabs({
           disabled={disabled}
           onClick={() => onChange(m.id)}
           icon={m.icon}
+          className={m.id !== "messy" && m.id !== "voice" ? mode === m.id ? "col-span-2 sm:col-auto" : "hidden sm:block" : undefined}
         >
           {m.label}
         </ModeTab>
       ))}
+    </div>
+    <div className="sm:hidden">
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button type="button" variant="outline" className="min-h-11 w-full" disabled={disabled} />}>More sources</DropdownMenuTrigger>
+        <DropdownMenuContent className="min-w-56">
+          {CAPTURE_MODES.filter((m) => m.id !== "messy" && m.id !== "voice" && (showCloud || m.id !== "cloud") && (showImports || m.id !== "imports")).map((source) => (
+            <DropdownMenuItem key={source.id} onClick={() => onChange(source.id)}>{source.label}</DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
     </div>
   );
 }
@@ -137,6 +161,7 @@ function ModeTab({
   disabled = false,
   icon: Icon,
   children,
+  className,
 }: {
   icon: LucideIcon;
   id: string;
@@ -145,6 +170,7 @@ function ModeTab({
   onClick: () => void;
   disabled?: boolean;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
     <button
@@ -157,9 +183,10 @@ function ModeTab({
       disabled={disabled && !active}
       onClick={onClick}
       className={cn(
-        "relative flex-1 whitespace-nowrap rounded-md px-1.5 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:px-4",
+        "relative min-h-11 flex-1 whitespace-nowrap rounded-md px-1.5 py-1.5 text-sm font-medium transition-colors sm:min-h-0 sm:flex-none sm:px-4",
         active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-        "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted-foreground"
+        "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted-foreground",
+        className
       )}
     >
       {active && (

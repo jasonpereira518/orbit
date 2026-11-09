@@ -144,10 +144,11 @@ export function FollowUpDraftComposer({
         rows={8}
         value={draft}
         onChange={(e) => onDraftChange(e.target.value)}
-        className="resize-y text-sm"
+        aria-label={`Follow-up message for ${contactName}`}
+        className="resize-y text-base md:text-sm"
       />
       <DraftLinkWarning text={draft} aiText={aiDraft} />
-      <div className="flex flex-wrap gap-2">
+      <div className="sticky bottom-0 flex flex-wrap gap-3 pointer-coarse:gap-4 max-sm:[&>button]:min-h-11 bg-popover py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:static sm:gap-2 sm:bg-transparent sm:py-0">
         <Button type="button" variant="outline" size="sm" onClick={onCopy}>
           <Copy className="size-3.5" />
           Copy

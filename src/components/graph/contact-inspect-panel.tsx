@@ -167,6 +167,13 @@ export function ContactInspectPanel({
   const router = useRouter();
   const [pending, start] = useTransition();
   const open = selection !== null;
+  const selectionKey = selection?.type === "contact" ? selection.id : selection?.type ?? "closed";
+  const [previousSelection, setPreviousSelection] = useState(selectionKey);
+  const [expanded, setExpanded] = useState(false);
+  if (previousSelection !== selectionKey) {
+    setPreviousSelection(selectionKey);
+    setExpanded(false);
+  }
 
   return (
     <Sheet
@@ -177,13 +184,25 @@ export function ContactInspectPanel({
     >
       <SheetContent
         side="right"
-        className="w-full overflow-y-auto border-l border-border/70 bg-card sm:max-w-md"
+        className={cn("w-full overflow-y-auto border-l border-border/70 bg-card sm:max-w-md max-md:!inset-x-3 max-md:!top-auto max-md:!bottom-[max(0.75rem,env(safe-area-inset-bottom))] max-md:!w-auto max-md:!max-w-none max-md:!rounded-3xl", expanded || selection?.type === "user" ? "max-md:max-h-[85dvh]" : "max-md:max-h-[45dvh]")}
       >
         {selection?.type === "user" && (
           <YouPanelBody summary={selection.summary} data={selection.data} />
         )}
 
         {selection?.type === "contact" && (
+          <>
+          <div className="md:hidden">
+            <SheetHeader className={cn("pr-14", expanded && "hidden")}>
+              <h2 className="font-heading text-base font-medium">{selection.data.label}</h2>
+              <p className="text-sm text-muted-foreground">{[selection.data.title, selection.data.company].filter(Boolean).join(" · ") || "In your network"}</p>
+            </SheetHeader>
+            <div className="flex flex-wrap gap-3 px-4 pb-4">
+              <Button onClick={() => setExpanded((value) => !value)} variant="outline" className="min-h-11">{expanded ? "Show less" : "Show details"}</Button>
+              <IntentLink href={`/contacts/${selection.id}`} className={cn(buttonVariants(), "min-h-11")}>Open contact</IntentLink>
+            </div>
+          </div>
+          <div className={cn(!expanded && "hidden md:block")}>
           <ContactPanelBody
             id={selection.id}
             data={selection.data}
@@ -192,6 +211,8 @@ export function ContactInspectPanel({
             onContactPatch={onContactPatch}
             onRefresh={() => router.refresh()}
           />
+          </div>
+          </>
         )}
       </SheetContent>
     </Sheet>

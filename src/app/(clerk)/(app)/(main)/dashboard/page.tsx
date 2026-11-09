@@ -101,6 +101,28 @@ export default async function DashboardPage() {
         <SetupChecklistSection />
       </Suspense>
 
+      {/* One section, TWO cards — so this grid always holds exactly two children,
+          and `dashboard.reminders` hides both together. Recently updated used to
+          share this row, which put THREE children in a two-column grid and left a
+          visible empty cell beside the third; hiding Reminders left the same hole
+          on the other side. It owns the row below instead, where its own column
+          count can adapt. Stretched, like every other two-card row here: the two cards
+          end on one line, and the shorter one's footer drops to meet it. */}
+      {show("dashboard.reminders") && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Suspense
+            fallback={
+              <>
+                <DashboardCardSkeleton className="h-64" />
+                <DashboardCardSkeleton className="h-64" />
+              </>
+            }
+          >
+            <RemindersAndFollowUpsSection bundle={bundle} />
+          </Suspense>
+        </div>
+      )}
+
       {show("dashboard.stats") && (
         <Suspense fallback={<DashboardStatRowSkeleton />}>
           <StatsSection bundle={bundle} />
@@ -139,28 +161,6 @@ export default async function DashboardPage() {
               radar={radarBriefing}
               outreach={outreachSummary}
             />
-          </Suspense>
-        </div>
-      )}
-
-      {/* One section, TWO cards — so this grid always holds exactly two children,
-          and `dashboard.reminders` hides both together. Recently updated used to
-          share this row, which put THREE children in a two-column grid and left a
-          visible empty cell beside the third; hiding Reminders left the same hole
-          on the other side. It owns the row below instead, where its own column
-          count can adapt. Stretched, like every other two-card row here: the two cards
-          end on one line, and the shorter one's footer drops to meet it. */}
-      {show("dashboard.reminders") && (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Suspense
-            fallback={
-              <>
-                <DashboardCardSkeleton className="h-64" />
-                <DashboardCardSkeleton className="h-64" />
-              </>
-            }
-          >
-            <RemindersAndFollowUpsSection bundle={bundle} />
           </Suspense>
         </div>
       )}

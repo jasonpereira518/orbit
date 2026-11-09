@@ -970,7 +970,7 @@ export function NetworkGraph({
                     }
                     setSearch(next);
                   }}
-                  placeholder="Search name, role, school, keywords…"
+                  placeholder="Search people…"
                   aria-label="Search your network"
                   className="h-9 border-white/15 bg-[#080b12]/92 pl-9 text-white placeholder:text-white/35"
                 />
