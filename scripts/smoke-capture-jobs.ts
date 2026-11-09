@@ -38,6 +38,7 @@ import { saveNoteBatch, type SaveNoteBatchInput, type SaveNoteBatchOptions } fro
 import { assembleCaptureCorpus, runCaptureJobById, type CaptureRunnerDeps } from "../src/lib/capture-job-runner";
 import type { CaptureParseResult } from "../src/lib/capture/types";
 import { emptyNoteBatchResult } from "../src/lib/note-batches";
+import { splitDecisions } from "../src/lib/capture/combine-results";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -473,6 +474,78 @@ async function main() {
     const maya = people.find((p) => p.fullName === "Maya Chen")!;
     const mayaNotes = await db.query.interactions.findMany({ where: eq(interactions.contactId, maya.id) });
     check("  with both conversations on their timeline", mayaNotes.length === 2, String(mayaNotes.length));
+
+    // Reviewed together, saved apart: each file is its own capture with its own notes.
+    const batches = await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) });
+    check("each file is saved as its own capture", batches.length === 2, String(batches.length));
+    check(
+      "  each holding only its own file's text",
+      batches.map((b) => b.sourceText).sort().join("|") === "Coffee with Maya and Leo.|Met Maya at the summit.",
+      batches.map((b) => b.sourceText).join("|")
+    );
+    const coffeeBatch = batches.find((b) => b.sourceText.includes("Leo"))!;
+    check("  and only its own people", coffeeBatch.result.participants.map((p) => p.name).sort().join() === "Leo Park,Maya Chen");
+    const partsAfter = await db.query.captureJobs.findMany({ where: inArray(captureJobs.id, [one.id, two.id]) });
+    check(
+      "  each file's job is saved and points at its capture",
+      partsAfter.every((r) => r.status === "saved" && batches.some((b) => b.id === r.noteBatchId)),
+      partsAfter.map((r) => `${r.status}:${r.noteBatchId}`).join()
+    );
+    check("  its source label stays its own", partsAfter.find((r) => r.id === one.id)?.sourceLabel === "summit.txt");
+    check(
+      "the combined job is saved with the totals and no capture of its own",
+      saved?.noteBatchId === null && saved.result?.saved?.created === 2 && saved.result.saved.contactIdByKey[combined!.result!.items[2]!.key] !== undefined,
+      JSON.stringify(saved?.result?.saved)
+    );
+    await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, combined!.id));
+    await runCaptureJobById(combined!.id, batchDeps);
+    check("saving it again writes nothing new", (await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).length === 2);
+
+    // A file whose every card was set aside writes no capture at all.
+    const drop2 = randomUUID();
+    const keep = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Lunch with Maya.", batchGroupId: drop2, sourceLabel: "lunch.txt" });
+    const toss = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Drinks with Leo.", batchGroupId: drop2, sourceLabel: "drinks.txt" });
+    await runCaptureJobById(keep.id, batchDeps);
+    await runCaptureJobById(toss.id, batchDeps);
+    const folded = await mergeCaptureBatchRows(USER, drop2);
+    for (const [index, item] of folded!.result!.items.entries()) {
+      await recordCaptureDecisionRow(USER, folded!.id, item.key, {
+        decision: item.noteLabel === "lunch.txt" ? "accept" : "reject", index, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: new Date().toISOString(),
+      });
+    }
+    await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, folded!.id));
+    const foldedSaved = await runCaptureJobById(folded!.id, batchDeps);
+    const tossRow = await db.query.captureJobs.findFirst({ where: eq(captureJobs.id, toss.id) });
+    const after2 = await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) });
+    check(
+      "a file with every card set aside writes no capture",
+      foldedSaved?.status === "saved" && after2.length === 3 && tossRow?.status === "merged" && !tossRow.noteBatchId,
+      `${foldedSaved?.status} ${after2.length} ${tossRow?.status}`
+    );
+
+    const split = splitDecisions(
+      {
+        people: {
+          "n0:0-A": { decision: "accept", index: 0, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: "x" },
+          "n1:0-B": { decision: "reject", index: 1, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: "x" },
+          "n1:1-C": { decision: "accept", index: 2, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: "x" },
+        },
+        reminders: { checked: ["n0:r0", "n1:r0"], overrides: { "n1:r0": { title: "Call C" } } },
+        opportunities: { checked: ["n1:1-C:0"], kinds: { "n1:1-C:0": "referral" } },
+      },
+      1,
+      [{ key: "0-B" }, { key: "1-C" }]
+    );
+    check(
+      "splitDecisions hands a part back its own keys and positions",
+      JSON.stringify(Object.keys(split.people!)) === '["0-B","1-C"]' &&
+        split.people!["1-C"]!.index === 1 &&
+        split.reminders?.checked.join() === "r0" &&
+        split.reminders.overrides.r0?.title === "Call C" &&
+        split.opportunities?.checked.join() === "1-C:0" &&
+        split.opportunities.kinds?.["1-C:0"] === "referral",
+      JSON.stringify(split)
+    );
 
     const lone = randomUUID();
     const solo = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Met Maya at the summit again.", batchGroupId: lone });

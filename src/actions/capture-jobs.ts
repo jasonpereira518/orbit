@@ -269,8 +269,8 @@ export async function queueCaptureJob(input: {
       //
       // Suspended for a multi-file drop, and ONLY for one. The rule exists because a lone
       // Extract has no way back to the cards it displaced — there is no list of them. A
-      // batch does: `CaptureQueuePanel` renders every job in the group and can open any of
-      // them, so the twelve meeting notes somebody just uploaded are exactly what this
+      // batch does: Recent captures lists the drop with a row per file (`listPendingCapturesFor`)
+      // and opens it, so the twelve meeting notes somebody just uploaded are exactly what this
       // would otherwise delete eleven of.
       if (!input.batchGroupId) {
         const db = await getDb();
@@ -283,9 +283,8 @@ export async function queueCaptureJob(input: {
               inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"]),
               // A row the public API enqueued (`sourceKind: "api"` — set ONLY by
               // src/app/api/v1/notes/route.ts, never client-forgeable; see the type's own
-              // comment in src/lib/capture/types.ts) is exempt from this in-app rule. It has
-              // no way back through `CaptureQueuePanel` — that only renders for a group of
-              // more than one job — so discarding it here would be silent data loss with no
+              // comment in src/lib/capture/types.ts) is exempt from this in-app rule. It is
+              // not part of any drop, so discarding it here would be silent data loss with no
               // recourse, unlike the ordinary single card this rule is written for, which the
               // person just displaced themselves and can re-extract if they want it back.
               ne(captureJobs.sourceKind, "api")
