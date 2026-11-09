@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { recordAccountAudit } from "@/lib/account-audit";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { requireUserId, UnauthorizedError } from "@/lib/auth";
@@ -92,6 +93,7 @@ export async function GET(request: Request) {
     model: DEFAULT_MODELS.openrouter,
     encryptedKey: encrypt(key),
   });
+  await recordAccountAudit({ userId: sessionUserId, action: "integration.connect", resourceType: "openrouter" });
 
   // 8. Done. Match saveAiSettings's own revalidation — the 302 makes the landing page
   // (/settings) render fresh regardless, but /chat would otherwise keep whatever the

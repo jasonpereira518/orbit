@@ -1,5 +1,6 @@
 "use server";
 
+import { recordAccountAudit } from "@/lib/account-audit";
 /**
  * Server actions for the events surface.
  *
@@ -866,6 +867,7 @@ export async function disconnectEventProvider(
 ): Promise<void> {
   const userId = await requireSyncUser();
   await deleteEventConnection(userId, provider);
+  await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: provider });
   revalidateEvents();
 }
 

@@ -27,6 +27,7 @@ import { generateApiKey, type ApiKeyKind, type ApiKeyScope } from "@/lib/api/key
 import { apiKeyCapRefusal } from "@/lib/api/key-cap";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { trackMcpConnected, trackMcpDisconnected } from "@/lib/mcp/events";
+import { recordAccountAudit } from "@/lib/account-audit";
 
 export type ApiKeySummary = {
   id: string;
@@ -124,6 +125,7 @@ export async function createApiKey(
       scopes: resolved,
     })
     .returning();
+  await recordAccountAudit({ userId, action: "api_key.create", resourceType: "api_key", resourceId: row.id, detail: { kind, prefix: key.prefix, scopes: resolved } });
 
   revalidatePath("/settings");
   if (kind === "mcp_url") trackMcpConnected({ userId, client: "other", via: "api_key" });
@@ -164,6 +166,7 @@ export async function revokeApiKey(id: string): Promise<{ ok: true }> {
     .returning();
   // The twin of `createApiKey`'s `mcp_connected`: only an MCP-URL key is an assistant connection.
   if (revoked[0]?.kind === "mcp_url") trackMcpDisconnected({ userId, client: "other", credentialId: id });
+  await recordAccountAudit({ userId, action: "api_key.revoke", resourceType: "api_key", resourceId: id });
   revalidatePath("/settings");
   return { ok: true };
 }
