@@ -24,6 +24,7 @@ import {
   SETTINGS_SECTIONS,
   integrationHref,
   legacyHashTab,
+  movedToPageAnchor,
   resolveIntegrationParam,
 } from "../src/components/settings/sections";
 import { getSurface } from "../src/lib/surfaces";
@@ -114,11 +115,11 @@ function unionMembers(file: string, typeName: string): string[] {
 }
 
 console.log("\ngroups");
-check("six groups", SETTINGS_GROUPS.length === 6);
+check("five groups", SETTINGS_GROUPS.length === 5);
 check(
-  "named Account, Goals and targets, Preferences, Integrations, Resources, Data, in that order",
+  "named Account, About you, Preferences, Integrations, Data and help, in that order",
   SETTINGS_GROUPS.map((g) => g.label).join(",") ===
-    "Account,Goals and targets,Preferences,Integrations,Resources,Data"
+    "Account,About you,Preferences,Integrations,Data and help"
 );
 const groupKeys = new Set<string>(SETTINGS_GROUPS.map((g) => g.key));
 for (const section of SETTINGS_SECTIONS) {
@@ -186,7 +187,6 @@ console.log("\nold dialog ids");
 const OLD_IDS: Array<[string, string, string | null]> = [
   ["gmail", "google", "inbox"],
   ["outlook", "microsoft", null],
-  ["calendar", "reminders", null],
   ["google", "google", null],
   ["linkedin", "linkedin", null],
   ["ai", "ai", null],
@@ -206,28 +206,46 @@ check(
 );
 check("the gmail link keeps its alias", integrationHref("gmail") === "/settings?integration=gmail");
 
+console.log("\npages that moved back onto the settings page");
+// Reminders in calendar left the dialog for Notifications; its old ids land on the row.
+for (const old of ["reminders", "calendar"]) {
+  check(`?integration=${old} opens no dialog page`, resolveIntegrationParam(old) === null);
+  check(`?integration=${old} lands on #settings-calendar`, movedToPageAnchor(old) === "settings-calendar");
+}
+check("#settings-calendar is a plain anchor now", legacyHashTab("#settings-calendar") === null);
+check(
+  "a live page or a prototype key moved nowhere",
+  movedToPageAnchor("google") === null && movedToPageAnchor("constructor") === null && movedToPageAnchor(null) === null
+);
+check(
+  "the page redirects them",
+  readFileSync("src/app/(clerk)/(app)/settings/page.tsx", "utf8").includes("movedToPageAnchor(")
+);
+
 console.log("\nsurface keys");
-// Operator hide-lists are stored by these; renaming one silently un-hides its surface.
+// Operator hide-lists are stored by these; renaming one silently un-hides its surface. Order
+// is free — cards move between groups — but the set is not. `settings-knowledge` was retired
+// with the Knowledge base card (a stored hide-list naming it now hides nothing).
 const FROZEN_SECTION_IDS = [
-  "settings-profile",
-  "settings-plan",
+  "settings-ai",
+  "settings-api",
   "settings-appearance",
-  "settings-notifications",
+  "settings-calendar",
+  "settings-data",
   "settings-email",
   "settings-goals",
-  "settings-targets",
-  "settings-ai",
-  "settings-outreach",
-  "settings-calendar",
-  "settings-api",
-  "settings-webhooks",
-  "settings-knowledge",
   "settings-help",
-  "settings-data",
+  "settings-notifications",
+  "settings-outreach",
+  "settings-plan",
+  "settings-profile",
+  "settings-targets",
+  "settings-webhooks",
 ];
 check(
   "section ids are unchanged",
-  SETTINGS_SECTIONS.map((s) => s.id).join(",") === FROZEN_SECTION_IDS.join(",")
+  SETTINGS_SECTIONS.map((s) => s.id).sort().join(",") === FROZEN_SECTION_IDS.join(","),
+  SETTINGS_SECTIONS.map((s) => s.id).sort().join(",")
 );
 
 console.log("\npage");

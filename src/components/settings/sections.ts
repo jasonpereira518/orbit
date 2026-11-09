@@ -1,5 +1,5 @@
 /**
- * Single source of truth for the settings page's structure: six groups, the sections in
+ * Single source of truth for the settings page's structure: five groups, the sections in
  * each, and which of those live in the Integrations dialog rather than on the page.
  *
  * `page.tsx` renders the groups and cards from these lists, `SettingsSectionNav` renders the
@@ -13,11 +13,10 @@
  */
 export const SETTINGS_GROUPS = [
   { id: "settings-group-account", key: "account", label: "Account" },
-  { id: "settings-group-goals", key: "goals", label: "Goals and targets" },
+  { id: "settings-group-about", key: "about", label: "About you" },
   { id: "settings-group-preferences", key: "preferences", label: "Preferences" },
   { id: "settings-group-integrations", key: "integrations", label: "Integrations" },
-  { id: "settings-group-resources", key: "resources", label: "Resources" },
-  { id: "settings-group-data", key: "data", label: "Data" },
+  { id: "settings-group-data", key: "data", label: "Data and help" },
 ] as const satisfies ReadonlyArray<{ id: string; key: string; label: string }>;
 
 export type SettingsGroupKey = (typeof SETTINGS_GROUPS)[number]["key"];
@@ -30,23 +29,26 @@ export type SettingsGroupId = (typeof SETTINGS_GROUPS)[number]["id"];
  *
  * `settings-api` keeps a name of its own because it backs two pages — API keys and Claude and
  * ChatGPT — and either page's name would hide the other half of what hiding it hides.
+ *
+ * `settings-profile` covers the About you card and Your socials as well as the Account card:
+ * they were one card when hide-lists started storing this key, so hiding it still hides all
+ * three.
  */
 export const SETTINGS_SECTIONS = [
-  { id: "settings-profile", label: "Profile", group: "account" },
-  { id: "settings-plan", label: "Pricing Plan", group: "account" },
+  { id: "settings-profile", label: "Account", group: "account" },
+  { id: "settings-plan", label: "Plan and usage", group: "account" },
+  { id: "settings-goals", label: "Goals", group: "about" },
+  { id: "settings-targets", label: "Targets", group: "about" },
   { id: "settings-appearance", label: "Appearance", group: "preferences" },
   { id: "settings-notifications", label: "Notifications", group: "preferences" },
+  { id: "settings-calendar", label: "Reminders in calendar", group: "preferences" },
   { id: "settings-email", label: "Email", group: "preferences" },
-  { id: "settings-goals", label: "Goals", group: "goals" },
-  { id: "settings-targets", label: "Targets", group: "goals" },
   { id: "settings-ai", label: "AI provider", group: "integrations" },
   { id: "settings-outreach", label: "Outreach", group: "integrations" },
-  { id: "settings-calendar", label: "Reminders in calendar", group: "integrations" },
   { id: "settings-api", label: "API and connectors", group: "integrations" },
   { id: "settings-webhooks", label: "Webhooks", group: "integrations" },
-  { id: "settings-knowledge", label: "Knowledge", group: "resources" },
-  { id: "settings-help", label: "Help", group: "resources" },
   { id: "settings-data", label: "Data and privacy", group: "data" },
+  { id: "settings-help", label: "Help", group: "data" },
 ] as const satisfies ReadonlyArray<{
   id: string;
   label: string;
@@ -87,7 +89,6 @@ export const INTEGRATION_TABS = [
   { id: "api", label: "API keys", group: "advanced", section: "settings-api" },
   { id: "webhooks", label: "Webhooks", group: "advanced", section: "settings-webhooks" },
   { id: "outreach", label: "Outreach keys", group: "advanced", section: "settings-outreach" },
-  { id: "reminders", label: "Reminders in calendar", group: "advanced", section: "settings-calendar" },
 ] as const satisfies ReadonlyArray<
   { id: string; label: string; group: IntegrationTabGroupKey } & (
     | { section: SettingsSectionId }
@@ -128,8 +129,22 @@ export function focusTargetId(view: IntegrationView, focus: IntegrationFocus): s
 export const INTEGRATION_TAB_ALIASES = {
   gmail: { view: "google", focus: "inbox" },
   outlook: { view: "microsoft" },
-  calendar: { view: "reminders" },
 } as const satisfies Record<string, { view: IntegrationTabId; focus?: IntegrationFocus }>;
+
+/**
+ * Dialog ids whose page moved back onto the settings page. The page redirects
+ * `?integration=reminders` to `/settings#settings-calendar`, so old links and bookmarks still
+ * land on the setting.
+ */
+const MOVED_TO_PAGE = {
+  reminders: "settings-calendar",
+  calendar: "settings-calendar",
+} as const satisfies Record<string, SettingsSectionId>;
+
+/** The on-page anchor an old `?integration=` id now stands for, or null. */
+export function movedToPageAnchor(value: string | null | undefined): SettingsSectionId | null {
+  return value && ownKey(MOVED_TO_PAGE, value) ? MOVED_TO_PAGE[value] : null;
+}
 
 export type IntegrationLinkTarget = IntegrationView | keyof typeof INTEGRATION_TAB_ALIASES;
 
@@ -177,7 +192,6 @@ export function resolveIntegrationParam(
 const LEGACY_HASH_TAB = {
   "settings-ai": "ai",
   "settings-outreach": "outreach",
-  "settings-calendar": "reminders",
   "settings-api": "api",
   "settings-webhooks": "webhooks",
 } as const satisfies Record<string, IntegrationTabId>;

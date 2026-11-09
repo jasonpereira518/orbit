@@ -14,7 +14,7 @@ export function MeetingNudgeSetting() {
   return (
     <SettingsRow
       title="Offer to record meetings"
-      description="A couple of minutes before a meeting on your Google Calendar, Orbit offers to open the recorder with the title and guests filled in. It needs Google Calendar connected and a plan with meeting recording, and it only appears while Orbit is open in a tab — turn on desktop notifications above to hear about it from another tab. This is saved on this device."
+      description="Before a Google Calendar meeting, Orbit offers to start the recorder with the title and guests filled in. Needs Google Calendar. This device only."
     >
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" disabled={on === null} onClick={() => setMeetingNudgeOn(!on)}>

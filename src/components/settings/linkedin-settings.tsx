@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import {
   Bell,
-  BriefcaseBusiness,
   MessageSquare,
   Newspaper,
   Upload,
@@ -18,7 +17,6 @@ import {
 } from "@/actions/linkedin-settings";
 import { listImports, type ImportHistoryItem } from "@/actions/imports";
 import { markLinkedInExportRequested } from "@/actions/linkedin-export";
-import { saveWorkHistoryAutoEnabled } from "@/actions/settings";
 import { setRadarCaptureLinkedin } from "@/actions/radar";
 import { useRouter } from "next/navigation";
 import { AccountPageShell, FeatureRow, whenLine, type HeaderStatus } from "@/components/settings/account-page";
@@ -304,20 +302,6 @@ export function LinkedInSettings() {
                 }
               />
             </FeatureRow>
-            <FeatureRow
-              icon={<BriefcaseBusiness className="size-4" />}
-              tone={theme.tone}
-              title="Keep work history current"
-              description="Looks up people’s current roles in the background, so a job change doesn’t slip past you."
-              control={{ kind: "switch", on: panel.workHistoryAuto }}
-              disabled={pending}
-              onAction={() =>
-                run(
-                  () => saveWorkHistoryAutoEnabled(!panel.workHistoryAuto),
-                  "Couldn’t save that — try again?",
-                )
-              }
-            />
             {panel.savePosts !== null ? (
               <FeatureRow
                 icon={<Newspaper className="size-4" />}

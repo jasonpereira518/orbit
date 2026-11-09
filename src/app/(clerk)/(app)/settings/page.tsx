@@ -1,8 +1,9 @@
-import { getGmailConnectionStatus } from "@/actions/gmail";
+import { redirect } from "next/navigation";
 import { getEmailSettings, getPlanOverview, getSettings } from "@/actions/settings";
 import { listGoals } from "@/actions/goals";
 import { getDisplayProfile, isClerkConfigured } from "@/lib/auth";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
+import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { DataSettings } from "@/components/settings/data-settings";
 import { GoalsSettings } from "@/components/settings/goals-settings";
 import { EmailSettings } from "@/components/settings/email-settings";
@@ -10,25 +11,28 @@ import { TargetCompaniesSettings } from "@/components/settings/target-companies-
 import { getSchools, getTargetCompanies } from "@/actions/target-companies";
 import { CreditsSettings } from "@/components/settings/credits-settings";
 import { HelpSettings } from "@/components/settings/help-settings";
-import { KnowledgeSettings } from "@/components/settings/knowledge-settings";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
-import { EmailIntelSetting } from "@/components/settings/email-intel-setting";
 import { RadarDigestSetting } from "@/components/settings/radar-digest-setting";
 import { MeetingNudgeSetting } from "@/components/settings/meeting-nudge-setting";
 import { PlanSettings } from "@/components/settings/plan-settings";
-import { ProfileSettings } from "@/components/settings/profile-settings";
+import {
+  AboutYouSettings,
+  AccountSettings,
+  SocialLinksSettings,
+} from "@/components/settings/profile-settings";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { SettingsSectionNav } from "@/components/settings/settings-section-nav";
 import {
+  INTEGRATION_PARAM,
   INTEGRATION_TABS,
   SETTINGS_GROUPS,
   SETTINGS_SECTIONS,
+  movedToPageAnchor,
   type SettingsGroupKey,
   type SettingsSectionId,
 } from "@/components/settings/sections";
 import { requireUserId } from "@/lib/auth";
-import { getEntitlements } from "@/lib/entitlements";
 import { tourResumable } from "@/lib/tour/tour-state";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
@@ -100,7 +104,16 @@ function Group({
   );
 }
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  // A dialog page that moved back onto this page: land on it instead of an empty dialog.
+  const requested = (await searchParams)[INTEGRATION_PARAM];
+  const movedTo = movedToPageAnchor(typeof requested === "string" ? requested : null);
+  if (movedTo) redirect(`/settings#${movedTo}`);
+
   const userId = await requireUserId();
   const [
     initialSettings,
@@ -130,8 +143,8 @@ export default async function SettingsPage() {
     // that moment — the section would sit on its skeleton forever. Null when hidden.
     getEmailSettings().catch(() => null),
   ]);
-  // `speechAllowance` returns a Date; the panel below is a client component, so hand it
-  // down as an ISO string the same way `managed-ai-policy`'s allowance already does.
+  // `speechAllowance` returns a Date; the plan card's meters are client components, so hand
+  // it down as an ISO string the same way `managed-ai-policy`'s allowance already does.
   const speechAllowances: SpeechAllowances = {
     meeting: { ...meetingAllowance, resetsAt: meetingAllowance.resetsAt.toISOString() },
     shortform: { ...shortformAllowance, resetsAt: shortformAllowance.resetsAt.toISOString() },
@@ -140,17 +153,13 @@ export default async function SettingsPage() {
   const { hidden } = visibility;
   const shows = (id: SettingsSectionId) => !hidden.has(surfaceKeyForSettingsId(id));
   // Radar's Monday email is offered only to someone who can open Radar, and its zone is
-  // captured the same way the page does it.
+  // captured the same way the page does it. Email insights on the Google page rides the
+  // same release.
   const radarLive = !hidden.has("page.radar") && !visibility.comingSoon.has("page.radar");
   if (radarLive) {
     const tz = (await cookies()).get(TZ_COOKIE)?.value;
     after(() => captureRadarTimeZone(userId, tz).catch(() => undefined));
   }
-  // Email insights rides Radar's release, so its two extra reads happen only where it shows:
-  // whether the connected Gmail grant covers mail access, and whether the plan includes it.
-  const [emailIntelStatus, emailIntelEntitlements] = radarLive
-    ? await Promise.all([getGmailConnectionStatus(), getEntitlements(userId)])
-    : [null, null];
 
   // Section pages follow their own settings surface; account pages follow /imports, so
   // hiding it can't be undone by reaching it through Settings. The Google page's Gmail
@@ -162,7 +171,9 @@ export default async function SettingsPage() {
   const groupVisible = (group: SettingsGroupKey) =>
     group === "integrations"
       ? integrationTabs.length > 0
-      : SETTINGS_SECTIONS.some((s) => s.group === group && shows(s.id));
+      : SETTINGS_SECTIONS.some((s) => s.group === group && shows(s.id)) ||
+        // About you and Your socials sit under `settings-profile`'s key (see `sections.ts`).
+        (group === "about" && shows("settings-profile"));
 
   const railSections = SETTINGS_GROUPS.filter((g) => groupVisible(g.key)).map((g) => ({
     id: g.id,
@@ -183,13 +194,7 @@ export default async function SettingsPage() {
 
       <Group group="account" visible={groupVisible("account")}>
         <Section id="settings-profile" hidden={hidden}>
-          <ProfileSettings
-            profile={profile}
-            clerkEnabled={isClerkConfigured()}
-            initialSocialLinks={initialSettings.socialLinks}
-            initialSenderBio={initialSettings.senderBio}
-            initialCareer={initialSettings.careerProfile}
-          />
+          <AccountSettings profile={profile} clerkEnabled={isClerkConfigured()} />
         </Section>
         <Section id="settings-plan" hidden={hidden}>
           <PlanSettings
@@ -197,11 +202,20 @@ export default async function SettingsPage() {
             usage={planOverview.usage}
             demoAccount={planOverview.demoAccount}
             config={planOverview.planConfig}
+            speech={speechAllowances}
           />
         </Section>
       </Group>
 
-      <Group group="goals" visible={groupVisible("goals")}>
+      <Group group="about" visible={groupVisible("about")}>
+        {shows("settings-profile") ? (
+          <div id="settings-about" className="scroll-mt-8">
+            <AboutYouSettings
+              initialSenderBio={initialSettings.senderBio}
+              initialCareer={initialSettings.careerProfile}
+            />
+          </div>
+        ) : null}
         <Section id="settings-goals" hidden={hidden}>
           <GoalsSettings initialGoals={initialGoals} />
         </Section>
@@ -211,33 +225,36 @@ export default async function SettingsPage() {
             initialSchools={schools}
           />
         </Section>
+        {shows("settings-profile") ? (
+          <div id="settings-socials" className="scroll-mt-8">
+            <SocialLinksSettings initialSocialLinks={initialSettings.socialLinks} />
+          </div>
+        ) : null}
       </Group>
 
       <Group group="preferences" visible={groupVisible("preferences")}>
-        {shows("settings-appearance") || shows("settings-notifications") ? (
+        {shows("settings-appearance") ? (
+          <SettingsSection title="Appearance" description="How Orbit looks on your screen.">
+            <AppearanceSettings initialTheme={initialSettings.theme} />
+          </SettingsSection>
+        ) : null}
+        {shows("settings-notifications") || shows("settings-calendar") ? (
           <SettingsSection
-            title="Appearance and notifications"
-            description="How Orbit looks, and when it gets your attention."
+            title="Notifications"
+            description="When and where Orbit gets your attention."
           >
-            {shows("settings-appearance") ? (
-              <AppearanceSettings initialTheme={initialSettings.theme} />
-            ) : null}
             {shows("settings-notifications") ? (
-              <NotificationSettings
-                initialAccountEnabled={initialSettings.desktopNotificationsEnabled}
-              />
+              <>
+                <NotificationSettings
+                  initialAccountEnabled={initialSettings.desktopNotificationsEnabled}
+                />
+                {radarLive ? (
+                  <RadarDigestSetting initialEnabled={initialSettings.radarDigestEnabled} />
+                ) : null}
+                <MeetingNudgeSetting />
+              </>
             ) : null}
-            {shows("settings-notifications") && radarLive ? (
-              <RadarDigestSetting initialEnabled={initialSettings.radarDigestEnabled} />
-            ) : null}
-            {shows("settings-notifications") && radarLive ? (
-              <EmailIntelSetting
-                initialEnabled={initialSettings.emailIntelEnabled}
-                canRead={emailIntelStatus?.canRead ?? false}
-                allowed={emailIntelEntitlements?.canUseRecruiters === true}
-              />
-            ) : null}
-            {shows("settings-notifications") ? <MeetingNudgeSetting /> : null}
+            {shows("settings-calendar") ? <CalendarFeedSettings /> : null}
           </SettingsSection>
         ) : null}
         <Section id="settings-email" hidden={hidden}>
@@ -251,16 +268,24 @@ export default async function SettingsPage() {
           initialSettings={initialSettings}
           canUseRecruiters={initialSettings.plan.canUseRecruiters}
           inboxVisible={!hidden.has("page.recruiters")}
-          speechAllowances={speechAllowances}
+          emailInsightsVisible={radarLive}
         />
       </Group>
 
-      <Group group="resources" visible={groupVisible("resources")}>
+      <Group group="data" visible={groupVisible("data")}>
+        <Section id="settings-data" hidden={hidden}>
+          <DataSettings />
+        </Section>
+        {/* Rendered whenever the group is: Credits is a licence requirement, and hiding Help
+            must not take it off the page. */}
         <SettingsSection
-          title="Knowledge and help"
-          description="What Orbit knows about your network, and help getting the most out of it."
+          title="Help"
+          description={
+            shows("settings-help")
+              ? "Walk through setup again, take the page-by-page tour, or tell us what isn’t working."
+              : undefined
+          }
         >
-          {shows("settings-knowledge") ? <KnowledgeSettings /> : null}
           {shows("settings-help") ? (
             <HelpSettings
               feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)}
@@ -269,12 +294,6 @@ export default async function SettingsPage() {
           ) : null}
           <CreditsSettings />
         </SettingsSection>
-      </Group>
-
-      <Group group="data" visible={groupVisible("data")}>
-        <Section id="settings-data" hidden={hidden}>
-          <DataSettings />
-        </Section>
       </Group>
 
       <SettingsSectionNav sections={railSections} />
