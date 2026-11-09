@@ -1241,6 +1241,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   count integer NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at);
 CREATE TABLE IF NOT EXISTS job_feed_sources (
   id text PRIMARY KEY,
   label text NOT NULL,
@@ -2966,7 +2967,13 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // across accounts by LinkedIn slug like linkedin_avatars (v159), so a second account with the
 // same connection pays no search. NOT 198/199: claude/duplicates-view-merge-training-7c9a92
 // holds 198 and main 199; 201-206 are claimed by other branches. Rescanned every ref Nov 8 2026.
-export const SCHEMA_VERSION = 200;
+//
+// 205 = rate_limit_buckets_window_started_idx: the bucket prune deletes by window age, which was a
+// sequential scan of a table that gains a row per (scope, key); the per-user AI buckets and daily
+// caps (audit M-07, L-22) grow it faster. Ported from the audit branch (built as 176). NOT 201:
+// #551; 202: leads-p2-teams-port; 203: #554; 204: leads-p3-pipeline-port. Rescanned every remote
+// ref on Nov 8 2026: 204 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 205;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3319,6 +3326,8 @@ export const SCALE_DDL: string[] = [
   // descending id. The cursor is a row-value comparison, which needs every element ordered
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
+  // v205: the rate-limit prune's range scan (FIX_PLAN 3.3). See `pruneRateLimitBuckets`.
+  `CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at)`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
   // on "who have I actually spoken to lately" rather than whoever is alphabetically first
