@@ -22,11 +22,12 @@
  * and returns a fresh read, so the voter always sees their own stars; another instance lags by
  * up to 30 s, which no visitor can act on. The live-results poll reads the same memo.
  */
+import { shareTokenMatches } from "@/lib/interest-list-tokens";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups, waitlistPollVotes } from "@/db/schema";
 import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS, consumeIpBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   POLL_ERROR,
   POLL_OVER_BUDGET,
@@ -40,7 +41,6 @@ import {
   type PollResults,
   type StarAllocation,
 } from "@/lib/waitlist-poll";
-import { ipBucketKey } from "@/lib/client-ip";
 
 const RESULTS_TTL_MS = 30_000;
 
@@ -97,7 +97,7 @@ async function signupIdForToken(token: string | null | undefined): Promise<strin
   const [row] = await db
     .select({ id: interestListSignups.id })
     .from(interestListSignups)
-    .where(eq(interestListSignups.shareToken, token))
+    .where(shareTokenMatches(token))
     .limit(1);
   return row?.id ?? null;
 }
@@ -156,7 +156,7 @@ export async function setStarsCore(input: StarsInput, ctx: VoteContext): Promise
 
   // A limiter that cannot count must not fail open into the write.
   try {
-    await consumeBucket("poll.vote", ipBucketKey(ctx.ip), RATE_LIMITS.pollVote);
+    await consumeIpBucket("poll.vote", ctx.ip, RATE_LIMITS.pollVote);
   } catch (err) {
     if (isRateLimitedError(err)) return { ok: false, message: POLL_RATE_LIMITED };
     console.error("[waitlist-poll] limiter failed", err);

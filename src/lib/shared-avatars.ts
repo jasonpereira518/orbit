@@ -8,7 +8,13 @@ import { getDb } from "@/db";
 import { linkedinAvatars } from "@/db/schema";
 import { AVATAR_RECHECK_DAYS } from "@/lib/avatar-backfill";
 import { deleteSharedAvatarBlob } from "@/lib/avatar-blob";
-import { fetchLinkedInPhoto, fetchLinkedInPhotoUrl, hasBlobStorage } from "@/lib/contact-avatar";
+import {
+  downloadAndPersistSharedAvatar,
+  fetchLinkedInPhoto,
+  fetchLinkedInPhotoUrl,
+  hasBlobStorage,
+} from "@/lib/contact-avatar";
+import { isLinkedInProfilePhoto } from "@/lib/contact-avatar-url";
 import { LINKEDIN_HOST_RE } from "@/lib/contact-avatar-sql";
 
 export type SharedAvatarRow = typeof linkedinAvatars.$inferSelect;
@@ -129,6 +135,32 @@ export async function adoptSharedPhoto(
 }
 
 /**
+ * Adopt an external photo URL (e.g. from Chrome extension or direct capture) into the shared pool.
+ * Only genuine LinkedIn profile photos on media.licdn.com are pooled.
+ */
+export async function adoptPhotoIntoSharedPool(
+  slug: string,
+  photoUrl: string,
+  source: SharedAvatarSource = "extension"
+): Promise<SharedLinkedInPhoto | null> {
+  const row = await getSharedAvatar(slug);
+  if (row?.blockedAt || (row?.imageUrl && isSharedFresh(row))) {
+    return row?.imageUrl ? { sharedUrl: row.imageUrl } : null;
+  }
+  if (!isLinkedInProfilePhoto(photoUrl)) return null;
+
+  if (hasBlobStorage()) {
+    const stored = await downloadAndPersistSharedAvatar(slug, photoUrl);
+    if (!stored) return null;
+    return adoptSharedPhoto(slug, row, stored, source);
+  }
+  if (photoUrl.startsWith("https://")) {
+    return adoptSharedPhoto(slug, row, photoUrl, source);
+  }
+  return null;
+}
+
+/**
  * The LinkedIn step of every photo ladder, cache-first.
  *
  * A fresh shared row answers without any source call or quota: a photo means the contact
@@ -157,7 +189,7 @@ export async function resolveLinkedInPhotoCached(
   if (!hasBlobStorage()) {
     // Rebuilt from the key, so the lookup and any negative row name the same person.
     const own = await fetchLinkedInPhotoUrl(contactId, `https://www.linkedin.com/in/${slug}`, userId);
-    if (!own && !row?.imageUrl) await upsertSharedAvatar({ slug, imageUrl: null, source: "unavatar" });
+    if (!own && !row?.imageUrl) await upsertSharedAvatar({ slug, imageUrl: null, source: "linkedin_direct" });
     return own;
   }
 
@@ -180,7 +212,7 @@ export async function resolveLinkedInPhotoCached(
     const current = await getSharedAvatar(slug);
     return current?.imageUrl && !current.blockedAt ? { sharedUrl: current.imageUrl } : null;
   }
-  // Negative rows name the first tier asked; both were.
-  await upsertSharedAvatar({ slug, imageUrl: null, source: "unavatar" });
+  // Negative rows name the first tier asked.
+  await upsertSharedAvatar({ slug, imageUrl: null, source: "linkedin_direct" });
   return null;
 }

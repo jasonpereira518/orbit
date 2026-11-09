@@ -22,7 +22,6 @@
 import { ReauthRequiredError } from "../src/lib/errors";
 import {
   fetchGmailHeaders,
-  fetchGmailMessageLinks,
   fetchGmailMessages,
   fetchGmailThread,
   fetchGooglePeopleContacts,
@@ -207,32 +206,6 @@ async function main() {
       const out = await fetchGmailMessages(TOKEN, ["ok1", "gone", "boom", "html", "ok2"]);
       t.check("404, 500 and an HTML 200 are dropped; the readable two survive", out.map((m) => m.id).join(",") === "ok1,ok2", out.map((m) => m.id).join(","));
       t.check("each id was asked for exactly once (500 is not a retry status)", http.calls.length === 5, String(http.calls.length));
-    } finally {
-      http.restore();
-    }
-  }
-
-  console.log("messages.get — links for event discovery");
-  {
-    const http = mockFetch([route("GET", /messages\/m-links\?format=full/, () => json(fullMessage("m-links")))]);
-    try {
-      const [msg] = await fetchGmailMessageLinks(TOKEN, ["m-links"]);
-      t.check("the href behind a button is collected", msg.links.includes("https://lu.ma/event/evt-test123"), msg.links.join(" "));
-      t.check("a bare URL in the text part is collected", msg.links.includes("https://jobs.example.com/r/42"));
-      t.check("the DKIM verdict is carried", msg.authenticationResults.includes("dkim=pass header.i=@lu.ma"));
-      t.check("Cc is carried", msg.cc === "team@example.com");
-    } finally {
-      http.restore();
-    }
-  }
-  {
-    const http = mockFetch([
-      route("GET", /messages\/a\?/, () => status(404)),
-      route("GET", /messages\/b\?/, () => notJson()),
-    ]);
-    try {
-      const out = await fetchGmailMessageLinks(TOKEN, ["a", "b"]);
-      t.check("404 and HTML 200 drop the message rather than throw", out.length === 0);
     } finally {
       http.restore();
     }

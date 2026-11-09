@@ -2,6 +2,7 @@
 
 import { requirePageUser } from "@/lib/plan-guards";
 import { and, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import Papa from "papaparse";
@@ -373,6 +374,7 @@ export async function startLinkedInImport(
   const userId = await requirePageUser("page.imports");
   assertImportTextFits(csvText);
   await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
+  await consumeDailyCap("importDaily", userId);
   const db = await getDb();
 
   const { rows } = parseLinkedInConnectionsCsv(csvText);
@@ -944,6 +946,7 @@ export async function startLinkedInMessagesImport(
   const userId = await requirePageUser("page.imports");
   assertImportTextFits(csvText);
   await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
+  await consumeDailyCap("importDaily", userId);
   const db = await getDb();
 
   const { messages } = parseLinkedInMessagesCsv(csvText);
@@ -1281,6 +1284,7 @@ export async function confirmCalendarImport(payload: {
   const userId = await requirePageUser("page.imports");
   assertImportTextFits(payload.text);
   await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
+  await consumeDailyCap("importDaily", userId);
   const db = await getDb();
   const createFollowUps = payload.createFollowUps !== false;
 
@@ -1482,6 +1486,7 @@ export async function confirmGoogleContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requirePageUser("page.imports");
+  await consumeDailyCap("importDaily", userId);
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "google_contacts", selectedIds.length);
   }
@@ -1636,6 +1641,7 @@ export async function confirmOutlookContactsImport(
   selectedIds: string[],
 ): Promise<{ importId: string; totalRows: number }> {
   const userId = await requirePageUser("page.imports");
+  await consumeDailyCap("importDaily", userId);
   if (await isDemoWorkspace(userId)) {
     return recordDemoContactsImport(userId, "outlook_contacts", selectedIds.length);
   }
@@ -1842,6 +1848,7 @@ export async function confirmContactsFileImport(
   const userId = await requirePageUser("page.imports");
   assertImportTextFits(text);
   await consumeBucket("importStart", userId, RATE_LIMITS.importStart);
+  await consumeDailyCap("importDaily", userId);
   const db = await getDb();
 
   // Throws on a file the preview would have refused — the client only gets here from a

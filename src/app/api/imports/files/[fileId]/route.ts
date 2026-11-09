@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { withMediaResourcePolicy } from "@/lib/media-headers";
 import { getDb } from "@/db";
 import { importFiles } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
@@ -14,7 +15,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * 404s rather than 403s, so the response never confirms a guessed id exists (as
  * `/api/capture/photos/[photoId]` does).
  */
-export async function GET(_req: Request, { params }: Params) {
+async function serve(_req: Request, { params }: Params) {
   let userId: string;
   try {
     userId = await requireUserId();
@@ -47,4 +48,9 @@ export async function GET(_req: Request, { params }: Params) {
       "X-Content-Type-Options": "nosniff",
     },
   });
+}
+
+/** Every response, redirects and misses included, is same-origin only (audit L-09). */
+export async function GET(_req: Request, ctx: Params) {
+  return withMediaResourcePolicy(await serve(_req, ctx));
 }

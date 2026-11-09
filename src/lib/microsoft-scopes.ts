@@ -112,7 +112,7 @@ export function grantCovers(purpose: MicrosoftPurpose, scopes: string | null | u
   return hasScope(scopes, PURPOSE_SCOPE[purpose]);
 }
 
-/** What one Connect asks for. Microsoft has no mail-free equivalent of `event_mail`. */
+/** What one Connect asks for. */
 export const MICROSOFT_CONNECT_PURPOSES: readonly MicrosoftPurpose[] = ["contacts", "calendar"];
 
 /**

@@ -13,6 +13,29 @@ import {
 import { CAPTURE_BODY_SIZE_LIMIT } from "./src/lib/capture-limits";
 import { adminRedirects } from "./src/lib/admin-redirects";
 
+/**
+ * Cache policy for the images in `public/`. Next serves them `max-age=0` (revalidate on every
+ * load), and they are not fingerprinted, so they cannot be `immutable`. Without this, every
+ * revisit to the landing page spent a conditional request on each of its ten hero images,
+ * and each one is a round trip before the art can paint. A day fresh plus a week of
+ * stale-while-revalidate keeps updates flowing: the first view after a change may show the
+ * old file, the next shows the new one.
+ *
+ * Scoped by directory AND extension on purpose. `/waitlist/<slug>` is a page and `/imports`
+ * is a redirect, so a bare directory match would cache routes; `orbit-sw.js` and the audio
+ * worklet are not listed, because a service worker must always be re-checked.
+ */
+const STATIC_IMAGE_CACHE = "public, max-age=86400, stale-while-revalidate=604800";
+const staticAssetCaching = [
+  "/landing/:file(.+\\.(?:avif|png|webp))",
+  "/guides/:file(.+\\.png)",
+  "/avatars/:file(.+\\.png)",
+  "/integrations/:file(.+\\.png)",
+  "/imports/:file(.+\\.webp)",
+  "/waitlist/:file(.+\\.(?:png|webp|gif))",
+  "/orbit-logo.png",
+].map((source) => ({ source, headers: [{ key: "Cache-Control", value: STATIC_IMAGE_CACHE }] }));
+
 const nextConfig: NextConfig = {
   // No `X-Powered-By: Next.js`: the exact framework is no one's business but ours.
   poweredByHeader: false,
@@ -39,7 +62,7 @@ const nextConfig: NextConfig = {
     };
     const appHeaders = buildSecurityHeaders(base);
     const host = waitlistHost();
-    if (!host) return [{ source: "/(.*)", headers: appHeaders }];
+    if (!host) return [{ source: "/(.*)", headers: appHeaders }, ...staticAssetCaching];
     const match = [{ type: "host" as const, value: hostMatchValue(host) }];
     return [
       {
@@ -48,6 +71,7 @@ const nextConfig: NextConfig = {
         headers: buildSecurityHeaders({ ...base, surface: "waitlist" }),
       },
       { source: "/(.*)", missing: match, headers: appHeaders },
+      ...staticAssetCaching,
     ];
   },
   // The waitlist host serves the waitlist and nothing else. Redirects run before the proxy
@@ -165,7 +189,7 @@ const nextConfig: NextConfig = {
     // walks up past the worktree's own package-lock.json, picks the main checkout's, and
     // makes THAT the project root: every worktree's dev server then covers all the others.
     // Pinned, a cold .next went from 1.6 GB to 280 MB and first compiles got ~20% faster.
-    root: import.meta.dirname,
+    root: process.env.TURBOPACK_ROOT || import.meta.dirname,
     resolveAlias: {
       "@clerk/shared/apiUrlFromPublishableKey":
         "./node_modules/@clerk/shared/dist/apiUrlFromPublishableKey.mjs",

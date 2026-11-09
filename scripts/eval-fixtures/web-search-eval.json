@@ -1,0 +1,31 @@
+{
+  "_note": "Public figures and companies only, never anyone from a user's network. Employers are as of mid-2026: re-check any that moved before trusting an absolute score. A baseline and a candidate run on the same fixtures, so a stale label costs both arms alike.",
+  "people": [
+    { "id": "p-li-nadella", "input": { "fullName": "Satya Nadella", "linkedinUrl": "https://www.linkedin.com/in/satyanadella" }, "employer": "Microsoft" },
+    { "id": "p-li-hoffman", "input": { "fullName": "Reid Hoffman", "linkedinUrl": "https://www.linkedin.com/in/reidhoffman" }, "employer": "Greylock" },
+    { "id": "p-li-gates", "input": { "fullName": "Bill Gates", "linkedinUrl": "https://www.linkedin.com/in/williamhgates" }, "employer": "Gates Foundation" },
+    { "id": "p-pichai", "input": { "fullName": "Sundar Pichai", "company": "Google" }, "employer": "Google" },
+    { "id": "p-huang", "input": { "fullName": "Jensen Huang", "company": "NVIDIA" }, "employer": "NVIDIA" },
+    { "id": "p-su", "input": { "fullName": "Lisa Su", "company": "AMD" }, "employer": "AMD" },
+    { "id": "p-collison", "input": { "fullName": "Patrick Collison", "company": "Stripe", "domain": "stripe.com" }, "employer": "Stripe" },
+    { "id": "p-chesky", "input": { "fullName": "Brian Chesky", "company": "Airbnb" }, "employer": "Airbnb" },
+    { "id": "p-amodei", "input": { "fullName": "Dario Amodei", "company": "Anthropic", "domain": "anthropic.com" }, "employer": "Anthropic" },
+    { "id": "p-lutke", "input": { "fullName": "Tobi Lütke", "company": "Shopify" }, "employer": "Shopify" },
+    { "id": "p-field", "input": { "fullName": "Dylan Field", "company": "Figma", "domain": "figma.com" }, "employer": "Figma" },
+    { "id": "p-perkins", "input": { "fullName": "Melanie Perkins", "company": "Canva" }, "employer": "Canva" },
+    { "id": "p-rauch", "input": { "fullName": "Guillermo Rauch", "company": "Vercel", "domain": "vercel.com" }, "employer": "Vercel" },
+    { "id": "p-zhao", "input": { "fullName": "Ivan Zhao", "company": "Notion" }, "employer": "Notion" },
+    { "id": "p-benioff", "input": { "fullName": "Marc Benioff", "company": "Salesforce" }, "employer": "Salesforce" },
+    { "id": "p-krishna", "input": { "fullName": "Arvind Krishna", "company": "IBM" }, "employer": "IBM" },
+    { "id": "p-saarinen", "input": { "fullName": "Karri Saarinen", "company": "Linear", "domain": "linear.app" }, "employer": "Linear" },
+    { "id": "p-glyman", "input": { "fullName": "Eric Glyman", "company": "Ramp", "domain": "ramp.com" }, "employer": "Ramp" }
+  ],
+  "companies": [
+    { "id": "c-stripe", "input": { "name": "Stripe", "domain": "stripe.com" }, "domain": "stripe.com" },
+    { "id": "c-figma", "input": { "name": "Figma", "domain": "figma.com" }, "domain": "figma.com" },
+    { "id": "c-vercel", "input": { "name": "Vercel" }, "domain": "vercel.com" },
+    { "id": "c-notion", "input": { "name": "Notion", "domain": "notion.so" }, "domain": "notion" },
+    { "id": "c-linear", "input": { "name": "Linear", "domain": "linear.app" }, "domain": "linear.app" },
+    { "id": "c-ramp", "input": { "name": "Ramp" }, "domain": "ramp.com" }
+  ]
+}

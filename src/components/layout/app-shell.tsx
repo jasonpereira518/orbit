@@ -235,7 +235,7 @@ export function AppShell({
               // Focus and scrollIntoView stop clear of the sticky section headers at the top
               // and the bottom nav and ask bar floating over the bottom (WCAG 2.4.11). The
               // bottom value is the content's own reserved padding, below.
-              "scroll-pt-12 scroll-pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:scroll-pb-24",
+              "scroll-pt-12 scroll-pb-[calc(var(--orbit-bottom-nav)+5rem)] md:scroll-pb-24",
             )}
           >
             <header
@@ -319,10 +319,10 @@ export function AppShell({
                 // rail's gutter if that is larger.
                 "md:pr-[max(5rem,calc(2.5rem+var(--content-rail-gutter,0px)))]",
                 isViewportLocked
-                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8 [@media(max-height:500px)]:flex-none [@media(max-height:500px)]:overflow-visible"
+                ? "min-h-0 flex-1 overflow-hidden pb-[var(--orbit-bottom-nav)] md:pb-8 [@media(max-height:500px)]:flex-none [@media(max-height:500px)]:overflow-visible"
                   : isSettings
-                    ? "flex-1 pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
-                    : "flex-1 pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:pb-24",
+                    ? "flex-1 pb-[var(--orbit-bottom-nav)] md:pb-8"
+                    : "flex-1 pb-[calc(var(--orbit-bottom-nav)+5rem)] md:pb-24",
                 isConstellation && "py-4 md:py-5",
               )}
             >
