@@ -11,3 +11,32 @@ description = "identifier-style linkedin assignments, not credentials"
 targetRules = ["linkedin-client-id"]
 regexTarget = "match"
 regexes = ['''(?i)linkedin(slug|url|experience|profile|import|export|avatar|history|connection|cache|id)''', '''(?i)linkedin[_-](slug|url|experience|profile|import|export|avatar|history|connection|cache|id)''']
+
+# scripts/smoke-origin-checks.ts is a route -> auth-kind table whose values are prose labels
+# ("cron secret", "one-click unsubscribe, URL token"), which trip generic-api-key. It holds no
+# credentials. Scoped to this one file and this one rule; every other rule still scans it.
+[[allowlists]]
+description = "auth-kind labels in the origin-checks smoke table, not credentials"
+targetRules = ["generic-api-key"]
+paths = ['''scripts/smoke-origin-checks\.ts''']
+
+# The 2026-11 security-audit port ships credential-shaped strings on purpose: a live-looking
+# Stripe key the env guard must refuse to echo (and the audit doc quoting the fixture it found),
+# and the crypto-rotation smoke's frozen ciphertexts, which have to stay stable across runs.
+# Scoped to those files and those rules, and matched against the finding text, so a real key
+# anywhere else — or a different kind of secret in these files — still fails the scan.
+[[allowlists]]
+description = "deliberate credential fixtures in the 2026-11 audit port"
+targetRules = ["stripe-access-token", "generic-api-key"]
+regexTarget = "match"
+paths = [
+  '''(^|/)scripts/smoke-env\.ts$''',
+  '''(^|/)SECURITY_AUDIT\.md$''',
+  '''(^|/)scripts/smoke-crypto-rotation\.ts$''',
+]
+regexes = [
+  '''sk_live_SHOULDNOTAPPEAR''',
+  '''sk_test_SECRETVALUE123''',
+  '''smoke-rotation-fixture-secret''',
+  '''dXNlcl9maXh0dXJl''',
+]
