@@ -256,6 +256,7 @@ type OrgRow = {
   kind: BrandKind;
   name_key: string;
   hex: string | null;
+  domain: string | null;
   resolved_at: string | Date | null;
   has_row: boolean;
 };
@@ -309,7 +310,7 @@ async function readOrgBrandColors(userId: string): Promise<OrgBrandColors> {
          WHERE ct.user_id = ${userId} AND btrim(coalesce(ct.school, '')) <> ''
          GROUP BY 3
       )
-      SELECT o.name, o.kind, o.name_key, b.hex, b.resolved_at, (b.name_key IS NOT NULL) AS has_row
+      SELECT o.name, o.kind, o.name_key, b.hex, b.domain, b.resolved_at, (b.name_key IS NOT NULL) AS has_row
         FROM orgs o
         LEFT JOIN org_brand_colors b ON b.name_key = o.name_key AND b.kind = o.kind
     `)
@@ -321,7 +322,8 @@ async function readOrgBrandColors(userId: string): Promise<OrgBrandColors> {
   for (const row of rows) {
     if (row.hex) {
       if (learned.length < MAX_LEARNED_PER_VIEWER) {
-        learned.push({ name: row.name, kind: row.kind, hex: row.hex });
+        const domain = toDomain(row.domain);
+        learned.push({ name: row.name, kind: row.kind, hex: row.hex, ...(domain ? { domain } : {}) });
       }
       continue;
     }
