@@ -134,8 +134,9 @@ export type InspectNeighbour = { id: string; data: GraphNodeData };
 /**
  * A floating glass card over the sky, not a modal sheet: the sky stays pannable and
  * clickable behind it, and clicking another star swaps what it shows. It lives inside the
- * graph stage, so it also shows in fullscreen. Always dark-scoped — the sky is deep space
- * whatever the app theme, and light glass over it went muddy grey.
+ * graph stage, so it also shows in fullscreen. It follows the app theme: in light mode it is
+ * `.liquid-glass-sky`, white glass dense enough to stay light over the always-dark sky (the
+ * stock light glass went muddy grey there) while the sky still blurs through.
  */
 export function ContactInspectPanel({
   selection,
@@ -176,7 +177,7 @@ export function ContactInspectPanel({
   return (
     <div
       className={cn(
-        "dark pointer-events-none absolute z-30 flex",
+        "pointer-events-none absolute z-30 flex",
         // Below lg the card docks to the bottom, clear of the corner buttons; from lg it
         // floats on the right between the top and bottom toolbars.
         "inset-x-2 top-[40%] bottom-14 items-end",
@@ -198,7 +199,7 @@ export function ContactInspectPanel({
           onClose();
         }}
         className={cn(
-          "liquid-glass pointer-events-auto flex max-h-full w-full flex-col rounded-2xl text-foreground outline-none",
+          "liquid-glass liquid-glass-sky pointer-events-auto flex max-h-full w-full flex-col rounded-2xl text-foreground outline-none",
           "animate-in fade-in-0 slide-in-from-bottom-3 duration-base ease-house lg:slide-in-from-bottom-0 lg:slide-in-from-right-4",
         )}
       >
@@ -209,7 +210,7 @@ export function ContactInspectPanel({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="absolute right-3 top-3 z-10 inline-flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            className="absolute right-3 top-3 z-10 inline-flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           >
             <X className="size-4" />
           </button>
@@ -275,7 +276,7 @@ function YouPanelBody({
     {
       value: summary.dormantCount ?? 0,
       label: "drifting comets",
-      tone: "text-[#ff8a6b]",
+      tone: "text-[#b23a1f] dark:text-[#ff8a6b]",
     },
     { value: summary.overdueCount ?? 0, label: "overdue follow-ups" },
   ];
@@ -308,8 +309,8 @@ function YouPanelBody({
         </div>
       </header>
 
-      <div className="flex items-baseline gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
-        <span className="font-[family-name:var(--font-display)] text-3xl text-[#f2c14e]">
+      <div className="flex items-baseline gap-2 rounded-xl border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.04] px-3.5 py-3">
+        <span className="font-[family-name:var(--font-display)] text-3xl text-[#8a5f00] dark:text-[#f2c14e]">
           {summary.total}
         </span>
         <span className="text-sm text-muted-foreground">people in orbit</span>
@@ -319,7 +320,7 @@ function YouPanelBody({
         {stats.map((s) => (
           <div
             key={s.label}
-            className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5"
+            className="rounded-xl border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.04] px-3 py-2.5"
           >
             <p className={cn("text-lg font-medium text-foreground", s.tone)}>
               {s.value}
@@ -399,7 +400,7 @@ function YouPanelBody({
             {goals.map((g) => (
               <li
                 key={g.id}
-                className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-foreground/90"
+                className="rounded-xl border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.04] px-3 py-2 text-sm text-foreground/90"
               >
                 {g.text}
               </li>
@@ -417,10 +418,10 @@ function YouPanelBody({
 }
 
 const ICON_ACTION_CLASS = cn(
-  "inline-flex size-9 items-center justify-center rounded-full border border-white/12 bg-white/[0.05] text-muted-foreground transition-colors",
-  "hover:border-white/25 hover:bg-white/10 hover:text-foreground",
+  "inline-flex size-9 items-center justify-center rounded-full border border-white/80 bg-white/60 dark:border-white/12 dark:bg-white/[0.05] text-muted-foreground transition-colors",
+  "hover:border-foreground/25 hover:bg-foreground/10 hover:text-foreground",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-  "aria-pressed:border-[#f2c14e]/50 aria-pressed:bg-[#f2c14e]/15 aria-pressed:text-[#f2c14e]",
+  "aria-pressed:border-[#f2c14e]/50 aria-pressed:bg-[#f2c14e]/15 aria-pressed:text-[#8a5f00] dark:aria-pressed:text-[#f2c14e]",
 );
 
 /** One round icon in the card's action row: a link, or a toggle when `onClick` is given. */
@@ -627,7 +628,7 @@ function ContactPanelBody({
               src={photoSrc}
               alt=""
               onError={() => setPhotoFailed(true)}
-              className="size-14 shrink-0 rounded-full border border-white/15 object-cover shadow-[0_0_22px_rgba(124,195,226,0.25)]"
+              className="size-14 shrink-0 rounded-full border border-foreground/10 object-cover shadow-[0_0_22px_rgba(124,195,226,0.25)]"
             />
           ) : (
             <PlanetInitials
@@ -688,24 +689,24 @@ function ContactPanelBody({
               : ` · ${data.score}/5`}
           </span>
           {data.comet && (
-            <span className="rounded-full bg-[#c4452d]/20 px-2.5 py-0.5 text-xs font-medium text-[#ff8a6b]">
+            <span className="rounded-full bg-[#c4452d]/20 px-2.5 py-0.5 text-xs font-medium text-[#b23a1f] dark:text-[#ff8a6b]">
               Drifting comet
             </span>
           )}
           {data.overdue && (
-            <span className="rounded-full bg-[#f2c14e]/15 px-2.5 py-0.5 text-xs font-medium text-[#f2c14e]">
+            <span className="rounded-full bg-[#f2c14e]/20 px-2.5 py-0.5 text-xs font-medium text-[#8a5f00] dark:text-[#f2c14e]">
               Follow-up overdue
             </span>
           )}
         </div>
 
         {(cluster || nearby.length > 0) && (
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-2.5 py-2">
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.04] px-2.5 py-2">
             {cluster && (
               <button
                 type="button"
                 onClick={() => onFocusCluster?.(cluster.id)}
-                className="inline-flex min-w-0 items-center gap-1.5 rounded-full px-1.5 py-0.5 text-sm transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                className="inline-flex min-w-0 items-center gap-1.5 rounded-full px-1.5 py-0.5 text-sm transition-colors hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                 aria-label={`Fly to the ${cluster.name} cluster`}
               >
                 <span
@@ -718,7 +719,7 @@ function ContactPanelBody({
                       : undefined,
                   }}
                 />
-                <span className="truncate" style={{ color: cluster.color }}>
+                <span className="truncate text-foreground">
                   {cluster.name}
                 </span>
               </button>
@@ -738,7 +739,7 @@ function ContactPanelBody({
                               type="button"
                               onClick={() => onSelectContact?.(n.id, n.data)}
                               aria-label={`Open ${n.data.label}`}
-                              className="relative block size-7 rounded-full ring-2 ring-[#141820] transition-transform hover:z-10 hover:-translate-y-0.5 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-ring"
+                              className="relative block size-7 rounded-full ring-2 ring-background transition-transform hover:z-10 hover:-translate-y-0.5 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-ring"
                             />
                           }
                         >
@@ -757,25 +758,25 @@ function ContactPanelBody({
         )}
 
         <dl className="grid grid-cols-2 gap-2 text-sm">
-          <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2">
+          <div className="rounded-xl border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.04] px-3 py-2">
             <dt className="text-xs text-muted-foreground">
               {data.hasLoggedInteraction ? "Last touch" : "In your network"}
             </dt>
             <dd className="text-foreground">{lastTouch}</dd>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2">
+          <div className="rounded-xl border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.04] px-3 py-2">
             <dt className="text-xs text-muted-foreground">Next follow-up</dt>
             <dd
               className={cn(
                 "text-foreground",
-                data.overdue && "text-[#f2c14e]",
+                data.overdue && "text-[#8a5f00] dark:text-[#f2c14e]",
               )}
             >
               {nextTouch || "None"}
             </dd>
           </div>
           {howMet && (
-            <div className="col-span-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2">
+            <div className="col-span-2 rounded-xl border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.04] px-3 py-2">
               <dt className="text-xs text-muted-foreground">How you met</dt>
               <dd className="text-foreground">{howMet}</dd>
             </div>
@@ -813,7 +814,7 @@ function ContactPanelBody({
             {data.tags!.map((tag) => (
               <span
                 key={tag}
-                className="rounded-md border border-white/10 bg-white/[0.05] px-2 py-0.5 text-xs text-foreground/85"
+                className="rounded-md border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.05] px-2 py-0.5 text-xs text-foreground/85"
               >
                 {tag}
               </span>
@@ -839,13 +840,13 @@ function ContactPanelBody({
         )}
       </div>
 
-      <footer className="space-y-2.5 border-t border-white/10 p-3">
+      <footer className="space-y-2.5 border-t border-foreground/10 p-3">
         {followUpOpen && (
           <EasyFollowUp
             contactId={id}
             contactName={data.preferredName || data.fullName}
             nextFollowUpAt={data.nextFollowUpAt}
-            className="w-full rounded-xl border border-white/10 bg-white/[0.04] p-3"
+            className="w-full rounded-xl border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.04] p-3"
             onScheduled={(dueDate) => {
               onContactPatch?.(id, { nextFollowUpAt: dueDate, overdue: false });
               onRefresh();
