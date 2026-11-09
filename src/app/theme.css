@@ -1679,6 +1679,37 @@
   }
 }
 
+/* Chat's loading planet (`orbit-mark.tsx`): one moon lap. It starts at the back of the orbit and
+ * eases in and out, so it drifts behind the planet and is quickest swinging past the front, the
+ * way a real orbit speeds up near its planet. `unlap` is the exact inverse, spun on the moon itself
+ * so the squashed orbit never stretches it. Reduced motion never mounts these: the component
+ * draws a parked moon instead, since the global clamp would freeze it hidden behind the planet. */
+@keyframes orbit-mark-lap {
+  from {
+    transform: rotate(-90deg);
+  }
+  to {
+    transform: rotate(270deg);
+  }
+}
+@keyframes orbit-mark-unlap {
+  from {
+    transform: rotate(90deg);
+  }
+  to {
+    transform: rotate(-270deg);
+  }
+}
+.orbit-mark-lap,
+.orbit-mark-unlap {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  animation: orbit-mark-lap 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.orbit-mark-unlap {
+  animation-name: orbit-mark-unlap;
+}
+
 @keyframes interest-spin {
   to {
     transform: rotate(360deg);
