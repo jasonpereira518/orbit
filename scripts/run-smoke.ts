@@ -78,6 +78,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-no-double-render": "pure",
   "smoke-font-preload": "pure",
   "smoke-oauth-refresh-rejection": "pure",
+  "smoke-credits-abort": "pure",
   "smoke-oauth-return": "pure",
   "smoke-openrouter-oauth": "pure",
   "smoke-report-error": "pure",
