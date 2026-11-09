@@ -16,6 +16,7 @@ import {
   AvatarSourceRateLimitError,
   parseImageDataUrl,
 } from "@/lib/contact-avatar";
+import { isUuid } from "@/lib/input/ids";
 
 type Params = { params: Promise<{ contactId: string }> };
 
@@ -110,6 +111,8 @@ async function serve(req: Request, { params }: Params) {
   }
   const { contactId } = await params;
   const versioned = new URL(req.url).searchParams.has("v");
+  // A malformed id would reach Postgres as a failed uuid cast — a 500 for "no such contact".
+  if (!isUuid(contactId)) return miss(404);
   const db = await getDb();
 
   const contact = await db.query.contacts.findFirst({

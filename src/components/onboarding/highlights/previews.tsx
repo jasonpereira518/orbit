@@ -15,6 +15,7 @@ import {
   ScanLine,
   Send,
   Sparkles,
+  Target,
 } from "lucide-react";
 import { Stagger, StaggerItem } from "@/components/onboarding/onboarding-ui";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,38 @@ function Initials({ name, tone = "primary" }: { name: string; tone?: "primary" |
     >
       {initials}
     </span>
+  );
+}
+
+/** The goals chapter: a goal, and the people Orbit puts first for it. Static, no company names. */
+export function GoalsPreview() {
+  const people = [
+    { name: "Maya Chen", why: "Software engineer · went to your school" },
+    { name: "Daniel Ruiz", why: "Hires interns on the team you want" },
+    { name: "Ama Owusu", why: "Made the same switch two years ago", tone: "gold" as const },
+  ];
+  return (
+    <Stagger className="flex h-full flex-col gap-2.5">
+      <StaggerItem className={cn(card, "flex items-center gap-3 border-primary/25 bg-primary/[0.04] p-3")}>
+        <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <Target className="size-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-3xs font-medium uppercase tracking-wide text-primary">Your goal</p>
+          <p className="truncate text-sm font-medium text-ink">Land a software internship in the next year</p>
+        </div>
+      </StaggerItem>
+      {people.map((p) => (
+        <StaggerItem key={p.name} className={cn(card, "flex items-center gap-3 px-3 py-2")}>
+          <Initials name={p.name} tone={p.tone} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-medium text-ink">{p.name}</p>
+            <p className="truncate text-3xs text-muted-foreground">{p.why}</p>
+          </div>
+          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium text-primary">Fits your goal</span>
+        </StaggerItem>
+      ))}
+    </Stagger>
   );
 }
 

@@ -21,6 +21,8 @@ export type Brand = {
   kind: BrandKind;
   /** The brand's own color, `#RRGGBB`. */
   hex: string;
+  /** Its website's bare host, for a logo. Curated entries only. */
+  domain?: string;
 };
 
 /** `domain`: the company's own website, for its logo. Explicit, never guessed from the name. */
@@ -28,32 +30,32 @@ type BrandEntry = [kind: BrandKind, hex: string, names: readonly string[], domai
 
 const ENTRIES: readonly BrandEntry[] = [
   // Schools -------------------------------------------------------------------------------
-  ["school", "#A51C30", ["Harvard University", "Harvard"]],
-  ["school", "#8C1515", ["Stanford University", "Stanford"]],
-  ["school", "#A31F34", ["Massachusetts Institute of Technology", "MIT"]],
-  ["school", "#00356B", ["Yale University", "Yale"]],
-  ["school", "#E77500", ["Princeton University", "Princeton"]],
-  ["school", "#B9D9EB", ["Columbia University", "Columbia"]],
-  ["school", "#011F5B", ["University of Pennsylvania", "UPenn", "Penn"]],
-  ["school", "#041E42", ["Penn State", "Pennsylvania State University"]],
-  ["school", "#B31B1B", ["Cornell University", "Cornell"]],
-  ["school", "#4E3629", ["Brown University", "Brown"]],
-  ["school", "#00693E", ["Dartmouth College", "Dartmouth"]],
-  ["school", "#003262", ["UC Berkeley", "University of California Berkeley", "Berkeley"]],
-  ["school", "#2774AE", ["UCLA", "University of California Los Angeles"]],
-  ["school", "#FFCB05", ["University of Michigan", "Michigan"]],
-  ["school", "#18453B", ["Michigan State University", "Michigan State"]],
-  ["school", "#57068C", ["New York University", "NYU"]],
-  ["school", "#B3A369", ["Georgia Institute of Technology", "Georgia Tech"]],
-  ["school", "#C41230", ["Carnegie Mellon University", "Carnegie Mellon", "CMU"]],
-  ["school", "#BF5700", ["University of Texas", "UT Austin"]],
-  ["school", "#500000", ["Texas A&M University", "Texas A&M"]],
-  ["school", "#4B2E83", ["University of Washington"]],
-  ["school", "#003087", ["Duke University", "Duke"]],
-  ["school", "#4E2A84", ["Northwestern University", "Northwestern"]],
-  ["school", "#800000", ["University of Chicago", "UChicago"]],
-  ["school", "#FF6C0C", ["California Institute of Technology", "Caltech"]],
-  ["school", "#990000", ["University of Southern California", "USC"]],
+  ["school", "#A51C30", ["Harvard University", "Harvard"], "harvard.edu"],
+  ["school", "#8C1515", ["Stanford University", "Stanford"], "stanford.edu"],
+  ["school", "#A31F34", ["Massachusetts Institute of Technology", "MIT"], "mit.edu"],
+  ["school", "#00356B", ["Yale University", "Yale"], "yale.edu"],
+  ["school", "#E77500", ["Princeton University", "Princeton"], "princeton.edu"],
+  ["school", "#B9D9EB", ["Columbia University", "Columbia"], "columbia.edu"],
+  ["school", "#011F5B", ["University of Pennsylvania", "UPenn", "Penn"], "upenn.edu"],
+  ["school", "#041E42", ["Penn State", "Pennsylvania State University"], "psu.edu"],
+  ["school", "#B31B1B", ["Cornell University", "Cornell"], "cornell.edu"],
+  ["school", "#4E3629", ["Brown University", "Brown"], "brown.edu"],
+  ["school", "#00693E", ["Dartmouth College", "Dartmouth"], "dartmouth.edu"],
+  ["school", "#003262", ["UC Berkeley", "University of California Berkeley", "Berkeley"], "berkeley.edu"],
+  ["school", "#2774AE", ["UCLA", "University of California Los Angeles"], "ucla.edu"],
+  ["school", "#FFCB05", ["University of Michigan", "Michigan"], "umich.edu"],
+  ["school", "#18453B", ["Michigan State University", "Michigan State"], "msu.edu"],
+  ["school", "#57068C", ["New York University", "NYU"], "nyu.edu"],
+  ["school", "#B3A369", ["Georgia Institute of Technology", "Georgia Tech"], "gatech.edu"],
+  ["school", "#C41230", ["Carnegie Mellon University", "Carnegie Mellon", "CMU"], "cmu.edu"],
+  ["school", "#BF5700", ["University of Texas", "UT Austin"], "utexas.edu"],
+  ["school", "#500000", ["Texas A&M University", "Texas A&M"], "tamu.edu"],
+  ["school", "#4B2E83", ["University of Washington"], "washington.edu"],
+  ["school", "#003087", ["Duke University", "Duke"], "duke.edu"],
+  ["school", "#4E2A84", ["Northwestern University", "Northwestern"], "northwestern.edu"],
+  ["school", "#800000", ["University of Chicago", "UChicago"], "uchicago.edu"],
+  ["school", "#FF6C0C", ["California Institute of Technology", "Caltech"], "caltech.edu"],
+  ["school", "#990000", ["University of Southern California", "USC"], "usc.edu"],
   [
     "school",
     "#4B9CD3",
@@ -64,32 +66,33 @@ const ENTRIES: readonly BrandEntry[] = [
       "UNC-Chapel Hill",
       "UNC",
     ],
+    "unc.edu",
   ],
-  ["school", "#002147", ["University of Oxford", "Oxford"]],
-  ["school", "#A3C1AD", ["University of Cambridge", "Cambridge"]],
-  ["school", "#002A5C", ["University of Toronto"]],
-  ["school", "#002145", ["University of British Columbia", "UBC"]],
-  ["school", "#FDD54F", ["University of Waterloo", "Waterloo"]],
-  ["school", "#041E42", ["Georgetown University", "Georgetown"]],
-  ["school", "#CC0000", ["North Carolina State University", "NC State", "NCSU"]],
-  ["school", "#9E7E38", ["Wake Forest University", "Wake Forest"]],
-  ["school", "#232D4B", ["University of Virginia", "UVA"]],
-  ["school", "#861F41", ["Virginia Tech"]],
-  ["school", "#BA0C2F", ["University of Georgia"]],
-  ["school", "#0021A5", ["University of Florida"]],
-  ["school", "#BB0000", ["Ohio State University", "The Ohio State University", "Ohio State"]],
-  ["school", "#C5050C", ["University of Wisconsin"]],
-  ["school", "#E84A27", ["University of Illinois"]],
-  ["school", "#CEB888", ["Purdue University", "Purdue"]],
-  ["school", "#002D72", ["Johns Hopkins University", "Johns Hopkins"]],
-  ["school", "#CFAE70", ["Vanderbilt University", "Vanderbilt"]],
-  ["school", "#00205B", ["Rice University"]],
-  ["school", "#012169", ["Emory University", "Emory"]],
-  ["school", "#0C2340", ["University of Notre Dame", "Notre Dame"]],
-  ["school", "#CC0000", ["Boston University"]],
-  ["school", "#8A100B", ["Boston College"]],
-  ["school", "#E21833", ["University of Maryland"]],
-  ["school", "#182B49", ["UC San Diego", "UCSD"]],
+  ["school", "#002147", ["University of Oxford", "Oxford"], "ox.ac.uk"],
+  ["school", "#A3C1AD", ["University of Cambridge", "Cambridge"], "cam.ac.uk"],
+  ["school", "#002A5C", ["University of Toronto"], "utoronto.ca"],
+  ["school", "#002145", ["University of British Columbia", "UBC"], "ubc.ca"],
+  ["school", "#FDD54F", ["University of Waterloo", "Waterloo"], "uwaterloo.ca"],
+  ["school", "#041E42", ["Georgetown University", "Georgetown"], "georgetown.edu"],
+  ["school", "#CC0000", ["North Carolina State University", "NC State", "NCSU"], "ncsu.edu"],
+  ["school", "#9E7E38", ["Wake Forest University", "Wake Forest"], "wfu.edu"],
+  ["school", "#232D4B", ["University of Virginia", "UVA"], "virginia.edu"],
+  ["school", "#861F41", ["Virginia Tech"], "vt.edu"],
+  ["school", "#BA0C2F", ["University of Georgia"], "uga.edu"],
+  ["school", "#0021A5", ["University of Florida"], "ufl.edu"],
+  ["school", "#BB0000", ["Ohio State University", "The Ohio State University", "Ohio State"], "osu.edu"],
+  ["school", "#C5050C", ["University of Wisconsin"], "wisc.edu"],
+  ["school", "#E84A27", ["University of Illinois"], "illinois.edu"],
+  ["school", "#CEB888", ["Purdue University", "Purdue"], "purdue.edu"],
+  ["school", "#002D72", ["Johns Hopkins University", "Johns Hopkins"], "jhu.edu"],
+  ["school", "#CFAE70", ["Vanderbilt University", "Vanderbilt"], "vanderbilt.edu"],
+  ["school", "#00205B", ["Rice University"], "rice.edu"],
+  ["school", "#012169", ["Emory University", "Emory"], "emory.edu"],
+  ["school", "#0C2340", ["University of Notre Dame", "Notre Dame"], "nd.edu"],
+  ["school", "#CC0000", ["Boston University"], "bu.edu"],
+  ["school", "#8A100B", ["Boston College"], "bc.edu"],
+  ["school", "#E21833", ["University of Maryland"], "umd.edu"],
+  ["school", "#182B49", ["UC San Diego", "UCSD"], "ucsd.edu"],
 
   // Tech ----------------------------------------------------------------------------------
   ["company", "#4285F4", ["Google", "Alphabet"], "google.com"],
@@ -228,8 +231,8 @@ export const CURATED_COMPANIES: readonly CuratedCompany[] = ENTRIES.flatMap(([ki
 
 /** Every alias key → the brands it names (one per kind at most in practice). */
 const INDEX = new Map<string, Brand[]>();
-for (const [kind, hex, names] of ENTRIES) {
-  const brand: Brand = { name: names[0]!, kind, hex };
+for (const [kind, hex, names, domain] of ENTRIES) {
+  const brand: Brand = { name: names[0]!, kind, hex, ...(domain ? { domain } : {}) };
   for (const alias of names) {
     const key = brandKey(alias);
     const list = INDEX.get(key) ?? [];
@@ -286,6 +289,22 @@ export function lookupCuratedBrandByName(
 ): Brand | null {
   const key = brandKey(name);
   return key ? lookupCuratedBrand(key, prefer) : null;
+}
+
+/**
+ * Curated brands an as-you-type query names: an alias that starts with it ("goo" → Google)
+ * or has a word that does ("chapel" → UNC), prefix hits first, each brand once.
+ */
+export function searchCuratedBrands(query: string, limit = 6): Brand[] {
+  const q = brandKey(query);
+  if (!q) return [];
+  const prefix: Brand[] = [];
+  const word: Brand[] = [];
+  for (const [key, brands] of INDEX) {
+    const bucket = key.startsWith(q) ? prefix : ` ${key}`.includes(` ${q}`) ? word : null;
+    if (bucket) bucket.push(...brands);
+  }
+  return [...new Set([...prefix, ...word])].slice(0, limit);
 }
 
 function lookupCuratedBrand(key: string, prefer?: BrandKind): Brand | null {
