@@ -26,7 +26,7 @@ import {
   triggerCampaignBackgroundSearchAction,
   updateCampaign,
 } from "@/actions/outreach";
-import { AlertCircle, CheckCircle2, Globe, Loader2, Radio, Sparkles, X } from "lucide-react";
+import { AlertCircle, Activity, CheckCircle2, ChevronDown, ChevronUp, Globe, Loader2, Radio, ShieldCheck, Sparkles, Terminal, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { isDeliveredMessage, prospectPipelineBucket } from "@/lib/outreach-metrics";
 import type {
@@ -106,6 +106,7 @@ export function CampaignWorkspace({
   );
   const [bgJob, setBgJob] = useState<CampaignBackgroundJob | null>(campaign.backgroundJob || null);
   const [showDismissedBgAlert, setShowDismissedBgAlert] = useState(false);
+  const [showActivityDrawer, setShowActivityDrawer] = useState(false);
 
   // Poll background job when active
   useEffect(() => {
@@ -341,17 +342,17 @@ export function CampaignWorkspace({
         <div className="relative overflow-hidden rounded-2xl border border-sky-500/30 bg-sky-500/5 p-4 shadow-sm backdrop-blur-xs dark:bg-sky-500/10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-sky-500/20 text-sky-600 dark:text-sky-400">
+              <div className="relative flex h-9 w-9 items-center justify-center rounded-full bg-sky-500/20 text-sky-600 dark:text-sky-400">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-40" />
                 <Loader2 className="h-4 w-4 animate-spin text-sky-600 dark:text-sky-300" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-sky-950 dark:text-sky-100">
-                    Background Agent Active
+                    Orbit Autonomous Scout Active
                   </span>
                   <span className="inline-flex items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
-                    Non-blocking
+                    Background execution
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-sky-900/80 dark:text-sky-200/80">
@@ -359,31 +360,121 @@ export function CampaignWorkspace({
                 </p>
               </div>
             </div>
-            <div className="text-right">
-              <span className="text-[11px] text-muted-foreground">
-                Feel free to navigate away; Orbit will update automatically.
-              </span>
+
+            <div className="flex items-center gap-2">
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => setShowActivityDrawer((v) => !v)}
+                className="rounded-full gap-1.5 text-xs border-sky-500/30 bg-card/80 hover:bg-card"
+              >
+                <Activity className="h-3 w-3 text-sky-600 dark:text-sky-400" />
+                {showActivityDrawer ? "Hide Scout Stream" : "Live Agent Stream"}
+                {showActivityDrawer ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </Button>
             </div>
           </div>
+
+          {/* Expandable Live Agent Activity Drawer */}
+          {showActivityDrawer && (
+            <div className="mt-3.5 space-y-2 rounded-xl border border-sky-500/20 bg-card/70 p-3.5 text-xs backdrop-blur-xs">
+              <div className="flex items-center justify-between border-b border-border/50 pb-2 text-[11px] font-semibold text-sky-950 dark:text-sky-100">
+                <span className="flex items-center gap-1.5">
+                  <Terminal className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+                  Live Scout Execution Log
+                </span>
+                <span className="text-muted-foreground font-normal">
+                  Phase: {bgJob.phase || "scanning"}
+                </span>
+              </div>
+
+              <div className="space-y-2 pt-1 font-mono text-[11px]">
+                <div className="flex items-start gap-2">
+                  <span className="text-emerald-500 font-bold">✓</span>
+                  <span className="text-muted-foreground">
+                    Target Criteria: Searching {campaign.name} for matching leadership & decision-makers.
+                  </span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className={bgJob.phase === "news_scan" ? "animate-pulse text-sky-500 font-bold" : "text-emerald-500 font-bold"}>
+                    {bgJob.phase === "news_scan" ? "●" : "✓"}
+                  </span>
+                  <span className="text-ink">
+                    Web Catalysts: Scanning recent press, company growth indicators, and news articles via BrightData.
+                  </span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className={bgJob.phase === "people_discovery" ? "animate-pulse text-sky-500 font-bold" : bgJob.phase === "drafting" || bgJob.phase === "completed" ? "text-emerald-500 font-bold" : "text-muted-foreground"}>
+                    {bgJob.phase === "people_discovery" ? "●" : bgJob.phase === "drafting" || bgJob.phase === "completed" ? "✓" : "○"}
+                  </span>
+                  <span className="text-ink">
+                    Prospect Discovery: Unlocking candidate profiles & calculating effectiveness scores.
+                  </span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className={bgJob.phase === "drafting" ? "animate-pulse text-sky-500 font-bold" : bgJob.phase === "completed" ? "text-emerald-500 font-bold" : "text-muted-foreground"}>
+                    {bgJob.phase === "drafting" ? "●" : bgJob.phase === "completed" ? "✓" : "○"}
+                  </span>
+                  <span className="text-ink">
+                    Tailored Drafts: Formulating news-referenced email & LinkedIn intros.
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Completed Background Job Banner */}
       {bgJob?.status === "completed" && !showDismissedBgAlert && bgJob.prospectsAdded !== undefined && (
-        <div className="flex items-center justify-between rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-950 dark:text-emerald-100">
-          <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-            <span>
-              <strong>Background scout completed:</strong> {bgJob.message}
-            </span>
+        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs text-emerald-950 dark:text-emerald-100">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span>
+                <strong>Background scout completed:</strong> {bgJob.message}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => setShowActivityDrawer((v) => !v)}
+                className="rounded-full gap-1 text-[11px] h-6 px-2 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-500/20"
+              >
+                <Activity className="h-3 w-3" />
+                {showActivityDrawer ? "Hide Stream" : "View Scout Log"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setShowDismissedBgAlert(true)}
+                className="rounded-full p-1 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowDismissedBgAlert(true)}
-            className="rounded-full p-1 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+
+          {/* Expandable Activity Drawer for completed job */}
+          {showActivityDrawer && (
+            <div className="mt-3 space-y-1.5 rounded-xl border border-emerald-500/20 bg-card/70 p-3 text-xs text-foreground backdrop-blur-xs font-mono text-[11px]">
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-semibold">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Autonomous scout run finished successfully
+              </div>
+              <div className="text-muted-foreground pt-1">
+                • {bgJob.prospectsAdded} prospects discovered & added to campaign pipeline.
+              </div>
+              <div className="text-muted-foreground">
+                • Catalysts and tailored personal messages ready for 1-click review.
+              </div>
+              {bgJob.completedAt && (
+                <div className="text-[10px] text-muted-foreground pt-1">
+                  Completed at {new Date(bgJob.completedAt).toLocaleTimeString()}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

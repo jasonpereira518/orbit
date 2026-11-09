@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { IntentLink } from "@/components/ui/intent-link";
-import { ExternalLink, Sparkles, TrendingUp, UserPlus } from "lucide-react";
+import { Briefcase, ExternalLink, Eye, GraduationCap, Sparkles, TrendingUp, UserPlus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   enrichProspect,
@@ -15,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { MessageEditorRow } from "@/components/outreach/message-editor-row";
 import { OutcomeControls } from "@/components/outreach/outcome-controls";
 import { OutreachActions } from "@/components/outreach/outreach-actions";
+import { DraftPreviewDialog } from "@/components/outreach/draft-preview-dialog";
 import { normalizeCompanyKey } from "@/lib/company-name";
 import type { WarmPath } from "@/lib/warm-paths";
 import { buildLinkedInSearchUrl, buildLinkedInUrl, channelLabel } from "@/lib/outreach-channels";
@@ -121,6 +122,7 @@ export function ProspectTable({
 }) {
   const [pending, start] = useTransition();
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [previewProspect, setPreviewProspect] = useState<ProspectRow | null>(null);
 
   function toggleSelection(prospectId: string, checked: boolean) {
     start(async () => {
@@ -316,9 +318,10 @@ export function ProspectTable({
                         {/* Warm path note */}
                         <WarmPathNote company={prospect.company} warmPaths={warmPaths} />
 
-                        {/* Effectiveness Match Badge */}
-                        {typeof (prospect.enrichment as any)?.effectivenessScore === "number" && (
-                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {/* Student-friendly Smart Badges */}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          {/* Effectiveness Match Badge */}
+                          {typeof (prospect.enrichment as any)?.effectivenessScore === "number" && (
                             <span
                               title={((prospect.enrichment as any)?.scoreReasons as string[])?.join(" • ") || "Effectiveness probability"}
                               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums border ${
@@ -332,26 +335,36 @@ export function ProspectTable({
                               <Sparkles className="h-2.5 w-2.5 text-emerald-500" />
                               {(prospect.enrichment as any)?.effectivenessScore}% Match
                             </span>
-                            {((prospect.enrichment as any)?.scoreReasons as string[])?.[0] && (
-                              <span className="text-[11px] text-muted-foreground truncate max-w-xs">
-                                · {((prospect.enrichment as any)?.scoreReasons as string[])[0]}
-                              </span>
-                            )}
-                          </div>
-                        )}
+                          )}
 
-                        {/* Recent News Catalyst if present */}
-                        {Boolean((prospect.enrichment as any)?.newsContext) && (
-                          <div className="mt-1 flex items-center gap-1">
+                          {/* Warm Path / Alumni Connection Badge */}
+                          {Boolean(prospect.company && warmPaths && warmPaths[normalizeCompanyKey(prospect.company)]?.length) && (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300">
+                              <GraduationCap className="h-3 w-3" />
+                              Alumni Connection
+                            </span>
+                          )}
+
+                          {/* Recent News Hook */}
+                          {Boolean((prospect.enrichment as any)?.newsContext) && (
                             <span
-                              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 max-w-sm truncate"
+                              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 max-w-sm truncate"
                               title={(prospect.enrichment as any)?.newsContext}
                             >
                               <TrendingUp className="h-3 w-3 text-emerald-500 shrink-0" />
                               <span className="truncate">{(prospect.enrichment as any)?.newsContext}</span>
                             </span>
-                          </div>
-                        )}
+                          )}
+
+                          {/* Hiring Signal */}
+                          {Array.isArray((prospect.enrichment as any)?.signals) &&
+                            ((prospect.enrichment as any).signals as string[]).some((s) => /hir|grow|scale|expan/i.test(s)) && (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                                <Briefcase className="h-3 w-3 text-amber-600" />
+                                Hiring Signal
+                              </span>
+                            )}
+                        </div>
 
                         {/* Company Growth Signals */}
                         {Array.isArray((prospect.enrichment as any)?.signals) && ((prospect.enrichment as any).signals.length > 0) && (
@@ -414,7 +427,18 @@ export function ProspectTable({
                     <span className={CELL_LABEL}>Draft</span>
                     {message ? (
                       <div className="space-y-2">
-                        <Badge variant="outline">{channelLabel(channel)}</Badge>
+                        <div className="flex items-center justify-between gap-1">
+                          <Badge variant="outline" className="rounded-full text-[11px]">{channelLabel(channel)}</Badge>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() => setPreviewProspect(prospect)}
+                            className="rounded-full gap-1 text-[11px] h-6 px-2.5 shadow-xs"
+                          >
+                            <Eye className="h-3 w-3 text-primary" />
+                            Preview
+                          </Button>
+                        </div>
                         {expanded === prospect.id ? (
                           <MessageEditorRow
                             campaignId={campaignId}
@@ -428,8 +452,9 @@ export function ProspectTable({
                         ) : (
                           <button
                             type="button"
-                            className="line-clamp-3 text-left text-muted-foreground hover:text-foreground"
-                            onClick={() => setExpanded(prospect.id)}
+                            className="line-clamp-2 text-left text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => setPreviewProspect(prospect)}
+                            title="Click to preview full draft"
                           >
                             {message.body || "Empty draft — click to edit"}
                           </button>
@@ -470,6 +495,16 @@ export function ProspectTable({
           </tbody>
         </table>
       </div>
+
+      {previewProspect && (
+        <DraftPreviewDialog
+          open={Boolean(previewProspect)}
+          onOpenChange={(open) => !open && setPreviewProspect(null)}
+          campaignId={campaignId}
+          prospect={previewProspect}
+          onUpdated={onUpdated}
+        />
+      )}
     </div>
   );
 }
