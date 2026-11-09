@@ -44,6 +44,7 @@ import {
   findAttendeeLinkedInAction,
   removeSpokenToConnection,
 } from "@/actions/events";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import type { RosterRow } from "@/lib/events/types";
 import { EditAttendeeDialog } from "./edit-attendee-dialog";
 import { friendlyError } from "@/lib/errors";
@@ -135,7 +136,7 @@ export function AttendeeRoster({
         }
         if (result.value.linkedinUrl) {
           setFoundUrls((prev) => ({ ...prev, [attendeeId]: result.value.linkedinUrl! }));
-          toast.success("LinkedIn profile found & saved!");
+          toast.success("Found LinkedIn profile");
           router.refresh();
         }
       } catch (err) {
@@ -155,9 +156,12 @@ export function AttendeeRoster({
           toast.error(friendlyError(result.error, "Couldn’t look up LinkedIns"));
           return;
         }
+        if (result.value.urls && Object.keys(result.value.urls).length > 0) {
+          setFoundUrls((prev) => ({ ...prev, ...result.value.urls }));
+        }
         toast.success(
           result.value.found > 0
-            ? `Found ${result.value.found} new LinkedIn profile${result.value.found === 1 ? "" : "s"}!`
+            ? `Found ${result.value.found} new LinkedIn profile${result.value.found === 1 ? "" : "s"}`
             : "No additional LinkedIn profiles found"
         );
         router.refresh();
@@ -322,6 +326,13 @@ export function AttendeeRoster({
                 onCheckedChange={() => toggle(row.id)}
                 disabled={connected || busy}
                 aria-label={`I met ${who}`}
+              />
+              <ContactAvatar
+                contactId={row.contactId ?? match?.contactId}
+                fullName={row.fullName ?? row.email ?? "Guest"}
+                profileImageUrl={row.profileImageUrl}
+                size="sm"
+                className="size-8 shrink-0"
               />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">

@@ -30,8 +30,7 @@ import type { OpportunityReviewItem } from "@/lib/capture/types";
 import { CAPTURE_MODES, CaptureTabs, capturePanelId, captureTabId, type CaptureMode } from "@/components/capture/capture-tabs";
 import { NotesLibraryUpload } from "@/components/capture/notes-library-upload";
 import type { DriveCaptureConfig } from "@/components/capture/drive-capture-button";
-import { CaptureQueuePanel } from "@/components/capture/capture-queue-panel";
-import { discardCaptureBatch, getActiveCaptureJobs, mergeCaptureBatch } from "@/actions/capture-jobs";
+import { getActiveCaptureJobs, mergeCaptureBatch } from "@/actions/capture-jobs";
 import { ExtractingStage } from "@/components/capture/extracting-stage";
 import { IgnoredPeopleSection } from "@/components/capture/ignored-people-section";
 import { MeetingCaptureTab } from "@/components/capture/meeting-capture-tab";
@@ -93,6 +92,7 @@ export function CaptureFlow({
   cloudNotes = null,
   openCloudReview = false,
   showImports = false,
+  showNotion = false,
   onSaved,
   variant = "capture",
 }: {
@@ -120,7 +120,11 @@ export function CaptureFlow({
   quota?: { used: number; limit: number | null } | null;
   /** For the notes box's localStorage draft key. */
   userId?: string | null;
-  /** The capture history feed, shown under the input UI only. */
+  /**
+   * The capture history feed, shown under the input UI and under the "N people ready to
+   * review" notice — opening /capture with drive docs waiting lands on that notice for one of
+   * them, and the history is where the others are listed.
+   */
   history?: React.ReactNode;
   /** Drive import is part of sync; with no plan for it the Drive button is not shown. */
   canUseSync?: boolean;
@@ -132,6 +136,8 @@ export function CaptureFlow({
   openCloudReview?: boolean;
   /** Show the Imports tab (the `page.imports` surface is live). Choosing it navigates to `/capture?mode=imports`. */
   showImports?: boolean;
+  /** The Notes library's "From Notion" button; false while the Notion surface isn't live for this viewer. */
+  showNotion?: boolean;
   /**
    * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
    * hands back to the caller instead of showing the saved screen. The store is cleared
@@ -175,7 +181,9 @@ export function CaptureFlow({
     return opened === "cloud" && !cloudNotes ? "messy" : opened;
   });
   /**
-   * The queue over a multi-file drop.
+   * Every open job, so a multi-file drop can be folded into one review once it is read. The
+   * queue itself is shown by Recent captures (`capture-history-list.tsx`), which lists every
+   * drop; this state only drives the fold and the auto-open of the newest drop.
    *
    * Polled separately from the single-job store rather than folded into it: that store holds
    * exactly one job by design and has other subscribers, and widening it to a collection
@@ -183,7 +191,7 @@ export function CaptureFlow({
    * only one job.
    */
   const [queue, setQueue] = useState<CaptureJobView[]>(initialJobs);
-  /** After a sorted multi-note upload settles: pull its jobs into the queue panel. */
+  /** After a sorted multi-note upload settles: pull its jobs in (and refresh the list that shows them). */
   const refreshQueue = useCallback(() => {
     void getActiveCaptureJobs()
       .then(setQueue)
@@ -195,13 +203,11 @@ export function CaptureFlow({
    *
    * `getActiveCaptureJobs` returns everything reachable, which can span two folder drops and
    * a lone Extract — the batch rule in `queueCaptureJob` stops a batch discarding its
-   * siblings, so several can be open at once. The panel is headed "This upload" and its
-   * Discard all is deliberately scoped to one `batchGroupId`, so rendering the others would
-   * make both of those statements false: it would name somebody else's drop as part of this
-   * one, and then discard only a third of what it had just listed.
+   * siblings, so several can be open at once. One drop is folded and reviewed at a time;
+   * the others wait as their own cards in Recent captures.
    *
-   * The active job's batch wins, so opening a row from an older drop switches the panel to
-   * that drop rather than leaving it pointing at the newest.
+   * The active job's batch wins, so opening an older drop from that list (`?job=`) folds
+   * that drop rather than the newest.
    */
   const activeBatchId =
     queue.find((j) => j.id === job?.id)?.batchGroupId ??
@@ -630,26 +636,6 @@ export function CaptureFlow({
                 tabId={captureTabId("meeting")}
               />
             )}
-            {batchJobs.length > 1 && activeBatchId && (
-              <div className="mb-4">
-                <CaptureQueuePanel
-                  jobs={batchJobs}
-                  activeJobId={job?.id ?? null}
-                  onOpen={(jobId) => {
-                    const next = batchJobs.find((j) => j.id === jobId);
-                    if (next) seedCaptureJob(next, { force: true });
-                  }}
-                  onDiscardAll={() => {
-                    void discardCaptureBatch(activeBatchId).then(() => {
-                      // Only this batch leaves the list. Clearing the whole thing would hide
-                      // any other drop still open until the next poll brought it back.
-                      setQueue((prev) => prev.filter((j) => j.batchGroupId !== activeBatchId));
-                      router.refresh();
-                    });
-                  }}
-                />
-              </div>
-            )}
             {mode === "library" && (
               <NotesLibraryUpload
                 hasApiKey={hasApiKey}
@@ -658,6 +644,7 @@ export function CaptureFlow({
                 onQueued={refreshQueue}
                 drive={drive}
                 canUseSync={canUseSync}
+                showNotion={showNotion}
               />
             )}
             {mode === "cloud" && cloudNotes && (
@@ -745,7 +732,7 @@ export function CaptureFlow({
         )}
       </AnimatePresence>
 
-      {phase === "input" && history}
+      {(phase === "input" || phase === "resume") && history}
       {phase !== "review" && !onSaved && !meetingsHost && <IgnoredPeopleSection initialCount={ignoredCount} />}
     </div>
   );

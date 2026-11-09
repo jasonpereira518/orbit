@@ -31,8 +31,8 @@
  *     ordinary bumped card does. `queueCaptureJob` exempts it specifically by `sourceKind`
  *     (`"api"`, set only here — see the type's own comment in src/lib/capture/types.ts for
  *     why that is safe to key an exemption on). Deliberately NOT `batchGroupId`: a fabricated
- *     single-item "batch" would make this job invisible to `CaptureQueuePanel` (which only
- *     renders for more than one job in a group) while still LOOKING like a batch member to
+ *     single-item "batch" would fold this job into a "drop" in Recent captures (`listPendingCapturesFor`) while
+ *     still LOOKING like a batch member to
  *     any code that keys off that column — worse than not being in a batch at all. This job
  *     is not part of any batch, and does not claim to be.
  *

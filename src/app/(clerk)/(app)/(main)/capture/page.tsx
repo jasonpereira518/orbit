@@ -17,7 +17,7 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 import { findEventById } from "@/lib/calendar-events";
 import { userTimeZone } from "@/lib/meeting-context";
 import { ymdInZone } from "@/lib/reminder-due-bucket";
-import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
+import { CLOUD_NOTES_SURFACE_KEY, NOTION_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import { getEventForUser, loadAttendeesForUser } from "@/lib/events/store";
 
@@ -78,6 +78,8 @@ export default async function CapturePage({
     event?: string;
     eventId?: string;
     attendees?: string;
+    /** A Recent captures row: open this job's review (checked against the user in the action). */
+    job?: string;
   }>;
 }) {
   const gate = await pageVisibilityGate("page.capture");
@@ -93,6 +95,7 @@ export default async function CapturePage({
   const importsLivePromise = userIdPromise.then((userId) => isSurfaceLive(userId, "page.imports")).catch(() => false);
   // Null hides the Drive & OneDrive tab: the surface is not live for this viewer, or the read failed.
   const cloudLivePromise = userIdPromise.then((userId) => isSurfaceLive(userId, CLOUD_NOTES_SURFACE_KEY)).catch(() => false);
+  const notionLivePromise = userIdPromise.then((userId) => isSurfaceLive(userId, NOTION_SURFACE_KEY)).catch(() => false);
 
   // The Imports tab renders on the server only when selected, so an ordinary capture visit
   // pays for none of the import hub's reads — and none of the capture reads below run here.
@@ -125,7 +128,7 @@ export default async function CapturePage({
   const settingsPromise = getSettings();
   const planPromise = getPlanOverview();
   // Same for the job and the ignored count: the page must render without either.
-  const jobPromise = getActiveCaptureJob().catch(() => null);
+  const jobPromise = getActiveCaptureJob(params.job ?? null).catch(() => null);
   // Every job still reachable, so a multi-file drop can render its queue. `.catch` because a
   // failed side read must not take the page with it — the single-job resume above is what
   // the page actually needs to function.
@@ -173,6 +176,7 @@ export default async function CapturePage({
   const ignoredCount = await ignoredPromise;
   const cloudNotes = await cloudNotesPromise;
   const showImports = await importsLivePromise;
+  const showNotion = await notionLivePromise;
   const defaultMode: CaptureMode = modeParam || "messy";
   // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Whisper or
   // Gemini — or Orbit's on Lifetime). Anthropic has no speech-to-text, so an Anthropic-only
@@ -186,7 +190,8 @@ export default async function CapturePage({
       <CaptureFlowLazy
         // The toast's and the bell's Review link to this same page: a client navigation would
         // keep the flow's tab state and never open the dialog, so a review link remounts it.
-        key={params.review === "1" ? "cloud-review" : "capture"}
+        // Same for a Recent captures row (`?job=`): each opens its own job.
+        key={params.review === "1" ? "cloud-review" : params.job ? `job-${params.job}` : "capture"}
         initialJob={job}
         initialJobs={jobs}
         initialContactId={contactId}
@@ -203,6 +208,7 @@ export default async function CapturePage({
         cloudNotes={cloudNotes}
         openCloudReview={params.review === "1"}
         showImports={showImports}
+        showNotion={showNotion}
         drive={{
           apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,
           appId: process.env.NEXT_PUBLIC_GOOGLE_APP_ID ?? null,

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
-import type { getGraphData } from "@/actions/graph";
+import { useEffect, useMemo } from "react";
+import type { GraphPayload } from "@/components/graph/graph-chart-types";
+import { decodeGraphPayload, type GraphWire } from "@/lib/graph-wire";
 import { predictSlowIntro } from "@/lib/graph/intro-choreography";
 import { beginIntro } from "@/lib/graph/intro-signal";
 import { markOpenStage } from "@/lib/graph/open-marks";
@@ -16,8 +17,6 @@ import {
   useSkyLayoutReady,
 } from "@/components/graph/constellation-modules";
 import { prefersReducedMotion } from "@/lib/motion-preference";
-
-type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
 
 /**
  * Decision two: the payload has arrived, so the layout cost is finally knowable.
@@ -60,10 +59,17 @@ export function NetworkGraphLazy({
   initialData = null,
   compact = false,
 }: {
-  initialData?: GraphPayload | null;
+  /** The server action's columnar wire form (see lib/graph-wire.ts). */
+  initialData?: GraphWire | null;
   compact?: boolean;
 }) {
-  const contactCount = initialData?.contacts.length ?? null;
+  // One decode for the session: the payload arrives once, and both the intro decision and the
+  // chart should see the same objects rather than each rebuilding their own.
+  const payload: GraphPayload | null = useMemo(
+    () => (initialData ? decodeGraphPayload(initialData) : null),
+    [initialData]
+  );
+  const contactCount = payload?.contacts.length ?? null;
   // In an effect, not during render — this has a side effect on the intro bus. It still lands
   // well before the phase it predicts: the dynamic import below only starts on this same
   // commit, and the layout cost it is guarding against happens after that chunk resolves.
@@ -79,9 +85,9 @@ export function NetworkGraphLazy({
 
   // Loaded without a Suspense boundary — see constellation-modules.ts for why that matters.
   const graph = useNetworkGraphModule();
-  const layoutReady = useSkyLayoutReady(initialData);
+  const layoutReady = useSkyLayoutReady(payload);
   if (!graph || !layoutReady) {
     return <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />;
   }
-  return <graph.NetworkGraph initialData={initialData} />;
+  return <graph.NetworkGraph initialData={payload} />;
 }

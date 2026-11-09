@@ -26,6 +26,7 @@
  *
  * Pure: no database, no network, no AI, and `now` is always an argument.
  */
+import { daysBetweenYmd, ymdInZone } from "@/lib/reminder-due-bucket";
 import {
   CONTEXT_CODES,
   JOB_LEFT_CODE,
@@ -245,8 +246,9 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-function dayLabel(date: Date, now: Date): string {
-  const days = daysBetween(date, now);
+/** Calendar days on the user's clock: a 9am meeting seen at 8pm the night before is "tomorrow". */
+function dayLabel(date: Date, now: Date, timeZone: string): string {
+  const days = daysBetweenYmd(ymdInZone(now, timeZone), ymdInZone(date, timeZone));
   if (days <= 0) return "today";
   if (days === 1) return "tomorrow";
   return `in ${days} days`;
@@ -362,7 +364,9 @@ export function scoreContactKinds(
   suppression: RadarSuppression,
   now: Date,
   /** What this account has taught Radar (`src/lib/radar/model.ts`). Null scores neutrally. */
-  model: RadarModel | null = null
+  model: RadarModel | null = null,
+  /** The user's zone, for "today" / "tomorrow" in the reasons. */
+  timeZone = "UTC"
 ): KindScore[] {
   if (contact.constellationPin === "out") return [];
   if (suppression.never === "all") return [];
@@ -380,7 +384,7 @@ export function scoreContactKinds(
           "prep",
           {
             code: "upcoming_meeting",
-            label: `You’re meeting ${dayLabel(s.at, now)}`,
+            label: `You’re meeting ${dayLabel(s.at, now, timeZone)}`,
             points: W.upcomingMeeting + (within48h ? W.upcomingMeetingWithin48h : 0),
           },
           { label: s.title ? `Meeting: ${s.title}` : "Meeting on your calendar", at: iso(s.at) },
@@ -392,7 +396,7 @@ export function scoreContactKinds(
         add(
           drafts,
           "prep",
-          { code: "event_upcoming", label: `You’ll both be at ${s.title} ${dayLabel(s.at, now)}`, points: W.eventUpcoming },
+          { code: "event_upcoming", label: `You’ll both be at ${s.title} ${dayLabel(s.at, now, timeZone)}`, points: W.eventUpcoming },
           { label: `Event: ${s.title}`, at: iso(s.at) },
           s.at
         );
@@ -433,7 +437,7 @@ export function scoreContactKinds(
           "follow_up",
           {
             code: overdue ? "opportunity_overdue" : "opportunity_due",
-            label: overdue ? `${s.label} was due ${plural(daysSince(s.at, now) ?? 0, "day")} ago` : `${s.label} is due ${dayLabel(s.at, now)}`,
+            label: overdue ? `${s.label} was due ${plural(daysSince(s.at, now) ?? 0, "day")} ago` : `${s.label} is due ${dayLabel(s.at, now, timeZone)}`,
             points: overdue ? W.opportunityOverdue : W.opportunityDue,
           },
           { label: `Opportunity: ${s.label}`, at: iso(s.at) }

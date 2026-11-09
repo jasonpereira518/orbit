@@ -147,7 +147,7 @@ export function buildCreditEmail(
     ];
   }
 
-  const cta = `${getAppBaseUrl()}/settings?integration=ai`;
+  const cta = `${getAppBaseUrl()}/settings#settings-plan`;
   const footer = "You get this email when your Orbit AI credits run low.";
   const text = [...lines, "", `See your credits: ${cta}`, "", `${footer} Turn it off: ${unsubscribeUrl}`].join("\n");
   const html = `<!doctype html>

@@ -12,8 +12,7 @@
  *     external client sees) and every read and write tool, in a fixed order.
  *   - The extension API through its real route handlers: /me, /resolve (confident, none),
  *     contact search, save, log interaction, follow-up.
- *   - The page loaders behind the dashboard, constellation, notification panel and
- *     knowledge base.
+ *   - The page loaders behind the dashboard, constellation and notification panel.
  *
  * All of it runs against the demo workspace (`seedDemoWorkspace`), which is the richest
  * fixture in the repo. Its ids are random and its dates are relative to now, so output is
@@ -50,7 +49,6 @@ import { POST as EXT_SIGNALS } from "../src/app/api/extension/signals/route";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
-import { loadKnowledgeBase } from "../src/lib/knowledge-base";
 import { logExtensionInteraction, saveContactFromExtension } from "../src/lib/extension/writes";
 import { buildStarterContext } from "../src/lib/extension/resolve";
 import { GET as V1_CONTACTS } from "../src/app/api/v1/contacts/route";
@@ -338,7 +336,6 @@ run(async () => {
     ["loader: dashboard", () => getDashboardData(USER)],
     ["loader: graph", () => loadGraphData(USER, { profile: null })],
     ["loader: notification panel", () => loadNotificationPanel(USER, new Date(), { withAlerts: true })],
-    ["loader: knowledge base", () => loadKnowledgeBase(USER)],
 
     // --- server actions and libs behind the contact page and settings -----------------
     ["action: getContact", () => getContact(sarah.id)],

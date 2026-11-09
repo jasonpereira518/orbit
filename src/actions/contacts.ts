@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import { requirePageUser } from "@/lib/plan-guards";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
@@ -8,6 +9,7 @@ import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-r
 import { deleteReplacedAvatar } from "@/lib/avatar-blob";
 import { deleteContactForUser } from "@/lib/contact-delete";
 import { revalidatePath } from "next/cache";
+import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
 import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
@@ -58,9 +60,24 @@ import {
   AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
+  isLinkedInProfilePhoto,
   AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
-import { resolveLinkedInPhotoCached, type ProfileImageSource } from "@/lib/shared-avatars";
+import {
+  adoptPhotoIntoSharedPool,
+  resolveLinkedInPhotoCached,
+  sharedPhotoSlug,
+  type ProfileImageSource,
+} from "@/lib/shared-avatars";
+import {
+  fetchLinkedInFullProfileDirect,
+  isLikelyPersonName,
+  isLinkedInDirectRateLimited,
+  LinkedInDirectRateLimitError,
+  splitHeadline,
+} from "@/lib/linkedin-scraper";
+import { readPublicWorkHistory, PUBLIC_WORK_HISTORY_DAYS } from "@/lib/public-work-history";
+import { isHandle } from "@/lib/contact-name-guess";
 import { clientAvatarUrlSql, sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   buildGooglePhotoIndex,
@@ -1311,8 +1328,9 @@ export async function lookupLinkedInProfile(input: {
 }
 
 /**
- * Refresh a batch of contacts from LinkedIn via Apollo people/match.
- * Updates role, company, location, school, and profile picture when found.
+ * Refresh a batch of contacts from LinkedIn.
+ * Extracts role, company, location, school, name, and profile picture directly from LinkedIn
+ * for free (with optional Apollo fallback if configured).
  */
 export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   const userId = await requirePageUser("page.contacts");
@@ -1353,17 +1371,42 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
     return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false, rateLimited: false };
   }
 
-  let enriched: Awaited<ReturnType<typeof enrichPeopleFromLinkedIn>>;
-  let avatarOnly = false;
+  let refreshed = 0;
+  let unmatched = 0;
+  let failed = 0;
+  let rateLimited = false;
+  let anyDetailsUpdated = false;
 
   const apiKey = await getApolloApiKey(userId);
-  if (!apiKey) {
-    // Photos still refresh via LinkedIn OG without Apollo.
-    avatarOnly = true;
-    enriched = ordered.map(() => null);
-  } else {
+
+  // 1. Direct LinkedIn profile fetch (free, no API quota)
+  const fullProfiles = await Promise.all(
+    ordered.map(async (c) => {
+      const slug = sharedPhotoSlug(c.linkedinUrl);
+      if (!slug || isLinkedInDirectRateLimited()) return null;
+      try {
+        return await fetchLinkedInFullProfileDirect(slug);
+      } catch (err) {
+        if (err instanceof LinkedInDirectRateLimitError) {
+          rateLimited = true;
+        }
+        return null;
+      }
+    })
+  );
+
+  // 2. Optional Apollo fallback if key configured and fields remain missing
+  let apolloProfiles: (LinkedInProfileEnrichment | null)[] = ordered.map(() => null);
+  const needsApolloFallback =
+    Boolean(apiKey) &&
+    ordered.some((_, i) => {
+      const p = fullProfiles[i];
+      return !p || !p.title || !p.company;
+    });
+
+  if (apiKey && needsApolloFallback) {
     try {
-      enriched = await enrichPeopleFromLinkedIn(
+      apolloProfiles = await enrichPeopleFromLinkedIn(
         userId,
         ordered.map((r) => ({
           linkedinUrl: r.linkedinUrl!,
@@ -1371,45 +1414,88 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
           email: r.email,
         }))
       );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "";
-      // Free Apollo plans often block people enrichment — still refresh photos.
-      if (
-        /not available on your current plan|403|Add an Apollo API key/i.test(
-          message
-        )
-      ) {
-        avatarOnly = true;
-        enriched = ordered.map(() => null);
-      } else {
-        throw err;
-      }
+    } catch {
+      // Apollo plan limits or issues do not block direct refresh
     }
   }
 
-  let refreshed = 0;
-  let unmatched = 0;
-  let failed = 0;
-  let rateLimited = false;
-
   for (let i = 0; i < ordered.length; i++) {
     const contact = ordered[i];
-    const profile = enriched[i];
+    const fullProfile = fullProfiles[i];
+    const apollo = apolloProfiles[i];
+    const slug = sharedPhotoSlug(contact.linkedinUrl);
 
     try {
-      // Prefer Apollo photo when present; otherwise resolve via LinkedIn, whose photo lands
-      // in the shared pool (the contact shows it from there) unless it has to be the
-      // contact's own.
-      let profileImageUrl: string | null = null;
-      let profileImageSource: ProfileImageSource = "apollo";
-      let sharedPhoto = false;
-      if (profile?.profileImageUrl) {
-        profileImageUrl = await downloadAndPersistAvatar(
-          contact.id,
-          profile.profileImageUrl
-        );
+      // Check cached shared work history if headline or company wasn't found directly
+      let cachedHistory: Awaited<ReturnType<typeof readPublicWorkHistory>> = null;
+      if (slug && (!fullProfile?.title || !fullProfile?.company)) {
+        cachedHistory = await readPublicWorkHistory(slug, PUBLIC_WORK_HISTORY_DAYS);
       }
-      if (!profileImageUrl && contact.linkedinUrl) {
+
+      // 1. Resolve text fields
+      let resolvedTitle = fullProfile?.title ?? apollo?.title ?? null;
+      let resolvedCompany = fullProfile?.company ?? apollo?.company ?? null;
+
+      if (!resolvedTitle && cachedHistory?.headline) {
+        const parsed = splitHeadline(cachedHistory.headline);
+        resolvedTitle = parsed.title;
+        if (!resolvedCompany) resolvedCompany = parsed.company;
+      }
+      if (!resolvedCompany && cachedHistory?.experiences?.[0]?.organization) {
+        resolvedCompany = cachedHistory.experiences[0].organization;
+      }
+      if (!resolvedTitle && cachedHistory?.experiences?.[0]?.title) {
+        resolvedTitle = cachedHistory.experiences[0].title;
+      }
+
+      const resolvedLocation = fullProfile?.location ?? apollo?.location ?? null;
+      const resolvedSchool = fullProfile?.school ?? apollo?.school ?? null;
+      const resolvedEmail = apollo?.email ?? null;
+
+      // Name resolution
+      let resolvedFullName: string | null = null;
+      let resolvedFirstName: string | null = null;
+      let resolvedLastName: string | null = null;
+
+      if (fullProfile?.fullName && isLikelyPersonName(fullProfile.fullName)) {
+        resolvedFullName = fullProfile.fullName;
+        resolvedFirstName = fullProfile.firstName;
+        resolvedLastName = fullProfile.lastName;
+      } else if (apollo?.firstName || apollo?.lastName) {
+        resolvedFirstName = apollo.firstName ?? null;
+        resolvedLastName = apollo.lastName ?? null;
+        resolvedFullName = [apollo.firstName, apollo.lastName].filter(Boolean).join(" ") || null;
+      }
+
+      // 2. Resolve avatar
+      let profileImageUrl: string | null = null;
+      let profileImageSource: ProfileImageSource = "public";
+      let sharedPhoto = false;
+
+      // Prefer Apollo photo if returned from paid Apollo call; otherwise direct LinkedIn photo
+      if (apollo?.profileImageUrl) {
+        profileImageUrl = await downloadAndPersistAvatar(contact.id, apollo.profileImageUrl);
+        if (profileImageUrl) profileImageSource = "apollo";
+      }
+
+      if (!profileImageUrl && slug && fullProfile?.imageUrl && isLinkedInProfilePhoto(fullProfile.imageUrl)) {
+        try {
+          const adopted = await adoptPhotoIntoSharedPool(slug, fullProfile.imageUrl, "linkedin_direct");
+          if (adopted?.sharedUrl) {
+            sharedPhoto = true;
+          }
+          // If no blob store, persist locally as data URL
+          const persisted = await downloadAndPersistAvatar(contact.id, fullProfile.imageUrl);
+          if (persisted) {
+            profileImageUrl = persisted;
+            profileImageSource = "public";
+          }
+        } catch {
+          // Fall through to resolveLinkedInPhotoCached
+        }
+      }
+
+      if (!profileImageUrl && !sharedPhoto && contact.linkedinUrl) {
         try {
           const linkedIn = await resolveLinkedInPhotoCached(
             contact.id,
@@ -1423,54 +1509,99 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
             sharedPhoto = linkedIn !== null;
           }
         } catch (err) {
-          if (err instanceof AvatarSourceRateLimitError) {
+          if (err instanceof AvatarSourceRateLimitError || err instanceof LinkedInDirectRateLimitError) {
             rateLimited = true;
-            unmatched += 1;
-            continue;
+          } else {
+            throw err;
           }
-          throw err;
         }
       }
 
-      if (!profile) {
+      // 3. Construct patch
+      const patch: Partial<ContactInput> = {};
+      let contactDetailsChanged = false;
+
+      if (resolvedTitle && resolvedTitle.trim() && resolvedTitle.trim() !== contact.title?.trim()) {
+        patch.title = resolvedTitle.trim();
+        contactDetailsChanged = true;
+      }
+
+      if (resolvedCompany && resolvedCompany.trim() && resolvedCompany.trim() !== contact.company?.trim()) {
+        patch.company = resolvedCompany.trim();
+        contactDetailsChanged = true;
+      }
+
+      if (resolvedLocation && resolvedLocation.trim() && resolvedLocation.trim() !== contact.location?.trim()) {
+        patch.location = resolvedLocation.trim();
+        contactDetailsChanged = true;
+      }
+
+      if (resolvedSchool && resolvedSchool.trim() && resolvedSchool.trim() !== contact.school?.trim()) {
+        patch.school = resolvedSchool.trim();
+        contactDetailsChanged = true;
+      }
+
+      if (resolvedEmail && resolvedEmail.trim() && !contact.email?.trim()) {
+        patch.email = resolvedEmail.trim();
+        contactDetailsChanged = true;
+      }
+
+      const currentNameWeak =
+        !contact.fullName?.trim() ||
+        isHandle(contact.fullName, contact.email) ||
+        (slug ? contact.fullName.trim().toLowerCase() === slug.toLowerCase() : false) ||
+        /^(linkedin member|member|unknown)$/i.test(contact.fullName.trim());
+
+      if (resolvedFullName && (currentNameWeak || contact.fullName !== resolvedFullName)) {
+        patch.fullName = resolvedFullName;
+        if (resolvedFirstName) patch.firstName = resolvedFirstName;
+        if (resolvedLastName) patch.lastName = resolvedLastName;
+        contactDetailsChanged = true;
+      } else {
+        if (resolvedFirstName && !contact.firstName?.trim()) {
+          patch.firstName = resolvedFirstName;
+          contactDetailsChanged = true;
+        }
+        if (resolvedLastName && !contact.lastName?.trim()) {
+          patch.lastName = resolvedLastName;
+          contactDetailsChanged = true;
+        }
+      }
+
+      if (profileImageUrl) {
+        patch.profileImageUrl = profileImageUrl;
+        patch.profileImageSource = profileImageSource;
+      }
+
+      if (Object.keys(patch).length > 0) {
+        await updateContactForUser(userId, contact.id, patch, { skipRevalidate: true });
         if (profileImageUrl) {
-          await updateContactForUser(
-            userId,
-            contact.id,
-            { profileImageUrl, profileImageSource },
-            { skipRevalidate: true }
-          );
           await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
-          refreshed += 1;
-        } else if (sharedPhoto) {
-          refreshed += 1;
-        } else {
-          unmatched += 1;
         }
-        continue;
+        await db
+          .update(contacts)
+          .set({ profileImageCheckedAt: new Date() })
+          .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
+
+        refreshed += 1;
+        if (contactDetailsChanged) {
+          anyDetailsUpdated = true;
+          const cid = contact.id;
+          try {
+            after(() => generateAndStoreContactBrief(userId, cid).catch(() => null));
+          } catch {
+            setTimeout(() => void generateAndStoreContactBrief(userId, cid).catch(() => null), 0);
+          }
+        }
+      } else if (sharedPhoto) {
+        await db
+          .update(contacts)
+          .set({ profileImageCheckedAt: new Date() })
+          .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
+        refreshed += 1;
+      } else {
+        unmatched += 1;
       }
-
-      await updateContactForUser(
-        userId,
-        contact.id,
-        {
-          ...(profile.title ? { title: profile.title } : {}),
-          ...(profile.company ? { company: profile.company } : {}),
-          ...(profile.location ? { location: profile.location } : {}),
-          ...(profile.school ? { school: profile.school } : {}),
-          ...(profile.email ? { email: profile.email } : {}),
-          ...(profile.firstName ? { firstName: profile.firstName } : {}),
-          ...(profile.lastName ? { lastName: profile.lastName } : {}),
-          ...(profile.linkedinUrl
-            ? { linkedinUrl: profile.linkedinUrl }
-            : {}),
-          ...(profileImageUrl ? { profileImageUrl, profileImageSource } : {}),
-        },
-        { skipRevalidate: true }
-      );
-      if (profileImageUrl) await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
-
-      refreshed += 1;
     } catch {
       failed += 1;
     }
@@ -1484,10 +1615,11 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
     ordered.map((c) => c.id)
   );
 
-  revalidatePath("/contacts");
-  revalidatePath("/");
-  revalidatePath("/graph");
+  revalidatePathIfRequestScoped("/contacts");
+  revalidatePathIfRequestScoped("/");
+  revalidatePathIfRequestScoped("/graph");
 
+  const avatarOnly = refreshed > 0 && !anyDetailsUpdated;
   return { refreshed, unmatched, failed, avatarOnly, rateLimited };
 }
 

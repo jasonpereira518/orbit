@@ -218,6 +218,12 @@ export type CaptureMeetingExtra = {
 /** What the runner stores once the parse is done. `CaptureParseResult` minus the corpus. */
 export type CaptureJobResult = Omit<CaptureParseResult, "sourceText" | "sourceHash"> & {
   saved?: CaptureSavedSummary;
+  /**
+   * Set on an upload's combined review (`mergeCaptureBatchRows`): the part jobs it folded,
+   * in `n0`, `n1`… order. Saving hands each part its own decisions and saves it as its own
+   * capture, so every file keeps its own notes and its own history row.
+   */
+  parts?: string[];
 };
 
 export type CaptureDecisionKind = "accept" | "reject" | "skip";

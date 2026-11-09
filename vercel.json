@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci --no-audit --no-fund",
   "buildCommand": "npm run check:env && npm run db:migrate && next build",
   "ignoreCommand": "bash scripts/vercel-ignore-build.sh"
 }

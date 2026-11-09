@@ -3021,7 +3021,8 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // and share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). Renumbered
 // 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
-export const SCHEMA_VERSION = 208;
+// 209 = outreach_campaigns.background_job (asynchronous campaign execution & scout runner)
+export const SCHEMA_VERSION = 209;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4146,6 +4147,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "jsonb DEFAULT '[]'"
   );
   await ensureColumn(client, "outreach_campaigns", "last_search_source", "text");
+  await ensureColumn(client, "outreach_campaigns", "background_job", "jsonb");
   await ensureColumn(
     client,
     "outreach_messages",
@@ -4826,6 +4828,7 @@ const alters = [
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS reply_cta text`,
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sequence_steps jsonb DEFAULT '[]'`,
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS last_search_source text`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS background_job jsonb`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS parent_message_id uuid`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS scheduled_for timestamptz`,

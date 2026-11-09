@@ -6,6 +6,7 @@ import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { loadGraphData } from "@/lib/graph-data";
+import { encodeGraphPayload } from "@/lib/graph-wire";
 import { traced } from "@/lib/perf-trace";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { getDisplayProfile } from "@/lib/auth";
@@ -18,9 +19,14 @@ export type { GraphCluster, UserSocialLinks } from "@/lib/graph-data";
 export async function getGraphData() {
   const userId = await requireUserForSurface("page.graph");
   // Handed over un-awaited: the Clerk profile round trip runs alongside the contact scan.
-  return traced("graph.load", () => loadGraphData(userId, { profile: getDisplayProfile() }), {
-    userId,
-  });
+  const data = await traced(
+    "graph.load",
+    () => loadGraphData(userId, { profile: getDisplayProfile() }),
+    { userId }
+  );
+  // Crosses the boundary in the compact columnar form; `NetworkGraph` decodes it (see
+  // lib/graph-wire.ts). `loadGraphData` itself stays object-shaped for the query-budget smokes.
+  return encodeGraphPayload(data);
 }
 
 /**
@@ -36,11 +42,12 @@ export async function getGraphData() {
  */
 export async function getFullGraphData() {
   const userId = await requireUserForSurface("page.graph");
-  return traced(
+  const data = await traced(
     "graph.load.all",
     () => loadGraphData(userId, { profile: getDisplayProfile(), scope: "all" }),
     { userId }
   );
+  return encodeGraphPayload(data);
 }
 
 /** What the inspect panel shows for one star beyond the chart payload (see `loadGraphData`). */

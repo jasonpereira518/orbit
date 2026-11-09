@@ -71,8 +71,8 @@ console.log("Stop does not strand the question...");
 {
   const route = readFileSync("src/app/api/chat/route.ts", "utf8");
   const discard = route.indexOf("await discardUnansweredQuestion(");
-  const early = route.indexOf("if (request.signal.aborted) return;");
-  check("discard runs before the client-gone return", discard >= 0 && early >= 0 && discard < early, `discard@${discard} early@${early}`);
+  const early = route.indexOf("if (turnAbort.signal.aborted) return;");
+  check("discard runs before the deliberate-abort return", discard >= 0 && early >= 0 && discard < early, `discard@${discard} early@${early}`);
   const emptyThread = route.indexOf("await discardEmptyThread(");
   check("the empty thread is removed after the question discard", discard >= 0 && emptyThread > discard, `discard@${discard} emptyThread@${emptyThread}`);
 }

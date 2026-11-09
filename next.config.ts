@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
 import { withBotId } from "botid/next/config";
@@ -35,6 +37,16 @@ const staticAssetCaching = [
   "/waitlist/:file(.+\\.(?:png|webp|gif))",
   "/orbit-logo.png",
 ].map((source) => ({ source, headers: [{ key: "Cache-Control", value: STATIC_IMAGE_CACHE }] }));
+
+const realNodeModulesDir = (() => {
+  try {
+    const target = fs.realpathSync(path.join(import.meta.dirname, "node_modules"));
+    if (target !== path.join(import.meta.dirname, "node_modules")) {
+      return target;
+    }
+  } catch {}
+  return null;
+})();
 
 const nextConfig: NextConfig = {
   // No `X-Powered-By: Next.js`: the exact framework is no one's business but ours.
@@ -182,6 +194,16 @@ const nextConfig: NextConfig = {
     // the 10MB default it silently truncates anything larger and lets the request through
     // with a partial body instead of failing. See src/lib/capture-limits.ts.
     proxyClientMaxBodySize: CAPTURE_BODY_SIZE_LIMIT,
+    ...(realNodeModulesDir
+      ? {
+          turbopackAdditionalRoots: {
+            linkedModules: {
+              path: path.dirname(realNodeModulesDir),
+              ignoreIfMissing: true,
+            },
+          },
+        }
+      : {}),
   },
   // Turbopack can fail to resolve @clerk/shared's wildcard `./*` package exports.
   turbopack: {

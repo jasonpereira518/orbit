@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { HEARTBEAT_INTERVAL_MS } from "@/lib/presence-window";
 import { isOffline, reportRequestError, reportRequestOk } from "@/lib/connectivity-store";
+import { syncTimeZoneCookie } from "@/lib/tz-cookie";
 
 /**
  * Tells the server this tab is still open and being used.
@@ -23,6 +24,8 @@ import { isOffline, reportRequestError, reportRequestOk } from "@/lib/connectivi
  */
 export function PresenceHeartbeat() {
   useEffect(() => {
+    // Rides along app-wide: the server reads this cookie as the user's zone (`viewerTimeZone`).
+    syncTimeZoneCookie();
     let timer: ReturnType<typeof setInterval> | null = null;
 
     const beat = () => {

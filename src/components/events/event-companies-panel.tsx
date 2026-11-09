@@ -19,6 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
+import { BrandLogo } from "@/components/ui/brand-logo";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import {
   addTargetCompanyFromEvent,
   dismissEventCompanyRow,
@@ -138,6 +140,16 @@ export function EventCompaniesPanel({
             <li key={row.id ?? `roster:${row.name}`} className="py-3">
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                 <div className="flex min-w-0 items-center gap-2">
+                  {row.domain ? (
+                    <BrandLogo
+                      domain={row.domain}
+                      name={row.name}
+                      className="size-4 shrink-0 rounded-sm"
+                      fallback={<Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
+                    />
+                  ) : (
+                    <Building2 className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                  )}
                   <span className="truncate text-sm font-medium text-ink">{row.name}</span>
                   {row.targetPriority ? (
                     // The reason to look at this row first.
@@ -184,18 +196,23 @@ export function EventCompaniesPanel({
                   </span>
                 ) : null}
                 {row.contacts.length > 0 ? (
-                  <span className="flex flex-wrap items-center gap-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
                     You know
                     {row.contacts.slice(0, 3).map((person, index) => (
-                      <span key={person.contactId}>
+                      <span key={person.contactId} className="inline-flex items-center gap-1">
+                        <ContactAvatar
+                          contactId={person.contactId}
+                          fullName={person.name}
+                          profileImageUrl={person.profileImageUrl}
+                          size="sm"
+                          className="size-4 shrink-0"
+                        />
                         <IntentLink
                           href={`/contacts/${person.contactId}`}
                           className="text-ink hover:underline"
                         >
                           {person.name}
                         </IntentLink>
-                        {/* "used to be there" is often the better introduction, and it is a
-                            different fact — an alum will take the call. */}
                         {person.tenure === "past" ? " (was there)" : ""}
                         {index < Math.min(row.contacts.length, 3) - 1 ? "," : ""}
                       </span>

@@ -40,7 +40,7 @@ export function RefreshContactsButton() {
     const jobId = `linkedin-refresh-${Date.now()}`;
 
     try {
-      const { targets, hasApollo } = await listLinkedInRefreshTargets();
+      const { targets } = await listLinkedInRefreshTargets();
 
       if (targets.length === 0) {
         toast.message("No LinkedIn profiles to refresh", {
@@ -62,7 +62,7 @@ export function RefreshContactsButton() {
       let refreshed = 0;
       let unmatched = 0;
       let failed = 0;
-      let avatarOnly = !hasApollo;
+      let avatarOnly = true;
       let rateLimited = false;
 
       for (let i = 0; i < targets.length; i += LINKEDIN_REFRESH_BATCH_SIZE) {
@@ -73,7 +73,7 @@ export function RefreshContactsButton() {
         refreshed += result.refreshed;
         unmatched += result.unmatched;
         failed += result.failed;
-        if (result.avatarOnly) avatarOnly = true;
+        if (!result.avatarOnly && result.refreshed > 0) avatarOnly = false;
         if (result.rateLimited) rateLimited = true;
         const done = Math.min(i + chunk.length, targets.length);
         setProgress({ done, total: targets.length });
@@ -85,28 +85,19 @@ export function RefreshContactsButton() {
         resultMessage = avatarOnly
           ? `Updated photos for ${refreshed} contact${refreshed === 1 ? "" : "s"}`
           : `Refreshed ${refreshed} contact${refreshed === 1 ? "" : "s"} from LinkedIn`;
-        toast.success(
-          resultMessage,
-          avatarOnly
-            ? {
-                description: hasApollo
-                  ? "Photos refreshed — roles and schools need a paid Apollo plan"
-                  : "Photos refreshed — add an Apollo key in Settings to update roles and schools too",
-              }
-            : undefined
-        );
+        toast.success(resultMessage);
       } else if (rateLimited) {
-        resultMessage = "Photo lookup rate limited";
+        resultMessage = "LinkedIn lookup rate limited";
         toast.message(resultMessage, {
           description:
-            "LinkedIn photos aren’t available right now — try again in a few minutes",
+            "LinkedIn isn’t available right now — try again in a few minutes",
         });
       } else {
         resultMessage = "No profiles updated";
         toast.message(resultMessage, {
           description:
             unmatched > 0
-              ? "Couldn’t find public photos for these profiles — check each is a public linkedin.com/in/… link"
+              ? "Couldn’t find public details for these profiles — check each is a public linkedin.com/in/… link"
               : "Nothing changed",
         });
       }
