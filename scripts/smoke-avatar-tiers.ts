@@ -106,6 +106,40 @@ async function main() {
   );
   check("an empty URL is not fetchable", isUnfetchableImageUrl("  "));
 
+  // ---- Tier 1: Direct LinkedIn public profile scrape succeeds (100% free) ------
+  const DIRECT_PHOTO = "https://media.licdn.com/dms/image/v2/D4E03AQ/profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1?e=1";
+  const DIRECT_HTML = `<html><head><meta property="og:image" content="${DIRECT_PHOTO}"></head><body></body></html>`;
+
+  await withFetch(
+    (url) => {
+      if (url.includes("linkedin.com/in/")) {
+        return new Response(DIRECT_HTML, { status: 200, headers: { "Content-Type": "text/html" } });
+      }
+      if (url.includes("media.licdn.com")) {
+        return jpegResponse();
+      }
+      return new Response(null, { status: 500 });
+    },
+    async (calls) => {
+      const stored = await fetchLinkedInPhotoUrl("tier-direct", LINKEDIN_URL, null);
+      check(
+        "direct scraper resolves a photo",
+        Boolean(stored?.startsWith("data:image/")),
+        String(stored).slice(0, 48)
+      );
+      check(
+        "direct LinkedIn profile was fetched",
+        calls.some((u) => u.includes("linkedin.com/in/")),
+        calls.join(", ")
+      );
+      check(
+        "neither unavatar nor microlink was touched on direct hit",
+        !calls.some((u) => u.includes("unavatar.io") || u.includes("api.microlink.io")),
+        calls.join(", ")
+      );
+    }
+  );
+
   // ---- Free tier succeeds: no metered quota is spent ----------------------------
   await withFetch(
     (url) => (url.includes("unavatar.io") ? jpegResponse() : new Response(null, { status: 500 })),

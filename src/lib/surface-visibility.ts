@@ -391,6 +391,15 @@ export async function isSurfaceLive(userId: string, surfaceKey: string): Promise
   );
 }
 
+/**
+ * Switched on and not coming-soon, and nothing else: no plan or feature check. For a card that
+ * is free on every plan but must stay dark until its page is released (People to meet).
+ */
+export async function isSurfaceReleased(userId: string, surfaceKey: string): Promise<boolean> {
+  const { hidden, comingSoon } = await resolveSurfaceVisibility(userId);
+  return !hidden.has(surfaceKey) && !comingSoon.has(surfaceKey);
+}
+
 /** Throws `SurfaceHiddenError` (or `PaywallError` for a tier-locked page) unless this viewer may reach `surfaceKey`. */
 export async function requireVisibleSurface(userId: string, surfaceKey: string) {
   if (isAlwaysVisible(surfaceKey)) return;

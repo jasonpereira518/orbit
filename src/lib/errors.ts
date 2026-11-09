@@ -381,7 +381,10 @@ export async function asActionResult<T>(
     // A plan denial is already written for the person who hit it, and a thrown one would reach
     // the client as a digest. Returned as data it survives — the same shape webhook-endpoints
     // and api-keys already use for this case.
-    if (isUserFacingError(err) || (err instanceof Error && err.name === "PaywallError")) {
+    if (
+      isUserFacingError(err) ||
+      (err instanceof Error && (err.name === "PaywallError" || err.name === "RateLimitedError"))
+    ) {
       return { ok: false, error: err.message };
     }
     throw err;

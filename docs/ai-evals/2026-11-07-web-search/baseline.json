@@ -1,0 +1,58 @@
+{
+  "label": "baseline",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "date": "2026-11-07T22:22:31.919Z",
+  "commit": "cb9b18e3",
+  "fixtures": "864881f746e5",
+  "runs": 2,
+  "decisions": null,
+  "network": null,
+  "tasks": {
+    "web-search": {
+      "cases": 24,
+      "metrics": {
+        "correct": 0.8541666666666666,
+        "confident": 0.8541666666666666,
+        "searchesPerCase": 1.1458333333333335,
+        "searchesPerCorrect": 1.3504784688995215
+      },
+      "misses": [
+        "p-li-hoffman",
+        "p-krishna",
+        "p-pichai",
+        "c-stripe",
+        "c-notion"
+      ],
+      "p50LatencyMs": 7905.5,
+      "costMicros": 334131,
+      "costPerCaseMicros": 13922.125,
+      "usage": [
+        {
+          "operation": "research.company",
+          "model": "claude-haiku-5-5",
+          "calls": 12,
+          "failures": 2,
+          "inputTokens": 238542,
+          "outputTokens": 21639,
+          "cachedInputTokens": 0,
+          "costMicros": 224673,
+          "unpriced": 0,
+          "p50Ms": 9245
+        },
+        {
+          "operation": "research.person",
+          "model": "claude-haiku-5-5",
+          "calls": 36,
+          "failures": 5,
+          "inputTokens": 561784,
+          "outputTokens": 54821,
+          "cachedInputTokens": 0,
+          "costMicros": 443589,
+          "unpriced": 0,
+          "p50Ms": 7609
+        }
+      ]
+    }
+  }
+}

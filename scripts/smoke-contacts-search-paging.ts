@@ -16,6 +16,7 @@ import {
   contactsOrderBy,
   decodeContactsCursor,
   encodeContactsCursor,
+  type ContactsCursor,
 } from "../src/lib/contacts-page-cursor";
 import type { ContactSort } from "../src/lib/contacts-page";
 import { run } from "./smoke/_env";
@@ -95,6 +96,41 @@ run(async () => {
   const noQuery = contactsOrderBy("relevance", null, rankedOnlyHassan);
   check("relevance without a search is rank, then name", noQuery.length === 4);
   check("relevance never takes a cursor", decodeContactsCursor(plain, "relevance", true) === null);
+
+  // Cursor fields are all shape-checked (audit L-11): a tampered cursor starts over, it never
+  // reaches a uuid cast or `new Date()` as a 500.
+  const forge = (o: object) => Buffer.from(JSON.stringify(o), "utf8").toString("base64url");
+  check("a cursor whose id is not a uuid is refused", decodeContactsCursor(forge({ s: "name", k: "a", n: "A", id: "x' or 1=1" }), "name", false) === null);
+  check("a recent cursor with an unreadable date is refused", decodeContactsCursor(forge({ s: "recent", u: "garbage", id: "00000000-0000-0000-0000-000000000000" }), "recent", false) === null);
+  check("a closeness cursor with a non-number score is refused", decodeContactsCursor(forge({ s: "closeness", c: "high", id: "00000000-0000-0000-0000-000000000000" }), "closeness", false) === null);
+  check("a closeness cursor in the unscored tail (c=null) is accepted", decodeContactsCursor(forge({ s: "closeness", c: null, id: "00000000-0000-0000-0000-000000000000" }), "closeness", false) !== null);
+  check("base64 garbage is refused", decodeContactsCursor("%%%not-base64", "name", false) === null);
+
+  // The closeness walk reaches every contact when some are unscored (audit M-12). Bulk
+  // imports leave closeness NULL until the hourly recalibration; NULLs sorted first and a
+  // cursor built from one excluded every scored contact, so the list stopped at page one.
+  await db.delete(contacts).where(eq(contacts.userId, U));
+  await db.insert(contacts).values([
+    ...Array.from({ length: 23 }, (_, i) => ({ userId: U, fullName: `Scored ${i}`, closeness: 10 + i })),
+    ...Array.from({ length: 23 }, (_, i) => ({ userId: U, fullName: `Unscored ${i}`, closeness: null })),
+  ]);
+  const seen: { id: string; closeness: number | null }[] = [];
+  let cursor: ContactsCursor | null = null;
+  for (let page = 0; page < 20; page++) {
+    const rows: { id: string; closeness: number | null }[] = await db
+      .select({ id: contacts.id, closeness: contacts.closeness })
+      .from(contacts)
+      .where(and(eq(contacts.userId, U), cursor ? contactsCursorCondition(cursor, null) : undefined))
+      .orderBy(...contactsOrderBy("closeness", null))
+      .limit(10);
+    seen.push(...rows);
+    if (rows.length < 10) break;
+    const last = rows[rows.length - 1]!;
+    cursor = contactsCursorFor("closeness", { id: last.id, closeness: last.closeness, sortKey: null, fullName: "", updatedAt: new Date(), lastInteractionAt: null, nameTier: 0 }, false);
+  }
+  check("the closeness walk reaches all 46 contacts across pages", seen.length === 46 && new Set(seen.map((r) => r.id)).size === 46, `${seen.length} rows, ${new Set(seen.map((r) => r.id)).size} distinct`);
+  const firstNull = seen.findIndex((r) => r.closeness === null);
+  check("scored contacts come first, highest first; unscored ones last", firstNull === 23 && seen.slice(0, 23).every((r, i, a) => i === 0 || (a[i - 1]!.closeness ?? 0) >= (r.closeness ?? 0)), `first null at ${firstNull}`);
 
   await db.delete(contacts).where(eq(contacts.userId, U));
 });

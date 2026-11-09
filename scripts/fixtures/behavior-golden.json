@@ -8336,7 +8336,9 @@
         "preferredName": null,
         "company": "OpenAI",
         "title": "Golden Title",
-        "goalRelevance": 1
+        "goalRelevance": 1,
+        "reason": "goal",
+        "companyName": null
       },
       {
         "id": "<contacts:Amara Diallo>",
@@ -8344,7 +8346,9 @@
         "preferredName": null,
         "company": "Bellwether Ventures",
         "title": "Head of Talent",
-        "goalRelevance": 1
+        "goalRelevance": 1,
+        "reason": "goal",
+        "companyName": null
       },
       {
         "id": "<contacts:Marcus Webb>",
@@ -8352,7 +8356,9 @@
         "preferredName": null,
         "company": "Linear",
         "title": "Engineering Lead",
-        "goalRelevance": 1
+        "goalRelevance": 1,
+        "reason": "goal",
+        "companyName": null
       },
       {
         "id": "<contacts:Sofia Marchetti>",
@@ -8360,7 +8366,9 @@
         "preferredName": null,
         "company": "Figma",
         "title": "Design Lead",
-        "goalRelevance": 1
+        "goalRelevance": 1,
+        "reason": "goal",
+        "companyName": null
       },
       {
         "id": "<contacts:Tom Bennett>",
@@ -8368,7 +8376,9 @@
         "preferredName": null,
         "company": "Stripe",
         "title": "Staff Software Engineer",
-        "goalRelevance": 0.666667
+        "goalRelevance": 0.666667,
+        "reason": "goal",
+        "companyName": null
       }
     ],
     "closenessById": {
