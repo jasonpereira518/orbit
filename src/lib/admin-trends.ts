@@ -425,12 +425,13 @@ export async function retentionCurves(
   const db = await getDb();
   const result = await db.execute(sql`
     WITH cohorts AS (
-      SELECT gs.cohort_start
-      FROM generate_series(
-        (date_trunc('month', now() AT TIME ZONE 'UTC') - (interval '1 month' * ${months - 1})) AT TIME ZONE 'UTC',
-        (date_trunc('month', now() AT TIME ZONE 'UTC')) AT TIME ZONE 'UTC',
-        interval '1 month'
-      ) AS gs(cohort_start)
+      -- Stepped on a zone-less UTC timestamp and converted back, like series(): stepping a
+      -- timestamptz does the month arithmetic in the session's zone, where midnight UTC is
+      -- the previous day. Then + interval '1 month' clamps the 31st to the 30th, every
+      -- later cohort lands a day early, and the current month is dropped altogether.
+      SELECT ((date_trunc('month', now() AT TIME ZONE 'UTC')
+               - (interval '1 month' * gs.n)) AT TIME ZONE 'UTC') AS cohort_start
+      FROM generate_series(0, ${months - 1}) AS gs(n)
     ),
     members AS (
       SELECT user_id, created_at AS signed_at, (date_trunc('month', created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS cohort_start

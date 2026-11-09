@@ -12,13 +12,13 @@ import { cn } from "@/lib/utils";
  * never in one place.
  */
 export const TAB_ROW_CLASS =
-  "flex items-stretch justify-around gap-0.5 px-1.5 pt-0.5 pb-1";
+  "grid grid-flow-col auto-cols-fr items-stretch gap-0 px-1.5 pt-0.5 pb-1";
 
 // No callout or text selection: holding a tab is a gesture here (it lifts the glass lens),
 // and iOS would otherwise open its link preview mid-press and cancel the pointer.
 export function tabItemClass(active: boolean) {
   return cn(
-    "flex w-full items-center justify-center py-0.5 text-[10.5px] font-medium transition-colors select-none [-webkit-touch-callout:none]",
+    "flex min-w-0 w-full items-center justify-center py-0.5 text-[10.5px] font-medium transition-colors select-none [-webkit-touch-callout:none]",
     active
       ? "text-primary dark:text-white"
       : "text-muted-foreground hover:text-foreground dark:text-white/75"
@@ -26,10 +26,10 @@ export function tabItemClass(active: boolean) {
 }
 
 export const TAB_OVAL_CLASS =
-  "relative flex w-[66px] flex-col items-center gap-0.5 rounded-full px-0.5 py-1.5";
+  "relative flex w-full max-w-[66px] min-w-0 flex-col items-center gap-1 rounded-full px-0.5 py-2";
 
 export const TAB_CONTENT_CLASS =
-  "relative z-10 flex flex-col items-center gap-0.5 transition-transform duration-150 ease-out";
+  "relative z-10 flex flex-col items-center gap-1 transition-transform duration-150 ease-out";
 
 export function tabContentStyle(pressed: boolean) {
   return { transform: pressed ? "scale(1.15)" : undefined };
@@ -39,7 +39,7 @@ export function tabContentStyle(pressed: boolean) {
 // (the circle sticks up out of the bar, and the lifted lens can overlap it) sits exactly
 // on the real one.
 export const CAPTURE_CELL_CLASS =
-  "relative flex w-full translate-y-1 flex-col items-center gap-0.5 px-1 py-1.5 text-[10.5px] font-medium text-primary";
+  "relative flex min-w-0 w-full translate-y-1 flex-col items-center gap-1 px-1 py-2 text-[10.5px] font-medium text-primary";
 export const CAPTURE_CIRCLE_CLASS =
   "absolute -top-5 left-1/2 flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg";
 

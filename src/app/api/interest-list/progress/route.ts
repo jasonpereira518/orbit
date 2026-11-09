@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { clientIpFrom, ipBucketKey } from "@/lib/client-ip";
+import { clientIpFrom } from "@/lib/client-ip";
 import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
 import { getProgressByShareToken } from "@/lib/interest-list-ticket";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS, consumeIpBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 // Polled by the referral tracker on someone's own pass, which carries no session: the share
 // token in the query is the credential, same as the pass page. It answers with the caller's
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await consumeBucket("interest.progress", ipBucketKey(clientIpFrom(request.headers)), RATE_LIMITS.interestProgress);
+    await consumeIpBucket("interest.progress", clientIpFrom(request.headers), RATE_LIMITS.interestProgress);
   } catch (err) {
     // A limiter that cannot count is not a reason to run the line query unmetered.
     const limited = isRateLimitedError(err);

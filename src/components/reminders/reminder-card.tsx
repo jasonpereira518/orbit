@@ -93,6 +93,7 @@ export function ReminderCard({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<string | null>(null);
+  const [purpose, setPurpose] = useState("");
   const [moving, startMove] = useTransition();
   const [editing, setEditing] = useState(false);
 
@@ -101,6 +102,7 @@ export function ReminderCard({
       try {
         const result = await draftFollowUpResponse(id);
         setDraft(result.body);
+        setPurpose(result.purpose);
       } catch (err) {
         toast.error(
           friendlyError(err, TOAST_COPY.draftFollowUpFailed)
@@ -324,6 +326,11 @@ export function ReminderCard({
               Copy
             </Button>
           </div>
+          {purpose ? (
+            <p className="mb-1.5 text-xs text-muted-foreground">
+              <span className="font-medium">Purpose</span> · {purpose}
+            </p>
+          ) : null}
           <p className="whitespace-pre-wrap text-sm text-muted-foreground">
             {draft}
           </p>

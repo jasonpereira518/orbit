@@ -12,6 +12,20 @@ import { FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
+import { LinkedInMark } from "@/components/settings/provider-marks";
+import { integrationHref } from "@/components/settings/sections";
+import {
+  Briefcase,
+  Building2,
+  MapPin,
+  Quote,
+  RefreshCw,
+  Sparkles,
+  Target,
+  Trash2,
+  Upload,
+  type LucideIcon,
+} from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { SENDER_BIO_MAX_LENGTH } from "@/lib/sender-profile";
 import { toast } from "@/lib/toast";
@@ -33,18 +47,45 @@ const profileAvatarAppearance = {
   },
 };
 
-/** The label/value pairs worth showing, skipping anything that was never imported. */
-function careerRows(c: CareerProfile): [string, string][] {
-  const rows: [string, string | undefined][] = [
-    ["Headline", c.profile?.headline],
-    ["Current role", c.role ? `${c.role.title} at ${c.role.company}` : undefined],
-    ["Industry", c.profile?.industry],
-    ["Location", c.profile?.location],
-    ["Skills", c.skills?.length ? `${c.skills.length}: ${c.skills.slice(0, 6).join(", ")}${c.skills.length > 6 ? "…" : ""}` : undefined],
-    ["Job titles", c.roleKeywords?.join(", ")],
-    ["Imported", c.importedAt ? new Date(c.importedAt).toLocaleDateString() : undefined],
+/** LinkedIn's brand blue, the tile tone the LinkedIn integration page uses (linkedin-settings.tsx). */
+const LINKEDIN_BLUE = "#0A66C2";
+const SKILL_CHIPS = 6;
+
+type CareerRow = { icon: LucideIcon; label: string } & ({ value: string } | { chips: string[] });
+
+/** The rows worth showing, skipping anything that was never imported. */
+function careerRows(c: CareerProfile): CareerRow[] {
+  const rows: (CareerRow | null)[] = [
+    c.profile?.headline ? { icon: Quote, label: "Headline", value: c.profile.headline } : null,
+    c.role ? { icon: Briefcase, label: "Current role", value: `${c.role.title} at ${c.role.company}` } : null,
+    c.profile?.industry ? { icon: Building2, label: "Industry", value: c.profile.industry } : null,
+    c.profile?.location ? { icon: MapPin, label: "Location", value: c.profile.location } : null,
+    c.skills?.length
+      ? {
+          icon: Sparkles,
+          label: "Skills",
+          chips: [
+            ...c.skills.slice(0, SKILL_CHIPS),
+            ...(c.skills.length > SKILL_CHIPS ? [`+${c.skills.length - SKILL_CHIPS} more`] : []),
+          ],
+        }
+      : null,
+    c.roleKeywords?.length ? { icon: Target, label: "Job titles", chips: c.roleKeywords } : null,
   ];
-  return rows.filter((r): r is [string, string] => Boolean(r[1]));
+  return rows.filter((r): r is CareerRow => r !== null);
+}
+
+/** The FeatureRow icon tile (account-page.tsx), washed in LinkedIn blue. */
+function LinkedInTile() {
+  return (
+    <span
+      aria-hidden
+      className="flex size-8 shrink-0 items-center justify-center rounded-lg"
+      style={{ backgroundColor: `color-mix(in srgb, ${LINKEDIN_BLUE} 14%, transparent)` }}
+    >
+      <LinkedInMark className="size-4" />
+    </span>
+  );
 }
 
 type ProfileData = {
@@ -189,27 +230,60 @@ export function ProfileSettings({
       </SettingsRow>
 
       <SettingsRow
-        title="From your LinkedIn export"
-        description="Your headline, current role, skills and the job titles you watch. Orbit uses them to pick who is worth reaching out to; it never overwrites what you typed above."
+        title="From your LinkedIn"
+        description="What Orbit learned about you from LinkedIn. It helps pick who’s worth reaching out to, and never overwrites what you wrote above."
       >
-        {career ? (
-          <div className="space-y-3">
-            <dl className="space-y-1.5 text-sm">
-              {careerRows(career).map(([label, value]) => (
-                <div key={label} className="flex gap-3">
-                  <dt className="w-28 shrink-0 text-muted-foreground">{label}</dt>
-                  <dd className="min-w-0 break-words">{value}</dd>
+        {/* `aim` alone (onboarding's, kept by Remove) is not an import: no rows to show. */}
+        {career && careerRows(career).length ? (
+          <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
+            <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
+              <LinkedInTile />
+              <p className="min-w-0 flex-1 text-sm font-medium text-ink">Your LinkedIn profile</p>
+              <p className="shrink-0 text-xs text-muted-foreground">
+                {career.importedAt
+                  ? `Imported ${new Date(career.importedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                  : "From setup"}
+              </p>
+            </div>
+            <dl className="divide-y divide-border/60 text-sm">
+              {careerRows(career).map((row) => (
+                <div key={row.label} className="flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5 sm:flex-nowrap">
+                  <dt className="flex w-32 shrink-0 items-center gap-2 text-muted-foreground">
+                    <row.icon className="size-4 shrink-0" aria-hidden />
+                    {row.label}
+                  </dt>
+                  <dd className="min-w-0 flex-1 break-words text-ink">
+                    {"chips" in row ? (
+                      <span className="flex flex-wrap gap-1.5">
+                        {row.chips.map((chip) => (
+                          <span
+                            key={chip}
+                            className="whitespace-nowrap rounded-full border border-border/70 bg-muted/40 px-2.5 py-0.5 text-xs"
+                          >
+                            {chip}
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      row.value
+                    )}
+                  </dd>
                 </div>
               ))}
             </dl>
-            <div className="flex flex-wrap items-center gap-3">
-              <Link href="/imports" className={buttonVariants({ variant: "outline", size: "sm" })}>
-                Import a newer export
+            <div className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-muted/20 px-4 py-3">
+              <Link
+                href={integrationHref("linkedin")}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                <RefreshCw className="size-3.5" aria-hidden />
+                Update from LinkedIn
               </Link>
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
+                className="text-muted-foreground"
                 disabled={clearing}
                 onClick={() =>
                   startClear(async () => {
@@ -226,19 +300,29 @@ export function ProfileSettings({
                   })
                 }
               >
+                <Trash2 className="size-3.5" aria-hidden />
                 {clearing ? "Removing…" : "Remove imported details"}
               </Button>
               <FormError className="basis-full">{clearError}</FormError>
             </div>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            Nothing imported yet.{" "}
-            <Link href="/imports" className="underline underline-offset-2">
-              Drop your LinkedIn export on Imports
-            </Link>{" "}
-            and Orbit reads Profile, Positions, Skills and Saved Job Alerts from it.
-          </p>
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-border/70 px-4 py-3">
+            <LinkedInTile />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-ink">Nothing from LinkedIn yet</p>
+              <p className="text-sm text-muted-foreground">
+                Your export brings your headline, roles, skills and saved job alerts.
+              </p>
+            </div>
+            <Link
+              href={integrationHref("linkedin")}
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              <Upload className="size-3.5" aria-hidden />
+              Upload your export
+            </Link>
+          </div>
         )}
       </SettingsRow>
 
