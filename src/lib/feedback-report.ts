@@ -81,6 +81,23 @@ export const QUICK_ANSWERS: ReadonlyArray<{ label: string; text: string }> = [
   { label: "Thank you", text: "Thank you — this genuinely made my day." },
 ];
 
+/**
+ * Where feedback the operator logged by hand came from — what someone said by text, in
+ * person, on a call or by email. Stored on `context.source`; an in-app report has none.
+ */
+export const FEEDBACK_SOURCES = ["text", "in_person", "call", "email"] as const;
+export type FeedbackSource = (typeof FEEDBACK_SOURCES)[number];
+export const SOURCE_LABELS: Record<FeedbackSource, string> = {
+  text: "text",
+  in_person: "in person",
+  call: "call",
+  email: "email",
+};
+
+export function isFeedbackSource(value: unknown): value is FeedbackSource {
+  return typeof value === "string" && (FEEDBACK_SOURCES as readonly string[]).includes(value);
+}
+
 /** Bonus AI credits the operator can thank someone with, per report. */
 export const THANKS_CREDIT_OPTIONS = [25, 50, 100] as const;
 export type ThanksCredits = (typeof THANKS_CREDIT_OPTIONS)[number];

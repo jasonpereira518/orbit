@@ -15,6 +15,7 @@ import {
 } from "@/components/admin/feedback-status-actions";
 import { FeedbackConversation } from "@/components/admin/feedback-conversation";
 import { loadFeedbackDetail } from "@/lib/admin-feedback";
+import { SOURCE_LABELS, isFeedbackSource } from "@/lib/feedback-report";
 import { loadThread, markThreadRead } from "@/lib/feedback-thread";
 
 export const metadata = { title: "Admin · Feedback entry" };
@@ -54,6 +55,7 @@ export default async function AdminFeedbackDetailPage({
         subtitle={
           <>
             {entry.category ?? entry.kind} · {entry.area ?? "unspecified area"} ·{" "}
+            {isFeedbackSource(entry.context?.source) && <>via {SOURCE_LABELS[entry.context.source]} · </>}
             <RelativeTime date={entry.createdAt} />{" "}
             <Link
               href="/admin/feedback"

@@ -11,8 +11,8 @@ import "./smoke/_env";
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { creditGrants, feedback, feedbackMessages } from "../src/db/schema";
-import { createFeedbackSubmission } from "../src/lib/feedback-submission";
+import { creditGrants, feedback, feedbackMessages, userSettings } from "../src/db/schema";
+import { createFeedbackSubmission, logDirectFeedback } from "../src/lib/feedback-submission";
 import {
   buildFeedbackReplyEmail,
   grantFeedbackThanks,
@@ -37,6 +37,7 @@ async function cleanup() {
     await db.delete(feedbackMessages).where(eq(feedbackMessages.userId, user));
     await db.delete(feedback).where(eq(feedback.userId, user));
     await db.delete(creditGrants).where(eq(creditGrants.userId, user));
+    await db.delete(userSettings).where(eq(userSettings.userId, user));
   }
 }
 
@@ -108,6 +109,23 @@ async function main() {
     check("the reply is escaped in HTML", mail.html.includes("Fixed &lt;b&gt;now&lt;/b&gt; &amp; live") && !mail.html.includes("<script>"));
     check("credits are mentioned", mail.text.includes("50 bonus AI credits"));
     check("the way back into Orbit is there", mail.text.includes("https://orbit.test/feedback/x"));
+  }
+
+  console.log("\nLogging feedback given outside the app");
+  {
+    await db.insert(userSettings).values({ userId: B, email: "Smoke.Thread@Example.com" });
+    const unknown = await logDirectFeedback({ email: "nobody@example.com", text: "hi", source: "text", area: null, loggedBy: "op" });
+    check("an email with no account is refused", !unknown.ok && unknown.message.includes("No Orbit account"));
+    const blank = await logDirectFeedback({ email: "smoke.thread@example.com", text: "  ", source: "text", area: null, loggedBy: "op" });
+    check("an empty message is refused", !blank.ok);
+    const logged = await logDirectFeedback({ email: "  smoke.thread@EXAMPLE.com ", text: "Texted me: the export is slow", source: "call", area: "import", loggedBy: "op" });
+    check("the email matches case-insensitively", logged.ok);
+    if (logged.ok) {
+      const [row] = await db.select().from(feedback).where(eq(feedback.id, logged.id));
+      check("it is filed under their account as a normal report", row.userId === B && row.kind === "freeform" && row.area === "import");
+      check("...remembering where it came from and who logged it", row.context.source === "call" && row.context.loggedBy === "op");
+      check("...and can be replied to like any other", (await postThreadMessage({ feedbackId: logged.id, author: "operator", body: "On it" })) !== null);
+    }
   }
 
   await cleanup();

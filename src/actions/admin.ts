@@ -52,7 +52,9 @@ import {
 import { UserFacingError } from "@/lib/errors";
 import { blockSharedAvatar, unblockSharedAvatar } from "@/lib/admin-avatars";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { MAX_THREAD_MESSAGE, THANKS_CREDIT_OPTIONS } from "@/lib/feedback-report";
+import { MAX_THREAD_MESSAGE, THANKS_CREDIT_OPTIONS, isFeedbackSource } from "@/lib/feedback-report";
+import { logDirectFeedback } from "@/lib/feedback-submission";
+import { triageFeedback } from "@/lib/feedback-triage";
 import {
   buildFeedbackReplyEmail,
   grantFeedbackThanks,
@@ -1054,6 +1056,42 @@ export async function setFeedbackStatusAction(input: {
 
   revalidateFeedback();
   return { ok: true, from: moved.from };
+}
+
+/**
+ * Log feedback someone gave you by text, in person, on a call or by email, under their
+ * account. It is triaged like an in-app report, but no Slack DM — you're the one who wrote it.
+ */
+export async function logFeedbackAction(input: {
+  email: string;
+  text: string;
+  source: string;
+  area: string | null;
+}): Promise<{ ok: true; id: string }> {
+  const adminUserId = await requireAdminUserId();
+  if (!isFeedbackSource(input.source)) throw new UserFacingError("Pick where it came from.");
+  const area = input.area && adminFeedback.isFeedbackArea(input.area) ? input.area : null;
+
+  const logged = await logDirectFeedback({
+    email: input.email,
+    text: input.text,
+    source: input.source,
+    area,
+    loggedBy: adminUserId,
+  });
+  if (!logged.ok) throw new UserFacingError(logged.message);
+
+  after(() => triageFeedback(logged.id));
+  await recordAdminAction({
+    adminUserId,
+    action: "feedback.log",
+    resourceType: "feedback",
+    resourceId: logged.id,
+    detail: { source: input.source },
+    reason: "Logged feedback given outside the app",
+  });
+  revalidateFeedback();
+  return { ok: true, id: logged.id };
 }
 
 /**

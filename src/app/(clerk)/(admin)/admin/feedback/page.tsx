@@ -22,6 +22,8 @@ import {
   loadFeedbackList,
   type FeedbackFilter,
 } from "@/lib/admin-feedback";
+import { LogFeedbackDialog } from "@/components/admin/log-feedback-dialog";
+import { SOURCE_LABELS, isFeedbackSource } from "@/lib/feedback-report";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Admin · Feedback" };
@@ -110,6 +112,8 @@ export default async function AdminFeedbackPage({
         title="Feedback"
         subtitle="What users told us about Orbit, newest first."
         action={
+          <div className="flex items-center gap-2">
+          <LogFeedbackDialog />
           <a
             href={`/api/admin/export?dataset=feedback&filter=${filter}`}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 px-3 py-1.5 text-sm text-muted-foreground transition-colors duration-fast hover:text-primary"
@@ -117,6 +121,7 @@ export default async function AdminFeedbackPage({
             <Download className="size-3.5" aria-hidden />
             Export CSV
           </a>
+          </div>
         }
       />
       <FeedbackTabs />
@@ -295,6 +300,11 @@ export default async function AdminFeedbackPage({
                       {row.triage?.summary ||
                         row.excerpt?.trim() || <span className="text-muted-foreground">(no text)</span>}
                     </Link>
+                    {isFeedbackSource(row.source) && (
+                      <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 align-middle text-[0.625rem] text-muted-foreground">
+                        via {SOURCE_LABELS[row.source]}
+                      </span>
+                    )}
                     {row.unreadReply && (
                       <span className="ml-2 rounded-full bg-primary/15 px-1.5 py-0.5 align-middle text-[0.625rem] font-medium text-primary">
                         new reply

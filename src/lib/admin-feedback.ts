@@ -96,6 +96,8 @@ export type FeedbackListRow = {
   triage: FeedbackTriage | null;
   /** The reporter replied in the conversation since the operator last opened it. */
   unreadReply: boolean;
+  /** Where feedback the operator logged by hand came from; null for in-app reports. */
+  source: string | null;
 };
 
 export type FeedbackSummary = {
@@ -238,6 +240,7 @@ function listSelection() {
     submitterEmail: userSettings.email,
     contactOk: sql<boolean | null>`(${feedback.context} ->> 'contactOk')::boolean`,
     triage: feedback.triage,
+    source: sql<string | null>`${feedback.context} ->> 'source'`,
     // Written out rather than interpolated — see the unqualified-column trap.
     unreadReply: sql<boolean>`exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.author = 'user' and m.created_at > coalesce(feedback.operator_read_at, 'epoch'::timestamptz))`,
   };

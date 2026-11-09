@@ -16,7 +16,8 @@
 import { put } from "@/lib/blob-lazy";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { feedback, feedbackScreenshots } from "@/db/schema";
+import { feedback, feedbackScreenshots, userSettings } from "@/db/schema";
+import { sql } from "drizzle-orm";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import {
@@ -30,6 +31,7 @@ import {
   MAX_SUBMISSION_BYTES,
   type FeedbackArea,
   type FeedbackCategory,
+  type FeedbackSource,
 } from "@/lib/feedback-report";
 
 /**
@@ -287,4 +289,46 @@ export async function createFeedbackSubmission(input: {
 
   await db.insert(feedbackScreenshots).values(rows);
   return { id: entry.id, screenshotCount: rows.length };
+}
+
+/**
+ * File feedback someone gave the operator outside the app — a text, a call, a chat in person —
+ * under their account, so it lands in the same inbox, gets triaged like any other report, and
+ * can be replied to in Orbit (which is what teaches them the button next time).
+ *
+ * Matches the person by email, exactly but case-insensitively, against the `user_settings`
+ * mirror of Clerk. No account, no entry: feedback that can't be replied to belongs in notes.
+ */
+export async function logDirectFeedback(input: {
+  email: string;
+  text: string;
+  source: FeedbackSource;
+  area: FeedbackArea | null;
+  loggedBy: string;
+}): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  const email = input.email.trim();
+  const text = input.text.trim();
+  if (!email) return { ok: false, message: "Add their email." };
+  if (!text) return { ok: false, message: "Add what they said." };
+  if (text.length > MAX_FEEDBACK_TEXT) {
+    return { ok: false, message: `Keep it under ${MAX_FEEDBACK_TEXT} characters.` };
+  }
+
+  const db = await getDb();
+  const [person] = await db
+    .select({ userId: userSettings.userId })
+    .from(userSettings)
+    .where(sql`lower(${userSettings.email}) = lower(${email})`)
+    .limit(1);
+  if (!person) return { ok: false, message: "No Orbit account with that email." };
+
+  const created = await createFeedbackSubmission({
+    userId: person.userId,
+    text,
+    area: input.area,
+    category: null,
+    context: { source: input.source, loggedBy: input.loggedBy, loggedAt: new Date().toISOString() },
+    screenshots: [],
+  });
+  return { ok: true, id: created.id };
 }
