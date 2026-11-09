@@ -15,10 +15,7 @@ import {
   SuggestedOutreachSection,
   TailSection,
 } from "@/components/dashboard/dashboard-sections";
-import {
-  DashboardCardSkeleton,
-  DashboardStatRowSkeleton,
-} from "@/components/loading/page-skeletons";
+import { DashboardBodySkeleton } from "@/components/loading/page-skeletons";
 import { listPendingAgentSends } from "@/lib/agent-sends";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
@@ -69,117 +66,82 @@ export default async function DashboardPage() {
       <RenderStamp />
       <DashboardHeader />
 
-      {/* Today's meetings (when the calendar has any) beside the morning briefing. Each child
-          carries its own `lg:flex-1`, so one alone fills the row, and `empty:hidden` drops the
-          row — and its share of the page gap — when neither renders. */}
-      <div className="flex flex-col gap-6 empty:hidden lg:flex-row">
-        <Suspense fallback={null}>
-          <TodayMeetingsSection now={new Date()} />
-        </Suspense>
-        {radarBriefing && (
-          <Suspense fallback={<DashboardCardSkeleton className="h-48 lg:flex-1 lg:basis-0" />}>
-            <MorningBriefingSection briefing={radarBriefing} />
-          </Suspense>
-        )}
-      </div>
+      {/* One boundary for everything below the header. The optional leading cards are
+          data-dependent — today's meetings, the LinkedIn nudge, agent drafts and the setup
+          checklist — and each used to mount late, above content that had already painted,
+          pushing it down by ~219 px. That was the dashboard's only layout shift (CLS 0.141,
+          worst for a new account, where most of them render). Holding the body until they
+          settle paints it once with the cards already in place; the header still streams
+          immediately, so first paint is unchanged. */}
+      <Suspense fallback={<DashboardBodySkeleton />}>
+        <div className="space-y-8">
+          {/* Today's meetings (when the calendar has any) beside the morning briefing. Each child
+              carries its own `lg:flex-1`, so one alone fills the row, and `empty:hidden` drops the
+              row — and its share of the page gap — when neither renders. */}
+          <div className="flex flex-col gap-6 empty:hidden lg:flex-row">
+            <TodayMeetingsSection now={new Date()} />
+            {radarBriefing && <MorningBriefingSection briefing={radarBriefing} />}
+          </div>
 
 
-      {/* Above every other card, and outside the surface-visibility switches: a message
-          waiting to go out is the only thing on this page that needs a decision rather
-          than attention, and it expires. It renders nothing when there is none. */}
-      <Suspense fallback={null}>
-        <AgentDraftsSection />
-      </Suspense>
+          {/* Above every other card, and outside the surface-visibility switches: a message
+              waiting to go out is the only thing on this page that needs a decision rather
+              than attention, and it expires. It renders nothing when there is none. */}
+          <AgentDraftsSection />
 
-      {/* What onboarding left open. Nothing while the guided tour is running, nothing once
-          every item is done or the person dismissed it on this device. */}
-      <Suspense fallback={null}>
-        <SetupChecklistSection />
-      </Suspense>
+          {/* What onboarding left open. Nothing while the guided tour is running, nothing once
+              every item is done or the person dismissed it on this device. */}
+          <SetupChecklistSection />
 
-      {show("dashboard.stats") && (
-        <Suspense fallback={<DashboardStatRowSkeleton />}>
-          <StatsSection bundle={bundle} />
-        </Suspense>
-      )}
+          {show("dashboard.stats") && <StatsSection bundle={bundle} />}
 
-      {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn import
-          exists. Below the setup card and the stats, not above them: the export takes a day to
-          arrive, so it is never the first thing to do — on a phone it used to fill the whole
-          first screen of a brand-new account, above "add someone". */}
-      <Suspense fallback={null}>
-        <LinkedInExportNudgeSection />
-      </Suspense>
+          {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn
+              import exists. Below the stats, not above them: the export takes a day to arrive,
+              so it is never the first thing to do — on a phone it used to fill the whole first
+              screen of a brand-new account, above "add someone". */}
+          <LinkedInExportNudgeSection />
 
-      {/* Flex for the same reason as the row below: the Network depth card removes itself
-          on an empty network (it can only draw zeros), and the constellation preview
-          should then fill the row rather than sit beside an empty grid column. */}
-      {show("dashboard.charts") && (
-        <div className="flex flex-col gap-6 lg:flex-row">
-          <Suspense
-            fallback={
-              <>
-                <DashboardCardSkeleton className="h-80 min-w-0 lg:flex-1" />
-                <DashboardCardSkeleton className="h-80 min-w-0 lg:flex-1" />
-              </>
-            }
-          >
-            <ChartsSection bundle={bundle} />
-          </Suspense>
+          {/* Flex for the same reason as the row below: the Network depth card removes itself
+              on an empty network (it can only draw zeros), and the constellation preview
+              should then fill the row rather than sit beside an empty grid column. */}
+          {show("dashboard.charts") && (
+            <div className="flex flex-col gap-6 lg:flex-row">
+              <ChartsSection bundle={bundle} />
+            </div>
+          )}
+
+          {/* Full width. The reply rate that used to be a second card here now sits beside the
+              heading, so this row holds the one card. */}
+          {showSuggestedRow && (
+            // `empty:hidden`: for a Radar viewer the suggestions card steps aside for the
+            // briefing, and the row would otherwise be an empty band.
+            <div className="flex flex-col items-stretch gap-6 empty:hidden lg:flex-row">
+              <SuggestedOutreachSection
+                bundle={bundle}
+                radar={radarBriefing}
+                outreach={outreachSummary}
+              />
+            </div>
+          )}
+
+          {/* One section, TWO cards — so this grid always holds exactly two children,
+              and `dashboard.reminders` hides both together. Recently updated used to
+              share this row, which put THREE children in a two-column grid and left a
+              visible empty cell beside the third; hiding Reminders left the same hole
+              on the other side. It owns the row below instead, where its own column
+              count can adapt. Stretched, like every other two-card row here: the two cards
+              end on one line, and the shorter one's footer drops to meet it. */}
+          {show("dashboard.reminders") && (
+            <div className="grid gap-6 lg:grid-cols-2">
+              <RemindersAndFollowUpsSection bundle={bundle} />
+            </div>
+          )}
+
+          {show("dashboard.recently-updated") && <RecentlyUpdatedSection bundle={bundle} />}
+
+          {show("dashboard.tail") && <TailSection bundle={bundle} />}
         </div>
-      )}
-
-      {/* Full width. The reply rate that used to be a second card here now sits beside the
-          heading, so this row holds the one card. */}
-      {showSuggestedRow && (
-        // `empty:hidden`: for a Radar viewer the suggestions card steps aside for the
-        // briefing, and the row would otherwise be an empty band.
-        <div className="flex flex-col items-stretch gap-6 empty:hidden lg:flex-row">
-          <Suspense
-            fallback={<DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />}
-          >
-            <SuggestedOutreachSection
-              bundle={bundle}
-              radar={radarBriefing}
-              outreach={outreachSummary}
-            />
-          </Suspense>
-        </div>
-      )}
-
-      {/* One section, TWO cards — so this grid always holds exactly two children,
-          and `dashboard.reminders` hides both together. Recently updated used to
-          share this row, which put THREE children in a two-column grid and left a
-          visible empty cell beside the third; hiding Reminders left the same hole
-          on the other side. It owns the row below instead, where its own column
-          count can adapt. Stretched, like every other two-card row here: the two cards
-          end on one line, and the shorter one's footer drops to meet it. */}
-      {show("dashboard.reminders") && (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Suspense
-            fallback={
-              <>
-                <DashboardCardSkeleton className="h-64" />
-                <DashboardCardSkeleton className="h-64" />
-              </>
-            }
-          >
-            <RemindersAndFollowUpsSection bundle={bundle} />
-          </Suspense>
-        </div>
-      )}
-
-      {show("dashboard.recently-updated") && (
-        <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
-          <RecentlyUpdatedSection bundle={bundle} />
-        </Suspense>
-      )}
-
-      {show("dashboard.tail") && (
-        <Suspense fallback={<DashboardCardSkeleton className="h-64" />}>
-          <TailSection bundle={bundle} />
-        </Suspense>
-      )}
+      </Suspense>
     </div>
   );
 }

@@ -45,6 +45,20 @@ export function noPhotoMarker(now: Date = new Date()) {
   return `${NO_PHOTO_PREFIX}${now.getTime()}`;
 }
 
+/** An https `media.licdn.com` URL with a `/profile-displayphoto…` or `/profile-framedphoto…` path segment: a LinkedIn profile photo. */
+export function isLinkedInProfilePhoto(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.hostname === "media.licdn.com" &&
+      parsed.pathname.split("/").some((seg) => seg.startsWith("profile-displayphoto") || seg.startsWith("profile-framedphoto"))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** True while a "we looked and found nothing" marker is still fresh. */
 export function hasFreshNoPhotoMarker(
   url: string | null | undefined,

@@ -43,6 +43,7 @@ import {
   PLAN_LIMIT_ROW_REASON,
 } from "../src/lib/import-job-processor";
 import { runImportJobById } from "../src/lib/import-job-dispatch";
+import { IMPORT_LEASE_MS, claimImportJob, releaseImportClaim } from "../src/lib/import-engine";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { previewUndo } from "../src/lib/imports/import-undo";
 
@@ -102,7 +103,16 @@ function fixture(n: number, dupEvery = 0) {
  * `writeWithNarrowing`.
  */
 function poisonCompany() {
-  return crypto.randomBytes(1500).toString("hex");
+  // 1,500 random characters from CJK Extension B (U+20000–U+2A6DF): four bytes each in UTF-8,
+  // so ~6 KB that neither TOAST nor PGLZ can shrink. Not ASCII hex any more: the write layer
+  // now caps free text at 2,000 characters (audit M-05), which put a 3,000-character hex
+  // string comfortably under the btree's ~2,704-byte entry limit and made it import cleanly.
+  // The cap counts characters, so multibyte text can still exceed the index's BYTE limit —
+  // exactly the case narrowing exists to isolate.
+  const bytes = crypto.randomBytes(1500 * 2);
+  let out = "";
+  for (let i = 0; i < 1500; i++) out += String.fromCodePoint(0x20000 + (bytes.readUInt16BE(i * 2) % 0xa6e0));
+  return out;
 }
 
 /**
@@ -410,7 +420,7 @@ async function main() {
   // A value that fails only at the actual write, and only for this one row, has to be
   // something Postgres accepts as JSON text but refuses when it lands somewhere indexed.
   // `poisonCompany()` is an incompressible (crypto-random, so PGLZ/TOAST can't shrink it)
-  // ~3000-character string. It does not fail on the `contacts` insert itself — it fails one
+  // ~6 KB string of 1,500 four-byte characters (see its own comment for why not ASCII). It does not fail on the `contacts` insert itself — it fails one
   // step earlier, in `resolveCompany`'s `INSERT INTO companies`, which is keyed by
   // `companies_user_name_uidx` on `(user_id, name_normalized)`; `normalizeCompanyName` only
   // lowercases and collapses whitespace, so the value reaches that unique btree index at
@@ -1353,6 +1363,53 @@ async function main() {
     (remindersAgain?.value ?? 0) === 1,
     `rows ${remindersAgain?.value}`
   );
+
+  // --- two runners on one job (audit H-04): the lease makes the second a no-op ---
+  // The stall backstop, a duplicate continuation kick and an admin retry all reach
+  // `runImportJob`. Before the lease, each re-claimed the `processing` rows the live runner
+  // was still writing, and every name-only row (nothing for the duplicate index to key on)
+  // was created twice while the counters were written back as absolutes by whichever runner
+  // finished last.
+  await reset();
+  const nameOnly = Array.from({ length: 40 }, (_, i) => ({
+    index: i,
+    firstName: `Only${i}`,
+    lastName: `Name${i}`,
+    email: "",
+    company: "",
+    position: "",
+    connectedOn: "15 Mar 2024",
+    url: "",
+  }));
+  id = await seedJob(nameOnly);
+  await Promise.all([runJob(id), runJob(id)]);
+  out = await outcome(id);
+  const db7 = await getDb();
+  const [nameOnlyRows] = await db7.select({ value: count() }).from(contacts).where(eq(contacts.userId, USER));
+  check("two overlapping runners create each name-only person exactly once", (nameOnlyRows?.value ?? 0) === 40, `rows ${nameOnlyRows?.value}`);
+  check("the counters describe one run, not two", out.status === "completed" && out.created === 40 && out.rowsProcessed === 40, JSON.stringify(out));
+  const leased = await db7.query.imports.findFirst({ where: eq(imports.id, id) });
+  check("a completed job holds no lease", leased?.claimToken === null && leased?.leaseUntil === null);
+
+  // --- the lease itself: live is exclusive, expired is taken over, released is free ---
+  id = await seedJob(fixture(3));
+  const held = await claimImportJob(id);
+  check("a processing job can be claimed", typeof held === "string");
+  check("a second claim against a live lease is refused", (await claimImportJob(id)) === null);
+  check(
+    "an expired lease is taken over",
+    typeof (await claimImportJob(id, { now: new Date(Date.now() + IMPORT_LEASE_MS + 1) })) === "string"
+  );
+  const fresh2 = await claimImportJob(id);
+  check("…and the takeover holds it against the next claim", fresh2 === null);
+  const current = await db7.query.imports.findFirst({ where: eq(imports.id, id) });
+  await releaseImportClaim(id, current!.claimToken!);
+  check("a released job is claimable again", typeof (await claimImportJob(id)) === "string");
+  check("the stale token cannot release the new holder's lease", await (async () => {
+    await releaseImportClaim(id, "not-the-token");
+    const row = await db7.query.imports.findFirst({ where: eq(imports.id, id) });
+    return row?.claimToken !== null;
+  })());
 
   await reset();
   const db = await getDb();

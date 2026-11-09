@@ -10,9 +10,9 @@
  *
  * Callers must have imported `./smoke/_env` first (local PGlite, no real provider keys).
  */
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../../src/db";
-import { contacts, interactions, userSettings } from "../../src/db/schema";
+import { contacts, interactions, rateLimitBuckets, userSettings } from "../../src/db/schema";
 import { encrypt } from "../../src/lib/crypto";
 import { generateOutreachDraft } from "../../src/lib/outreach-drafts";
 import { generateContactFollowUpDraft } from "../../src/lib/follow-up-drafts";
@@ -68,6 +68,13 @@ export async function only(run: () => Promise<unknown>): Promise<SentPrompt> {
 
 export async function seedCaseUser(): Promise<{ contactId: string }> {
   const db = await getDb();
+  // The click-driven draft ops are metered (audit M-07), and every `pglite` smoke script in a
+  // shard shares one database, so a script that ran earlier in the shard may already have spent
+  // this user's `draft` window. Start each caller from a clean bucket, as the other rate-limited
+  // smokes do.
+  await db
+    .delete(rateLimitBuckets)
+    .where(inArray(rateLimitBuckets.bucket, [`draft:${CASE_USER}`, `compose:${CASE_USER}`]));
   await db.delete(userSettings).where(eq(userSettings.userId, CASE_USER));
   await db.insert(userSettings).values({
     userId: CASE_USER,
