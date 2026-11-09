@@ -25,7 +25,7 @@ export default async function OutreachPage() {
 
   const [campaigns, quota, gmailIdent, outlookIdent] = await Promise.all([
     listCampaigns(),
-    getOutreachQuota(userId).catch(() => null),
+    getOutreachQuota().catch(() => null),
     gmailProvider.identity(userId).catch(() => null),
     outlookProvider.identity(userId).catch(() => null),
   ]);

@@ -2084,6 +2084,7 @@ export async function generateLinkedInBrowserUsePromptAction(input: {
   });
 }
 
-export async function getOutreachQuota(userId: string) {
+export async function getOutreachQuota() {
+  const userId = await requireUserId();
   return get5HourSendQuota(userId);
 }
