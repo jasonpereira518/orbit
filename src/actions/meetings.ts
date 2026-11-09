@@ -1,5 +1,7 @@
 "use server";
 
+import { ymdInZone } from "@/lib/reminder-due-bucket";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { calendarSources, gmailConnections, meetingSessions, type MeetingDigest } from "@/db/schema";
@@ -38,7 +40,6 @@ import {
 } from "@/lib/meeting-sessions";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { speechAllowance } from "@/lib/speech-quota";
-import { isoDay } from "@/lib/suggested-reminder-utils";
 import { actionFailure } from "@/lib/action-failure";
 
 /**
@@ -307,6 +308,7 @@ export async function analyzeMeetingSession(
       );
     };
 
+    const timeZone = await viewerTimeZone(userId);
     let digest = !opts.force && !typed ? t.session.digest : null;
     if (!digest) {
       try {
@@ -320,7 +322,7 @@ export async function analyzeMeetingSession(
             attendees: attendeeNames,
             userNotes: notes || undefined,
             invite: event ? { attendees: invited, agenda: event.agenda } : undefined,
-            lastTime: lastOpen.length ? { date: isoDay(last!.startedAt), actionItems: lastOpen } : undefined,
+            lastTime: lastOpen.length ? { date: ymdInZone(last!.startedAt, timeZone), actionItems: lastOpen } : undefined,
           },
           { complete: completeJson, parseJson: parseAiJson }
         );
@@ -355,6 +357,7 @@ export async function analyzeMeetingSession(
       startedAtIso,
       userName,
       presentNames: present,
+      timeZone,
     });
 
     return {
@@ -366,7 +369,7 @@ export async function analyzeMeetingSession(
           eventDate:
             opts.localDateIso && /^\d{4}-\d{2}-\d{2}$/.test(opts.localDateIso)
               ? opts.localDateIso
-              : isoDay(t.session.startedAt),
+              : ymdInZone(t.session.startedAt, timeZone),
           // Only people who were ON the call: the two-pass parse turns every seed into a
           // review card, and someone merely mentioned should be a mention, not a card.
           seedPeople: present.map((name) => ({

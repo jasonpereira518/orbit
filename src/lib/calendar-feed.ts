@@ -1,3 +1,4 @@
+import { isDateOnlyDue } from "@/lib/reminder-due-bucket";
 import { createHash, randomBytes } from "node:crypto";
 import { and, asc, eq, gte, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -25,20 +26,16 @@ const TIMED_ALARM = "-PT15M";
  * Two storage conventions both mean "date only" in this codebase, and each must be
  * recognized or the event degrades into a spurious half-hour meeting:
  *   - UTC midnight — `new Date("YYYY-MM-DD")`, e.g. `createReminder`.
- *   - Local noon — `atLocalNoon()`, used by extracted dates and
+ *   - Noon — `atLocalNoon()` on the (UTC) server, used by extracted dates and
  *     `scheduleContactFollowUpAt`. Noon is deliberate: it keeps the calendar day stable
  *     in the UI across timezone offsets, but it is emphatically not a real appointment
  *     time, and treating it as one also risks rendering on the wrong day for viewers
  *     far from the server's timezone.
  */
 export function isDateOnly(due: Date) {
-  const utcMidnight =
-    due.getUTCHours() === 0 &&
-    due.getUTCMinutes() === 0 &&
-    due.getUTCSeconds() === 0;
-  const localNoon =
-    due.getHours() === 12 && due.getMinutes() === 0 && due.getSeconds() === 0;
-  return utcMidnight || localNoon;
+  // The shared rule (UTC midnight or UTC noon), not this runtime's local noon: the server's
+  // zone must not decide whether a reminder is an all-day event.
+  return isDateOnlyDue(due);
 }
 
 export function generateCalendarFeedToken() {
