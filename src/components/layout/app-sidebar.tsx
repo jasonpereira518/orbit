@@ -4,7 +4,7 @@ import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { preloadCaptureFlow } from "@/components/capture/capture-flow-lazy";
 import { preloadChatPanel } from "@/components/chat/chat-panel-lazy";
-import { Lock, Plus, Search } from "lucide-react";
+import { Lock, Search, Sparkles } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
 import { UserButton } from "@clerk/nextjs";
 import { motion } from "motion/react";
@@ -183,8 +183,9 @@ export function AppSidebar({
   // One ordered list, then split: a page marked coming soon always drops below the divider,
   // whatever group the code declared it in, and keeps its place in the operator's order
   // within that group.
+  // /capture is left out: the primary button above the list is its door.
   const ordered = orderNavItems([...APP_NAV_CORE, ...APP_NAV_EXTRAS], navOrder).filter(
-    (item) => !isHrefHidden(item.href, hidden)
+    (item) => item.href !== "/capture" && !isHrefHidden(item.href, hidden)
   );
   const core = ordered.filter((item) => !isHrefComingSoon(item.href, comingSoon));
   const extras = ordered.filter((item) => isHrefComingSoon(item.href, comingSoon));
@@ -256,21 +257,21 @@ export function AppSidebar({
           live door into a hidden page. */}
       {!captureHidden && (
       <div className="px-2 pb-3 lg:px-3">
-        {/* The most-used door into /capture: hover or focus fetches the whole route and the
+        {/* The only door into /capture here (the nav list skips it): hover or focus fetches the whole route and the
             form's code, so the click lands with neither a skeleton nor a chunk wait. */}
         <IntentLink
           href="/capture"
           onPointerEnter={preloadCaptureFlow}
           onFocus={preloadCaptureFlow}
-          title="Log interaction"
+          title="Capture"
           className={cn(
             buttonVariants({ size: "icon" }),
             "mx-auto flex h-10 w-10 lg:h-auto lg:w-full lg:justify-start lg:gap-2 lg:px-3 lg:py-2",
             "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
           )}
         >
-          <Plus className="h-4 w-4" />
-          <span className="max-lg:sr-only">Log interaction</span>
+          <Sparkles className="h-4 w-4" />
+          <span className="max-lg:sr-only">Capture</span>
         </IntentLink>
       </div>
       )}
