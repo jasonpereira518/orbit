@@ -1385,6 +1385,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   thanks_credits integer,
   user_read_at timestamptz,
   operator_read_at timestamptz,
+  thanks_seen_at timestamptz,
   context jsonb NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1414,6 +1415,7 @@ CREATE TABLE IF NOT EXISTS feedback_messages (
   user_id text NOT NULL,
   author text NOT NULL,
   body text NOT NULL,
+  credits integer,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS feedback_messages_feedback_idx ON feedback_messages(feedback_id, created_at);
@@ -3037,12 +3039,15 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
 // 209 = outreach_campaigns.background_job (asynchronous campaign execution & scout runner)
 //
-// 210 = the feedback rework, both halves in one bump (built as 209 + 210 on this branch, then
-// renumbered on Nov 9 2026 when outreach's 209 reached main first):
+// 213 = the feedback rework, in one bump (built as 209 + 210 on this branch; renumbered on
+// Nov 9 2026 to 213, above every open branch's claim — #589 and chat work hold 210–212, Leads
+// 209–212 — after a preview database stamped 210 by another branch skipped this DDL):
 // feedback.triage (jsonb) — the AI triage pass's summary, severity and duplicate-of, see
 // src/lib/feedback-triage.ts; and the feedback conversation — feedback_messages (new table)
-// plus feedback.thanks_credits / user_read_at / operator_read_at, see src/lib/feedback-thread.ts.
-export const SCHEMA_VERSION = 210;
+// plus feedback.thanks_credits / user_read_at / operator_read_at, see src/lib/feedback-thread.ts;
+// and the thank-you gift — feedback_messages.credits (on the reply that carried it) and
+// feedback.thanks_seen_at (null while still wrapped).
+export const SCHEMA_VERSION = 213;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4436,6 +4441,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "thanks_credits", "integer");
   await ensureColumn(client, "feedback", "user_read_at", "timestamptz");
   await ensureColumn(client, "feedback", "operator_read_at", "timestamptz");
+  await ensureColumn(client, "feedback", "thanks_seen_at", "timestamptz");
+  await ensureColumn(client, "feedback_messages", "credits", "integer");
   // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
   await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
   await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
@@ -4937,6 +4944,8 @@ const alters = [
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS thanks_credits integer`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_read_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS operator_read_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS thanks_seen_at timestamptz`,
+  `ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS credits integer`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,

@@ -21,6 +21,7 @@ import {
   markThreadRead,
   postThreadMessage,
   unreadRepliesFor,
+  unwrapThanks,
 } from "../src/lib/feedback-thread";
 
 const A = "smoke-thread-a";
@@ -96,6 +97,24 @@ async function main() {
     check("exactly one adjustment grant", grants.length === 1 && grants[0].grantKey === `adj:feedback:${id}`);
     check("...worth 50 credits, and not cash", grants[0].microsGranted === 500_000 && grants[0].amountCents === null && grants[0].stripeRef === null);
     check("the report remembers the first amount", (await loadThread(id, { userId: A }))?.thanksCredits === 50);
+  }
+
+  console.log("\nThe gift");
+  {
+    await new Promise((r) => setTimeout(r, 5));
+    await postThreadMessage({ feedbackId: id, author: "operator", body: "Thank you!", credits: 50 });
+    const thread = await loadThread(id, { userId: A });
+    const gifted = thread?.messages.filter((m) => m.credits != null) ?? [];
+    check("the reply that carried it holds the credits", gifted.length === 1 && gifted[0].credits === 50 && gifted[0].body === "Thank you!");
+    check("...and it starts wrapped", thread?.thanksSeen === false);
+    check("the list says a gift is waiting", (await listMyFeedback(A))[0]?.giftWaiting === true);
+    check("the bell knows it's a gift", (await unreadRepliesFor(A))[0]?.giftWaiting === true);
+    check("a reporter's message never carries credits", (await postThreadMessage({ feedbackId: id, author: "user", body: "wow", userId: A, credits: 999 })) !== null
+      && (await loadThread(id, "operator"))?.messages.at(-1)?.credits === null);
+    check("someone else can't unwrap it", (await unwrapThanks(id, B)) === null && (await loadThread(id, { userId: A }))?.thanksSeen === false);
+    check("the reporter unwraps it and learns the amount", (await unwrapThanks(id, A)) === 50);
+    check("...it's now opened", (await loadThread(id, { userId: A }))?.thanksSeen === true && (await listMyFeedback(A))[0]?.giftWaiting === false);
+    check("unwrapping again is harmless", (await unwrapThanks(id, A)) === 50);
   }
 
   console.log("\nEmail");

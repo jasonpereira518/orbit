@@ -8,9 +8,8 @@
  * Only `kind = 'freeform'` reports have a conversation. PMF and churn answers are a score and
  * a reason, not something anyone asked to talk about.
  *
- * "Realtime" is polling: both sides re-read the thread every `THREAD_POLL_MS` while it is
- * open on screen. ponytail: polling an indexed read is fine at a founder's feedback volume;
- * move to SSE or a WebSocket if a conversation ever needs sub-second replies.
+ * Live on both sides: `/api/feedback/[id]/stream` pushes the thread over server-sent events
+ * whenever it changes (see that route for how often, and the upgrade path).
  */
 
 import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
@@ -24,6 +23,8 @@ export type ThreadMessage = {
   id: string;
   author: "user" | "operator";
   body: string;
+  /** Bonus credits this operator reply carried as a thank-you; the gift renders under it. */
+  credits: number | null;
   createdAt: string;
 };
 
@@ -33,6 +34,8 @@ export type FeedbackThread = {
   report: { text: string | null; createdAt: string; area: string | null };
   status: "new" | "triaged" | "resolved";
   thanksCredits: number | null;
+  /** The thank-you has been unwrapped. False while there is a gift still waiting. */
+  thanksSeen: boolean;
   messages: ThreadMessage[];
   /** The operator has replied, so the reporter can write back. */
   open: boolean;
@@ -58,6 +61,7 @@ export async function loadThread(
       area: feedback.area,
       status: feedback.status,
       thanksCredits: feedback.thanksCredits,
+      thanksSeenAt: feedback.thanksSeenAt,
       createdAt: feedback.createdAt,
     })
     .from(feedback)
@@ -71,6 +75,7 @@ export async function loadThread(
       id: feedbackMessages.id,
       author: feedbackMessages.author,
       body: feedbackMessages.body,
+      credits: feedbackMessages.credits,
       createdAt: feedbackMessages.createdAt,
     })
     .from(feedbackMessages)
@@ -82,6 +87,7 @@ export async function loadThread(
     report: { text: entry.text, createdAt: entry.createdAt.toISOString(), area: entry.area },
     status: entry.status,
     thanksCredits: entry.thanksCredits,
+    thanksSeen: entry.thanksSeenAt !== null,
     messages: rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),
     open: rows.some((r) => r.author === "operator"),
   };
@@ -115,6 +121,8 @@ export async function postThreadMessage(input: {
   body: string;
   /** Required for the reporter: their own id, checked against the report's owner. */
   userId?: string;
+  /** Operator only: the thank-you credits this reply carries (already granted). */
+  credits?: number | null;
 }): Promise<{ reporterId: string; report: string | null } | null> {
   if (!isUuid(input.feedbackId)) return null;
   const db = await getDb();
@@ -140,9 +148,33 @@ export async function postThreadMessage(input: {
     userId: entry.userId,
     author: input.author,
     body: input.body,
+    credits: input.author === "operator" ? (input.credits ?? null) : null,
   });
   await markThreadRead(input.feedbackId, input.author, entry.userId);
   return { reporterId: entry.userId, report: entry.text };
+}
+
+/**
+ * Unwrap the thank-you: stamp it seen, once, on the reporter's own report. Returns the
+ * credits it carried, or null when there was nothing of theirs to unwrap (idempotent — a
+ * second call still returns the credits, so a double tap can't lose the reveal).
+ */
+export async function unwrapThanks(feedbackId: string, userId: string): Promise<number | null> {
+  if (!isUuid(feedbackId)) return null;
+  const db = await getDb();
+  const [row] = await db
+    .select({ credits: feedback.thanksCredits, seenAt: feedback.thanksSeenAt })
+    .from(feedback)
+    .where(and(eq(feedback.id, feedbackId), eq(feedback.userId, userId)))
+    .limit(1);
+  if (!row || row.credits == null) return null;
+  if (!row.seenAt) {
+    await db
+      .update(feedback)
+      .set({ thanksSeenAt: new Date() })
+      .where(and(eq(feedback.id, feedbackId), eq(feedback.userId, userId)));
+  }
+  return row.credits;
 }
 
 /**
@@ -185,6 +217,8 @@ export type UnreadReply = {
   latest: string;
   at: Date;
   thanksCredits: number | null;
+  /** A thank-you is waiting to be unwrapped on this report. */
+  giftWaiting: boolean;
 };
 
 /** The reporter's conversations with an operator message they haven't opened yet. */
@@ -196,6 +230,9 @@ export async function unreadRepliesFor(userId: string): Promise<UnreadReply[]> {
       body: feedbackMessages.body,
       at: feedbackMessages.createdAt,
       thanksCredits: feedback.thanksCredits,
+      thanksSeenAt: feedback.thanksSeenAt,
+      // The gift card lives on a message; a report credited without one has nothing to open.
+      giftCredits: feedbackMessages.credits,
     })
     .from(feedbackMessages)
     .innerJoin(feedback, eq(feedback.id, feedbackMessages.feedbackId))
@@ -212,8 +249,19 @@ export async function unreadRepliesFor(userId: string): Promise<UnreadReply[]> {
   // Newest message per report: the query is already newest-first.
   const latest = new Map<string, UnreadReply>();
   for (const r of rows) {
-    if (latest.has(r.feedbackId)) continue;
-    latest.set(r.feedbackId, { feedbackId: r.feedbackId, latest: r.body, at: r.at, thanksCredits: r.thanksCredits });
+    const known = latest.get(r.feedbackId);
+    if (known) {
+      // An older unread reply may be the one carrying the gift.
+      if (r.giftCredits != null && r.thanksSeenAt === null) known.giftWaiting = true;
+      continue;
+    }
+    latest.set(r.feedbackId, {
+      feedbackId: r.feedbackId,
+      latest: r.body,
+      at: r.at,
+      thanksCredits: r.thanksCredits,
+      giftWaiting: r.giftCredits != null && r.thanksSeenAt === null,
+    });
   }
   return [...latest.values()];
 }
@@ -226,6 +274,8 @@ export type MyFeedbackRow = {
   thanksCredits: number | null;
   replies: number;
   unread: boolean;
+  /** A thank-you is waiting to be unwrapped. */
+  giftWaiting: boolean;
 };
 
 /** The reporter's own reports, newest first, for "Your feedback". */
@@ -242,12 +292,26 @@ export async function listMyFeedback(userId: string, limit = 20): Promise<MyFeed
       // Drizzle renders `${feedback.id}` unqualified and the subquery would compare the inner
       // table to itself (the unqualified-column trap).
       replies: sql<number>`(select count(*)::int from feedback_messages m where m.feedback_id = feedback.id and m.author = 'operator')`,
+      // Only a gift with a card to open: a reply has to carry it (spelled out — see above).
+      giftWaiting: sql<boolean>`(feedback.thanks_seen_at is null and exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.credits is not null))`,
       unread: sql<boolean>`exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.author = 'operator' and m.created_at > coalesce(feedback.user_read_at, 'epoch'::timestamptz))`,
     })
     .from(feedback)
     .where(and(eq(feedback.userId, userId), eq(feedback.kind, "freeform")))
     .orderBy(desc(feedback.createdAt))
     .limit(limit);
+}
+
+/** Who sent a report. */
+export async function reporterOf(feedbackId: string): Promise<string | null> {
+  if (!isUuid(feedbackId)) return null;
+  const db = await getDb();
+  const [row] = await db
+    .select({ userId: feedback.userId })
+    .from(feedback)
+    .where(eq(feedback.id, feedbackId))
+    .limit(1);
+  return row?.userId ?? null;
 }
 
 /** The reporter's address, when the operator wants the reply emailed too. */

@@ -4800,6 +4800,8 @@ export const feedback = pgTable(
     userReadAt: timestamp("user_read_at", { withTimezone: true }),
     /** When the operator last opened it. The reporter's messages after it are unread. */
     operatorReadAt: timestamp("operator_read_at", { withTimezone: true }),
+    /** When the reporter unwrapped the credit thank-you. Null while it is still wrapped. */
+    thanksSeenAt: timestamp("thanks_seen_at", { withTimezone: true }),
     /** Where they were when they said it — route, plan, contact count. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -4893,6 +4895,8 @@ export const feedbackMessages = pgTable(
     userId: text("user_id").notNull(),
     author: text("author").$type<"user" | "operator">().notNull(),
     body: text("body").notNull(),
+    /** Bonus credits this operator reply carried as a thank-you; the gift card renders under it. */
+    credits: integer("credits"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [

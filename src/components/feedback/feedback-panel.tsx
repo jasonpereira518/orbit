@@ -400,7 +400,11 @@ export function FeedbackPanel({
             <FeedbackList rows={mine} onOpen={(id) => onTargetChange({ view: "thread", id })} />
           )
         ) : target.view === "thread" ? (
-          <PanelThread id={target.id} onBack={() => onTargetChange({ view: "list" })} />
+          <PanelThread
+            id={target.id}
+            onBack={() => onTargetChange({ view: "list" })}
+            onNavigate={() => requestClose(false)}
+          />
         ) : (
         <>
         {/* The four kinds, on one line, all optional. Scrolls sideways on a narrow phone
@@ -737,7 +741,15 @@ function describeDraft(message: string, shots: number): string {
  * One conversation inside the panel. Reading it marks it read (the action does), and
  * `FeedbackChat` keeps it live and asks the bell to re-read.
  */
-function PanelThread({ id, onBack }: { id: string; onBack: () => void }) {
+function PanelThread({
+  id,
+  onBack,
+  onNavigate,
+}: {
+  id: string;
+  onBack: () => void;
+  onNavigate: () => void;
+}) {
   const [thread, setThread] = useState<FeedbackThread | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
@@ -764,7 +776,7 @@ function PanelThread({ id, onBack }: { id: string; onBack: () => void }) {
       ) : thread === null ? (
         <p className="text-sm text-muted-foreground">That conversation isn’t available.</p>
       ) : (
-        <FeedbackChat key={thread.id} initial={thread} />
+        <FeedbackChat key={thread.id} initial={thread} onNavigate={onNavigate} />
       )}
     </div>
   );

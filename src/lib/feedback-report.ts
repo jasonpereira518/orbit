@@ -105,9 +105,6 @@ export type ThanksCredits = (typeof THANKS_CREDIT_OPTIONS)[number];
 /** One chat message, either side. Long enough for a real answer, short of an essay. */
 export const MAX_THREAD_MESSAGE = 2000;
 
-/** How often an open conversation checks for new messages, both sides. */
-export const THREAD_POLL_MS = 4000;
-
 /** Before, the error, after. A fourth shot has never told anyone anything new. */
 export const MAX_SCREENSHOTS = 3;
 

@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { getFeedbackThreadAdminAction, replyToFeedbackAction } from "@/actions/admin";
-import { ThreadMessages, usePolledThread } from "@/components/feedback/feedback-thread-view";
+import { replyToFeedbackAction } from "@/actions/admin";
+import { ThreadMessages, useLiveThread } from "@/components/feedback/feedback-thread-view";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { friendlyError } from "@/lib/errors";
@@ -32,7 +32,7 @@ export function FeedbackConversation({
   reporterLabel: string;
   hasEmail: boolean;
 }) {
-  const [thread, setThread] = usePolledThread(initial, getFeedbackThreadAdminAction);
+  const { thread, setThread, showPending } = useLiveThread(initial, "operator");
   const [body, setBody] = useState("");
   const [resolve, setResolve] = useState(initial.status !== "resolved");
   const [credits, setCredits] = useState<ThanksCredits | null>(null);
@@ -43,18 +43,22 @@ export function FeedbackConversation({
   const field = useRef<HTMLTextAreaElement>(null);
 
   const send = () => {
-    if (!body.trim() || pending) return;
+    const text = body.trim();
+    if (!text || pending) return;
+    // On screen at once; the server's copy (with any gift on it) replaces it when it lands.
+    const drop = showPending(text);
+    setBody("");
     start(async () => {
       try {
         const result = await replyToFeedbackAction({
           id: thread.id,
-          body,
+          body: text,
           resolve,
           thankCredits: credits,
           email,
         });
+        drop();
         setThread(result.thread);
-        setBody("");
         setCredits(null);
         setEmail(false);
         setResolve(false);
@@ -62,6 +66,8 @@ export function FeedbackConversation({
         toast.success(extras.length ? `Sent — ${extras.join(", ")}` : "Sent");
         if (email && !result.emailed) toast.error("The email copy didn’t send — they’ll still see it in Orbit");
       } catch (err) {
+        drop();
+        setBody(text);
         toast.error(friendlyError(err, "That reply didn’t send — try again?"));
       }
     });

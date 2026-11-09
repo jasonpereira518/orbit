@@ -1,6 +1,7 @@
 "use client";
 
 import { formatDistanceToNow } from "date-fns";
+import { Gift } from "lucide-react";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
 import type { MyFeedbackRow } from "@/lib/feedback-thread";
@@ -49,10 +50,17 @@ export function FeedbackList({
                 {row.thanksCredits != null && ` · +${row.thanksCredits} credits`}
               </span>
             </span>
-            {row.unread && (
-              <span className="mt-0.5 shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[0.65rem] font-medium text-primary">
-                New reply
+            {row.giftWaiting ? (
+              <span className="mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-full bg-gold/15 px-2 py-0.5 text-[0.65rem] font-medium text-gold-ink">
+                <Gift className="size-3" aria-hidden />
+                Gift waiting
               </span>
+            ) : (
+              row.unread && (
+                <span className="mt-0.5 shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[0.65rem] font-medium text-primary">
+                  New reply
+                </span>
+              )
             )}
           </a>
         </li>

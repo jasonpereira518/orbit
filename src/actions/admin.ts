@@ -59,9 +59,9 @@ import {
   buildFeedbackReplyEmail,
   grantFeedbackThanks,
   loadThread,
-  markThreadRead,
   postThreadMessage,
   reporterEmail,
+  reporterOf,
   type FeedbackThread,
 } from "@/lib/feedback-thread";
 import { sendSiteInviteEmail } from "@/lib/site-invite-email";
@@ -1095,17 +1095,6 @@ export async function logFeedbackAction(input: {
 }
 
 /**
- * The operator's side of a feedback conversation, polled by the detail page while it is open.
- * Reading it marks the reporter's messages seen.
- */
-export async function getFeedbackThreadAdminAction(id: string): Promise<FeedbackThread | null> {
-  await requireAdminUserId();
-  const thread = await loadThread(id, "operator");
-  if (thread) await markThreadRead(id, "operator");
-  return thread;
-}
-
-/**
  * Reply to a feedback report — which opens the conversation on the reporter's side — with
  * the optional extras that make a reply worth getting: resolve it, thank them with bonus
  * credits (once per report), and email them a copy.
@@ -1135,12 +1124,26 @@ export async function replyToFeedbackAction(input: {
             throw new UserFacingError("Pick 25, 50 or 100 credits");
           })();
 
-  const posted = await postThreadMessage({ feedbackId: input.id, author: "operator", body });
-  if (!posted) throw new UserFacingError("Only feedback sent from the app can be replied to");
+  // Check it can be replied to before granting anything: credits on a report nobody can see
+  // the reply to would be a gift with no card.
+  const thread = await loadThread(input.id, "operator");
+  if (!thread) throw new UserFacingError("Only feedback sent from the app can be replied to");
 
-  const credited = credits
-    ? await grantFeedbackThanks({ feedbackId: input.id, userId: posted.reporterId, credits })
-    : false;
+  // Grant FIRST, so the message carries the gift only when this call made it — a second
+  // thank-you on the same report is a no-op and must not show a second card.
+  const reporterId = await reporterOf(input.id);
+  const credited =
+    credits && reporterId
+      ? await grantFeedbackThanks({ feedbackId: input.id, userId: reporterId, credits })
+      : false;
+
+  const posted = await postThreadMessage({
+    feedbackId: input.id,
+    author: "operator",
+    body,
+    credits: credited ? credits : null,
+  });
+  if (!posted) throw new UserFacingError("Only feedback sent from the app can be replied to");
 
   if (input.resolve) {
     // Already resolved is fine here — replying to a resolved report is just a reply.
@@ -1174,9 +1177,9 @@ export async function replyToFeedbackAction(input: {
   });
 
   revalidateFeedback();
-  const thread = await loadThread(input.id, "operator");
-  if (!thread) throw new UserFacingError("That feedback entry no longer exists");
-  return { ok: true, thread, emailed, credited };
+  const latest = await loadThread(input.id, "operator");
+  if (!latest) throw new UserFacingError("That feedback entry no longer exists");
+  return { ok: true, thread: latest, emailed, credited };
 }
 
 /**

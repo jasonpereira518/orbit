@@ -17,6 +17,7 @@ import {
   Clock,
   FileText,
   Loader2,
+  Gift,
   MessageSquareText,
   NotebookPen,
   Radar,
@@ -542,7 +543,9 @@ function NotificationRow({
         : item.kind === "cloud_notes"
           ? FileText
           : item.kind === "feedback_reply"
-            ? MessageSquareText
+            ? item.gift
+              ? Gift
+              : MessageSquareText
             : Bell;
   const when = item.dueAt
     ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })

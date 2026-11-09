@@ -3,6 +3,11 @@
 import { headers } from "next/headers";
 import { after } from "next/server";
 import { requireUserId } from "@/lib/auth";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { userSettings } from "@/db/schema";
+import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
+import { getCreditBalance } from "@/lib/credits/ledger";
 import { getEntitlements } from "@/lib/entitlements";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import {
@@ -21,6 +26,7 @@ import {
   loadThread,
   markThreadRead,
   postThreadMessage,
+  unwrapThanks,
   type FeedbackThread,
   type MyFeedbackRow,
 } from "@/lib/feedback-thread";
@@ -168,7 +174,8 @@ export async function submitFeedback(
 /**
  * The reporter's side of a feedback conversation: read it (which marks it read), and reply.
  *
- * Polled every `THREAD_POLL_MS` by the chat page while it is on screen. Null when the report
+ * Read once when the feedback panel opens a conversation (the live stream takes over from
+ * there, see `/api/feedback/[id]/stream`). Null when the report
  * isn't theirs — the page shows a 404 for that, never a "not yours".
  */
 export async function getMyFeedbackThread(feedbackId: string): Promise<FeedbackThread | null> {
@@ -210,4 +217,29 @@ export async function sendFeedbackMessage(
 export async function listMyFeedbackAction(): Promise<MyFeedbackRow[]> {
   const userId = await requireUserId();
   return listMyFeedback(userId);
+}
+
+/**
+ * Unwrap the credit thank-you on one of your reports. Returns what it carried and your balance
+ * after it, for the gift card's reveal. Idempotent; null when there's nothing to unwrap.
+ */
+export async function unwrapFeedbackThanks(
+  feedbackId: string
+): Promise<{ credits: number; balance: number | null } | null> {
+  const userId = await requireUserId();
+  const credits = await unwrapThanks(feedbackId, userId);
+  if (credits == null) return null;
+  // The same read the credits card makes (`getCreditsOverview`). A balance that can't be read
+  // just isn't shown — the gift itself has already landed.
+  let balance: number | null = null;
+  try {
+    const { plan } = await getEntitlements(userId);
+    const db = await getDb();
+    const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) });
+    const b = await getCreditBalance(userId, plan, row, new Date(), { ensure: false });
+    balance = Math.floor(b.spendable / MICROS_PER_CREDIT);
+  } catch {
+    balance = null;
+  }
+  return { credits, balance };
 }

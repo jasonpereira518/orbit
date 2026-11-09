@@ -193,6 +193,8 @@ export async function loadNotificationPanel(
     suggestionId?: string;
     suggestedReminderId?: string;
     contactId?: string | null;
+    /** Feedback replies only: the reply carried a thank-you that's still wrapped. */
+    gift?: boolean;
     /** Follow-ups only: the contact's role and company, so the UI can tint the company. */
     contactTitle?: string | null;
     company?: string | null;
@@ -359,8 +361,12 @@ export async function loadNotificationPanel(
     items.push({
       id: `feedback-reply:${reply.feedbackId}:${reply.at.getTime()}`,
       kind: "feedback_reply",
-      title: `${FEEDBACK_RECIPIENT} replied to your feedback`,
-      body: reply.thanksCredits ? `${firstLine} · +${reply.thanksCredits} credits` : firstLine,
+      // A thank-you still waiting to be unwrapped is the headline; the reply comes with it.
+      title: reply.giftWaiting
+        ? `${FEEDBACK_RECIPIENT} sent you a thank-you`
+        : `${FEEDBACK_RECIPIENT} replied to your feedback`,
+      body: reply.giftWaiting ? `+${reply.thanksCredits} AI credits — open to unwrap` : firstLine,
+      gift: reply.giftWaiting,
       url: `/feedback/${reply.feedbackId}`,
       dueAt: reply.at.toISOString(),
       urgency: "due",

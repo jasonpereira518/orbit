@@ -1,9 +1,8 @@
 "use client";
 
-import { Sparkles } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
-import { getMyFeedbackThread, sendFeedbackMessage } from "@/actions/feedback";
-import { ThreadMessages, usePolledThread } from "@/components/feedback/feedback-thread-view";
+import { sendFeedbackMessage } from "@/actions/feedback";
+import { ThreadMessages, useLiveThread } from "@/components/feedback/feedback-thread-view";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { refreshPulse } from "@/lib/app-pulse-store";
@@ -18,12 +17,19 @@ const STATUS_LABEL: Record<FeedbackThread["status"], string> = {
 };
 
 /**
- * The reporter's side of a feedback conversation. Live while it is open (polled, see
- * `usePolledThread`); the composer appears once the operator has replied, because that is
+ * The reporter's side of a feedback conversation. Live while it is open (streamed, see
+ * `useLiveThread`); the composer appears once the operator has replied, because that is
  * when there is someone on the other end.
  */
-export function FeedbackChat({ initial }: { initial: FeedbackThread }) {
-  const [thread, setThread] = usePolledThread(initial, getMyFeedbackThread);
+export function FeedbackChat({
+  initial,
+  onNavigate,
+}: {
+  initial: FeedbackThread;
+  /** Called when they follow a link out of the chat — the panel uses it to close itself. */
+  onNavigate?: () => void;
+}) {
+  const { thread, setThread, showPending } = useLiveThread(initial, "user");
   const [body, setBody] = useState("");
   const [pending, start] = useTransition();
 
@@ -34,15 +40,20 @@ export function FeedbackChat({ initial }: { initial: FeedbackThread }) {
   }, []);
 
   const send = () => {
-    if (!body.trim() || pending) return;
+    const text = body.trim();
+    if (!text || pending) return;
+    // On screen at once, like any message; the server's copy replaces it when it lands.
+    const drop = showPending(text);
+    setBody("");
     start(async () => {
-      const result = await sendFeedbackMessage(thread.id, body);
+      const result = await sendFeedbackMessage(thread.id, text);
+      drop();
       if (!result.ok) {
         toast.error(result.message);
+        setBody(text);
         return;
       }
       setThread(result.thread);
-      setBody("");
     });
   };
 
@@ -52,15 +63,8 @@ export function FeedbackChat({ initial }: { initial: FeedbackThread }) {
         Status: <span className="font-medium text-foreground">{STATUS_LABEL[thread.status]}</span>
       </p>
 
-      {thread.thanksCredits != null && (
-        <p className="flex items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
-          <Sparkles className="size-4 shrink-0 text-accent-foreground" aria-hidden />
-          {FEEDBACK_RECIPIENT} added {thread.thanksCredits} bonus AI credits to your account as a thank-you.
-        </p>
-      )}
-
       <div className="rounded-2xl border border-border/60 bg-card p-4">
-        <ThreadMessages thread={thread} viewer="user" />
+        <ThreadMessages thread={thread} viewer="user" onNavigate={onNavigate} />
       </div>
 
       {thread.open ? (
