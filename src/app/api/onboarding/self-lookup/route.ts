@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { parseOwnLinkedInUrl } from "@/lib/about-you";
 import { lookUpSelfForUser } from "@/lib/about-you-server";
 import { requireUserId } from "@/lib/auth";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { friendlyError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +31,8 @@ export async function POST(request: Request) {
   } catch (err) {
     return NextResponse.json({ error: friendlyError(err, "Sign in to continue") }, { status: 401 });
   }
+  const refused = sameOriginGuard(request);
+  if (refused) return refused;
   if (request.headers.get("x-orbit-research") !== "1") {
     return NextResponse.json({ error: "Missing research header" }, { status: 400 });
   }

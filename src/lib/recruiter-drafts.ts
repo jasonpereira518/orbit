@@ -1,4 +1,5 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 
@@ -88,6 +89,9 @@ export async function generateRecruiterDraft(
   userId: string,
   input: RecruiterDraftInput
 ): Promise<GeneratedRecruiterDraft> {
+  // One model call, one unit of `draft` (audit M-07). In a batch, a draft past the limit
+  // comes back as that draft's own error and the rest of the batch is kept.
+  await consumeBucket("draft", userId, RATE_LIMITS.draft);
   const intent = RECRUITER_INTENTS[input.intent];
 
   const context = [

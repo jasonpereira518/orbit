@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { friendlyError, isQuietFailureMessage, isUserFacingError, withReference } from "@/lib/errors";
+import { scrubText } from "@/lib/sentry-scrub";
 
 /**
  * Where a CAUGHT error goes.
@@ -78,9 +79,17 @@ function sanitize(extra: Record<string, unknown> | undefined): Record<string, un
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(extra)) {
     if (SECRET_KEY.test(k)) continue;
-    out[k] = typeof v === "string" && v.length > 500 ? `${v.slice(0, 500)}…` : v;
+    // Scrubbed (audit L-14): an extra is often an error's message or a provider's reply, and
+    // either can carry model output about a person's notes, an address or a key.
+    const text = typeof v === "string" ? scrubText(v) : v;
+    out[k] = typeof text === "string" && text.length > 500 ? `${text.slice(0, 500)}…` : text;
   }
   return out;
+}
+
+/** A rate limit is the person's pace, not a fault: shown, never reported. By name, like `PaywallError`. */
+function isRateLimit(err: unknown): boolean {
+  return err instanceof Error && err.name === "RateLimitedError" && Boolean(err.message);
 }
 
 /** Report a caught error. Returns the reference to show the person (8 characters). */
@@ -121,7 +130,7 @@ export function reportedFailure(
   fallback: string,
   ctx: ReportContext
 ): { error: string; ref: string | null } {
-  if (isUserFacingError(err)) return { error: (err as Error).message, ref: null };
+  if (isUserFacingError(err) || isRateLimit(err)) return { error: (err as Error).message, ref: null };
   const message = friendlyError(err, fallback);
   if (isQuietFailureMessage(message)) return { error: message, ref: null };
   const ref = reportError(err, { ...ctx, level: ctx.level ?? (message === fallback ? "error" : "warning") });
@@ -143,7 +152,7 @@ export function reportAndContinue<T>(ctx: ReportContext, fallback: T) {
  * faults. Returns the reference, or null when it stayed quiet.
  */
 export function reportUnlessQuiet(err: unknown, ctx: ReportContext): string | null {
-  if (isUserFacingError(err)) return null;
+  if (isUserFacingError(err) || isRateLimit(err)) return null;
   if (isQuietFailureMessage(friendlyError(err, ""))) return null;
   return reportError(err, { level: "warning", ...ctx });
 }

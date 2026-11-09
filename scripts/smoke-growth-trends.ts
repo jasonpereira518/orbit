@@ -84,7 +84,11 @@ async function main() {
   // --- 3. Seed ------------------------------------------------------------------------
   const tag = `gt_${Date.now().toString(36)}`;
   const id = (name: string) => `${tag}_${name}`;
-  const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
+  // "A few hours ago" must still be today: just after UTC midnight (or Monday 00:xx, the
+  // week boundary) now-1h falls in the previous day/week and the day/week-bucketed checks
+  // read it as last period. Offsets under a day clamp to the start of today (UTC).
+  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const ago = (ms: number) => new Date(ms < DAY ? Math.max(now.getTime() - ms, dayStart) : now.getTime() - ms).toISOString();
 
   const user = (name: string, createdAt: string) =>
     db.execute(sql`INSERT INTO user_settings (user_id, created_at) VALUES (${id(name)}, ${createdAt})`);
@@ -256,6 +260,20 @@ async function main() {
     "a cohort with a three-day-old member draws no week 0",
     Boolean(young) && !young!.weeks.some((w) => w.week === 0)
   );
+  // The month spine must not depend on the session's zone. CI runs in UTC, where the old
+  // `generate_series` over timestamptz happened to be right; a zone west of UTC puts
+  // midnight UTC on the previous day, where month stepping clamped to the 30th, every
+  // cohort landed a day early and the current month vanished. Reproduce that zone here so
+  // the check cannot pass by luck.
+  await db.execute(sql`SET TIME ZONE 'Etc/GMT+5'`);
+  const west = await retentionCurves(6, 12);
+  await db.execute(sql`RESET TIME ZONE`);
+  check(
+    "cohort months are UTC month starts whatever the session zone",
+    west.length === 6 &&
+      west.every((c) => c.cohortStart.getUTCDate() === 1 && c.cohortStart.getUTCHours() === 0),
+    JSON.stringify(west.map((c) => c.cohortStart.toISOString()))
+  );
 
   // --- 5. Consistency and AI cost: their own seed, their own baseline ----------------
   console.log("\nConsistent use");
@@ -265,7 +283,7 @@ async function main() {
 
   // k writes once a week, four weeks running: consistent by both definitions.
   await user("k", ago(40 * DAY));
-  for (const d of [0, 7, 14, 21]) await contact("k", ago(d * DAY + 1 * HOUR));
+  for (const d of [0, 7, 14, 21]) await contact("k", new Date(new Date(ago(1 * HOUR)).getTime() - d * DAY).toISOString());
   // AI: two managed-key calls, one BYOK call, one failed unpriced call.
   const ev = (owner: string, micros: number | null, success: number) => sql`
     INSERT INTO usage_events (user_id, operation, provider, model, kind, key_owner, estimated_cost_micros, success, created_at)
