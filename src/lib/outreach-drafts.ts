@@ -1,3 +1,5 @@
+import { LOCAL_TIME_RULE, promptNow } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { z } from "zod";
 import { completeJson } from "@/lib/ai";
 import { AI_INCOMPLETE_MESSAGE } from "@/lib/errors";
@@ -161,7 +163,7 @@ Return JSON: { "subject": string|null, "body": string }`;
     operation: "outreach.draft",
     schema: { name: "outreach_draft", zod: outreachDraftWire },
     temperature: 0.55,
-    system,
+    system: `${promptNow(await viewerTimeZone(userId))} ${LOCAL_TIME_RULE}\n\n${system}`,
     user: `${withWritingPreferences(goalsBlock, input.writingInstructions)}
 ${senderBlock ? `${senderBlock}\n` : ""}
 Prospect:

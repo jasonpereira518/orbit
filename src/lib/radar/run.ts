@@ -12,6 +12,7 @@
  * `runRadarForUser` never throws. A failure is reported, recorded on the `radar_runs` row,
  * and retried sooner than a success would be.
  */
+import { userTimeZone } from "@/lib/meeting-context";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite } from "@/db";
 import { radarRuns, userSettings } from "@/db/schema";
@@ -203,9 +204,10 @@ export function scoreCandidates(
   suppressions: Map<string, RadarSuppression>,
   now: Date,
   model: RadarModel | null = null,
-  focus: UserFocus | null = null
+  focus: UserFocus | null = null,
+  timeZone = "UTC"
 ): NewRecommendation[] {
-  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model, focus), RADAR_CAPS);
+  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model, focus, timeZone), RADAR_CAPS);
 }
 
 /** Every person's winning card, before the caps: what the rerank chooses its shortlist from. */
@@ -217,7 +219,8 @@ export function scorePicks(
   suppressions: Map<string, RadarSuppression>,
   now: Date,
   model: RadarModel | null = null,
-  focus: UserFocus | null = null
+  focus: UserFocus | null = null,
+  timeZone = "UTC"
 ): NewRecommendation[] {
   const byContact = new Map<string, RadarSignal[]>();
   for (const s of signals) {
@@ -230,7 +233,7 @@ export function scorePicks(
   for (const row of candidates) {
     rowById.set(row.id, row);
     const contact = toRadarContact(row, targetKeys, goals, focus);
-    const kinds = scoreContactKinds(contact, byContact.get(row.id) ?? [], suppressions.get(row.id) ?? NO_SUPPRESSION, now, model);
+    const kinds = scoreContactKinds(contact, byContact.get(row.id) ?? [], suppressions.get(row.id) ?? NO_SUPPRESSION, now, model, timeZone);
     const pick = pickWinner(row.id, kinds, now);
     if (pick) picks.push(pick);
   }
@@ -345,7 +348,8 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         });
         // Email signals first: a card keeps at most two pieces of evidence, and the one from
         // mail is the one an accept needs to find its email again.
-        const picks = scorePicks(candidates, [...emailSignals, ...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model, focus);
+        const timeZone = await userTimeZone(userId);
+        const picks = scorePicks(candidates, [...emailSignals, ...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model, focus, timeZone);
 
         // AI, on the account's own key, in one shared budget. First the rerank, which may
         // nudge the shortlist before the caps choose the final list; then, once the list is
