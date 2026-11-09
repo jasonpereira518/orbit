@@ -10,14 +10,24 @@
  * A retryable failure (the token endpoint timing out, a 5xx) is NOT a reason to reconnect: it
  * propagates unchanged so the scheduler backs off. That split is the whole point of
  * `OAuthTokenError.needsReauth`.
+ *
+ * Providers that never say when a token expires (Salesforce) have a null `tokenExpiresAt`, so
+ * only the reactive half runs for them.
  */
 import {
   markConnectorNeedsReauth,
   updateConnectorTokens,
   type ClaimedConnectorConnection,
 } from "@/lib/connectors/connections";
-import { OAuthTokenError, refreshAccessToken, type OAuthTokens } from "@/lib/connectors/oauth";
+import {
+  OAuthTokenError,
+  isTrustedInstanceUrl,
+  refreshAccessToken,
+  type OAuthTokens,
+} from "@/lib/connectors/oauth";
 import { ConnectorAuthError, ConnectorNeedsReauthError } from "@/lib/connectors/auth-errors";
+import { crmProviderLabel, isCrmConnectorId } from "@/lib/crm/types";
+import { reportError } from "@/lib/report-error";
 
 export { ConnectorAuthError, ConnectorNeedsReauthError };
 
@@ -31,25 +41,46 @@ export type ConnectorAuth = {
 
 export type ConnectorAuthDeps = {
   now?: () => Date;
-  refresh?: (connectorId: string, refreshToken: string) => Promise<OAuthTokens>;
+  refresh?: (connectorId: string, refreshToken: string, instanceUrl: string | null) => Promise<OAuthTokens>;
   persist?: typeof updateConnectorTokens;
   markNeedsReauth?: typeof markConnectorNeedsReauth;
 };
 
-const RECONNECT = "Reconnect to keep syncing";
+/**
+ * The stored `sync_error` for a give-up: a fixed sentence Orbit wrote, never the token
+ * endpoint's text (that goes to `reportError`). A CRM's starts with its label, so the card's
+ * `crmErrorLine` shows it rather than masking it.
+ */
+export function reconnectLine(connectorId: string): string {
+  return isCrmConnectorId(connectorId)
+    ? `${crmProviderLabel(connectorId)} stopped accepting Orbit’s sign-in — reconnect to keep syncing`
+    : "Reconnect to keep syncing";
+}
 
 export function openConnectorAuth(
   conn: ClaimedConnectorConnection,
   deps: ConnectorAuthDeps = {}
 ): ConnectorAuth {
   const now = deps.now ?? (() => new Date());
-  const refresh = deps.refresh ?? ((id: string, token: string) => refreshAccessToken(id, token));
+  const refresh =
+    deps.refresh ??
+    ((id: string, token: string, instanceUrl: string | null) => refreshAccessToken(id, token, { instanceUrl }));
   const persist = deps.persist ?? updateConnectorTokens;
   const markNeedsReauth = deps.markNeedsReauth ?? markConnectorNeedsReauth;
   let reactiveUsed = false;
 
+  // Every write here carries the run's lease: a run that lost it (a reconnect stored a new
+  // grant, a disconnect claimed the row) must not persist its tokens or mark the new grant dead.
+  const lease = { leaseStartedAt: conn.leaseStartedAt };
+
   async function giveUp(reason: string): Promise<never> {
-    await markNeedsReauth(conn.id, `${reason} — ${RECONNECT}`);
+    reportError(new Error(reason), {
+      where: "connectors.token.reauth",
+      userId: conn.userId,
+      level: "warning",
+      extra: { connectorId: conn.connectorId, connectionId: conn.id },
+    });
+    await markNeedsReauth(conn.id, reconnectLine(conn.connectorId), lease);
     throw new ConnectorNeedsReauthError(reason);
   }
 
@@ -57,19 +88,30 @@ export function openConnectorAuth(
     if (!conn.refreshToken) return giveUp(reason);
     let tokens: OAuthTokens;
     try {
-      tokens = await refresh(conn.connectorId, conn.refreshToken);
+      tokens = await refresh(conn.connectorId, conn.refreshToken, conn.instanceUrl);
     } catch (err) {
       if (err instanceof OAuthTokenError && err.needsReauth) return giveUp(err.message);
       throw err;
     }
-    await persist(conn.id, {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      expiresAt: tokens.expiresAt,
-    });
+    // Salesforce names the org's host on every refresh; an org moved to a new instance says so here.
+    // Stored as its origin, like the connect stores it, so a trailing slash is never a "move".
+    const movedTo = tokens.extra?.instance_url;
+    const movedOrigin = isTrustedInstanceUrl(conn.connectorId, movedTo) ? new URL(movedTo).origin : null;
+    const instanceUrl = movedOrigin && movedOrigin !== conn.instanceUrl ? movedOrigin : null;
+    await persist(
+      conn.id,
+      {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+        instanceUrl,
+      },
+      lease
+    );
     conn.accessToken = tokens.accessToken;
     if (tokens.refreshToken) conn.refreshToken = tokens.refreshToken;
     conn.tokenExpiresAt = tokens.expiresAt;
+    if (instanceUrl) conn.instanceUrl = instanceUrl;
     return tokens.accessToken;
   }
 

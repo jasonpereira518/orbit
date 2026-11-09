@@ -17,7 +17,8 @@ export async function GET(request: Request, { params }: Params) {
   // Next 16: route params are a Promise and must be awaited.
   const { connectorId } = await params;
   const url = new URL(request.url);
-  const state = parseOAuthState(url.searchParams.get("state"));
+  const rawState = url.searchParams.get("state");
+  const state = parseOAuthState(rawState);
   const back = new URL(state?.returnTo ?? "/leads", url.origin);
 
   async function fail(kind: string, reason: Reason, message?: unknown) {
@@ -48,7 +49,7 @@ export async function GET(request: Request, { params }: Params) {
   }
 
   try {
-    await completeCrmConnect({ sessionUserId: userId, connectorId, code, state });
+    await completeCrmConnect({ sessionUserId: userId, connectorId, code, state, rawState: rawState ?? "" });
   } catch (err) {
     return fail(err instanceof CrmConnectError ? err.kind : "other", "oauth_failed", err);
   }

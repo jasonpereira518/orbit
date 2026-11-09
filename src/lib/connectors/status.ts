@@ -17,6 +17,7 @@ export const CONNECTOR_STATUS_LOOKUP_IDS = [
   "zapier",
   "granola",
   "hubspot",
+  "salesforce",
 ] as const;
 
 export type ConnectorStatusId = (typeof CONNECTOR_STATUS_LOOKUP_IDS)[number];

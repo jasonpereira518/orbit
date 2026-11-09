@@ -20,7 +20,7 @@ import { connectorLeaseHeld, markConnectorSyncResult, saveConnectorCursor } from
 import { ConnectorNeedsReauthError } from "@/lib/connectors/auth-errors";
 import { openConnectorAuth, type ConnectorAuthDeps } from "@/lib/connectors/token";
 import { persistCrmPage } from "@/lib/crm/persist";
-import type { CrmPerson } from "@/lib/crm/types";
+import type { CrmPerson, CrmSyncResult } from "@/lib/crm/types";
 import { getEntitlements } from "@/lib/entitlements";
 import { finalizeIngest, openIngestContext, type IngestContext } from "@/lib/ingest/events";
 import { HubspotApiError, findHubspotOwner, introspectHubspotToken, searchHubspotContacts } from "./api";
@@ -45,21 +45,14 @@ export type HubspotSyncDeps = {
   auth?: ConnectorAuthDeps;
 };
 
-export type HubspotSyncResult = {
-  outcome: "complete" | "partial" | "needs_reauth" | "stopped";
-  pages: number;
-  records: number;
-  contactsCreated: number;
-  leadsCreated: number;
-  blocked: number;
-  message?: string;
-};
+export type HubspotSyncResult = CrmSyncResult;
 
 const NOT_ENTITLED = "HubSpot sync is on Orbit Pro and Lifetime — upgrade to keep it running";
 const NO_OWNER =
   "HubSpot has no owner record for the person who connected, so no contacts are assigned to you — ask a HubSpot admin to add you as a user, then sync again";
 const NOBODY = "HubSpot didn’t say who connected — reconnect HubSpot";
-const LEASE_LOST = "HubSpot’s connection changed during the sync";
+// Starts "HubSpot " so `crmErrorLine` shows it, not the generic line.
+const LEASE_LOST = "HubSpot was reconnected or disconnected during the sync — nothing more was saved";
 
 export async function syncHubspot(
   conn: ClaimedConnectorConnection,
@@ -71,13 +64,17 @@ export async function syncHubspot(
   const started = now().getTime();
   const result: HubspotSyncResult = { outcome: "complete", pages: 0, records: 0, contactsCreated: 0, leadsCreated: 0, blocked: 0 };
 
-  const stop = async (message: string): Promise<HubspotSyncResult> => {
-    await markConnectorSyncResult(conn.id, { ok: false, error: message, retryable: false });
-    return { ...result, outcome: "stopped", message };
-  };
+  const holdsLease = () => connectorLeaseHeld(conn.id, conn.leaseStartedAt);
   // Nothing recorded: the row is gone, or belongs to a newer run.
   const leaseLost = (): HubspotSyncResult => ({ ...result, outcome: "stopped", message: LEASE_LOST });
-  const holdsLease = () => connectorLeaseHeld(conn.id, conn.leaseStartedAt);
+  // A stop disarms the row — so it checks the lease first, like every other write (Ruling 12b).
+  const stop = async (message: string): Promise<HubspotSyncResult> => {
+    if (!(await holdsLease())) return leaseLost();
+    await markConnectorSyncResult(conn.id, { ok: false, error: message, retryable: false }, undefined, {
+      leaseStartedAt: conn.leaseStartedAt,
+    });
+    return { ...result, outcome: "stopped", message };
+  };
 
   const entitlements = await getEntitlements(conn.userId);
   if (!entitlements.canUseCrm) return stop(NOT_ENTITLED);
@@ -106,7 +103,7 @@ export async function syncHubspot(
     const who: HubspotIdentity = identity;
 
     let window = windowFromCursor(cursor, now());
-    await saveConnectorCursor(conn.id, cursorFromWindow(window, who));
+    await saveConnectorCursor(conn.id, cursorFromWindow(window, who), { leaseStartedAt: conn.leaseStartedAt });
 
     // Opened on the first page that has someone in it: it reads the person's whole contact
     // list, which a run that finds nothing new has no use for.
@@ -144,7 +141,7 @@ export async function syncHubspot(
         }
         const step = advanceWindow(window, { maxModified, nextAfter: page.nextAfter }, now());
         window = step.window;
-        await saveConnectorCursor(conn.id, cursorFromWindow(window, who));
+        await saveConnectorCursor(conn.id, cursorFromWindow(window, who), { leaseStartedAt: conn.leaseStartedAt });
         if (step.done) {
           done = true;
           break;
@@ -156,11 +153,12 @@ export async function syncHubspot(
     }
 
     if (lost || !(await holdsLease())) return leaseLost();
-    await markConnectorSyncResult(conn.id, {
-      ok: true,
-      cursor: cursorFromWindow(window, who),
-      ...(done ? {} : { nextSyncAt: now() }),
-    });
+    await markConnectorSyncResult(
+      conn.id,
+      { ok: true, cursor: cursorFromWindow(window, who), ...(done ? {} : { nextSyncAt: now() }) },
+      undefined,
+      { leaseStartedAt: conn.leaseStartedAt }
+    );
     return { ...result, outcome: done ? "complete" : "partial" };
   } catch (err) {
     if (err instanceof ConnectorNeedsReauthError) return { ...result, outcome: "needs_reauth", message: err.message };

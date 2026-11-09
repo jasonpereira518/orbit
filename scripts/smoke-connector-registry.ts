@@ -25,6 +25,7 @@ import {
 } from "../src/lib/connectors/registry";
 import { CONNECTOR_SYNCS, resolveConnectorWithSync } from "../src/lib/connectors/syncs";
 import { HUBSPOT_SCOPES } from "../src/lib/crm/hubspot/mapping";
+import { SALESFORCE_SCOPES } from "../src/lib/crm/salesforce/mapping";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -229,6 +230,20 @@ check(
 check(
   "HubSpot lists only what P4 really does (reads people)",
   JSON.stringify(connectorById("hubspot")?.capabilities.map((c) => c.id)) === JSON.stringify(["syncPeople"])
+);
+
+check(
+  "Salesforce is gated on the crm entitlement, not sync",
+  connectorById("salesforce")?.entitlement === "crm",
+  String(connectorById("salesforce")?.entitlement)
+);
+check(
+  "Salesforce's syncPeople asks for exactly the scopes the sync uses",
+  JSON.stringify(connectorById("salesforce")?.capabilities.find((c) => c.id === "syncPeople")?.scopes) === JSON.stringify([...SALESFORCE_SCOPES])
+);
+check(
+  "Salesforce lists only what P5 really does (reads people)",
+  JSON.stringify(connectorById("salesforce")?.capabilities.map((c) => c.id)) === JSON.stringify(["syncPeople"])
 );
 
 if (failures > 0) {

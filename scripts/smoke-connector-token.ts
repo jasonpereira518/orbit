@@ -12,6 +12,7 @@ import { getDb } from "../src/db";
 import { connectorConnections } from "../src/db/schema";
 import {
   claimConnectorConnectionForUser,
+  updateConnectorTokens,
   upsertConnectorConnection,
 } from "../src/lib/connectors/connections";
 import { OAuthTokenError, type OAuthTokens } from "../src/lib/connectors/oauth";
@@ -19,7 +20,9 @@ import {
   ConnectorAuthError,
   ConnectorNeedsReauthError,
   openConnectorAuth,
+  reconnectLine,
 } from "../src/lib/connectors/token";
+import { crmErrorLine } from "../src/lib/crm/types";
 import { decryptOrNull } from "../src/lib/crypto";
 
 let failures = 0;
@@ -30,19 +33,26 @@ function check(label: string, ok: boolean, detail = "") {
 
 const USER = "smoke-connector-token";
 
-async function fresh(opts: { expiresInMs: number | null; refreshToken?: string | null }) {
+async function fresh(opts: {
+  expiresInMs: number | null;
+  refreshToken?: string | null;
+  connectorId?: string;
+  instanceUrl?: string | null;
+}) {
+  const connectorId = opts.connectorId ?? "hubspot";
   const db = await getDb();
   await db.delete(connectorConnections).where(eq(connectorConnections.userId, USER));
   await upsertConnectorConnection({
     userId: USER,
-    connectorId: "hubspot",
+    connectorId,
     authKind: "oauth2",
     accessToken: "access-old",
     refreshToken: opts.refreshToken === undefined ? "refresh-old" : opts.refreshToken,
     tokenExpiresAt: opts.expiresInMs === null ? null : new Date(Date.now() + opts.expiresInMs),
     nextSyncAt: null,
+    instanceUrl: opts.instanceUrl,
   });
-  const conn = await claimConnectorConnectionForUser(USER, "hubspot");
+  const conn = await claimConnectorConnectionForUser(USER, connectorId);
   if (!conn) throw new Error("setup: could not claim");
   return conn;
 }
@@ -140,6 +150,38 @@ run(async () => {
     check("and is disarmed", stored?.nextSyncAt === null);
   }
 
+  console.log("\nthe stored reason is Orbit's sentence, never the token endpoint's text");
+  {
+    const conn = await fresh({ expiresInMs: 30_000 });
+    const r = refresher(new OAuthTokenError("BAD_REFRESH_TOKEN: raw provider words", true));
+    await openConnectorAuth(conn, { refresh: r.refresh }).call(async () => "never").catch(() => null);
+    const stored = await row();
+    check(
+      "a CRM's line starts with its name, so the card shows it",
+      stored?.syncError === "HubSpot stopped accepting Orbit’s sign-in — reconnect to keep syncing" &&
+        crmErrorLine(stored.syncError) === stored.syncError,
+      String(stored?.syncError)
+    );
+    check("no provider text is stored", !(stored?.syncError ?? "").includes("BAD_REFRESH_TOKEN"));
+    check("any other connector gets the generic line", reconnectLine("some-other") === "Reconnect to keep syncing");
+  }
+
+  console.log("\na run that lost its lease writes no tokens and no needs_reauth");
+  {
+    const conn = await fresh({ expiresInMs: 30_000 });
+    // Someone else holds the row now (a reconnect, a disconnect's claim, a later run).
+    await claimConnectorConnectionForUser(USER, conn.connectorId, new Date(Date.now() + 3_600_000));
+    const refused = refresher(new OAuthTokenError("BAD_REFRESH_TOKEN", true));
+    await openConnectorAuth(conn, { refresh: refused.refresh }).call(async () => "never").catch(() => null);
+    check("the row is not marked needs_reauth", (await row())?.status === "active", String((await row())?.status));
+    const renewed = refresher({ ...NEW_TOKENS, refreshToken: "refresh-stale" });
+    const conn2 = { ...conn };
+    await openConnectorAuth(conn2, { refresh: renewed.refresh }).call(async () => "ok");
+    const stored = await row();
+    check("the stale refresh's access token is not stored", decryptOrNull(stored?.accessTokenEncrypted ?? null) === "access-old");
+    check("nor its refresh token", decryptOrNull(stored?.refreshTokenEncrypted ?? null) === "refresh-old");
+  }
+
   console.log("\na provider having a bad minute does NOT mean reconnect");
   {
     const conn = await fresh({ expiresInMs: 30_000 });
@@ -166,6 +208,68 @@ run(async () => {
     }
     check("it throws ConnectorNeedsReauthError", caught instanceof ConnectorNeedsReauthError);
     check("without trying to refresh", r.calls.length === 0);
+  }
+
+  console.log("\na Salesforce refresh carries the stored instance host and adopts a moved one");
+  {
+    const conn = await fresh({
+      expiresInMs: null,
+      connectorId: "salesforce",
+      instanceUrl: "https://acme.my.salesforce.com",
+    });
+    const seenInstanceUrls: Array<string | null> = [];
+    const persisted: Array<Parameters<typeof updateConnectorTokens>[1]> = [];
+    const refresh = async (_id: string, _refreshToken: string, instanceUrl: string | null) => {
+      seenInstanceUrls.push(instanceUrl);
+      return {
+        accessToken: "new",
+        refreshToken: null,
+        expiresAt: null,
+        scopes: null,
+        extra: { instance_url: "https://acme2.my.salesforce.com" },
+      };
+    };
+    const persist = async (id: string, tokens: Parameters<typeof updateConnectorTokens>[1]) => {
+      persisted.push(tokens);
+      return updateConnectorTokens(id, tokens);
+    };
+    const seen: string[] = [];
+    await openConnectorAuth(conn, { refresh, persist }).call(async (t) => {
+      seen.push(t);
+      if (t === "access-old") throw new ConnectorAuthError("401");
+    });
+    check("the refresh received the stored instance host", seenInstanceUrls[0] === "https://acme.my.salesforce.com", String(seenInstanceUrls[0]));
+    check("persist got the new instance host", persisted[0]?.instanceUrl === "https://acme2.my.salesforce.com", String(persisted[0]?.instanceUrl));
+    check("persist got a null refresh token", persisted[0]?.refreshToken === null);
+    check("the connection's instance host is now the new one", conn.instanceUrl === "https://acme2.my.salesforce.com");
+    check("the refresh token in memory is unchanged", conn.refreshToken === "refresh-old");
+    check("the second call used the new token", seen[1] === "new", seen.join(","));
+  }
+
+  console.log("\nan untrusted moved instance host is never adopted");
+  {
+    const conn = await fresh({
+      expiresInMs: null,
+      connectorId: "salesforce",
+      instanceUrl: "https://acme.my.salesforce.com",
+    });
+    const persisted: Array<Parameters<typeof updateConnectorTokens>[1]> = [];
+    const refresh = async () => ({
+      accessToken: "new",
+      refreshToken: null,
+      expiresAt: null,
+      scopes: null,
+      extra: { instance_url: "https://evil.example" },
+    });
+    const persist = async (id: string, tokens: Parameters<typeof updateConnectorTokens>[1]) => {
+      persisted.push(tokens);
+      return updateConnectorTokens(id, tokens);
+    };
+    await openConnectorAuth(conn, { refresh, persist }).call(async (t) => {
+      if (t === "access-old") throw new ConnectorAuthError("401");
+    });
+    check("an untrusted moved host is persisted as null", persisted[0]?.instanceUrl === null, String(persisted[0]?.instanceUrl));
+    check("the connection's instance host is unchanged", conn.instanceUrl === "https://acme.my.salesforce.com");
   }
 
   const db = await getDb();

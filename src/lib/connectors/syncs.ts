@@ -15,6 +15,7 @@ import {
 } from "@/lib/connectors/registry";
 import { syncGranola } from "@/lib/connectors/granola";
 import { syncHubspot } from "@/lib/crm/hubspot/sync";
+import { syncSalesforce } from "@/lib/crm/salesforce/sync";
 
 export type ConnectorSync = (conn: ClaimedConnectorConnection) => Promise<void>;
 
@@ -26,6 +27,9 @@ export const CONNECTOR_SYNCS: Partial<Record<ConnectorId, ConnectorSync>> = {
   },
   hubspot: async (conn) => {
     await syncHubspot(conn);
+  },
+  salesforce: async (conn) => {
+    await syncSalesforce(conn);
   },
 };
 
