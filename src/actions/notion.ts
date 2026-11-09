@@ -150,7 +150,7 @@ export async function queueNotionPage(input: {
       throw reauthCopy(err);
     }
     if (page.text.trim().length <= page.title.length + 4) throw new UserFacingError(`“${page.title}” has no text to read`);
-    const outcome = await createCaptureFromText(userId, { text: page.text, label: page.title, batchGroupId: input.batchGroupId });
+    const outcome = await createCaptureFromText(userId, { text: page.text, label: page.title, batchGroupId: input.batchGroupId, provider: "notion" });
     if (outcome.status === "queued") after(() => startCaptureRuns([outcome.jobId]));
     return outcome;
   });
