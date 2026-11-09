@@ -172,7 +172,9 @@ jobs:
             range="$BASE..$HEAD"
           fi
           echo "scanning $range"
-          /tmp/gitleaks git --no-banner --redact --log-opts="$range" .
+          # --verbose prints each finding (rule, file, line, commit); --redact keeps the secret
+          # itself out of the log. Without it a failure only says "leaks found: N".
+          /tmp/gitleaks git --no-banner --redact --verbose --log-opts="$range" .
 
   # The smoke suite is ~400 scripts run one after another (PGlite is single-writer), about
   # ten minutes serially and by far the slowest job. Four machines run exactly the same
