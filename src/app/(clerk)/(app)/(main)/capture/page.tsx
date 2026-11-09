@@ -17,7 +17,7 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 import { findEventById } from "@/lib/calendar-events";
 import { userTimeZone } from "@/lib/meeting-context";
 import { ymdInZone } from "@/lib/reminder-due-bucket";
-import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
+import { CHAT_IMPORTS_SURFACE_KEY, CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import { getEventForUser, loadAttendeesForUser } from "@/lib/events/store";
 
@@ -134,6 +134,10 @@ export default async function CapturePage({
   const cloudNotesPromise = cloudLivePromise
     .then((live) => (live ? getCloudNotesState() : null))
     .catch(() => null);
+  // Whether a dropped chat export has a card to go to.
+  const chatImportsPromise = userIdPromise
+    .then((userId) => isSurfaceLive(userId, CHAT_IMPORTS_SURFACE_KEY))
+    .catch(() => false);
 
   let contactId: string | null = null;
   let contactName: string | null = null;
@@ -172,6 +176,7 @@ export default async function CapturePage({
   const jobs = await jobsPromise;
   const ignoredCount = await ignoredPromise;
   const cloudNotes = await cloudNotesPromise;
+  const chatImports = await chatImportsPromise;
   const showImports = await importsLivePromise;
   const defaultMode: CaptureMode = modeParam || "messy";
   // The gate's own answer for the engine chain in `transcribeAudioWithAI` (Whisper or
@@ -202,6 +207,7 @@ export default async function CapturePage({
         canUseSync={canUseSync}
         cloudNotes={cloudNotes}
         openCloudReview={params.review === "1"}
+        chatImports={chatImports}
         showImports={showImports}
         drive={{
           apiKey: process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? null,

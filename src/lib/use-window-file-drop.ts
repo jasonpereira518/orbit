@@ -33,6 +33,13 @@ import {
  * the count never returns to zero. Left there, the overlay covers the page forever and the only
  * way out is a reload. `dragover` fires continuously while a drag is live, so its absence is a
  * reliable "the drag is gone" signal, and the watchdog clears on that.
+ *
+ * ## Drops a zone already took
+ *
+ * The listeners are on `window`, so they run after every element's own handler. A page with
+ * drop zones of its own (Capture's Notes Library, Messy Notes, the notes sorter) cancels the
+ * drop there; `defaultPrevented` is how this hook knows the file has been taken and leaves it.
+ * A link dragged onto a text field is the field's too.
  */
 
 /** How long without a `dragover` before we conclude the drag is gone. */
@@ -139,13 +146,16 @@ export function useWindowFileDrop({
     };
 
     const onDragOver = (e: DragEvent) => {
-      if (!payload(e.dataTransfer)) return;
+      const carried = payload(e.dataTransfer);
+      if (!carried) return;
+      lastDragOverAt.current = Date.now();
+      // A field's own text drop: cancelling dragover here would refuse it.
+      if (carried === "text" && isEditableTarget(e.target)) return;
       // Unconditional, even when disabled: the alternative is the browser navigating away.
       e.preventDefault();
       if (e.dataTransfer) {
         e.dataTransfer.dropEffect = disabledRef.current ? "none" : "copy";
       }
-      lastDragOverAt.current = Date.now();
     };
 
     const onDragLeave = (e: DragEvent) => {
@@ -160,9 +170,10 @@ export function useWindowFileDrop({
     const onDrop = (e: DragEvent) => {
       const carried = payload(e.dataTransfer);
       if (!carried) return;
-      e.preventDefault();
+      const taken = e.defaultPrevented || (carried === "text" && isEditableTarget(e.target));
+      if (!taken) e.preventDefault();
       reset();
-      if (disabledRef.current) return;
+      if (disabledRef.current || taken) return;
 
       if (carried === "text") {
         // Read synchronously, for the same reason as the files below.
@@ -249,7 +260,8 @@ export function useWindowFilePaste({
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      if (disabledRef.current) return;
+      // A field or zone that handled the paste itself.
+      if (disabledRef.current || e.defaultPrevented) return;
       const files = Array.from(e.clipboardData?.files ?? []);
       if (!files.length) {
         const text = e.clipboardData?.getData("text/plain") ?? "";
@@ -258,8 +270,13 @@ export function useWindowFilePaste({
         }
         return;
       }
-      e.preventDefault();
-      onFilesRef.current(files);
+      // Decided a task later, not now: a zone may listen on `window` too (Messy Notes' scan
+      // paste), and which of us runs first follows mount order, which a tab switch flips. By
+      // the next task every listener has run, and a cancelled paste is one somebody took —
+      // so this one must not cancel it itself.
+      window.setTimeout(() => {
+        if (!e.defaultPrevented && !disabledRef.current) onFilesRef.current(files);
+      });
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
