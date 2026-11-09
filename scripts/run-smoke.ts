@@ -230,6 +230,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-event-notes-sync": "pure",
   "smoke-event-professional-filter": "pure",
   "smoke-event-recommendations": "pure",
+  "smoke-leads-page": "pure",
   "smoke-closeness-materialized": "pure",
   "smoke-comet-cap": "pure",
   "smoke-constellation-eligibility": "pure",

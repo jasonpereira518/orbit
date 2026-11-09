@@ -158,6 +158,14 @@ const PAGES: Surface[] = [
     comingSoon: true,
   },
   {
+    key: "page.leads",
+    kind: "page",
+    label: "Leads",
+    description: "Warm paths to the people you want to reach, through your teammates' networks.",
+    href: "/leads",
+    comingSoon: true,
+  },
+  {
     key: "page.knowledge",
     kind: "page",
     label: "Knowledge",

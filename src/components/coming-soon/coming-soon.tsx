@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  Handshake,
   PartyPopper,
   Pause,
   Play,
@@ -52,6 +53,11 @@ const FEATURES: Record<string, Feature> = {
     icon: Send,
     teaser:
       "Campaigns that help you reach the right people at the right moment, in your own voice. It's still in the dry dock.",
+  },
+  "page.leads": {
+    icon: Handshake,
+    teaser:
+      "Who on your team already knows the person you want to reach, and how well — so you ask for an intro instead of sending a cold email. Still in the scaffolding.",
   },
 };
 
