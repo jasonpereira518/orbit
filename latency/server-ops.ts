@@ -60,7 +60,7 @@ async function buildOps(): Promise<Op[]> {
   const { loadGraphData } = await import("../src/lib/graph-data");
   const { loadNotificationPanel } = await import("../src/lib/notification-panel");
   const { loadAppPulse } = await import("../src/lib/app-pulse");
-  const { loadKnowledgeBase } = await import("../src/lib/knowledge-base");
+  const { searchKnowledgeContent } = await import("../src/lib/knowledge-search");
   const { loadKnowledgePeople } = await import("../src/lib/knowledge-people");
   const { listContactsPage } = await import("../src/lib/contacts-page-query");
   const { hybridSearchContacts } = await import("../src/lib/hybrid-search");
@@ -138,7 +138,7 @@ async function buildOps(): Promise<Op[]> {
     { group: "page", name: "reminders rail counts", run: () => queryReminderRailCounts(db, USER, { tz: "UTC", inboxId: null }) },
     { group: "page", name: "reminders page today", run: () => queryRemindersPage(db, USER, { view: "today", listId: null, limit: 50, tz: "UTC" } as never, { inboxId: null }) },
     { group: "page", name: "reminders page upcoming", run: () => queryRemindersPage(db, USER, { view: "upcoming", listId: null, limit: 50, tz: "UTC" } as never, { inboxId: null }) },
-    { group: "page", name: "knowledge base", run: () => loadKnowledgeBase(USER) },
+    { group: "page", name: "knowledge search", run: () => searchKnowledgeContent(USER, "dinner") },
     { group: "page", name: "knowledge people", run: () => loadKnowledgePeople(USER) },
     { group: "page", name: "chat threads list", run: () => actionsChat.listChatThreads() },
     { group: "page", name: "chat suggestions", run: () => actionsChat.getChatSuggestions() },
