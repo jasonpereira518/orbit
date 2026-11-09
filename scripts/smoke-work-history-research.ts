@@ -12,7 +12,8 @@ import "./smoke/_env";
 
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, rateLimitBuckets } from "../src/db/schema";
+import { contacts, publicWorkHistory, rateLimitBuckets } from "../src/db/schema";
+import { readPublicWorkHistory, sweepPublicWorkHistory, writePublicWorkHistory } from "../src/lib/public-work-history";
 import { anthropicWebSearchToolType } from "../src/lib/ai";
 import { RateLimitedError } from "../src/lib/rate-limit";
 import { aiOperationThinking, aiOperationTier } from "../src/lib/ai-operations";
@@ -39,6 +40,8 @@ async function reset() {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, `%${USER}%`));
+  // A shared history left by an earlier run would answer before the fake researcher is asked.
+  await db.delete(publicWorkHistory);
 }
 
 async function makeContact(fullName: string, linkedinUrl: string | null) {
@@ -315,6 +318,42 @@ async function main() {
   check("Sonnet 4.5 gets the basic search", anthropicWebSearchToolType("claude-sonnet-4-5") === "web_search_20250305");
 
   await reset();
+  // --- the shared public history (public-work-history.ts) ---------------------------------
+  const OTHER = `${USER}-other`;
+  const source = await makeContact("Twin Source", "https://www.linkedin.com/in/twin-source");
+  await researchContactWorkHistory(USER, source, {
+    force: true,
+    researcher: fake({ experiences: [role("Stripe", { isCurrent: true })] }).researcher,
+  });
+  const [twin] = await db
+    .insert(contacts)
+    .values({ userId: OTHER, fullName: "Twin Source", linkedinUrl: "https://www.linkedin.com/in/twin-source", company: "Stripe", title: "PM" })
+    .returning();
+  const secondAccount = fake({ experiences: [role("Nope", { isCurrent: true })] });
+  const reused = await researchContactWorkHistory(OTHER, twin!.id, { researcher: secondAccount.researcher });
+  check(
+    "a second account with the same profile gets the shared history, with no search",
+    reused === "saved" && secondAccount.asked.length === 0,
+    reused,
+  );
+  const lone = await makeContact("Lone Wolf", "https://www.linkedin.com/in/lone-wolf");
+  await researchContactWorkHistory(USER, lone, { researcher: fake({ confident: false, experiences: [role("Somewhere")] }).researcher });
+  check("an unsure answer is never shared", (await readPublicWorkHistory("lone-wolf", 30)) === null);
+  await db.insert(publicWorkHistory).values({ slug: "blocked-one", answer: null, blockedAt: new Date(), blockedBy: "smoke-admin" });
+  await writePublicWorkHistory("blocked-one", { headline: null, experiences: [role("Leak", { isCurrent: true })], sources: [] });
+  const blockedRow = await db.query.publicWorkHistory.findFirst({ where: eq(publicWorkHistory.slug, "blocked-one") });
+  check("a blocked profile is never served or rewritten", (await readPublicWorkHistory("blocked-one", 30)) === null && blockedRow?.answer === null);
+  await db.insert(publicWorkHistory).values({ slug: "nobody-has-them", answer: { headline: null, experiences: [role("Gone")], sources: [] } });
+  await sweepPublicWorkHistory();
+  const left = new Set((await db.select({ slug: publicWorkHistory.slug }).from(publicWorkHistory)).map((r) => r.slug));
+  check(
+    "the sweep drops a profile no account has, keeps a known one and the takedown",
+    !left.has("nobody-has-them") && left.has("twin-source") && left.has("blocked-one"),
+    [...left].join(),
+  );
+  await db.delete(contacts).where(eq(contacts.userId, OTHER));
+  await db.delete(publicWorkHistory);
+
   console.log("\nsmoke-work-history-research: all checks passed");
   process.exit(0);
 }

@@ -77,6 +77,11 @@ export function buildSecurityHeaders(options: {
       "https://*.ingest.us.sentry.io",
       "https://va.vercel-scripts.com",
       "https://vitals.vercel-insights.com",
+      // Clerk's telemetry beacon. Blocking it does not break sign-in, but it is the only
+      // violation real browsers report (6 rows since the policy went report-only), so an
+      // enforced policy would keep reporting a failure that is not one. Allow it and the
+      // report stream is empty.
+      "https://clerk-telemetry.com",
       // Google Picker for Drive imports
       "https://www.googleapis.com",
       // Google Identity Services (host-wide, as Google advises for connect-src)

@@ -1,4 +1,5 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { revealUnsubscribeToken } from "@/lib/interest-list-tokens";
 import { getDb } from "@/db";
 import {
   broadcastRecipients,
@@ -154,14 +155,21 @@ export async function audienceFor(): Promise<
   Array<{ id: string; email: string; unsubscribeToken: string }>
 > {
   const db = await getDb();
-  return db
+  const rows = await db
     .select({
       id: interestListSignups.id,
       email: interestListSignups.email,
       unsubscribeToken: interestListSignups.unsubscribeToken,
+      unsubscribeTokenEncrypted: interestListSignups.unsubscribeTokenEncrypted,
     })
     .from(interestListSignups)
     .where(audienceWhere());
+  // Stored hashed and encrypted (audit L-05); a row whose token cannot be read is skipped
+  // rather than mailed a link that would not work.
+  return rows.flatMap((r) => {
+    const unsubscribeToken = revealUnsubscribeToken(r);
+    return unsubscribeToken ? [{ id: r.id, email: r.email, unsubscribeToken }] : [];
+  });
 }
 
 /** The size of `audienceFor()`, for the console, without loading every row to count them. */

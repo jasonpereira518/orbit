@@ -115,6 +115,7 @@
 @source "../components/warp/warp-provider.tsx";
 @source "../db/index.ts";
 @source "../db/schema.ts";
+@source "../lib/account-audit.ts";
 @source "../lib/action-items.ts";
 @source "../lib/admin-audit.ts";
 @source "../lib/admin.ts";
@@ -153,6 +154,7 @@
 @source "../lib/clerk-session-hint.ts";
 @source "../lib/client-events.ts";
 @source "../lib/client-ip.ts";
+@source "../lib/closeness-cohort.ts";
 @source "../lib/closeness-evidence.ts";
 @source "../lib/closeness-materialize.ts";
 @source "../lib/closeness.ts";
@@ -168,16 +170,20 @@
 @source "../lib/contact-brief.ts";
 @source "../lib/contact-identity.ts";
 @source "../lib/contact-input.ts";
+@source "../lib/contact-merge.ts";
 @source "../lib/contact-message-submit.ts";
 @source "../lib/contact-message.ts";
 @source "../lib/contact-profile-format.ts";
 @source "../lib/contact-profile.ts";
+@source "../lib/contact-resolve.ts";
 @source "../lib/contact-writes.ts";
 @source "../lib/credits/grants.ts";
 @source "../lib/credits/ledger.ts";
+@source "../lib/crypto-rewrap.ts";
 @source "../lib/crypto.ts";
 @source "../lib/dates.ts";
 @source "../lib/decisions/catalog.ts";
+@source "../lib/decisions/duplicates.ts";
 @source "../lib/decisions/engine.ts";
 @source "../lib/decisions/gates.ts";
 @source "../lib/decisions/jev.ts";
@@ -196,6 +202,8 @@
 @source "../lib/demo-data/seed.ts";
 @source "../lib/demo-data/student.ts";
 @source "../lib/demo-workspace.ts";
+@source "../lib/dictation.ts";
+@source "../lib/duplicate-count-memo.ts";
 @source "../lib/duplicates.ts";
 @source "../lib/entitlements.ts";
 @source "../lib/error-events.ts";
@@ -205,6 +213,7 @@
 @source "../lib/gate-events.ts";
 @source "../lib/google-scopes.ts";
 @source "../lib/ics.ts";
+@source "../lib/input/text.ts";
 @source "../lib/interaction-date.ts";
 @source "../lib/interaction-provenance.ts";
 @source "../lib/interaction-types.ts";
@@ -212,6 +221,7 @@
 @source "../lib/interest-list-join.ts";
 @source "../lib/interest-list-schema.ts";
 @source "../lib/interest-list-ticket.ts";
+@source "../lib/interest-list-tokens.ts";
 @source "../lib/interest-list.ts";
 @source "../lib/interest-progress-store.ts";
 @source "../lib/internal-auth.ts";
@@ -247,6 +257,7 @@
 @source "../lib/plans/plan-rules.ts";
 @source "../lib/product-event-schemas.ts";
 @source "../lib/product-events.ts";
+@source "../lib/provider-connections.ts";
 @source "../lib/query-counter.ts";
 @source "../lib/rate-limit.ts";
 @source "../lib/recruiters.ts";
@@ -256,6 +267,7 @@
 @source "../lib/safe-links.ts";
 @source "../lib/search.ts";
 @source "../lib/secret-patterns.ts";
+@source "../lib/secrets.ts";
 @source "../lib/sentry-browser.ts";
 @source "../lib/sentry-lazy.ts";
 @source "../lib/sentry-scrub.ts";

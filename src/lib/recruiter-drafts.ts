@@ -1,6 +1,7 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
 import { cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import { guardDraftOutput } from "@/lib/draft-output";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 
 /**
@@ -89,6 +90,9 @@ export async function generateRecruiterDraft(
   userId: string,
   input: RecruiterDraftInput
 ): Promise<GeneratedRecruiterDraft> {
+  // One model call, one unit of `draft` (audit M-07). In a batch, a draft past the limit
+  // comes back as that draft's own error and the rest of the batch is kept.
+  await consumeBucket("draft", userId, RATE_LIMITS.draft);
   const intent = RECRUITER_INTENTS[input.intent];
 
   // The recruiter row is shared across accounts and its fields, like the companies and roles,

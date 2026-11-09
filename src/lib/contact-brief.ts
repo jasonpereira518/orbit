@@ -17,6 +17,7 @@ import { getRecentMoveLines } from "@/lib/job-changes";
 import { OPEN_OPPORTUNITY_STATUSES, opportunityKindLabel } from "@/lib/opportunity-kinds";
 import { isoDay } from "@/lib/suggested-reminder-utils";
 import { reportUnlessQuiet } from "@/lib/report-error";
+import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { listActiveGoalsForUser } from "@/lib/user-goals";
 
@@ -316,7 +317,15 @@ function buildDeterministicSummary(input: {
 export async function generateAndStoreContactBrief(
   userId: string,
   contactId: string,
-  options?: { force?: boolean; engines?: Engines }
+  options?: {
+    force?: boolean;
+    engines?: Engines;
+    /**
+     * False for a caller already metered by its own bucket (the Knowledge page's refresh,
+     * a capture). Everything else spends the `brief` bucket when the model is asked (M-07).
+     */
+    meter?: boolean;
+  }
 ): Promise<{ summary: string | null; standing: string | null; nextStep?: string | null; aiError: string | null } | null> {
   const db = await getDb();
   // Projected to exactly what the prompt, the deterministic fallback and the stored brief
@@ -570,6 +579,10 @@ export async function generateAndStoreContactBrief(
   let goalFit: GoalFit | null = null;
 
   try {
+    // Charged only here, where the model is about to be asked: the hash match and the gate
+    // above are free. Past the limit this lands in the catch below like a refused key — the
+    // model-written brief on file is kept, or the plain-language one is written.
+    if (options?.meter !== false) await consumeBucket("brief", userId, RATE_LIMITS.brief);
     // The account is opened once and handed to the call. This used to mint a second grant just to
     // read the model name (`getAiConfig`): on Orbit's key that placed a credit hold nothing ever
     // settled, so each brief reserved its estimate twice for ten minutes, and near an empty
@@ -596,7 +609,7 @@ export async function generateAndStoreContactBrief(
       ? { judged: goals.map((g) => g.id), items: sanitizeGoalFit(parsed.goal_fit, goals) }
       : null;
   } catch (err) {
-    if (isAiAccessError(err)) aiError = err.message;
+    if (isAiAccessError(err) || isRateLimitedError(err)) aiError = err.message;
     // The deterministic summary is a fine fallback, but a brief that silently never uses
     // the model is a fault worth seeing — unless the cause is the person's own key setup.
     reportUnlessQuiet(err, { where: "job.contact-brief", userId, extra: { contactId } });
