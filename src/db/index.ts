@@ -4059,6 +4059,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "jsonb DEFAULT '[]'"
   );
   await ensureColumn(client, "outreach_campaigns", "last_search_source", "text");
+  await ensureColumn(client, "outreach_campaigns", "background_job", "jsonb");
   await ensureColumn(
     client,
     "outreach_messages",
@@ -4736,6 +4737,7 @@ const alters = [
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS reply_cta text`,
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sequence_steps jsonb DEFAULT '[]'`,
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS last_search_source text`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS background_job jsonb`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS parent_message_id uuid`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS scheduled_for timestamptz`,

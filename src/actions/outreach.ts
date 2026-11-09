@@ -2,6 +2,7 @@
 
 import { and, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import {
   interactions,
@@ -1704,6 +1705,111 @@ export async function runCampaignDeepSearchAction(campaignId: string) {
   revalidatePath(`/outreach/${campaignId}`);
   revalidatePath("/outreach");
   return result;
+}
+
+/**
+ * Initiates an asynchronous background deep search so the user doesn't wait on a blocking page
+ */
+export async function triggerCampaignBackgroundSearchAction(
+  campaignId: string,
+  options?: { maxProspects?: number }
+) {
+  const userId = await requireOutreachUser();
+  await requireCampaign(userId, campaignId);
+  const db = await getDb();
+
+  // Mark job as running immediately in DB
+  await db
+    .update(outreachCampaigns)
+    .set({
+      backgroundJob: {
+        status: "running",
+        phase: "news_scan",
+        startedAt: new Date().toISOString(),
+        message: "Scanning news & scouting prospects in background...",
+      },
+      updatedAt: new Date(),
+    })
+    .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId)));
+
+  // Defer execution to background after response
+  const runTask = async () => {
+    try {
+      await runCampaignDeepSearch(userId, campaignId, options);
+    } catch {
+      // Errors are persisted to campaign.backgroundJob
+    }
+  };
+
+  try {
+    after(runTask);
+  } catch {
+    // Outside request context (e.g. CLI or test)
+    runTask();
+  }
+
+  revalidatePath(`/outreach/${campaignId}`);
+  revalidatePath("/outreach");
+
+  return {
+    ok: true,
+    started: true,
+    message: "Background deep search started. Orbit will continue scouting news and candidates.",
+  };
+}
+
+/**
+ * Checks the current background job status for a campaign
+ */
+export async function getCampaignBackgroundStatusAction(campaignId: string) {
+  const userId = await requireOutreachUser();
+  const db = await getDb();
+
+  const campaign = await db.query.outreachCampaigns.findFirst({
+    where: and(
+      eq(outreachCampaigns.id, campaignId),
+      eq(outreachCampaigns.userId, userId)
+    ),
+    columns: {
+      id: true,
+      backgroundJob: true,
+      updatedAt: true,
+    },
+  });
+
+  if (!campaign) {
+    return { status: "idle" as const };
+  }
+
+  return (
+    campaign.backgroundJob || {
+      status: "idle" as const,
+    }
+  );
+}
+
+/**
+ * Clears or cancels a background job state
+ */
+export async function clearCampaignBackgroundJobAction(campaignId: string) {
+  const userId = await requireOutreachUser();
+  const db = await getDb();
+
+  await db
+    .update(outreachCampaigns)
+    .set({
+      backgroundJob: {
+        status: "idle",
+        completedAt: new Date().toISOString(),
+      },
+      updatedAt: new Date(),
+    })
+    .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId)));
+
+  revalidatePath(`/outreach/${campaignId}`);
+  revalidatePath("/outreach");
+
+  return { ok: true };
 }
 
 /**

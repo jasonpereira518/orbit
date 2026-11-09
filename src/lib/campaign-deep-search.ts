@@ -31,181 +31,271 @@ export type DeepSearchProgress = {
 export async function runCampaignDeepSearch(
   userId: string,
   campaignId: string,
-  options?: { maxProspects?: number }
+  options?: { maxProspects?: number; includeFollowUps?: boolean }
 ): Promise<{ success: boolean; prospectsAdded: number; message: string }> {
   const db = await getDb();
 
-  // 1. Load campaign
-  const campaign = await db.query.outreachCampaigns.findFirst({
-    where: and(
-      eq(outreachCampaigns.id, campaignId),
-      eq(outreachCampaigns.userId, userId)
-    ),
-  });
-
-  if (!campaign) {
-    throw new Error("Campaign not found");
-  }
-
-  const filters = (campaign.audienceFilters || {}) as AudienceFilters;
-  const targetCompany = filters.organizationNames?.[0] || undefined;
-  const targetTitles = filters.titles?.length ? filters.titles : ["VP of Engineering", "Head of Product", "CEO", "Founder"];
-
-  // 2. Discover prospects with BrightData scraper
-  const searchResult = await searchPeopleWithBrightData(userId, {
-    titles: targetTitles,
-    company: targetCompany,
-    locations: filters.locations,
-    industries: filters.industries,
-    skills: filters.keywords ? [filters.keywords] : undefined,
-    query: campaign.audienceQuery || undefined,
-    limit: options?.maxProspects || 8,
-  });
-
-  const candidates = searchResult.candidates;
-  if (!candidates.length) {
-    return {
-      success: true,
-      prospectsAdded: 0,
-      message: "Deep search completed: no new matching prospects found.",
-    };
-  }
-
-  // 3. For each candidate's company, pull recent news & catalysts
-  const companyNewsCache = new Map<string, { headline: string; signals: string[] }>();
-
-  for (const candidate of candidates) {
-    if (!companyNewsCache.has(candidate.company)) {
-      const newsData = await scrapeCompanyNewsWithBrightData(candidate.company);
-      companyNewsCache.set(candidate.company, {
-        headline: newsData.news[0]?.headline || `${candidate.company} expanding product team`,
-        signals: newsData.signals || ["Active Market Presence"],
-      });
-    }
-  }
-
-  // 4. Batch upsert prospects into campaign
-  const newProspectIds: string[] = [];
-
-  for (let idx = 0; idx < candidates.length; idx++) {
-    const candidate = candidates[idx];
-    const companyData = companyNewsCache.get(candidate.company);
-    const externalId = `deep-search-${candidate.id}-${Date.now()}-${idx}`;
-    const email = `${candidate.fullName.toLowerCase().replace(/[^a-z]/g, "")}@${candidate.company.toLowerCase().replace(/[^a-z]/g, "")}.com`;
-    const newsContext = companyData?.headline || candidate.recentNews || null;
-    const signals = companyData?.signals || candidate.signals || [];
-
-    const effectiveness = calculateProspectEffectiveness({
-      title: candidate.title,
-      company: candidate.company,
-      email,
-      linkedinUrl: candidate.linkedinUrl,
-      newsContext,
-      signals,
-      targetTitles,
+  try {
+    // 1. Load campaign
+    const campaign = await db.query.outreachCampaigns.findFirst({
+      where: and(
+        eq(outreachCampaigns.id, campaignId),
+        eq(outreachCampaigns.userId, userId)
+      ),
     });
 
-    const inserted = await db
-      .insert(outreachProspects)
-      .values({
-        campaignId,
-        externalId,
-        fullName: candidate.fullName,
+    if (!campaign) {
+      throw new Error("Campaign not found");
+    }
+
+    // Set initial background status
+    await db
+      .update(outreachCampaigns)
+      .set({
+        backgroundJob: {
+          status: "running",
+          phase: "news_scan",
+          startedAt: new Date().toISOString(),
+          message: "Scanning target companies & recent news catalysts...",
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachCampaigns.id, campaignId));
+
+    const filters = (campaign.audienceFilters || {}) as AudienceFilters;
+    const targetCompany = filters.organizationNames?.[0] || undefined;
+    const targetTitles = filters.titles?.length
+      ? filters.titles
+      : ["VP of Engineering", "Head of Product", "CEO", "Founder", "Director of Business Development"];
+
+    // 2. Discover prospects with BrightData scraper
+    await db
+      .update(outreachCampaigns)
+      .set({
+        backgroundJob: {
+          status: "running",
+          phase: "people_discovery",
+          startedAt: new Date().toISOString(),
+          message: "Scouting relevant decision-makers with BrightData...",
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachCampaigns.id, campaignId));
+
+    const searchResult = await searchPeopleWithBrightData(userId, {
+      titles: targetTitles,
+      company: targetCompany,
+      locations: filters.locations,
+      industries: filters.industries,
+      skills: filters.keywords ? [filters.keywords] : undefined,
+      query: campaign.audienceQuery || undefined,
+      limit: options?.maxProspects || 8,
+    });
+
+    const candidates = searchResult.candidates;
+    const isDemo = !searchResult.isLive || candidates.some((c) => c.source === "preview_simulation");
+
+    if (!candidates.length) {
+      const msg = "Deep search completed: no new matching prospects found.";
+      await db
+        .update(outreachCampaigns)
+        .set({
+          backgroundJob: {
+            status: "completed",
+            phase: "completed",
+            completedAt: new Date().toISOString(),
+            prospectsAdded: 0,
+            message: msg,
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(outreachCampaigns.id, campaignId));
+
+      return {
+        success: true,
+        prospectsAdded: 0,
+        message: msg,
+      };
+    }
+
+    // 3. For each candidate's company, pull recent news & catalysts
+    const companyNewsCache = new Map<string, { headline: string; signals: string[] }>();
+
+    for (const candidate of candidates) {
+      if (!companyNewsCache.has(candidate.company)) {
+        const newsData = await scrapeCompanyNewsWithBrightData(candidate.company);
+        companyNewsCache.set(candidate.company, {
+          headline: newsData.news[0]?.headline || `${candidate.company} expanding product & leadership team`,
+          signals: newsData.signals || ["Active Market Presence", "Recent Hiring Initiative"],
+        });
+      }
+    }
+
+    // 4. Batch upsert prospects into campaign
+    const newProspectIds: string[] = [];
+
+    for (let idx = 0; idx < candidates.length; idx++) {
+      const candidate = candidates[idx];
+      const companyData = companyNewsCache.get(candidate.company);
+      const externalId = `deep-search-${candidate.id}-${Date.now()}-${idx}`;
+      const cleanCompany = (candidate.company || "company").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const cleanName = candidate.fullName.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const email = isDemo
+        ? `${cleanName}@${cleanCompany}.example.com`
+        : (((candidate as any).email as string | undefined) || `${cleanName}@${cleanCompany}.com`);
+      const newsContext = companyData?.headline || candidate.recentNews || null;
+      const signals = companyData?.signals || candidate.signals || [];
+
+      const effectiveness = calculateProspectEffectiveness({
         title: candidate.title,
         company: candidate.company,
         email,
         linkedinUrl: candidate.linkedinUrl,
-        location: candidate.location,
-        status: "selected", // Ready for outreach
-        enrichment: {
-          avatarUrl: candidate.avatarUrl,
-          headline: candidate.summary,
-          summary: candidate.summary,
-          newsContext,
-          signals,
-          matchReason: candidate.matchReason,
-          source: candidate.source,
-          deepSearchCatalogedAt: new Date().toISOString(),
-          effectivenessScore: effectiveness.score,
-          priorityTier: effectiveness.tier,
-          scoreReasons: effectiveness.reasons,
-        },
-      })
-      .onConflictDoNothing()
-      .returning();
-
-    if (inserted[0]?.id) {
-      newProspectIds.push(inserted[0].id);
-    }
-  }
-
-  // 5. Automatically generate tailored initial drafts for newly added prospects
-  if (newProspectIds.length > 0) {
-    try {
-      const userGoals = await listActiveGoalTexts();
-      const writingInstructions = await loadWritingInstructions(userId);
-
-      const draftInputs: DraftInput[] = candidates.map((candidate) => {
-        const companyData = companyNewsCache.get(candidate.company);
-        const enrichedSummary = [
-          candidate.summary,
-          companyData?.headline ? `Recent News Catalyst: ${companyData.headline}` : null,
-          companyData?.signals?.length ? `Company Signals: ${companyData.signals.join(", ")}` : null,
-          candidate.matchReason ? `Match Reason: ${candidate.matchReason}` : null,
-        ]
-          .filter(Boolean)
-          .join(". ");
-
-        return {
-          channel: ((campaign.defaultChannel as OutreachChannel) || "email"),
-          tone: campaign.tone || "professional",
-          messageIntent: campaign.messageIntent || "Reach out regarding company growth and partnerships",
-          audienceQuery: campaign.audienceQuery,
-          replyCta: (campaign.replyCta as any) || "book_intro",
-          userGoals,
-          writingInstructions,
-          prospect: {
-            fullName: candidate.fullName,
-            title: candidate.title,
-            company: candidate.company,
-            location: candidate.location,
-            enrichmentSummary: enrichedSummary,
-          },
-        };
+        newsContext,
+        signals,
+        targetTitles,
       });
 
-      const drafts = await generateOutreachDraftsBatch(userId, draftInputs);
+      const inserted = await db
+        .insert(outreachProspects)
+        .values({
+          campaignId,
+          externalId,
+          fullName: candidate.fullName,
+          title: candidate.title,
+          company: candidate.company,
+          email,
+          linkedinUrl: candidate.linkedinUrl,
+          location: candidate.location,
+          status: isDemo ? "suggested" : "selected",
+          enrichment: {
+            avatarUrl: candidate.avatarUrl,
+            headline: candidate.summary,
+            summary: candidate.summary,
+            newsContext,
+            signals,
+            matchReason: candidate.matchReason,
+            source: candidate.source,
+            demo: isDemo,
+            deepSearchCatalogedAt: new Date().toISOString(),
+            effectivenessScore: effectiveness.score,
+            priorityTier: effectiveness.tier,
+            scoreReasons: effectiveness.reasons,
+          },
+        })
+        .onConflictDoNothing()
+        .returning();
 
-      for (let i = 0; i < drafts.length; i++) {
-        const draft = drafts[i];
-        const prospectId = newProspectIds[i];
-        if (draft && prospectId) {
-          await db.insert(outreachMessages).values({
-            prospectId,
-            channel: ((campaign.defaultChannel as OutreachChannel) || "email"),
-            subject: draft.subject,
-            body: draft.body,
-            status: "draft",
-          });
-        }
+      if (inserted[0]?.id) {
+        newProspectIds.push(inserted[0].id);
       }
-    } catch {
-      // Non-blocking draft generation; user can draft on-demand
     }
+
+    // 5. Automatically generate tailored initial drafts for newly added prospects
+    if (newProspectIds.length > 0) {
+      await db
+        .update(outreachCampaigns)
+        .set({
+          backgroundJob: {
+            status: "running",
+            phase: "drafting",
+            startedAt: new Date().toISOString(),
+            message: `Drafting personalized messages for ${newProspectIds.length} new prospects...`,
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(outreachCampaigns.id, campaignId));
+
+      try {
+        const userGoals = await listActiveGoalTexts();
+        const writingInstructions = await loadWritingInstructions(userId);
+
+        const draftInputs: DraftInput[] = candidates.map((candidate) => {
+          const companyData = companyNewsCache.get(candidate.company);
+          const enrichedSummary = [
+            candidate.summary,
+            companyData?.headline ? `Recent News Catalyst: ${companyData.headline}` : null,
+            companyData?.signals?.length ? `Company Signals: ${companyData.signals.join(", ")}` : null,
+            candidate.matchReason ? `Match Reason: ${candidate.matchReason}` : null,
+          ]
+            .filter(Boolean)
+            .join(". ");
+
+          return {
+            channel: ((campaign.defaultChannel as OutreachChannel) || "email"),
+            tone: campaign.tone || "professional",
+            messageIntent: campaign.messageIntent || "Reach out regarding company growth and partnerships",
+            audienceQuery: campaign.audienceQuery,
+            replyCta: (campaign.replyCta as any) || "book_intro",
+            userGoals,
+            writingInstructions,
+            prospect: {
+              fullName: candidate.fullName,
+              title: candidate.title,
+              company: candidate.company,
+              location: candidate.location,
+              enrichmentSummary: enrichedSummary,
+            },
+          };
+        });
+
+        const drafts = await generateOutreachDraftsBatch(userId, draftInputs);
+
+        for (let i = 0; i < drafts.length; i++) {
+          const draft = drafts[i];
+          const prospectId = newProspectIds[i];
+          if (draft && prospectId) {
+            await db.insert(outreachMessages).values({
+              prospectId,
+              channel: ((campaign.defaultChannel as OutreachChannel) || "email"),
+              subject: draft.subject,
+              body: draft.body,
+              status: "draft",
+            });
+          }
+        }
+      } catch {
+        // Non-blocking draft generation; user can draft on-demand
+      }
+    }
+
+    // 6. Update campaign timestamp and completion status
+    const message = `Deep search completed: scouted and added ${newProspectIds.length} prospects with news catalysts & drafts.`;
+    await db
+      .update(outreachCampaigns)
+      .set({
+        lastSearchSource: isDemo ? "demo" : "brightdata_deep_search",
+        backgroundJob: {
+          status: "completed",
+          phase: "completed",
+          completedAt: new Date().toISOString(),
+          prospectsAdded: newProspectIds.length,
+          message,
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachCampaigns.id, campaignId));
+
+    return {
+      success: true,
+      prospectsAdded: newProspectIds.length,
+      message,
+    };
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    await db
+      .update(outreachCampaigns)
+      .set({
+        backgroundJob: {
+          status: "failed",
+          completedAt: new Date().toISOString(),
+          error: errorMsg,
+          message: "Deep search encountered an error while processing in the background.",
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(outreachCampaigns.id, campaignId));
+
+    throw err;
   }
-
-  // 6. Update campaign timestamp
-  await db
-    .update(outreachCampaigns)
-    .set({
-      lastSearchSource: "brightdata_deep_search",
-      updatedAt: new Date(),
-    })
-    .where(eq(outreachCampaigns.id, campaignId));
-
-  return {
-    success: true,
-    prospectsAdded: newProspectIds.length,
-    message: `Deep search found and added ${newProspectIds.length} prospects with recent news context & initial drafts generated.`,
-  };
 }

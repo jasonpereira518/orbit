@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -20,11 +20,13 @@ import { Button } from "@/components/ui/button";
 import {
   generateDueFollowUps,
   generateOutreachDrafts,
+  getCampaignBackgroundStatusAction,
   runCampaignDeepSearchAction,
   searchProspects,
+  triggerCampaignBackgroundSearchAction,
   updateCampaign,
 } from "@/actions/outreach";
-import { Globe, Sparkles } from "lucide-react";
+import { AlertCircle, CheckCircle2, Globe, Loader2, Radio, Sparkles, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { isDeliveredMessage, prospectPipelineBucket } from "@/lib/outreach-metrics";
 import type {
@@ -34,6 +36,7 @@ import type {
   PipelineFilter,
   SequenceStep,
 } from "@/lib/outreach-types";
+import type { CampaignBackgroundJob } from "@/db/schema";
 import { friendlyError } from "@/lib/errors";
 
 export function CampaignWorkspace({
@@ -51,6 +54,7 @@ export function CampaignWorkspace({
     defaultChannel: string | null;
     status: string;
     lastSearchSource?: string | null;
+    backgroundJob?: CampaignBackgroundJob | null;
     audienceFilters?: AudienceFilters | null;
     sequenceSteps?: SequenceStep[] | null;
     metrics: CampaignMetrics;
@@ -100,6 +104,33 @@ export function CampaignWorkspace({
   const [filters, setFilters] = useState<AudienceFilters>(
     (campaign.audienceFilters as AudienceFilters) || {}
   );
+  const [bgJob, setBgJob] = useState<CampaignBackgroundJob | null>(campaign.backgroundJob || null);
+  const [showDismissedBgAlert, setShowDismissedBgAlert] = useState(false);
+
+  // Poll background job when active
+  useEffect(() => {
+    if (bgJob?.status !== "running") return;
+
+    const interval = setInterval(async () => {
+      try {
+        const latest = await getCampaignBackgroundStatusAction(campaign.id);
+        if (latest) {
+          setBgJob(latest as CampaignBackgroundJob);
+          if (latest.status === "completed") {
+            toast.success(latest.message || "Background deep search completed!");
+            router.refresh();
+          } else if (latest.status === "failed") {
+            toast.error(latest.message || "Background search encountered an issue");
+          }
+        }
+      } catch {
+        // Retry silently on next tick
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [bgJob?.status, campaign.id, router]);
+
   const defaultChannel = (campaign.defaultChannel || "email") as OutreachChannel;
   const isDemo =
     campaign.lastSearchSource === "demo" ||
@@ -283,11 +314,21 @@ export function CampaignWorkspace({
   function handleDeepSearch() {
     start(async () => {
       try {
-        toast.message("Scanning web news and discovering prospects with BrightData in background...");
-        const result = await runCampaignDeepSearchAction(campaign.id);
-        toast.success(result.message);
-        refresh();
+        setBgJob({
+          status: "running",
+          phase: "news_scan",
+          startedAt: new Date().toISOString(),
+          message: "Starting deep search in background...",
+        });
+        setShowDismissedBgAlert(false);
+
+        const result = await triggerCampaignBackgroundSearchAction(campaign.id);
+        toast.message("Scouting started in the background. You can continue working freely.");
       } catch (err) {
+        setBgJob({
+          status: "failed",
+          message: "Could not start background search. Please try again.",
+        });
         toast.error("Deep search encountered an issue — try again in a moment");
       }
     });
@@ -295,6 +336,57 @@ export function CampaignWorkspace({
 
   return (
     <div className="space-y-4">
+      {/* Background Activity Banner */}
+      {bgJob?.status === "running" && (
+        <div className="relative overflow-hidden rounded-2xl border border-sky-500/30 bg-sky-500/5 p-4 shadow-sm backdrop-blur-xs dark:bg-sky-500/10">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-sky-500/20 text-sky-600 dark:text-sky-400">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-40" />
+                <Loader2 className="h-4 w-4 animate-spin text-sky-600 dark:text-sky-300" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-sky-950 dark:text-sky-100">
+                    Background Agent Active
+                  </span>
+                  <span className="inline-flex items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
+                    Non-blocking
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-sky-900/80 dark:text-sky-200/80">
+                  {bgJob.message || "Scouting web news and matching candidates with BrightData..."}
+                </p>
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="text-[11px] text-muted-foreground">
+                Feel free to navigate away; Orbit will update automatically.
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Completed Background Job Banner */}
+      {bgJob?.status === "completed" && !showDismissedBgAlert && bgJob.prospectsAdded !== undefined && (
+        <div className="flex items-center justify-between rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-950 dark:text-emerald-100">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            <span>
+              <strong>Background scout completed:</strong> {bgJob.message}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowDismissedBgAlert(true)}
+            className="rounded-full p-1 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {isDemo && (
         <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-950 dark:text-amber-100">
           <strong>Preview mode.</strong> Showing high-fidelity sample profiles. Enable live scraping with BrightData in{" "}
@@ -349,11 +441,20 @@ export function CampaignWorkspace({
         <Button
           size="sm"
           onClick={handleDeepSearch}
-          disabled={pending}
+          disabled={pending || bgJob?.status === "running"}
           className="gap-1.5 shadow-xs rounded-full text-xs"
         >
-          <Sparkles className="h-3.5 w-3.5" />
-          Deep Search Web News
+          {bgJob?.status === "running" ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Scouting in Background...
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-3.5 w-3.5" />
+              Scout Web in Background
+            </>
+          )}
         </Button>
       </div>
 
