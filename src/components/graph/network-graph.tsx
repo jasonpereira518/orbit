@@ -498,9 +498,9 @@ export function NetworkGraph({
   // at mount: most visits never search, and at 10,000 contacts building it
   // was ~10ms of the render that opens the chart.
   const contactHaystackIndex = useMemo(() => {
-    let index: Map<string, string> | null = null;
+    let index: ReturnType<typeof buildContactHaystackIndex> | null = null;
     return () =>
-      (index ??= data ? buildContactHaystackIndex(data.contacts) : new Map<string, string>());
+      (index ??= data ? buildContactHaystackIndex(data.contacts) : new Map());
   }, [data]);
 
   const requestDefaultView = useCallback(() => {
@@ -653,6 +653,18 @@ export function NetworkGraph({
       setZoomToken((t) => t + 1);
     },
     [search]
+  );
+
+  const handleShowAll = useCallback(() => {
+    setScope(true);
+  }, [setScope]);
+
+  const handleSelect = useCallback(
+    (picked: InspectSelection) => {
+      setSelection(picked);
+      if (picked) emitTourEvent("graph.star-selected");
+    },
+    []
   );
 
   const toggleFullscreen = useCallback(async () => {
@@ -881,7 +893,7 @@ export function NetworkGraph({
           cssFullscreen && "!fixed inset-0 z-[100] w-screen"
         )}
       >
-        {!smallSky && <Starfield />}
+        <Starfield />
 
         {!compact && (
           <>
@@ -1334,7 +1346,7 @@ export function NetworkGraph({
         {renderer && <renderer.Chart
           data={data}
           constellationFilterOn={constellationFilterOn}
-          onShowAll={() => setScope(true)}
+          onShowAll={handleShowAll}
           loadingAll={loadingAll}
           company={company}
           school={school}
@@ -1349,10 +1361,7 @@ export function NetworkGraph({
           peekToken={peekToken}
           selection={selection}
           hoveredId={hoveredId}
-          onSelect={(picked) => {
-            setSelection(picked);
-            if (picked) emitTourEvent("graph.star-selected");
-          }}
+          onSelect={handleSelect}
           onHover={setHoveredId}
           onFocusCluster={focusClusterById}
           compact={compact}

@@ -10,6 +10,26 @@
  */
 export const KNOWLEDGE_PEOPLE_LIMIT = 300;
 
+/** Shortest and longest search the content search accepts, and the most people it returns. */
+export const KNOWLEDGE_SEARCH_MIN_CHARS = 3;
+export const KNOWLEDGE_SEARCH_MAX_CHARS = 80;
+export const KNOWLEDGE_SEARCH_LIMIT = 50;
+
+/** A person whose notes, messages or facts contain what was searched for. */
+export type KnowledgeSearchHit = {
+  id: string;
+  fullName: string;
+  firstName: string | null;
+  title: string | null;
+  company: string | null;
+  hasPhoto: boolean;
+  lastInteractionAt: string | null;
+  /** A stretch of the matching text, around the match. Null when only their name or role matched. */
+  snippet: string | null;
+  /** Where the match is: "In a note", "In a message"... Null with a null snippet. */
+  where: string | null;
+};
+
 /** Characters of summary an index row shows. One line, not a paragraph. */
 export const GIST_CHARS = 140;
 
