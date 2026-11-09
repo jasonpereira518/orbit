@@ -10,7 +10,7 @@ import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
 import { rollBackApplied } from "@/lib/chat-auto-apply";
-import { answerDeadlineMs, answerWithLookups } from "@/lib/chat-agent-loop";
+import { answerDeadlineMs, answerWithLookups, type ChatMode } from "@/lib/chat-agent-loop";
 import { sanitizeAttachments } from "@/lib/chat-attachments";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
@@ -40,7 +40,7 @@ import { scrubModelText } from "@/lib/sentry-scrub";
 import { requireVisibleSurface } from "@/lib/surface-visibility";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /**
  * Streaming chat, the one path every chat answer takes (the page and the ask bar). It streams
@@ -89,6 +89,8 @@ export async function POST(request: Request) {
         timeZone?: unknown;
         turnId?: unknown;
         attachments?: unknown;
+        mode?: unknown;
+        web?: unknown;
       }
     | null;
   const threadId = typeof body?.threadId === "string" ? body.threadId : null;
@@ -100,6 +102,11 @@ export async function POST(request: Request) {
   const contextContactIds = Array.isArray(body?.contextContactIds)
     ? body.contextContactIds.filter((id): id is string => typeof id === "string").slice(0, 10)
     : [];
+
+  // How hard to work on it, and whether the web may be searched. Anything unrecognized is
+  // today's behaviour: a quick answer with web lookups available.
+  const mode: ChatMode = body?.mode === "deep" ? "deep" : "quick";
+  const web = body?.web !== false;
 
   // Files attached to the question: names and the text already read from them. Counted,
   // cut to length and stripped of anything that is not one here, whatever the client sent.
@@ -295,12 +302,12 @@ export async function POST(request: Request) {
               }
             : undefined;
 
-        steps.start("answer", "Writing the answer");
+        steps.start("answer", mode === "deep" ? "Researching in depth" : "Writing the answer");
         // Secrets and fence markers are scrubbed from the LIVE stream, not only from what is
         // stored afterwards — see `createStreamRedactor`. (A scrub is recorded once the
         // stored copy is guarded, by `guardChatAnswer`; nothing is recorded here twice.)
         const redactor = createStreamRedactor();
-        const deadlineSignal = AbortSignal.timeout(answerDeadlineMs(requestStartedAt));
+        const deadlineSignal = AbortSignal.timeout(answerDeadlineMs(requestStartedAt, Date.now(), mode));
         const onDelta = (delta: string) => {
           const safe = redactor.push(delta);
           if (safe) send({ type: "answer", delta: safe });
@@ -325,6 +332,8 @@ export async function POST(request: Request) {
               // Cards appear as the loop drafts them, not only once the answer is done.
               onProposed: (items) => send({ type: "actions", items }),
               steer,
+              mode,
+              web,
             }),
           { userId }
         );

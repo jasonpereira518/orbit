@@ -21,11 +21,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Globe,
   History,
   Loader2,
   Mail,
   NotebookPen,
   Paperclip,
+  Telescope,
   Pencil,
   Plus,
   Trash2,
@@ -56,6 +58,7 @@ import {
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { readRailOpen, writeRailOpen } from "@/lib/chat-rail-pref";
+import { readChatDeep, readChatWeb, writeChatDeep, writeChatWeb } from "@/lib/chat-mode-pref";
 import { ScanControls } from "@/components/scan/scan-controls";
 import {
   COMPOSER_TEXT_BOX,
@@ -136,6 +139,7 @@ import { useDictation } from "@/lib/use-dictation";
 import {
   clearTurnInFlight,
   inFlightThreadId,
+  DEEP_RESUME_WINDOW_MS,
   markTurnInFlight,
   pendingTurn,
   RESUME_POLL_MS,
@@ -431,6 +435,14 @@ export function ChatPanel({
   // Whether the last turn ended in an answer. A stopped or failed turn holds the queue
   // rather than firing the next message into a conversation that just went wrong.
   const landedRef = useRef(false);
+  // The composer's two switches, remembered per browser. Refs mirror them so the send
+  // callbacks read the current value without being rebuilt on every toggle.
+  const [deep, setDeep] = useState(readChatDeep);
+  const [web, setWeb] = useState(readChatWeb);
+  const modeRef = useRef({ deep, web });
+  useEffect(() => {
+    modeRef.current = { deep, web };
+  }, [deep, web]);
   // Files attached to the question being written. See `@/lib/chat-attach-client`.
   const [fileChips, setFileChips] = useState<FileChip[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1172,7 +1184,13 @@ export function ChatPanel({
         const controller = new AbortController();
         abortRef.current = controller;
         const turnId = crypto.randomUUID();
-        markTurnInFlight(activeId, { startedAt: Date.now(), turnId, controller });
+        const { deep: asDeep, web: withWeb } = modeRef.current;
+        markTurnInFlight(activeId, {
+          startedAt: Date.now(),
+          turnId,
+          controller,
+          windowMs: asDeep ? DEEP_RESUME_WINDOW_MS : undefined,
+        });
         turnRef.current = { threadId: activeId, turnId };
         await streamChat(
           {
@@ -1181,6 +1199,8 @@ export function ChatPanel({
             contextContactIds,
             turnId,
             attachments: attachments.length ? attachments : undefined,
+            mode: asDeep ? "deep" : undefined,
+            web: withWeb ? undefined : false,
           },
           {
             onAnswer: (delta) => smoother.push(delta),
@@ -1414,6 +1434,8 @@ export function ChatPanel({
             question: displayQuestion,
             threadId,
             versionOf: { assistantMessageId, question: newQuestion },
+            mode: modeRef.current.deep ? "deep" : undefined,
+            web: modeRef.current.web ? undefined : false,
           },
           {
             onAnswer: (delta) => smoother.push(delta),
@@ -1964,7 +1986,7 @@ export function ChatPanel({
                     <div className="flex justify-start">
                       <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
                         <OrbitMark reduceMotion={reduceMotion} />
-                        {resuming ? "Still writing the answer…" : "Starting…"}
+                        {resuming ? "Still writing the answer…" : deep ? "Researching in depth…" : "Starting…"}
                       </div>
                     </div>
                   )}
@@ -2207,6 +2229,50 @@ export function ChatPanel({
                     />
                   )}
                 </MentionComposer>
+                {/* Two switches for how this question is answered. Each is a toggle button, so
+                    its state is announced (`aria-pressed`) as well as shown. */}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-pressed={deep}
+                  aria-label="Deep research"
+                  title={
+                    deep
+                      ? "Deep research is on: a thorough answer that can take a few minutes and uses more AI credits"
+                      : "Deep research: a thorough answer that can take a few minutes and uses more AI credits"
+                  }
+                  disabled={loadingThread}
+                  onClick={() => {
+                    setDeep(!deep);
+                    writeChatDeep(!deep);
+                  }}
+                  className={cn(
+                    "size-9 shrink-0 rounded-full",
+                    deep ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary" : "text-muted-foreground"
+                  )}
+                >
+                  <Telescope className="size-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-pressed={web}
+                  aria-label="Web search"
+                  title={web ? "Web search is on: answers may look things up on the public web" : "Web search is off: answers use only your own records"}
+                  disabled={loadingThread}
+                  onClick={() => {
+                    setWeb(!web);
+                    writeChatWeb(!web);
+                  }}
+                  className={cn(
+                    "size-9 shrink-0 rounded-full",
+                    web ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary" : "text-muted-foreground"
+                  )}
+                >
+                  <Globe className="size-4" />
+                </Button>
                 <DictationButton
                   state={dictation.state}
                   level={dictation.level}
