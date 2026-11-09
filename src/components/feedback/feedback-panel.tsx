@@ -24,27 +24,20 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  AREA_LABELS,
   AREA_OPTIONS,
-  FEEDBACK_CATEGORIES,
+  FEEDBACK_RECIPIENT,
   MAX_FEEDBACK_TEXT,
   MAX_SCREENSHOTS,
   clampPanelOffset,
   featureAreaForPath,
   readClientContext,
   type FeedbackArea,
-  type FeedbackCategory,
 } from "@/lib/feedback-report";
 import { useCornerShift } from "@/lib/corner-clearance";
 import { PANEL_CORNER_SHIFT_PX, type PanelAnchor } from "@/lib/floating-panel";
 import { blobToDataUrl } from "@/lib/screenshot-capture";
 import { toast } from "@/lib/toast";
-
-const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
-  bug: "Something's broken",
-  idea: "I have an idea",
-  confusing: "This confused me",
-  praise: "This worked well",
-};
 
 export function FeedbackPanel({
   open,
@@ -54,8 +47,6 @@ export function FeedbackPanel({
   onOffsetChange,
   message,
   onMessageChange,
-  category,
-  onCategoryChange,
   area,
   onAreaChange,
   shots,
@@ -93,8 +84,6 @@ export function FeedbackPanel({
   onOffsetChange: (next: { x: number; y: number }) => void;
   message: string;
   onMessageChange: (value: string) => void;
-  category: FeedbackCategory;
-  onCategoryChange: (next: FeedbackCategory) => void;
   /** `null` = follow the current page. Owned by the widget so it survives a dismissal. */
   area: FeedbackArea | null;
   onAreaChange: (next: FeedbackArea) => void;
@@ -356,7 +345,6 @@ export function FeedbackPanel({
       const result = await submitFeedback({
         text: message,
         area: effectiveArea,
-        category,
         path: client.path,
         viewport: client.viewport,
         devicePixelRatio: client.devicePixelRatio,
@@ -456,67 +444,12 @@ export function FeedbackPanel({
           onPointerCancel={endDrag}
         >
           <SheetTitle className="font-[family-name:var(--font-display)] text-lg">
-            Tell us what happened
+            Message {FEEDBACK_RECIPIENT}
           </SheetTitle>
           <SheetDescription>
-            It goes straight to whoever runs Orbit, with the page you&apos;re on attached.
+            I read every one. Useful reports can earn bonus AI credits.
           </SheetDescription>
         </SheetHeader>
-
-        {/* A segmented row rather than a Select: four options, and a popup inside a
-            floating sheet is a stacking-context fight nobody wins. */}
-        {/* `shrink-0`, like every other block here: the sheet scrolls when it runs out of
-            room, it does not compress its contents. See the note on the message block. */}
-        <div className="flex shrink-0 flex-wrap gap-2" role="group" aria-label="Kind of feedback">
-          {FEEDBACK_CATEGORIES.map((value) => (
-            <Button
-              key={value}
-              type="button"
-              size="xs"
-              variant={category === value ? "default" : "outline"}
-              aria-pressed={category === value}
-              onClick={() => onCategoryChange(value)}
-            >
-              {CATEGORY_LABELS[value]}
-            </Button>
-          ))}
-        </div>
-
-        <div className="grid shrink-0 gap-1.5">
-          <span id="feedback-area-label" className="text-xs font-medium text-muted-foreground">
-            Which part of Orbit?
-          </span>
-          {/* Orbit's own dropdown rather than a bare `<select>`, whose popup is drawn by the
-              OS and looks like nothing else in the app. The popup portals out at z-50 and
-              mounts after the sheet, so it paints above it. */}
-          <Select
-            value={effectiveArea}
-            onValueChange={(v) => onAreaChange((v || "other") as FeedbackArea)}
-            // Without `items`, `SelectValue` renders the raw stored value — the trigger
-            // would read "dashboard" rather than "Dashboard".
-            items={AREA_OPTIONS}
-          >
-            <SelectTrigger aria-labelledby="feedback-area-label" className="h-9 w-full">
-              <SelectValue />
-            </SelectTrigger>
-            {/* `alignItemWithTrigger={false}` is the load-bearing half. The default
-                positions the popup so the selected row sits over the trigger, which both
-                covers the field you just pressed and — via
-                `data-[align-trigger=true]:animate-none` in `ui/select.tsx` — turns the
-                open and close animation off entirely. Opting out drops the list below the
-                trigger and gives back the fade-and-zoom every other popup in the app has.
-
-                `p-1` insets the rows from the popup's own rounded corners; without it the
-                first and last row sit flush against the edge. */}
-            <SelectContent alignItemWithTrigger={false} className="p-1">
-              {AREA_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value} className="py-1.5 pl-2">
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
 
         {/* The one block that gives, so that everything else always fits on screen.
  *
@@ -536,14 +469,16 @@ export function FeedbackPanel({
  * With the floor on the block and none on the field, the field is exactly as tall as its
  * parent at every size. It cannot spill, and there is nothing to scroll.
  *
- * The floor is 48px — about two lines. It was 64px, which was fine until a screenshot was
- * attached: the thumbnail row has to come out of this box, and on a short window the extra
- * 16px was the difference between the form fitting and the Send button being pushed off the
- * bottom. Low enough that everything still fits with a shot attached on a ~600px window,
- * which is a small laptop browser; high enough that the field never becomes a slot. The
- * sheet keeps `overflow-y-auto` as a last resort below that, so nothing is ever
- * unreachable, but it is not the normal path. */}
-        <div className="grid min-h-12 flex-1 gap-1.5">
+ * The floor is 80px: the field's two lines plus the 28px area tag that now sits inside this
+ * block. It was 48px when the kind chips and the area field sat ABOVE the message; taking
+ * those out gave back ~130px, so the tag fits inside the old budget with room to spare and
+ * everything still fits with a shot attached on a ~600px window. The sheet keeps
+ * `overflow-y-auto` as a last resort below that, so nothing is ever unreachable, but it is
+ * not the normal path.
+ *
+ * `grid-rows-[1fr_auto]`: the field takes the slack and the tag row stays its own height.
+ * Two auto rows would stretch equally and float the tag halfway down an empty box. */}
+        <div className="grid min-h-20 flex-1 grid-rows-[1fr_auto] gap-1.5">
           <Textarea
             ref={attachTextarea}
             autoFocus
@@ -556,12 +491,56 @@ export function FeedbackPanel({
             className="h-full min-h-0 resize-none"
             value={message}
             maxLength={MAX_FEEDBACK_TEXT}
-            placeholder="What were you trying to do, and what happened instead?"
+            placeholder="What’s on your mind? A bug, an idea, something confusing…"
             onChange={(e) => onMessageChange(e.target.value)}
+            // Enter sends, the way a message does — that is the habit this window is
+            // competing with. Shift+Enter is the new line.
+            //
+            // Fine pointers only: on a phone the return key is how you write a second
+            // line, and the Send button is right there. Never mid-composition either — an
+            // IME uses Enter to commit the candidate, and sending half a word is worse
+            // than not sending.
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+              if (!window.matchMedia("(pointer: fine)").matches) return;
+              e.preventDefault();
+              void send();
+            }}
           />
-          {remaining < 400 && (
-            <p className="text-right text-xs text-muted-foreground">{remaining} left</p>
-          )}
+          {/* Which part of Orbit, as a tag under the message rather than a field above it.
+              It is filled in from the page, so nobody has to answer it; it is still one tap
+              to correct. Orbit's own dropdown rather than a bare `<select>`, whose popup is
+              drawn by the OS and looks like nothing else in the app. */}
+          <div className="flex items-center justify-between gap-2">
+            <Select
+              value={effectiveArea}
+              onValueChange={(v) => onAreaChange((v || "other") as FeedbackArea)}
+              // Without `items`, `SelectValue` renders the raw stored value — the trigger
+              // would read "dashboard" rather than "Dashboard".
+              items={AREA_OPTIONS}
+            >
+              <SelectTrigger
+                aria-label={`Which part of Orbit: ${AREA_LABELS[effectiveArea]}`}
+                className="h-7 w-auto gap-1 rounded-full px-2.5 text-xs text-muted-foreground"
+              >
+                <span aria-hidden>About:</span>
+                <SelectValue />
+              </SelectTrigger>
+              {/* `alignItemWithTrigger={false}` drops the list below the trigger instead of
+                  over it, which also gives back the open/close animation that
+                  `data-[align-trigger=true]:animate-none` in `ui/select.tsx` turns off. */}
+              <SelectContent alignItemWithTrigger={false} className="p-1">
+                {AREA_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value} className="py-1.5 pl-2">
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {remaining < 400 && (
+              <p className="text-xs text-muted-foreground">{remaining} left</p>
+            )}
+          </div>
         </div>
 
         {/* A little clear of the message box above it. Both are large bordered surfaces, so

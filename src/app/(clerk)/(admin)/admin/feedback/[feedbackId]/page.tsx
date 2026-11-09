@@ -71,6 +71,29 @@ export default async function AdminFeedbackDetailPage({
           )}
         </AdminPanel>
 
+        {entry.triage && (
+          <AdminPanel title="Triage">
+            <dl>
+              <DefinitionRow label="Summary">{entry.triage.summary}</DefinitionRow>
+              <DefinitionRow label="Severity">{entry.triage.severity}</DefinitionRow>
+              {entry.triage.duplicateOf && (
+                <DefinitionRow label="Looks like">
+                  <Link
+                    href={`/admin/feedback/${entry.triage.duplicateOf}`}
+                    className="underline underline-offset-2 hover:text-primary"
+                  >
+                    an earlier open report
+                  </Link>
+                </DefinitionRow>
+              )}
+            </dl>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Read by AI when it arrived. The kind above came from the same pass unless it was
+              set by hand.
+            </p>
+          </AdminPanel>
+        )}
+
         <AdminPanel title={`Screenshots (${screenshots.length})`}>
           {screenshots.length === 0 ? (
             <EmptyState>Nothing was attached.</EmptyState>

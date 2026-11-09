@@ -36,8 +36,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // click); and event discovery from confirmation emails is gone, so its description is removed.
 // 2026-11-08: shared public work history — a confident web-search work history found from a
 // public LinkedIn profile is reused across accounts that have the same profile, like shared photos.
-export const TERMS_VERSION = "2026-11-08";
-export const LEGAL_LAST_UPDATED = "November 8, 2026";
+// 2026-11-09: feedback — an AI model on Orbit's account reads each report for the operator
+// (summary, kind, urgency, repeats), and the Slack alert now carries the whole report with the
+// sender's email, plan and account age instead of a short excerpt.
+export const TERMS_VERSION = "2026-11-09";
+export const LEGAL_LAST_UPDATED = "November 9, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

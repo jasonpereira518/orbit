@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
@@ -13,6 +14,8 @@ import {
   type FeedbackScreenshotInput,
   type FeedbackSubmissionInput,
 } from "@/lib/feedback-submission";
+import { notifyFeedbackSubmitted } from "@/lib/feedback-notify";
+import { triageFeedback } from "@/lib/feedback-triage";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 export type FeedbackSubmitResult =
@@ -123,6 +126,22 @@ export async function submitFeedback(
       category: data.category ?? null,
       context,
       screenshots,
+    });
+    // After the response: the person's Send has already landed. Triage first so the DM can
+    // lead with the summary line; a triage that fails returns null and the DM goes without it.
+    after(async () => {
+      const triage = await triageFeedback(created.id);
+      await notifyFeedbackSubmitted({
+        id: created.id,
+        userId,
+        plan,
+        area: data.area ?? null,
+        category: triage?.category ?? data.category ?? null,
+        text: data.text,
+        path: sanitizePath(data.path),
+        screenshotCount: created.screenshotCount,
+        triage,
+      });
     });
     return { ok: true, id: created.id };
   } catch (err) {

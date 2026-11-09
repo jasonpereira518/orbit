@@ -45,6 +45,7 @@ import type {
   ThreadDecision,
 } from "@/lib/email-intel/types";
 import type { MemorySourceKind } from "@/lib/memory-chunks";
+import type { FeedbackTriage } from "@/lib/feedback-report";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -4772,6 +4773,12 @@ export const feedback = pgTable(
     statusChangedBy: text("status_changed_by"),
     /** What was done about it. Operator prose, not the user's. */
     resolutionNote: text("resolution_note"),
+    /**
+     * The AI triage pass's reading of the report — one-line summary, severity, and an earlier
+     * open report it repeats. Null until the pass has run, and for good if it never could
+     * (no operator account, AI unavailable). See `src/lib/feedback-triage.ts`.
+     */
+    triage: jsonb("triage").$type<FeedbackTriage>(),
     /** Where they were when they said it — route, plan, contact count. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

@@ -16,8 +16,8 @@ import {
   MAX_SCREENSHOTS,
   MAX_SCREENSHOT_BYTES,
   MAX_SUBMISSION_BYTES,
+  FEEDBACK_RECIPIENT,
   type FeedbackArea,
-  type FeedbackCategory,
 } from "@/lib/feedback-report";
 import { toast } from "@/lib/toast";
 import {
@@ -95,9 +95,6 @@ type Phase =
  */
 const SENT_HOLD_MS = 640;
 
-/** What a fresh draft starts on. Matches the first chip in the panel's row. */
-const DEFAULT_CATEGORY: FeedbackCategory = "bug";
-
 /**
  * The feedback button, and every piece of state behind it.
  *
@@ -140,11 +137,12 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   const [sentBeat, setSentBeat] = useState(false);
   /**
    * The rest of the draft, up here for the same reason the message is: the panel unmounts
-   * whenever the window closes, so anything it owns dies with it. These two used to be the
-   * panel's own state, which is why the kind and the area reset even when the words did not.
-   */
-  const [category, setCategory] = useState<FeedbackCategory>(DEFAULT_CATEGORY);
-  /**
+   * whenever the window closes, so anything it owns dies with it.
+   *
+   * There is no "kind" here any more. The form used to open on four kind chips, which made
+   * it read as a ticket to fill in; the triage pass (`src/lib/feedback-triage.ts`) now works
+   * the kind out from the words.
+   *
    * `null` means "whatever page you are on", resolved by the panel at render time.
    *
    * Storing the resolved value would freeze the area at the page the draft was started on.
@@ -234,7 +232,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     // screen. The button's check is the acknowledgement while the panel is still up; this
     // is what remains once it has gone, and it is also how the success reaches a screen
     // reader, through sonner's live region.
-    if (wasSent) toast.success("Thanks — it’s on its way");
+    if (wasSent) toast.success(`Sent to ${FEEDBACK_RECIPIENT} — thank you`);
 
     setSentBeat(false);
     setOffset({ x: 0, y: 0 });
@@ -245,7 +243,6 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     for (const shot of shotsRef.current) URL.revokeObjectURL(shot.previewUrl);
     setShots([]);
     setMessage("");
-    setCategory(DEFAULT_CATEGORY);
     setArea(null);
     setCaret(null);
   }, []);
@@ -528,8 +525,6 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
             setEditingShotId(id);
             setPhase("annotating");
           }}
-          category={category}
-          onCategoryChange={setCategory}
           area={area}
           onAreaChange={setArea}
           // `discard` separates "I am done with this" from "get this out of my way". Only

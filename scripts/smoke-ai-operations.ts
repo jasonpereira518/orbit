@@ -149,6 +149,7 @@ console.log("\nDerived lists");
         "contact.work_history",
         "duplicates.same_person",
         "email.understand",
+        "feedback.triage",
         "import.enrich",
         "import.enrich.gate",
         "import.linkedin.timeline",

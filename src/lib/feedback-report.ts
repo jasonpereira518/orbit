@@ -32,9 +32,40 @@ export const FEEDBACK_AREAS = [
 ] as const;
 export type FeedbackArea = (typeof FEEDBACK_AREAS)[number];
 
-/** What kind of remark it is. Orthogonal to the area — what happened vs. where. */
+/**
+ * Who the feedback window says it goes to.
+ *
+ * A person, not "us": people were texting the founder rather than using the form, and a
+ * message to someone you know is the thing they were already doing. One constant so the
+ * panel, the thank-you and the replies all name the same person.
+ */
+export const FEEDBACK_RECIPIENT = "Jason";
+
+/**
+ * What kind of remark it is. Orthogonal to the area — what happened vs. where.
+ *
+ * The form no longer asks for it; `src/lib/feedback-triage.ts` reads it from the words.
+ */
 export const FEEDBACK_CATEGORIES = ["bug", "idea", "confusing", "praise"] as const;
 export type FeedbackCategory = (typeof FEEDBACK_CATEGORIES)[number];
+
+/** How much it matters, as the triage pass reads it. */
+export const FEEDBACK_SEVERITIES = ["low", "medium", "high"] as const;
+export type FeedbackSeverity = (typeof FEEDBACK_SEVERITIES)[number];
+
+/**
+ * What the triage pass (`src/lib/feedback-triage.ts`) concluded about one report.
+ *
+ * Here rather than in the triage module because the schema types the `feedback.triage`
+ * column with it and the console renders it, and this file is the one both sides can import.
+ */
+export type FeedbackTriage = {
+  /** One line, for the Slack DM and the console's list. */
+  summary: string;
+  severity: FeedbackSeverity;
+  /** An earlier, still-open report this one repeats, if the model saw one. */
+  duplicateOf: string | null;
+};
 
 /** Before, the error, after. A fourth shot has never told anyone anything new. */
 export const MAX_SCREENSHOTS = 3;

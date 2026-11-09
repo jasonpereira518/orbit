@@ -18,7 +18,6 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { feedback, feedbackScreenshots } from "@/db/schema";
 import { hasBlobStorage } from "@/lib/contact-avatar";
-import { notifyFeedbackSubmitted } from "@/lib/feedback-notify";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import {
   FEEDBACK_AREAS,
@@ -236,6 +235,10 @@ export type FeedbackScreenshotInput = DecodedScreenshot & {
  *
  * The parent is inserted first, so a blob failure aborts with one childless parent row
  * rather than a half-populated gallery that reads as "one of my screenshots vanished".
+ *
+ * Tells nobody. The submit action triages the report and sends the Slack DM after the
+ * response (`after()` in `src/actions/feedback.ts`), so the DM can lead with the triage
+ * line; a report the operator logs by hand needs no DM at all.
  */
 export async function createFeedbackSubmission(input: {
   userId: string;
@@ -261,13 +264,6 @@ export async function createFeedbackSubmission(input: {
     // overload resolution in this TS version, the same way it does in `interest-list.ts`
     // and `import-engine.ts`.
     .returning();
-
-  notifyFeedbackSubmitted({
-    id: entry.id,
-    category: entry.category,
-    area: entry.area,
-    text: entry.text,
-  }).catch(() => {});
 
   if (input.screenshots.length === 0) return { id: entry.id, screenshotCount: 0 };
 

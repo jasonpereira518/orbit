@@ -33,6 +33,12 @@ const FILTERS: Array<{ value: FeedbackFilter; label: string }> = [
   { value: "resolved", label: "Resolved" },
 ];
 
+const SEVERITY_CLASS: Record<string, string> = {
+  high: "bg-destructive/15 text-destructive",
+  medium: "bg-accent/20 text-accent-foreground",
+  low: "bg-muted text-muted-foreground",
+};
+
 const STATUS_CLASS: Record<string, string> = {
   new: "bg-accent/20 text-accent-foreground",
   triaged: "bg-muted text-muted-foreground",
@@ -280,12 +286,36 @@ export default async function AdminFeedbackPage({
                     {row.contactOk && <span className="ml-1 text-[0.625rem] text-accent-foreground" title="Said we may contact them">✉</span>}
                   </Td>
                   <Td>
+                    {/* The triage line when there is one: a sentence someone wrote for
+                        reading at a glance beats the first 180 characters of a report. */}
                     <Link
                       href={`/admin/feedback/${row.id}`}
                       className="underline underline-offset-2 hover:text-primary"
                     >
-                      {row.excerpt?.trim() || <span className="text-muted-foreground">(no text)</span>}
+                      {row.triage?.summary ||
+                        row.excerpt?.trim() || <span className="text-muted-foreground">(no text)</span>}
                     </Link>
+                    {row.triage && (
+                      <span className="ml-2 inline-flex items-center gap-1.5 align-middle">
+                        <span
+                          className={cn(
+                            "rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium",
+                            SEVERITY_CLASS[row.triage.severity]
+                          )}
+                        >
+                          {row.triage.severity}
+                        </span>
+                        {row.triage.duplicateOf && (
+                          <Link
+                            href={`/admin/feedback/${row.triage.duplicateOf}`}
+                            className="text-[0.625rem] text-muted-foreground underline-offset-2 hover:underline"
+                            title="Looks like an earlier open report"
+                          >
+                            ↳ dup
+                          </Link>
+                        )}
+                      </span>
+                    )}
                   </Td>
                   <Td
                     numeric

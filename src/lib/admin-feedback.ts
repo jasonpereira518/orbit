@@ -3,7 +3,13 @@ import { getDb } from "@/db";
 import { feedback, feedbackScreenshots, userSettings } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
 import { assertRevealable } from "@/lib/admin-redaction";
-import { FEEDBACK_AREAS, FEEDBACK_CATEGORIES, type FeedbackArea, type FeedbackCategory } from "@/lib/feedback-report";
+import {
+  FEEDBACK_AREAS,
+  FEEDBACK_CATEGORIES,
+  type FeedbackArea,
+  type FeedbackCategory,
+  type FeedbackTriage,
+} from "@/lib/feedback-report";
 
 /**
  * The feedback console's read side: what people said, and what has been done about it.
@@ -86,6 +92,8 @@ export type FeedbackListRow = {
   submitterEmail: string | null;
   /** They ticked "you may contact me about this". Null on entries older than the field. */
   contactOk: boolean | null;
+  /** The AI triage pass's reading — see `src/lib/feedback-triage.ts`. Null until it has run. */
+  triage: FeedbackTriage | null;
 };
 
 export type FeedbackSummary = {
@@ -227,6 +235,7 @@ function listSelection() {
     statusChangedAt: feedback.statusChangedAt,
     submitterEmail: userSettings.email,
     contactOk: sql<boolean | null>`(${feedback.context} ->> 'contactOk')::boolean`,
+    triage: feedback.triage,
   };
 }
 
@@ -285,6 +294,7 @@ export type FeedbackDetail = {
     statusChangedAt: Date | null;
     statusChangedBy: string | null;
     resolutionNote: string | null;
+    triage: FeedbackTriage | null;
   };
   screenshots: FeedbackScreenshotRow[];
   submitter: { email: string | null; createdAt: Date | null } | null;
@@ -339,6 +349,7 @@ export async function loadFeedbackDetail(id: string): Promise<FeedbackDetail | n
       statusChangedAt: entry.statusChangedAt,
       statusChangedBy: entry.statusChangedBy,
       resolutionNote: entry.resolutionNote,
+      triage: entry.triage,
     },
     screenshots,
     submitter: submitter ?? null,
