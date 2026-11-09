@@ -58,7 +58,7 @@ function plural(n: number, word: string) {
  * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola, hubspot, salesforce] =
+  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola, hubspot, salesforce, notion] =
     await Promise.all([
       settle(getSettings()),
       settle(getCalendarFeedStatus()),
@@ -72,6 +72,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       settle(requireUserId().then((id) => getConnectorConnection(id, "granola"))),
       settle(requireUserId().then((id) => getConnectorConnection(id, "hubspot"))),
       settle(requireUserId().then((id) => getConnectorConnection(id, "salesforce"))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "notion"))),
     ]);
   const now = new Date();
   const pages: IntegrationStatuses["pages"] = {};
@@ -221,6 +222,15 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
         : salesforce.status === "needs_reauth"
           ? { state: "partial", detail: "Reconnect needed" }
           : { state: "on", detail: salesforce.label ?? "Connected" };
+  connectors.notion =
+    notion === "unknown"
+      ? "unknown"
+      : !notion
+        ? { state: "off", detail: "Not connected" }
+        : notion.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: notion.accountRef ?? "Connected" };
+  pages.notion = connectors.notion;
 
   // The registry and this action must answer for the same connectors. The smoke test checks
   // the list against the registry; this checks the implementation against the list.

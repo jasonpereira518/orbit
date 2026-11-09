@@ -3263,6 +3263,10 @@
       "granola": {
         "state": "off",
         "detail": "Not connected"
+      },
+      "notion": {
+        "state": "off",
+        "detail": "Not connected"
       }
     },
     "accounts": {
@@ -3327,6 +3331,10 @@
         "detail": "orbit-demo.hubspot.com"
       },
       "salesforce": {
+        "state": "off",
+        "detail": "Not connected"
+      },
+      "notion": {
         "state": "off",
         "detail": "Not connected"
       }

@@ -483,6 +483,28 @@ async function main() {
 
   await db.delete(captureJobs).where(and(eq(captureJobs.userId, USER), eq(captureJobs.status, "discarded")));
   await reset();
+  console.log("\nOne paste, several meetings…");
+  {
+    await reset();
+    const seen: Array<{ corpus: string; eventDate: string | null | undefined }> = [];
+    const week = "Nov 3 — Coffee with Ada\nAda is moving to the infra team next month.\n\nNov 5 — Call with Grace\nGrace is hiring two engineers this quarter.";
+    const multi = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: week });
+    const done = await runCaptureJobById(multi.id, {
+      enrich: false,
+      now: new Date("2026-11-09T15:00:00Z"),
+      parse: async (_u, corpus, hints) => {
+        seen.push({ corpus, eventDate: hints?.eventDate });
+        return fakeParse(corpus);
+      },
+    });
+    check("each meeting is read on its own", seen.length === 2, String(seen.length));
+    check("with its own date", seen.map((s) => s.eventDate).join() === "2026-11-03,2026-11-05", seen.map((s) => s.eventDate).join());
+    check("and only its own notes", seen[0]!.corpus.includes("Ada") && !seen[0]!.corpus.includes("Grace") && seen[1]!.corpus.includes("Grace"));
+    const labels = [...new Set((done?.result?.items ?? []).map((i) => i.noteLabel))];
+    check("one review, cards labelled by meeting", done?.status === "ready" && labels.join("|") === "Nov 3 — Coffee with Ada|Nov 5 — Call with Grace", labels.join("|"));
+    check("and keyed apart", new Set((done?.result?.items ?? []).map((i) => i.key)).size === (done?.result?.items.length ?? -1));
+  }
+
   console.log("\nsmoke-capture-jobs: all checks passed");
 }
 

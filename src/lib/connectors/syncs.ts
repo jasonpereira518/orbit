@@ -14,6 +14,7 @@ import {
   type ConnectorManifest,
 } from "@/lib/connectors/registry";
 import { syncGranola } from "@/lib/connectors/granola";
+import { syncNotionPeople } from "@/lib/connectors/notion";
 import { syncHubspot } from "@/lib/crm/hubspot/sync";
 import { syncSalesforce } from "@/lib/crm/salesforce/sync";
 
@@ -24,6 +25,10 @@ export const CONNECTOR_SYNCS: Partial<Record<ConnectorId, ConnectorSync>> = {
   // Granola reloads its own connection by id (it predates the claim handing over the row).
   granola: async (conn) => {
     await syncGranola(conn.id);
+  },
+  // Does nothing until a people database is chosen on the Notion settings page.
+  notion: async (conn) => {
+    await syncNotionPeople(conn.id);
   },
   hubspot: async (conn) => {
     await syncHubspot(conn);

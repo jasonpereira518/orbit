@@ -1,3 +1,5 @@
+import { promptNow } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -276,13 +278,16 @@ async function draftFromContext(input: {
       ? `End with a short sign-off followed by "${senderFirstName}" on its own line.`
       : "Do not write a sign-off, signature, or placeholder name — end on the final sentence.";
 
+  // Date only: this call is cached, and a clock in the prompt would change its key every minute.
+  const today = promptNow(await viewerTimeZone(input.userId), new Date(), { time: false });
   const content = await cachedCompleteJson(input.userId, {
     operation,
     schema: { name: "follow_up_draft", zod: z.object({ body: z.string() }) },
     access: input.access,
     signal: input.signal,
     temperature: 0.5,
-    system: `You draft warm, specific follow-up messages for a personal networking CRM called Orbit.
+    system: `${today}
+You draft warm, specific follow-up messages for a personal networking CRM called Orbit.
 The user is following up with someone they already know — not cold outreach.
 
 Return strict JSON: { "purpose": string, "body": string }

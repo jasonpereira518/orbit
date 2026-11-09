@@ -8,6 +8,8 @@
  * cites nothing is dropped. Without one, the same facts become points by rule — still useful,
  * never invented.
  */
+import { promptNow } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -228,7 +230,8 @@ export async function generateTalkingPoints(
       userId,
       {
         operation: "meeting.talking_points",
-        system: systemPrompt(),
+        // Date only: the cache below keys on the prompt for a day.
+        system: `${promptNow(await viewerTimeZone(userId), new Date(), { time: false })}\n${systemPrompt()}`,
         user: talkingPointsPrompt(ctx.event.title, ctx.people.map((p) => p.name), facts),
         temperature: 0.3,
         maxOutputTokens: 2048,

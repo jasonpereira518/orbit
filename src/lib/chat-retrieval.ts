@@ -1,3 +1,4 @@
+import { promptNow } from "@/lib/user-clock";
 import { completeJson, parseAiJson } from "@/lib/ai";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { RERANK_TUNING, rerankQuestion } from "@/lib/decisions/catalog";
@@ -268,6 +269,8 @@ export async function understandQuery(
    */
   context: {
     today?: string;
+    /** The user's zone: when given, the parse is told the user's date and weekday, not UTC's. */
+    timeZone?: string;
     priorTurns?: ReadonlyArray<{ role: string; content: string }>;
     aboutUser?: string | null;
     userSchools?: readonly string[];
@@ -298,7 +301,12 @@ export async function understandQuery(
             .join("\n")
         )}\n\n`
       : "";
-    const todayBlock = `Today is ${context.today ?? new Date().toISOString().slice(0, 10)}.\n\n`;
+    // "Tomorrow" and "this week" become a calendar window here, which `chat-calendar` reads on
+    // the user's clock — so the parse must be told the user's day, not the server's (UTC).
+    const todayLine = context.timeZone
+      ? promptNow(context.timeZone, new Date(), { time: false })
+      : `Today is ${context.today ?? new Date().toISOString().slice(0, 10)}.`;
+    const todayBlock = `${todayLine}\n\n`;
     const content = await withTimeout(
       (signal) =>
         completeFn(userId, {

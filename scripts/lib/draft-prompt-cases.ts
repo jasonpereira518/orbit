@@ -21,7 +21,13 @@ import { generateConversationStarters, type StarterContext } from "../../src/lib
 
 export const CASE_USER = "smoke-draft-prompts-user";
 
-export type SentPrompt = { system: string; user: string };
+export type SentPrompt = { system: string; user: string; dated?: boolean };
+
+/**
+ * The leading "Today is …" line (`promptNow`) changes every day, so the goldens hold the
+ * prompt without it; `dated` records that it was there.
+ */
+const NOW_LINE = /^Today is [^\n]*\n\n?/;
 export type CaseResults = Record<string, SentPrompt>;
 
 /** What the stubbed model answers, valid for every one of the four operations. */
@@ -48,8 +54,10 @@ export function installPromptCapture() {
       systemInstruction?: { parts?: Array<{ text?: string }> };
       contents?: Array<{ parts?: Array<{ text?: string }> }>;
     };
+    const system = (body.systemInstruction?.parts ?? []).map((p) => p.text ?? "").join("");
     captured.push({
-      system: (body.systemInstruction?.parts ?? []).map((p) => p.text ?? "").join(""),
+      dated: NOW_LINE.test(system),
+      system: system.replace(NOW_LINE, ""),
       user: (body.contents ?? []).flatMap((c) => (c.parts ?? []).map((p) => p.text ?? "")).join(""),
     });
     return Response.json({
