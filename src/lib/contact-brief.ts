@@ -1,3 +1,5 @@
+import { promptNow } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -596,7 +598,8 @@ export async function generateAndStoreContactBrief(
       // Fenced for the model only: `inputHash` and the skip gate stay on the plain input, so
       // adding the fence did not make every brief on file look stale.
       user: fenceUntrusted("RECORDS", userPrompt),
-      system,
+      // Today, so "three weeks ago" and "this Thursday" in the brief are right on the day it is written.
+      system: `${promptNow(await viewerTimeZone(userId), new Date(), { time: false })}\n${system}`,
     });
     const parsed = contactBriefSchema.parse(JSON.parse(content));
     summary = parsed.summary.trim();

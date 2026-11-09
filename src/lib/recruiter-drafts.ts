@@ -1,3 +1,5 @@
+import { LOCAL_TIME_RULE, promptNow } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { completeJson, parseAiJson } from "@/lib/ai";
 import { cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import { guardDraftOutput } from "@/lib/draft-output";
@@ -141,7 +143,7 @@ Return JSON: {"subject": string, "body": string}`;
     operation: "recruiter.draft",
     temperature: 0.55,
     maxOutputTokens: 600,
-    system,
+    system: `${promptNow(await viewerTimeZone(userId))} ${LOCAL_TIME_RULE}\n\n${system}`,
     user: `${context}
 
 ${input.variationHint ? `Vary phrasing from other drafts in this batch: ${input.variationHint}` : ""}`,

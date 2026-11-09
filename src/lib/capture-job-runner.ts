@@ -13,6 +13,8 @@
  * runner (a) adopts a batch that already exists for this corpus and (b) re-runs duplicate
  * detection so a person created by the previous attempt is now an update, not a second row.
  */
+import { splitMeetings } from "@/lib/capture/split-meetings";
+import { combineCaptureResults } from "@/lib/capture/combine-results";
 import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
 import { openEngines } from "@/lib/decisions/engine";
 import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
@@ -179,8 +181,8 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
   try {
     const corpus = assembleCaptureCorpus(row);
     if (!corpus) throw new Error("Nothing to read yet");
-    const parsed = await Promise.race([
-      parse(row.userId, corpus, row.inputHints, {
+    const parseOne = (text: string, hints: typeof row.inputHints) =>
+      parse(row.userId, text, hints, {
         meetingSessionId: row.meetingSessionId,
         // The review flow: someone will look at these cards, so new people are worth a search.
         lookUpNewPeople: true,
@@ -192,7 +194,26 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
         // to outlast CAPTURE_CLAIM_STALE_MS in silence and get re-claimed — and re-billed —
         // while still running. And stop between them once the claim is gone: `claimWatch`.
         onProgress: watch.heartbeat,
-      }),
+      });
+    // A paste of several dated meetings is read one meeting at a time, each with its own
+    // date, then folded into one review like a multi-file upload (`split-meetings.ts`).
+    // Recordings, Granola notes and file bins are one note by construction.
+    const meetings =
+      !row.meetingSessionId && !row.ingestedBlocks?.length && !(row.inputHints as GranolaJobHints | null)?.granola
+        ? splitMeetings(corpus, deps.now)
+        : [];
+    const parsed = await Promise.race([
+      meetings.length
+        ? Promise.all(
+            meetings.map(async (m) => {
+              const { sourceText, sourceHash, ...result } = await parseOne(m.text, { ...(row.inputHints ?? {}), eventDate: m.dateIso });
+              return { label: m.label, sourceText, sourceHash, result };
+            })
+          ).then((parts) => {
+            const combined = combineCaptureResults(parts);
+            return { ...combined.result, sourceText: combined.sourceText, sourceHash: combined.sourceHash };
+          })
+        : parseOne(corpus, row.inputHints),
       watch.lost,
     ]);
     if (!(await heartbeatCaptureJob(id, token))) throw new ClaimLostError();

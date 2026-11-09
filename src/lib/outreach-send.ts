@@ -1,3 +1,5 @@
+import { startOfUserDay } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { outreachFromAddress } from "@/lib/outreach-sender";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
@@ -85,8 +87,8 @@ export async function getOutreachSendConfig(
  */
 export async function countSendsToday(userId: string) {
   const db = await getDb();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
+  // The user's midnight, not the server's (UTC): the cap resets when their day does.
+  const start = startOfUserDay(await viewerTimeZone(userId));
 
   const rows = await db
     .select({ count: sql<number>`count(*)::int` })

@@ -16,6 +16,8 @@
  * worse than none, because it teaches the user to stop trusting the feature.
  */
 
+import { promptNow } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { z } from "zod";
 import type {
   ConversationStarter,
@@ -704,7 +706,8 @@ export async function generateConversationStarters(
         operation: "extension.starters",
         // See extension/parse-profile.ts: the route's 30 s limit, so end before it.
         signal: AbortSignal.timeout(EXTENSION_AI_DEADLINE_MS),
-        system: systemPrompt(ctx.mode, limit),
+        // Date only: cached per page, so a clock here would defeat the cache.
+        system: `${promptNow(await viewerTimeZone(userId), new Date(), { time: false })}\n${systemPrompt(ctx.mode, limit)}`,
         user: userPrompt(ctx, limit),
         temperature: 0.6,
         // Matches the house default. A tighter budget looks generous for three

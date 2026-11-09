@@ -388,7 +388,8 @@ run(async () => {
   // posts read (26); plus the one constant read of the user's imported skills/job titles
   // (`loadUserFocus`) and the email-insights opt-in check (`produceEmailSignals`, one statement
   // that returns nothing for an account that has not opted in); see smoke-page-budgets.
-  check("and a bounded number of them", statements <= 28, String(statements));
+  // 29: plus the user's saved zone (`userTimeZone`), so "meeting tomorrow" is the user's tomorrow.
+  check("and a bounded number of them", statements <= 29, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);
