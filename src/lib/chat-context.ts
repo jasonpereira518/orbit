@@ -1,3 +1,5 @@
+import { listMemories } from "@/lib/chat-memory";
+import { memoriesForPrompt } from "@/lib/chat-memory-text";
 import { attachmentsForPrompt, type ChatAttachment } from "@/lib/chat-attachments";
 import { nowInZone } from "@/lib/user-clock";
 import { loadChatCalendar, type ChatCalendar } from "@/lib/chat-calendar";
@@ -180,6 +182,8 @@ export type ChatContext = {
   scopedQuestion: string;
   /** Freeform context the user typed for this conversation, if any — never extracted into contacts. */
   userContext: string | null;
+  /** What the person asked Orbit to keep in mind across chats, for the prompt's fenced block. */
+  memories: string | null;
   /** The text of files attached to this question and earlier in the thread, for the prompt's fenced block. */
   attachedFiles: string | null;
   /** One line to show under the answer when the semantic arm was unavailable. */
@@ -816,6 +820,8 @@ export async function prepareChatContext(
   // ROUTING (decisions/chat-route.ts). Read from the question parse retrieval already makes,
   // so it costs no extra round trip; the branches it gates (attention brief, recruiter list)
   // chain off it while the search runs. A failed parse routes to the one-pass default.
+  // Read beside everything else; an answer never fails because memories could not be read.
+  const memoriesP = listMemories(userId).catch(() => []);
   const priorRowsP = threadId
     ? db.query.chatMessages
         .findMany({
@@ -1286,6 +1292,7 @@ export async function prepareChatContext(
     snippets,
     scopedQuestion,
     userContext,
+    memories: memoriesForPrompt(await memoriesP),
     attachedFiles: attachmentsForPrompt(
       options.attachments ?? [],
       priorRows.flatMap((row) => (row.role === "user" ? (row.attachments ?? []) : []))

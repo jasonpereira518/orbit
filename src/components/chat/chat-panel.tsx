@@ -38,6 +38,7 @@ import { ChatThreadProvider } from "@/components/chat/chat-thread-context";
 import { DraftEditor } from "@/components/chat/draft-editor";
 import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
 import { WritingInstructionsField } from "@/components/chat/writing-instructions-field";
+import { ChatMemoriesField } from "@/components/chat/chat-memories-field";
 import { clearSendResume, peekSendResumeFor } from "@/lib/chat-send-resume";
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import {
@@ -2417,6 +2418,7 @@ export function ChatPanel({
             </div>
           </div>
           <WritingInstructionsField active={contextOpen} />
+          <ChatMemoriesField active={contextOpen} />
         </SheetContent>
       </Sheet>
     </ChatThreadProvider>

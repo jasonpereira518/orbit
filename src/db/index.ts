@@ -230,6 +230,14 @@ CREATE TABLE IF NOT EXISTS user_goals (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id);
+CREATE TABLE IF NOT EXISTS chat_memories (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  text text NOT NULL,
+  source_thread_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_memories_user_idx ON chat_memories(user_id, created_at);
 CREATE TABLE IF NOT EXISTS tags (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3029,7 +3037,8 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // running turn reads them between lookup rounds).
 // 211 = chat_threads.pinned_at (a conversation pinned to the top of the history list).
 // 212 = chat_messages.attachments (the names and read text of files attached to a question).
-export const SCHEMA_VERSION = 212;
+// 213 = chat_memories (new table: things the person asked Orbit to remember across chats).
+export const SCHEMA_VERSION = 213;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
