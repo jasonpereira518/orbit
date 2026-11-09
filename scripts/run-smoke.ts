@@ -58,6 +58,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-granola-pick": "pglite",
   "smoke-contact-name-sweep": "pglite",
   "smoke-contact-monthly-upkeep": "pglite",
+  "smoke-linkedin-refresh": "pglite",
   "smoke-non-person-participant": "pglite",
   "smoke-onboarding-steps": "pure",
   "smoke-school-name": "pure",
