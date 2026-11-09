@@ -43,6 +43,7 @@ import {
   connectorOutbox,
   contactBriefs,
   emailSends,
+  crmRecords,
   contactEmbeddings,
   memoryChunks,
   contactExperiences,
@@ -76,6 +77,7 @@ import {
   imports,
   interactionMentions,
   interactions,
+  leads,
   meetingSessions,
   meetingTranscriptSegments,
   noteBatches,
@@ -101,6 +103,8 @@ import {
   suggestedReminders,
   tags,
   targetCompanies,
+  teamMembers,
+  teams,
   type DataPurgeRunRow,
   usageEvents,
   userGoals,
@@ -113,6 +117,7 @@ import { recomputeRecruiterRating,
   RECRUITER_DELETED_CREATOR,
   rederiveSharedRecruiterPii,
 } from "@/lib/recruiters";
+import { TEAM_DELETED_CREATOR } from "@/lib/team-domain";
 import {
   DATA_CATEGORY_IDS,
   DATA_CATEGORY_META,
@@ -387,6 +392,36 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(imports).where(eq(imports.userId, userId));
     },
   },
+  leads: {
+    exports: [own(teamMembers), own(leads)],
+    counts: [teamMembers, leads],
+    run: async (db, userId) => {
+      await db.delete(leads).where(eq(leads.userId, userId));
+      const memberships = await db
+        .select({ teamId: teamMembers.teamId })
+        .from(teamMembers)
+        .where(eq(teamMembers.userId, userId));
+      await db.delete(teamMembers).where(eq(teamMembers.userId, userId));
+      // The team row is shared: a creator's account can go while the team stays. Same
+      // sentinel as recruiters, for the same reason — never null, never a dangling id.
+      await db
+        .update(teams)
+        .set({ createdBy: TEAM_DELETED_CREATOR, updatedAt: new Date() })
+        .where(eq(teams.createdBy, userId));
+      // A team nobody is on any more is not a team. Literal identifiers on purpose: a
+      // column interpolated into sql`` here would render unqualified.
+      for (const { teamId } of memberships) {
+        await db
+          .delete(teams)
+          .where(
+            and(
+              eq(teams.id, teamId),
+              sql`not exists (select 1 from team_members tm where tm.team_id = teams.id)`
+            )
+          );
+      }
+    },
+  },
   connections: {
     exports: [
       own(gmailConnections),
@@ -399,6 +434,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(connectorConnections),
       own(externalLinks),
       own(connectorOutbox),
+      own(crmRecords),
     ],
     counts: [
       gmailConnections,
@@ -411,6 +447,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       connectorConnections,
       externalLinks,
       connectorOutbox,
+      crmRecords,
     ],
     run: async (db, userId) => {
       // Read before the delete: once the row is gone there is nothing to revoke with.
@@ -445,6 +482,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // that is not Gmail or Outlook. Same class of secret as the rows above, and it must
       // not outlive the account.
       await db.delete(connectorConnections).where(eq(connectorConnections.userId, userId));
+      // What a CRM connection synced. The contacts it created are the user's and stay with
+      // `contacts`; this is only the ledger that mapped them, and it must not outlive the grant.
+      await db.delete(crmRecords).where(eq(crmRecords.userId, userId));
       // The outbox may hold an unsent payload and external_links maps this user's rows into
       // other systems. Both go with the connection that produced them.
       await db.delete(connectorOutbox).where(eq(connectorOutbox.userId, userId));

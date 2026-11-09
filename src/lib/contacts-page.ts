@@ -106,6 +106,8 @@ export type ContactsPageFilters = {
    */
   quiet?: number;
   sort?: ContactSort;
+  /** Only contacts a connected CRM synced ("work contacts"). Ignored while Leads is not released. */
+  work?: true;
   /** Jump the A–Z rail to a letter. "#" means everything sorting before "a". */
   letter?: string;
   /** Restrict to contacts carrying this tag, matched case-insensitively. */

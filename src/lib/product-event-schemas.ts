@@ -44,7 +44,7 @@ export const PLANS = ["free", "orbit", "max", "lifetime"] as const;
 export const INTERVALS = ["month", "year", "once"] as const;
 export const GATES = [
   "contacts", "outreach", "hostedSending", "hostedEnrichment", "recruiters", "sync", "extension",
-  "api", "meetings", "creditPacks", "extraConnections", "managedCredits", "backgroundFloor",
+  "api", "crm", "meetings", "creditPacks", "extraConnections", "managedCredits", "backgroundFloor",
   "speechShortform", "speechMeeting", "radar", "events", "findPeople", "compose", "cloudNotes", "page",
 ] as const;
 export const FAILURE_FLOWS = ["capture", "import", "sync", "voice", "ai", "email", "checkout"] as const;

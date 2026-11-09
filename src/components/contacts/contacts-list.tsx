@@ -175,6 +175,7 @@ export type ContactsListFilters = {
   /** Days since the last logged interaction — see `parseQuietDays`. */
   quiet?: number;
   sort?: ContactSort;
+  work?: true;
   letter?: string;
   tag?: string;
   school?: string;
@@ -389,6 +390,7 @@ export function ContactsList({
     if (filters.tag) params.set("tag", filters.tag);
     if (filters.quiet) params.set("quiet", String(filters.quiet));
     if (filters.sort && filters.sort !== "name") params.set("sort", filters.sort);
+    if (filters.work) params.set("view", "work");
     if (filters.importId) params.set("importId", filters.importId);
     params.set("letter", letter);
     router.replace(`/contacts?${params.toString()}`);
@@ -432,6 +434,26 @@ export function ContactsList({
         }
       });
     }, DUR_MS.slow);
+  }
+
+  if (contacts.length === 0 && filters.work) {
+    // Filters narrowing the Work view to nothing is not the same as having no work contacts.
+    if (filters.q || filters.company || filters.minScore || filters.followUp) {
+      return (
+        <div className="p-10 text-center text-muted-foreground">
+          No work contacts match these filters. Clear search to see all of them.
+        </div>
+      );
+    }
+    return (
+      <div className="p-10 text-center text-muted-foreground">
+        No work contacts yet. Connect HubSpot on the{" "}
+        <Link href="/leads" className="text-primary underline">
+          Leads page
+        </Link>{" "}
+        and your customers show up here.
+      </div>
+    );
   }
 
   if (contacts.length === 0 && !hasActiveFilters(filters) && !(total && total > 0)) {

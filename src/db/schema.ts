@@ -716,6 +716,7 @@ export const companies = pgTable(
   (t) => [
     index("companies_user_idx").on(t.userId),
     uniqueIndex("companies_user_name_uidx").on(t.userId, t.nameNormalized),
+    index("companies_name_normalized_idx").on(t.nameNormalized),
   ]
 );
 
@@ -811,6 +812,14 @@ export const contacts = pgTable(
      * member of the network everywhere else: `/contacts`, search, chat and the timeline.
      */
     constellationPin: text("constellation_pin").$type<"in" | "out">(),
+    /**
+     * Whether teammates may learn that this person is in the user's network (name and
+     * closeness tier only — see `src/lib/leads/warm-path-sql.ts`). Integer per house
+     * convention. Defaults to shared but is inert until `team_members.share_network` is 1:
+     * the per-team switch is the real gate and this is the per-contact exception, the
+     * `user_recruiter_links.shared_to_pool` shape. Survives leaving and rejoining a team.
+     */
+    teamShared: integer("team_shared").default(1).notNull(),
     metContext: text("met_context"),
     dateMet: timestamp("date_met", { withTimezone: true }),
     howMet: text("how_met"),
@@ -983,6 +992,7 @@ export const contactIdentities = pgTable(
     uniqueIndex("contact_identities_user_kind_value_uidx").on(t.userId, t.kind, t.value),
     /** Without this, deleting a contact scans the table (see `event_attendees_contact_idx`). */
     index("contact_identities_contact_idx").on(t.contactId),
+    index("contact_identities_kind_value_idx").on(t.kind, t.value),
   ]
 );
 
@@ -3329,6 +3339,11 @@ export type ConnectorSyncCursor = {
   clientId?: string | null;
   /** Granola: sync only notes in these folders. Absent or empty means every note. */
   folderIds?: string[] | null;
+  /**
+   * Small facts a sync learns once and reuses every pass — a CRM's portal id and the owner
+   * record it filters on. Strings only: it round-trips through jsonb on both drivers.
+   */
+  meta?: Record<string, string> | null;
   /** Notion: the workspace this grant belongs to, and the people database being synced. */
   notion?: NotionCursor | null;
 };
@@ -6554,6 +6569,184 @@ export type EventCompany = typeof eventCompanies.$inferSelect;
 export type TargetCompany = typeof targetCompanies.$inferSelect;
 export type ContactIdentity = typeof contactIdentities.$inferSelect;
 export type NewContactIdentity = typeof contactIdentities.$inferInsert;
+
+/**
+ * A team is a verified email domain. Everyone whose Clerk primary email is verified at
+ * `@acme.com` may join the one `acme.com` team; public mail domains never form one
+ * (`teamDomainForEmail` in `src/lib/team-domain.ts`). The row is shared, not user-scoped:
+ * `created_by` is deliberately NOT named `user_id`, so the purge's derived scan does not
+ * demand a delete — a creator's account can go while the team stays, and their id is
+ * rewritten to `TEAM_DELETED_CREATOR` instead (the `recruiters.created_by_user_id` rule).
+ */
+export const teams = pgTable(
+  "teams",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** Lower-cased. The team's identity. */
+    domain: text("domain").notNull(),
+    name: text("name").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("teams_domain_uidx").on(t.domain)]
+);
+
+export type Team = typeof teams.$inferSelect;
+
+/**
+ * One row per member. `share_network` is the reciprocal opt-in: 0 contributes nothing
+ * to the who-knows-whom lookups and sees nothing from them. Starts at 0 for everyone,
+ * like `user_settings.recruiter_sharing`, and is read live by every query — never
+ * cached — so switching it off withdraws a person's contacts immediately.
+ */
+export const teamMembers = pgTable(
+  "team_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    /** Unique: one team per user, because a user has one verified primary email. */
+    userId: text("user_id").notNull(),
+    shareNetwork: integer("share_network").default(0).notNull(),
+    /** The domain proven at join time, kept so a later re-verification can compare. */
+    emailDomain: text("email_domain").notNull(),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("team_members_user_uidx").on(t.userId),
+    index("team_members_team_sharing_idx").on(t.teamId, t.shareNetwork),
+  ]
+);
+
+export type TeamMember = typeof teamMembers.$inferSelect;
+
+export type LeadSource = "manual" | "apollo" | "crm";
+export type LeadStatus = "open" | "intro_requested" | "converted" | "dismissed";
+
+export type CrmRemoteType = "contact" | "lead";
+/** What the CRM says the person is to the business. Anything else a provider sends is `other`. */
+export type CrmLifecycle = "lead" | "customer" | "other";
+export type CrmScalar = string | number | boolean | null;
+
+/**
+ * One person as a connected CRM describes them: the sync ledger, and the map between an Orbit
+ * contact and its CRM record in both directions. Connection-derived — deleted on disconnect,
+ * purged with `connections`, rebuilt by the next sync — unlike `leads`, which is the user's own.
+ *
+ * A HubSpot contact moving lead → customer keeps its row and flips `lifecycle`; the unique
+ * `(user_id, connector_id, remote_type, remote_id)` is what the sync upserts on. `contact_id` is
+ * set once a customer becomes (or matches) an Orbit contact: "work contacts" are exactly the
+ * contacts with a row here. `link_blocked_at` marks a customer the plan's contact cap refused.
+ */
+export const crmRecords = pgTable(
+  "crm_records",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    remoteType: text("remote_type").$type<CrmRemoteType>().notNull(),
+    remoteId: text("remote_id").notNull(),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    lifecycle: text("lifecycle").$type<CrmLifecycle>().notNull(),
+    /** The provider's raw stage value, never interpreted beyond `lifecycle`. */
+    stage: text("stage"),
+    displayName: text("display_name").notNull(),
+    email: text("email"),
+    /** `identityKeysFor`'s email value. */
+    emailNormalized: text("email_normalized"),
+    phone: text("phone"),
+    linkedinUrl: text("linkedin_url"),
+    companyName: text("company_name"),
+    companyNormalized: text("company_normalized"),
+    companyDomain: text("company_domain"),
+    title: text("title"),
+    remoteOwnerRef: text("remote_owner_ref"),
+    remoteUrl: text("remote_url"),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    remoteCreatedAt: timestamp("remote_created_at", { withTimezone: true }),
+    remoteUpdatedAt: timestamp("remote_updated_at", { withTimezone: true }),
+    /** Whitelisted scalar properties only (see the provider's mapping module). */
+    properties: jsonb("properties").$type<Record<string, CrmScalar>>().default({}).notNull(),
+    linkBlockedAt: timestamp("link_blocked_at", { withTimezone: true }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("crm_records_remote_uidx").on(t.userId, t.connectorId, t.remoteType, t.remoteId),
+    index("crm_records_user_contact_idx").on(t.userId, t.contactId),
+    /** Without this, deleting a contact scans the table (see `leads_contact_idx`). */
+    index("crm_records_contact_idx").on(t.contactId),
+    index("crm_records_user_lifecycle_idx").on(t.userId, t.connectorId, t.lifecycle),
+    index("crm_records_link_blocked_idx")
+      .on(t.userId, t.connectorId)
+      .where(sql`link_blocked_at is not null`),
+  ]
+);
+
+export type CrmRecord = typeof crmRecords.$inferSelect;
+
+/**
+ * A person the user wants to reach, before (or instead of) they become a contact. Kept apart
+ * from `contacts` on purpose: a pipeline of cold targets must not flood the network, the
+ * constellation, or the free plan's contact cap. "Add to contacts" sets `contact_id` and the
+ * row stays as history.
+ *
+ * The identity columns are written only by `normalizeLeadInput` (src/lib/leads/lead-identity.ts),
+ * which uses the same `identityKeysFor` that writes `contact_identities` — so the warm-path SQL
+ * matches a lead to a teammate's contact by plain equality. `source = 'crm'` rows and
+ * `crm_record_id` arrive with the CRM sync (P4).
+ */
+export const leads = pgTable(
+  "leads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    source: text("source").$type<LeadSource>().notNull(),
+    /** Set by "Add to contacts". The lead stays, as history. */
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    /** The CRM record a `source = 'crm'` lead came from; kept when a manual lead merges into one. */
+    crmRecordId: uuid("crm_record_id").references(() => crmRecords.id, { onDelete: "set null" }),
+    displayName: text("display_name").notNull(),
+    email: text("email"),
+    /** `identityKeysFor`'s email value; null for a role mailbox or no address. */
+    emailNormalized: text("email_normalized"),
+    linkedinUrl: text("linkedin_url"),
+    linkedinSlug: text("linkedin_slug"),
+    phone: text("phone"),
+    phoneE164: text("phone_e164"),
+    companyName: text("company_name"),
+    /** `companies.name_normalized` form, for "who knows anyone at this company". */
+    companyNormalized: text("company_normalized"),
+    title: text("title"),
+    /** Apollo's person id, so a repeated search never saves the same person twice. */
+    apolloId: text("apollo_id"),
+    status: text("status").$type<LeadStatus>().default("open").notNull(),
+    /** The user's own note on the target. Never shared. */
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("leads_user_status_idx").on(t.userId, t.status, t.updatedAt.desc()),
+    index("leads_user_email_idx").on(t.userId, t.emailNormalized),
+    index("leads_user_linkedin_idx").on(t.userId, t.linkedinSlug),
+    /** Without this, deleting a contact scans the table (see `contact_identities_contact_idx`). */
+    index("leads_contact_idx").on(t.contactId),
+    uniqueIndex("leads_user_apollo_uidx")
+      .on(t.userId, t.apolloId)
+      .where(sql`apollo_id is not null`),
+    uniqueIndex("leads_user_crm_record_uidx")
+      .on(t.userId, t.crmRecordId)
+      .where(sql`crm_record_id is not null`),
+  ]
+);
+
+export type Lead = typeof leads.$inferSelect;
+
 export type ContactMerge = typeof contactMerges.$inferSelect;
 export type NewContactMerge = typeof contactMerges.$inferInsert;
 export type DuplicateSuggestion = typeof duplicateSuggestions.$inferSelect;

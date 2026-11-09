@@ -77,6 +77,7 @@ export const PLAN_SHORT_LABELS: Record<Plan, string> = {
  *   extension's own gate (open PR #248), not by this flag.
  * - `sync`: pasted-ICS calendar subscriptions and event sources.
  * - `extraConnections`: a second Google or Microsoft account. Free keeps its first one.
+ * - `crm`: connecting Salesforce or HubSpot to Leads (Pro, Max and Lifetime).
  * - `hostedAi`: AI on Orbit's provider keys, metered in credits (every plan).
  * - `creditPacks`: buying a $5 top-up pack (every plan but Lifetime).
  * - `radar`, `events`, `findPeople`, `compose`, `cloudNotes`: features that ship coming soon.
@@ -94,6 +95,7 @@ export const FEATURE_KEYS = [
   "sync",
   "extension",
   "api",
+  "crm",
   "meetings",
   "hostedAi",
   "creditPacks",
@@ -138,6 +140,7 @@ const PAID_FEATURES: Record<FeatureKey, boolean> = {
   sync: true,
   extension: true,
   api: true,
+  crm: true,
   meetings: true,
   hostedAi: true,
   creditPacks: true,
@@ -168,6 +171,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
       sync: false,
       extension: true,
       api: false,
+      crm: false,
       meetings: false,
       hostedAi: true,
       creditPacks: true,

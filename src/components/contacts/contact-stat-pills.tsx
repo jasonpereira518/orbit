@@ -2,6 +2,7 @@ import { formatLastTouch } from "@/lib/relative-date";
 import { ConstellationPinButton } from "@/components/contacts/constellation-pin-button";
 import { HealthSparkline } from "@/components/contacts/health-sparkline";
 import { StatPillExplainer } from "@/components/contacts/stat-pill-explainer";
+import { TeamShareButton } from "@/components/contacts/team-share-button";
 import { Badge } from "@/components/ui/badge";
 import {
   closenessPercentChipClass,
@@ -15,6 +16,7 @@ export function ContactStatPills({
   hasLoggedInteraction,
   health,
   constellation,
+  team,
 }: {
   closeness: ClosenessBreakdown;
   /** Null when there is no touch in the window to score — the pill is left out. */
@@ -36,6 +38,11 @@ export function ContactStatPills({
     pin: "in" | "out" | null;
     substantive: boolean;
   };
+  /**
+   * Present only for a team member while Leads is released for them — the contact page
+   * decides. The per-contact "Hidden from team" exception.
+   */
+  team?: { contactId: string; shared: boolean };
 }) {
   const pct = Math.round(closeness.closeness * 100);
   const since = lastTouchAt ? formatLastTouch(new Date(lastTouchAt)) : null;
@@ -112,6 +119,7 @@ export function ContactStatPills({
           substantive={constellation.substantive}
         />
       )}
+      {team && <TeamShareButton contactId={team.contactId} shared={team.shared} />}
     </div>
   );
 }

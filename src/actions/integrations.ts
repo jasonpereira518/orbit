@@ -58,7 +58,7 @@ function plural(n: number, word: string) {
  * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola, notion] =
+  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola, hubspot, notion] =
     await Promise.all([
       settle(getSettings()),
       settle(getCalendarFeedStatus()),
@@ -70,6 +70,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       settle(listCalendarSubscriptions()),
       settle(requireUserId().then((id) => listEventConnections(id))),
       settle(requireUserId().then((id) => getConnectorConnection(id, "granola"))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "hubspot"))),
       settle(requireUserId().then((id) => getConnectorConnection(id, "notion"))),
     ]);
   const now = new Date();
@@ -201,6 +202,15 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
           ? { state: "partial", detail: "Reconnect needed" }
           : { state: "on", detail: "Connected" };
   pages.granola = connectors.granola;
+  // HubSpot's own row in connector_connections (Leads P4): the portal it syncs, or why not.
+  connectors.hubspot =
+    hubspot === "unknown"
+      ? "unknown"
+      : hubspot === null
+        ? { state: "off", detail: "Not connected" }
+        : hubspot.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: hubspot.label ?? "Connected" };
 
   connectors.notion =
     notion === "unknown"

@@ -5,6 +5,7 @@ import {
   actionItems,
   chatMessages,
   chatThreads,
+  connectorConnections,
   contactBriefs,
   contactExperiences,
   contactIdentities,
@@ -32,10 +33,18 @@ import {
 } from "@/db/schema";
 import { actionItemHash } from "@/lib/action-items";
 import { markCohortDirty } from "@/lib/closeness-materialize";
-import { createCompanyResolver } from "@/lib/companies";
+import { createCompanyResolver, resolveCompany } from "@/lib/companies";
 import { normalizeCompanyKey } from "@/lib/company-name";
 import { buildRecentDiscussions } from "@/lib/contact-brief";
+import { claimIdentities } from "@/lib/contact-identity";
+import { getConnectorConnection, upsertConnectorConnection } from "@/lib/connectors/connections";
+import { persistCrmPage } from "@/lib/crm/persist";
+import { DEMO_CRM_ACCOUNT_REF } from "@/lib/crm/types";
 import { identityKeysFor } from "@/lib/duplicates";
+import { finalizeIngest, openIngestContext } from "@/lib/ingest/events";
+import { saveLead } from "@/lib/leads/store";
+import { joinTeamWithDomain } from "@/lib/teams";
+import { ensureUserSettings } from "@/lib/user-settings";
 import {
   normalizeEmail,
   normalizeFirm,
@@ -43,7 +52,15 @@ import {
   recomputeRecruiterRating,
 } from "@/lib/recruiters";
 import { getInboxListId } from "@/lib/reminder-lists";
+import { DEMO_CRM_LABEL, demoCrmPeople } from "@/lib/demo-data/crm";
 import { DEMO_GOALS, DEMO_PEOPLE, type DemoPerson } from "@/lib/demo-data/network";
+import {
+  DEMO_LEADS,
+  DEMO_TEAM_DOMAIN,
+  DEMO_TEAMMATE_CONTACTS,
+  DEMO_TEAMMATES,
+  demoTeamAllowed,
+} from "@/lib/demo-data/team";
 import { buildExtendedCast, seedExtendedSurfaces, type ExtendedCast } from "@/lib/demo-data/seed-extended";
 import { STUDENT_GOALS, STUDENT_LISTS, STUDENT_PEOPLE, studentEvents } from "@/lib/demo-data/student";
 import {
@@ -133,6 +150,10 @@ export async function seedDemoWorkspace(
           ["imports", () => seedImports(userId, ago, summary, DEMO_PEOPLE.length)],
           ["goals", () => seedGoals(userId, summary, DEMO_GOALS)],
         ];
+  surfaces.push(["team", () => seedTeam(userId, summary)]);
+  // The CRM story (HubSpot customers) is the founder persona's; the student and gillings casts are
+  // pinned to their own contact counts, and work contacts would add to them.
+  if (!student && !gillings) surfaces.push(["crm", () => seedCrm(userId, summary)]);
   if (extended) {
     surfaces.push(["extended", () => seedExtendedSurfaces(userId, extended, contactIdByName, now, summary)]);
   }
@@ -1126,6 +1147,93 @@ async function seedGoals(userId: string, summary: DemoSeedSummary, goals: readon
   const db = await getDb();
   await db.insert(userGoals).values(goals.map((text) => ({ userId, text })));
   summary.goals = goals.length;
+}
+
+/* ------------------------------------------------------------------------------ team */
+
+/**
+ * The demo team on `orbit.local`: two colleagues who share their networks, the people they
+ * know (with explicit closeness — nobody ever reads their accounts, so nothing would score
+ * them), and four leads for this account that land hot, warm, cool and cold. Colleagues'
+ * contacts are created once; a later local account only joins.
+ */
+async function seedTeam(userId: string, summary: DemoSeedSummary): Promise<void> {
+  if (!demoTeamAllowed()) return;
+  const db = await getDb();
+  for (const mate of DEMO_TEAMMATES) {
+    await ensureUserSettings(mate.userId);
+    await db
+      .update(userSettings)
+      .set({ firstName: mate.firstName, lastName: mate.lastName, email: mate.email })
+      .where(eq(userSettings.userId, mate.userId));
+    await joinTeamWithDomain(mate.userId, DEMO_TEAM_DOMAIN, { shareNetwork: true });
+
+    const existing = await db.query.contacts.findFirst({
+      where: eq(contacts.userId, mate.userId),
+      columns: { id: true },
+    });
+    if (existing) continue;
+    for (const person of DEMO_TEAMMATE_CONTACTS.filter((c) => c.teammate === mate.userId)) {
+      const company = await resolveCompany(mate.userId, person.company);
+      const [row] = await db
+        .insert(contacts)
+        .values({
+          userId: mate.userId,
+          fullName: person.fullName,
+          email: person.email,
+          title: person.title,
+          company: company?.name ?? person.company,
+          companyId: company?.id ?? null,
+          closenessTier: person.tier,
+          closeness: person.closeness,
+          source: DEMO_SOURCE,
+        })
+        .returning();
+      await claimIdentities(mate.userId, row.id, identityKeysFor({ email: person.email }), DEMO_SOURCE);
+    }
+  }
+
+  await joinTeamWithDomain(userId, DEMO_TEAM_DOMAIN, { shareNetwork: true });
+  for (const lead of DEMO_LEADS) {
+    await saveLead(userId, {
+      source: "manual",
+      displayName: lead.displayName,
+      email: lead.email,
+      companyName: lead.companyName,
+      title: lead.title,
+    });
+  }
+  summary.teamMembers = DEMO_TEAMMATES.length + 1;
+  summary.leads = DEMO_LEADS.length;
+}
+
+/**
+ * The demo HubSpot. Local database only, for the reason the demo team is: a fake connection on
+ * a shared database would show a real account a HubSpot it never connected. No token and
+ * `next_sync_at` null, so the scheduler never claims it; "Sync now" and disconnect recognise
+ * `DEMO_CRM_ACCOUNT_REF` and never call HubSpot.
+ */
+async function seedCrm(userId: string, summary: DemoSeedSummary): Promise<void> {
+  if (!demoTeamAllowed()) return;
+  if (await getConnectorConnection(userId, "hubspot")) return;
+  await upsertConnectorConnection({
+    userId,
+    connectorId: "hubspot",
+    authKind: "oauth2",
+    label: DEMO_CRM_LABEL,
+    accountRef: DEMO_CRM_ACCOUNT_REF,
+    capabilities: ["syncPeople"],
+    nextSyncAt: null,
+  });
+  const db = await getDb();
+  await db
+    .update(connectorConnections)
+    .set({ lastSyncedAt: new Date(Date.now() - 12 * 60_000) })
+    .where(and(eq(connectorConnections.userId, userId), eq(connectorConnections.connectorId, "hubspot")));
+  const ctx = await openIngestContext(userId, { source: "hubspot", createsContacts: true, reportResolutions: true });
+  const stats = await persistCrmPage(ctx, "hubspot", demoCrmPeople());
+  await finalizeIngest(ctx);
+  summary.crmRecords = stats.records;
 }
 
 function sha256(text: string) {
