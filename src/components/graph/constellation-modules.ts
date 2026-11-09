@@ -177,8 +177,8 @@ export function resetConstellationModules() {
 export const __testing = { slots, load };
 
 /** Which renderer this viewport draws the sky with — see `use-small-sky.ts`. */
-function rendererFor(smallSky: boolean): "flow" | "mobile" {
-  return smallSky ? "mobile" : "flow";
+function rendererFor(_smallSky?: boolean): "flow" {
+  return "flow";
 }
 
 /**

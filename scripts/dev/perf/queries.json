@@ -36,8 +36,8 @@
   "sql": "SELECT DISTINCT i.user_id FROM interactions i WHERE (coalesce(i.raw_notes,'')<>'' OR coalesce(i.ai_summary,'')<>'') AND NOT EXISTS (SELECT 1 FROM memory_chunks m WHERE m.user_id=i.user_id AND m.source_kind='interaction' AND m.source_id=i.id AND m.source_hash=md5(coalesce(floor(extract(epoch from i.interaction_date))::bigint::text,'')||'|'||coalesce(i.interaction_type,'')||'|'||coalesce(i.contact_id::text,'')||'|'||coalesce(nullif(i.raw_notes,''),i.ai_summary,''))) LIMIT 25"
  },
  {
-  "name": "Q11 knowledge-base search",
-  "sql": "SELECT id FROM interactions WHERE user_id='demo-user' AND (ai_summary ILIKE '%dinner%' OR raw_notes ILIKE '%dinner%' OR EXISTS (SELECT 1 FROM contacts c WHERE c.id=interactions.contact_id AND c.full_name ILIKE '%dinner%')) ORDER BY interaction_date DESC LIMIT 500"
+  "name": "Q11 knowledge content search",
+  "sql": "SELECT contact_id FROM interactions WHERE user_id='demo-user' AND (strpos(lower(coalesce(ai_summary,'')),'dinner')>0 OR strpos(lower(coalesce(raw_notes,'')),'dinner')>0) ORDER BY interaction_date DESC LIMIT 150"
  },
  {
   "name": "Q12 listContactsMatching",

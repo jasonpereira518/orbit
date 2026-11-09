@@ -2,9 +2,10 @@
  * Audit L-04: a `%` or `_` typed into a search box is a character to find, not a wildcard.
  *
  * Three searches built `%${q}%` (or `${q}%`) from the raw query: the contacts list and picker
- * (`contactSearchCondition`), the knowledge base, and the shared recruiter pool. A bare `%`
- * matched the whole table and `%a%b%c%…` was a cheap CPU burn. They now go through
- * `escapeLike`, like the name-tier ranking beside them always did.
+ * (`contactSearchCondition`), the knowledge page, and the shared recruiter pool. A bare `%`
+ * matched the whole table and `%a%b%c%…` was a cheap CPU burn. The first and last now go
+ * through `escapeLike`, like the name-tier ranking beside them always did; the knowledge
+ * search is a literal `strpos` match, so it has no pattern to escape.
  *
  * Run: npx tsx scripts/smoke-like-escaping.ts
  */
@@ -14,7 +15,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, recruiters, userRecruiterLinks } from "../src/db/schema";
 import { contactSearchCondition, escapeLike } from "../src/lib/contact-search-rank";
-import { loadKnowledgeBase } from "../src/lib/knowledge-base";
+import { searchKnowledgeContent } from "../src/lib/knowledge-search";
 import { searchCanonicalRecruiters } from "../src/lib/recruiters";
 import { run } from "./smoke/_env";
 
@@ -56,16 +57,25 @@ run(async () => {
   const underscore = await names("Ada_");
   check('"Ada_" finds "Ada_Lovelace" and not "AdaXLovelace"', underscore.includes("Ada_Lovelace") && !underscore.includes("AdaXLovelace"), JSON.stringify(underscore));
 
-  console.log("\nKnowledge base search...");
-  const kb = async (q: string) => (await loadKnowledgeBase(U, { q, kind: "all" })).entries;
-  const kbAll = await kb("");
-  const kbPercent = await kb("%");
-  check("the unfiltered knowledge base has entries to search", kbAll.length >= 2, `${kbAll.length} entries`);
-  check('"%" is not "everything" in the knowledge base', kbPercent.length < kbAll.length, `${kbPercent.length} of ${kbAll.length}`);
+  console.log("\nKnowledge search...");
+  // A literal `strpos` match, not a LIKE pattern, so there is nothing to escape (and a query
+  // under three characters is not searched at all, so a bare "%" is never the whole table).
+  const kb = async (q: string) => (await searchKnowledgeContent(U, q)).map((h) => h.fullName).sort();
+  const kbBare = await kb("%");
+  check('a bare "%" is below the search minimum and finds nothing', kbBare.length === 0, JSON.stringify(kbBare));
+  const kbPercent = await kb("50%");
   check(
-    '"%" finds only text with a literal percent sign',
-    kbPercent.every((e) => JSON.stringify(e).includes("%")),
-    JSON.stringify(kbPercent.map((e) => e.title ?? e))
+    '"50%" finds the literal "50% Club", not "500 Startups"',
+    kbPercent.includes("50% Club") && !kbPercent.includes("500 Startups"),
+    JSON.stringify(kbPercent)
+  );
+  const kbWild = await kb("%%%");
+  check('"%%%" is not a wildcard: it finds nobody', kbWild.length === 0, JSON.stringify(kbWild));
+  const kbUnderscore = await kb("Ada_");
+  check(
+    '"Ada_" finds "Ada_Lovelace" and not "AdaXLovelace"',
+    kbUnderscore.includes("Ada_Lovelace") && !kbUnderscore.includes("AdaXLovelace"),
+    JSON.stringify(kbUnderscore)
   );
 
   console.log("\nShared recruiter search...");
