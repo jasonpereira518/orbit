@@ -250,6 +250,26 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
         warnings.push(`${name} is unset (required in production)`);
       }
     }
+    // A preview must never carry production's credentials. Variables added in Vercel without
+    // picking an environment land on "All Environments", so a live Clerk or Stripe key on a
+    // preview is the common mistake, not an exotic one — and a preview signed into the
+    // production Clerk instance, or charging real cards, is production with a test label.
+    if (has(env, "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY") && !env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!.startsWith("pk_test_")) {
+      errors.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must be a test-instance key (pk_test_) in preview deployments");
+    }
+    if (has(env, "CLERK_SECRET_KEY") && !env.CLERK_SECRET_KEY!.startsWith("sk_test_")) {
+      errors.push("CLERK_SECRET_KEY must be a test-instance key (sk_test_) in preview deployments");
+    }
+    if (has(env, "STRIPE_SECRET_KEY") && !env.STRIPE_SECRET_KEY!.startsWith("sk_test_")) {
+      errors.push("STRIPE_SECRET_KEY must be a test-mode key (sk_test_) in preview deployments");
+    }
+    // The showcase account is comped Lifetime on a keypress (`triggerDemoCelebration`). That
+    // is fine against a preview's own branch and a real grant against production's rows.
+    const target = databaseHost(env.DATABASE_URL);
+    const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
+    if (has(env, "DEMO_ACCOUNT_USER_ID") && target && production && target === production) {
+      errors.push("DEMO_ACCOUNT_USER_ID must not be set on a preview whose DATABASE_URL is the production database");
+    }
     return { errors, warnings, missingRequired, missingExpected };
   }
 

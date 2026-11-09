@@ -475,6 +475,8 @@ CREATE TABLE IF NOT EXISTS imports (
   stall_resumes integer NOT NULL DEFAULT 0,
   reverted_at timestamptz,
   revert_stats jsonb,
+  claim_token text,
+  lease_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -2997,20 +2999,36 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // #551; 202: leads-p2-teams-port; 203: #554; 204: leads-p3-pipeline-port. Rescanned every remote
 // ref on Nov 8 2026: 204 was the highest claimed anywhere.
 //
-// 208 = the Phase 2 integrity fixes (built as 203, ported from #474 where they were 172 and
-// 173): contacts_user_closeness_nl_idx (closeness sort NULLS LAST, M-12),
+// 206 = imports.claim_token + imports.lease_until: the import runner's lease, so the stall
+// backstop or an admin retry can never run a second runner beside a live one (security audit
+// H-04, ported from #474 where it was 171). Built as 201; renumbered to 206 on Nov 8 2026 when
+// #557 reached main first at 205 — a database stamped 205 would never run a 201. The Phase 2
+// and 3.6 ports renumber above this one as they land.
+//
+// 207 = the Phase 2 integrity fixes of the security audit (ported from #474, where they were 172
+// and 173): contacts_user_closeness_nl_idx (closeness sort NULLS LAST, M-12),
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
 // L-20), and chat_threads.stopped_turn_id + chat_messages.client_turn_id (a dropped chat
-// connection keeps the person's question; only an explicit Stop discards it, L-25) — plus
-// FIX_PLAN 3.5 / 3.6 (built as 206, ported from #474 where it was 177): account_audit_log (new
-// table, L-23); user_settings.credit_email_unsub_token_hash (L-05) and clerk_user_updated_at
-// (L-07); interest_list_signups.unsubscribe_token_hash / _encrypted and share_token_hash /
-// _encrypted, with unsubscribe_token made nullable (L-05). Renumbered 203/206 → 208 on Nov 8
-// 2026 to land above #557 (205), the Phase 1 port (206) and this PR's Phase 2 half (207): a
-// database stamped above the old numbers would never run their DDL.
+// connection keeps the person's question; only an explicit Stop discards it, L-25). Built as 203;
+// renumbered to 207 on Nov 8 2026 to land above #557 (205) and the Phase 1 port (206) — #557
+// reached main first, and a database stamped above 203 would never run a 203.
+//
+// 208 = FIX_PLAN 3.5 / 3.6 of the security audit (built as 206; ported from #474, where it was
+// 177): account_audit_log (new table, L-23); user_settings.credit_email_unsub_token_hash (L-05)
+// and clerk_user_updated_at (L-07); interest_list_signups.unsubscribe_token_hash / _encrypted
+// and share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). Renumbered
+// 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
+// old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
 export const SCHEMA_VERSION = 208;
+// outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
+// interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
+// mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
+// L-20), and chat_threads.stopped_turn_id + chat_messages.client_turn_id (a dropped chat
+// connection keeps the person's question; only an explicit Stop discards it, L-25). Built as 203;
+// renumbered to 207 on Nov 8 2026 to land above #557 (205) and the Phase 1 port (206) — #557
+// reached main first, and a database stamped above 203 would never run a 203.
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3365,15 +3383,15 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   // v205: the rate-limit prune's range scan (FIX_PLAN 3.3). See `pruneRateLimitBuckets`.
   `CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at)`,
-  // v208: the contacts list's closeness sort is NULLS LAST (audit M-12), which the index
+  // v207: the contacts list's closeness sort is NULLS LAST (audit M-12), which the index
   // above (DESC = NULLS FIRST) cannot serve. Kept alongside it: other readers order that way.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_nl_idx ON contacts(user_id, closeness DESC NULLS LAST, id DESC)`,
-  // v208: the outbound webhook drain's claim (audit M-03). See `claimDueDeliveries`.
+  // v207: the outbound webhook drain's claim (audit M-03). See `claimDueDeliveries`.
   `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_by text`,
   `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
-  // v208: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
+  // v207: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
-  // v208: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
+  // v207: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
@@ -4998,6 +5016,9 @@ const alters = [
   `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS revert_snapshot jsonb`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS reverted_at timestamptz`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS revert_stats jsonb`,
+  // v201: the import runner's lease (audit H-04). See `imports.claimToken` in schema.ts.
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS claim_token text`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS lease_until timestamptz`,
   // Partial: the overwhelming majority of interactions and reminders are hand-made and
   // carry NULL here, and the only query that reads the column asks for one import's rows.
   `CREATE INDEX IF NOT EXISTS interactions_import_idx ON interactions(import_id) WHERE import_id IS NOT NULL`,

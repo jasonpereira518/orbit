@@ -260,6 +260,20 @@ async function main() {
     "a cohort with a three-day-old member draws no week 0",
     Boolean(young) && !young!.weeks.some((w) => w.week === 0)
   );
+  // The month spine must not depend on the session's zone. CI runs in UTC, where the old
+  // `generate_series` over timestamptz happened to be right; a zone west of UTC puts
+  // midnight UTC on the previous day, where month stepping clamped to the 30th, every
+  // cohort landed a day early and the current month vanished. Reproduce that zone here so
+  // the check cannot pass by luck.
+  await db.execute(sql`SET TIME ZONE 'Etc/GMT+5'`);
+  const west = await retentionCurves(6, 12);
+  await db.execute(sql`RESET TIME ZONE`);
+  check(
+    "cohort months are UTC month starts whatever the session zone",
+    west.length === 6 &&
+      west.every((c) => c.cohortStart.getUTCDate() === 1 && c.cohortStart.getUTCHours() === 0),
+    JSON.stringify(west.map((c) => c.cohortStart.toISOString()))
+  );
 
   // --- 5. Consistency and AI cost: their own seed, their own baseline ----------------
   console.log("\nConsistent use");
