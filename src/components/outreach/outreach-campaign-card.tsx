@@ -32,7 +32,7 @@ export function OutreachCampaignCard({
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-medium text-ink">{campaign.name}</h2>
             {isRunning && (
-              <Badge className="rounded-full bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30 animate-pulse flex items-center gap-1.5 px-2 py-0.5 text-[10px]">
+              <Badge className="rounded-full bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30 animate-pulse flex items-center gap-1.5 px-2 py-0.5 text-3xs">
                 <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 Scouting in background
               </Badge>
@@ -42,7 +42,7 @@ export function OutreachCampaignCard({
             {campaign.audienceQuery || "No audience description"}
           </p>
           {campaign.backgroundJob?.status === "completed" && campaign.backgroundJob.message && (
-            <p className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground/90">
+            <p className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground-subtle">
               <Sparkles className="h-3 w-3 text-primary shrink-0" />
               <span className="truncate">{campaign.backgroundJob.message}</span>
             </p>

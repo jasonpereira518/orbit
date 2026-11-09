@@ -15,7 +15,7 @@ import {
 import { countAgentSendsToday } from "@/lib/agent-sends";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import { decryptAndRewrap } from "@/lib/crypto-rewrap";
-import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
+import { DAILY_SEND_LIMIT, type OutreachChannel, type OutreachSendProvider, type FiveHourQuota, interpolateMailMerge } from "@/lib/outreach-types";
 import { entitlementsFromSettings, resolvePlan } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { isPlaceholderAddress, PLACEHOLDER_ADDRESS_SEND_MESSAGE } from "@/lib/outreach-quality";
@@ -24,22 +24,14 @@ import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { gmailProvider } from "@/lib/email/providers/gmail";
 import { outlookProvider } from "@/lib/email/providers/outlook";
 
-export type OutreachSendProvider = "gmail" | "outlook" | "resend";
+export type { OutreachSendProvider, FiveHourQuota };
+export { interpolateMailMerge };
 
 export const FIVE_HOUR_SEND_LIMITS: Record<Plan, number> = {
   free: 5,
   orbit: 50,
   max: 250,
   lifetime: 250,
-};
-
-export type FiveHourQuota = {
-  plan: Plan;
-  limit: number;
-  used: number;
-  remaining: number;
-  resetsAt: Date;
-  canSend: boolean;
 };
 
 /**
@@ -93,29 +85,6 @@ export async function get5HourSendQuota(userId: string): Promise<FiveHourQuota> 
     resetsAt,
     canSend: remaining > 0,
   };
-}
-
-/**
- * Replaces {{variable}} tokens in templates with recipient data
- */
-export function interpolateMailMerge(
-  template: string,
-  variables: {
-    first_name?: string | null;
-    full_name?: string | null;
-    company?: string | null;
-    title?: string | null;
-    recent_signal?: string | null;
-    sender_name?: string | null;
-    [key: string]: string | null | undefined;
-  }
-): string {
-  let result = template;
-  for (const [key, val] of Object.entries(variables)) {
-    const regex = new RegExp(`{{\\s*${key}\\s*}}`, "gi");
-    result = result.replace(regex, val || "");
-  }
-  return result;
 }
 
 export async function getOutreachSendConfig(
@@ -243,7 +212,7 @@ export async function sendOutreachMessage(input: {
     const quota = await get5HourSendQuota(input.userId);
     if (!quota.canSend) {
       throw new UserFacingError(
-        `5-hour send quota reached (${quota.used}/${quota.limit} on ${quota.plan} plan). Resets at ${quota.resetsAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+        `5-hour send quota reached (${quota.used}/${quota.limit} on ${quota.plan} plan) — resets at ${quota.resetsAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
       );
     }
   }
@@ -263,7 +232,7 @@ export async function sendOutreachMessage(input: {
     if (input.provider === "gmail") {
       const gmailIdentity = await gmailProvider.identity(input.userId);
       if (!gmailIdentity) {
-        throw new UserFacingError("Gmail account is not connected or lacks send permission. Connect Gmail in Settings.");
+        throw new UserFacingError("Gmail account is not connected or lacks send permission — connect Gmail in Settings");
       }
       const sent = await gmailProvider.send(
         input.userId,
@@ -286,7 +255,7 @@ export async function sendOutreachMessage(input: {
     if (input.provider === "outlook") {
       const outlookIdentity = await outlookProvider.identity(input.userId);
       if (!outlookIdentity) {
-        throw new UserFacingError("Outlook account is not connected or lacks send permission. Connect Outlook in Settings.");
+        throw new UserFacingError("Outlook account is not connected or lacks send permission — connect Outlook in Settings");
       }
       const sent = await outlookProvider.send(
         input.userId,

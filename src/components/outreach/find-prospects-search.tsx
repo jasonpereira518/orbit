@@ -3,9 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import {
-  Briefcase,
   Building2,
-  Check,
   Compass,
   ExternalLink,
   Filter,
@@ -16,12 +14,10 @@ import {
   Sparkles,
   TrendingUp,
   UserPlus,
-  Users,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -30,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import {
   searchPeopleWithBrightDataAction,
   getOutreachFlowSuggestionsAction,
@@ -146,10 +143,10 @@ export function FindProspectsSearch({
         if (res.candidates.length > 0) {
           toast.success(`Found ${res.candidates.length} matching people`);
         } else {
-          toast.message("No matching people found. Try adjusting your query.");
+          toast.message("No matching people found — try adjusting your query");
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Search failed to complete");
+        toast.error(friendlyError(err, "Search didn’t finish"));
       }
     });
   }
@@ -238,7 +235,7 @@ export function FindProspectsSearch({
         setSelectedCandidates(new Set());
         onProspectsAdded?.();
       } catch (err) {
-        toast.error("Failed to add prospects to campaign");
+        toast.error(friendlyError(err, "Couldn’t add prospects to campaign"));
       }
     });
   }
@@ -255,7 +252,7 @@ export function FindProspectsSearch({
       });
       toast.success(`Saved ${candidate.fullName} to your contacts`);
     } catch {
-      toast.error("Failed to save contact");
+      toast.error("Couldn’t save contact");
     } finally {
       setSavingContactId(null);
     }
@@ -697,7 +694,7 @@ export function FindProspectsSearch({
                         {candidate.title} <span className="text-muted-foreground">at</span>{" "}
                         <span className="font-medium text-ink">{candidate.company}</span>
                       </p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                      <p className="text-2xs text-muted-foreground mt-0.5 truncate">
                         {candidate.location}
                       </p>
                     </div>
@@ -710,11 +707,11 @@ export function FindProspectsSearch({
                     </p>
 
                     <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                      <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
+                      <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-3xs font-medium text-primary">
                         {candidate.matchReason}
                       </span>
                       {Boolean(candidate.education || candidate.almaMater) && (
-                        <span className="rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:text-indigo-300 inline-flex items-center gap-1">
+                        <span className="rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 py-0.5 text-3xs font-medium text-indigo-700 dark:text-indigo-300 inline-flex items-center gap-1">
                           <GraduationCap className="h-2.5 w-2.5 shrink-0" />
                           <span className="truncate">{candidate.education || candidate.almaMater}</span>
                         </span>
@@ -723,13 +720,13 @@ export function FindProspectsSearch({
                         candidate.signals.slice(0, 2).map((sig) => (
                           <span
                             key={sig}
-                            className="rounded-full border border-border/40 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground"
+                            className="rounded-full border border-border/40 bg-muted/50 px-2 py-0.5 text-3xs text-muted-foreground"
                           >
                             {sig}
                           </span>
                         ))}
                       {candidate.recentNews && (
-                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 truncate max-w-full inline-flex items-center gap-1">
+                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-0.5 text-3xs font-medium text-emerald-600 dark:text-emerald-400 truncate max-w-full inline-flex items-center gap-1">
                           <TrendingUp className="h-2.5 w-2.5 shrink-0" />
                           <span className="truncate">{candidate.recentNews}</span>
                         </span>
@@ -745,12 +742,12 @@ export function FindProspectsSearch({
                         target="_blank"
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 text-primary hover:underline text-[11px]"
+                        className="inline-flex items-center gap-1 text-primary hover:underline text-2xs"
                       >
                         LinkedIn Profile <ExternalLink className="h-2.5 w-2.5" />
                       </a>
                     ) : (
-                      <span className="text-muted-foreground text-[11px]">Public web profile</span>
+                      <span className="text-muted-foreground text-2xs">Public web profile</span>
                     )}
 
                     <div onClick={(e) => e.stopPropagation()}>

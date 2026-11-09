@@ -179,7 +179,7 @@ export function CampaignExportDialog({
         {prospects.length > 0 && (
           <div className="rounded-2xl border border-border/60 bg-muted/30 p-3 text-xs">
             <span className="font-medium text-muted-foreground">Preview includes:</span>
-            <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-ink">
+            <div className="mt-1 flex flex-wrap gap-1.5 text-2xs text-ink">
               <span className="rounded-md bg-card px-2 py-0.5 border border-border/40">Name & Title</span>
               <span className="rounded-md bg-card px-2 py-0.5 border border-border/40">Company & Location</span>
               <span className="rounded-md bg-card px-2 py-0.5 border border-border/40">Email & LinkedIn</span>

@@ -144,14 +144,14 @@ export async function openGoogleSheetsWithData(campaignName: string, prospects: 
   const tsv = generateGoogleSheetsTsv(prospects);
   const ok = await copyText(tsv);
   if (!ok) {
-    toast.error("Failed to copy data to clipboard");
+    toast.error("Couldn’t copy data to clipboard");
     return false;
   }
 
   // Open Google Sheets create in new tab
   window.open("https://sheets.new", "_blank", "noopener,noreferrer");
   toast.success(
-    `Copied ${prospects.length} prospects to clipboard! Press Cmd+V (or Ctrl+V) in your new Google Sheet to paste.`
+    `Copied ${prospects.length} prospects to clipboard — press Cmd+V (or Ctrl+V) in your new Google Sheet to paste`
   );
   return true;
 }
@@ -221,12 +221,12 @@ export async function copyNotionTable(prospects: ProspectRow[]): Promise<boolean
   const table = generateNotionMarkdownTable(prospects);
   const ok = await copyText(table);
   if (!ok) {
-    toast.error("Failed to copy Notion table to clipboard");
+    toast.error("Couldn’t copy Notion table to clipboard");
     return false;
   }
 
   toast.success(
-    `Copied ${prospects.length} prospects as a Notion table! Paste (Cmd+V / Ctrl+V) on any blank Notion page.`
+    `Copied ${prospects.length} prospects as a Notion table — paste (Cmd+V / Ctrl+V) on any blank Notion page`
   );
   return true;
 }

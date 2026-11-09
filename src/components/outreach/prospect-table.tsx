@@ -121,7 +121,7 @@ export function ProspectTable({
   onUpdated?: () => void;
 }) {
   const [pending, start] = useTransition();
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, _setExpanded] = useState<string | null>(null);
   const [previewProspect, setPreviewProspect] = useState<ProspectRow | null>(null);
 
   function toggleSelection(prospectId: string, checked: boolean) {
@@ -226,6 +226,16 @@ export function ProspectTable({
                 prospect.fullName,
                 prospect.company
               );
+              const enrichment = (prospect.enrichment ?? {}) as Record<string, unknown>;
+              const avatarUrl = prospect.avatarUrl || (typeof enrichment.avatarUrl === "string" ? enrichment.avatarUrl : null);
+              const summary = (typeof enrichment.summary === "string" ? enrichment.summary : null) || (typeof enrichment.headline === "string" ? enrichment.headline : null);
+              const effectivenessScore = typeof enrichment.effectivenessScore === "number" ? enrichment.effectivenessScore : null;
+              const scoreReasons = Array.isArray(enrichment.scoreReasons) ? (enrichment.scoreReasons as string[]) : [];
+              const isAlumniMatch = Boolean(enrichment.isAlumniMatch);
+              const matchedSchool = typeof enrichment.matchedSchool === "string" ? enrichment.matchedSchool : null;
+              const education = typeof enrichment.education === "string" ? enrichment.education : (typeof enrichment.almaMater === "string" ? enrichment.almaMater : null);
+              const newsContext = typeof enrichment.newsContext === "string" ? enrichment.newsContext : null;
+              const signals = Array.isArray(enrichment.signals) ? (enrichment.signals as string[]) : [];
 
               return (
                 <tr
@@ -247,9 +257,9 @@ export function ProspectTable({
                     <div className="flex items-start gap-3">
                       {/* Avatar */}
                       <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden border border-border/60 bg-muted">
-                        {(prospect.avatarUrl || (prospect.enrichment as any)?.avatarUrl) ? (
+                        {avatarUrl ? (
                           <img
-                            src={prospect.avatarUrl || ((prospect.enrichment as any)?.avatarUrl as string)}
+                            src={avatarUrl}
                             alt={prospect.fullName}
                             className="h-full w-full object-cover"
                             onError={(e) => {
@@ -309,9 +319,9 @@ export function ProspectTable({
                         </div>
 
                         {/* Bio / Summary snippet if present */}
-                        {Boolean((prospect.enrichment as any)?.summary || (prospect.enrichment as any)?.headline) && (
-                          <p className="mt-1 text-[11px] text-muted-foreground line-clamp-1 max-w-md">
-                            {(prospect.enrichment as any)?.summary || (prospect.enrichment as any)?.headline}
+                        {Boolean(summary) && (
+                          <p className="mt-1 text-2xs text-muted-foreground line-clamp-1 max-w-md">
+                            {summary}
                           </p>
                         )}
 
@@ -321,74 +331,73 @@ export function ProspectTable({
                         {/* Student-friendly Smart Badges */}
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                           {/* Effectiveness Match Badge */}
-                          {typeof (prospect.enrichment as any)?.effectivenessScore === "number" && (
+                          {typeof effectivenessScore === "number" && (
                             <span
-                              title={((prospect.enrichment as any)?.scoreReasons as string[])?.join(" • ") || "Effectiveness probability"}
-                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums border ${
-                                (prospect.enrichment as any)?.effectivenessScore >= 80
+                              title={scoreReasons.join(" • ") || "Effectiveness probability"}
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-semibold tabular-nums border ${
+                                effectivenessScore >= 80
                                   ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                                  : (prospect.enrichment as any)?.effectivenessScore >= 60
+                                  : effectivenessScore >= 60
                                     ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
                                     : "border-border/60 bg-muted/40 text-muted-foreground"
                               }`}
                             >
                               <Sparkles className="h-2.5 w-2.5 text-emerald-500" />
-                              {(prospect.enrichment as any)?.effectivenessScore}% Match
+                              {effectivenessScore}% Match
                             </span>
                           )}
 
                           {/* Shared Alumni Match Badge */}
-                          {Boolean((prospect.enrichment as any)?.isAlumniMatch && (prospect.enrichment as any)?.matchedSchool) && (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-indigo-800 dark:text-indigo-200 shadow-xs">
+                          {Boolean(isAlumniMatch && matchedSchool) && (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-0.5 text-2xs font-semibold text-indigo-800 dark:text-indigo-200 shadow-xs">
                               <GraduationCap className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-300" />
-                              Alumni Match: {(prospect.enrichment as any).matchedSchool}
+                              Alumni Match: {matchedSchool}
                             </span>
                           )}
 
                           {/* Education / Alma Mater Badge */}
-                          {Boolean((prospect.enrichment as any)?.education || (prospect.enrichment as any)?.almaMater) && !(prospect.enrichment as any)?.isAlumniMatch && (
+                          {Boolean(education) && !isAlumniMatch && (
                             <span
-                              className="inline-flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-700 dark:text-indigo-300 max-w-xs truncate"
-                              title={(prospect.enrichment as any)?.education || (prospect.enrichment as any)?.almaMater}
+                              className="inline-flex items-center gap-1 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-2xs font-medium text-indigo-700 dark:text-indigo-300 max-w-xs truncate"
+                              title={education}
                             >
                               <GraduationCap className="h-3 w-3 text-indigo-500 shrink-0" />
-                              <span className="truncate">{(prospect.enrichment as any)?.education || (prospect.enrichment as any)?.almaMater}</span>
+                              <span className="truncate">{education}</span>
                             </span>
                           )}
 
                           {/* Warm Path Connection Badge */}
                           {Boolean(prospect.company && warmPaths && warmPaths[normalizeCompanyKey(prospect.company)]?.length) && (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                            <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-2xs font-medium text-primary">
                               Warm Connection
                             </span>
                           )}
 
                           {/* Recent News Hook */}
-                          {Boolean((prospect.enrichment as any)?.newsContext) && (
+                          {Boolean(newsContext) && (
                             <span
-                              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 max-w-sm truncate"
-                              title={(prospect.enrichment as any)?.newsContext}
+                              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-2xs font-medium text-emerald-700 dark:text-emerald-300 max-w-sm truncate"
+                              title={newsContext}
                             >
                               <TrendingUp className="h-3 w-3 text-emerald-500 shrink-0" />
-                              <span className="truncate">{(prospect.enrichment as any)?.newsContext}</span>
+                              <span className="truncate">{newsContext}</span>
                             </span>
                           )}
 
                           {/* Hiring Signal */}
-                          {Array.isArray((prospect.enrichment as any)?.signals) &&
-                            ((prospect.enrichment as any).signals as string[]).some((s) => /hir|grow|scale|expan/i.test(s)) && (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                                <Briefcase className="h-3 w-3 text-amber-600" />
-                                Hiring Signal
-                              </span>
-                            )}
+                          {signals.some((s) => /hir|grow|scale|expan/i.test(s)) && (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-2xs font-medium text-amber-700 dark:text-amber-300">
+                              <Briefcase className="h-3 w-3 text-amber-600" />
+                              Hiring Signal
+                            </span>
+                          )}
                         </div>
 
                         {/* Company Growth Signals */}
-                        {Array.isArray((prospect.enrichment as any)?.signals) && ((prospect.enrichment as any).signals.length > 0) && (
+                        {signals.length > 0 && (
                           <div className="mt-1 flex flex-wrap gap-1">
-                            {((prospect.enrichment as any).signals as string[]).slice(0, 2).map((sig: string) => (
-                              <span key={sig} className="inline-flex items-center rounded-full bg-muted/50 border border-border/40 px-2 py-0.5 text-[10px] text-muted-foreground">
+                            {signals.slice(0, 2).map((sig: string) => (
+                              <span key={sig} className="inline-flex items-center rounded-full bg-muted/50 border border-border/40 px-2 py-0.5 text-3xs text-muted-foreground">
                                 {sig}
                               </span>
                             ))}
@@ -446,12 +455,12 @@ export function ProspectTable({
                     {message ? (
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-1">
-                          <Badge variant="outline" className="rounded-full text-[11px]">{channelLabel(channel)}</Badge>
+                          <Badge variant="outline" className="rounded-full text-2xs">{channelLabel(channel)}</Badge>
                           <Button
                             size="xs"
                             variant="outline"
                             onClick={() => setPreviewProspect(prospect)}
-                            className="rounded-full gap-1 text-[11px] h-6 px-2.5 shadow-xs"
+                            className="rounded-full gap-1 text-2xs h-6 px-2.5 shadow-xs"
                           >
                             <Eye className="h-3 w-3 text-primary" />
                             Preview

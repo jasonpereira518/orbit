@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Check, Copy, ExternalLink, Globe, Key, ShieldCheck, Sparkles, Terminal } from "lucide-react";
+import { Check, Copy, ExternalLink, Globe, ShieldCheck, Sparkles, Terminal } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { copyText } from "@/lib/clipboard";
 
@@ -55,7 +55,7 @@ BRIGHTDATA_CUSTOMER_ID=hl_your_customer_id # Optional for proxy-based routes`;
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl sm:max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl sm:max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle className="flex items-center gap-2 text-xl font-[family-name:var(--font-display)]">

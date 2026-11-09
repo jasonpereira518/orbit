@@ -12,7 +12,7 @@
 
 import { getDb } from "@/db";
 import { outreachCampaigns, outreachMessages, outreachProspects, type AudienceFilters } from "@/db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { searchPeopleWithBrightData, scrapeCompanyNewsWithBrightData } from "@/lib/brightdata";
 import { generateOutreachDraftsBatch, type DraftInput } from "@/lib/outreach-drafts";
 import { calculateProspectEffectiveness } from "@/lib/outreach-scoring";
@@ -142,7 +142,7 @@ export async function runCampaignDeepSearch(
       const cleanName = candidate.fullName.toLowerCase().replace(/[^a-z0-9]/g, "");
       const email = isDemo
         ? `${cleanName}@${cleanCompany}.example.com`
-        : (((candidate as any).email as string | undefined) || `${cleanName}@${cleanCompany}.com`);
+        : (((candidate as { email?: string }).email) || `${cleanName}@${cleanCompany}.com`);
       const newsContext = companyData?.headline || candidate.recentNews || null;
       const signals = companyData?.signals || candidate.signals || [];
 
@@ -228,7 +228,7 @@ export async function runCampaignDeepSearch(
             tone: campaign.tone || "professional",
             messageIntent: campaign.messageIntent || "Reach out regarding company growth and partnerships",
             audienceQuery: campaign.audienceQuery,
-            replyCta: (campaign.replyCta as any) || "book_intro",
+            replyCta: campaign.replyCta || "book_intro",
             userGoals,
             writingInstructions,
             prospect: {

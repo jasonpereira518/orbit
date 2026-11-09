@@ -4,8 +4,9 @@ import { useState, useTransition } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { AlertCircle, Bot, Check, Copy, Download, ExternalLink, Loader2, Play, ShieldAlert, Sparkles } from "lucide-react";
+import { Bot, Check, Copy, Download, Loader2, Play, ShieldAlert, Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import { copyText } from "@/lib/clipboard";
 import { generateLinkedInBrowserUsePromptAction } from "@/actions/outreach";
 import type { BrowserUseTaskConfig } from "@/lib/browser-use";
@@ -40,7 +41,7 @@ export function LinkedInBrowserUseDialog({
         });
         setTaskConfig(config);
       } catch (err) {
-        toast.error("Failed to generate LinkedIn Browser Use prompt");
+        toast.error(friendlyError(err, "Couldn’t generate LinkedIn Browser Use prompt"));
         setOpen(false);
       }
     });
@@ -80,7 +81,7 @@ export function LinkedInBrowserUseDialog({
         if (prev + 1 >= taskConfig.targets.length) {
           clearInterval(interval);
           setExecuting(false);
-          toast.success("Browser Use sequence simulation complete! All targets queued.");
+          toast.success("Browser Use sequence simulation complete — all targets queued");
           return prev + 1;
         }
         return prev + 1;
@@ -100,14 +101,14 @@ export function LinkedInBrowserUseDialog({
         <Bot className="h-3.5 w-3.5 text-primary" />
         LinkedIn Connect
         {selectedProspectIds.length > 0 && (
-          <span className="ml-0.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+          <span className="ml-0.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-3xs font-semibold text-primary">
             {selectedProspectIds.length}
           </span>
         )}
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <div className="flex items-center justify-between">
               <DialogTitle className="flex items-center gap-2 text-xl font-[family-name:var(--font-display)]">
@@ -133,7 +134,7 @@ export function LinkedInBrowserUseDialog({
                   Automated Human-Like Pacing & 300-Char Safety Guardrails
                 </div>
                 <p>
-                  This prefilled prompt instructs OpenAI's Browser Use agent to visit each LinkedIn profile, verify they aren't already connected, insert their custom personalized note, and space actions by 6-12 seconds to respect LinkedIn's weekly invitation quota.
+                  This prefilled prompt instructs OpenAI’s Browser Use agent to visit each LinkedIn profile, verify they aren’t already connected, insert their custom personalized note, and space actions by 6-12 seconds to respect LinkedIn’s weekly invitation quota.
                 </p>
               </div>
 
@@ -159,16 +160,16 @@ export function LinkedInBrowserUseDialog({
                           {idx + 1}. {target.fullName} — <span className="text-muted-foreground">{target.title} at {target.company}</span>
                         </span>
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-muted-foreground">
+                          <span className="text-3xs text-muted-foreground">
                             {target.personalizedNote.length}/300 chars
                           </span>
                           {executing && idx === progressIndex && (
-                            <Badge className="bg-primary/20 text-primary border-primary/30 text-[10px] animate-pulse">
+                            <Badge className="bg-primary/20 text-primary border-primary/30 text-3xs animate-pulse">
                               Connecting...
                             </Badge>
                           )}
                           {executing && idx < progressIndex && (
-                            <Badge className="bg-emerald-500/20 text-emerald-600 border-emerald-500/30 text-[10px]">
+                            <Badge className="bg-emerald-500/20 text-emerald-600 border-emerald-500/30 text-3xs">
                               Done
                             </Badge>
                           )}
@@ -207,15 +208,27 @@ export function LinkedInBrowserUseDialog({
 
               {/* Action Buttons */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-border/70">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleDownloadJson}
-                  className="text-xs gap-1.5"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Download JSON Task
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownloadJson}
+                    className="text-xs gap-1.5"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download JSON
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSimulateRun}
+                    disabled={executing}
+                    className="text-xs gap-1.5"
+                  >
+                    <Play className="h-3.5 w-3.5 text-primary" />
+                    {executing ? "Simulating..." : "Test Simulation"}
+                  </Button>
+                </div>
 
                 <div className="flex items-center gap-2">
                   <Button

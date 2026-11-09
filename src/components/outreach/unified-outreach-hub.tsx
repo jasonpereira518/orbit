@@ -9,23 +9,20 @@ import {
   Layers,
   Plus,
   Send,
-  Sparkles,
-  Settings,
   Mail,
   Gauge,
   CheckCircle2,
   Clock,
-  ExternalLink,
   ShieldCheck,
 } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { FindProspectsSearch } from "@/components/outreach/find-prospects-search";
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { cn } from "@/lib/utils";
 import { SPRING_PILL } from "@/lib/motion";
-import type { FiveHourQuota } from "@/lib/outreach-send";
+import type { FiveHourQuota } from "@/lib/outreach-types";
 import { BrightDataIntegrationGuide } from "@/components/outreach/brightdata-integration-guide";
 
 type Tab = "discover" | "campaigns" | "integrations";
@@ -43,7 +40,7 @@ export function UnifiedOutreachHub({
   isBrightDataLive,
   quotaData,
 }: {
-  campaigns: Array<any>;
+  campaigns: Array<React.ComponentProps<typeof OutreachCampaignCard>["campaign"]>;
   accountRate: number | null;
   totals: { sent: number; bounced: number; positive: number };
   isBrightDataLive: boolean;
@@ -165,7 +162,7 @@ export function UnifiedOutreachHub({
                     <span className="text-sm text-muted-foreground">
                       positive reply rate
                     </span>
-                    <span className="text-xs text-muted-foreground/80">
+                    <span className="text-xs text-muted-foreground-subtle">
                       ({totals.positive} positive · {totals.sent} sent)
                     </span>
                   </div>
@@ -339,7 +336,7 @@ export function UnifiedOutreachHub({
                     style={{ width: `${Math.min(100, Math.max(4, (quota.used / quota.limit) * 100))}%` }}
                   />
                 </div>
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <div className="flex items-center justify-between text-2xs text-muted-foreground">
                   <span>{quota.used} sent in current 5-hour window</span>
                   <span className="flex items-center gap-1">
                     <Clock className="h-3 w-3" />
@@ -367,7 +364,7 @@ export function UnifiedOutreachHub({
                     <span className="font-semibold text-ink block">{tier.plan}</span>
                     <p className="mt-0.5 font-medium">{tier.limit}</p>
                     {tier.current && (
-                      <span className="inline-block mt-1.5 text-[10px] font-semibold text-primary">
+                      <span className="inline-block mt-1.5 text-3xs font-semibold text-primary">
                         Your Plan
                       </span>
                     )}

@@ -3,7 +3,7 @@
  */
 
 import { getDb } from "@/db";
-import { contacts, userSettings } from "@/db/schema";
+import { contacts } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
 
 export type OutreachSuggestion = {

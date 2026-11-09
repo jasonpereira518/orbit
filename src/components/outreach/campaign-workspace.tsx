@@ -21,12 +21,11 @@ import {
   generateDueFollowUps,
   generateOutreachDrafts,
   getCampaignBackgroundStatusAction,
-  runCampaignDeepSearchAction,
   searchProspects,
   triggerCampaignBackgroundSearchAction,
   updateCampaign,
 } from "@/actions/outreach";
-import { AlertCircle, Activity, CheckCircle2, ChevronDown, ChevronUp, Download, Globe, Loader2, Radio, ShieldCheck, Sparkles, Terminal, X } from "lucide-react";
+import { Activity, CheckCircle2, ChevronDown, ChevronUp, Download, Loader2, Sparkles, Terminal, X } from "lucide-react";
 import { CampaignExportDialog } from "@/components/outreach/campaign-export-dialog";
 import { toast } from "@/lib/toast";
 import { isDeliveredMessage, prospectPipelineBucket } from "@/lib/outreach-metrics";
@@ -169,7 +168,9 @@ export function CampaignWorkspace({
       contactId: p.contactId,
       isDemo: Boolean(p.enrichment?.demo),
       companyMismatch: Boolean(p.enrichment?.companyMismatch),
-      avatarUrl: ((p.enrichment as any)?.avatarUrl as string) || null,
+      avatarUrl: typeof (p.enrichment as Record<string, unknown> | null)?.avatarUrl === "string"
+        ? ((p.enrichment as Record<string, unknown>).avatarUrl as string)
+        : null,
       enrichment: p.enrichment,
       pipeline: prospectPipelineBucket({
         id: p.id,
@@ -213,18 +214,23 @@ export function CampaignWorkspace({
   const filtered = useMemo(() => {
     let result = pipeline === "all" ? prospects : prospects.filter((p) => p.pipeline === pipeline);
     if (priorityFilter === "high") {
-      result = result.filter((p) => (p.enrichment as any)?.priorityTier === "high");
+      result = result.filter((p) => (p.enrichment as Record<string, unknown> | null)?.priorityTier === "high");
     } else if (priorityFilter === "strong") {
       result = result.filter(
-        (p) =>
-          (p.enrichment as any)?.priorityTier === "high" ||
-          (p.enrichment as any)?.priorityTier === "strong"
+        (p) => {
+          const tier = (p.enrichment as Record<string, unknown> | null)?.priorityTier;
+          return tier === "high" || tier === "strong";
+        }
       );
     }
     // Sort highest effectiveness first
     return [...result].sort((a, b) => {
-      const aScore = ((a.enrichment as any)?.effectivenessScore as number) || 0;
-      const bScore = ((b.enrichment as any)?.effectivenessScore as number) || 0;
+      const aScore = (typeof (a.enrichment as Record<string, unknown> | null)?.effectivenessScore === "number"
+        ? (a.enrichment as Record<string, unknown>).effectivenessScore as number
+        : 0);
+      const bScore = (typeof (b.enrichment as Record<string, unknown> | null)?.effectivenessScore === "number"
+        ? (b.enrichment as Record<string, unknown>).effectivenessScore as number
+        : 0);
       return bScore - aScore;
     });
   }, [pipeline, priorityFilter, prospects]);
@@ -325,9 +331,9 @@ export function CampaignWorkspace({
         });
         setShowDismissedBgAlert(false);
 
-        const result = await triggerCampaignBackgroundSearchAction(campaign.id);
-        toast.message("Scouting started in the background. You can continue working freely.");
-      } catch (err) {
+        await triggerCampaignBackgroundSearchAction(campaign.id);
+        toast.message("Scouting started in the background — you can continue working freely");
+      } catch {
         setBgJob({
           status: "failed",
           message: "Could not start background search. Please try again.",
@@ -353,7 +359,7 @@ export function CampaignWorkspace({
                   <span className="text-xs font-semibold text-sky-950 dark:text-sky-100">
                     Orbit Autonomous Scout Active
                   </span>
-                  <span className="inline-flex items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
+                  <span className="inline-flex items-center rounded-full bg-sky-500/15 px-2 py-0.5 text-3xs font-medium text-sky-700 dark:text-sky-300">
                     Background execution
                   </span>
                 </div>
@@ -380,7 +386,7 @@ export function CampaignWorkspace({
           {/* Expandable Live Agent Activity Drawer */}
           {showActivityDrawer && (
             <div className="mt-3.5 space-y-2 rounded-xl border border-sky-500/20 bg-card/70 p-3.5 text-xs backdrop-blur-xs">
-              <div className="flex items-center justify-between border-b border-border/50 pb-2 text-[11px] font-semibold text-sky-950 dark:text-sky-100">
+              <div className="flex items-center justify-between border-b border-border/50 pb-2 text-2xs font-semibold text-sky-950 dark:text-sky-100">
                 <span className="flex items-center gap-1.5">
                   <Terminal className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
                   Live Scout Execution Log
@@ -390,7 +396,7 @@ export function CampaignWorkspace({
                 </span>
               </div>
 
-              <div className="space-y-2 pt-1 font-mono text-[11px]">
+              <div className="space-y-2 pt-1 font-mono text-2xs">
                 <div className="flex items-start gap-2">
                   <span className="text-emerald-500 font-bold">✓</span>
                   <span className="text-muted-foreground">
@@ -442,13 +448,14 @@ export function CampaignWorkspace({
                 size="xs"
                 variant="ghost"
                 onClick={() => setShowActivityDrawer((v) => !v)}
-                className="rounded-full gap-1 text-[11px] h-6 px-2 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-500/20"
+                className="rounded-full gap-1 text-2xs h-6 px-2 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-500/20"
               >
                 <Activity className="h-3 w-3" />
                 {showActivityDrawer ? "Hide Stream" : "View Scout Log"}
               </Button>
               <button
                 type="button"
+                aria-label="Dismiss alert"
                 onClick={() => setShowDismissedBgAlert(true)}
                 className="rounded-full p-1 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
               >
@@ -459,7 +466,7 @@ export function CampaignWorkspace({
 
           {/* Expandable Activity Drawer for completed job */}
           {showActivityDrawer && (
-            <div className="mt-3 space-y-1.5 rounded-xl border border-emerald-500/20 bg-card/70 p-3 text-xs text-foreground backdrop-blur-xs font-mono text-[11px]">
+            <div className="mt-3 space-y-1.5 rounded-xl border border-emerald-500/20 bg-card/70 p-3 text-xs text-foreground backdrop-blur-xs font-mono text-2xs">
               <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-semibold">
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 Autonomous scout run finished successfully
@@ -471,7 +478,7 @@ export function CampaignWorkspace({
                 • Catalysts and tailored personal messages ready for 1-click review.
               </div>
               {bgJob.completedAt && (
-                <div className="text-[10px] text-muted-foreground pt-1">
+                <div className="text-3xs text-muted-foreground pt-1">
                   Completed at {new Date(bgJob.completedAt).toLocaleTimeString()}
                 </div>
               )}
@@ -580,7 +587,7 @@ export function CampaignWorkspace({
         <PipelineFilters value={pipeline} counts={counts} onChange={setPipeline} />
 
         <div className="flex items-center gap-1 rounded-full border border-border/60 bg-card p-1 text-xs">
-          <span className="px-2 text-muted-foreground font-medium text-[11px]">Match:</span>
+          <span className="px-2 text-muted-foreground font-medium text-2xs">Match:</span>
           <button
             type="button"
             onClick={() => setPriorityFilter("all")}

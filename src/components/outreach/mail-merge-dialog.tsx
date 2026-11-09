@@ -10,7 +10,6 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   AlertCircle,
   Clock,
-  ExternalLink,
   Gauge,
   Inbox,
   Loader2,
@@ -20,12 +19,13 @@ import {
   UserCheck,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { friendlyError } from "@/lib/errors";
 import {
   bulkSendMailMergeAction,
   getOutreachSendQuotaAction,
 } from "@/actions/outreach";
-import type { FiveHourQuota, OutreachSendProvider } from "@/lib/outreach-send";
-import { interpolateMailMerge } from "@/lib/outreach-send";
+import type { FiveHourQuota, OutreachSendProvider } from "@/lib/outreach-types";
+import { interpolateMailMerge } from "@/lib/outreach-types";
 import type { ProspectRow } from "@/components/outreach/prospect-table";
 
 export function MailMergeDialog({
@@ -113,12 +113,12 @@ export function MailMergeDialog({
 
         toast.success(`Sent ${res.sent} mail merge messages successfully!`);
         if (res.failed > 0) {
-          toast.error(`${res.failed} sends failed or reached limit.`);
+          toast.error(`${res.failed} sends couldn’t go out`);
         }
         setOpen(false);
         onSent?.();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Send failed");
+        toast.error(friendlyError(err, "Couldn’t send messages"));
       }
     });
   }
@@ -139,14 +139,14 @@ export function MailMergeDialog({
         <Mail className="h-3.5 w-3.5" />
         Mass Mail Merge
         {selectedProspects.length > 0 && (
-          <span className="ml-0.5 rounded-full bg-primary-foreground/20 px-1.5 py-0.5 text-[10px] font-semibold">
+          <span className="ml-0.5 rounded-full bg-primary-foreground/20 px-1.5 py-0.5 text-3xs font-semibold">
             {selectedProspects.length}
           </span>
         )}
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <div className="flex items-center justify-between">
               <DialogTitle className="flex items-center gap-2 text-xl font-[family-name:var(--font-display)]">
@@ -166,7 +166,7 @@ export function MailMergeDialog({
                     <Gauge className="h-4 w-4 text-primary" />
                     5-Hour Rolling Send Quota
                   </span>
-                  <Badge variant="outline" className="capitalize text-[10px]">
+                  <Badge variant="outline" className="capitalize text-3xs">
                     {quota.plan} Plan ({quota.limit} limit)
                   </Badge>
                 </div>
@@ -188,7 +188,7 @@ export function MailMergeDialog({
                   />
                 </div>
                 {isOverQuota && (
-                  <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1 pt-0.5">
+                  <p className="text-2xs text-amber-600 dark:text-amber-400 flex items-center gap-1 pt-0.5">
                     <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                     You selected {sendsRequested} prospects, but have {quota.remaining} sends remaining in this 5-hour window.
                   </p>
@@ -219,7 +219,7 @@ export function MailMergeDialog({
                       <span className="h-2 w-2 rounded-full bg-emerald-500" />
                     )}
                   </div>
-                  <span className="mt-1 text-[11px] truncate w-full">
+                  <span className="mt-1 text-2xs truncate w-full">
                     {quotaData?.providers.gmail.email || "Not connected"}
                   </span>
                 </button>
@@ -241,7 +241,7 @@ export function MailMergeDialog({
                       <span className="h-2 w-2 rounded-full bg-emerald-500" />
                     )}
                   </div>
-                  <span className="mt-1 text-[11px] truncate w-full">
+                  <span className="mt-1 text-2xs truncate w-full">
                     {quotaData?.providers.outlook.email || "Not connected"}
                   </span>
                 </button>
@@ -260,7 +260,7 @@ export function MailMergeDialog({
                       <Mail className="h-3.5 w-3.5 text-primary" /> Orbit Resend
                     </span>
                   </div>
-                  <span className="mt-1 text-[11px]">System / Custom SMTP</span>
+                  <span className="mt-1 text-2xs">System / Custom SMTP</span>
                 </button>
               </div>
             </div>
@@ -282,7 +282,7 @@ export function MailMergeDialog({
                     className="inline-flex items-center gap-1 rounded-md border border-border/80 bg-muted/50 px-2 py-0.5 text-xs text-ink hover:bg-muted"
                   >
                     <Sparkles className="h-2.5 w-2.5 text-primary" />
-                    {label} <code className="text-[10px] text-muted-foreground">{"{{" + tag + "}}"}</code>
+                    {label} <code className="text-3xs text-muted-foreground">{"{{" + tag + "}}"}</code>
                   </button>
                 ))}
               </div>

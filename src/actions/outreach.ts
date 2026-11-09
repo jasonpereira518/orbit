@@ -20,7 +20,6 @@ import {
   companyMatchesOrganizations,
   enrichPerson,
   parseAudienceToFilters,
-  searchPeople,
   userHasApolloKey,
 } from "@/lib/apollo";
 import { requireUserId } from "@/lib/auth";
@@ -43,8 +42,9 @@ import {
   isDemoProspect,
   prospectSearchStatus,
 } from "@/lib/outreach-quality";
-import { sendOutreachMessage, get5HourSendQuota, interpolateMailMerge, type OutreachSendProvider } from "@/lib/outreach-send";
-import { searchPeopleWithBrightData, scrapeCompanyNewsWithBrightData, getBrightDataConfig, type PeopleSearchCriteria, type BrightDataCandidate } from "@/lib/brightdata";
+import { sendOutreachMessage, get5HourSendQuota, type OutreachSendProvider } from "@/lib/outreach-send";
+import { interpolateMailMerge } from "@/lib/outreach-types";
+import { searchPeopleWithBrightData, getBrightDataConfig, type PeopleSearchCriteria, type BrightDataCandidate } from "@/lib/brightdata";
 import { getOutreachFlowSuggestions } from "@/lib/outreach-suggestions";
 import { runCampaignDeepSearch } from "@/lib/campaign-deep-search";
 import { generateLinkedInBrowserUsePrompt, type LinkedInBrowserTarget } from "@/lib/browser-use";
@@ -518,7 +518,7 @@ export async function searchProspects(campaignId: string, page = 1) {
   return asActionResult(() => searchProspectsCore(campaignId, page));
 }
 
-async function searchProspectsCore(campaignId: string, page = 1) {
+async function searchProspectsCore(campaignId: string, _page = 1) {
   const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
@@ -547,7 +547,7 @@ async function searchProspectsCore(campaignId: string, page = 1) {
     const cleanName = c.fullName.toLowerCase().replace(/[^a-z0-9]/g, "");
     const email = isDemo
       ? `${cleanName}@${cleanCompany}.example.com`
-      : (((c as any).email as string | undefined) ?? null);
+      : (((c as { email?: string }).email as string | undefined) ?? null);
 
     return {
       externalId: `bd-${c.id}-${i}`,
@@ -1948,7 +1948,7 @@ export async function bulkSendMailMergeAction(input: {
   const quota = await get5HourSendQuota(userId);
   if (!quota.canSend) {
     throw new UserFacingError(
-      `5-hour send quota of ${quota.limit} emails reached on ${quota.plan} plan. Resets at ${quota.resetsAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+      `5-hour send quota of ${quota.limit} emails reached on ${quota.plan} plan — resets at ${quota.resetsAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
     );
   }
 
@@ -1966,12 +1966,17 @@ export async function bulkSendMailMergeAction(input: {
       // Apply mail merge template interpolation if template provided
       if (input.templateSubject || input.templateBody) {
         const prospect = message.prospect;
+        const enrichment = (prospect.enrichment ?? {}) as Record<string, unknown>;
+        const recentSignal =
+          (typeof enrichment.newsContext === "string" ? enrichment.newsContext : null) ||
+          (typeof enrichment.recentNews === "string" ? enrichment.recentNews : null) ||
+          "";
         const variables = {
           first_name: prospect.fullName.split(" ")[0] || prospect.fullName,
           full_name: prospect.fullName,
           company: prospect.company || "your team",
           title: prospect.title || "your role",
-          recent_signal: (prospect.enrichment as any)?.newsContext || (prospect.enrichment as any)?.recentNews || "",
+          recent_signal: recentSignal,
         };
 
         if (input.templateSubject) {
@@ -2077,4 +2082,8 @@ export async function generateLinkedInBrowserUsePromptAction(input: {
   return generateLinkedInBrowserUsePrompt(targets, {
     campaignName: campaign.name,
   });
+}
+
+export async function getOutreachQuota(userId: string) {
+  return get5HourSendQuota(userId);
 }

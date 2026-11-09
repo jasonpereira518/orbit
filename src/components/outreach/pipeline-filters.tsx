@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import type { PipelineFilter } from "@/lib/outreach-types";
-import { ArrowRight, CheckCircle2, ChevronRight, Clock, MessageSquare, Send, Sparkles, Users } from "lucide-react";
+import { ChevronRight, Clock, MessageSquare, Send, Sparkles, Users } from "lucide-react";
 
 type StepperStage = {
   id: PipelineFilter;
@@ -76,7 +76,7 @@ export function PipelineFilters({
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span
                     className={cn(
-                      "rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums",
+                      "rounded-full px-2 py-0.5 text-2xs font-semibold tabular-nums",
                       active
                         ? "bg-primary-foreground/20 text-primary-foreground"
                         : "bg-muted text-muted-foreground group-hover:bg-muted/80"
@@ -100,7 +100,7 @@ export function PipelineFilters({
       {/* Secondary Quick Filters & Conversion Badge */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-muted-foreground text-[11px] font-medium mr-1">Other views:</span>
+          <span className="text-muted-foreground text-2xs font-medium mr-1">Other views:</span>
           {SECONDARY_FILTERS.map((filter) => {
             const count = counts[filter.id];
             const active = value === filter.id;
@@ -110,7 +110,7 @@ export function PipelineFilters({
                 type="button"
                 onClick={() => onChange(filter.id)}
                 className={cn(
-                  "rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+                  "rounded-full border px-2.5 py-0.5 text-2xs font-medium transition-colors",
                   active
                     ? "border-primary bg-primary text-primary-foreground"
                     : "border-border/60 bg-card text-muted-foreground hover:text-foreground hover:border-border"
@@ -124,7 +124,7 @@ export function PipelineFilters({
         </div>
 
         {responseRate !== null && (
-          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <div className="flex items-center gap-1 text-2xs text-muted-foreground">
             <span className="font-medium text-ink">Pipeline Conversion:</span>
             <span className="font-semibold text-emerald-600 dark:text-emerald-400">
               {responseRate}% reply rate

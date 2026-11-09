@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -27,7 +26,6 @@ import {
 } from "@/components/ui/select";
 import {
   DEFAULT_SEQUENCE_STEPS,
-  OUTREACH_CHANNELS,
   OUTREACH_REPLY_CTAS,
   REPLY_CTA_LABELS,
   type AudienceFilters,
@@ -47,11 +45,9 @@ import {
   Compass,
   ExternalLink,
   GraduationCap,
-  Lightbulb,
   Search,
   Sparkles,
   TrendingUp,
-  Users,
 } from "lucide-react";
 
 const STEPS = ["Audience", "People", "Message"] as const;
@@ -236,10 +232,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
   const [channel, setChannel] = useState<OutreachChannel>("email");
   const [templateSeed, setTemplateSeed] = useState("");
   const [enableSequence, setEnableSequence] = useState(true);
-  const [sequenceSteps, setSequenceSteps] = useState<SequenceStep[]>(
+  const [sequenceSteps, _setSequenceSteps] = useState<SequenceStep[]>(
     DEFAULT_SEQUENCE_STEPS
   );
-  const [searchTotal, setSearchTotal] = useState<number | null>(null);
+  const [_searchTotal, setSearchTotal] = useState<number | null>(null);
   const [lastSearchSource, setLastSearchSource] = useState<string | null>(null);
   const [discoveredProspects, setDiscoveredProspects] = useState<DiscoveredProspect[]>([]);
   const [pending, start] = useTransition();
@@ -272,12 +268,12 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
     let list = discoveredProspects;
     if (matchPriorityFilter === "high") {
       list = list.filter((p) => {
-        const score = ((p.enrichment || {}) as any).effectivenessScore;
+        const score = ((p.enrichment || {}) as Record<string, unknown>).effectivenessScore;
         return typeof score === "number" && score >= 80;
       });
     } else if (matchPriorityFilter === "strong") {
       list = list.filter((p) => {
-        const score = ((p.enrichment || {}) as any).effectivenessScore;
+        const score = ((p.enrichment || {}) as Record<string, unknown>).effectivenessScore;
         return typeof score === "number" && score >= 60;
       });
     }
@@ -309,12 +305,12 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
     if (!campaignId) return;
     start(async () => {
       try {
-        toast.message("Scanning web and company news for catalysts...");
+        toast.message("Scanning web and company news for catalysts");
         const result = await runCampaignDeepSearchAction(campaignId);
         await loadCampaignData(campaignId);
         toast.success(result.message);
       } catch (err) {
-        toast.error(friendlyError(err, "Deep search failed"));
+        toast.error(friendlyError(err, "Deep search didn’t finish"));
       }
     });
   }
@@ -361,7 +357,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
           setStep(1);
         }
       } catch (err) {
-        toast.error(friendlyError(err, "Couldn't save audience"));
+        toast.error(friendlyError(err, "Couldn’t save audience"));
       }
     });
   }
@@ -385,7 +381,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
         await loadCampaignData(campaignId);
         toast.success(`Found ${result.matched} people matching criteria`);
       } catch (err) {
-        toast.error(friendlyError(err, "Search failed"));
+        toast.error(friendlyError(err, "Search didn’t finish"));
       }
     });
   }
@@ -409,7 +405,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
         });
         goToCampaign(campaignId);
       } catch (err) {
-        toast.error(friendlyError(err, "Couldn't write drafts"));
+        toast.error(friendlyError(err, "Couldn’t write drafts"));
       }
     });
   }
@@ -525,14 +521,14 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                     <div className="flex items-center justify-between w-full mb-1.5">
                       <div className="flex items-center gap-1.5">
                         <Icon className="h-3.5 w-3.5 text-primary" />
-                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        <span className="text-3xs font-semibold text-muted-foreground uppercase tracking-wider">
                           {preset.badge}
                         </span>
                       </div>
                       {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
                     </div>
                     <span className="font-semibold text-ink text-xs">{preset.title}</span>
-                    <span className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                    <span className="text-2xs text-muted-foreground line-clamp-1 mt-0.5">
                       {preset.subtitle}
                     </span>
                   </button>
@@ -628,7 +624,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                   className="rounded-md border-border text-primary h-3.5 w-3.5"
                 />
                 <span className="font-medium text-ink">Enable automated follow-up sequence</span>
-                <span className="text-muted-foreground text-[11px]">(2.4x higher reply rates for student outreach)</span>
+                <span className="text-muted-foreground text-2xs">(2.4x higher reply rates for student outreach)</span>
               </label>
 
               {enableSequence && (
@@ -638,36 +634,36 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                       <Clock className="h-3.5 w-3.5 text-primary" />
                       Sequence Schedule
                     </span>
-                    <span className="text-[11px] text-muted-foreground">Auto-pauses on reply</span>
+                    <span className="text-2xs text-muted-foreground">Auto-pauses on reply</span>
                   </div>
 
                   <div className="grid gap-2 sm:grid-cols-3">
                     <div className="rounded-xl border border-border/60 bg-card p-2.5 text-xs space-y-1">
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <div className="flex items-center justify-between text-2xs text-muted-foreground">
                         <span className="font-semibold text-ink">Step 1 · Initial</span>
-                        <span className="font-mono text-[10px] text-primary">Day 0</span>
+                        <span className="font-mono text-3xs text-primary">Day 0</span>
                       </div>
-                      <p className="text-[11px] text-muted-foreground leading-snug">
+                      <p className="text-2xs text-muted-foreground leading-snug">
                         Personalized intro tailored to their specific role, company, and catalysts.
                       </p>
                     </div>
 
                     <div className="rounded-xl border border-border/60 bg-card p-2.5 text-xs space-y-1">
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <div className="flex items-center justify-between text-2xs text-muted-foreground">
                         <span className="font-semibold text-ink">Step 2 · Nudge</span>
-                        <span className="font-mono text-[10px] text-primary">+{sequenceSteps[0]?.delayDays || 3} days</span>
+                        <span className="font-mono text-3xs text-primary">+{sequenceSteps[0]?.delayDays || 3} days</span>
                       </div>
-                      <p className="text-[11px] text-muted-foreground leading-snug">
+                      <p className="text-2xs text-muted-foreground leading-snug">
                         Gentle check-in referencing your prior note with added conversational context.
                       </p>
                     </div>
 
                     <div className="rounded-xl border border-border/60 bg-card p-2.5 text-xs space-y-1">
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <div className="flex items-center justify-between text-2xs text-muted-foreground">
                         <span className="font-semibold text-ink">Step 3 · Wrap-up</span>
-                        <span className="font-mono text-[10px] text-primary">+{sequenceSteps[1]?.delayDays || 7} days</span>
+                        <span className="font-mono text-3xs text-primary">+{sequenceSteps[1]?.delayDays || 7} days</span>
                       </div>
-                      <p className="text-[11px] text-muted-foreground leading-snug">
+                      <p className="text-2xs text-muted-foreground leading-snug">
                         Polite wrap-up keeping the door open for future opportunities.
                       </p>
                     </div>
@@ -867,7 +863,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                             <p className="text-xs text-ink/80 font-medium truncate mt-0.5">
                               {prospect.title || "Target Role"}
                             </p>
-                            <p className="text-[11px] text-muted-foreground truncate">
+                            <p className="text-2xs text-muted-foreground truncate">
                               <span className="font-medium text-ink">{prospect.company || "Target Company"}</span>
                               {prospect.location && (
                                 <>
@@ -881,7 +877,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
                         {/* Bio / Summary context */}
                         {summary && (
-                          <p className="text-[11.5px] text-muted-foreground line-clamp-2 leading-relaxed">
+                          <p className="text-2xs text-muted-foreground line-clamp-2 leading-relaxed">
                             {summary}
                           </p>
                         )}
@@ -890,18 +886,18 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                         {(matchReason || signals.length > 0 || education) && (
                           <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                             {matchReason && (
-                              <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
+                              <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-3xs font-medium text-primary">
                                 {matchReason}
                               </span>
                             )}
                             {education && (
-                              <span className="rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium text-indigo-700 dark:text-indigo-300 inline-flex items-center gap-1">
+                              <span className="rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 py-0.5 text-3xs font-medium text-indigo-700 dark:text-indigo-300 inline-flex items-center gap-1">
                                 <GraduationCap className="h-2.5 w-2.5 shrink-0" />
                                 <span className="truncate">{education}</span>
                               </span>
                             )}
                             {signals.slice(0, 2).map((sig) => (
-                              <span key={sig} className="rounded-full border border-border/40 bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">
+                              <span key={sig} className="rounded-full border border-border/40 bg-muted/50 px-2 py-0.5 text-3xs text-muted-foreground">
                                 {sig}
                               </span>
                             ))}
@@ -910,7 +906,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
                         {/* Recent News Catalyst */}
                         {news && (
-                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-1.5 text-2xs font-medium text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
                             <TrendingUp className="h-3 w-3 text-emerald-500 shrink-0" />
                             <span className="truncate">{news}</span>
                           </div>
@@ -918,10 +914,10 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                       </div>
 
                       {/* Footer: Details & LinkedIn links */}
-                      <div className="flex items-center justify-between pt-2 border-t border-border/40 text-[11px] text-muted-foreground" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-between pt-2 border-t border-border/40 text-2xs text-muted-foreground" onClick={(e) => e.stopPropagation()}>
                         <span className="truncate max-w-[180px]">
                           {prospect.email ? (
-                            <span className="text-ink font-mono text-[10px]">{prospect.email}</span>
+                            <span className="text-ink font-mono text-3xs">{prospect.email}</span>
                           ) : (
                             <span>Verified public profile</span>
                           )}
@@ -1062,7 +1058,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                         "Hi {{name}}, I'm a student interested in {{company}}'s work. If you have 15 minutes, I'd love to ask a couple of quick questions about your team over a virtual coffee chat!"
                       )
                     }
-                    className="rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted font-medium transition-colors"
+                    className="rounded-full bg-muted/60 px-2.5 py-0.5 text-2xs text-foreground hover:bg-muted font-medium transition-colors"
                   >
                     Coffee Chat
                   </button>
@@ -1073,7 +1069,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                         "Hi {{name}}, I'm applying for upcoming internship roles at {{company}} and saw your work on the team. I would be grateful for any advice on the interview process if your schedule allows."
                       )
                     }
-                    className="rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted font-medium transition-colors"
+                    className="rounded-full bg-muted/60 px-2.5 py-0.5 text-2xs text-foreground hover:bg-muted font-medium transition-colors"
                   >
                     Internship Advice
                   </button>
@@ -1084,7 +1080,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                         "Hi {{name}}, I noticed we share an alumni connection! As a student exploring careers in your field, I would love to hear what surprised you most about joining {{company}}."
                       )
                     }
-                    className="rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted font-medium transition-colors"
+                    className="rounded-full bg-muted/60 px-2.5 py-0.5 text-2xs text-foreground hover:bg-muted font-medium transition-colors"
                   >
                     Alumni Connect
                   </button>
@@ -1102,7 +1098,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
 
               {/* Variable Tokens Toolbar */}
               <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                <span className="text-[11px] text-muted-foreground mr-1">Insert tokens:</span>
+                <span className="text-2xs text-muted-foreground mr-1">Insert tokens:</span>
                 {[
                   { token: "{{name}}", label: "First Name" },
                   { token: "{{company}}", label: "Company" },
@@ -1114,7 +1110,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                     key={v.token}
                     type="button"
                     onClick={() => insertVariable(v.token)}
-                    className="rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[10px] font-mono text-ink/80 hover:bg-muted hover:text-ink transition"
+                    className="rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-3xs font-mono text-ink/80 hover:bg-muted hover:text-ink transition"
                     title={`Insert ${v.token}`}
                   >
                     +{v.token}
@@ -1130,11 +1126,11 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                   <Sparkles className="h-3.5 w-3.5 text-primary" />
                   Live Draft Personalization Preview
                 </span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-2xs text-muted-foreground">
                   Simulated for {discoveredProspects[0] ? discoveredProspects[0].fullName : "First candidate"}
                 </span>
               </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
+              <p className="text-2xs text-muted-foreground leading-relaxed">
                 Subject: <span className="font-medium text-ink">Quick question about {discoveredProspects[0]?.company || "team"} engineering, {discoveredProspects[0] ? discoveredProspects[0].fullName.split(" ")[0] : "there"}</span>
               </p>
               <div className="rounded-xl border border-border/60 bg-card p-3 text-[11.5px] text-ink leading-relaxed font-sans space-y-1.5">
@@ -1143,8 +1139,8 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 </p>
                 <p>
                   I saw your work as <span className="rounded-md bg-primary/10 text-primary px-1.5 py-0.2 font-medium">{discoveredProspects[0]?.title || "VP of Engineering"}</span> at <span className="rounded-md bg-primary/10 text-primary px-1.5 py-0.2 font-medium">{discoveredProspects[0]?.company || "Capital One"}</span>
-                  {Boolean((discoveredProspects[0]?.enrichment as any)?.newsContext) ? (
-                    <> (congratulations on the recent <span className="rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.2 font-medium">{(discoveredProspects[0]?.enrichment as any).newsContext}</span>!)</>
+                  {Boolean((discoveredProspects[0]?.enrichment as Record<string, unknown> | null)?.newsContext) ? (
+                    <> (congratulations on the recent <span className="rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.2 font-medium">{String((discoveredProspects[0]?.enrichment as Record<string, unknown>).newsContext)}</span>!)</>
                   ) : (
                     <> and have been closely following the team&apos;s developments.</>
                   )}

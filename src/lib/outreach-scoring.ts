@@ -74,6 +74,15 @@ export function calculateProspectEffectiveness(input: ProspectScoreInput): Score
     }
   }
 
+  // Check against explicit target companies
+  if (input.targetCompanies?.length && companyLower) {
+    const directCompany = input.targetCompanies.some((c) => companyLower.includes(c.toLowerCase()));
+    if (directCompany) {
+      titleScore = Math.min(35, titleScore + 5);
+      reasons.push("Target company match (+5)");
+    }
+  }
+
   score += titleScore;
 
   // 2. News Catalyst Urgency & Freshness (0 - 30 points)

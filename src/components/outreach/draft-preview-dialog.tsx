@@ -14,7 +14,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import {
   Briefcase,
-  Check,
   Copy,
   ExternalLink,
   GraduationCap,
@@ -32,7 +31,7 @@ import { friendlyError } from "@/lib/errors";
 export function DraftPreviewDialog({
   open,
   onOpenChange,
-  campaignId,
+  campaignId: _campaignId,
   prospect,
   onUpdated,
 }: {
@@ -64,7 +63,7 @@ export function DraftPreviewDialog({
     const text = channel === "email" && subject ? `Subject: ${subject}\n\n${body}` : body;
     const ok = await copyText(text);
     if (!ok) {
-      toast.error("Failed to copy to clipboard");
+      toast.error("Couldn’t copy to clipboard");
       return;
     }
     if (message?.id) {
@@ -95,7 +94,7 @@ export function DraftPreviewDialog({
         toast.success("Draft updated");
         onUpdated?.();
       } catch (err) {
-        toast.error(friendlyError(err, "Couldn't save draft update"));
+        toast.error(friendlyError(err, "Couldn’t save draft update"));
       }
     });
   }
@@ -113,14 +112,14 @@ export function DraftPreviewDialog({
         onOpenChange(false);
         onUpdated?.();
       } catch (err) {
-        toast.error(friendlyError(err, "Could not send message"));
+        toast.error(friendlyError(err, "Couldn’t send message"));
       }
     });
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl p-6 sm:p-7">
+      <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto rounded-3xl p-6 sm:p-7">
         <DialogHeader className="space-y-3 pb-2 border-b border-border/60">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -196,7 +195,7 @@ export function DraftPreviewDialog({
             )}
 
             {prospect.isDemo && (
-              <Badge variant="outline" className="rounded-full text-[11px]">
+              <Badge variant="outline" className="rounded-full text-2xs">
                 Demo Mode
               </Badge>
             )}

@@ -1,4 +1,40 @@
+import { type Plan } from "@/lib/plans/plan-config";
+
 export type OutreachChannel = "email" | "linkedin" | "sms";
+
+export type OutreachSendProvider = "gmail" | "outlook" | "resend";
+
+export type FiveHourQuota = {
+  plan: Plan;
+  limit: number;
+  used: number;
+  remaining: number;
+  resetsAt: Date;
+  canSend: boolean;
+};
+
+/**
+ * Replaces {{variable}} tokens in templates with recipient data
+ */
+export function interpolateMailMerge(
+  template: string,
+  variables: {
+    first_name?: string | null;
+    full_name?: string | null;
+    company?: string | null;
+    title?: string | null;
+    recent_signal?: string | null;
+    sender_name?: string | null;
+    [key: string]: string | null | undefined;
+  }
+): string {
+  let result = template;
+  for (const [key, val] of Object.entries(variables)) {
+    const regex = new RegExp(`{{\\s*${key}\\s*}}`, "gi");
+    result = result.replace(regex, val || "");
+  }
+  return result;
+}
 
 export type OutreachMessageStatus =
   | "draft"

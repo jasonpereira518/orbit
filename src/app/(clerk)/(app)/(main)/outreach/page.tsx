@@ -1,4 +1,4 @@
-import { listCampaigns } from "@/actions/outreach";
+import { listCampaigns, getOutreachQuota } from "@/actions/outreach";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
@@ -7,7 +7,6 @@ import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { UnifiedOutreachHub } from "@/components/outreach/unified-outreach-hub";
 import { getBrightDataConfig } from "@/lib/brightdata";
-import { get5HourSendQuota } from "@/lib/outreach-send";
 import { gmailProvider } from "@/lib/email/providers/gmail";
 import { outlookProvider } from "@/lib/email/providers/outlook";
 
@@ -26,7 +25,7 @@ export default async function OutreachPage() {
 
   const [campaigns, quota, gmailIdent, outlookIdent] = await Promise.all([
     listCampaigns(),
-    get5HourSendQuota(userId).catch(() => null),
+    getOutreachQuota(userId).catch(() => null),
     gmailProvider.identity(userId).catch(() => null),
     outlookProvider.identity(userId).catch(() => null),
   ]);
