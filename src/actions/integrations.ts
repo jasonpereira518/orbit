@@ -137,6 +137,8 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
 
   // Assistants sign in through Clerk and leave no record in Orbit, so there is nothing to report.
   pages.assistants = { state: "none", detail: "Works on every plan" };
+  // The catalog is a place to browse, not something that can be on or off.
+  pages.connectors = { state: "none", detail: "Everything Orbit connects to" };
 
   // --- the connector catalog ------------------------------------------------------------
   // Keyed by connector id, not by page: the catalog answers for things that are not pages
@@ -191,6 +193,10 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
         ? { state: "on", detail: plural(keys.length, "key") }
         : { state: "off", detail: "No keys" };
 
+  // File imports have no connection to report; Drive rides the Google grant.
+  connectors.contacts_file = { state: "none", detail: "Upload a file any time" };
+  connectors.chat_exports = { state: "none", detail: "Upload an export any time" };
+  connectors.google_drive = connectors.google;
   connectors.granola =
     granola === "unknown"
       ? "unknown"

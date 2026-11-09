@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { ChevronLeft, ChevronRight, LayoutGrid } from "lucide-react";
 import type { getSettings } from "@/actions/settings";
 import {
@@ -18,6 +18,7 @@ import { AssistantsSettings } from "@/components/settings/assistants-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { GranolaSettings } from "@/components/settings/granola-settings";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
+import { AllConnectors } from "@/components/settings/all-connectors";
 import { IntegrationsOverview } from "@/components/settings/integrations-overview";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
 import { SettingsSurfaceProvider } from "@/components/settings/settings-section";
@@ -588,6 +589,14 @@ function DialogBody({
                       canUseRecruiters={canUseRecruiters}
                       onOpenPage={openPage}
                       speechAllowances={speechAllowances}
+                      catalog={{
+                        tabs,
+                        statuses,
+                        runningTab,
+                        onConnect: (provider) =>
+                          (provider === "google" ? googleConnect : microsoftConnect).connect(),
+                        connecting: connectingProvider,
+                      }}
                     />
                   </>
                 )}
@@ -608,6 +617,7 @@ function Panel({
   canUseRecruiters,
   onOpenPage,
   speechAllowances,
+  catalog,
 }: {
   id: IntegrationTabId;
   active: boolean;
@@ -616,6 +626,8 @@ function Panel({
   canUseRecruiters: boolean;
   onOpenPage: (page: IntegrationTabId) => void;
   speechAllowances: SpeechAllowances;
+  /** What the All connectors page needs that the account pages fetch for themselves. */
+  catalog: Omit<ComponentProps<typeof AllConnectors>, "onOpen">;
 }) {
   switch (id) {
     // One page per account, not a stack of cards. `returnTo` is the page itself: the page is
@@ -649,6 +661,8 @@ function Panel({
       return <LinkedInSettings />;
     case "granola":
       return <GranolaSettings />;
+    case "connectors":
+      return <AllConnectors {...catalog} onOpen={onOpenPage} />;
     case "ai":
       return <AiSettings initialSettings={initialSettings} speech={speechAllowances} />;
     case "assistants":

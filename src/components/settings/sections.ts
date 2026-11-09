@@ -80,6 +80,7 @@ export const INTEGRATION_TABS = [
   { id: "microsoft", label: "Microsoft", group: "accounts", surface: "page.imports" },
   { id: "linkedin", label: "LinkedIn", group: "accounts", surface: "page.imports" },
   { id: "granola", label: "Granola", group: "accounts", surface: "page.imports" },
+  { id: "connectors", label: "All connectors", group: "accounts", surface: "page.imports" },
   { id: "ai", label: "AI", group: "ai", section: "settings-ai" },
   { id: "assistants", label: "Claude and ChatGPT", group: "ai", section: "settings-api" },
   { id: "api", label: "API keys", group: "advanced", section: "settings-api" },
@@ -99,9 +100,12 @@ export type IntegrationTabId = (typeof INTEGRATION_TABS)[number]["id"];
 export const OVERVIEW = "overview";
 export type IntegrationView = typeof OVERVIEW | IntegrationTabId;
 
-/** The pages the Overview gives a card — everything outside Advanced. */
+/**
+ * The pages the Overview can give a card — everything outside Advanced, except the catalog
+ * page itself, which the Overview links to instead.
+ */
 export const OVERVIEW_TABS: readonly IntegrationTabId[] = INTEGRATION_TABS.filter(
-  (tab) => tab.group !== "advanced"
+  (tab) => tab.group !== "advanced" && tab.id !== "connectors"
 ).map((tab) => tab.id);
 
 /** A place inside a page a link can land on. Only the Google page has one so far. */

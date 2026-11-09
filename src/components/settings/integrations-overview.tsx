@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronRight, TriangleAlert } from "lucide-react";
+import { ChevronRight, LayoutGrid, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import {
@@ -27,8 +27,10 @@ const DESCRIPTIONS: Partial<Record<IntegrationTabId, string>> = {
 };
 
 /**
- * The Integrations dialog's home: anything that needs fixing, then one card per account with
- * its status and the one thing to do next. Advanced pages get no card — on wide screens they
+ * The Integrations dialog's home: anything that needs fixing, then one card per integration
+ * that is actually on — connected, or connected and asking for something. Everything else,
+ * including what isn't set up yet, lives on the All connectors page this links to.
+ * Advanced pages get no card — on wide screens they
  * are reachable from the nav, and on phones, where the nav is hidden, from a collapsed block
  * below the cards.
  *
@@ -64,7 +66,12 @@ export function IntegrationsOverview({
    *  the browser leaves for the provider. Null when nothing is in flight. */
   connecting: AccountProvider | null;
 }) {
-  const cards = OVERVIEW_TABS.filter((id) => tabs.includes(id));
+  // On, or on and asking for something. Until the statuses arrive nothing is known to be on.
+  const cards = OVERVIEW_TABS.filter((id) => {
+    const status = statuses?.pages[id];
+    return tabs.includes(id) && status !== undefined && status !== "unknown" && (status.state === "on" || status.state === "partial");
+  });
+  const showCatalogLink = tabs.includes("connectors");
   const attention = (statuses?.attention ?? []).filter((item) => tabs.includes(item.tab));
   const advancedTabs = INTEGRATION_TABS.filter((t) => t.group === "advanced" && tabs.includes(t.id));
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -74,7 +81,7 @@ export function IntegrationsOverview({
       <div>
         <h3 className="text-lg font-medium text-ink">Overview</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          What Orbit is connected to, and what’s left to set up.
+          What Orbit is connected to right now.
         </p>
       </div>
 
@@ -93,6 +100,12 @@ export function IntegrationsOverview({
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {statuses === null ? (
+        <p className="text-sm text-muted-foreground">Checking your connections…</p>
+      ) : cards.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Nothing is connected yet.</p>
       ) : null}
 
       <ul className="grid gap-3 sm:grid-cols-2">
@@ -141,6 +154,17 @@ export function IntegrationsOverview({
           );
         })}
       </ul>
+
+      {showCatalogLink ? (
+        <Button
+          variant={cards.length === 0 ? "default" : "outline"}
+          data-integration-card="connectors"
+          onClick={() => onOpen("connectors")}
+        >
+          <LayoutGrid aria-hidden className="size-4" />
+          {cards.length === 0 ? "Browse all connectors" : "See all connectors"}
+        </Button>
+      ) : null}
 
       {advancedTabs.length > 0 ? (
         <div className="border-t border-border/60 pt-4 md:hidden">
