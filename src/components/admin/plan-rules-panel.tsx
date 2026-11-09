@@ -36,6 +36,7 @@ const FEATURE_INFO: Record<FeatureKey, { label: string; description: string }> =
   sync: { label: "Calendar subscriptions", description: "Pasted ICS feeds and event sources." },
   extension: { label: "Extension", description: "The browser extension's plan flag (its core is free regardless)." },
   api: { label: "REST API and webhooks", description: "API keys and outbound webhooks. MCP stays free on every plan." },
+  crm: { label: "CRM sync", description: "Connecting Salesforce or HubSpot to Leads. Joining a team and warm paths stay free." },
   meetings: { label: "Meeting recording", description: "Record and transcribe new meetings. Past meetings stay readable." },
   hostedAi: { label: "Included AI", description: "AI on Orbit's keys, metered in the plan's credits." },
   creditPacks: { label: "Credit packs", description: "Buying a $5 top-up pack of AI credits." },

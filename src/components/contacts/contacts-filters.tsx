@@ -61,6 +61,7 @@ export function ContactsFilters({
   initialLetter,
   initialSchool = "",
   schoolOptions = { mine: [], network: [] },
+  view,
   importId,
   children,
 }: {
@@ -80,6 +81,7 @@ export function ContactsFilters({
   initialSchool?: string;
   /** The user's own schools and the network's, most common first (`listContactSchoolOptions`). */
   schoolOptions?: { mine: string[]; network: string[] };
+  view?: "work";
   /**
    * The active `/contacts?importId=…` scope, if any. Not a control this component offers —
    * only the page's banner sets or clears it — but every filter change here rebuilds the URL
@@ -129,6 +131,7 @@ export function ContactsFilters({
     // and nothing said why.
     if (initialTag) params.set("tag", initialTag);
     if (initialLetter) params.set("letter", initialLetter);
+    if (view === "work") params.set("view", "work");
     if (importId) params.set("importId", importId);
     const qs = params.toString();
     const href = qs ? `/contacts?${qs}` : "/contacts";

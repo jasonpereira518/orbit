@@ -11,27 +11,35 @@ import {
   directionForPeopleNav,
   isPeopleNavInBrowser,
   markPeopleNavInBrowser,
+  type PeopleView,
 } from "@/lib/people-nav";
 
-const OPTIONS = [
-  { key: "contacts" as const, href: "/contacts", label: "Contacts" },
-  { key: "recruiters" as const, href: "/recruiters", label: "Recruiters" },
+const OPTIONS: Array<{ key: PeopleView; href: string; label: string }> = [
+  { key: "contacts", href: "/contacts", label: "Contacts" },
+  { key: "work", href: "/contacts?view=work", label: "Work" },
+  { key: "recruiters", href: "/recruiters", label: "Recruiters" },
 ];
 
 function PeopleViewToggle({
   visual,
+  showWork,
   onNavigate,
 }: {
-  visual: "contacts" | "recruiters";
-  onNavigate: (key: "contacts" | "recruiters", href: string) => void;
+  visual: PeopleView;
+  showWork: boolean;
+  onNavigate: (key: PeopleView, href: string) => void;
 }) {
+  const options = OPTIONS.filter((o) => showWork || o.key !== "work");
   return (
     <div
-      className="relative flex w-[11.5rem] shrink-0 rounded-lg border border-border/70 bg-card p-0.5 text-sm"
+      className={cn(
+        "relative flex shrink-0 rounded-lg border border-border/70 bg-card p-0.5 text-sm",
+        showWork ? "w-[16.5rem]" : "w-[11.5rem]"
+      )}
       role="tablist"
       aria-label="People view"
     >
-      {OPTIONS.map((opt) => {
+      {options.map((opt) => {
         const selected = visual === opt.key;
         return (
           <IntentLink
@@ -68,13 +76,15 @@ function PeopleViewToggle({
 
 export function PeopleListShell({
   active,
+  showWork = false,
   title,
   subtitle,
   actions,
   pending = false,
   children,
 }: {
-  active: "contacts" | "recruiters";
+  active: PeopleView;
+  showWork?: boolean;
   title: string;
   subtitle: React.ReactNode;
   actions?: React.ReactNode;
@@ -94,15 +104,16 @@ export function PeopleListShell({
 
   useEffect(() => {
     router.prefetch("/contacts");
+    if (showWork) router.prefetch("/contacts?view=work");
     router.prefetch("/recruiters");
-  }, [router]);
+  }, [router, showWork]);
 
   useEffect(() => {
     setVisual(active);
     if (!pending) clearPeopleNavInBrowser();
   }, [active, pending]);
 
-  function navigateTo(key: "contacts" | "recruiters", href: string) {
+  function navigateTo(key: PeopleView, href: string) {
     if (key === active) return;
     const dir = directionForPeopleNav(active, key);
     // Cookie lets the route's loading.tsx skip its skeleton mid-toggle.
@@ -160,7 +171,7 @@ export function PeopleListShell({
             leaving and the new one arriving.
           */}
           <ViewTransition name="people-view-toggle" enter="none" exit="none" update="none" share="auto">
-            <PeopleViewToggle visual={visual} onNavigate={navigateTo} />
+            <PeopleViewToggle visual={visual} showWork={showWork} onNavigate={navigateTo} />
           </ViewTransition>
         </div>
         {/* Reserved while the page loads, so the actions arriving don't push the list down. */}

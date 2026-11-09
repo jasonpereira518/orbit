@@ -11,6 +11,8 @@ import {
 } from "@/lib/contacts-page";
 import { getPlanOverview } from "@/actions/settings";
 import { countDuplicates } from "@/actions/duplicates";
+import { requireUserId } from "@/lib/auth";
+import { isSurfaceReleased } from "@/lib/surface-visibility";
 import { buttonVariants } from "@/components/ui/button";
 import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { ContactsFilters } from "@/components/contacts/contacts-filters";
@@ -36,6 +38,7 @@ export default async function ContactsPage({
     tag?: string;
     /** Alumni of one school, or "@mine" for anyone who went to one of the user's. */
     school?: string;
+    view?: string;
     /** Marks one import's new people in the list (`ContactsList` draws them in yellow). */
     importId?: string;
   }>;
@@ -51,6 +54,11 @@ export default async function ContactsPage({
   const sort: ContactSort = explicitSort ?? (params.q?.trim() ? "relevance" : "name");
   const quiet = parseQuietDays(params.quiet);
 
+  // The Work pill follows Leads' release, like the team pill on a contact page. A `view=work`
+  // link opened while Leads is closed is simply the plain list.
+  const showWork = await isSurfaceReleased(await requireUserId(), "page.leads");
+  const work = showWork && params.view === "work";
+
   const filters = {
     q: params.q,
     company: params.company,
@@ -58,6 +66,7 @@ export default async function ContactsPage({
     followUp: params.followUp === "due" ? ("due" as const) : undefined,
     quiet: quiet ?? undefined,
     sort,
+    work: work ? (true as const) : undefined,
     letter: params.letter,
     tag: params.tag,
     school: params.school,
@@ -90,10 +99,15 @@ export default async function ContactsPage({
 
   return (
     <PeopleListShell
-      active="contacts"
-      title="Contacts"
+      active={work ? "work" : "contacts"}
+      showWork={showWork}
+      title={work ? "Work contacts" : "Contacts"}
       subtitle={
-        page.total === null
+        work
+          ? page.total === null
+            ? "From your CRM"
+            : `${page.total.toLocaleString()} ${page.total === 1 ? "person" : "people"} from your CRM`
+          : page.total === null
           ? "Your network"
           : // `total` counts what the filters matched, not the network. Calling a filtered
             // count "in your network" told someone with 24 contacts that they had 6 — and
@@ -140,6 +154,7 @@ export default async function ContactsPage({
           initialSchool={params.school || ""}
           schoolOptions={schoolOptions}
           initialLetter={params.letter || ""}
+          view={work ? "work" : undefined}
           importId={params.importId}
         >
           {/*
@@ -149,7 +164,7 @@ export default async function ContactsPage({
             down and rebuilt the whole subtree.
           */}
           <ContactsList
-            key={[params.q, params.company, params.minScore, params.followUp, params.tag, params.school, String(quiet), sort, params.importId].join("|")}
+            key={[params.q, params.company, params.minScore, params.followUp, params.tag, params.school, String(quiet), sort, params.importId, work ? "work" : ""].join("|")}
             initialItems={page.items}
             initialCursor={page.nextCursor}
             total={page.total}

@@ -52,6 +52,7 @@ const GATE_LABELS: Record<string, string> = {
   sync: "Calendar / mail sync",
   extension: "Browser extension",
   api: "API and webhooks",
+  crm: "CRM (Salesforce / HubSpot)",
   meetings: "Meeting transcription",
   creditPacks: "Credit packs",
   extraConnections: "Second Google / Microsoft account",

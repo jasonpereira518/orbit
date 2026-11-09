@@ -5,6 +5,7 @@ import {
   actionItems,
   chatMessages,
   chatThreads,
+  connectorConnections,
   contactBriefs,
   contactExperiences,
   contactIdentities,
@@ -36,7 +37,11 @@ import { createCompanyResolver, resolveCompany } from "@/lib/companies";
 import { normalizeCompanyKey } from "@/lib/company-name";
 import { buildRecentDiscussions } from "@/lib/contact-brief";
 import { claimIdentities } from "@/lib/contact-identity";
+import { getConnectorConnection, upsertConnectorConnection } from "@/lib/connectors/connections";
+import { persistCrmPage } from "@/lib/crm/persist";
+import { DEMO_CRM_ACCOUNT_REF } from "@/lib/crm/types";
 import { identityKeysFor } from "@/lib/duplicates";
+import { finalizeIngest, openIngestContext } from "@/lib/ingest/events";
 import { saveLead } from "@/lib/leads/store";
 import { joinTeamWithDomain } from "@/lib/teams";
 import { ensureUserSettings } from "@/lib/user-settings";
@@ -47,6 +52,7 @@ import {
   recomputeRecruiterRating,
 } from "@/lib/recruiters";
 import { getInboxListId } from "@/lib/reminder-lists";
+import { DEMO_CRM_LABEL, demoCrmPeople } from "@/lib/demo-data/crm";
 import { DEMO_GOALS, DEMO_PEOPLE, type DemoPerson } from "@/lib/demo-data/network";
 import {
   DEMO_LEADS,
@@ -145,6 +151,9 @@ export async function seedDemoWorkspace(
           ["goals", () => seedGoals(userId, summary, DEMO_GOALS)],
         ];
   surfaces.push(["team", () => seedTeam(userId, summary)]);
+  // The CRM story (HubSpot customers) is the founder persona's; the student and gillings casts are
+  // pinned to their own contact counts, and work contacts would add to them.
+  if (!student && !gillings) surfaces.push(["crm", () => seedCrm(userId, summary)]);
   if (extended) {
     surfaces.push(["extended", () => seedExtendedSurfaces(userId, extended, contactIdByName, now, summary)]);
   }
@@ -1196,6 +1205,35 @@ async function seedTeam(userId: string, summary: DemoSeedSummary): Promise<void>
   }
   summary.teamMembers = DEMO_TEAMMATES.length + 1;
   summary.leads = DEMO_LEADS.length;
+}
+
+/**
+ * The demo HubSpot. Local database only, for the reason the demo team is: a fake connection on
+ * a shared database would show a real account a HubSpot it never connected. No token and
+ * `next_sync_at` null, so the scheduler never claims it; "Sync now" and disconnect recognise
+ * `DEMO_CRM_ACCOUNT_REF` and never call HubSpot.
+ */
+async function seedCrm(userId: string, summary: DemoSeedSummary): Promise<void> {
+  if (!demoTeamAllowed()) return;
+  if (await getConnectorConnection(userId, "hubspot")) return;
+  await upsertConnectorConnection({
+    userId,
+    connectorId: "hubspot",
+    authKind: "oauth2",
+    label: DEMO_CRM_LABEL,
+    accountRef: DEMO_CRM_ACCOUNT_REF,
+    capabilities: ["syncPeople"],
+    nextSyncAt: null,
+  });
+  const db = await getDb();
+  await db
+    .update(connectorConnections)
+    .set({ lastSyncedAt: new Date(Date.now() - 12 * 60_000) })
+    .where(and(eq(connectorConnections.userId, userId), eq(connectorConnections.connectorId, "hubspot")));
+  const ctx = await openIngestContext(userId, { source: "hubspot", createsContacts: true, reportResolutions: true });
+  const stats = await persistCrmPage(ctx, "hubspot", demoCrmPeople());
+  await finalizeIngest(ctx);
+  summary.crmRecords = stats.records;
 }
 
 function sha256(text: string) {

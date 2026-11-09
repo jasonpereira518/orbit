@@ -198,6 +198,7 @@ async function main() {
   check("sync gated", ent.canUseSync === false);
   check("hosted sending gated", ent.canUseHostedSending === false);
   check("hosted enrichment gated", ent.canUseHostedEnrichment === false);
+  check("crm gated", ent.canUseCrm === false);
 
   const resolver = await createCompanyResolver(USER);
   const bulk = Array.from({ length: FREE_CONTACT_LIMIT - 1 }, (_, i) => ({
@@ -267,6 +268,7 @@ async function main() {
   check("outreach unlocked", ent.canUseOutreach === true);
   check("sync unlocked", ent.canUseSync === true);
   check("extension unlocked", ent.canUseExtension === true);
+  check("crm unlocked on lifetime", ent.canUseCrm === true);
   // Lifetime has every Max entitlement except packs; its included AI has a smaller allowance.
   check("hosted sending unlocked on lifetime", ent.canUseHostedSending === true);
   check("no hosted enrichment on lifetime", ent.canUseHostedEnrichment === false);
@@ -293,6 +295,7 @@ async function main() {
   check("plan is orbit", ent.plan === "orbit", ent.plan);
   check("hosted sending unlocked", ent.canUseHostedSending === true);
   check("no hosted enrichment on orbit", ent.canUseHostedEnrichment === false);
+  check("crm unlocked on pro", ent.canUseCrm === true);
 
   // --- the REST API is Max-only, and the refusal records what would unlock it ---
   let apiThrew: unknown = null;
@@ -367,7 +370,8 @@ async function main() {
         ent.canUseRecruiters &&
         ent.canUseSync &&
         ent.canUseExtension &&
-        ent.canUseApi,
+        ent.canUseApi &&
+        ent.canUseCrm,
       JSON.stringify(ent)
     );
     let demoThrew: unknown = null;

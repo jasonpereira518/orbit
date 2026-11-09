@@ -58,7 +58,7 @@ function plural(n: number, word: string) {
  * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola] =
+  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola, hubspot] =
     await Promise.all([
       settle(getSettings()),
       settle(getCalendarFeedStatus()),
@@ -70,6 +70,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       settle(listCalendarSubscriptions()),
       settle(requireUserId().then((id) => listEventConnections(id))),
       settle(requireUserId().then((id) => getConnectorConnection(id, "granola"))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "hubspot"))),
     ]);
   const now = new Date();
   const pages: IntegrationStatuses["pages"] = {};
@@ -200,6 +201,15 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
           ? { state: "partial", detail: "Reconnect needed" }
           : { state: "on", detail: "Connected" };
   pages.granola = connectors.granola;
+  // HubSpot's own row in connector_connections (Leads P4): the portal it syncs, or why not.
+  connectors.hubspot =
+    hubspot === "unknown"
+      ? "unknown"
+      : hubspot === null
+        ? { state: "off", detail: "Not connected" }
+        : hubspot.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: hubspot.label ?? "Connected" };
 
   // The registry and this action must answer for the same connectors. The smoke test checks
   // the list against the registry; this checks the implementation against the list.

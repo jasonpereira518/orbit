@@ -10,6 +10,7 @@ import { getGmailConnectionStatus, getGmailScanStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus, getOutlookScanStatus } from "@/actions/outlook";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
+import { isSurfaceReleased } from "@/lib/surface-visibility";
 import { RecruitersLocked } from "@/components/locked-feature";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
@@ -35,7 +36,8 @@ export default async function RecruitersPage({
   if (gate) return gate;
 
   const params = await searchParams;
-  const { canUseRecruiters } = await getEntitlements(await requireUserId());
+  const userId = await requireUserId();
+  const { canUseRecruiters } = await getEntitlements(userId);
 
   if (!canUseRecruiters) {
     return <RecruitersLocked config={await getEffectivePlanConfig()} />;
@@ -47,7 +49,7 @@ export default async function RecruitersPage({
   const tab = params.tab === "discover" ? "discover" : "mine";
   const q = params.q || "";
 
-  const [{ enabled: sharing }, mine, gmail, scan, outlook, outlookScan, discover] = await Promise.all([
+  const [{ enabled: sharing }, mine, gmail, scan, outlook, outlookScan, showWork, discover] = await Promise.all([
     getRecruiterSharing(),
     listMyRecruiters(),
     getGmailConnectionStatus(),
@@ -56,6 +58,8 @@ export default async function RecruitersPage({
     getGmailScanStatus(),
     getOutlookConnectionStatus(),
     getOutlookScanStatus(),
+    // The Work pill follows Leads' release, like the pill on /contacts.
+    isSurfaceReleased(userId, "page.leads"),
     // Alongside the rest rather than after it: it depends on none of them. Returns [] for a
     // private viewer, so this is safe to call unconditionally.
     tab === "discover" ? listDiscoverRecruiters(q || undefined) : Promise.resolve([]),
@@ -73,6 +77,7 @@ export default async function RecruitersPage({
   return (
     <PeopleListShell
       active="recruiters"
+      showWork={showWork}
       title="Recruiters"
       subtitle="Every recruiter you've talked to — and, if you share, the ones everyone else has."
       actions={

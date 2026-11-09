@@ -62,6 +62,12 @@ export type Entitlements = {
    */
   canUseApi: boolean;
   /**
+   * Connecting Salesforce or HubSpot to Leads. Its own key, like `canUseApi`, so the denial
+   * copy names the right thing and `gate_events` tells CRM demand apart from mailbox sync.
+   * Joining a team and looking up warm paths are free and never consult it.
+   */
+  canUseCrm: boolean;
+  /**
    * The MCP server — Orbit inside Claude, ChatGPT or any other assistant that speaks the
    * protocol. True on every plan, including free, which is the one deliberate exception to
    * the paid-connector line above.
@@ -190,6 +196,7 @@ export function entitlementsForPlan(
     canUseSync: f.sync,
     canUseExtension: f.extension,
     canUseApi: f.api,
+    canUseCrm: f.crm,
     canUseMcp: true,
     canUseMeetings: f.meetings,
     canUseHostedAi: f.hostedAi,
@@ -271,6 +278,8 @@ export function featureDenial(feature: DeniableFeature, config: Record<Plan, Pla
       return `Recruiter tracking is available on ${on}.`;
     case "api":
       return `The Orbit API and webhooks are available on ${on}. Claude and ChatGPT connect on any plan, with no key.`;
+    case "crm":
+      return `Salesforce and HubSpot sync are available on ${on}.`;
     case "sync":
       return `Calendar subscriptions and event sources are available on ${on}.`;
     case "extension":
