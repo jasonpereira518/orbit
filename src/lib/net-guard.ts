@@ -103,6 +103,7 @@ async function resolveDeliverable(url: string): Promise<Array<{ address: string;
   const parsed = new URL(url);
   if (parsed.protocol !== "https:") throw new Error("Only https:// endpoints are allowed");
   if (parsed.username || parsed.password) throw new Error("Credentials in URL are not allowed");
+  if (parsed.port && parsed.port !== "443") throw new Error("Only default HTTPS port (443) is allowed");
 
   const host = parsed.hostname.replace(/^\[|\]$/g, "");
   if (/\.(local|internal|localdomain)$/i.test(host) || host === "localhost") {

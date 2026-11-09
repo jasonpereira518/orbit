@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import Papa from "papaparse";
+import { safeUnparseCsv } from "@/lib/csv-export";
 import { AdminForbiddenError, requireAdminUserId } from "@/lib/admin";
 import { recordAdminAction } from "@/lib/admin-operations";
 import {
@@ -100,7 +101,7 @@ export async function GET(request: NextRequest) {
   const body =
     format === "json"
       ? JSON.stringify(rows, null, 2)
-      : Papa.unparse(rows, { escapeFormulae: CSV_FORMULA_START });
+      : safeUnparseCsv(rows);
 
   return new NextResponse(body, {
     status: 200,

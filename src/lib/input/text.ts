@@ -20,6 +20,12 @@
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 
 /**
+ * Zero-width characters (200B-200F), bidirectional overrides (202A-202E),
+ * isolates (2066-2069) and BOM (FEFF) that disguise or spoof text.
+ */
+const INVISIBLE = /[​-‏‪-‮⁦-⁩﻿]/g;
+
+/**
  * Caps per field kind. Chosen well above anything a person types, and below the point where
  * a single row starts costing real money to scan or index. Capture's own input ceiling is
  * 100k characters, so a note written from a capture always fits.
@@ -49,7 +55,7 @@ export const MAX_TAGS = 50;
 
 /** Storable text: controls stripped, line endings normalised, NFC, truncated to `max`. */
 export function cleanText(value: string, max: number): string {
-  let out = value.replace(/\r\n?/g, "\n").replace(CONTROL, "");
+  let out = value.replace(/\r\n?/g, "\n").replace(CONTROL, "").replace(INVISIBLE, "");
   try {
     out = out.normalize("NFC");
   } catch {

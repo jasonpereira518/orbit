@@ -78,6 +78,24 @@ export function isLinkedInProfileUrl(url: string) {
   }
 }
 
+/**
+ * Accepts http:// and https:// URLs, or bare domains (e.g. "example.com").
+ * Refuses executable or pseudo schemes (javascript:, data:, vbscript:, file:).
+ */
+export function isSafeWebsiteUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (/^(?:javascript|data|vbscript|file):/i.test(trimmed)) return false;
+  try {
+    const parsed = new URL(
+      trimmed.startsWith("http://") || trimmed.startsWith("https://") ? trimmed : `https://${trimmed}`
+    );
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 const baseShape = {
   fullName: trimmedMax(LIMITS.name).refine((v) => v.length > 0, {
     message: "Name is required",
@@ -99,7 +117,10 @@ const baseShape = {
     { message: "That doesn't look like a LinkedIn profile URL" }
   ),
   xHandle: optionalText(LIMITS.handle),
-  website: optionalText(LIMITS.url),
+  website: optionalText(LIMITS.url).refine(
+    (v) => v === undefined || isSafeWebsiteUrl(v),
+    { message: "That website address doesn't look right" }
+  ),
 };
 
 /**
@@ -164,6 +185,15 @@ export function normalizeContactInput(
   rawInput: ContactInput,
   mode: "strict" | "lenient" = "strict"
 ): NormalizeResult {
+  if (typeof rawInput.notes === "string" && rawInput.notes.length > 500_000) {
+    return { ok: false, issues: [{ field: "notes", message: "Contact notes exceed maximum allowed size" }] };
+  }
+  if (typeof rawInput.howMet === "string" && rawInput.howMet.length > 50_000) {
+    return { ok: false, issues: [{ field: "howMet", message: "How we met exceeds maximum allowed size" }] };
+  }
+  if (Array.isArray(rawInput.keyFacts) && rawInput.keyFacts.length > 1_000) {
+    return { ok: false, issues: [{ field: "keyFacts", message: "Too many key facts (maximum 1,000)" }] };
+  }
   const input = cleanContactFreeText(rawInput);
   const parsed = strictSchema.safeParse(input);
 

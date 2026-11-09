@@ -23,6 +23,7 @@ import { del } from "@/lib/blob-lazy";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { personKeyOf } from "@/lib/events/people";
 import { UserFacingError } from "@/lib/errors";
+import { optionalClientDate } from "@/lib/input/dates";
 import type {
   AttendeeRole,
   AttendeeSource,
@@ -276,10 +277,6 @@ export type CreateEventInput = {
  * (`optionalClientDate`); this keeps a caller that forgot — a sync adapter, a script — from
  * failing a whole write over one unreadable time. Unreadable means "no time stated".
  */
-function validDateOrNull(value: Date | null | undefined): Date | null {
-  return value instanceof Date && !Number.isNaN(value.getTime()) ? value : null;
-}
-
 export async function createEventForUser(
   userId: string,
   input: CreateEventInput
@@ -290,8 +287,8 @@ export async function createEventForUser(
     .values({
       userId,
       title: input.title.trim(),
-      startsAt: validDateOrNull(input.startsAt),
-      endsAt: validDateOrNull(input.endsAt),
+      startsAt: optionalClientDate(input.startsAt, "event start date"),
+      endsAt: optionalClientDate(input.endsAt, "event end date"),
       timezone: input.timezone ?? null,
       venue: input.venue ?? null,
       city: input.city ?? null,
@@ -336,8 +333,8 @@ export async function updateEventForUser(
     .update(events)
     .set({
       ...safe,
-      ...("startsAt" in safe ? { startsAt: validDateOrNull(safe.startsAt as Date | null | undefined) } : {}),
-      ...("endsAt" in safe ? { endsAt: validDateOrNull(safe.endsAt as Date | null | undefined) } : {}),
+      ...("startsAt" in safe ? { startsAt: optionalClientDate(safe.startsAt, "event start date") } : {}),
+      ...("endsAt" in safe ? { endsAt: optionalClientDate(safe.endsAt, "event end date") } : {}),
       updatedAt: new Date(),
     })
     .where(and(eq(events.id, eventId), eq(events.userId, userId)));

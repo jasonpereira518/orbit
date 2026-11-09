@@ -34,6 +34,7 @@ import {
   type Interaction,
 } from "@/db/schema";
 import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
+import { UserFacingError } from "@/lib/errors";
 import { PLAN_LABELS, availableOn, salePlansWith } from "@/lib/plans/plan-config";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { recordGateHit, recordGateHitThrottled } from "@/lib/gate-events";
@@ -1289,6 +1290,15 @@ export async function logInteractionForUser(
   input: LogInteractionInput,
   options?: ContactWriteOptions
 ) {
+  if (typeof input.rawNotes === "string" && input.rawNotes.length > 500_000) {
+    throw new UserFacingError("Interaction notes exceed maximum allowed size (500,000 characters)");
+  }
+  if (typeof input.aiSummary === "string" && input.aiSummary.length > 100_000) {
+    throw new UserFacingError("Summary exceeds maximum allowed size (100,000 characters)");
+  }
+  if (Array.isArray(input.topics) && input.topics.length > 1_000) {
+    throw new UserFacingError("Too many topics (maximum 1,000 items)");
+  }
   const db = await getDb();
   const { clampSameDayToNow, parseInteractionDateFromNotes } = await import(
     "@/lib/interaction-date"
