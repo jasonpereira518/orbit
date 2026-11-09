@@ -408,7 +408,7 @@
  * to go in the block above, and `check:tokens` will not tell you otherwise. */
 :root {
   --orbit-corner-bottom: calc(
-    4.625rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
+    var(--orbit-bottom-nav) + var(--orbit-corner-lift)
   );
   --orbit-corner-right: 0.75rem;
 
@@ -446,7 +446,7 @@
      Distinct from `--orbit-corner-bottom` above, which anchors floating widgets in the
      corner; this is the band ordinary page content has to stay out of. 0 at `md`, where
      `md:hidden` takes the nav away. */
-  --orbit-bottom-nav: calc(5.5rem + env(safe-area-inset-bottom));
+  --orbit-bottom-nav: calc(4.625rem + env(safe-area-inset-bottom));
 
   /* Width the contacts A-Z rail occupies on the right.
      ------------------------------------------------------------------------------
