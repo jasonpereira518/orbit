@@ -38,7 +38,8 @@ export async function priorCaptureOf(userId: string, sourceHash: string): Promis
  */
 export async function createCaptureFromText(
   userId: string,
-  input: { text: string; label: string; batchGroupId: string; provider: CloudProvider; force?: boolean },
+  // "notion": a page picked from Notion, tagged `cloud:notion` (no Drive/OneDrive badge).
+  input: { text: string; label: string; batchGroupId: string; provider: CloudProvider | "notion"; force?: boolean },
 ): Promise<CaptureFromTextOutcome> {
   // `source_hash` is written by the parse over the corpus it read, which for a plain doc is this text.
   if (!input.force) {

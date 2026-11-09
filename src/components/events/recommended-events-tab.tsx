@@ -11,6 +11,7 @@ import {
   MapPin,
   Plus,
   Sparkles,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
@@ -48,6 +49,7 @@ export function RecommendedEventsTab({
   const [addedIds, setAddedIds] = useState<Set<string>>(
     new Set(recommendations.filter((r) => r.alreadyAdded).map((r) => r.id))
   );
+  const [hiddenRecIds, setHiddenRecIds] = useState<Set<string>>(new Set());
   const [filterCity, setFilterCity] = useState<string>("all");
 
   const cities = Array.from(
@@ -59,10 +61,27 @@ export function RecommendedEventsTab({
   );
 
   const filtered = recommendations.filter((r) => {
+    if (hiddenRecIds.has(r.id)) return false;
     if (filterCity === "all") return true;
     if (filterCity === "online") return r.attendanceMode === "online";
     return r.city?.toLowerCase() === filterCity.toLowerCase();
   });
+
+  function handleDismiss(rec: RecommendedEvent) {
+    setHiddenRecIds((prev) => new Set([...prev, rec.id]));
+    toast.success(`Removed “${rec.title}” from recommendations`, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          setHiddenRecIds((prev) => {
+            const next = new Set(prev);
+            next.delete(rec.id);
+            return next;
+          });
+        },
+      },
+    });
+  }
 
   function handleAdd(rec: RecommendedEvent) {
     setAddingId(rec.id);
@@ -177,13 +196,24 @@ export function RecommendedEventsTab({
                 ) : null}
 
                 {/* Match Score Badge */}
-                <div className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-xs font-semibold text-white shadow-sm backdrop-blur-md">
+                <div className="absolute right-10 top-2.5 flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-xs font-semibold text-white shadow-sm backdrop-blur-md">
                   <Flame className="size-3.5 text-amber-400" aria-hidden />
                   <span>{event.matchScore}% Match</span>
                 </div>
 
+                {/* Hide Button */}
+                <button
+                  type="button"
+                  onClick={() => handleDismiss(event)}
+                  className="absolute right-2.5 top-2.5 z-10 flex size-6 items-center justify-center rounded-full bg-black/60 text-white/90 shadow-sm backdrop-blur-md transition-transform hover:scale-110 hover:bg-black/80 hover:text-white"
+                  aria-label={`Hide ${event.title}`}
+                  title="Hide recommendation"
+                >
+                  <X className="size-3.5" aria-hidden />
+                </button>
+
                 {/* Platform Badge */}
-                <div className="absolute left-3 top-3 rounded-full bg-black/60 px-2 py-0.5 text-3xs font-medium text-white/90 backdrop-blur-sm">
+                <div className="absolute left-3 top-2.5 rounded-full bg-black/60 px-2 py-0.5 text-3xs font-medium text-white/90 backdrop-blur-sm">
                   {PLATFORM_LABELS[event.platform]}
                 </div>
               </div>

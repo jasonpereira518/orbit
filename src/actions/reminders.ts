@@ -36,7 +36,7 @@ import {
   inboxIdFromLists,
   normalizeListName,
 } from "@/lib/reminder-lists";
-import { resolveTimeZone, TZ_COOKIE } from "@/lib/reminder-due-bucket";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import {
   assertReminderContactOwned,
   createReminderForUser,
@@ -185,17 +185,6 @@ export async function fetchDashboard() {
   return { data, networkStats };
 }
 
-async function viewerTimeZone() {
-  const { cookies } = await import("next/headers");
-  try {
-    return resolveTimeZone((await cookies()).get(TZ_COOKIE)?.value);
-  } catch {
-    // No request scope (a script or smoke test calling the action directly): UTC, the same
-    // fallback as a request without the cookie.
-    return resolveTimeZone(null);
-  }
-}
-
 /**
  * `ensureReminderLists`, deduplicated within one server render. The /reminders page loads
  * the rail and the first page in parallel and each needs the lists, so on a render they
@@ -222,7 +211,7 @@ export async function loadReminderRail(): Promise<{
   const db = await getDb();
   const [lists, tz] = await Promise.all([
     ensureReminderListsForRender(userId),
-    viewerTimeZone(),
+    viewerTimeZone(userId),
   ]);
   const inboxId =
     lists.find((l) => l.isInbox === 1)?.id ?? lists[0]?.id ?? null;
@@ -258,7 +247,7 @@ export async function loadRemindersPage(
   const [inboxId, tz] = await Promise.all([
     // `getInboxListId`, over the render-shared lists read (see above).
     ensureReminderListsForRender(userId).then(inboxIdFromLists),
-    viewerTimeZone(),
+    viewerTimeZone(userId),
   ]);
 
   let listId: string | null = null;

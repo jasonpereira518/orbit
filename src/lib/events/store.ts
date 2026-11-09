@@ -226,10 +226,29 @@ export async function listRosterForUser(
   eventId: string
 ): Promise<RosterRow[]> {
   const db = await getDb();
-  const rows = await db.query.eventAttendees.findMany({
-    where: and(eq(eventAttendees.eventId, eventId), eq(eventAttendees.userId, userId)),
-    orderBy: [desc(eventAttendees.spokeTo), eventAttendees.fullName],
-  });
+  const rows = await db
+    .select({
+      id: eventAttendees.id,
+      fullName: eventAttendees.fullName,
+      email: eventAttendees.email,
+      company: eventAttendees.company,
+      title: eventAttendees.title,
+      linkedinUrl: eventAttendees.linkedinUrl,
+      xHandle: eventAttendees.xHandle,
+      attendeeRole: eventAttendees.attendeeRole,
+      source: eventAttendees.source,
+      spokeTo: eventAttendees.spokeTo,
+      contactId: eventAttendees.contactId,
+      profileImageUrl: contacts.profileImageUrl,
+    })
+    .from(eventAttendees)
+    .leftJoin(
+      contacts,
+      and(eq(contacts.id, eventAttendees.contactId), eq(contacts.userId, userId))
+    )
+    .where(and(eq(eventAttendees.eventId, eventId), eq(eventAttendees.userId, userId)))
+    .orderBy(desc(eventAttendees.spokeTo), eventAttendees.fullName);
+
   return rows.map((r) => ({
     id: r.id,
     fullName: r.fullName,
@@ -242,6 +261,7 @@ export async function listRosterForUser(
     source: r.source,
     spokeTo: r.spokeTo === 1,
     contactId: r.contactId,
+    profileImageUrl: r.profileImageUrl ?? null,
   }));
 }
 

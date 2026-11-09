@@ -48,6 +48,7 @@ export const ERROR_SOURCES = {
   oauthGranolaCallback: "oauth.granola.callback",
   /** The generic connector OAuth callback (`/api/connectors/[id]/callback`) — HubSpot first. */
   oauthConnectorCallback: "oauth.connector.callback",
+  oauthNotionCallback: "oauth.notion.callback",
   /**
    * A CalDAV request to iCloud (`src/lib/caldav/client.ts`) exhausted its retries. Kept
    * apart from `eventPageFetch` deliberately — the two share `guardedFetchText`'s retry

@@ -128,6 +128,10 @@ run(async () => {
     INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, access_token_encrypted)
     VALUES (${USER}, 'granola', 'oauth2', 'active', ${encrypt("access")})
   `);
+  await db.execute(sql`
+    INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, account_ref, access_token_encrypted)
+    VALUES (${USER}, 'notion', 'oauth2', 'active', 'Acme HQ', ${encrypt("access")})
+  `);
 
   const statuses = await getIntegrationStatuses();
 
@@ -142,6 +146,7 @@ run(async () => {
     zapier: "1 key",
     granola: "Connected",
     hubspot: "acme.hubspot.com",
+    notion: "Acme HQ",
   };
   for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {
     const status = statuses.connectors[id];

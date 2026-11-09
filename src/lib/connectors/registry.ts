@@ -371,14 +371,14 @@ const CONNECTOR_MANIFESTS = [
     label: "Notion",
     family: "knowledge",
     auth: "oauth2",
-    availability: "planned",
-    entitlement: "sync",
+    // Available, but released by the `feature.notion` surface (coming soon until launch).
+    availability: "available",
+    // Free on every plan (Jason, Nov 7). Capture from pages still spends AI credits as usual.
+    entitlement: null,
     rateBucket: "providerSync",
     purgeCategory: "connections",
-    capabilities: [
-      read("importContacts", "Import a people database"),
-      write("writeContact", "Mirror contacts into a Notion database"),
-    ],
+    // Read-only by Jason's call (Nov 7): Orbit never writes to Notion.
+    capabilities: [read("importContacts", "Sync a people database into contacts")],
   },
 ] as const satisfies readonly ConnectorManifest[];
 

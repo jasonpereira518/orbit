@@ -22,12 +22,13 @@
  * every company picker in the product forever. They are grouped live from the generated
  * `event_attendees.company_key` instead, which costs one indexed aggregate and creates nothing.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { eventCompanies } from "@/db/schema";
+import { eventCompanies, orgBrandColors } from "@/db/schema";
 import { createCompanyResolver } from "@/lib/companies";
 import { companyMatchKeys } from "@/lib/events/company-list-parse";
 import { assertEventOwnedBy } from "@/lib/events/store";
+import { lookupBrand } from "@/lib/brand-colors";
 
 export type EventCompanyRole = "host" | "sponsor" | "exhibitor" | "employer";
 export type EventCompanySource = "page" | "paste" | "screenshot" | "ai" | "manual";
@@ -96,6 +97,7 @@ export type CompanyPanelPerson = {
   contactId: string;
   name: string;
   title: string | null;
+  profileImageUrl?: string | null;
   /** `now` — works there today. `past` — used to, per their experience history. */
   tenure: "now" | "past";
 };
@@ -105,6 +107,7 @@ export type EventCompanyRow = {
   id: string | null;
   companyId: string | null;
   name: string;
+  domain: string | null;
   role: EventCompanyRole | "attendee_employer";
   source: EventCompanySource | null;
   evidence: string | null;
@@ -134,12 +137,13 @@ async function contactsAtCompanies(
     contact_id: string;
     full_name: string;
     title: string | null;
+    profile_image_url: string | null;
     tenure: "now" | "past";
   }>(
     await db.execute(sql`
       -- Current employer, by the same normalisation the generated column uses.
       SELECT ${sql.raw("regexp_replace(regexp_replace(lower(c.company), '[^a-z0-9\\s]', ' ', 'g'), '\\s+', ' ', 'g')")} AS key,
-             c.id AS contact_id, c.full_name, c.title, 'now'::text AS tenure
+             c.id AS contact_id, c.full_name, c.title, c.profile_image_url, 'now'::text AS tenure
         FROM contacts c
        WHERE c.user_id = ${userId}
          AND c.company IS NOT NULL
@@ -148,7 +152,7 @@ async function contactsAtCompanies(
       -- Anyone who used to be there. The contact_experiences org index covers this, and an
       -- alum is often the better introduction anyway: they will take the call.
       SELECT x.organization_normalized AS key,
-             c.id AS contact_id, c.full_name, x.title, 'past'::text AS tenure
+             c.id AS contact_id, c.full_name, x.title, c.profile_image_url, 'past'::text AS tenure
         FROM contact_experiences x
         JOIN contacts c ON c.id = x.contact_id AND c.user_id = ${userId}
        WHERE x.user_id = ${userId}
@@ -168,6 +172,7 @@ async function contactsAtCompanies(
         contactId: row.contact_id,
         name: row.full_name,
         title: row.title,
+        profileImageUrl: row.profile_image_url,
         tenure: row.tenure,
       });
     }
@@ -231,6 +236,33 @@ export async function loadEventCompanyPanel(
     loadTargetKeys(userId),
   ]);
 
+  const brandDomains = new Map<string, string>();
+  if (keys.size > 0) {
+    const brandRows = await db
+      .select({ nameKey: orgBrandColors.nameKey, domain: orgBrandColors.domain })
+      .from(orgBrandColors)
+      .where(
+        and(
+          eq(orgBrandColors.kind, "company"),
+          inArray(orgBrandColors.nameKey, [...keys]),
+          isNotNull(orgBrandColors.domain)
+        )
+      );
+    for (const b of brandRows) {
+      if (b.domain) brandDomains.set(b.nameKey, b.domain);
+    }
+  }
+
+  const domainFor = (name: string): string | null => {
+    for (const key of companyMatchKeys(name)) {
+      const d = brandDomains.get(key);
+      if (d) return d;
+    }
+    const curatedBrand = lookupBrand(name, "company");
+    if (curatedBrand?.domain) return curatedBrand.domain;
+    return null;
+  };
+
   const peopleFor = (name: string): CompanyPanelPerson[] => {
     const seen = new Set<string>();
     const out: CompanyPanelPerson[] = [];
@@ -265,6 +297,7 @@ export async function loadEventCompanyPanel(
     id: row.id,
     companyId: row.company_id,
     name: row.name,
+    domain: domainFor(row.name),
     role: row.role,
     source: row.source,
     evidence: row.evidence,
@@ -284,6 +317,7 @@ export async function loadEventCompanyPanel(
       id: null,
       companyId: null,
       name: row.name,
+      domain: domainFor(row.name),
       role: "attendee_employer",
       source: null,
       evidence: null,

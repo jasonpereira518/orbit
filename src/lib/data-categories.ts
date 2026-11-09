@@ -212,7 +212,7 @@ export function planPurgeSteps(
   return steps;
 }
 
-export type DisconnectProvider = "gmail" | "outlook" | "granola";
+export type DisconnectProvider = "gmail" | "outlook" | "granola" | "notion";
 
 /**
  * What "Also delete what Orbit imported from this account" deletes, as whole categories
@@ -228,6 +228,8 @@ export const DISCONNECT_DELETE_CATEGORIES: Readonly<
   outlook: ["recruiters"],
   // Granola only adds to contacts and meetings, which stay: nothing of its own to offer.
   granola: [],
+  // Same for Notion: pages become notes on contacts, rows become contacts, and both stay.
+  notion: [],
 };
 
 /** Where a user removes Orbit's Outlook access themselves (no app-side revoke exists). */

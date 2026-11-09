@@ -204,7 +204,7 @@ check(
 );
 check(
   "a planned connector never gets a sync, even if one is registered",
-  resolveConnectorWithSync("notion", { notion: stubSync })?.sync === undefined
+  resolveConnectorWithSync("apple_reminders", { apple_reminders: stubSync })?.sync === undefined
 );
 check("an unknown id resolves to null", resolveConnectorWithSync("nope", {}) === null);
 const GENERIC = ["oauth2", "api_key", "dav_password"];

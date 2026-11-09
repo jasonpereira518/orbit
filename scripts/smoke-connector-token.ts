@@ -68,6 +68,7 @@ const NEW_TOKENS: OAuthTokens = {
   refreshToken: null,
   expiresAt: new Date(Date.now() + 1_800_000),
   scopes: null,
+  raw: {},
 };
 
 run(async () => {
