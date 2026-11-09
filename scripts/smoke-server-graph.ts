@@ -22,6 +22,8 @@ const LAYOUT = "src/app/(clerk)/(app)/layout.tsx";
  * With a cap equal to the current size, every PR that adds one layout file fails, and parallel
  * PRs each pass alone but break together. 104 leaves headroom; the real regressions (147 files)
  * are caught by this being far from that and by LAYOUT_BANNED below. Raise it deliberately.
+ * Key derivation for rotatable secrets (user-settings reads the credit-email token through
+ * secrets.ts, audit 3.6) added two small modules, which fit inside that headroom.
  */
 const LAYOUT_MAX_FILES = 104;
 /** Modules that must never load on every page: heavy, and needed only by specific actions. */

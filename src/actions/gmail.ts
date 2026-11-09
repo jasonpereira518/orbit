@@ -1,6 +1,7 @@
 "use server";
 
 import { startJobInOwnInvocation } from "@/lib/import-stall";
+import { recordAccountAudit } from "@/lib/account-audit";
 import { consumeDailyCap } from "@/lib/rate-limit";
 import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
@@ -282,6 +283,7 @@ export async function disconnectGmail(opts: { alsoDelete?: boolean } = {}) {
   // Email insights reads this mailbox, and its records are derived from that mail: remove them
   // and switch the feature off rather than leave a sweep to fail on a dead grant.
   await deleteEmailIntelData(userId);
+  await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: "gmail" });
   // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
   // deliberately separate — see provider-connections.ts), so a reconnect's fresh connection
   // id would otherwise never dedupe against the orphaned row and seedCalendarSources would

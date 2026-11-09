@@ -71,7 +71,9 @@ export async function GET(_req: Request, { params }: Params) {
 
   if (shot.storage === "blob") {
     if (!shot.blobUrl) return new NextResponse(null, { status: 404 });
-    const upstream = await fetch(shot.blobUrl, { cache: "no-store" });
+    // Bounded so a stalled blob store fails this request instead of holding it open.
+    const upstream = await fetch(shot.blobUrl, { cache: "no-store", signal: AbortSignal.timeout(20_000) }).catch(() => null);
+    if (!upstream) return new NextResponse(null, { status: 504 });
     if (!upstream.ok || !upstream.body) return new NextResponse(null, { status: 404 });
     return new NextResponse(upstream.body, { headers });
   }

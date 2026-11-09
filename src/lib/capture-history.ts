@@ -87,6 +87,8 @@ function decodeCursor(cursor: string | null | undefined): { at: string; id: stri
  * (open, undo, delete) treat it as not found. The run is undone from its own surface.
  */
 export const CAPTURE_BATCH_SQL = ne(noteBatches.entryPoint, "relationship");
+/** A capture the history can show: finished, or finished and then undone. Never one mid-write or one that threw. */
+export const FINISHED_BATCH_SQL = inArray(noteBatches.status, ["saved", "undone"]);
 
 /** True when `batchId` is one of `userId`'s captures (not a relationship run batch). */
 export async function isCaptureBatchFor(userId: string, batchId: string): Promise<boolean> {
@@ -164,6 +166,7 @@ export async function listCaptureHistoryFor(
       and(
         eq(noteBatches.userId, userId),
         CAPTURE_BATCH_SQL,
+        FINISHED_BATCH_SQL,
         after
           ? sql`(${noteBatches.createdAt}, ${noteBatches.id}) < (${after.at}::timestamptz, ${after.id}::uuid)`
           : undefined
@@ -228,7 +231,8 @@ export async function listCaptureHistoryFor(
     return {
       id: row.id,
       createdAt: new Date(row.createdAt).toISOString(),
-      status: row.status,
+      // Narrowed by FINISHED_BATCH_SQL above; the column also carries `saving` and `failed`.
+      status: row.status as CaptureHistoryItem["status"],
       entryPoint: row.entryPoint,
       kinds,
       method: captureMethod({

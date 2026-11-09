@@ -21,6 +21,8 @@ import { hasBlobStorage } from "@/lib/contact-avatar";
 import { fillSharedAvatars, sweepOrphanedSharedAvatars } from "@/lib/shared-avatar-upkeep";
 import { sweepPublicWorkHistory } from "@/lib/public-work-history";
 import { sweepEmailAttachments } from "@/lib/email/attachments";
+import { runRetentionSweeps } from "@/lib/retention";
+import { backfillInterestListTokens } from "@/lib/interest-list-tokens";
 import {
   finishCronRun,
   startCronRun,
@@ -186,6 +188,19 @@ export async function GET(request: Request) {
     orphanSweepAborted: false,
     /** Stages left for the next run because the route reached `ROUTE_BUDGET_MS`. */
     stagesSkipped: 0,
+    /** Retention windows from `src/lib/retention.ts` (audit M-08): rows deleted or fields emptied. */
+    cronRunsPruned: 0,
+    webhookDeliveriesPruned: 0,
+    webhookRecipientsStripped: 0,
+    outboundPayloadsCleared: 0,
+    feedbackScreenshotsPruned: 0,
+    transcriptSegmentsPruned: 0,
+    emailBodiesCleared: 0,
+    gateEventsPruned: 0,
+    extensionUsagePruned: 0,
+    speechUsagePruned: 0,
+    /** Pre-v206 interest-list rows moved to hashed + encrypted tokens (audit L-05). */
+    interestTokensBackfilled: 0,
   };
   /** Wall-clock ms per stage (`ms.<stage>`) and the skipped ones (`skipped.<stage>`), for `cron_runs.stats`. */
   const stageStats: Record<string, number | boolean> = {};
@@ -271,6 +286,23 @@ export async function GET(request: Request) {
       // run instead of vanishing, and says why.
       status = "partial";
       reportError(err, { where: "job.process-stalled.housekeeping" });
+    }
+
+    if (stage("retention")) try {
+      // Retention for the tables nothing else prunes (audit M-08). Its own try block, so a
+      // failure here never costs the job-resumption work this route exists for.
+      Object.assign(stats, await runRetentionSweeps());
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.retention" });
+    }
+
+    if (stage("interest-tokens")) try {
+      // Waitlist tokens still in plaintext from before v206; bounded, a batch an hour.
+      stats.interestTokensBackfilled = await backfillInterestListTokens();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.interest-tokens" });
     }
 
     if (stage("chat-staging")) try {
