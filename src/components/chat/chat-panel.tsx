@@ -44,6 +44,7 @@ import {
   listChatThreads,
   pinChatThread,
   renameChatThread,
+  saveChatDraft,
   searchChatThreads,
   steerChatTurn,
   stopChatTurn,
@@ -2378,8 +2379,9 @@ const AssistantBubble = memo(function AssistantBubble({
     // stored recommendations — the same people, the latter after the server's checks.
     const recs = ids.flatMap((id): ChatRecommendation[] => {
       const saved = recById.get(id);
-      if (saved) return [saved];
       const person = msg.blocks?.people[id];
+      // An entry added only to hold a saved draft has no reason of its own: keep the role line.
+      if (saved) return [saved.reason ? saved : { ...saved, reason: person?.subtitle ?? "" }];
       return person
         ? [{ contact_id: id, recruiter_id: null, name: person.name, reason: person.subtitle ?? "", suggested_action: "", draft_message: null }]
         : [];
@@ -2559,15 +2561,27 @@ const RecommendationCard = memo(function RecommendationCard({
   const placed = !rec.recruiter_id && !rec.suggested_action;
   const line = rec.recruiter_id ? "Recruiter" : subtitle || (placed ? rec.reason : undefined);
   // Drafts are written when asked for, not with every answer — most would never be read.
-  const [draft, setDraft] = useState(rec.draft_message);
+  const [draft, setDraft] = useState(rec.edited_draft ?? rec.draft_message);
   const [drafting, setDrafting] = useState(false);
+  // Kept on the saved answer so a reload brings the draft back. Quiet: the text stays on
+  // screen whatever happens, and an unsaved answer has nowhere to keep it yet.
+  const contactId = rec.contact_id;
+  const saveDraft = useMemo(
+    () =>
+      messageId && contactId
+        ? (text: string) => void saveChatDraft(messageId, contactId, text).catch(() => {})
+        : undefined,
+    [messageId, contactId]
+  );
   async function writeDraft() {
     if (!rec.contact_id || drafting) return;
     setDrafting(true);
     try {
       const result = await draftContactFollowUp(rec.contact_id, { channel: "email", intent: question });
-      if (result.ok) setDraft(result.body);
-      else toast.error(result.error);
+      if (result.ok) {
+        setDraft(result.body);
+        saveDraft?.(result.body);
+      } else toast.error(result.error);
     } catch (err) {
       toast.error(friendlyError(err, TOAST_COPY.draftFollowUpFailed));
     } finally {
@@ -2637,6 +2651,7 @@ const RecommendationCard = memo(function RecommendationCard({
         <DraftEditor
           initial={resume?.body ?? draft ?? ""}
           name={rec.name}
+          onSave={saveDraft}
           actions={
             messageId && rec.contact_id
               ? (text) =>

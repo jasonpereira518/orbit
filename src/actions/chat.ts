@@ -22,6 +22,7 @@ import {
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
 import { addTurnSteer, markTurnStopped } from "@/lib/chat-persist";
 import { isUuid } from "@/lib/input/ids";
+import { saveDraftEdit } from "@/lib/chat-draft-save";
 import { PINNED_THREADS_MAX, pinThread, renameThread, searchThreads, type ThreadSearchHit } from "@/lib/chat-threads";
 import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
@@ -382,6 +383,16 @@ export async function deleteChatThread(threadId: string) {
     .delete(chatThreads)
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
   return { ok: true as const };
+}
+
+/**
+ * Keep a draft the person wrote or edited on an answer's card, so a reload does not lose it.
+ * Quiet on failure: the text is still on screen, and the next save tries again.
+ */
+export async function saveChatDraft(messageId: string, contactId: string, text: string) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(messageId) || !isUuid(contactId) || typeof text !== "string") return { ok: false as const };
+  return { ok: await saveDraftEdit(userId, messageId, contactId, text) };
 }
 
 /** Rename a saved conversation. A title, once set, is never overwritten by a later answer. */
