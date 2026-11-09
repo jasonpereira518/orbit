@@ -25,6 +25,7 @@
  */
 import type { DataCategory } from "@/lib/data-categories";
 import type { FeatureKey } from "@/lib/entitlements";
+import type { ClaimedConnectorConnection } from "@/lib/connectors/connections";
 
 export type ConnectorFamily =
   | "people"
@@ -137,8 +138,11 @@ export type ConnectorManifest = {
   /** Search aliases so "iCloud" finds Apple Contacts and "Teams" finds Outlook Calendar. */
   aliases?: string[];
   /**
-   * One sync pass for one connection, resolved by the scheduler so this module stays
-   * loadable from a client component.
+   * One sync pass for one claimed connection — secrets already decrypted by the claim.
+   *
+   * Never set on an entry in this file: a sync reaches the database, and this module must
+   * stay loadable from a client component. `resolveConnectorWithSync` in `./syncs.ts`
+   * attaches it, and only server code (the scheduler, the CRM actions) imports that.
    *
    * ── Who records the outcome ────────────────────────────────────────────────────────────
    *
@@ -165,7 +169,7 @@ export type ConnectorManifest = {
    * is disarmed by the very next pass with "This connector is no longer available — reconnect
    * it from Settings," which is a lie the user cannot act on.
    */
-  sync?: (connectionId: string) => Promise<void>;
+  sync?: (conn: ClaimedConnectorConnection) => Promise<void>;
 };
 
 const read = (id: ConnectorCapabilityId, label: string, scopes: string[] = []): ConnectorCapability => ({
@@ -339,16 +343,29 @@ const CONNECTOR_MANIFESTS = [
     label: "HubSpot",
     family: "crm",
     auth: "oauth2",
-    availability: "planned",
-    entitlement: "sync",
+    availability: "available",
+    entitlement: "crm",
     rateBucket: "providerSync",
     purgeCategory: "connections",
+    // P4 reads people. Engagements and write-back (`logActivity`, `writeContact`) land in P6;
+    // the registry lists what a connector really does. Scopes mirror `HUBSPOT_SCOPES` in
+    // src/lib/crm/hubspot/mapping.ts (smoke-connector-registry compares them).
     capabilities: [
-      read("syncPeople", "Import the contacts you own"),
-      read("syncEvents", "Import logged engagements"),
-      write("logActivity", "Log Orbit interactions on the matching record"),
-      write("writeContact", "Create a HubSpot contact"),
+      read("syncPeople", "Read the contacts you own", ["crm.objects.contacts.read", "crm.objects.owners.read"]),
     ],
+  },
+  {
+    id: "salesforce",
+    label: "Salesforce",
+    family: "crm",
+    auth: "oauth2",
+    availability: "available",
+    entitlement: "crm",
+    rateBucket: "providerSync",
+    purgeCategory: "connections",
+    // P5 reads people. Scopes mirror `SALESFORCE_SCOPES` in src/lib/crm/salesforce/mapping.ts
+    // (smoke-connector-registry compares them).
+    capabilities: [read("syncPeople", "Read the contacts and leads you own", ["api", "refresh_token", "id"])],
   },
   {
     id: "granola",
@@ -361,9 +378,6 @@ const CONNECTOR_MANIFESTS = [
     purgeCategory: "connections",
     aliases: ["meeting notes"],
     capabilities: [read("syncEvents", "Log your Granola meetings and refresh AI notes")],
-    // Lazy, so this file stays free of the database driver — no client component imports
-    // the registry today; if one ever does, move this lookup into the scheduler.
-    sync: async (id: string) => (await import("@/lib/connectors/granola")).syncGranola(id),
   },
   {
     id: "notion",
@@ -378,8 +392,6 @@ const CONNECTOR_MANIFESTS = [
     purgeCategory: "connections",
     // Read-only by Jason's call (Nov 7): Orbit never writes to Notion.
     capabilities: [read("importContacts", "Sync a people database into contacts")],
-    // Does nothing until a people database is chosen on the Notion settings page.
-    sync: async (id: string) => (await import("@/lib/connectors/notion")).syncNotionPeople(id),
   },
 ] as const satisfies readonly ConnectorManifest[];
 

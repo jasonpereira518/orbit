@@ -975,11 +975,20 @@ export function foldMergesByContact(
  * compares it against the contact's current `updated_at` and refuses to restore a person
  * who has been edited since. Returned rather than passed in, because this function also
  * uses the same instant for `embedding_stale_at` and the two must not drift.
+ *
+ * `fillBlanksOnly` flips who wins: every set-or-leave-alone column becomes
+ * `COALESCE(existing, incoming)`, so a sync only fills what the contact lacks and never
+ * overwrites what the person typed — `source` included, so a provider cannot relabel a
+ * contact it merely matched. `company` and `company_id` move as a pair: both fill only when
+ * the contact has neither, so an id is never stitched onto someone else's company name. The
+ * two interaction-timestamp columns keep widening either way: `LEAST`/`GREATEST` never
+ * discards a stored value, which is the whole point of the flag.
  */
 export async function bulkMergeContactsForUser(
   userId: string,
   merges: Array<{ contactId: string; input: Partial<ContactInput> }>,
-  companyResolve: CompanyResolver
+  companyResolve: CompanyResolver,
+  options?: { fillBlanksOnly?: boolean }
 ): Promise<Date | null> {
   if (merges.length === 0) return null;
   // Same cleaning every other write path gets (audit M-05): imported text is the most
@@ -1023,23 +1032,40 @@ export async function bulkMergeContactsForUser(
     )`;
   });
 
+  // Set-or-leave-alone, from a fixed list of column names (never input). By default the
+  // incoming value wins; with `fillBlanksOnly` the stored one does.
+  const fillBlanksOnly = options?.fillBlanksOnly === true;
+  const merged = (column: string) =>
+    sql.raw(fillBlanksOnly ? `COALESCE(c.${column}, v.${column})` : `COALESCE(v.${column}, c.${column})`);
+  const companyColumn = (column: "company" | "company_id") =>
+    fillBlanksOnly
+      ? sql.raw(`CASE WHEN c.company IS NULL AND c.company_id IS NULL THEN v.${column} ELSE c.${column} END`)
+      : merged(column);
+
+  // The source label follows the photo: a fill-blanks sync that keeps the stored photo keeps its
+  // label too, and one that fills a missing photo takes the incoming label with it.
+  const profileImageSource = fillBlanksOnly
+    ? sql`CASE WHEN c.profile_image_url IS NULL AND v.profile_image_url IS NOT NULL
+               THEN v.profile_image_source ELSE c.profile_image_source END`
+    : sql`CASE WHEN v.profile_image_url IS NULL THEN c.profile_image_source
+               ELSE v.profile_image_source END`;
+
   await db.execute(sql`
     UPDATE contacts AS c
-    SET company           = COALESCE(v.company, c.company),
-        company_id        = COALESCE(v.company_id, c.company_id),
-        title             = COALESCE(v.title, c.title),
-        email             = COALESCE(v.email, c.email),
-        phone             = COALESCE(v.phone, c.phone),
-        linkedin_url      = COALESCE(v.linkedin_url, c.linkedin_url),
-        first_name        = COALESCE(v.first_name, c.first_name),
-        last_name         = COALESCE(v.last_name, c.last_name),
-        profile_image_url = COALESCE(v.profile_image_url, c.profile_image_url),
-        profile_image_source = CASE WHEN v.profile_image_url IS NULL THEN c.profile_image_source
-                                    ELSE v.profile_image_source END,
-        source            = COALESCE(v.source, c.source),
-        how_met           = COALESCE(v.how_met, c.how_met),
-        met_context       = COALESCE(v.met_context, c.met_context),
-        date_met          = COALESCE(v.date_met, c.date_met),
+    SET company           = ${companyColumn("company")},
+        company_id        = ${companyColumn("company_id")},
+        title             = ${merged("title")},
+        email             = ${merged("email")},
+        phone             = ${merged("phone")},
+        linkedin_url      = ${merged("linkedin_url")},
+        first_name        = ${merged("first_name")},
+        last_name         = ${merged("last_name")},
+        profile_image_url = ${merged("profile_image_url")},
+        profile_image_source = ${profileImageSource},
+        source            = ${merged("source")},
+        how_met           = ${merged("how_met")},
+        met_context       = ${merged("met_context")},
+        date_met          = ${merged("date_met")},
         -- WIDEN, not set-or-leave-alone — see this function's doc comment. A re-import
         -- can only push the known interaction window outward, never narrow it.
         first_interaction_at = LEAST(c.first_interaction_at, v.first_interaction_at),

@@ -65,6 +65,13 @@ import { sql } from "drizzle-orm";
   "external_item_companies",
   "email_threads",
   "email_events",
+  "teams",
+  "team_members",
+  "leads",
+  "connector_connections",
+  "external_links",
+  "connector_outbox",
+  "crm_records",
 ] as const;
 
 async function main() {

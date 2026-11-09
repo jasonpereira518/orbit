@@ -16,6 +16,8 @@ export const CONNECTOR_STATUS_LOOKUP_IDS = [
   "apollo",
   "zapier",
   "granola",
+  "hubspot",
+  "salesforce",
   "notion",
 ] as const;
 

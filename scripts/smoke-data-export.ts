@@ -5,6 +5,7 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
+import { sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import * as schema from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
@@ -33,6 +34,7 @@ async function seed() {
   await db.insert(schema.contactSignals).values({ userId: USER, contactId: contact.id, kind: "company_news", occurredAt: new Date(), source: "manual", payload: { title: "Globex raises a Series B", company: "Globex" }, dedupeHash: "smoke-export-signal" });
   await db.insert(schema.imports).values({ userId: USER, importType: "linkedin_connections" });
   await db.insert(schema.gmailConnections).values({ userId: USER, emailAddress: "e@x.test", accessTokenEncrypted: encrypt("a"), refreshTokenEncrypted: encrypt("r") });
+  await db.insert(schema.crmRecords).values({ userId: USER, connectorId: "hubspot", remoteType: "contact", remoteId: "hs-export", lifecycle: "customer", displayName: "Katherine Johnson" });
   await db.insert(schema.events).values({ userId: USER, title: "Summit" });
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet people" });
   await db.insert(schema.chatThreads).values({ userId: USER, title: "thread" });
@@ -43,6 +45,18 @@ async function seed() {
   await db.insert(schema.feedback).values({ userId: USER, kind: "churn_reason", text: "words" });
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
   await db.insert(schema.tags).values({ userId: USER, name: "friend" });
+  const [team] = await db
+    .insert(schema.teams)
+    .values({ domain: "smoke-export.test", name: "Smoke Export", createdBy: USER })
+    .onConflictDoUpdate({ target: schema.teams.domain, set: { domain: sql`excluded.domain` } })
+    .returning();
+  await db
+    .insert(schema.teamMembers)
+    .values({ teamId: team.id, userId: USER, shareNetwork: 1, emailDomain: "smoke-export.test" })
+    .onConflictDoUpdate({
+      target: schema.teamMembers.userId,
+      set: { teamId: team.id, shareNetwork: 1, emailDomain: "smoke-export.test", updatedAt: new Date() },
+    });
   return { contactId: contact.id, recruiterId: recruiter.id };
 }
 

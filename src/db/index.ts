@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS companies (
 );
 CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized);
+CREATE INDEX IF NOT EXISTS companies_name_normalized_idx ON companies(name_normalized);
 CREATE TABLE IF NOT EXISTS contacts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -190,6 +191,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   source text,
   industry text,
   constellation_pin text,
+  team_shared integer NOT NULL DEFAULT 1,
   met_context text,
   date_met timestamptz,
   how_met text,
@@ -1851,6 +1853,7 @@ CREATE TABLE IF NOT EXISTS connector_connections (
   auth_kind text NOT NULL,
   label text,
   account_ref text,
+  instance_url text,
   api_key_encrypted text,
   access_token_encrypted text,
   refresh_token_encrypted text,
@@ -1949,6 +1952,87 @@ CREATE TABLE IF NOT EXISTS contact_identities (
   source text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS teams (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  domain text NOT NULL,
+  name text NOT NULL,
+  created_by text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS teams_domain_uidx ON teams(domain);
+CREATE TABLE IF NOT EXISTS team_members (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  team_id uuid NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  share_network integer NOT NULL DEFAULT 0,
+  email_domain text NOT NULL,
+  joined_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS team_members_user_uidx ON team_members(user_id);
+CREATE INDEX IF NOT EXISTS team_members_team_sharing_idx ON team_members(team_id, share_network);
+CREATE TABLE IF NOT EXISTS crm_records (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  connector_id text NOT NULL,
+  remote_type text NOT NULL,
+  remote_id text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  lifecycle text NOT NULL,
+  stage text,
+  display_name text NOT NULL,
+  email text,
+  email_normalized text,
+  phone text,
+  linkedin_url text,
+  company_name text,
+  company_normalized text,
+  company_domain text,
+  title text,
+  remote_owner_ref text,
+  remote_url text,
+  last_activity_at timestamptz,
+  remote_created_at timestamptz,
+  remote_updated_at timestamptz,
+  properties jsonb NOT NULL DEFAULT '{}'::jsonb,
+  link_blocked_at timestamptz,
+  synced_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS crm_records_remote_uidx ON crm_records(user_id, connector_id, remote_type, remote_id);
+CREATE INDEX IF NOT EXISTS crm_records_user_contact_idx ON crm_records(user_id, contact_id);
+CREATE INDEX IF NOT EXISTS crm_records_contact_idx ON crm_records(contact_id);
+CREATE INDEX IF NOT EXISTS crm_records_user_lifecycle_idx ON crm_records(user_id, connector_id, lifecycle);
+CREATE INDEX IF NOT EXISTS crm_records_link_blocked_idx ON crm_records(user_id, connector_id) WHERE link_blocked_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS leads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  source text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  crm_record_id uuid REFERENCES crm_records(id) ON DELETE SET NULL,
+  display_name text NOT NULL,
+  email text,
+  email_normalized text,
+  linkedin_url text,
+  linkedin_slug text,
+  phone text,
+  phone_e164 text,
+  company_name text,
+  company_normalized text,
+  title text,
+  apollo_id text,
+  status text NOT NULL DEFAULT 'open',
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS leads_user_status_idx ON leads(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS leads_user_email_idx ON leads(user_id, email_normalized);
+CREATE INDEX IF NOT EXISTS leads_user_linkedin_idx ON leads(user_id, linkedin_slug);
+CREATE INDEX IF NOT EXISTS leads_contact_idx ON leads(contact_id);
+CREATE UNIQUE INDEX IF NOT EXISTS leads_user_apollo_uidx ON leads(user_id, apollo_id) WHERE apollo_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS contact_merges (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3021,14 +3105,33 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // and share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). Renumbered
 // 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
-export const SCHEMA_VERSION = 208;
-// outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
-// interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
-// mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
-// L-20), and chat_threads.stopped_turn_id + chat_messages.client_turn_id (a dropped chat
-// connection keeps the person's question; only an explicit Stop discards it, L-25). Built as 203;
-// renumbered to 207 on Nov 8 2026 to land above #557 (205) and the Phase 1 port (206) — #557
-// reached main first, and a database stamped above 203 would never run a 203.
+//
+// 209 = teams, team_members, contacts.team_shared, contact_identities(kind, value) and
+// companies(name_normalized): the Leads team model and the who-knows-whom index, P2 of
+// docs/superpowers/specs/2026-09-22-leads-design.md. Ported onto main from the never-merged
+// stack (#266); built as 90, then 121, then 202 against the old base, and renumbered to 209
+// when main reached 208 — a database stamped above the old number would skip this DDL in
+// silence. The rest of the Leads port takes the next numbers after a fresh rescan.
+//
+// 210 = leads: the Leads pipeline — manual and Apollo targets, ranked by who on the team knows
+// them. P3 of docs/superpowers/specs/2026-09-22-leads-design.md, ported onto main from the
+// never-merged stack (#267): built as 92, then 122, then 204 against the old base, and
+// renumbered to 210 when the P2 port landed at 209 — a database stamped above the old number
+// would skip this DDL in silence.
+//
+// 211 = crm_records and leads.crm_record_id: the HubSpot read sync, P4 of
+// docs/superpowers/specs/2026-09-22-leads-design.md, ported onto main from the never-merged
+// stack (#279): built as 94, then 123, then against the old base; a database stamped above the
+// old number would skip this DDL in silence, so it takes a NEW number. NOT 209 or 210: the P2
+// and P3 ports claim them. Rescanned every remote ref, local branch and worktree on Nov 8 2026:
+// 210 was the highest claimed anywhere.
+//
+// 212 = connector_connections.instance_url: the account's own API host, which Salesforce hands
+// back at connect and every call must use (Leads P5). Ported onto main from the never-merged
+// stack (#343): built as 95, then 124; a database stamped above the old number would skip this
+// DDL in silence, so it takes a NEW number. NOT 211: the P4 port claims it. Rescanned every
+// remote ref, local branch and worktree on Nov 9 2026: 211 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 212;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3564,6 +3667,10 @@ export const SCALE_DDL: string[] = [
   // delete from scanning this table (the omission contacts_company_id_idx was added for).
   `CREATE INDEX IF NOT EXISTS contact_identities_contact_idx
      ON contact_identities(contact_id)`,
+  // The who-knows-whom lookup: a teammate's identity, matched across every user's contacts.
+  // The unique index above leads with user_id and cannot serve a cross-user probe.
+  `CREATE INDEX IF NOT EXISTS contact_identities_kind_value_idx
+     ON contact_identities(kind, value)`,
 
   // Alias lookup: a stale contact id in, the surviving contact id out. Unique because a
   // contact can only be merged away once -- attempting it twice is a bug, not a no-op.
@@ -4070,6 +4177,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "chat_messages", "follow_ups", "jsonb DEFAULT '[]'");
   await ensureColumn(client, "user_settings", "chat_auto_apply", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "user_settings", "email_activity_sync", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "contacts", "team_shared", "integer NOT NULL DEFAULT 1");
   await ensureColumn(
     client,
     "interactions",
@@ -4416,6 +4524,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v76: the outbox claim is an identity with its own lease, not an overloaded schedule.
   await ensureColumn(client, "connector_outbox", "claimed_by", "uuid");
   await ensureColumn(client, "connector_outbox", "claimed_until", "timestamptz");
+  // v94: a CRM lead's record (P4).
+  await ensureColumn(client, "leads", "crm_record_id", "uuid REFERENCES crm_records(id) ON DELETE SET NULL");
+  // v124: the account's own API host (Leads P5, Salesforce).
+  await ensureColumn(client, "connector_connections", "instance_url", "text");
 
   // v89: Deepgram diarization label on a local database built before it existed.
   await ensureColumn(client, "meeting_transcript_segments", "speaker", "text");
@@ -4810,6 +4922,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS contacts_user_x_idx ON contacts(user_id, x_handle)`,
   `CREATE INDEX IF NOT EXISTS companies_user_idx ON companies(user_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS companies_user_name_uidx ON companies(user_id, name_normalized)`,
+  `CREATE INDEX IF NOT EXISTS companies_name_normalized_idx ON companies(name_normalized)`,
   `CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id)`,
   `CREATE INDEX IF NOT EXISTS contacts_company_idx ON contacts(user_id, company)`,
   `CREATE INDEX IF NOT EXISTS contacts_follow_up_idx ON contacts(user_id, next_follow_up_at)`,
@@ -5222,7 +5335,7 @@ const alters = [
   // predecessor, and both indexes are written in both places because smoke-schema-ddl
   // compares the `uniqueIndex()` declarations in schema.ts against this file by name and
   // column list.
-  `CREATE TABLE IF NOT EXISTS connector_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, auth_kind text NOT NULL, label text, account_ref text, api_key_encrypted text, access_token_encrypted text, refresh_token_encrypted text, token_expires_at timestamptz, scopes text, capabilities jsonb NOT NULL DEFAULT '[]'::jsonb, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE TABLE IF NOT EXISTS connector_connections (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, connector_id text NOT NULL, auth_kind text NOT NULL, label text, account_ref text, instance_url text, api_key_encrypted text, access_token_encrypted text, refresh_token_encrypted text, token_expires_at timestamptz, scopes text, capabilities jsonb NOT NULL DEFAULT '[]'::jsonb, status text NOT NULL DEFAULT 'active', last_synced_at timestamptz, sync_cursor jsonb, next_sync_at timestamptz, sync_status text, sync_started_at timestamptz, sync_error text, sync_failures integer NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS connector_connections_user_uidx ON connector_connections(user_id, connector_id)`,
   `CREATE INDEX IF NOT EXISTS connector_connections_due_idx ON connector_connections(next_sync_at) WHERE next_sync_at IS NOT NULL`,
   // Schema v75: connector write-back. Same both-places rule as v74 above.
@@ -5413,6 +5526,15 @@ const alters = [
   `ALTER TABLE interest_list_signups ALTER COLUMN unsubscribe_token DROP NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_unsub_hash_uidx ON interest_list_signups(unsubscribe_token_hash)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_hash_uidx ON interest_list_signups(share_token_hash)`,
+  // v209 (first shipped as v90, then v121/v202): the Leads team model column on
+  // tables older databases already have (docs/superpowers/specs/2026-09-22-leads-design.md, P2).
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS team_shared integer NOT NULL DEFAULT 1`,
+  // v123 (first shipped as v94): a CRM lead's record (P4). The partial unique lives here only, after its column: the
+  // template runs first, and on a database that already has `leads` the column is not there yet.
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_record_id uuid REFERENCES crm_records(id) ON DELETE SET NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS leads_user_crm_record_uidx ON leads(user_id, crm_record_id) WHERE crm_record_id IS NOT NULL`,
+  // v124: connector_connections.instance_url — the account's own API host (Leads P5, Salesforce).
+  `ALTER TABLE connector_connections ADD COLUMN IF NOT EXISTS instance_url text`,
 ];
 
 /**

@@ -150,7 +150,59 @@ run(async () => {
     JSON.stringify(marieAgain?.notes)
   );
 
-  console.log("\neighth pass: `tagNames` tags people this run CREATES, and only those");
+  console.log("\neighth pass: resolutions, by input index");
+  // A CRM sync links each of ITS records to a contact, and a batch can name one person
+  // twice — so the answer has to be per input index, not per created contact.
+  const reporting = await openIngestContext(USER, {
+    source: "smoke",
+    createsContacts: true,
+    reportResolutions: true,
+  });
+  reporting.headroom = 1;
+  const eighth = await ingestPeople(reporting, [
+    { fullName: "Ada Lovelace", email: "ada@example.com" }, // 0: matches the existing Ada
+    { fullName: "Hedy Lamarr", email: "hedy@example.com" }, // 1: created (uses the headroom)
+    { fullName: "Hedy Lamarr", email: "hedy@example.com", title: "Inventor" }, // 2: folds into 1
+    { fullName: "   " }, // 3: no name, skipped
+    { fullName: "Over The Cap", email: "cap@example.com" }, // 4: refused by the cap
+  ]);
+  const [adaNow] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  const [hedy] = await db.select().from(contacts).where(eq(contacts.email, "hedy@example.com"));
+  const byIndex = new Map((eighth.resolutions ?? []).map((r) => [r.index, r.contactId]));
+  check("resolutions are reported when asked for", Array.isArray(eighth.resolutions), JSON.stringify(eighth));
+  check("a match resolves to the existing contact", byIndex.get(0) === adaNow?.id, JSON.stringify([...byIndex]));
+  check("a create resolves to the new contact", byIndex.get(1) === hedy?.id);
+  check("an in-batch repeat resolves to the same new contact", byIndex.get(2) === hedy?.id);
+  check("a nameless input has no resolution", !byIndex.has(3));
+  check("a capped input has no resolution", !byIndex.has(4));
+  check(
+    "they come back in input order",
+    (eighth.resolutions ?? []).map((r) => r.index).join(",") === "0,1,2",
+    JSON.stringify(eighth.resolutions)
+  );
+  const silent = await ingestPeople(ctx, [{ fullName: "Ada Lovelace", email: "ada@example.com" }]);
+  check("and are not reported unless asked for", silent.resolutions === undefined);
+
+  console.log("\nninth pass: a provider that disagrees with what the user typed never overwrites it");
+  // A CRM whose record for Ada carries a different title and company — and its own source.
+  const [adaBefore] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  const crm = await openIngestContext(USER, { source: "hubspot", createsContacts: true });
+  const ninth = await ingestPeople(crm, [
+    { fullName: "Ada Lovelace", email: "ada@example.com", title: "Engineer", company: "Babbage & Co", phone: "+1 415 555 0199" },
+  ]);
+  check("the record matched", ninth.matched === 1 && ninth.created === 0, JSON.stringify(ninth));
+  const [adaAfter] = await db.select().from(contacts).where(eq(contacts.email, "ada@example.com"));
+  check("the stored title was kept", adaAfter?.title === "Mathematician", String(adaAfter?.title));
+  check(
+    "the stored company (and its company id) was kept",
+    adaAfter?.company === "Analytical" && adaAfter?.companyId === adaBefore?.companyId,
+    `${adaAfter?.company} / ${adaAfter?.companyId} (was ${adaBefore?.companyId})`
+  );
+  check("the source was not relabelled", adaAfter?.source === adaBefore?.source && adaAfter?.source !== "hubspot", String(adaAfter?.source));
+  check("a blank field still filled", adaAfter?.phone === "+1 415 555 0199", String(adaAfter?.phone));
+  await finalizeIngest(crm);
+
+  console.log("\ntenth pass: `tagNames` tags people this run CREATES, and only those");
   console.log("A synced address book must land on the default sky the way a one-time import does:");
   console.log("the batch adapters tag their people, and a tag is an intent signal.");
   const tagged = await openIngestContext(USER, {
@@ -158,12 +210,12 @@ run(async () => {
     createsContacts: true,
     tagNames: ["google-contacts"],
   });
-  const eighth = await ingestPeople(tagged, [
+  const tagRun = await ingestPeople(tagged, [
     { fullName: "Katherine Johnson", email: "katherine@example.com" },
     // Already exists (created untagged in the first pass) — a merge must not tag it.
     { fullName: "Grace Hopper", email: "grace@example.com", title: "Rear Admiral" },
   ]);
-  check("one created, one matched", eighth.created === 1 && eighth.matched === 1, JSON.stringify(eighth));
+  check("one created, one matched", tagRun.created === 1 && tagRun.matched === 1, JSON.stringify(tagRun));
 
   const tagNamesFor = async (email: string) => {
     const [contact] = await db.select().from(contacts).where(and(eq(contacts.userId, USER), eq(contacts.email, email)));
@@ -188,7 +240,7 @@ run(async () => {
     JSON.stringify(graceTags)
   );
 
-  console.log("\nninth pass: `recalibrate` scores the network now, the default leaves it dirty");
+  console.log("\neleventh pass: `recalibrate` scores the network now, the default leaves it dirty");
   console.log("Only the run that finishes a first full read asks for it; a delta run relies on the");
   console.log("debounce so a sync storm cannot become a recalibration storm.");
   const cohortRow = async () =>
@@ -213,7 +265,7 @@ run(async () => {
     JSON.stringify({ dirtyAt: afterRecalibrate?.dirtyAt, n: afterRecalibrate?.contactCount, total })
   );
 
-  console.log("\ntenth pass: when the cap bites, the best-described people are the ones kept");
+  console.log("\ntwelfth pass: when the cap bites, the best-described people are the ones kept");
   const rankedCtx = await openIngestContext(USER, { source: "smoke", createsContacts: true });
   rankedCtx.headroom = 2;
   const tenth = await ingestPeople(rankedCtx, [

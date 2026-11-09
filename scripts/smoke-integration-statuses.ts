@@ -119,6 +119,14 @@ run(async () => {
     INSERT INTO outlook_connections (user_id, email_address, status, access_token_encrypted, refresh_token_encrypted)
     VALUES (${USER}, 'demo@example.com', 'active', ${encrypt("access")}, ${encrypt("refresh")})
   `);
+  await db.execute(sql`
+    INSERT INTO connector_connections (user_id, connector_id, auth_kind, label, status)
+    VALUES (${USER}, 'hubspot', 'oauth2', 'acme.hubspot.com', 'active')
+  `);
+  await db.execute(sql`
+    INSERT INTO connector_connections (user_id, connector_id, auth_kind, label, status)
+    VALUES (${USER}, 'salesforce', 'oauth2', 'ada@acme.com', 'active')
+  `);
 
   await db.execute(sql`
     INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, access_token_encrypted)
@@ -141,6 +149,8 @@ run(async () => {
     apollo: "Key saved",
     zapier: "1 key",
     granola: "Connected",
+    hubspot: "acme.hubspot.com",
+    salesforce: "ada@acme.com",
     notion: "Acme HQ",
   };
   for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {

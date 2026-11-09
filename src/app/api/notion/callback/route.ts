@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     // A reconnect (how people change which pages Orbit sees) keeps the chosen people database.
     const previous = await getConnectorConnection(sessionUserId, "notion");
     const kept = previous ? (await loadConnectorConnection(previous.id))?.cursor?.notion : null;
-    const workspace = notionWorkspace(grant.raw);
+    const workspace = notionWorkspace(grant.raw ?? {});
     await upsertConnectorConnection({
       userId: sessionUserId,
       connectorId: "notion",

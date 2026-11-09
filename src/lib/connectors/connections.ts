@@ -22,7 +22,7 @@
  * smoke tests both load this, and importing `next/server` alone retains the Node event loop
  * and hangs any `tsx` script.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { connectorConnections, type ConnectorSyncCursor } from "@/db/schema";
 import type { PgColumn } from "drizzle-orm/pg-core";
@@ -40,13 +40,21 @@ export type ClaimedConnectorConnection = {
   connectorId: string;
   authKind: "oauth2" | "api_key" | "dav_password" | "api_token";
   accountRef: string | null;
+  /** The account's own API host (Salesforce). Null for providers with one global host. */
+  instanceUrl: string | null;
   /** Already decrypted. Null means the row is unusable and the caller must flag reauth. */
   accessToken: string | null;
   refreshToken: string | null;
+  tokenExpiresAt: Date | null;
   scopes: string | null;
   capabilities: string[];
   cursor: ConnectorSyncCursor | null;
   syncFailures: number;
+  /**
+   * The `sync_started_at` this claim wrote: the run's lease. A disconnect's claim, a reconnect
+   * or a purge replaces or removes it, and `connectorLeaseHeld` is how a run finds out.
+   */
+  leaseStartedAt: Date;
 };
 
 type ClaimRow = {
@@ -55,13 +63,16 @@ type ClaimRow = {
   connector_id: string;
   auth_kind: ClaimedConnectorConnection["authKind"];
   account_ref: string | null;
+  instance_url: string | null;
   api_key_encrypted: string | null;
   access_token_encrypted: string | null;
   refresh_token_encrypted: string | null;
+  token_expires_at: Date | string | null;
   scopes: string | null;
   capabilities: string[] | string | null;
   sync_cursor: ConnectorSyncCursor | string | null;
   sync_failures: number;
+  sync_started_at: Date | string;
 };
 
 /** PGlite hands back parsed jsonb; `neon-http` can hand back a string. */
@@ -73,6 +84,31 @@ function parseJson<T>(value: T | string | null): T | null {
   } catch {
     return null;
   }
+}
+
+async function toClaimed(row: ClaimRow): Promise<ClaimedConnectorConnection> {
+  // Re-encrypts a legacy or previous-secret ciphertext on the way past (audit L-06).
+  const open = (stored: string | null, column: PgColumn) =>
+    decryptAndRewrap(stored, { table: connectorConnections, column, idColumn: connectorConnections.id, id: row.id });
+  return {
+    id: row.id,
+    userId: row.user_id,
+    connectorId: row.connector_id,
+    authKind: row.auth_kind,
+    accountRef: row.account_ref,
+    instanceUrl: row.instance_url ?? null,
+    accessToken:
+      row.auth_kind === "oauth2"
+        ? await open(row.access_token_encrypted, connectorConnections.accessTokenEncrypted)
+        : await open(row.api_key_encrypted, connectorConnections.apiKeyEncrypted),
+    refreshToken: await open(row.refresh_token_encrypted, connectorConnections.refreshTokenEncrypted),
+    tokenExpiresAt: row.token_expires_at ? new Date(row.token_expires_at) : null,
+    scopes: row.scopes,
+    capabilities: parseJson<string[]>(row.capabilities) ?? [],
+    cursor: parseJson<ConnectorSyncCursor>(row.sync_cursor),
+    syncFailures: row.sync_failures,
+    leaseStartedAt: new Date(row.sync_started_at),
+  };
 }
 
 /**
@@ -100,30 +136,130 @@ export async function claimDueConnectorConnections(
           ORDER BY next_sync_at
           LIMIT ${limit}
        )
-      RETURNING id, user_id, connector_id, auth_kind, account_ref, api_key_encrypted,
-                access_token_encrypted, refresh_token_encrypted, scopes, capabilities,
-                sync_cursor, sync_failures
+      RETURNING id, user_id, connector_id, auth_kind, account_ref, instance_url, api_key_encrypted,
+                access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes,
+                capabilities, sync_cursor, sync_failures, sync_started_at
     `)
   );
-  // Re-encrypts a legacy or previous-secret ciphertext on the way past (audit L-06).
-  const open = (stored: string | null, column: PgColumn, id: string) =>
-    decryptAndRewrap(stored, { table: connectorConnections, column, idColumn: connectorConnections.id, id });
-  return Promise.all(rows.map(async (row) => ({
-    id: row.id,
-    userId: row.user_id,
-    connectorId: row.connector_id,
-    authKind: row.auth_kind,
-    accountRef: row.account_ref,
-    accessToken:
-      row.auth_kind === "oauth2"
-        ? await open(row.access_token_encrypted, connectorConnections.accessTokenEncrypted, row.id)
-        : await open(row.api_key_encrypted, connectorConnections.apiKeyEncrypted, row.id),
-    refreshToken: await open(row.refresh_token_encrypted, connectorConnections.refreshTokenEncrypted, row.id),
-    scopes: row.scopes,
-    capabilities: parseJson<string[]>(row.capabilities) ?? [],
-    cursor: parseJson<ConnectorSyncCursor>(row.sync_cursor),
-    syncFailures: row.sync_failures,
-  })));
+  return Promise.all(rows.map(toClaimed));
+}
+
+/**
+ * Claim ONE user's connection now, for "Sync now". The same lease as the scheduler's claim,
+ * so the two can never run one connection at once — but it ignores `next_sync_at`: a
+ * connection a failure disarmed is exactly the one a person presses "Sync now" on. Null when
+ * there is no active connection or a run already holds the lease.
+ */
+export async function claimConnectorConnectionForUser(
+  userId: string,
+  connectorId: string,
+  now: Date = new Date()
+): Promise<ClaimedConnectorConnection | null> {
+  const db = await getDb();
+  const leaseCutoff = new Date(now.getTime() - SYNC_LEASE_MS);
+  const rows = rowsOf<ClaimRow>(
+    await db.execute(sql`
+      UPDATE connector_connections
+         SET sync_status = 'syncing', sync_started_at = ${now}, updated_at = ${now}
+       WHERE user_id = ${userId}
+         AND connector_id = ${connectorId}
+         AND status = 'active'
+         AND (sync_status IS DISTINCT FROM 'syncing' OR sync_started_at < ${leaseCutoff})
+      RETURNING id, user_id, connector_id, auth_kind, account_ref, instance_url, api_key_encrypted,
+                access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes,
+                capabilities, sync_cursor, sync_failures, sync_started_at
+    `)
+  );
+  return rows[0] ? await toClaimed(rows[0]) : null;
+}
+
+/**
+ * Whether a run still holds the lease it claimed: the row exists, is active, is syncing, and
+ * carries the very `sync_started_at` the claim wrote. False once the run recorded its end, a
+ * newer claim took the row over (a disconnect claims before it deletes), a reconnect reset
+ * it, or a purge deleted it — a run that sees false must write nothing more.
+ */
+export async function connectorLeaseHeld(id: string, leaseStartedAt: Date): Promise<boolean> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ id: connectorConnections.id })
+    .from(connectorConnections)
+    .where(
+      and(
+        eq(connectorConnections.id, id),
+        eq(connectorConnections.status, "active"),
+        eq(connectorConnections.syncStatus, "syncing"),
+        eq(connectorConnections.syncStartedAt, leaseStartedAt)
+      )
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
+/**
+ * Belt-and-braces against the same class of bug `connectorLeaseHeld` guards reads against: a
+ * caller that already checked the lease (or claimed it itself) can hand back the very
+ * `sync_started_at` it saw, and every write this function makes then requires the row to
+ * still carry it (and still be `syncing`). A caller that omits it gets the old, unguarded
+ * behavior — every existing call site keeps working unchanged.
+ */
+export type LeaseGuardOpts = { leaseStartedAt?: Date };
+
+function leaseGuard(base: SQL, opts: LeaseGuardOpts): SQL {
+  return opts.leaseStartedAt
+    ? (and(base, eq(connectorConnections.syncStatus, "syncing"), eq(connectorConnections.syncStartedAt, opts.leaseStartedAt)) as SQL)
+    : base;
+}
+
+/**
+ * Store a refreshed OAuth token. A refresh that returns no refresh token keeps the stored one
+ * (most providers only rotate it sometimes); one that does replaces it.
+ *
+ * `opts.leaseStartedAt`: a sync's refresh passes its lease, so a run that lost it (a reconnect
+ * stored a NEW grant meanwhile) cannot overwrite the new grant's tokens with its own.
+ */
+export async function updateConnectorTokens(
+  id: string,
+  tokens: {
+    accessToken: string;
+    refreshToken: string | null;
+    expiresAt: Date | null;
+    instanceUrl?: string | null;
+  },
+  opts: LeaseGuardOpts = {}
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(connectorConnections)
+    .set({
+      accessTokenEncrypted: encrypt(tokens.accessToken),
+      ...(tokens.refreshToken ? { refreshTokenEncrypted: encrypt(tokens.refreshToken) } : {}),
+      tokenExpiresAt: tokens.expiresAt,
+      ...(tokens.instanceUrl ? { instanceUrl: tokens.instanceUrl } : {}),
+      updatedAt: new Date(),
+    })
+    .where(leaseGuard(eq(connectorConnections.id, id), opts));
+}
+
+/**
+ * Store a sync's progress without ending the run: the lease stays, `sync_status` stays
+ * `syncing`. A long first sync saves after every page, so a function killed at its time limit
+ * (or a 429 that ends the run) resumes at the next page instead of the first.
+ *
+ * `opts.leaseStartedAt`: every sync passes its lease. A cursor caches who the sync reads for
+ * (Salesforce's org and user), and a reconnect seeds a new one in its upsert — a run that lost
+ * its lease must not write the previous identity back over that seed.
+ */
+export async function saveConnectorCursor(
+  id: string,
+  cursor: ConnectorSyncCursor,
+  opts: LeaseGuardOpts = {}
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(connectorConnections)
+    .set({ syncCursor: cursor, updatedAt: new Date() })
+    .where(leaseGuard(eq(connectorConnections.id, id), opts));
 }
 
 export type ConnectorSyncOutcome =
@@ -135,11 +271,21 @@ export type ConnectorSyncOutcome =
  *
  * A non-retryable failure disarms immediately — it is a consent problem, and retrying a
  * revoked grant on a backoff ladder only delays telling the user.
+ *
+ * `opts.leaseStartedAt`: when given, every write here (including the failure path's read of
+ * `sync_failures`, and the `disarmConnectorSync` it may reach) requires the row to still carry
+ * this exact lease. Without it, a caller whose sync lost its lease mid-run — a disconnect, a
+ * reconnect, or a second claim already holds a NEW `sync_started_at` — could still overwrite
+ * that new holder's row: `markConnectorSyncSucceeded`'s guard is `sync_status = 'syncing'`
+ * alone, which the new holder satisfies too, and this function's failure path had no guard at
+ * all. Every caller that already claimed a lease (the scheduler's connector pass, "Sync now",
+ * every sync's own terminal call) should pass it.
  */
 export async function markConnectorSyncResult(
   id: string,
   outcome: ConnectorSyncOutcome,
-  now: Date = new Date()
+  now: Date = new Date(),
+  opts: LeaseGuardOpts = {}
 ): Promise<void> {
   const db = await getDb();
   if (outcome.ok) {
@@ -155,19 +301,21 @@ export async function markConnectorSyncResult(
         nextSyncAt: outcome.nextSyncAt ?? new Date(now.getTime() + CONNECTOR_SYNC_INTERVAL_MS),
         updatedAt: now,
       })
-      .where(eq(connectorConnections.id, id));
+      .where(leaseGuard(eq(connectorConnections.id, id), opts));
     return;
   }
 
   const [row] = await db
     .select({ failures: connectorConnections.syncFailures })
     .from(connectorConnections)
-    .where(eq(connectorConnections.id, id));
+    .where(leaseGuard(eq(connectorConnections.id, id), opts));
+  // The lease moved on since the caller claimed it: nothing here still describes this row.
+  if (opts.leaseStartedAt && !row) return;
   const failures = (row?.failures ?? 0) + 1;
   const error = outcome.error.slice(0, 500);
 
   if (!outcome.retryable || failures >= MAX_SYNC_FAILURES) {
-    await disarmConnectorSync(id, error, now, failures);
+    await disarmConnectorSync(id, error, now, failures, opts);
     return;
   }
 
@@ -181,7 +329,7 @@ export async function markConnectorSyncResult(
       nextSyncAt: new Date(now.getTime() + backoffMs(failures)),
       updatedAt: now,
     })
-    .where(eq(connectorConnections.id, id));
+    .where(leaseGuard(eq(connectorConnections.id, id), opts));
 }
 
 /**
@@ -198,10 +346,16 @@ export async function markConnectorSyncResult(
  * with `next_sync_at` unchanged and `last_synced_at` NULL: due again on the very next pass,
  * forever, and "never synced" in the settings UI. Nothing in P0 hits that path (no manifest
  * entry has a `sync` yet), which is exactly why it has to be settled before P1 writes one.
+ *
+ * `opts.leaseStartedAt`, when given, narrows the existing `syncing` guard to THIS run's own
+ * lease — without it, a sync that returned after losing its lease (a disconnect, a reconnect,
+ * or a second claim already holds a new `sync_started_at`) would still close out whichever run
+ * holds the row now, since `sync_status = 'syncing'` alone is true for that one too.
  */
 export async function markConnectorSyncSucceeded(
   id: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  opts: LeaseGuardOpts = {}
 ): Promise<void> {
   const db = await getDb();
   await db
@@ -216,16 +370,23 @@ export async function markConnectorSyncSucceeded(
       updatedAt: now,
     })
     .where(
-      and(eq(connectorConnections.id, id), eq(connectorConnections.syncStatus, "syncing"))
+      leaseGuard(and(eq(connectorConnections.id, id), eq(connectorConnections.syncStatus, "syncing")) as SQL, opts)
     );
 }
 
-/** Stop scheduling this connection. Only reconnecting, or a capability change, re-arms it. */
+/**
+ * Stop scheduling this connection. Only reconnecting, or a capability change, re-arms it.
+ *
+ * `opts.leaseStartedAt`, when given, requires the row still carry that exact lease — see
+ * `markConnectorSyncResult`'s doc for why `markConnectorSyncResult`'s failure path threads it
+ * through here rather than disarming unconditionally.
+ */
 export async function disarmConnectorSync(
   id: string,
   reason: string,
   now: Date = new Date(),
-  failures?: number
+  failures?: number,
+  opts: LeaseGuardOpts = {}
 ): Promise<void> {
   const db = await getDb();
   await db
@@ -238,11 +399,20 @@ export async function disarmConnectorSync(
       nextSyncAt: null,
       updatedAt: now,
     })
-    .where(eq(connectorConnections.id, id));
+    .where(leaseGuard(eq(connectorConnections.id, id), opts));
 }
 
-/** A token-level rejection: the only way back is re-running the connect flow. */
-export async function markConnectorNeedsReauth(id: string, error: string): Promise<void> {
+/**
+ * A token-level rejection: the only way back is re-running the connect flow.
+ *
+ * `opts.leaseStartedAt`: a sync's give-up passes its lease, so a run that lost it cannot mark a
+ * freshly reconnected row `needs_reauth` over a grant it never saw.
+ */
+export async function markConnectorNeedsReauth(
+  id: string,
+  error: string,
+  opts: LeaseGuardOpts = {}
+): Promise<void> {
   const db = await getDb();
   await db
     .update(connectorConnections)
@@ -254,7 +424,7 @@ export async function markConnectorNeedsReauth(id: string, error: string): Promi
       nextSyncAt: null,
       updatedAt: new Date(),
     })
-    .where(eq(connectorConnections.id, id));
+    .where(leaseGuard(eq(connectorConnections.id, id), opts));
 }
 
 export type UpsertConnectorConnectionInput = {
@@ -263,6 +433,7 @@ export type UpsertConnectorConnectionInput = {
   authKind: ClaimedConnectorConnection["authKind"];
   label?: string | null;
   accountRef?: string | null;
+  instanceUrl?: string | null;
   /** OAuth access token, API key or app-specific password, encrypted before it is stored. */
   accessToken?: string | null;
   refreshToken?: string | null;
@@ -270,15 +441,20 @@ export type UpsertConnectorConnectionInput = {
   scopes?: string | null;
   capabilities?: string[];
   nextSyncAt?: Date | null;
-  /** Replaces the stored cursor when given; left alone otherwise. */
-  syncCursor?: ConnectorSyncCursor;
+  /**
+   * The cursor the first sync starts from — a provider's seed (Salesforce's org and user), or
+   * null (omitted) for a fresh window. Written in the same statement as the grant, so no claim
+   * can ever read a new grant paired with the previous connection's cursor.
+   */
+  syncCursor?: ConnectorSyncCursor | null;
 };
 
 /**
  * Create or replace the one row for this (user, connector).
  *
- * Reconnecting clears `needs_reauth`, the failure count and the stale error: the grant is
- * new, so none of the old run's state describes it any more.
+ * Reconnecting clears `needs_reauth`, the failure count, the stale error and the cursor
+ * (replaced by `input.syncCursor`, or null): the grant is new, so none of the old run's state
+ * describes it any more — and the grant may belong to someone else in the same account.
  */
 export async function upsertConnectorConnection(
   input: UpsertConnectorConnectionInput
@@ -291,6 +467,7 @@ export async function upsertConnectorConnection(
     authKind: input.authKind,
     label: input.label ?? null,
     accountRef: input.accountRef ?? null,
+    instanceUrl: input.instanceUrl ?? null,
     apiKeyEncrypted: input.authKind === "oauth2" ? null : secret,
     accessTokenEncrypted: input.authKind === "oauth2" ? secret : null,
     refreshTokenEncrypted: input.refreshToken ? encrypt(input.refreshToken) : null,
@@ -302,9 +479,12 @@ export async function upsertConnectorConnection(
     syncStartedAt: null,
     syncError: null,
     syncFailures: 0,
-    nextSyncAt: input.nextSyncAt ?? new Date(),
+    syncCursor: input.syncCursor ?? null,
+    // `??` would treat an explicit `null` the same as "omitted" and arm the row anyway —
+    // and `null` is exactly what a caller passes to mean "leave this connection unarmed"
+    // (the module doc above, and the demo HubSpot connection, both depend on that holding).
+    nextSyncAt: input.nextSyncAt === undefined ? new Date() : input.nextSyncAt,
     updatedAt: new Date(),
-    ...(input.syncCursor ? { syncCursor: input.syncCursor } : {}),
   };
   const [row] = await db
     .insert(connectorConnections)
@@ -321,6 +501,10 @@ export async function upsertConnectorConnection(
         authKind: sql`excluded.auth_kind`,
         label: sql`coalesce(excluded.label, ${connectorConnections.label})`,
         accountRef: sql`coalesce(excluded.account_ref, ${connectorConnections.accountRef})`,
+        // Unconditionally overwritten, not coalesced: a reconnect without a new instance_url
+        // means the provider's host is no longer known (or unchanged and resupplied), and an
+        // upsert that omits it is exactly how a caller says "I have no host for this row".
+        instanceUrl: sql`excluded.instance_url`,
         // Unconditionally overwritten, not coalesced: a reconnect that supplies a new
         // secret must replace the old one. The auth-kind split in `values` above already
         // nulls out whichever of these two columns no longer applies, so a switch between
@@ -345,9 +529,9 @@ export async function upsertConnectorConnection(
         syncStartedAt: values.syncStartedAt,
         syncError: values.syncError,
         syncFailures: values.syncFailures,
+        syncCursor: sql`excluded.sync_cursor`,
         nextSyncAt: sql`excluded.next_sync_at`,
         updatedAt: sql`excluded.updated_at`,
-        ...(input.syncCursor ? { syncCursor: sql`excluded.sync_cursor` } : {}),
       },
     })
     // Bare `.returning()`, not `.returning({ ... })` — an explicit field selector defeats
@@ -357,16 +541,39 @@ export async function upsertConnectorConnection(
   return { id: row!.id };
 }
 
+/**
+ * Forget a connection's sync progress, so its next run re-identifies and starts a fresh window.
+ * A reconnect no longer needs this — `upsertConnectorConnection` writes the cursor (or its
+ * seed) in the same statement as the grant; this stays for callers that reset a cursor alone.
+ *
+ * A seed replaces the cursor with facts the next sync needs from the connect (Salesforce's
+ * org and user ids).
+ */
+export async function resetConnectorCursor(
+  userId: string,
+  connectorId: string,
+  seed: ConnectorSyncCursor | null = null
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(connectorConnections)
+    .set({ syncCursor: seed ?? null, updatedAt: new Date() })
+    .where(and(eq(connectorConnections.userId, userId), eq(connectorConnections.connectorId, connectorId)));
+}
+
 export type ConnectorConnectionSummary = {
   id: string;
   connectorId: string;
   label: string | null;
   accountRef: string | null;
+  instanceUrl: string | null;
   status: "active" | "needs_reauth";
   capabilities: string[];
   lastSyncedAt: Date | null;
   syncError: string | null;
   syncStatus: string | null;
+  syncStartedAt: Date | null;
+  nextSyncAt: Date | null;
 };
 
 /** Never returns a secret: this feeds the settings UI. */
@@ -380,11 +587,14 @@ export async function listConnectorConnections(
       connectorId: connectorConnections.connectorId,
       label: connectorConnections.label,
       accountRef: connectorConnections.accountRef,
+      instanceUrl: connectorConnections.instanceUrl,
       status: connectorConnections.status,
       capabilities: connectorConnections.capabilities,
       lastSyncedAt: connectorConnections.lastSyncedAt,
       syncError: connectorConnections.syncError,
       syncStatus: connectorConnections.syncStatus,
+      syncStartedAt: connectorConnections.syncStartedAt,
+      nextSyncAt: connectorConnections.nextSyncAt,
     })
     .from(connectorConnections)
     .where(eq(connectorConnections.userId, userId));
@@ -443,7 +653,7 @@ export async function deleteConnectorConnection(
  */
 export async function loadConnectorConnection(
   id: string
-): Promise<(ClaimedConnectorConnection & { tokenExpiresAt: Date | null }) | null> {
+): Promise<Omit<ClaimedConnectorConnection, "leaseStartedAt"> | null> {
   const db = await getDb();
   const [row] = await db.select().from(connectorConnections).where(eq(connectorConnections.id, id));
   if (!row) return null;
@@ -460,6 +670,7 @@ export async function loadConnectorConnection(
     cursor: parseJson<ConnectorSyncCursor>(row.syncCursor),
     syncFailures: row.syncFailures,
     tokenExpiresAt: row.tokenExpiresAt,
+    instanceUrl: row.instanceUrl ?? null,
   };
 }
 
@@ -501,4 +712,15 @@ export async function armConnectorSync(
         eq(connectorConnections.status, "active")
       )
     );
+}
+
+/** The decrypted refresh token, for the revoke on disconnect. Server code only — never the UI. */
+export async function getConnectorRefreshToken(userId: string, connectorId: string): Promise<string | null> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ refresh: connectorConnections.refreshTokenEncrypted })
+    .from(connectorConnections)
+    .where(and(eq(connectorConnections.userId, userId), eq(connectorConnections.connectorId, connectorId)))
+    .limit(1);
+  return decryptOrNull(row?.refresh ?? null);
 }

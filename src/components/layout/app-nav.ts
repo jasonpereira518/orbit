@@ -14,6 +14,7 @@ import {
   Radar,
   AudioLines,
   UserSearch,
+  Handshake,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -101,6 +102,13 @@ const FIND: AppNavItem = {
   label: "Find people",
   icon: UserSearch,
 };
+const LEADS: AppNavItem = {
+  href: "/leads",
+  label: "Leads",
+  // An intro through a colleague, which is what the page is for. Not `Target`: Settings
+  // already uses that for target companies, a different idea.
+  icon: Handshake,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -127,7 +135,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
  * default order.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [FIND, EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [FIND, EVENTS, OUTREACH, LEADS, KNOWLEDGE];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -159,6 +167,7 @@ export const MOBILE_MORE_NAV = [
   FIND,
   EVENTS,
   OUTREACH,
+  LEADS,
   KNOWLEDGE,
 ];
 
