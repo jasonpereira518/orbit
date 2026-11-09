@@ -3697,6 +3697,12 @@ export const chatThreads = pgTable(
     title: text("title"),
     /** Freeform context the user types for this conversation only — never extracted into contacts. */
     contextNote: text("context_note"),
+    /**
+     * The client turn id of the last answer the person stopped on purpose (audit L-25). A
+     * dropped connection and a Stop look the same to the server; this is how it tells them
+     * apart: only a stopped turn's question is discarded. See `markTurnStopped`.
+     */
+    stoppedTurnId: text("stopped_turn_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -3768,6 +3774,12 @@ export const chatMessages = pgTable(
      * model-written. Stored so the chips survive a reload; empty on rows from before v196.
      */
     followUps: jsonb("follow_ups").$type<string[]>().default([]),
+    /**
+     * The id the client minted for the turn that wrote this question, so a Stop that reaches
+     * the server after the question was saved can find and discard it. Null on assistant rows,
+     * versioned turns and every row from before SCHEMA_VERSION 174.
+     */
+    clientTurnId: text("client_turn_id"),
     /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
@@ -4351,6 +4363,9 @@ export const outboundWebhookDeliveries = pgTable(
     lastError: text("last_error"),
     lastAttemptedAt: timestamp("last_attempted_at", { withTimezone: true }),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    /** The drain that owns this row, and until when (audit M-03). See `claimDueDeliveries`. */
+    claimedBy: text("claimed_by"),
+    claimedUntil: timestamp("claimed_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -4812,6 +4827,11 @@ export const interestListSignups = pgTable(
      * on insert, never on a rejoin. No FK, like every other cross-row reference here.
      */
     referredById: uuid("referred_by_id"),
+    /**
+     * The highest referral tier (its `at`) this row has been mailed about. Raised with a
+     * conditional update before the mail goes out, so each tier is mailed once (audit L-20).
+     */
+    referralTierMailed: integer("referral_tier_mailed").notNull().default(0),
     /**
      * The name on the pass, collected in the join's second step. Null until then — and for
      * every row from before the step existed, and for anyone who left after step one.

@@ -840,6 +840,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   user_id text NOT NULL,
   title text,
   context_note text,
+  stopped_turn_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -860,6 +861,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   feedback_note text,
   answer_outcome text,
   follow_ups jsonb DEFAULT '[]',
+  client_turn_id text,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -1189,6 +1191,8 @@ CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
   last_error text,
   last_attempted_at timestamptz,
   delivered_at timestamptz,
+  claimed_by text,
+  claimed_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id);
@@ -1409,6 +1413,7 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   join_session_id text,
   user_id text,
   converted_at timestamptz,
+  referral_tier_mailed integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
@@ -2981,7 +2986,17 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // H-04, ported from #474 where it was 171). Built as 201; renumbered to 206 on Nov 8 2026 when
 // #557 reached main first at 205 — a database stamped 205 would never run a 201. The Phase 2
 // and 3.6 ports renumber above this one as they land.
-export const SCHEMA_VERSION = 206;
+//
+// 207 = the Phase 2 integrity fixes of the security audit (ported from #474, where they were 172
+// and 173): contacts_user_closeness_nl_idx (closeness sort NULLS LAST, M-12),
+// outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
+// interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
+// mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
+// L-20), and chat_threads.stopped_turn_id + chat_messages.client_turn_id (a dropped chat
+// connection keeps the person's question; only an explicit Stop discards it, L-25). Built as 203;
+// renumbered to 207 on Nov 8 2026 to land above #557 (205) and the Phase 1 port (206) — #557
+// reached main first, and a database stamped above 203 would never run a 203.
+export const SCHEMA_VERSION = 207;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3336,6 +3351,17 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
   // v205: the rate-limit prune's range scan (FIX_PLAN 3.3). See `pruneRateLimitBuckets`.
   `CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at)`,
+  // v207: the contacts list's closeness sort is NULLS LAST (audit M-12), which the index
+  // above (DESC = NULLS FIRST) cannot serve. Kept alongside it: other readers order that way.
+  `CREATE INDEX IF NOT EXISTS contacts_user_closeness_nl_idx ON contacts(user_id, closeness DESC NULLS LAST, id DESC)`,
+  // v207: the outbound webhook drain's claim (audit M-03). See `claimDueDeliveries`.
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_by text`,
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
+  // v207: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
+  // v207: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
   // on "who have I actually spoken to lately" rather than whoever is alphabetically first
