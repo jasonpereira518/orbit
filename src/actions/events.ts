@@ -1,5 +1,6 @@
 "use server";
 
+import { recordAccountAudit } from "@/lib/account-audit";
 /**
  * Server actions for the events surface.
  *
@@ -100,6 +101,7 @@ import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { GOOGLE_SCOPES, hasScope } from "@/lib/google-scopes";
 import { actionFailure } from "@/lib/action-failure";
+import { optionalClientDate } from "@/lib/input/dates";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
 const SURFACE = "page.events";
@@ -208,7 +210,7 @@ export async function createEvent(input: {
       userId,
       {
         title,
-        startsAt: input.startsAt ? new Date(input.startsAt) : null,
+        startsAt: optionalClientDate(input.startsAt, "start time"),
         venue: input.venue ?? null,
         city: input.city ?? null,
         url,
@@ -335,7 +337,7 @@ export async function updateEvent(
   }
 
   const asDate = (value: string | null | undefined) =>
-    value === undefined ? undefined : value ? new Date(value) : null;
+    value === undefined ? undefined : optionalClientDate(value, "event time");
 
   await updateEventForUser(userId, eventId, {
     ...pickEventEdits(patch as Record<string, unknown>),
@@ -865,6 +867,7 @@ export async function disconnectEventProvider(
 ): Promise<void> {
   const userId = await requireSyncUser();
   await deleteEventConnection(userId, provider);
+  await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: provider });
   revalidateEvents();
 }
 

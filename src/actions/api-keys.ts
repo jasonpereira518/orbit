@@ -24,8 +24,10 @@ import { apiKeys } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { isPaywallError, requireEntitlement } from "@/lib/entitlements";
 import { generateApiKey, type ApiKeyKind, type ApiKeyScope } from "@/lib/api/keys";
+import { apiKeyCapRefusal } from "@/lib/api/key-cap";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { trackMcpConnected, trackMcpDisconnected } from "@/lib/mcp/events";
+import { recordAccountAudit } from "@/lib/account-audit";
 
 export type ApiKeySummary = {
   id: string;
@@ -74,7 +76,7 @@ export async function listApiKeys(): Promise<ApiKeySummary[]> {
  * lost: `requireEntitlement` writes the `gate_events` row before it throws, and this catches
  * it afterwards.
  */
-export type ApiKeyRefusal = { ok: false; reason: "payment_required"; message: string };
+export type ApiKeyRefusal = { ok: false; reason: "payment_required" | "limit_reached"; message: string };
 
 export type CreatedApiKey = {
   ok: true;
@@ -102,6 +104,8 @@ export async function createApiKey(
     }
     throw err;
   }
+  const atCap = await apiKeyCapRefusal(userId);
+  if (atCap) return { ok: false, reason: "limit_reached", message: atCap };
 
   const trimmed = name.trim().slice(0, 80) || "Untitled key";
   // Always include read: a write-only key is not a distinction anything here honours, and
@@ -121,6 +125,7 @@ export async function createApiKey(
       scopes: resolved,
     })
     .returning();
+  await recordAccountAudit({ userId, action: "api_key.create", resourceType: "api_key", resourceId: row.id, detail: { kind, prefix: key.prefix, scopes: resolved } });
 
   revalidatePath("/settings");
   if (kind === "mcp_url") trackMcpConnected({ userId, client: "other", via: "api_key" });
@@ -161,6 +166,7 @@ export async function revokeApiKey(id: string): Promise<{ ok: true }> {
     .returning();
   // The twin of `createApiKey`'s `mcp_connected`: only an MCP-URL key is an assistant connection.
   if (revoked[0]?.kind === "mcp_url") trackMcpDisconnected({ userId, client: "other", credentialId: id });
+  await recordAccountAudit({ userId, action: "api_key.revoke", resourceType: "api_key", resourceId: id });
   revalidatePath("/settings");
   return { ok: true };
 }

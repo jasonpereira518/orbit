@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 import { requireUserId } from "@/lib/auth";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { recordHeartbeat } from "@/lib/presence";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,9 @@ export const runtime = "nodejs";
  * something that is not their problem and that they cannot act on. The client does not
  * retry for the same reason — the next beat is 45 seconds away.
  */
-export async function POST() {
+export async function POST(request: Request) {
+  // A cross-site beat is dropped like any other failure: the answer is always 204.
+  if (sameOriginGuard(request)) return new NextResponse(null, { status: 204 });
   try {
     const userId = await requireUserId();
     // The write itself runs after the 204 is sent: its outcome never changed the response

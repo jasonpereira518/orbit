@@ -16,8 +16,12 @@
  * The tradeoff is real and worth stating: a URL is likelier to be logged, shared or pasted
  * than a header. Keys minted for this route are marked `kind: 'mcp_url'` so Settings can
  * present them differently and a user can revoke one without touching their API keys.
+ *
+ * Every response carries `Deprecation` / `Sunset` / `Link` headers and every request logs a
+ * line (`src/lib/mcp/path-token-sunset.ts`, where the sunset date is set).
  */
 import { handleMcpRequest } from "@/lib/mcp/handle";
+import { logPathTokenUse, withPathTokenDeprecation } from "@/lib/mcp/path-token-sunset";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,10 +32,12 @@ type Ctx = { params: Promise<{ token: string }> };
 export async function POST(request: Request, ctx: Ctx) {
   // Next 16: route params are a Promise and must be awaited.
   const { token } = await ctx.params;
-  return handleMcpRequest(request, { token });
+  logPathTokenUse("POST");
+  return withPathTokenDeprecation(await handleMcpRequest(request, { token }));
 }
 
 export async function GET(request: Request, ctx: Ctx) {
   const { token } = await ctx.params;
-  return handleMcpRequest(request, { token });
+  logPathTokenUse("GET");
+  return withPathTokenDeprecation(await handleMcpRequest(request, { token }));
 }

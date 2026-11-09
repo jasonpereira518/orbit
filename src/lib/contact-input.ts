@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ContactInput } from "@/lib/contact-writes";
+import { MAX_LIST_ITEMS, MAX_TAGS, TEXT_LIMITS, cleanText, cleanTextList } from "@/lib/input/text";
 
 /**
  * The server-side input contract for contacts.
@@ -101,6 +102,45 @@ const baseShape = {
   website: optionalText(LIMITS.url),
 };
 
+/**
+ * Caps for the free-text fields the strict schema does not own. Truncated rather than
+ * refused, in BOTH modes: these are written by extraction (a capture's `notes` can be the
+ * whole 100k-character corpus), importers and people alike, and a hard refusal here would
+ * turn an over-long LinkedIn "About" into a failed import row. Every cap sits above what any
+ * of those producers writes today and below the 1 MB at which `search_tsv` fails the save.
+ */
+const FREE_TEXT_CAPS: Record<string, number> = {
+  notes: TEXT_LIMITS.rawNotes,
+  aiSummary: TEXT_LIMITS.summary,
+  howMet: TEXT_LIMITS.shortParagraph,
+  metContext: 200,
+  industry: 200,
+  source: 100,
+  cadencePhrase: 200,
+};
+
+/** Cap for any other string field: the strict schema's own caps are lower and still apply. */
+const DEFAULT_FIELD_CAP = TEXT_LIMITS.shortParagraph;
+
+/**
+ * Make every string in a contact input storable (audit M-05): NUL and other control
+ * characters stripped (Postgres refuses `\u0000` in a `text` column, and one in a name used
+ * to fail the whole write with an opaque 500), NFC-normalised, and capped. List fields are
+ * cleaned per entry and bounded in length. Runs before validation in every mode, so the
+ * strict schema measures what will actually be stored.
+ */
+export function cleanContactFreeText<T extends Partial<ContactInput>>(input: T): T {
+  const out: Record<string, unknown> = { ...input };
+  for (const [k, v] of Object.entries(out)) {
+    if (typeof v === "string") out[k] = cleanText(v, FREE_TEXT_CAPS[k] ?? DEFAULT_FIELD_CAP);
+  }
+  if (Array.isArray(input.keyFacts)) out.keyFacts = cleanTextList(input.keyFacts, TEXT_LIMITS.listItem, MAX_LIST_ITEMS);
+  if (Array.isArray(input.sharedInterests)) out.sharedInterests = cleanTextList(input.sharedInterests, TEXT_LIMITS.listItem, MAX_LIST_ITEMS);
+  if (Array.isArray(input.opportunities)) out.opportunities = cleanTextList(input.opportunities, TEXT_LIMITS.listItem, MAX_LIST_ITEMS);
+  if (Array.isArray(input.tagNames)) out.tagNames = cleanTextList(input.tagNames, TEXT_LIMITS.tag, MAX_TAGS);
+  return out as T;
+}
+
 /** Validates the fields this module owns; everything else passes through untouched. */
 const strictSchema = z.object(baseShape);
 
@@ -121,9 +161,10 @@ export type NormalizeResult =
  * write shape.
  */
 export function normalizeContactInput(
-  input: ContactInput,
+  rawInput: ContactInput,
   mode: "strict" | "lenient" = "strict"
 ): NormalizeResult {
+  const input = cleanContactFreeText(rawInput);
   const parsed = strictSchema.safeParse(input);
 
   if (parsed.success) {
@@ -181,8 +222,9 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T) {
  * that touches one field cannot be rejected by another it never sends.
  */
 export function parseContactPatch(
-  input: Partial<ContactInput>
+  rawInput: Partial<ContactInput>
 ): Partial<ContactInput> {
+  const input = cleanContactFreeText(rawInput);
   const partial = z.object(baseShape).partial();
   const parsed = partial.safeParse(input);
   if (!parsed.success) {

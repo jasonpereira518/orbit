@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   credit_email_enabled integer NOT NULL DEFAULT 1,
   credit_notice_period_start timestamptz,
   credit_notice_level integer NOT NULL DEFAULT 0,
+  credit_email_unsub_token_hash text,
+  clerk_user_updated_at timestamptz,
   last_active_at timestamptz,
   recruiter_sharing integer NOT NULL DEFAULT 0,
   terms_accepted_at timestamptz,
@@ -475,6 +477,8 @@ CREATE TABLE IF NOT EXISTS imports (
   stall_resumes integer NOT NULL DEFAULT 0,
   reverted_at timestamptz,
   revert_stats jsonb,
+  claim_token text,
+  lease_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -840,6 +844,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   user_id text NOT NULL,
   title text,
   context_note text,
+  stopped_turn_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -860,6 +865,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   feedback_note text,
   answer_outcome text,
   follow_ups jsonb DEFAULT '[]',
+  client_turn_id text,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
   is_active boolean NOT NULL DEFAULT true,
@@ -1136,6 +1142,18 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 CREATE INDEX IF NOT EXISTS admin_audit_log_created_idx ON admin_audit_log(created_at);
 CREATE INDEX IF NOT EXISTS admin_audit_log_target_idx ON admin_audit_log(target_user_id);
+CREATE TABLE IF NOT EXISTS account_audit_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subject_user_id text NOT NULL,
+  actor text NOT NULL,
+  action text NOT NULL,
+  resource_type text,
+  resource_id text,
+  detail jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS account_audit_log_subject_idx ON account_audit_log(subject_user_id, created_at);
+CREATE INDEX IF NOT EXISTS account_audit_log_action_idx ON account_audit_log(action, created_at);
 CREATE TABLE IF NOT EXISTS api_keys (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -1189,6 +1207,8 @@ CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
   last_error text,
   last_attempted_at timestamptz,
   delivered_at timestamptz,
+  claimed_by text,
+  claimed_until timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS outbound_deliveries_endpoint_event_uidx ON outbound_webhook_deliveries(endpoint_id, event_id);
@@ -1243,6 +1263,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   count integer NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at);
 CREATE TABLE IF NOT EXISTS job_feed_sources (
   id text PRIMARY KEY,
   label text NOT NULL,
@@ -1393,11 +1414,15 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   utm_medium text,
   utm_campaign text,
   landing_path text,
-  unsubscribe_token text NOT NULL,
+  unsubscribe_token text,
+  unsubscribe_token_hash text,
+  unsubscribe_token_encrypted text,
   unsubscribed_at timestamptz,
   welcome_planet text,
   follow_up_sent_at timestamptz,
   share_token text,
+  share_token_hash text,
+  share_token_encrypted text,
   referred_by_id uuid,
   first_name text,
   last_name text,
@@ -1408,6 +1433,7 @@ CREATE TABLE IF NOT EXISTS interest_list_signups (
   join_session_id text,
   user_id text,
   converted_at timestamptz,
+  referral_tier_mailed integer NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_email_uidx ON interest_list_signups(email);
@@ -1603,6 +1629,13 @@ CREATE TABLE IF NOT EXISTS linkedin_avatars (
   blocked_by text
 );
 CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at);
+CREATE TABLE IF NOT EXISTS public_work_history (
+  slug text PRIMARY KEY,
+  answer jsonb,
+  resolved_at timestamptz NOT NULL DEFAULT now(),
+  blocked_at timestamptz,
+  blocked_by text
+);
 CREATE TABLE IF NOT EXISTS cloud_note_sources (
   user_id text NOT NULL,
   provider text NOT NULL,
@@ -2977,15 +3010,54 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 198: claude/duplicates-view-merge-training-7c9a92 claims it. Rescanned every remote ref and
 // worktree on Nov 7 2026: 198 was the highest claimed anywhere.
 //
-// 202 = teams, team_members, contacts.team_shared, contact_identities(kind, value) and
+// 200 = public_work_history: a confident work history found by a public web search, shared
+// across accounts by LinkedIn slug like linkedin_avatars (v159), so a second account with the
+// same connection pays no search. NOT 198/199: claude/duplicates-view-merge-training-7c9a92
+// holds 198 and main 199; 201-206 are claimed by other branches. Rescanned every ref Nov 8 2026.
+//
+// 205 = rate_limit_buckets_window_started_idx: the bucket prune deletes by window age, which was a
+// sequential scan of a table that gains a row per (scope, key); the per-user AI buckets and daily
+// caps (audit M-07, L-22) grow it faster. Ported from the audit branch (built as 176). NOT 201:
+// #551; 202: leads-p2-teams-port; 203: #554; 204: leads-p3-pipeline-port. Rescanned every remote
+// ref on Nov 8 2026: 204 was the highest claimed anywhere.
+//
+// 206 = imports.claim_token + imports.lease_until: the import runner's lease, so the stall
+// backstop or an admin retry can never run a second runner beside a live one (security audit
+// H-04, ported from #474 where it was 171). Built as 201; renumbered to 206 on Nov 8 2026 when
+// #557 reached main first at 205 — a database stamped 205 would never run a 201. The Phase 2
+// and 3.6 ports renumber above this one as they land.
+//
+// 207 = the Phase 2 integrity fixes of the security audit (ported from #474, where they were 172
+// and 173): contacts_user_closeness_nl_idx (closeness sort NULLS LAST, M-12),
+// outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
+// interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
+// mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
+// L-20), and chat_threads.stopped_turn_id + chat_messages.client_turn_id (a dropped chat
+// connection keeps the person's question; only an explicit Stop discards it, L-25). Built as 203;
+// renumbered to 207 on Nov 8 2026 to land above #557 (205) and the Phase 1 port (206) — #557
+// reached main first, and a database stamped above 203 would never run a 203.
+//
+// 208 = FIX_PLAN 3.5 / 3.6 of the security audit (built as 206; ported from #474, where it was
+// 177): account_audit_log (new table, L-23); user_settings.credit_email_unsub_token_hash (L-05)
+// and clerk_user_updated_at (L-07); interest_list_signups.unsubscribe_token_hash / _encrypted
+// and share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). Renumbered
+// 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
+// old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
+//
+// 209 = teams, team_members, contacts.team_shared, contact_identities(kind, value) and
 // companies(name_normalized): the Leads team model and the who-knows-whom index, P2 of
 // docs/superpowers/specs/2026-09-22-leads-design.md. Ported onto main from the never-merged
-// stack (#266): built as 90, then 121; a database stamped above either would skip this DDL in
-// silence, so it takes a NEW number. NOT 200 or 201: claude/shared-work-history and
-// claude/security-audit-phase1-port claim them. Rescanned every remote ref, local branch and
-// worktree on Nov 7 2026: 201 was the highest claimed anywhere. The rest of the Leads port
-// (P3 pipeline, P4 HubSpot, P5 Salesforce) takes the next numbers after a fresh rescan.
-export const SCHEMA_VERSION = 202;
+// stack (#266); built as 90, then 121, then 202 against the old base, and renumbered to 209
+// when main reached 208 — a database stamped above the old number would skip this DDL in
+// silence. The rest of the Leads port takes the next numbers after a fresh rescan.
+export const SCHEMA_VERSION = 209;
+// outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
+// interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
+// mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
+// L-20), and chat_threads.stopped_turn_id + chat_messages.client_turn_id (a dropped chat
+// connection keeps the person's question; only an explicit Stop discards it, L-25). Built as 203;
+// renumbered to 207 on Nov 8 2026 to land above #557 (205) and the Phase 1 port (206) — #557
+// reached main first, and a database stamped above 203 would never run a 203.
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3338,6 +3410,19 @@ export const SCALE_DDL: string[] = [
   // descending id. The cursor is a row-value comparison, which needs every element ordered
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
+  // v205: the rate-limit prune's range scan (FIX_PLAN 3.3). See `pruneRateLimitBuckets`.
+  `CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at)`,
+  // v207: the contacts list's closeness sort is NULLS LAST (audit M-12), which the index
+  // above (DESC = NULLS FIRST) cannot serve. Kept alongside it: other readers order that way.
+  `CREATE INDEX IF NOT EXISTS contacts_user_closeness_nl_idx ON contacts(user_id, closeness DESC NULLS LAST, id DESC)`,
+  // v207: the outbound webhook drain's claim (audit M-03). See `claimDueDeliveries`.
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_by text`,
+  `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
+  // v207: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
+  // v207: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
   // on "who have I actually spoken to lately" rather than whoever is alphabetically first
@@ -4739,6 +4824,9 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS profile_image_source text`,
   `CREATE TABLE IF NOT EXISTS linkedin_avatars (slug text PRIMARY KEY, image_url text, source text NOT NULL, resolved_at timestamptz NOT NULL DEFAULT now(), blocked_at timestamptz, blocked_by text)`,
   `CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at)`,
+  // Schema v200: confident public web-search work histories, shared across accounts by LinkedIn
+  // profile slug, the same way linkedin_avatars shares photos (src/lib/public-work-history.ts).
+  `CREATE TABLE IF NOT EXISTS public_work_history (slug text PRIMARY KEY, answer jsonb, resolved_at timestamptz NOT NULL DEFAULT now(), blocked_at timestamptz, blocked_by text)`,
   // Schema v164: cloud notes. One row per watched drive (its own change cursor — never
   // gmail_connections.sync_cursor, which calendar sync owns) and one per doc found or extracted,
   // which is the dedupe, the panel row and the review dialog. Plus the auto-extract switch.
@@ -4963,6 +5051,9 @@ const alters = [
   `ALTER TABLE import_job_rows ADD COLUMN IF NOT EXISTS revert_snapshot jsonb`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS reverted_at timestamptz`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS revert_stats jsonb`,
+  // v201: the import runner's lease (audit H-04). See `imports.claimToken` in schema.ts.
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS claim_token text`,
+  `ALTER TABLE imports ADD COLUMN IF NOT EXISTS lease_until timestamptz`,
   // Partial: the overwhelming majority of interactions and reminders are hand-made and
   // carry NULL here, and the only query that reads the column asks for one import's rows.
   `CREATE INDEX IF NOT EXISTS interactions_import_idx ON interactions(import_id) WHERE import_id IS NOT NULL`,
@@ -5345,7 +5436,20 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS relationship_engine_enabled integer NOT NULL DEFAULT 1`,
   // Schema v148: sender labels the owner picked as "me" in chat exports (WhatsApp has no "Me").
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_self_names jsonb NOT NULL DEFAULT '[]'`,
-  // v121 (first shipped as v90): the Leads team model (docs/superpowers/specs/2026-09-22-leads-design.md, P2).
+  // Schema v208 (FIX_PLAN 3.5 / 3.6): hash-bound credit-email unsubscribe (audit L-05), Clerk
+  // user.updated ordering (L-07), and interest-list tokens hashed at rest (L-05). The plaintext
+  // token columns become nullable; `backfillInterestListTokens` moves old rows over in place.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_unsub_token_hash text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS clerk_user_updated_at timestamptz`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS unsubscribe_token_hash text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS unsubscribe_token_encrypted text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token_hash text`,
+  `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS share_token_encrypted text`,
+  `ALTER TABLE interest_list_signups ALTER COLUMN unsubscribe_token DROP NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_unsub_hash_uidx ON interest_list_signups(unsubscribe_token_hash)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_hash_uidx ON interest_list_signups(share_token_hash)`,
+  // v209 (first shipped as v90, then v121/v202): the Leads team model column on
+  // tables older databases already have (docs/superpowers/specs/2026-09-22-leads-design.md, P2).
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS team_shared integer NOT NULL DEFAULT 1`,
 ];
 
