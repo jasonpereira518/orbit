@@ -3212,10 +3212,6 @@
         "state": "off",
         "detail": "Not set up"
       },
-      "reminders": {
-        "state": "off",
-        "detail": "Off"
-      },
       "api": {
         "state": "on",
         "detail": "1 key"

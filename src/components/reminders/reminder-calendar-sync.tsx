@@ -11,7 +11,6 @@ import {
 } from "@/actions/calendar-feed";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { integrationHref } from "@/components/settings/sections";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
