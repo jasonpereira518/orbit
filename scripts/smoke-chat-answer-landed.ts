@@ -62,7 +62,9 @@ console.log("History controls locked while an answer streams...");
   const rail = readFileSync("src/components/chat/chat-history-rail.tsx", "utf8");
   const panel = readFileSync("src/components/chat/chat-panel.tsx", "utf8");
   check("rail row (the active one too)", lockedWhileBusy(rail, "onSelect(thread.id)", "button"));
-  check("rail delete", lockedWhileBusy(rail, "onDelete(thread.id)", "button"));
+  // Delete lives in the row's options menu now; the menu itself is what locks.
+  check("rail row options (rename, pin, delete)", lockedWhileBusy(rail, "Chat options: ${label}", "DropdownMenuTrigger"));
+  check("rail search result", lockedWhileBusy(rail, "onSelect(hit.id)", "button"));
   check("phone history item", lockedWhileBusy(panel, "void loadThread(thread.id, { prefetched: true });", "DropdownMenuItem"));
   check("phone history delete", lockedWhileBusy(panel, "removeThread(thread.id);", "button"));
 }
