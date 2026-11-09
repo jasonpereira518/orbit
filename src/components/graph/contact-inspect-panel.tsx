@@ -468,6 +468,44 @@ function IconAction({
   );
 }
 
+/**
+ * Initials on Neptune, for someone with no photo: the landing page's planet art (the same
+ * files the capture review cards use), dark enough that white initials read on it, with
+ * the review cards' terminator shadow so it sits in the sky rather than on it.
+ */
+function PlanetInitials({
+  initials,
+  className,
+}: {
+  initials: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "relative isolate flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold text-white",
+        className,
+      )}
+    >
+      <picture className="absolute inset-0 -z-10">
+        <source type="image/avif" srcSet="/landing/planets/neptune.avif" />
+        <source type="image/webp" srcSet="/landing/planets/neptune.webp" />
+        <img
+          src="/landing/planets/neptune.png"
+          alt=""
+          draggable={false}
+          className="size-full rounded-full object-cover select-none"
+        />
+      </picture>
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 rounded-full shadow-[inset_-6px_-8px_14px_rgba(0,0,0,0.42)]"
+      />
+      <span className="[text-shadow:0_1px_3px_rgba(0,0,0,0.6)]">{initials}</span>
+    </span>
+  );
+}
+
 /** A neighbour's face: their stored photo when there is one, initials otherwise. */
 function NeighbourFace({ id, data }: InspectNeighbour) {
   const [failed, setFailed] = useState(false);
@@ -484,9 +522,7 @@ function NeighbourFace({ id, data }: InspectNeighbour) {
       className="size-full rounded-full object-cover"
     />
   ) : (
-    <span className="flex size-full items-center justify-center rounded-full bg-primary/80 text-3xs font-semibold text-primary-foreground">
-      {data.initials}
-    </span>
+    <PlanetInitials initials={data.initials} className="size-full text-3xs" />
   );
 }
 
@@ -594,16 +630,10 @@ function ContactPanelBody({
               className="size-14 shrink-0 rounded-full border border-white/15 object-cover shadow-[0_0_22px_rgba(124,195,226,0.25)]"
             />
           ) : (
-            <div
-              className={cn(
-                "flex size-14 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white",
-                "bg-[radial-gradient(circle_at_30%_30%,rgba(255,255,255,0.35),transparent_42%)] bg-[#0f3d3e]",
-                data.comet && "bg-[#c4452d] ring-2 ring-[#ff6b4a]/60",
-                data.overdue && !data.comet && "ring-2 ring-[#c4a35a]",
-              )}
-            >
-              {data.initials}
-            </div>
+            <PlanetInitials
+              initials={data.initials}
+              className="size-14 text-sm shadow-[0_0_22px_rgba(90,130,230,0.35)]"
+            />
           )}
           <div className="min-w-0">
             {/* `min-w-0` lets flex shrink it, but a single unbroken token still needs
