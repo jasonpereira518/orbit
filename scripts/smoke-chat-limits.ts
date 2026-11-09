@@ -4,7 +4,7 @@
  *  - a question is capped at CHAT_QUESTION_MAX_CHARS, refused with a 400 in house voice, and
  *    the cap is checked BEFORE the edit path's version work (which can discard later turns);
  *  - the answer stream is cut by a deadline inside the route's `maxDuration`, kept apart from
- *    `request.signal` (a Stop), and a deadline abort reads as the timeout copy, not "cancelled".
+ *    the turn's own abort (a Stop), and a deadline abort reads as the timeout copy, not "cancelled".
  *
  * Pure: no network, no database. Run: npx tsx scripts/smoke-chat-limits.ts
  */
@@ -66,10 +66,11 @@ async function main() {
     /deadlineSignal\s*[:=]\s*AbortSignal\.timeout\(\s*answerDeadlineMs\(requestStartedAt\)\s*\)/.test(route)
   );
   check(
-    "request.signal still goes through untouched, never merged with the deadline",
-    /signal:\s*request\.signal\s*,/.test(route) && !/AbortSignal\.any\(/.test(route)
+    "the turn's Stop signal still goes through untouched, never merged with the deadline",
+    /signal:\s*turnAbort\.signal\s*,/.test(route) && !/AbortSignal\.any\(/.test(route)
   );
-  check("and a Stop is still read from request.signal alone", route.includes("if (request.signal.aborted) return;"));
+  // The turn outlives the connection, so a Stop is the turn's own abort, not the request's.
+  check("and a Stop is still read from the turn's signal alone", route.includes("if (turnAbort.signal.aborted) return;"));
   // The answer itself (`answerWithLookups`); `smoke-chat-answer-deadline` drives it through
   // the real SDKs.
   const loop = readFileSync("src/lib/chat-agent-loop.ts", "utf8");
