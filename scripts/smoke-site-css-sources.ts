@@ -25,12 +25,17 @@ check(
 
 // Each tree loads exactly one sheet: the root layout loads none, so a marketing page never
 // pays for the app's utilities and an app page never lacks them.
-const has = (file: string, css: string) => new RegExp(`import ["'][./]*${css}["']`).test(readFileSync(file, "utf8"));
+const has = (file: string, css: string) =>
+  new RegExp(`import (?:\\w+ from )?["'][./]*${css}["']`).test(readFileSync(file, "utf8"));
 check("the root layout loads no stylesheet", !has("src/app/layout.tsx", "globals\\.css") && !has("src/app/layout.tsx", "site\\.css"));
 check("(site) loads site.css", has("src/app/(site)/layout.tsx", "site\\.css"));
 check("(clerk) loads globals.css", has("src/app/(clerk)/layout.tsx", "globals\\.css"));
 check("/scan loads globals.css", has("src/app/scan/[token]/page.tsx", "globals\\.css"));
-check("not-found and global-error load site.css", has("src/app/not-found.tsx", "site\\.css") && has("src/app/global-error.tsx", "site\\.css"));
+check(
+  "not-found owns its styles, not the marketing sheet",
+  has("src/app/not-found.tsx", "not-found\\.module\\.css") && !has("src/app/not-found.tsx", "site\\.css") && !has("src/app/not-found.tsx", "globals\\.css")
+);
+check("global-error imports no stylesheet", !has("src/app/global-error.tsx", "site\\.css") && !has("src/app/global-error.tsx", "globals\\.css"));
 
 if (failures) {
   console.error(`\nsmoke-site-css-sources: ${failures} failure(s)`);
