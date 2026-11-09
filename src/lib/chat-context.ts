@@ -1,3 +1,4 @@
+import { nowInZone } from "@/lib/user-clock";
 import { loadChatCalendar, type ChatCalendar } from "@/lib/chat-calendar";
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -99,9 +100,15 @@ const ABOUT_USER_MAX_CHARS = 600;
  * — the prompt then says nothing, rather than "unknown".
  */
 export function renderAboutUser(
-  row: { senderBio?: string | null; careerProfile?: CareerProfile | null } | null | undefined
+  row:
+    | { senderBio?: string | null; careerProfile?: CareerProfile | null; firstName?: string | null; lastName?: string | null }
+    | null
+    | undefined
 ): string | null {
   const parts: string[] = [];
+  // Their real name, so an email draft is signed by them rather than "[Your Name]" or nobody.
+  const name = sanitizeProfileLine([row?.firstName, row?.lastName].filter(Boolean).join(" "));
+  if (name) parts.push(`name: ${name} (sign any email draft with this full name)`);
   const bio = normalizeSenderBio(row?.senderBio);
   if (bio) parts.push(`in their own words: ${bio}`);
   const career = row?.careerProfile;
@@ -381,6 +388,8 @@ async function retrieveRankedContacts(
     access?: Promise<AiAccess | undefined>;
     /** The request's signal: the parse and the rerank are cancelled when the caller leaves. */
     signal?: AbortSignal;
+    /** The user's zone, so the parse resolves "tomorrow" on the user's day. */
+    timeZone?: Promise<string>;
   }
 ): Promise<{
   ranked: RankedContact[];
@@ -417,9 +426,13 @@ async function retrieveRankedContacts(
     }),
     // The earlier turns are one indexed read the parser alone waits on (for "she" and "the
     // second one"); the embedding beside it does not.
-    (routing?.priorTurns ?? Promise.resolve([] as PriorTurn[]))
-      .catch(() => [] as PriorTurn[])
-      .then((priorTurns) => understandQuery(userId, q, activeGoals, complete, { priorTurns, userSchools, aboutUser, signal: routing?.signal }))
+    Promise.all([
+      (routing?.priorTurns ?? Promise.resolve([] as PriorTurn[])).catch(() => [] as PriorTurn[]),
+      (routing?.timeZone ?? Promise.resolve(undefined)).catch(() => undefined),
+    ])
+      .then(([priorTurns, timeZone]) =>
+        understandQuery(userId, q, activeGoals, complete, { priorTurns, userSchools, aboutUser, timeZone, signal: routing?.signal })
+      )
       .then((parsed) => {
         routing?.onParsed(parsed);
         return parsed;
@@ -734,24 +747,6 @@ export function renderFocusProfile(profile: Awaited<ReturnType<typeof getContact
   return `${rendered.slice(0, FOCUS_PROFILE_MAX_CHARS)}\n(profile truncated at ${FOCUS_PROFILE_MAX_CHARS} characters)`;
 }
 
-/** "Wednesday 2026-10-28 14:05" on the user's wall clock. */
-function nowInZone(now: Date, tz: string): string {
-  const p = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      hourCycle: "h23",
-      weekday: "long",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-      .formatToParts(now)
-      .map((x) => [x.type, x.value])
-  );
-  return `${p.weekday} ${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
-}
 
 export async function prepareChatContext(
   userId: string,
@@ -877,6 +872,7 @@ export async function prepareChatContext(
         onParsed: settleParsed,
         access: accessP,
         signal: options.signal,
+        timeZone: tzP,
       }).finally(() => settleParsed(null)),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.

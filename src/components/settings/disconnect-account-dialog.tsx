@@ -18,7 +18,7 @@ import {
   type DisconnectProvider,
 } from "@/lib/data-categories";
 
-const NAMES: Record<DisconnectProvider, string> = { gmail: "Google", outlook: "Outlook", granola: "Granola" };
+const NAMES: Record<DisconnectProvider, string> = { gmail: "Google", outlook: "Outlook", granola: "Granola", notion: "Notion" };
 
 /**
  * One confirmation for every account page's Disconnect (Google, Outlook, Granola). DB-free imports only.
@@ -91,6 +91,8 @@ export function DisconnectAccountDialog({
                 <>Orbit deletes its copy of the sign-in and asks Google to revoke its access.</>
               ) : provider === "granola" ? (
                 <>Orbit stops bringing in new notes and deletes its copy of the sign-in.</>
+              ) : provider === "notion" ? (
+                <>Orbit asks Notion to revoke its access, stops syncing, and deletes its copy of the sign-in.</>
               ) : (
                 <>
                   Orbit deletes its copy of the sign-in. Microsoft doesn’t let apps revoke their
@@ -130,7 +132,7 @@ export function DisconnectAccountDialog({
             </label>
           ) : (
             <p className="text-xs leading-snug text-muted-foreground">
-              {provider === "granola" ? "Contacts and meetings" : "Contacts"} imported from {name} stay in
+              {provider === "granola" ? "Contacts and meetings" : provider === "notion" ? "Contacts and notes" : "Contacts"} imported from {name} stay in
               Orbit. Delete them from Contacts, or remove everything in Settings → Data and privacy.
             </p>
           )}

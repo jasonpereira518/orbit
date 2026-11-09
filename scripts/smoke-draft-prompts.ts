@@ -50,6 +50,7 @@ async function main() {
     const g = got[name];
     check(`${name}: system prompt`, g?.system === want[name]!.system, g ? firstDiff(want[name]!.system, g.system) : "missing");
     check(`${name}: user message`, g?.user === want[name]!.user, g ? firstDiff(want[name]!.user, g.user) : "missing");
+    check(`${name}: told the user's date`, g?.dated === true);
   }
 
   // Purpose: Orbit picks it, an edited one is a verbatim override, intent stays a hint.
