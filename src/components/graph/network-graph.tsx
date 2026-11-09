@@ -15,6 +15,8 @@ import {
   getGraphData,
   refreshConstellationBatch,
 } from "@/actions/graph";
+import { decodeGraphPayload } from "@/lib/graph-wire";
+import type { GraphPayload } from "@/components/graph/graph-chart-types";
 import { toast } from "sonner";
 import { useCornerClearance } from "@/lib/corner-clearance";
 import { searchDashboardContacts } from "@/actions/search";
@@ -81,7 +83,6 @@ import {
   Sparkles,
 } from "lucide-react";
 
-type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
 /**
  * Module scope, deliberately — not an effect.
  *
@@ -372,7 +373,8 @@ export function NetworkGraph({
       return;
     }
     getGraphData()
-      .then((payload) => {
+      .then((wire) => {
+        const payload = decodeGraphPayload(wire);
         lastFetchAt.current = Date.now();
         scopeCache.current.engaged = payload;
         // The wider set is now stale too, but re-fetching it here would defeat the point of
@@ -421,7 +423,8 @@ export function NetworkGraph({
     }
     setLoadingAll(true);
     getFullGraphData()
-      .then((payload) => {
+      .then((wire) => {
+        const payload = decodeGraphPayload(wire);
         scopeCache.current.all = payload;
         showAllStarsRef.current = true;
         setShowAllStars(true);

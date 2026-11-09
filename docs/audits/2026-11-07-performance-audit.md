@@ -124,7 +124,7 @@ Ordered by expected impact over risk, and by whether a result could be measured 
 | 5 | Marketing stylesheet preloaded on every app route (root `not-found.tsx` imports `site.css`) | 30 KB gz per app load | Medium: risks the 404 page's styling | Not shipped; effect not distinguishable from noise (-0 to -200 ms LCP on 3 routes) |
 | 6 | Cut shell JS (lazy watchers, base-ui) | Mobile interactive | Medium | Not shipped; the shell is 0.5-5 KB pieces with no large deferrable block |
 | 7 | Contacts list: defer per-row tooltip/popover hydration | `/contacts` TBT (~290 ms mobile) | Medium: accessibility | Not shipped; needs its own design |
-| 8 | `/graph` payload (4.7 MB at 10k, ~480 B per contact) | Server 300 ms, mobile LCP | High | Not shipped; needs a compact wire format |
+| 8 | `/graph` payload (4.7 MB at 10k, ~480 B per contact) | Server 300 ms, mobile LCP | High | **Shipped** (columnar wire): 5.17 -> 1.79 MB raw, 748 -> 423 KB gz, 448 -> 309 KB brotli at 10k; encode 4 ms, decode 6 ms; the 3k payload now has a 1.2 MB tripwire |
 
 ## What shipped
 
@@ -139,6 +139,10 @@ Ordered by expected impact over risk, and by whether a result could be measured 
    form skeleton. `/capture` is unchanged.
 4. **Harness** (`scripts/dev/perf/`): `page-bench.mjs`, `search-bench.mjs`, `inp-bench.mjs`, `compare.mjs`,
    `bundle-attribution.mjs`, `serve-demo.sh`. See the README there.
+5. **`lib/graph-wire.ts`:** `getGraphData`/`getFullGraphData` hand the client a columnar wire form (one column per field,
+   dictionaries for company/school/title/industry/tier/tags, cluster members as contact indexes) and `NetworkGraph`
+   decodes it. Measured on the 10,000-contact fixture: 5.17 MB -> 1.79 MB raw, 748 -> 423 KB gz, 448 -> 309 KB brotli,
+   with a 4 ms encode and 6 ms decode; the round trip is structurally identical (`smoke-graph-wire`).
 
 ## Results
 
@@ -203,7 +207,8 @@ queueing on PGlite's single connection.
 2. **Mobile LCP on `/contacts`, `/chat`, `/meetings`, `/graph` (4.5-5.3 s).** The content waits behind scripts in the same
    pipe. Fewer first-load bytes helps all four; streaming the shell's own scripts later would too.
 3. **`/contacts` hydration.** 50 rows, ~6 KB of markup each, each with a tooltip and popover trigger. TBT ~290 ms at 4x CPU.
-4. **`/graph` payload.** 4.7 MB / 300 ms at 10k. A compact wire format would cut both.
+4. **`/graph` payload.** The columnar wire form cut the 10k transfer 31% brotli and 65% raw. What remains is the scan
+   itself (4.2 s to load 10k on PGlite here) and the client's parse and allocation of 1.8 MB rather than 5.2 MB.
 5. **Marketing stylesheet on every app page.** Move the 404's styles out of `site.css`, or have the root `not-found`
    own a small stylesheet, so app routes stop preloading ~30 KB gz of marketing CSS. Measure on a quiet machine first.
 6. **Public static pages** carry ~410 KB gz of JS (`WarpProvider`, motion, sonner, base-ui). `LazyMotion` was tried
