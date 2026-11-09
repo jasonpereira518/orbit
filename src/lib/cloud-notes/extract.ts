@@ -38,7 +38,7 @@ export async function priorCaptureOf(userId: string, sourceHash: string): Promis
  */
 export async function createCaptureFromText(
   userId: string,
-  input: { text: string; label: string; batchGroupId: string; force?: boolean },
+  input: { text: string; label: string; batchGroupId: string; provider: CloudProvider; force?: boolean },
 ): Promise<CaptureFromTextOutcome> {
   // `source_hash` is written by the parse over the corpus it read, which for a plain doc is this text.
   if (!input.force) {
@@ -51,6 +51,8 @@ export async function createCaptureFromText(
     inputText: input.text,
     batchGroupId: input.batchGroupId,
     sourceLabel: input.label.slice(0, 200),
+    // Read back by the capture history to badge the row Google Drive / OneDrive.
+    sources: [`cloud:${input.provider}`],
   });
   return { status: "queued", jobId: row.id };
 }
@@ -115,7 +117,7 @@ export async function extractCloudFiles(
         result.failed.push({ fileId: file.id, name: file.name, message: `“${file.name}” is empty` });
         continue;
       }
-      const outcome = await createCaptureFromText(userId, { text, label: file.name, batchGroupId: input.batchGroupId });
+      const outcome = await createCaptureFromText(userId, { text, label: file.name, batchGroupId: input.batchGroupId, provider });
       (outcome.status === "queued" ? result.queued : result.duplicates).push({ fileId: file.id, jobId: outcome.jobId });
       await db
         .insert(cloudNoteFiles)

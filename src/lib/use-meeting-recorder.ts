@@ -32,6 +32,7 @@ import { useMotionValue, type MotionValue } from "motion/react";
 import { createDownsampler, encodeWav16, rmsLevel, TARGET_SAMPLE_RATE } from "@/lib/voice-recording";
 import { ABSOLUTE_VOICE_RMS, MAX_MEETING_MS, MeetingChunker, type MeetingChunk } from "@/lib/meeting-chunking";
 import { LoudnessTimeline } from "@/lib/speaker-map";
+import { callKindFromLabel, type CallKind } from "@/lib/call-kind";
 
 const WORKLET_URL = "/orbit-pcm-worklet.js";
 const WORKLET_NAME = "orbit-pcm-recorder";
@@ -93,7 +94,7 @@ export type UseMeetingRecorderOptions = {
    * and is not retained here, so a listener that keeps it must copy it.
    */
   onFrame?: (pcm: Int16Array) => void;
-  onStarted?: (info: { surface: MeetingSurface; micActive: boolean }) => void;
+  onStarted?: (info: { surface: MeetingSurface; micActive: boolean; callKind: CallKind | null }) => void;
   onEnd?: (reason: MeetingRecorderEndReason, elapsedMs: number) => void;
   onError?: (code: MeetingRecorderErrorCode) => void;
   /** The mic was asked for and refused, or dropped mid-call. Recording carries on without it. */
@@ -420,6 +421,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
           : shared === "browser" || shared === "window" || shared === "monitor"
             ? shared
             : null;
+        const callKind = micOnly ? null : callKindFromLabel(videoTrack?.label);
         // Kept, not stopped — see the header. Disabled so nothing renders it, and held to the
         // cheapest capture again here: the TypeError fallback below asks for plain
         // `video: true`, which would otherwise capture the full screen at full rate.
@@ -569,7 +571,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
         setSurface(sharedSurface);
         setMicActive(Boolean(mic));
         setState("recording");
-        cb.current.onStarted?.({ surface: sharedSurface, micActive: Boolean(mic) });
+        cb.current.onStarted?.({ surface: sharedSurface, micActive: Boolean(mic), callKind });
 
         // Display only. The clock the recording actually runs on is the sample count; a
         // throttled interval just makes the number on screen update less often.

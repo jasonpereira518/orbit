@@ -136,6 +136,15 @@ export default function PrivacyPage() {
               stay with your account.
             </li>
             <li>
+              <strong>Contact work history</strong> — when a web search finds a contact&rsquo;s work
+              history from their public LinkedIn profile and is confident it is them, that history is
+              kept in a shared set for up to 30 days and reused for any Orbit user who has the same
+              profile, so it is not searched again. Only what a public web search found is shared:
+              never anything you typed or imported, nothing the Orbit browser extension captures, and
+              nothing a search was unsure about. It is deleted within a day once no Orbit account has
+              that person, and after 90 days at most.
+            </li>
+            <li>
               <strong>Voice and meetings</strong> — audio you record is sent to be transcribed and is
               not kept. The transcript is: a voice note becomes the text of your note, and a meeting
               keeps its transcript until you delete the meeting.
@@ -189,7 +198,11 @@ export default function PrivacyPage() {
               platform&rsquo;s profile links where it shows them — and sends it to Orbit only when you
               press Save. The guests are kept on that event in Orbit, never sent to an AI provider,
               and none becomes a contact unless you add them one by one. Orbit&rsquo;s servers never
-              fetch a guest list themselves.
+              fetch a guest list themselves. On your LinkedIn Connections page, it offers to log the
+              people you connected with at one of your events: it sends Orbit only the names,
+              profile links and headlines of the connections you tick, when you press Log, and they
+              are added to that event&rsquo;s guest list. None becomes a contact until you review
+              and save them in Orbit.
             </li>
             <li>
               <strong>Secrets you provide</strong> — API keys for AI, enrichment, email, SMS and
@@ -288,17 +301,6 @@ export default function PrivacyPage() {
             on Google&rsquo;s side, remove Orbit from your Google Account&rsquo;s third-party access
             page.
           </p>
-          <DocCallout title="Confirmation emails">
-            <p>
-              If you turn on event discovery from confirmation emails, Orbit searches your Gmail for
-              mail from event platforms only — Luma, Partiful, Eventbrite, Meetup and Posh — and
-              opens a message only when Google&rsquo;s signature check confirms it came from one of
-              them. It keeps the event link, the subject line, the sender&rsquo;s domain and the
-              date; it stores no message bodies, reads no other mail, and never sends this mail to
-              an AI provider. Turning it off stops the scanning and removes what it recorded about
-              where each event was found.
-            </p>
-          </DocCallout>
           <DocCallout title="Email insights">
             <p>
               If you turn on Email insights in Settings, Orbit checks your Gmail every fifteen
@@ -636,8 +638,9 @@ export default function PrivacyPage() {
             your account.
           </p>
           <p>
-            A shared LinkedIn photo is deleted within a day once no Orbit account has that person.
-            To have one removed sooner, email us through the <Link href="/contact">contact page</Link>.
+            A shared LinkedIn photo or shared work history is deleted within a day once no Orbit
+            account has that person, and a shared work history after 90 days at most. To have one
+            removed sooner, email us through the <Link href="/contact">contact page</Link>.
           </p>
           <p>
             When you delete your account, every table holding your data is cleared, including your
@@ -696,7 +699,7 @@ export default function PrivacyPage() {
           </ul>
           <p>
             The operator can comp or revoke a plan, suspend or delete an account, retry or cancel an
-            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, remove a shared LinkedIn photo, and
+            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, remove a shared LinkedIn photo (which also removes that profile&rsquo;s shared work history), and
             create a one-time link that signs in as your account (for support, and for the demo
             account). Each of these requires a written reason, recorded in an audit log. Opening your
             account is recorded, and so is every individual contact record opened, by its id.

@@ -66,7 +66,7 @@ createServer((req, res) => {
         id: "msg_e2e_stub",
         type: "message",
         role: "assistant",
-        model: typeof body?.model === "string" ? body.model : "claude-haiku-5-5",
+        model: typeof body?.model === "string" ? body.model : "claude-3-5-haiku-latest",
         content: [{ type: "text", text: JSON.stringify(answerFor(body)) }],
         stop_reason: "end_turn",
         stop_sequence: null,
@@ -74,9 +74,10 @@ createServer((req, res) => {
       });
     }
     if (req.method === "POST" && /:generateContent(?:\?|$)/.test(req.url ?? "")) {
+      const answer = answerFor(body);
       return reply(res, 200, {
         candidates: [{ index: 0, finishReason: "STOP",
-          content: { role: "model", parts: [{ text: JSON.stringify(answerFor(body)) }] } }],
+          content: { role: "model", parts: [{ text: JSON.stringify(answer) }] } }],
         usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
       });
     }

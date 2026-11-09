@@ -480,6 +480,17 @@ async function main() {
   // ================================================================= 7. ownership and state
   section("Refusals");
 
+  // Two reverts at once (a double click, two tabs): exactly one may do the work (audit L-20).
+  await reset();
+  const jobH = await seedJob([connection(70)]);
+  await runJob(jobH);
+  const [r1, r2] = await Promise.all([revertImport(USER, jobH), revertImport(USER, jobH)]);
+  check(
+    "two concurrent reverts: exactly one runs, the other is told it already ran",
+    [r1, r2].filter((r) => r.ok).length === 1 && [r1, r2].some((r) => !r.ok && r.reason === "already_reverted"),
+    JSON.stringify([r1, r2].map((r) => (r.ok ? "ok" : r.reason)))
+  );
+
   const notMine = await revertImport("someone-else", jobF);
   check(
     "another user cannot revert this import",

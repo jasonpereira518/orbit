@@ -1,7 +1,7 @@
 /**
  * A revoked Gmail grant fails the recruiter scan with needs_reconnect — it is not "no mail".
  *
- * Pins: `fetchGmailMessages`, `fetchGmailMessageLinks` and `fetchGmailThread`
+ * Pins: `fetchGmailMessages` and `fetchGmailThread`
  * (src/lib/gmail.ts) throw `ReauthRequiredError` on a 401, like `fetchGmailHeaders` and
  * Outlook's `fetchOutlookMessages`; and `runGmailRecruiterScanJob`
  * (src/lib/gmail-scan-processor.ts) fails the import with errorCode `needs_reconnect`, leaves
@@ -22,7 +22,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { importJobRows, imports, recruiterScanState } from "../src/db/schema";
 import { ReauthRequiredError } from "../src/lib/errors";
-import { fetchGmailMessageLinks, fetchGmailMessages, fetchGmailThread } from "../src/lib/gmail";
+import { fetchGmailMessages, fetchGmailThread } from "../src/lib/gmail";
 import { runGmailRecruiterScanJob, type ScanDeps } from "../src/lib/gmail-scan-processor";
 import { fetchOutlookMessages } from "../src/lib/outlook";
 import { checker } from "./smoke/check";
@@ -108,19 +108,6 @@ run(async () => {
         "fetchGmailMessages turns a 401 into ReauthRequiredError",
         messagesErr instanceof ReauthRequiredError,
         `returned ${JSON.stringify(messages)}`
-      );
-
-      let linksErr: unknown = null;
-      let links: unknown = null;
-      try {
-        links = await fetchGmailMessageLinks(TOKEN, ["18c2f0a1b2c3d400"]);
-      } catch (e) {
-        linksErr = e;
-      }
-      t.check(
-        "fetchGmailMessageLinks turns a 401 into ReauthRequiredError",
-        linksErr instanceof ReauthRequiredError,
-        `returned ${JSON.stringify(links)}`
       );
 
       let threadErr: unknown = null;

@@ -1,5 +1,6 @@
 "use server";
 
+import { recordAccountAudit } from "@/lib/account-audit";
 /**
  * Server actions for the events surface.
  *
@@ -10,7 +11,6 @@
  * actions are reachable by direct POST, so a check anywhere else is not a check.
  */
 import { cookies } from "next/headers";
-import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireSyncUser, requireUserForReleasedSurface } from "@/lib/plan-guards";
 import { requireReleasedSurface } from "@/lib/surface-visibility";
@@ -64,7 +64,6 @@ import {
   type UpdateAttendeeResult,
 } from "@/lib/events/store";
 import {
-  connectAttendees,
   previewConnect,
   restampEventInteractions,
   type ConnectPreviewRow,
@@ -79,16 +78,30 @@ import {
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
 import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { listCalendarSources } from "@/lib/calendar-sources";
 import type {
   AttendeeRole,
-  ConnectSummary,
   EventConnectionProvider,
   RosterRow,
 } from "@/lib/events/types";
+import {
+  getRecommendedUpcomingEvents,
+  type RecommendedEvent,
+} from "@/lib/events/recommendations";
+import { saveAndSyncEventNotes } from "@/lib/events/notes-sync";
+import {
+  findAttendeeLinkedIn,
+  batchFindRosterLinkedIns,
+} from "@/lib/events/linkedin-finder";
+import { getDb } from "@/db";
+import { eventProviderConnections } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
+import { decryptOrNull } from "@/lib/crypto";
 import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
-import { GOOGLE_SCOPES, hasGmailReadScope, hasScope } from "@/lib/google-scopes";
+import { GOOGLE_SCOPES, hasScope } from "@/lib/google-scopes";
 import { actionFailure } from "@/lib/action-failure";
+import { optionalClientDate } from "@/lib/input/dates";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
 const SURFACE = "page.events";
@@ -197,7 +210,7 @@ export async function createEvent(input: {
       userId,
       {
         title,
-        startsAt: input.startsAt ? new Date(input.startsAt) : null,
+        startsAt: optionalClientDate(input.startsAt, "start time"),
         venue: input.venue ?? null,
         city: input.city ?? null,
         url,
@@ -210,15 +223,10 @@ export async function createEvent(input: {
       revalidateEvents(found.id);
       return { id: found.id, existing: true };
     }
-    const event = { id: found.id };
-
-    if (input.url) {
-      // Off the request path: the user should land on their event, not wait on someone
-      // else's web server. `enrich_status` on the row is how the UI shows this is in flight.
-      after(() => enrichEvent(userId, event.id, input.url!).catch(() => {}));
-    }
+    // No background page read here: the dialog awaits `enrichEventFromUrl` right after this,
+    // and a second read in `after()` fetched the same page twice for every link.
     revalidateEvents();
-    return { id: event.id };
+    return { id: found.id };
   });
 }
 
@@ -329,7 +337,7 @@ export async function updateEvent(
   }
 
   const asDate = (value: string | null | undefined) =>
-    value === undefined ? undefined : value ? new Date(value) : null;
+    value === undefined ? undefined : optionalClientDate(value, "event time");
 
   await updateEventForUser(userId, eventId, {
     ...pickEventEdits(patch as Record<string, unknown>),
@@ -567,9 +575,8 @@ export async function deleteAttendee(eventId: string, attendeeId: string): Promi
  * Who on this roster is already in your network.
  *
  * Built on `previewConnect` rather than a second, cheaper matcher on purpose. The badge this
- * feeds and the connect preview must never disagree — "already a contact" above a preview
- * that says "create" reads as a bug — and reuse is the only way to guarantee they agree at
- * the same threshold against the same index.
+ * feeds and the old connect preview had to agree at the same threshold against the same index,
+ * and ingest still matches at that floor.
  *
  * Only unconnected rows are asked about: a row with a `contactId` is already known to be
  * linked, and asking would pay for a match we already have.
@@ -582,33 +589,6 @@ export async function matchRosterToNetwork(eventId: string): Promise<ConnectPrev
   const unlinked = roster.filter((r) => !r.contactId).map((r) => r.id);
   if (unlinked.length === 0) return [];
   return previewConnect(userId, event, unlinked);
-}
-
-/** A dry run, so the user sees who will merge and who will be created before committing. */
-export async function previewConnectAttendees(
-  eventId: string,
-  attendeeIds: string[]
-): Promise<ConnectPreviewRow[]> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) throw new Error("That event no longer exists.");
-  return previewConnect(userId, event, attendeeIds);
-}
-
-export async function addSpokenToConnections(
-  eventId: string,
-  attendeeIds: string[]
-): Promise<ConnectSummary & { remaining: number }> {
-  const userId = await requireUserForReleasedSurface(SURFACE);
-  const event = await getEventForUser(userId, eventId);
-  if (!event) throw new Error("That event no longer exists.");
-
-  const summary = await connectAttendees(userId, event, attendeeIds);
-  revalidateEvents(eventId);
-  // These people are now contacts, so the surfaces that count them are stale.
-  revalidatePath("/contacts");
-  revalidatePath("/dashboard");
-  return summary;
 }
 
 export async function removeSpokenToConnection(
@@ -735,35 +715,26 @@ export async function addTargetCompanyFromEvent(
 export async function getEventConnections(): Promise<{
   connections: EventConnectionSummary[];
   eventbriteConfigured: boolean;
-  /** Any active Google connection exists. */
-  googleConnected: boolean;
-  /** That connection may read mail — the confirmation-email scan can run. */
-  googleMailGranted: boolean;
-  /** That connection may read the calendar — meetings sync. */
-  googleCalendarGranted: boolean;
+  /**
+   * A calendar calendar-discovery reads: Google with the calendar scope, or an Outlook or iCloud
+   * calendar source.
+   */
+  calendarConnected: boolean;
 }> {
   const userId = await requireUserForReleasedSurface(SURFACE);
-  const [connections, grant, demo] = await Promise.all([
+  const [connections, grant, sources, demo] = await Promise.all([
     listEventConnections(userId),
     findGmailGrant(userId),
+    listCalendarSources(userId),
     isDemoWorkspace(userId),
   ]);
-  // The demo workspace stores no OAuth grant but reads as connected everywhere else.
-  if (demo) {
-    return {
-      connections,
-      eventbriteConfigured: eventbriteOAuthConfig().configured,
-      googleConnected: true,
-      googleMailGranted: true,
-      googleCalendarGranted: true,
-    };
-  }
   return {
-    connections,
+    // The gmail rows are the retired confirmation-email scan; nothing reads them any more.
+    connections: connections.filter((c) => c.provider !== "gmail"),
     eventbriteConfigured: eventbriteOAuthConfig().configured,
-    googleConnected: grant !== null,
-    googleMailGranted: hasGmailReadScope(grant?.scopes),
-    googleCalendarGranted: hasScope(grant?.scopes, GOOGLE_SCOPES.calendar),
+    // The demo workspace stores no OAuth grant but reads as connected everywhere else.
+    calendarConnected:
+      demo || hasScope(grant?.scopes, GOOGLE_SCOPES.calendar) || sources.some((s) => s.provider !== "google"),
   };
 }
 
@@ -859,52 +830,6 @@ export async function connectEventFeed(
   }
 }
 
-/**
- * Turn the confirmation-email scan on or off.
- *
- * `gmail.readonly` is a Google RESTRICTED scope. The user granted it for calendar and contact
- * history; reading their mail for event confirmations is a different purpose, so it gets its
- * own explicit switch rather than riding along on a grant made for something else.
- *
- * The connection row IS the consent: no row, no scan. Turning it off deletes the row, which
- * takes the stored scan position with it — there is nothing else to delete, because the scan
- * keeps no message content anywhere.
- */
-export async function setGmailEventScan(
-  enabled: boolean
-): Promise<{ ok: boolean; error?: string; needsMailScope?: boolean }> {
-  const userId = await requireSyncUser();
-  await requireReleasedSurface(userId, SURFACE);
-
-  if (!enabled) {
-    await deleteEventConnection(userId, "gmail");
-    revalidateEvents();
-    return { ok: true };
-  }
-
-  const connection = await findGmailGrant(userId);
-  // This switch never widens a grant silently: without gmail.readonly it tells the card to
-  // send the person through Google's consent screen for exactly that scope.
-  if (!connection || !hasGmailReadScope(connection.scopes)) {
-    return {
-      ok: false,
-      needsMailScope: true,
-      error: "Allow mail access first — Orbit asks Google for it next",
-    };
-  }
-
-  await upsertEventConnection(userId, {
-    provider: "gmail",
-    authKind: "google_grant",
-    // No secret: the token comes from the Gmail connection at scan time, so nothing is
-    // duplicated here and revoking Google revokes this too.
-    secret: "",
-    label: connection.emailAddress ?? "Gmail",
-  });
-  revalidateEvents();
-  return { ok: true };
-}
-
 export async function startEventbriteOAuth(): Promise<{ url: string }> {
   const userId = await requireSyncUser();
   await requireReleasedSurface(userId, SURFACE);
@@ -942,5 +867,143 @@ export async function disconnectEventProvider(
 ): Promise<void> {
   const userId = await requireSyncUser();
   await deleteEventConnection(userId, provider);
+  await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: provider });
   revalidateEvents();
 }
+
+/**
+ * Get personalized upcoming event recommendations relative to past event history.
+ */
+export async function getRecommendedEvents(): Promise<RecommendedEvent[]> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  return getRecommendedUpcomingEvents(userId);
+}
+
+/**
+ * Add a recommended event to the user's upcoming events.
+ */
+export async function addRecommendedEvent(
+  rec: RecommendedEvent
+): Promise<ActionResult<{ id: string; existing?: boolean }>> {
+  return asActionResult(async () => {
+    const userId = await requireUserForReleasedSurface(SURFACE);
+    const found = await findOrCreateEventByLink(
+      userId,
+      {
+        title: rec.title,
+        startsAt: rec.startsAt ? new Date(rec.startsAt) : null,
+        endsAt: rec.endsAt ? new Date(rec.endsAt) : null,
+        venue: rec.venue,
+        city: rec.city,
+        url: rec.url,
+        description: rec.description,
+        organizerName: rec.organizerName,
+        attendanceMode: rec.attendanceMode,
+        coverImageUrl: rec.coverImageUrl,
+        themeColor: rec.themeColor,
+        role: "attended",
+        rsvpStatus: "going",
+      },
+      "page"
+    );
+
+    revalidateEvents(found.id);
+    return { id: found.id, existing: found.existing };
+  });
+}
+
+/**
+ * Save notes for an event and sync them to Orbit's knowledge base and chat context.
+ */
+export async function saveEventNotes(
+  eventId: string,
+  notes: string
+): Promise<ActionResult<{ success: boolean; savedAt: string }>> {
+  return asActionResult(async () => {
+    const userId = await requireUserForReleasedSurface(SURFACE);
+    const result = await saveAndSyncEventNotes(userId, eventId, notes);
+    revalidateEvents(eventId);
+    revalidatePath("/knowledge");
+    return { success: result.ok, savedAt: result.savedAt.toISOString() };
+  });
+}
+
+/**
+ * Automatically locate and update the LinkedIn profile for an individual attendee.
+ */
+export async function findAttendeeLinkedInAction(
+  eventId: string,
+  attendeeId: string
+): Promise<ActionResult<{ linkedinUrl: string | null; source?: string }>> {
+  return asActionResult(async () => {
+    const userId = await requireUserForReleasedSurface(SURFACE);
+    const result = await findAttendeeLinkedIn(userId, eventId, attendeeId);
+    if (!result.ok) {
+      throw new UserFacingError(result.error ?? "Could not find a verified LinkedIn profile");
+    }
+    revalidateEvents(eventId);
+    return { linkedinUrl: result.linkedinUrl, source: result.source };
+  });
+}
+
+/**
+ * Batch resolve LinkedIn profiles for all attendees missing one on this roster.
+ */
+export async function batchFindRosterLinkedInsAction(
+  eventId: string
+): Promise<ActionResult<{ found: number; total: number }>> {
+  return asActionResult(async () => {
+    const userId = await requireUserForReleasedSurface(SURFACE);
+    const result = await batchFindRosterLinkedIns(userId, eventId);
+    revalidateEvents(eventId);
+    return result;
+  });
+}
+
+/**
+ * Trigger an immediate sync for a connected event provider (Luma, Partiful, Eventbrite).
+ */
+export async function triggerProviderSync(
+  provider: EventConnectionProvider
+): Promise<ActionResult<{ count: number }>> {
+  return asActionResult(async () => {
+    const userId = await requireSyncUser();
+    const db = await getDb();
+    const [row] = await db
+      .select({
+        provider: eventProviderConnections.provider,
+        apiKeyEncrypted: eventProviderConnections.apiKeyEncrypted,
+        accessTokenEncrypted: eventProviderConnections.accessTokenEncrypted,
+      })
+      .from(eventProviderConnections)
+      .where(
+        and(
+          eq(eventProviderConnections.userId, userId),
+          eq(eventProviderConnections.provider, provider)
+        )
+      )
+      .limit(1);
+
+    if (!row) {
+      throw new UserFacingError(`${provider} is not connected`);
+    }
+
+    const secret = decryptOrNull(row.apiKeyEncrypted ?? row.accessTokenEncrypted);
+    if (!secret) {
+      throw new UserFacingError(`Connection credentials missing or expired`);
+    }
+
+    let found = 0;
+    if (provider === "luma_ics" || provider === "partiful_ics") {
+      const stats = await syncIcsFeed(userId, secret, provider);
+      found = stats.created + stats.attached;
+    } else if (provider === "luma") {
+      const result = await listCalendarEvents(secret, null);
+      found = result.items.length;
+    }
+
+    revalidateEvents();
+    return { count: found };
+  });
+}
+

@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
+import { escapeLike } from "@/lib/contact-search-rank";
 import { resolvePlan, type Plan, type PlanSource } from "@/lib/entitlements";
 import { cachedAdminAggregates, type AdminUserRow } from "@/lib/admin-metrics";
 import { PRESENCE_WINDOW_MS } from "@/lib/presence-window";
@@ -256,7 +257,7 @@ function buildPredicates(query: RosterQuery) {
     // Prefix rather than substring, so the index stays usable and the box cannot be used to
     // enumerate accounts by fragment. Matched against the user id as well as the email:
     // pasting a Clerk id — whole or partial — is the most common way this box gets used.
-    const prefix = `${q.toLowerCase()}%`;
+    const prefix = `${escapeLike(q.toLowerCase())}%`;
     parts.push(
       sql`(lower(coalesce(s.email, '')) LIKE ${prefix}
            OR lower(s.user_id) LIKE ${prefix}

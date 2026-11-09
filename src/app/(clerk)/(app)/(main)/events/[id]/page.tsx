@@ -10,6 +10,8 @@ import { AttendeeRoster, type RosterMatch } from "@/components/events/attendee-r
 import { RosterImportPanel } from "@/components/events/roster-import-panel";
 import { EventCompaniesPanel } from "@/components/events/event-companies-panel";
 import { WhoToTalkToCard } from "@/components/events/who-to-talk-to-card";
+import { PeopleYouMet } from "@/components/events/people-you-met";
+import { EventNotesPanel } from "@/components/events/event-notes-panel";
 import {
   getEvent,
   getEventCompanies,
@@ -19,6 +21,11 @@ import {
   matchRosterToNetwork,
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { requireUserId } from "@/lib/auth";
+import { userTimeZone } from "@/lib/meeting-context";
+import { ymdInZone } from "@/lib/reminder-due-bucket";
+import { offsetMinutes } from "@/lib/events/wall-clock";
+import { eventThemeVars } from "@/lib/events/theme";
 
 /** Request-memoized so `generateMetadata` and the page share one read. */
 const loadEvent = cache((id: string) => getEvent(id));
@@ -37,6 +44,11 @@ async function WhoToTalkTo({ eventId }: { eventId: string }) {
   const data = await getWhoToTalkTo(eventId);
   if (!data) return null;
   return <WhoToTalkToCard eventId={eventId} data={data} aiAvailable={data.aiAvailable} />;
+}
+
+async function Met({ eventId, rosterPromise }: { eventId: string; rosterPromise: Promise<RosterResult> }) {
+  const result = await rosterPromise;
+  return <PeopleYouMet eventId={eventId} rows={result.ok ? result.rows : []} />;
 }
 
 async function Companies({ eventId }: { eventId: string }) {
@@ -61,9 +73,6 @@ async function Roster({
 }) {
   const result = await rosterPromise;
 
-  // A failed read used to fall through to the roster's "No attendees yet" empty state, which
-  // told the user their guest list was empty when in fact it could not be loaded. Those are
-  // opposite facts and must not share a screen.
   if (!result.ok) {
     return (
       <p className="rounded-xl border border-border/70 bg-card px-4 py-3 text-sm text-muted-foreground">
@@ -86,8 +95,6 @@ async function Roster({
       : []
   );
 
-  // The history is an aggregate over the user's whole roster past; a failure there costs a
-  // badge, never the list, so it degrades to "we did not say" exactly as matches do.
   const history = await historyPromise;
   return (
     <AttendeeRoster
@@ -104,18 +111,11 @@ export default async function EventDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  // See `pageVisibilityGate`'s doc comment: the layout-level check does not catch a click
-  // straight from a sibling route, so this page re-checks itself.
   const gate = await pageVisibilityGate("page.events");
   if (gate) return gate;
 
   const { id } = await params;
 
-  // Both started before the first await and settled to a value, so they are already in flight
-  // while the event row loads and an eager rejection cannot go unhandled.
-  //
-  // The roster's failure is kept as a distinct state rather than collapsed to `[]`; the match
-  // lookup's is not, because a missing badge degrades to "we did not say", which is honest.
   const rosterPromise: Promise<RosterResult> = getRoster(id).then(
     (rows) => ({ ok: true as const, rows }),
     () => ({ ok: false as const })
@@ -124,22 +124,40 @@ export default async function EventDetailPage({
   const historyPromise = getRosterHistory(id).catch(() => []);
 
   const event = await loadEvent(id);
-  // Before any Suspense boundary, so the route returns a real 404 rather than streaming a
-  // shell and then discovering there is nothing to put in it.
   if (!event) notFound();
 
+  const zone = await userTimeZone(await requireUserId());
+  const eventDay = event.startsAt
+    ? new Date(event.startsAt.getTime() + (offsetMinutes(event.timezone, event.startsAt) ?? 0) * 60_000)
+        .toISOString()
+        .slice(0, 10)
+    : null;
+  const past = !eventDay || eventDay <= ymdInZone(new Date(), zone);
+  const accent = event.themeColor ?? "#6366f1";
+  const themeVars = eventThemeVars(accent);
+
   return (
-    <div className="mx-auto max-w-5xl space-y-6 pb-8">
+    <div
+      className="event-theme relative mx-auto max-w-5xl space-y-6 pb-12"
+      style={themeVars as React.CSSProperties}
+    >
       <RenderStamp />
-      {/* A static destination rather than `router.back()`: an event page is a deep link
-          people reach from a fresh tab or a search result, where going back leaves the app. */}
+
+      {/* Dynamic Ambient Glow Mesh */}
+      <div
+        className="pointer-events-none absolute -top-24 left-1/2 -z-10 h-[360px] w-[800px] -translate-x-1/2 rounded-full opacity-20 blur-[120px]"
+        style={{ background: "var(--event-accent)" }}
+        aria-hidden
+      />
+
       <Link
         href="/events"
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-ink"
       >
-        <ArrowLeft className="size-3" aria-hidden /> Back to events
+        <ArrowLeft className="size-3.5" aria-hidden /> Back to events
       </Link>
 
+      {/* Themed Event Hero Banner */}
       <EventHero event={event} />
 
       {event.enrichError ? (
@@ -148,29 +166,42 @@ export default async function EventDetailPage({
         </p>
       ) : null}
 
-      <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
-        <RosterImportPanel eventId={event.id} />
+      {/* Event Notes & Debrief Notepad (Feeds into Orbit Knowledge Context) */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "40ms" } as React.CSSProperties}>
+        <EventNotesPanel eventId={event.id} initialNotes={event.notes} />
       </div>
 
-      {/* The shortlist first: it is the answer, and the roster below it is the evidence.
-          `fallback={null}` because it renders nothing when the facts single nobody out. */}
-      <div className="reveal-mount" style={{ "--reveal-delay": "70ms" } as React.CSSProperties}>
+      {past ? (
+        <div className="reveal-mount" style={{ "--reveal-delay": "50ms" } as React.CSSProperties}>
+          <Suspense fallback={<Skeleton className="h-28 w-full rounded-2xl" />}>
+            <Met eventId={event.id} rosterPromise={rosterPromise} />
+          </Suspense>
+        </div>
+      ) : null}
+
+      {/* Suggested People to Reach Out To / Follow Up With (Available for Both Upcoming & Past) */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
         <Suspense fallback={null}>
           <WhoToTalkTo eventId={event.id} />
         </Suspense>
       </div>
 
-      {/* Companies before the roster: at a career fair the booth list IS the event, and at a
-          conference it is the shape that makes four hundred names navigable. */}
-      <div className="reveal-mount" style={{ "--reveal-delay": "90ms" } as React.CSSProperties}>
+      {/* Roster Import Panel */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "70ms" } as React.CSSProperties}>
+        <RosterImportPanel eventId={event.id} />
+      </div>
+
+      {/* Companies & Sponsors */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "80ms" } as React.CSSProperties}>
         <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
           <Companies eventId={event.id} />
         </Suspense>
       </div>
 
-      <div className="reveal-mount" style={{ "--reveal-delay": "120ms" } as React.CSSProperties}>
+      {/* Full Attendee Roster with Automatic LinkedIn Finder */}
+      <div className="reveal-mount" style={{ "--reveal-delay": "100ms" } as React.CSSProperties}>
         <h2 className="mb-3 font-[family-name:var(--font-display)] text-xl text-ink">
-          Who was there
+          Guest List & Attendees
         </h2>
         <Suspense fallback={<Skeleton className="h-64 w-full rounded-2xl" />}>
           <Roster
