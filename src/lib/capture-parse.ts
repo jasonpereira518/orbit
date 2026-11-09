@@ -11,6 +11,8 @@
  * Throws `UserFacingError` for the cases the person should read verbatim ("No people or
  * dates found…"); anything else is a real failure the callers word with `friendlyError`.
  */
+import { promptNow, userDayAnchor } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, tags } from "@/db/schema";
@@ -112,6 +114,8 @@ export type CaptureParseOptions = {
   background?: boolean;
   /** Injectable clock, for the smoke suite. */
   now?: Date;
+  /** The user's IANA zone; read from the viewer's cookie, else the account, when absent. */
+  timeZone?: string;
   /**
    * The account's decision engines — who a mention means, and a card's default save target
    * (decisions/capture.ts). Opened here when absent; pass `NO_ENGINES` for the rules alone.
@@ -235,8 +239,13 @@ export async function runCaptureParse(
       company: p.company,
     })),
   ]);
+  // The user's day, not the server's (UTC): relative phrases, the year of "March 3", and
+  // which dates are already past are all read against it.
+  const timeZone = opts.timeZone ?? (await viewerTimeZone(userId));
+  const today = userDayAnchor(timeZone, opts.now ?? new Date());
   const mergedHints: CaptureParseHints = {
     eventDate: hints?.eventDate || detected.hints.eventDate || null,
+    today: promptNow(timeZone, opts.now ?? new Date(), { time: false }),
     seedPeople: seedPeople.length ? seedPeople : undefined,
     interactionType: hints?.interactionType || detected.hints.interactionType || null,
     metAt: hints?.metAt || null,
@@ -259,7 +268,6 @@ export async function runCaptureParse(
   // Run all three concurrently. The commitment pass is failure-isolated: contact
   // extraction is the core value and must survive a bad dates response. The duplicate
   // lookup only depends on userId, so it doesn't need to wait on either AI call.
-  const today = opts.now ?? new Date();
   // Opened here rather than at its first use below: the dates pass is gated on a decision
   // model, and it starts inside this same Promise.all.
   const enginesP = opts.engines ? Promise.resolve(opts.engines) : openEngines(userId, { llm: true });

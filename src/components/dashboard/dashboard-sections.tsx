@@ -1,4 +1,5 @@
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -457,7 +458,7 @@ export async function RemindersAndFollowUpsSection({
 }: {
   bundle: DashboardBundle;
 }) {
-  const { data } = await bundle;
+  const [{ data }, timeZone] = await Promise.all([bundle, viewerTimeZone()]);
   return (
     <>
       <div className="reveal-mount min-w-0 [&>*]:h-full" style={revealDelay(0)}>
@@ -515,6 +516,7 @@ export async function RemindersAndFollowUpsSection({
                   tier={tierForContact(data, c.id)}
                   nextFollowUpAt={c.nextFollowUpAt}
                   lastInteractionAt={c.lastInteractionAt}
+                  timeZone={timeZone}
                 />
               ))
             )}

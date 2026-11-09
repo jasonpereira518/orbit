@@ -80,6 +80,8 @@ export const INTEGRATION_TABS = [
   { id: "microsoft", label: "Microsoft", group: "accounts", surface: "page.imports" },
   { id: "linkedin", label: "LinkedIn", group: "accounts", surface: "page.imports" },
   { id: "granola", label: "Granola", group: "accounts", surface: "page.imports" },
+  // Its own feature surface (`NOTION_SURFACE_KEY`) so it ships closed until launch.
+  { id: "notion", label: "Notion", group: "accounts", surface: "feature.notion" },
   { id: "ai", label: "AI", group: "ai", section: "settings-ai" },
   { id: "assistants", label: "Claude and ChatGPT", group: "ai", section: "settings-api" },
   { id: "api", label: "API keys", group: "advanced", section: "settings-api" },

@@ -18,9 +18,7 @@
 @source "(site)/layout.tsx";
 @source "(site)/loading.tsx";
 @source "(site)/page.tsx";
-@source "global-error.tsx";
 @source "layout.tsx";
-@source "not-found.tsx";
 @source "../components/analytics/pageview-beacon.tsx";
 @source "../components/analytics/vercel-telemetry.tsx";
 @source "../components/chat/chat-history-rail.tsx";
@@ -209,6 +207,7 @@
 @source "../lib/entitlements.ts";
 @source "../lib/error-events.ts";
 @source "../lib/errors.ts";
+@source "../lib/events/wall-clock.ts";
 @source "../lib/fact-lists.ts";
 @source "../lib/format-elapsed.ts";
 @source "../lib/gate-events.ts";
@@ -263,6 +262,7 @@
 @source "../lib/rate-limit.ts";
 @source "../lib/recruiters.ts";
 @source "../lib/related-contacts.ts";
+@source "../lib/reminder-due-bucket.ts";
 @source "../lib/reminder-lists.ts";
 @source "../lib/report-error.ts";
 @source "../lib/safe-links.ts";
@@ -299,10 +299,12 @@
 @source "../lib/usage-events.ts";
 @source "../lib/use-media-query.ts";
 @source "../lib/use-prefers-reduced-motion.ts";
+@source "../lib/user-clock.ts";
 @source "../lib/user-goals.ts";
 @source "../lib/user-settings.ts";
 @source "../lib/utils.ts";
 @source "../lib/verbatim.ts";
+@source "../lib/viewer-time-zone.ts";
 @source "../lib/voice-recording.ts";
 @source "../lib/waitlist-demo.ts";
 @source "../lib/waitlist-host.ts";

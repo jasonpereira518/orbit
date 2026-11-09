@@ -93,6 +93,7 @@ export function CaptureFlow({
   cloudNotes = null,
   openCloudReview = false,
   showImports = false,
+  showNotion = false,
   onSaved,
   variant = "capture",
 }: {
@@ -132,6 +133,8 @@ export function CaptureFlow({
   openCloudReview?: boolean;
   /** Show the Imports tab (the `page.imports` surface is live). Choosing it navigates to `/capture?mode=imports`. */
   showImports?: boolean;
+  /** The Notes library's "From Notion" button; false while the Notion surface isn't live for this viewer. */
+  showNotion?: boolean;
   /**
    * Embedded in onboarding: notes only (no mode tabs, no ignored-people list), and a save
    * hands back to the caller instead of showing the saved screen. The store is cleared
@@ -658,6 +661,7 @@ export function CaptureFlow({
                 onQueued={refreshQueue}
                 drive={drive}
                 canUseSync={canUseSync}
+                showNotion={showNotion}
               />
             )}
             {mode === "cloud" && cloudNotes && (

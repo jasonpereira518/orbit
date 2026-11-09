@@ -17,6 +17,7 @@ import { ApiSettings } from "@/components/settings/api-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
 import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { GranolaSettings } from "@/components/settings/granola-settings";
+import { NotionSettings } from "@/components/settings/notion-settings";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import { IntegrationsOverview } from "@/components/settings/integrations-overview";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
@@ -588,6 +589,7 @@ function DialogBody({
                       canUseRecruiters={canUseRecruiters}
                       onOpenPage={openPage}
                       speechAllowances={speechAllowances}
+                      notionLive={tabs.includes("notion")}
                     />
                   </>
                 )}
@@ -608,6 +610,7 @@ function Panel({
   canUseRecruiters,
   onOpenPage,
   speechAllowances,
+  notionLive,
 }: {
   id: IntegrationTabId;
   active: boolean;
@@ -616,6 +619,8 @@ function Panel({
   canUseRecruiters: boolean;
   onOpenPage: (page: IntegrationTabId) => void;
   speechAllowances: SpeechAllowances;
+  /** The Notion page is visible to this viewer, so Notion AI joins the assistants. */
+  notionLive: boolean;
 }) {
   switch (id) {
     // One page per account, not a stack of cards. `returnTo` is the page itself: the page is
@@ -649,10 +654,12 @@ function Panel({
       return <LinkedInSettings />;
     case "granola":
       return <GranolaSettings />;
+    case "notion":
+      return <NotionSettings />;
     case "ai":
       return <AiSettings initialSettings={initialSettings} speech={speechAllowances} />;
     case "assistants":
-      return <AssistantsSettings />;
+      return <AssistantsSettings withNotion={notionLive} />;
     case "reminders":
       return <CalendarFeedSettings />;
     case "api":

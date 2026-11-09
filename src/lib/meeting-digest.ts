@@ -324,6 +324,8 @@ export type MeetingMeta = {
   userName: string | null;
   /** Everyone known to have been on the call, from the user's list and the digest. */
   presentNames: string[];
+  /** The user's zone: an evening call in the US is still that day, not UTC's next one. */
+  timeZone?: string;
 };
 
 /**
@@ -337,6 +339,7 @@ export function buildMeetingCorpus(digest: MeetingDigest, meta: MeetingMeta): st
   const dateLabel = Number.isNaN(date.getTime())
     ? meta.startedAtIso
     : date.toLocaleDateString("en-US", {
+        timeZone: meta.timeZone,
         weekday: "long",
         year: "numeric",
         month: "long",

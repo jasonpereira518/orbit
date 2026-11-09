@@ -5,22 +5,17 @@ import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge"
 import { companyBrandText } from "@/lib/company-brand";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { cn } from "@/lib/utils";
+import { DEFAULT_TZ, daysBetweenYmd, ymdInZone } from "@/lib/reminder-due-bucket";
 
-function followUpDueLabel(nextFollowUpAt?: Date | string | null) {
+/** Calendar days in the viewer's zone: due at 9am and read at 3pm is "Due today", not overdue a day. */
+function followUpDueLabel(nextFollowUpAt: Date | string | null | undefined, timeZone: string) {
   if (!nextFollowUpAt) return null;
   const d = new Date(nextFollowUpAt);
   if (Number.isNaN(d.getTime())) return null;
   const now = new Date();
-  const overdue = d <= now;
-  if (overdue) {
-    const days = Math.max(
-      1,
-      Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24))
-    );
-    return { text: `Overdue ${days} day${days === 1 ? "" : "s"}`, overdue: true };
-  }
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return { text: "Due today", overdue: false };
+  const days = daysBetweenYmd(ymdInZone(d, timeZone), ymdInZone(now, timeZone));
+  if (days > 0) return { text: `Overdue ${days} day${days === 1 ? "" : "s"}`, overdue: true };
+  if (days === 0) return { text: "Due today", overdue: false };
   return {
     text: `Due ${formatDistanceToNow(d, { addSuffix: true })}`,
     overdue: false,
@@ -45,6 +40,7 @@ export function DueFollowUpRow({
   tier,
   nextFollowUpAt,
   lastInteractionAt,
+  timeZone = DEFAULT_TZ,
 }: {
   id: string;
   fullName: string;
@@ -54,8 +50,10 @@ export function DueFollowUpRow({
   tier?: "inner" | "mid" | "outer";
   nextFollowUpAt?: Date | string | null;
   lastInteractionAt?: Date | string | null;
+  /** The viewer's zone, for which calendar day the follow-up falls on. */
+  timeZone?: string;
 }) {
-  const due = followUpDueLabel(nextFollowUpAt);
+  const due = followUpDueLabel(nextFollowUpAt, timeZone);
   const lastTouch = lastTouchLabel(lastInteractionAt);
   const companyBrand = companyBrandText(company);
   // The role line carries the company, tinted; it stays index 0 so the overdue styling

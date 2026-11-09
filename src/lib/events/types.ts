@@ -152,5 +152,6 @@ export type RosterRow = {
   source: AttendeeSource;
   spokeTo: boolean;
   contactId: string | null;
+  profileImageUrl?: string | null;
 };
 

@@ -16,15 +16,17 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { CalendarPlus, ChevronDown, Loader2, Plug, Trash2 } from "lucide-react";
+import { CalendarPlus, ChevronDown, Loader2, Plug, RefreshCw, Trash2, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/lib/toast";
 import {
   connectEventFeed,
+  connectEventbriteKey,
   connectLuma,
   disconnectEventProvider,
   startEventbriteOAuth,
+  triggerProviderSync,
 } from "@/actions/events";
 import type { EventConnectionSummary } from "@/lib/events/connections";
 import type { EventConnectionProvider } from "@/lib/events/types";
@@ -87,6 +89,8 @@ export function EventConnectionsCard({
   const [pending, start] = useTransition();
   const [apiKey, setApiKey] = useState("");
   const [showLumaField, setShowLumaField] = useState(false);
+  const [eventbriteKey, setEventbriteKey] = useState("");
+  const [showEventbriteField, setShowEventbriteField] = useState(false);
   const [feedUrl, setFeedUrl] = useState("");
   const [openFeed, setOpenFeed] = useState<"luma_ics" | "partiful_ics" | null>(null);
 
@@ -151,6 +155,36 @@ export function EventConnectionsCard({
       setApiKey("");
       setShowLumaField(false);
       toast.success("Luma connected — events you host will sync automatically");
+      router.refresh();
+    });
+  }
+
+  function saveEventbriteKey() {
+    start(async () => {
+      const result = await connectEventbriteKey(eventbriteKey);
+      if (!result.ok) {
+        toast.error(result.error ?? "Eventbrite didn’t accept that token");
+        return;
+      }
+      setEventbriteKey("");
+      setShowEventbriteField(false);
+      toast.success("Eventbrite connected — events you host will sync automatically");
+      router.refresh();
+    });
+  }
+
+  function syncNow(provider: EventConnectionProvider) {
+    start(async () => {
+      const result = await triggerProviderSync(provider);
+      if (!result.ok) {
+        toast.error(friendlyError(result.error, "Couldn’t sync events right now"));
+        return;
+      }
+      toast.success(
+        result.value.count > 0
+          ? `Synced — ${result.value.count} event${result.value.count === 1 ? "" : "s"} updated`
+          : "Synced — all events up to date"
+      );
       router.refresh();
     });
   }
@@ -340,41 +374,102 @@ export function EventConnectionsCard({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-ink">Eventbrite</p>
-            <p className="text-xs text-muted-foreground">
-              {eventbrite
-                ? eventbrite.status === "needs_reauth"
+        {eventbrite ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-ink">Eventbrite</p>
+              <p className="text-xs text-muted-foreground">
+                {eventbrite.status === "needs_reauth"
                   ? "Needs reconnecting — Eventbrite rejected the saved token."
-                  : `Connected${eventbrite.label ? ` · ${eventbrite.label}` : ""}`
-                : eventbriteConfigured
-                  ? "Sign in to sync events your organisation runs."
-                  : "Not configured on this deployment."}
-            </p>
+                  : `Connected${eventbrite.label ? ` · ${eventbrite.label}` : ""}`}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => syncNow("eventbrite")}
+                disabled={pending}
+              >
+                <RefreshCw className={`size-3.5 ${pending ? "animate-spin" : ""}`} aria-hidden />
+                Sync
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => disconnect("eventbrite")}
+                disabled={pending}
+              >
+                <Trash2 className="size-4" aria-hidden />
+                Disconnect
+              </Button>
+            </div>
           </div>
-          {eventbrite ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => disconnect("eventbrite")}
-              disabled={pending}
-            >
-              <Trash2 className="size-4" aria-hidden />
-              Disconnect
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={connectEventbrite}
-              disabled={pending || !eventbriteConfigured}
-            >
-              <Plug className="size-4" aria-hidden />
-              Connect
-            </Button>
-          )}
-        </div>
+        ) : showEventbriteField ? (
+          <div className="space-y-2 rounded-xl border border-border/60 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-ink">Eventbrite Private Token</p>
+              <button
+                type="button"
+                onClick={() => setShowEventbriteField(false)}
+                aria-label="Cancel"
+                className="text-muted-foreground hover:text-ink"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Paste your personal token from Eventbrite &rarr; Account Settings &rarr; Developer Links &rarr; API Keys.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                value={eventbriteKey}
+                onChange={(e) => setEventbriteKey(e.target.value)}
+                placeholder="Eventbrite Private Token"
+                type="password"
+                aria-label="Eventbrite Private Token"
+                className="flex-1 min-w-[200px]"
+              />
+              <Button onClick={saveEventbriteKey} disabled={pending || !eventbriteKey.trim()}>
+                {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                Save &amp; Sync
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-ink">Eventbrite</p>
+              <p className="text-xs text-muted-foreground">
+                {eventbriteConfigured
+                  ? "Sign in with OAuth or connect with a private token to sync events you host."
+                  : "Connect with your Eventbrite private token to sync events you host."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {eventbriteConfigured ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={connectEventbrite}
+                  disabled={pending}
+                >
+                  <Plug className="size-4" aria-hidden />
+                  Sign in with Eventbrite
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowEventbriteField(true)}
+                disabled={pending}
+              >
+                <Plug className="size-4" aria-hidden />
+                {eventbriteConfigured ? "Token" : "Connect"}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
       </div>
       </div>
