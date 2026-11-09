@@ -3329,6 +3329,30 @@ export type ConnectorSyncCursor = {
   clientId?: string | null;
   /** Granola: sync only notes in these folders. Absent or empty means every note. */
   folderIds?: string[] | null;
+  /** Notion: the workspace this grant belongs to, and the people database being synced. */
+  notion?: NotionCursor | null;
+};
+
+/** The `PersonRecord` fields a Notion database column can fill. */
+export type NotionPersonField =
+  | "fullName"
+  | "email"
+  | "phone"
+  | "linkedinUrl"
+  | "company"
+  | "title"
+  | "location"
+  | "notes";
+
+export type NotionCursor = {
+  workspaceId: string | null;
+  workspaceName: string | null;
+  workspaceIcon: string | null;
+  /** The people database (a Notion data source) synced into contacts; null means none chosen. */
+  dataSourceId?: string | null;
+  dataSourceTitle?: string | null;
+  /** Field → Notion property id (ids survive a column rename). */
+  mapping?: Partial<Record<NotionPersonField, string>> | null;
 };
 
 export type ProviderSyncCursor = {

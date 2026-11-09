@@ -8,7 +8,7 @@
  * checks both). Tailwind only compiles class names it can see whole, so each stays a literal.
  */
 
-export type ProviderThemeId = "google" | "microsoft" | "linkedin" | "granola" | "claude" | "chatgpt";
+export type ProviderThemeId = "google" | "microsoft" | "linkedin" | "granola" | "notion" | "claude" | "chatgpt";
 
 export type ProviderTheme = {
   className: string;
@@ -56,6 +56,15 @@ export const PROVIDER_THEMES: Record<ProviderThemeId, ProviderTheme> = {
     stripe: ["#B4C44A"],
     stripeVariant: "solid",
     tone: "#6B7A1A",
+  },
+  // Notion's own ink: near-black controls, the page's warm off-black for icon tiles.
+  notion: {
+    className:
+      "[--primary:#191919] [--primary-foreground:#ffffff] [--ring:#191919] dark:[--primary:#E6E6E5] dark:[--primary-foreground:#191919] dark:[--ring:#E6E6E5]",
+    primary: { light: "#191919", dark: "#E6E6E5", lightText: "#ffffff", darkText: "#191919" },
+    stripe: ["#37352F"],
+    stripeVariant: "solid",
+    tone: "#37352F",
   },
   // Claude's terracotta. The published #D97757 under white text is 3.1:1, so light mode
   // deepens it; dark mode keeps the real colour with dark text.
