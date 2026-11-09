@@ -26,7 +26,11 @@ import {
 } from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
 
-const SEARCH_DEBOUNCE_MS = 250;
+// The wait after the last keystroke before the list re-renders on the server. It was 250 ms, the
+// largest single piece of every search (a settled search took 363–601 ms, of which 250 was this
+// wait). 150 sits between the command palette (140) and the composer menu (180): a typist
+// pausing between words still gets one render, and a fast one still gets one.
+const SEARCH_DEBOUNCE_MS = 150;
 
 const CLOSENESS_OPTIONS = [
   { value: "any", label: "Any" },

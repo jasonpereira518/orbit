@@ -20,6 +20,8 @@ import {
   discoverPeople,
   listRecentResearch,
   personResearchKey,
+  answerMatch,
+  searchOnceThenVerify,
   researchCompany,
   researchPerson,
   saveResearchedPersonForUser,
@@ -335,6 +337,26 @@ async function main() {
   const rerun = fake(CONFIDENT);
   await researchPerson(USER, { fullName: "Ivy Chen", company: "Notion" }, { researcher: rerun.researcher });
   check("…and the rerun on Find people is a cache hit, not a second search", rerun.asked.length === 0);
+
+  // --- one search first; a second only when the first is unsure ---------------------
+  const stepCalls: number[] = [];
+  const answering = (matches: string[]) => async (_user: string, maxSearches: number) => {
+    stepCalls.push(maxSearches);
+    return { json: JSON.stringify({ match: matches[stepCalls.length - 1] }), sources: [{ url: `https://s${stepCalls.length}.example`, title: null }] };
+  };
+  await searchOnceThenVerify(answering(["confident"]), "p");
+  check("a confident first answer stops at one search", stepCalls.join() === "1", stepCalls.join());
+  stepCalls.length = 0;
+  await searchOnceThenVerify(answering(["none"]), "p");
+  check("so does 'none': a second look rarely finds somebody", stepCalls.join() === "1", stepCalls.join());
+  stepCalls.length = 0;
+  const verified = await searchOnceThenVerify(answering(["unsure", "confident"]), "p");
+  check(
+    "an unsure first answer earns one more search, with both calls' sources kept",
+    stepCalls.join() === "1,1" && answerMatch(verified.json) === "confident" && verified.sources.length === 2,
+    stepCalls.join(),
+  );
+  check("an answer that does not parse has no verdict", answerMatch("not json") === null);
 
   // --- briefs are pruned at RESEARCH_CACHE_DAYS; other cached answers are not -------
   const old = new Date(Date.now() - (RESEARCH_CACHE_DAYS + 1) * 86_400_000);
