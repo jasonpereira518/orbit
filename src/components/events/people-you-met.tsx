@@ -11,6 +11,7 @@ import Link from "next/link";
 import { NotebookPen, UserCheck } from "lucide-react";
 import { IntentLink } from "@/components/ui/intent-link";
 import { buttonVariants } from "@/components/ui/button";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { cn } from "@/lib/utils";
 import type { RosterRow } from "@/lib/events/types";
 
@@ -44,8 +45,15 @@ export function PeopleYouMet({ eventId, rows }: { eventId: string; rows: RosterR
             <li key={row.id} className="py-2">
               <IntentLink
                 href={`/contacts/${row.contactId}`}
-                className="flex min-w-0 items-baseline gap-2 text-sm hover:underline"
+                className="flex min-w-0 items-center gap-2 text-sm hover:underline"
               >
+                <ContactAvatar
+                  contactId={row.contactId}
+                  fullName={row.fullName ?? row.email ?? "Contact"}
+                  profileImageUrl={row.profileImageUrl}
+                  size="sm"
+                  className="size-6 shrink-0"
+                />
                 <span className="truncate font-medium text-ink">{row.fullName ?? row.email ?? "Unnamed"}</span>
                 <span className="truncate text-xs text-muted-foreground">
                   {[row.title, row.company].filter(Boolean).join(" · ")}

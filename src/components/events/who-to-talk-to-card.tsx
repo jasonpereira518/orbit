@@ -19,6 +19,7 @@ import { IntentLink } from "@/components/ui/intent-link";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
 import { explainAttendee } from "@/actions/events";
+import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import type { WhoToTalkTo } from "@/lib/events/who-to-talk-to";
 
 export function WhoToTalkToCard({
@@ -76,8 +77,15 @@ export function WhoToTalkToCard({
           return (
             <li key={row.attendeeId} className="rounded-xl border border-border/60 p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center gap-3">
+                  <ContactAvatar
+                    contactId={row.contactId}
+                    fullName={row.name}
+                    size="sm"
+                    className="size-8 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-medium text-ink">
                       {row.contactId ? (
                         <IntentLink href={`/contacts/${row.contactId}`} className="hover:underline">
@@ -104,7 +112,8 @@ export function WhoToTalkToCard({
                     <p className="truncate text-xs text-muted-foreground">{detail}</p>
                   ) : null}
                 </div>
-                {aiAvailable ? (
+              </div>
+              {aiAvailable ? (
                   <Button
                     variant="ghost"
                     size="xs"
