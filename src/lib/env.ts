@@ -93,7 +93,6 @@ export const REQUIRED_IN_PREVIEW = [
  * (`src/lib/ai-access.ts`). Checked by presence only, here as everywhere.
  */
 const MANAGED_AI_KEYS = [
-  "ORBIT_MANAGED_GEMINI_API_KEY",
   "ORBIT_MANAGED_OPENAI_API_KEY",
   "ORBIT_MANAGED_ANTHROPIC_API_KEY",
 ] as const;
@@ -148,6 +147,17 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       const secret = env.ENCRYPTION_SECRET!.trim();
       if (secret.length < 32 || secret === ENCRYPTION_PLACEHOLDER) {
         errors.push("ENCRYPTION_SECRET must be at least 32 characters and not the .env.example placeholder");
+      }
+    }
+    // Set only while rotating ENCRYPTION_SECRET: the old value, still accepted for decrypting
+    // and verifying (src/lib/secrets.ts). Same strength rule; the same value as the current
+    // one means the rotation has not actually happened.
+    if (has(env, "ENCRYPTION_SECRET_PREVIOUS")) {
+      const previous = env.ENCRYPTION_SECRET_PREVIOUS!.trim();
+      if (previous.length < 32 || previous === ENCRYPTION_PLACEHOLDER) {
+        errors.push("ENCRYPTION_SECRET_PREVIOUS must be at least 32 characters and not the .env.example placeholder");
+      } else if (previous === env.ENCRYPTION_SECRET?.trim()) {
+        warnings.push("ENCRYPTION_SECRET_PREVIOUS equals ENCRYPTION_SECRET — remove it, or set ENCRYPTION_SECRET to the new value");
       }
     }
     // A short salt is worse than none: the hash it produces is a plain digest of an IP,
@@ -239,6 +249,26 @@ export function validateEnv(env: EnvBag, options: { vercelEnv: VercelEnv }): Env
       if (!has(env, name) && !(REQUIRED_IN_PREVIEW as readonly string[]).includes(name)) {
         warnings.push(`${name} is unset (required in production)`);
       }
+    }
+    // A preview must never carry production's credentials. Variables added in Vercel without
+    // picking an environment land on "All Environments", so a live Clerk or Stripe key on a
+    // preview is the common mistake, not an exotic one — and a preview signed into the
+    // production Clerk instance, or charging real cards, is production with a test label.
+    if (has(env, "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY") && !env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!.startsWith("pk_test_")) {
+      errors.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must be a test-instance key (pk_test_) in preview deployments");
+    }
+    if (has(env, "CLERK_SECRET_KEY") && !env.CLERK_SECRET_KEY!.startsWith("sk_test_")) {
+      errors.push("CLERK_SECRET_KEY must be a test-instance key (sk_test_) in preview deployments");
+    }
+    if (has(env, "STRIPE_SECRET_KEY") && !env.STRIPE_SECRET_KEY!.startsWith("sk_test_")) {
+      errors.push("STRIPE_SECRET_KEY must be a test-mode key (sk_test_) in preview deployments");
+    }
+    // The showcase account is comped Lifetime on a keypress (`triggerDemoCelebration`). That
+    // is fine against a preview's own branch and a real grant against production's rows.
+    const target = databaseHost(env.DATABASE_URL);
+    const production = env.PRODUCTION_DB_HOST?.trim().toLowerCase();
+    if (has(env, "DEMO_ACCOUNT_USER_ID") && target && production && target === production) {
+      errors.push("DEMO_ACCOUNT_USER_ID must not be set on a preview whose DATABASE_URL is the production database");
     }
     return { errors, warnings, missingRequired, missingExpected };
   }

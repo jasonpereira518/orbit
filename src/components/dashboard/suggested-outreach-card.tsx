@@ -1,11 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { saveResearchedPerson } from "@/actions/web-research";
 import { SuggestionRow } from "@/components/dashboard/suggestion-row";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LINKEDIN_PROFILE, requestBrief } from "@/lib/research-client";
+import { friendlyError } from "@/lib/errors";
+import type { PersonToMeet } from "@/lib/people-to-meet";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 const PREVIEW_COUNT = 4;
@@ -26,6 +31,117 @@ export type SuggestedOutreachItem = {
   lastInteractionAt?: Date | string | null;
   tier?: "inner" | "mid" | "outer";
 };
+
+/**
+ * Loads after paint (a weekly web search can be slow) and renders nothing until there are rows.
+ * A route, not a server action: Next runs a client's actions one at a time, so an action here
+ * would hold every other dashboard action behind the search.
+ */
+function PeopleToMeet() {
+  const [result, setResult] = useState<{ people: PersonToMeet[]; canResearch: boolean } | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/people-to-meet", { method: "POST", headers: { "x-orbit-research": "1" } })
+      .then((r) => (r.ok ? (r.json() as Promise<{ people: PersonToMeet[]; canResearch: boolean }>) : null))
+      .then((r) => live && r && setResult(r))
+      .catch(() => {}); // a failed load is the same as nothing to show
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!result?.people.length) return null;
+  return (
+    <section aria-labelledby="people-to-meet" className="space-y-2 pt-2">
+      <h3 id="people-to-meet" className="text-sm font-medium text-ink">People to meet</h3>
+      <div className={LIST_CLASS}>
+        {result.people.map((p) => (
+          <PersonToMeetRow key={p.url} person={p} canResearch={result.canResearch} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PersonToMeetRow({ person, canResearch }: { person: PersonToMeet; canResearch: boolean }) {
+  const [briefKey, setBriefKey] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+
+  // Save and Brief share one person brief (cached server-side), so Save never needs Brief first.
+  const brief = async () => {
+    if (briefKey) return briefKey;
+    const url = person.url.replace(/[?#].*$/, "");
+    const b = await requestBrief({
+      kind: "person",
+      fullName: person.name,
+      company: person.company ?? "",
+      linkedinUrl: LINKEDIN_PROFILE.test(url) ? url : "",
+    });
+    setBriefKey(b.key);
+    if (b.dossier.kind === "person" && b.dossier.match === "confident") setSummary(b.dossier.summary ?? null);
+    else setUnconfirmed(true);
+    return b.key;
+  };
+  const run = (then: (key: string) => Promise<void>) =>
+    start(async () => {
+      try {
+        await then(await brief());
+      } catch (err) {
+        toast.error(friendlyError(err, "That didn’t work — try again?"));
+      }
+    });
+  const save = () =>
+    run(async (key) => {
+      const res = await saveResearchedPerson(key);
+      if (!res.ok) return void toast.error(res.error);
+      setSaved(res.value.contactId);
+    });
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card p-3">
+      <a
+        href={person.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="font-medium text-primary hover:underline"
+      >
+        {person.name}
+      </a>
+      {person.headline && <p className="mt-0.5 text-xs text-muted-foreground">{person.headline}</p>}
+      <p className="mt-1.5 text-sm text-ink/80">{person.whyMatches}</p>
+      {summary && <p className="mt-1.5 text-xs text-muted-foreground">{summary}</p>}
+      {unconfirmed && <p role="status" className="mt-1.5 text-xs text-muted-foreground">Couldn’t confirm a match.</p>}
+      {canResearch && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {saved ? (
+            <Link href={`/contacts/${saved}`} className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}>
+              Saved — open
+            </Link>
+          ) : (
+            <>
+              <Button type="button" size="sm" disabled={pending} onClick={save}>
+                Save
+              </Button>
+              {!summary && !unconfirmed && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pending}
+                  onClick={() => run(async () => {})}
+                >
+                  {pending ? "Reading…" : "Brief"}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function SuggestedOutreachCard({
   items,
@@ -161,6 +277,7 @@ export function SuggestedOutreachCard({
             ) : null}
           </>
         )}
+        <PeopleToMeet />
       </CardContent>
     </Card>
   );

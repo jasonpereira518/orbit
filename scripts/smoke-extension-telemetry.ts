@@ -140,8 +140,9 @@ run(async () => {
   check("a probe without the header is not an install", (await eventsOf("extension_installed")).length === 1 && (await eventsOf("extension_action")).length === 0);
 
   console.log("\nactions…");
-  // Events are not released to an ordinary account by default: the save is refused, which is an
-  // attempted action that failed.
+  // With Events marked coming soon, the save is refused, which is an attempted action that
+  // failed.
+  await setSurfaceComingSoon(USER, "page.events", true);
   const refused = await roster(post("/event-roster", { page: rosterPage }, { "x-orbit-extension-version": "1.3.0" }));
   check("a refused roster save is a clean 404", refused.status === 404, String(refused.status));
   const refusedEvents = await settle("extension_action", 1);
@@ -159,7 +160,7 @@ run(async () => {
     actions.length === 2 && actions[1]?.properties.action === "event_roster" && actions[1]?.properties.site === "luma" && actions[1]?.properties.ok === true && actions[1]?.surface === "extension",
     JSON.stringify(actions.map((a) => a.properties))
   );
-  await setSurfaceComingSoon(USER, "page.events", true); // back to the code default
+  await setSurfaceComingSoon(USER, "page.events", false); // back to the code default
   const failed = await followUps(post("/follow-ups", { contactId: "00000000-0000-4000-8000-000000000000", inDays: 3 }));
   check("a follow-up for a contact that is not there fails cleanly", failed.status === 404, String(failed.status));
   const afterFail = await settle("extension_action", 3);

@@ -238,13 +238,15 @@ run(async () => {
     (t) => t.name
   );
   check("tools/list returns the read tools", ["search_contacts", "get_contact", "who_do_i_know_at", "due_followups"].every((t) => tools.includes(t)), tools.join(","));
-  // Page-gated feature reads follow the page: events is not released to this account, so an
-  // outside agent is not offered its tools; an ungated feature read is.
+  // Page-gated feature reads follow the page: radar and outreach ship as coming soon, so an
+  // outside agent is not offered their tools; a released page's reads (events) and an ungated
+  // feature read are.
   check(
     "a tool behind a page not yet released to the user is not offered",
-    !tools.includes("list_events") && !tools.includes("get_event_roster") && tools.includes("query_contacts"),
+    !tools.includes("list_radar_cards") && !tools.includes("list_campaigns") && tools.includes("query_contacts"),
     tools.join(",")
   );
+  check("a released page's tools are offered", tools.includes("list_events") && tools.includes("get_event_roster"), tools.join(","));
   check("a write key sees the write tools", tools.includes("log_interaction") && tools.includes("create_contact"), tools.join(","));
   // So do the page-gated writes: radar and outreach ship as coming soon, so their writes are not
   // offered either, while an ungated catalog write is.

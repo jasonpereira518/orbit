@@ -287,7 +287,12 @@ export async function rasterizePdf(
   const data = new Uint8Array(await file.arrayBuffer());
   // Keep the loading task: in pdfjs v6 `destroy()` lives on it, not on the document, and
   // it is what tears the worker down.
-  const loadingTask = pdfjs.getDocument({ data });
+  //
+  // `isEvalSupported: false` (audit L-18): pdfjs 6 no longer compiles fonts with `eval` and
+  // dropped the option from its types, so on this version it is a no-op. It is passed anyway
+  // so a downgrade, or a release that brings the path back, cannot quietly turn eval on.
+  const params: Parameters<typeof pdfjs.getDocument>[0] & { isEvalSupported: false } = { data, isEvalSupported: false };
+  const loadingTask = pdfjs.getDocument(params);
   const doc = await loadingTask.promise;
   try {
     if (doc.numPages === 0) throw new ScanError("empty-pdf");

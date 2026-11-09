@@ -9,15 +9,11 @@ import {
   saveOnboardingStep,
   startOnboardingPath,
 } from "@/actions/onboarding";
-import { OrbitLogo } from "@/components/orbit-logo";
 import { Button } from "@/components/ui/button";
+import { OnboardingMark } from "@/components/onboarding/onboarding-mark";
 import { OnboardingProgress } from "@/components/onboarding/onboarding-progress";
-import {
-  BackButton,
-  Stagger,
-  StaggerItem,
-  StepHeading,
-} from "@/components/onboarding/onboarding-ui";
+import { StaggerItem, StepLayout } from "@/components/onboarding/onboarding-ui";
+import { AboutStep } from "@/components/onboarding/steps/about-step";
 import { CaptureStep } from "@/components/onboarding/steps/capture-step";
 import { ConnectStep } from "@/components/onboarding/steps/connect-step";
 import { HighlightsStep, type PlanFlags } from "@/components/onboarding/steps/highlights-step";
@@ -60,6 +56,8 @@ export type OnboardingFlowProps = {
   captureJob: CaptureJobView | null;
   linkedinRequested: boolean;
   linkedinImported: boolean;
+  /** `social_links.linkedin`, so the About you step's URL field starts filled. */
+  linkedinUrl: string | null;
   /** Surface keys hidden from this viewer; their overview chapters are skipped. */
   hidden: string[];
   /** Page keys behind the coming-soon screen for this viewer. */
@@ -98,6 +96,7 @@ export function OnboardingFlow({
   captureJob: initialCaptureJob,
   linkedinRequested,
   linkedinImported,
+  linkedinUrl,
   hidden,
   comingSoon,
   connect,
@@ -278,18 +277,31 @@ export function OnboardingFlow({
   const showSkip = step !== "welcome" && step !== "launch";
 
   return (
-    <div className="relative flex min-h-dvh flex-col overflow-x-clip">
-      {/* A faint glow behind everything: static, so it costs nothing per frame. No ring —
-          at this size its edge ran straight through the step content. */}
+    // From md up the shell is exactly one screen tall, so a step that outgrows it scrolls its
+    // own middle region (see StepLayout) instead of the page. Phones scroll the page.
+    <div className="relative flex min-h-dvh flex-col overflow-x-clip md:h-dvh">
+      {/* Faint light behind everything, and a few still stars: static, so they cost nothing
+          per frame. No ring — at this size its edge ran straight through the step content. */}
       <div
         aria-hidden
         className="pointer-events-none absolute top-[-30vmax] left-1/2 size-[80vmax] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--primary)_5%,transparent)_0%,transparent_60%)]"
       />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute top-[-20vmax] right-[-15vmax] size-[60vmax] rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--gold)_14%,transparent)_0%,transparent_62%)]"
+      />
+      <div aria-hidden className="pointer-events-none absolute inset-0" style={{ backgroundImage: STARS }} />
 
-      <header className="relative z-10 mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-4 sm:px-8 sm:pt-5">
+      <header className="relative z-10 mx-auto grid w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 pt-4 sm:px-8">
         <div className="flex items-center gap-2 justify-self-start">
-          <OrbitLogo size="sm" />
-          <span className="font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-ink">
+          <OnboardingMark size={28} />
+          {/* Below sm the named stepper needs the room, so the word is for screen readers only. */}
+          <span
+            className={cn(
+              "font-[family-name:var(--font-display)] text-lg leading-none tracking-tight text-ink",
+              path && "max-sm:sr-only",
+            )}
+          >
             Orbit
           </span>
         </div>
@@ -302,7 +314,7 @@ export function OnboardingFlow({
               type="button"
               variant="ghost"
               size="sm"
-              className="text-muted-foreground"
+              className="h-9 text-muted-foreground"
               disabled={pending}
               onClick={() => leave(false)}
             >
@@ -316,9 +328,9 @@ export function OnboardingFlow({
           the stage itself until the person reaches the app. */}
       <StageJobLine />
 
-      {/* Every step is sized to fit one laptop screen: the column centres it in whatever
-          height is left under the header, and only a genuinely short window scrolls. */}
-      <main id="main-content" className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center px-4 pt-4 pb-5 sm:px-8 sm:pt-5 sm:pb-6">
+      {/* Every step fills the height left under the header, up to a cap, and the column centres
+          it: each step pins its footer to the bottom of that box. */}
+      <main id="main-content" className="relative mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col justify-center px-4 pt-3 pb-4 sm:px-8 sm:pb-5">
         <AnimatePresence mode="popLayout" initial={false} custom={slide}>
           <motion.div
             key={step}
@@ -329,12 +341,22 @@ export function OnboardingFlow({
             initial="enter"
             animate="center"
             exit="exit"
-            className="w-full outline-none"
+            className="flex min-h-0 w-full flex-1 flex-col outline-none md:max-h-[46rem]"
           >
             {step === "welcome" && (
               <Centered>
                 <WelcomeStep needsTerms={!termsDone} pending={pending} onChoose={choosePath} />
               </Centered>
+            )}
+
+            {step === "about" && (
+              <AboutStep
+                initialUrl={linkedinUrl}
+                pending={pending}
+                onNext={() => advance("about")}
+                onSkip={() => advance("about")}
+                onBack={() => retreat("about")}
+              />
             )}
 
             {step === "import" && (
@@ -464,10 +486,17 @@ function StageJobLine() {
   );
 }
 
+/** Five still stars in the top corners: dots in the motif's gold and a muted teal. */
+const STARS = [
+  "radial-gradient(1.5px 1.5px at 88% 12%, var(--gold), transparent)",
+  "radial-gradient(1px 1px at 76% 22%, var(--gold), transparent)",
+  "radial-gradient(1px 1px at 93% 30%, color-mix(in oklab, var(--primary) 40%, transparent), transparent)",
+  "radial-gradient(1.2px 1.2px at 70% 8%, color-mix(in oklab, var(--primary) 40%, transparent), transparent)",
+  "radial-gradient(1px 1px at 9% 18%, var(--gold), transparent)",
+].join(", ");
+
 function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-center">{children}</div>
-  );
+  return <div className="flex min-h-0 flex-1 flex-col items-center justify-center">{children}</div>;
 }
 
 function BranchStep({
@@ -486,19 +515,11 @@ function BranchStep({
   wide?: boolean;
   children: React.ReactNode;
 }) {
+  // The shared frame without a footer: each branch's own controls end its content, and the
+  // middle may scroll (the no-scroll goal covers the eight main pages only).
   return (
-    <Stagger className={cn("mx-auto", wide ? "max-w-5xl space-y-4" : "max-w-2xl space-y-6")}>
-      <div className="space-y-4">
-        {onBack && (
-          <StaggerItem>
-            <BackButton onClick={onBack} />
-          </StaggerItem>
-        )}
-        <StepHeading eyebrow={eyebrow} title={title}>
-          {description}
-        </StepHeading>
-      </div>
+    <StepLayout onBack={onBack} eyebrow={eyebrow} title={title} description={description} className={cn(wide && "max-w-5xl")}>
       <StaggerItem>{children}</StaggerItem>
-    </Stagger>
+    </StepLayout>
   );
 }

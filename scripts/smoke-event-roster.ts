@@ -1,24 +1,19 @@
 /**
- * The roster -> connections flow, end to end.
+ * The roster, and marking people as met on it.
  *
  * These are the properties whose absence is invisible until someone's network is wrong:
- * re-connecting the same people must not double their interactions, an attendee who is
- * already a contact must be matched rather than duplicated, two different people who happen
- * to share a name must NOT be merged (the reason this path uses 0.85 and not calendar's 0.6),
- * the plan cap must be reported rather than swallowed, and every connected attendee must be
- * linked back to the contact they became.
+ * re-importing must not duplicate rows, a contact logged as met must land on the roster row
+ * that is already them rather than a second line, logging twice must change nothing, and
+ * every person met must be linked back to their contact.
  */
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
-import {
-  connectAttendees,
-  previewConnect,
-  restampEventInteractions,
-} from "../src/lib/events/connect";
+import { previewConnect, restampEventInteractions } from "../src/lib/events/connect";
 import {
   createEventForUser,
+  recordMetAtEvent,
   linkAttendeesToContacts,
   listRosterForUser,
   upsertEventAttendees,
@@ -65,6 +60,23 @@ async function counts() {
              (SELECT count(*)::int FROM interactions WHERE user_id = ${USER}) AS interactions
     `)
   )[0]!;
+}
+
+async function addContact(fullName: string, email: string | null, linkedinUrl: string | null = null): Promise<string> {
+  const db = await getDb();
+  return rowsOf<{ id: string }>(
+    await db.execute(sql`
+      INSERT INTO contacts (user_id, full_name, email, linkedin_url)
+      VALUES (${USER}, ${fullName}, ${email}, ${linkedinUrl}) RETURNING id
+    `)
+  )[0]!.id;
+}
+
+async function graceId(): Promise<string> {
+  const db = await getDb();
+  return rowsOf<{ id: string }>(
+    await db.execute(sql`SELECT id FROM contacts WHERE user_id = ${USER} AND email = 'grace@cobol.mil'`)
+  )[0]!.id;
 }
 
 const ROSTER = `
@@ -124,76 +136,40 @@ run(async () => {
     preview.filter((p) => p.outcome === "create").length === 2
   );
 
-  const before = await counts();
-  const summary = await connectAttendees(USER, event, roster.map((r) => r.id));
-  const after = await counts();
-
-  check("two new contacts were created", summary.created === 2, JSON.stringify(summary));
-  check("one existing contact was matched", summary.matched === 1);
-  check("three interactions were logged", summary.interactionsLogged === 3);
-  check(
-    "the network grew by exactly two",
-    after.contacts - before.contacts === 2,
-    `${before.contacts} -> ${after.contacts}`
-  );
-  check("nothing was blocked by the plan", summary.blockedByPlan === 0);
-
-  // --- the stored interaction is shaped right ------------------------------------------------
+  // --- logging people as met ("Log who you met" saves through capture, then this) -----------
   {
-    const db = await getDb();
-    const rows = rowsOf<{ interaction_type: string; external_id: string; interaction_date: string }>(
-      await db.execute(sql`
-        SELECT interaction_type, external_id, interaction_date
-          FROM interactions WHERE user_id = ${USER} ORDER BY external_id
-      `)
-    );
-    check(
-      "every interaction is typed 'event'",
-      rows.length === 3 && rows.every((r) => r.interaction_type === "event"),
-      rows.map((r) => r.interaction_type).join(",")
-    );
-    check(
-      "external ids are evt:<eventId>:<contactId>",
-      rows.every((r) => r.external_id.startsWith(`${eventExternalIdBase(event.id)}:`)),
-      rows[0]?.external_id
-    );
-    // Dating these today would score a March conference as the user's most recent contact.
-    check(
-      "interactions are dated from the event, not from now",
-      rows.every((r) => new Date(r.interaction_date).getUTCFullYear() === 2026 &&
-                        new Date(r.interaction_date).getUTCMonth() === 2),
-      rows[0]?.interaction_date
-    );
-    check(
-      "ids are unique per (event, contact)",
-      new Set(rows.map((r) => r.external_id)).size === 3
-    );
-  }
+    // Matched to their rows by email, by exact name, and one person who was never on the list.
+    const grace = await graceId();
+    const alanId = await addContact("Alan Turing", null);
+    const adaId = await addContact("Ada Lovelace", "ada@analytical.io");
+    const newId = await addContact("Katherine Johnson", "kj@nasa.gov");
+    const linked = await recordMetAtEvent(USER, event.id, [grace, alanId, adaId, newId]);
+    check("every person met is linked", linked === 4, String(linked));
 
-  // --- attendees are linked back ---------------------------------------------------------------
-  roster = await listRosterForUser(USER, event.id);
-  check("every attendee is linked to a contact", roster.every((r) => r.contactId !== null));
-  check("every attendee is marked spoken-to", roster.every((r) => r.spokeTo));
-  check(
-    "each attendee maps to a DISTINCT contact",
-    new Set(roster.map((r) => r.contactId)).size === 3
-  );
+    roster = await listRosterForUser(USER, event.id);
+    check("a guest already on the list is not added twice", roster.length === 4, `${roster.length} rows`);
+    check(
+      "the person who was not on the list is added",
+      roster.some((r) => r.fullName === "Katherine Johnson" && r.source === "capture")
+    );
+    check("every row is linked to a contact", roster.every((r) => r.contactId !== null));
+    check("every row is marked met", roster.every((r) => r.spokeTo));
+    check("each row maps to a DISTINCT contact", new Set(roster.map((r) => r.contactId)).size === 4);
+    check("the name-only match landed on Alan", roster.find((r) => r.email === "alan@bletchley.uk")?.contactId === alanId);
 
-  // --- re-running is idempotent ------------------------------------------------------------
-  {
-    const again = await connectAttendees(USER, event, roster.map((r) => r.id));
-    const now = await counts();
-    check(
-      "re-connecting creates no new contacts",
-      now.contacts === after.contacts,
-      `${after.contacts} -> ${now.contacts}`
-    );
-    check(
-      "re-connecting creates no new interactions",
-      now.interactions === after.interactions,
-      `${after.interactions} -> ${now.interactions}`
-    );
-    check("already-connected attendees are skipped", again.created === 0 && again.matched === 0);
+    const before = await counts();
+    await recordMetAtEvent(USER, event.id, [grace, alanId, adaId, newId]);
+    check("logging again adds no rows", (await listRosterForUser(USER, event.id)).length === 4);
+    check("and creates no contacts", (await counts()).contacts === before.contacts);
+
+    const stranger = await createEventForUser("someone-else", { title: "Not yours" });
+    let refused = false;
+    try {
+      await recordMetAtEvent(USER, stranger.id, [grace]);
+    } catch {
+      refused = true;
+    }
+    check("another user's event is refused", refused);
   }
 
   // --- editing and deleting a single row --------------------------------------------------------
@@ -276,8 +252,7 @@ run(async () => {
     );
 
     // Deleting a CONNECTED row must not take the contact or the interaction with it.
-    const roster = await listRosterForUser(USER, fix.id);
-    await connectAttendees(USER, fix, [roster.find((r) => r.fullName === "Grace Hopper")!.id]);
+    await recordMetAtEvent(USER, fix.id, [await graceId()]);
     const before = await counts();
     const connected = (await listRosterForUser(USER, fix.id)).find((r) => r.contactId)!;
     await deleteAttendeeForUser(USER, connected.id);
@@ -301,8 +276,7 @@ run(async () => {
     ]);
     await upsertEventAttendees(USER, ev.id, lineUp, "page");
 
-    const seeded = await listRosterForUser(USER, ev.id);
-    await connectAttendees(USER, ev, [seeded.find((r) => r.fullName === "Ada Lovelace")!.id]);
+    await recordMetAtEvent(USER, ev.id, [await addContact("Ada Lovelace", null, "https://www.linkedin.com/in/ada-refresh")]);
     const linkedBefore = (await listRosterForUser(USER, ev.id)).find((r) => r.fullName === "Ada Lovelace")!;
     const before = await counts();
 
@@ -370,10 +344,20 @@ run(async () => {
       parseRosterText("Katherine Johnson <kj@nasa.gov>\nMargaret Hamilton <mh@mit.edu>").attendees,
       "paste"
     );
-    const people = await listRosterForUser(USER, ev.id);
-    await connectAttendees(USER, ev, people.map((r) => r.id));
-
+    // The interactions the retired roster Connect wrote (`evt:` ids, a derived note). Nothing
+    // writes these any more, but existing ones are still kept in step when the event changes.
     const db = await getDb();
+    for (const [name, email] of [
+      ["Katherine Johnson", "kj@nasa.gov"],
+      ["Margaret Hamilton", "mh@mit.edu"],
+    ] as const) {
+      const contactId = await addContact(name, email);
+      await db.execute(sql`
+        INSERT INTO interactions (user_id, contact_id, interaction_type, interaction_date, raw_notes, ai_summary, external_id)
+        VALUES (${USER}, ${contactId}, 'event', ${ev.startsAt}, 'Met at Restamp Summit (Old Hall, Boston).',
+                'Restamp Summit', ${`${eventExternalIdBase(ev.id)}:${contactId}`})
+      `);
+    }
     const noteOf = async (email: string) =>
       rowsOf<{ raw_notes: string | null; ai_summary: string | null; interaction_date: Date }>(
         await db.execute(sql`
@@ -515,26 +499,6 @@ run(async () => {
     await linkAttendeesToContacts(USER, [
       { attendeeId: target.id, contactId: target.contactId! },
     ]);
-  }
-
-  // --- the plan cap is reported, not swallowed -------------------------------------------------
-  {
-    const capped = await createEventForUser(USER, { title: "Capped Event" });
-    await upsertEventAttendees(
-      USER,
-      capped.id,
-      parseRosterText("Cap One <one@cap.io>\nCap Two <two@cap.io>").attendees,
-      "paste"
-    );
-    const cappedRoster = await listRosterForUser(USER, capped.id);
-    // The demo/free ceiling is enforced by contactHeadroomForUser; rather than reaching into
-    // plan config, assert the field is carried through as a number the UI can render.
-    const s = await connectAttendees(USER, capped, cappedRoster.map((r) => r.id));
-    check(
-      "blockedByPlan is always reported as a number",
-      typeof s.blockedByPlan === "number",
-      String(s.blockedByPlan)
-    );
   }
 
   // --- what a provider sync writes that nothing used to store -----------------------------------

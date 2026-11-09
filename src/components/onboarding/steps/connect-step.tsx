@@ -1,17 +1,29 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { ArrowRight, Check, ChevronDown, RefreshCw } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  ChevronDown,
+  CircleCheck,
+  MousePointerClick,
+  RefreshCw,
+  ShieldCheck,
+  UserCheck,
+  type LucideIcon,
+} from "lucide-react";
 import { getGmailConnectionStatus, startGmailOAuth } from "@/actions/gmail";
 import { saveOnboardingStep } from "@/actions/onboarding";
 import { getOutlookConnectionStatus, startOutlookOAuth } from "@/actions/outlook";
 import { GoogleContactsImport } from "@/components/imports/google-contacts-import";
 import { OutlookContactsImport } from "@/components/imports/outlook-contacts-import";
 import {
-  BackButton,
+  CARD,
+  GroupLabel,
   Stagger,
   StaggerItem,
-  StepHeading,
+  StepFooter,
+  StepLayout,
 } from "@/components/onboarding/onboarding-ui";
 import { GoogleMark, MicrosoftMark } from "@/components/onboarding/provider-logo";
 import { Button } from "@/components/ui/button";
@@ -57,10 +69,10 @@ function readReturn(): (OAuthReturn & { provider: ConnectProvider }) | null {
   return microsoft ? { ...microsoft, provider: "microsoft" } : null;
 }
 
-const HOW_IT_WORKS = [
-  "Pick your account on the Google or Microsoft screen",
-  "Allow contacts. Orbit can’t read or send your mail",
-  "Come back here and choose who to add",
+const HOW_IT_WORKS: Array<{ icon: LucideIcon; line: string }> = [
+  { icon: MousePointerClick, line: "Pick your account on the Google or Microsoft screen" },
+  { icon: ShieldCheck, line: "Allow contacts. Orbit can’t read or send your mail" },
+  { icon: UserCheck, line: "Come back here and choose who to add" },
 ];
 
 /**
@@ -145,134 +157,147 @@ export function ConnectStep({
   const retryProvider = oauth && oauth.tone !== "success" && accounts[oauth.provider].configured ? oauth.provider : null;
 
   return (
-    <Stagger className="mx-auto max-w-2xl space-y-5">
-      <div className="space-y-4">
-        <StaggerItem>
-          <BackButton onClick={onBack} disabled={pending} />
-        </StaggerItem>
-        <StepHeading eyebrow="Your contacts" title="Bring in the people you email">
-          Connect Google or Outlook and pick who to add. It&apos;s free, and you choose every
-          person before anything is imported.
-        </StepHeading>
-      </div>
-
-      {!anyConnected && (
-        <Stagger as="ol" className="grid gap-2 sm:grid-cols-3">
-          {HOW_IT_WORKS.map((line, i) => (
-            <StaggerItem as="li" key={line} className="flex gap-2.5 rounded-xl border border-border/60 bg-card/60 p-3 text-sm">
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-2xs font-semibold text-primary">
-                {i + 1}
-              </span>
-              <span className="text-foreground">{line}</span>
-            </StaggerItem>
-          ))}
-        </Stagger>
-      )}
-
-      {oauth && (
-        <StaggerItem>
-          <div
-            role="status"
-            className={cn(
-              "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm",
-              oauth.tone === "success" && "border-primary/30 bg-primary/5 text-foreground",
-              oauth.tone === "message" && "border-border/70 bg-muted/30 text-muted-foreground",
-              oauth.tone === "error" && "border-destructive/30 bg-destructive/5 text-destructive",
-            )}
-          >
-            <span>{oauth.text}</span>
-            {retryProvider && (
-              <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => connect(retryProvider)}>
-                Try again
+    <StepLayout
+      onBack={onBack}
+      backDisabled={pending}
+      eyebrow="Your contacts"
+      title="Bring in the people you email"
+      description="Connect Google or Outlook and pick who to add. It’s free, and you choose every person before anything is imported."
+      footer={
+        <StepFooter
+          left={
+            anyConnected ? (
+              <p className="text-[0.8125rem] text-muted-foreground">You can bring in more any time from Imports.</p>
+            ) : (
+              <Button type="button" variant="ghost" className="h-10 text-muted-foreground" disabled={pending} onClick={onContinue}>
+                Skip for now
               </Button>
-            )}
-          </div>
-        </StaggerItem>
-      )}
-
-      <Stagger as="ul" className="space-y-3">
-        {rows.map((p) => {
-          const account = accounts[p.id];
-          const needsReauth = account.connected && account.health === "needs_reauth";
-          const Mark = p.id === "google" ? GoogleMark : MicrosoftMark;
-          return (
-            <StaggerItem as="li" key={p.id} className="rounded-2xl border border-border/70 bg-card p-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <span
-                  className="relative flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-white"
-                  aria-hidden
-                >
-                  <Mark className="size-5" />
-                  {account.connected && (
-                    <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                      <Check className="size-2.5" strokeWidth={3.5} />
-                    </span>
-                  )}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-ink">{p.label}</p>
-                  <p className="truncate text-sm text-muted-foreground">
-                    {account.connected
-                      ? needsReauth
-                        ? SESSION_EXPIRED_LINE
-                        : `Connected as ${account.email ?? "your account"}`
-                      : p.short}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {account.connected && !needsReauth ? (
-                    <Button
-                      type="button"
-                      variant={importing === p.id ? "ghost" : "default"}
-                      size="sm"
-                      aria-expanded={importing === p.id}
-                      onClick={() => setImporting((cur) => (cur === p.id ? null : p.id))}
-                    >
-                      {importing === p.id ? "Hide" : "Choose who to add"}
-                      <ChevronDown
-                        className={cn("size-4 transition-transform", importing === p.id && "rotate-180")}
-                        aria-hidden
-                      />
-                    </Button>
-                  ) : (
-                    <Button type="button" size="sm" disabled={pending} onClick={() => connect(p.id)}>
-                      {needsReauth ? (
-                        <>
-                          <RefreshCw className="size-4" aria-hidden />
-                          Reconnect
-                        </>
-                      ) : (
-                        `Connect ${p.label}`
-                      )}
-                    </Button>
-                  )}
-                </div>
-              </div>
-              {importing === p.id && account.connected && (
-                // Scrolls inside the card, so the step still fits one screen however many
-                // people the account has.
-                <div className="mt-4 max-h-[min(22rem,45dvh)] overflow-y-auto border-t border-border/60 pt-4">
-                  {p.id === "google" ? (
-                    <GoogleContactsImport returnTo={RETURN_TO} />
-                  ) : (
-                    <OutlookContactsImport returnTo={RETURN_TO} />
-                  )}
-                </div>
+            )
+          }
+          right={
+            anyConnected && (
+              <Button type="button" size="lg" className="h-10 px-4" disabled={pending} onClick={onContinue}>
+                Continue
+                <ArrowRight className="size-4" aria-hidden />
+              </Button>
+            )
+          }
+        />
+      }
+    >
+      <div className="space-y-4">
+        {oauth && (
+          <StaggerItem>
+            <div
+              role="status"
+              className={cn(
+                "flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm",
+                oauth.tone === "success" && "border-primary/30 bg-primary/5 text-foreground",
+                oauth.tone === "message" && "border-border/70 bg-muted/30 text-muted-foreground",
+                oauth.tone === "error" && "border-destructive/30 bg-destructive/5 text-destructive",
               )}
-            </StaggerItem>
-          );
-        })}
-      </Stagger>
+            >
+              <span>{oauth.text}</span>
+              {retryProvider && (
+                <Button type="button" size="sm" variant="outline" className="h-9" disabled={pending} onClick={() => connect(retryProvider)}>
+                  Try again
+                </Button>
+              )}
+            </div>
+          </StaggerItem>
+        )}
 
-      <StaggerItem className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
-        <p className="text-xs text-muted-foreground">
-          {anyConnected ? "You can bring in more any time from Imports." : "Orbit never sends email from your account."}
-        </p>
-        <Button type="button" size="lg" className="h-10 px-4" disabled={pending} onClick={onContinue}>
-          {anyConnected ? "Continue" : "Skip for now"}
-          <ArrowRight className="size-4" aria-hidden />
-        </Button>
-      </StaggerItem>
-    </Stagger>
+        <Stagger as="ul" className="space-y-2.5">
+          {rows.map((p) => {
+            const account = accounts[p.id];
+            const needsReauth = account.connected && account.health === "needs_reauth";
+            const Mark = p.id === "google" ? GoogleMark : MicrosoftMark;
+            return (
+              <StaggerItem as="li" key={p.id} className={cn(CARD, "p-4")}>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span
+                    className="relative flex size-9 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-white"
+                    aria-hidden
+                  >
+                    <Mark className="size-5" />
+                    {account.connected && (
+                      <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                        <Check className="size-2.5" strokeWidth={3.5} />
+                      </span>
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-ink">{p.label}</p>
+                    <p className="truncate text-[0.8125rem] text-muted-foreground">
+                      {account.connected
+                        ? needsReauth
+                          ? SESSION_EXPIRED_LINE
+                          : `Connected as ${account.email ?? "your account"}`
+                        : p.short}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {account.connected && !needsReauth ? (
+                      <Button
+                        type="button"
+                        variant={importing === p.id ? "ghost" : "default"}
+                        className="h-9 px-3"
+                        aria-expanded={importing === p.id}
+                        onClick={() => setImporting((cur) => (cur === p.id ? null : p.id))}
+                      >
+                        {importing === p.id ? "Hide" : "Choose who to add"}
+                        <ChevronDown
+                          className={cn("size-4 transition-transform", importing === p.id && "rotate-180")}
+                          aria-hidden
+                        />
+                      </Button>
+                    ) : (
+                      <Button type="button" className="h-9 px-3" disabled={pending} onClick={() => connect(p.id)}>
+                        {needsReauth ? (
+                          <>
+                            <RefreshCw className="size-4" aria-hidden />
+                            Reconnect
+                          </>
+                        ) : (
+                          <>
+                            {`Connect ${p.label}`}
+                            <ArrowRight className="size-4" aria-hidden />
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {importing === p.id && account.connected && (
+                  // Scrolls inside the card, so the step still fits one screen however many
+                  // people the account has.
+                  <div className="mt-4 max-h-[min(22rem,45dvh)] overflow-y-auto border-t border-border/60 pt-4">
+                    {p.id === "google" ? (
+                      <GoogleContactsImport returnTo={RETURN_TO} />
+                    ) : (
+                      <OutlookContactsImport returnTo={RETURN_TO} />
+                    )}
+                  </div>
+                )}
+              </StaggerItem>
+            );
+          })}
+        </Stagger>
+
+        {!anyConnected && (
+          <StaggerItem>
+            <GroupLabel icon={CircleCheck}>How it works</GroupLabel>
+            <ol className="grid gap-2 sm:grid-cols-3">
+              {HOW_IT_WORKS.map(({ icon: Icon, line }) => (
+                <li key={line} className="flex gap-2.5 rounded-xl border border-border/60 bg-card/60 p-3 text-[0.8125rem]">
+                  <Icon className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+                  <span className="min-w-0 text-foreground">{line}</span>
+                </li>
+              ))}
+            </ol>
+          </StaggerItem>
+        )}
+      </div>
+    </StepLayout>
   );
 }
