@@ -138,7 +138,7 @@ export async function findActiveCaptureJob(userId: string, now = new Date()): Pr
       eq(captureJobs.userId, userId),
       // One file of a multi-file upload is never resumed on its own: the upload is reviewed
       // together, once every file is read (`mergeCaptureBatchRows`). Until then it is
-      // reachable through the queue panel, which `findActiveCaptureJobs` still feeds.
+      // reachable through its drop in Recent captures, which `findActiveCaptureJobs` still feeds.
       isNull(captureJobs.batchGroupId),
       or(
         inArray(captureJobs.status, [...ACTIVE_CAPTURE_JOB_STATUSES]),
@@ -188,7 +188,7 @@ const BATCH_BUSY: CaptureJobStatus[] = ["ingesting", "transcribed", "queued", "e
  * Fold a multi-file upload's ready jobs into one job, reviewed as a single deck.
  *
  * Nothing happens while any file is still being read — the upload is reviewed together, so
- * it waits for the slowest file. Files that failed stay in the queue panel with their error;
+ * it waits for the slowest file. Files that failed stay on the drop's card in Recent captures with their error;
  * they are not held up by, and do not hold up, the rest.
  *
  * The ready rows are CLAIMED first (`ready` → `merged`, returning), which is what makes two
@@ -247,7 +247,7 @@ export async function mergeCaptureBatchRows(
         status: "ready",
         entryPoint: parts[0]!.entryPoint,
         sourceLabel: `${parts.length} notes`,
-        result: combined.result,
+        result: { ...combined.result, parts: parts.map((r) => r.id) },
         sourceText: combined.sourceText,
         sourceHash: combined.sourceHash,
         sources: union(parts.map((r) => r.sources)),
@@ -280,7 +280,9 @@ export async function discardCaptureBatchRows(userId: string, batchGroupId: stri
       and(
         eq(captureJobs.userId, userId),
         eq(captureJobs.batchGroupId, batchGroupId),
-        inArray(captureJobs.status, [...ACTIVE_CAPTURE_JOB_STATUSES])
+        // Failed files too: Discard on a drop's card in Recent captures lists them, and a
+        // drop whose only file failed would otherwise come straight back.
+        inArray(captureJobs.status, [...ACTIVE_CAPTURE_JOB_STATUSES, "failed"])
       )
     )
     .returning();

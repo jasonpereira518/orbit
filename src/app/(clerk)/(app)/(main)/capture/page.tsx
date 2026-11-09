@@ -78,6 +78,8 @@ export default async function CapturePage({
     event?: string;
     eventId?: string;
     attendees?: string;
+    /** A Recent captures row: open this job's review (checked against the user in the action). */
+    job?: string;
   }>;
 }) {
   const gate = await pageVisibilityGate("page.capture");
@@ -126,7 +128,7 @@ export default async function CapturePage({
   const settingsPromise = getSettings();
   const planPromise = getPlanOverview();
   // Same for the job and the ignored count: the page must render without either.
-  const jobPromise = getActiveCaptureJob().catch(() => null);
+  const jobPromise = getActiveCaptureJob(params.job ?? null).catch(() => null);
   // Every job still reachable, so a multi-file drop can render its queue. `.catch` because a
   // failed side read must not take the page with it — the single-job resume above is what
   // the page actually needs to function.
@@ -188,7 +190,8 @@ export default async function CapturePage({
       <CaptureFlowLazy
         // The toast's and the bell's Review link to this same page: a client navigation would
         // keep the flow's tab state and never open the dialog, so a review link remounts it.
-        key={params.review === "1" ? "cloud-review" : "capture"}
+        // Same for a Recent captures row (`?job=`): each opens its own job.
+        key={params.review === "1" ? "cloud-review" : params.job ? `job-${params.job}` : "capture"}
         initialJob={job}
         initialJobs={jobs}
         initialContactId={contactId}

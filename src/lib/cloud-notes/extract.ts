@@ -10,7 +10,7 @@ import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 
 /**
  * Cloud docs into capture jobs. Each doc becomes its own reviewable job under one batch id, so
- * the queue panel shows the set like any multi-file drop — extracting never saves anything to
+ * Recent captures shows the set like any multi-file drop — extracting never saves anything to
  * contacts on its own; the person reviews the cards.
  */
 
