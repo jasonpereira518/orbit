@@ -227,14 +227,14 @@ export function ProspectTable({
                 prospect.company
               );
               const enrichment = (prospect.enrichment ?? {}) as Record<string, unknown>;
-              const avatarUrl = prospect.avatarUrl || (typeof enrichment.avatarUrl === "string" ? enrichment.avatarUrl : null);
-              const summary = (typeof enrichment.summary === "string" ? enrichment.summary : null) || (typeof enrichment.headline === "string" ? enrichment.headline : null);
-              const effectivenessScore = typeof enrichment.effectivenessScore === "number" ? enrichment.effectivenessScore : null;
+              const avatarUrl = prospect.avatarUrl || (typeof enrichment.avatarUrl === "string" ? enrichment.avatarUrl : undefined);
+              const summary = (typeof enrichment.summary === "string" ? enrichment.summary : undefined) || (typeof enrichment.headline === "string" ? enrichment.headline : undefined);
+              const effectivenessScore = typeof enrichment.effectivenessScore === "number" ? enrichment.effectivenessScore : undefined;
               const scoreReasons = Array.isArray(enrichment.scoreReasons) ? (enrichment.scoreReasons as string[]) : [];
               const isAlumniMatch = Boolean(enrichment.isAlumniMatch);
-              const matchedSchool = typeof enrichment.matchedSchool === "string" ? enrichment.matchedSchool : null;
-              const education = typeof enrichment.education === "string" ? enrichment.education : (typeof enrichment.almaMater === "string" ? enrichment.almaMater : null);
-              const newsContext = typeof enrichment.newsContext === "string" ? enrichment.newsContext : null;
+              const matchedSchool = typeof enrichment.matchedSchool === "string" ? enrichment.matchedSchool : undefined;
+              const education = typeof enrichment.education === "string" ? enrichment.education : (typeof enrichment.almaMater === "string" ? enrichment.almaMater : undefined);
+              const newsContext = typeof enrichment.newsContext === "string" ? enrichment.newsContext : undefined;
               const signals = Array.isArray(enrichment.signals) ? (enrichment.signals as string[]) : [];
 
               return (
