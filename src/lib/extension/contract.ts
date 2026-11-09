@@ -153,6 +153,25 @@ export type EventRosterResponse = {
 };
 
 /* -------------------------------------------------------------------------- */
+/* Log connections at an event (LinkedIn → Connections)                       */
+/* -------------------------------------------------------------------------- */
+
+/** GET /events: the events the user could have just been at, to pick one from. */
+export type RecentEventsResponse = {
+  events: Array<{ id: string; title: string; startsAt: string | null }>;
+};
+
+/** The connections the user ticked: names and LinkedIn profile links, nothing else. */
+export type LogConnectionsRequest = { eventId: string; people: PageCandidate[] };
+export type LogConnectionsResponse = {
+  eventId: string;
+  /** Their rows on the event's guest list, for the debrief link (`/capture?attendees=`). */
+  attendeeIds: string[];
+  /** How many were not on the list yet. */
+  added: number;
+};
+
+/* -------------------------------------------------------------------------- */
 /* Resolve                                                                    */
 /* -------------------------------------------------------------------------- */
 

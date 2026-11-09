@@ -60,6 +60,7 @@ export default async function OnboardingPage() {
       captureJob={captureJob}
       linkedinRequested={settings.linkedinExportRequestedAt != null}
       linkedinImported={linkedinImported}
+      linkedinUrl={settings.socialLinks?.linkedin ?? null}
       hidden={[...visibility.hidden]}
       comingSoon={[...visibility.comingSoon]}
       connect={{

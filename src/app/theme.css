@@ -96,6 +96,8 @@
   --color-night-max: #f2c14e;
   --color-night-lifetime: #c9d1db;
   --color-ink: var(--ink);
+  --color-gold: var(--gold);
+  --color-gold-ink: var(--gold-ink);
   --color-admin-nav-hover: var(--admin-nav-hover);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -238,6 +240,11 @@
      lets `--primary` be an accent in both themes without dragging body content
      with it. Light is unchanged from before the split. */
   --ink: #0f3d3e;
+  /* Onboarding's motif gold (the mark's ring, done stages, icons on a selected teal fill).
+     The body glow's gold, made solid. Decoration, never a control colour: `--gold` is for
+     icons and dots (2.3:1 on a card), `--gold-ink` carries text on a `bg-gold/15` note. */
+  --gold: #c4a35a;
+  --gold-ink: #6e5726;
   /* Admin nav hover wash. Carries its own alpha rather than being tinted at the call
      site, because the hover span uses `opacity` for its fade-in — the two would fight. */
   --admin-nav-hover: rgb(15 61 62 / 0.10);
@@ -360,6 +367,8 @@
   --tier-max: #f2c14e;
   --tier-lifetime: #c5ccd6;
   --ink: #e7ecf1;
+  --gold: #d4b469;
+  --gold-ink: #ecd49a;
   --admin-nav-hover: rgb(124 195 226 / 0.16);
   /* Shadows on a dark ground want to be deeper than the surface, not neutral
      black — a pure-black shadow over a tinted ground reads as a dead hole. */
@@ -399,7 +408,7 @@
  * to go in the block above, and `check:tokens` will not tell you otherwise. */
 :root {
   --orbit-corner-bottom: calc(
-    4.625rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
+    var(--orbit-bottom-nav) + var(--orbit-corner-lift)
   );
   --orbit-corner-right: 0.75rem;
 
@@ -437,7 +446,7 @@
      Distinct from `--orbit-corner-bottom` above, which anchors floating widgets in the
      corner; this is the band ordinary page content has to stay out of. 0 at `md`, where
      `md:hidden` takes the nav away. */
-  --orbit-bottom-nav: calc(5.5rem + env(safe-area-inset-bottom));
+  --orbit-bottom-nav: calc(4.625rem + env(safe-area-inset-bottom));
 
   /* Width the contacts A-Z rail occupies on the right.
      ------------------------------------------------------------------------------

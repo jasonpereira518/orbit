@@ -67,6 +67,7 @@ import {
   type RecordedMeetingChunk,
 } from "@/lib/use-meeting-recorder";
 import { useMeetingLive, type LiveSegment, type LiveUnavailable } from "@/lib/use-meeting-live";
+import { packSurface, type CallKind } from "@/lib/call-kind";
 import { monthWindow } from "@/lib/speech-limits";
 import {
   publishEngine,
@@ -457,7 +458,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
   );
 
   const handleStarted = useCallback(
-    async ({ surface, micActive }: { surface: MeetingSurface; micActive: boolean }) => {
+    async ({ surface, micActive, callKind }: { surface: MeetingSurface; micActive: boolean; callKind: CallKind | null }) => {
       setPhase("live");
       setFatal(null);
       fatalRef.current = false;
@@ -481,7 +482,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
           title: title.trim() || null,
           attendees: parseAttendees(attendeesText, attendeeEmailsRef.current),
           includesMic: micActive,
-          captureSurface: surface,
+          captureSurface: packSurface(surface, callKind),
           recorderId: recorderIdRef.current,
           calendarEventKey,
           calendarSeriesId,

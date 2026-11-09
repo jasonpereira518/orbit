@@ -9,6 +9,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { webhookEndpoints } from "@/db/schema";
 import { apiError, apiHandler, apiOk } from "@/lib/api/http";
+import { isUuid } from "@/lib/input/ids";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +17,10 @@ export const dynamic = "force-dynamic";
 export const DELETE = apiHandler(
   { scope: "write", bucket: "apiWrite" },
   async (request, { caller }) => {
-    const id = new URL(request.url).pathname.split("/").pop() ?? "";
+    const id = new URL(request.url).pathname.split("/").filter(Boolean).pop() ?? "";
+    // Malformed is answered exactly like wrong-owner, as `v1/followups/[id]` does: a uuid cast
+    // failure would otherwise funnel into a 500.
+    if (!isUuid(id)) return apiError({ code: "not_found", message: "No such webhook endpoint." });
     const db = await getDb();
     const removed = (
       await db

@@ -300,6 +300,8 @@ export type CreateCaptureJobInput = {
   entryPoint?: "capture" | "profile";
   seedContactId?: string | null;
   meetingSessionId?: string | null;
+  /** The event this capture debriefs. The caller proves it is the user's (`assertEventOwnedBy`). */
+  eventId?: string | null;
   batchGroupId?: string | null;
   sourceLabel?: string | null;
   mentionPicks?: MentionPick[] | null;
@@ -309,6 +311,8 @@ export type CreateCaptureJobInput = {
    * Typed loosely because it arrives from a browser; `cleanFileHashes` is the filter.
    */
   sourceFileHashes?: readonly unknown[] | null;
+  /** Provenance tags ("cloud:google"), not names. Server-set only: see `createCaptureFromText`. */
+  sources?: string[];
 };
 
 export async function createCaptureJob(userId: string, input: CreateCaptureJobInput): Promise<CaptureJobRow> {
@@ -355,6 +359,7 @@ function captureJobValues(userId: string, input: CreateCaptureJobInput) {
     entryPoint: input.entryPoint ?? "capture",
     seedContactId: input.seedContactId ?? null,
     meetingSessionId: input.meetingSessionId ?? null,
+    eventId: input.eventId ?? null,
     batchGroupId: input.batchGroupId ?? null,
     sourceLabel: input.sourceLabel?.slice(0, 200) ?? null,
     // Sanitised here rather than at the caller: this is the only door into the column,
@@ -362,6 +367,7 @@ function captureJobValues(userId: string, input: CreateCaptureJobInput) {
     mentionPicks: sanitizeMentionPicks(input.mentionPicks ?? []),
     result: input.result ?? null,
     sourceFileHashes: cleanFileHashes(input.sourceFileHashes),
+    sources: input.sources ?? [],
   } satisfies typeof captureJobs.$inferInsert;
 }
 

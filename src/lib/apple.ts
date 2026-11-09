@@ -22,7 +22,8 @@ import {
 } from "@/lib/caldav/client";
 import { deleteCalendarSourcesForProvider, setSourceEnabled } from "@/lib/calendar-sources";
 import { deriveConnectionHealth, type ConnectionHealth } from "@/lib/connection-status";
-import { decrypt, encrypt } from "@/lib/crypto";
+import { encrypt } from "@/lib/crypto";
+import { decryptAndRewrapStrict } from "@/lib/crypto-rewrap";
 import { UserFacingError, withReference } from "@/lib/errors";
 import { reportError } from "@/lib/report-error";
 
@@ -296,5 +297,11 @@ export async function appleCredentials(connectionId: string): Promise<CalDavCred
   if (!conn) {
     throw new Error(`apple_connections row ${connectionId} not found`);
   }
-  return { username: conn.emailAddress, password: decrypt(conn.appPasswordEncrypted) };
+  const password = await decryptAndRewrapStrict(conn.appPasswordEncrypted, {
+    table: appleConnections,
+    column: appleConnections.appPasswordEncrypted,
+    idColumn: appleConnections.id,
+    id: conn.id,
+  });
+  return { username: conn.emailAddress, password };
 }

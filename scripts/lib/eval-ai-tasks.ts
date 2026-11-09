@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../../src/db";
 import {
   actionItems,
@@ -25,8 +25,11 @@ import {
   memoryChunks,
   reminders,
   tags,
+  usageEvents,
   userGoals,
 } from "../../src/db/schema";
+import { researchCompany, researchPerson } from "../../src/lib/web-research";
+import { normalizeCompanyKey } from "../../src/lib/company-name";
 import { labelAnswer } from "../../src/lib/chat-abstention";
 import { saveChatAutoApplyFor } from "../../src/lib/chat-auto-apply";
 import { chatWriteNamed, runUndo, type UndoStep } from "../../src/lib/tools/chat-writes";
@@ -142,7 +145,8 @@ export type TaskName =
   | "chat"
   | "research"
   | "digest"
-  | "relationship";
+  | "relationship"
+  | "web-search";
 
 export const TASK_NAMES: TaskName[] = [
   "capture",
@@ -162,6 +166,7 @@ export const TASK_NAMES: TaskName[] = [
   "research",
   "digest",
   "relationship",
+  "web-search",
 ];
 
 /** Overridable so the harness itself can be exercised on throwaway fixtures. */
@@ -2065,6 +2070,75 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
   };
 }
 
+type WebSearchFixture = {
+  people: Array<{ id: string; input: Parameters<typeof researchPerson>[1]; employer: string }>;
+  companies: Array<{ id: string; input: Parameters<typeof researchCompany>[1]; domain: string }>;
+};
+
+/**
+ * Live web research on public figures and companies (`web-search-eval.json`): does the brief
+ * name the right employer or website, and how many paid searches did it take. Spends real
+ * searches — about $0.50 a run on Anthropic. `ORBIT_WEB_SEARCH_LEGACY=1` runs the pre-round-2
+ * budgets, so one commit measures both arms.
+ */
+async function runWebSearchTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const f = fixture<WebSearchFixture>("web-search-eval.json");
+  const db = await getDb();
+  const started = new Date();
+  // The per-account allowances would refuse the second run; the eval measures search, not them.
+  const resetBuckets = () => db.execute(sql`DELETE FROM rate_limit_buckets WHERE bucket LIKE ${`%${userId}%`} OR bucket LIKE 'web-search-all:%'`);
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+  let confident = 0;
+  let correct = 0;
+  let cases = 0;
+  const people = f.people.slice(0, limit ?? f.people.length);
+  const companies = f.companies.slice(0, limit ?? f.companies.length);
+  for (const p of people) {
+    await resetBuckets();
+    cases++;
+    const t0 = Date.now();
+    const res = await researchPerson(userId, p.input, { fresh: true }).catch((err) => (log(`  ${p.id}: ${String(err)}`), null));
+    latenciesMs.push(Date.now() - t0);
+    const sure = Boolean(res?.ok && res.dossier.match === "confident");
+    const org = res?.ok ? normalizeCompanyKey(res.dossier.current?.organization ?? "") : "";
+    const right = sure && org.includes(normalizeCompanyKey(p.employer));
+    if (sure) confident++;
+    if (right) correct++;
+    else misses.push(p.id);
+    log(`  ${p.id}: ${res?.ok ? res.dossier.match : "error"} → ${res?.ok ? res.dossier.current?.organization ?? "—" : "—"}`);
+  }
+  for (const c of companies) {
+    await resetBuckets();
+    cases++;
+    const t0 = Date.now();
+    const res = await researchCompany(userId, c.input, { fresh: true }).catch((err) => (log(`  ${c.id}: ${String(err)}`), null));
+    latenciesMs.push(Date.now() - t0);
+    const sure = Boolean(res?.ok && res.dossier.match === "confident");
+    const right = sure && Boolean(res?.ok && res.dossier.website?.includes(c.domain) && res.dossier.description);
+    if (sure) confident++;
+    if (right) correct++;
+    else misses.push(c.id);
+    log(`  ${c.id}: ${res?.ok ? res.dossier.match : "error"} → ${res?.ok ? res.dossier.website ?? "—" : "—"}`);
+  }
+  const [row] = await db
+    .select({ searches: sql<number>`coalesce(sum(${usageEvents.webSearches}), 0)::float8` })
+    .from(usageEvents)
+    .where(and(eq(usageEvents.userId, userId), gte(usageEvents.createdAt, started)));
+  const searches = Number(row?.searches ?? 0);
+  return {
+    cases,
+    misses,
+    latenciesMs,
+    metrics: {
+      correct: cases ? correct / cases : null,
+      confident: cases ? confident / cases : null,
+      searchesPerCase: cases ? searches / cases : null,
+      searchesPerCorrect: correct ? searches / correct : null,
+    },
+  };
+}
+
 export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   capture: runCaptureTask,
   recruiter: runRecruiterTask,
@@ -2083,4 +2157,5 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   research: runResearchTask,
   digest: runDigestTask,
   relationship: runRelationshipTask,
+  "web-search": runWebSearchTask,
 };

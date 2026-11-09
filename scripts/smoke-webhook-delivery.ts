@@ -13,6 +13,9 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import { encrypt } from "../src/lib/crypto";
 import {
+  DELIVERY_CLAIM_MS,
+  MAX_PER_ENDPOINT_PER_PASS,
+  claimDueDeliveries,
   MAX_CONSECUTIVE_FAILURES,
   MAX_DELIVERY_ATTEMPTS,
   assertDeliverable,
@@ -189,6 +192,36 @@ run(async () => {
   check("three sweeps of 20 reach all 45 subscribers", served.size === 45, String(served.size));
   check("a window never repeats a subscriber", new Set(rotatingWindow(subs, 20, 7)).size === 20);
   check("under the cap, everyone every time", rotatingWindow(subs.slice(0, 5), 20, 3).length === 5);
+
+  // --- The drain's claim (audit M-03) ------------------------------------------------------
+  // Exercised on `claimDueDeliveries` directly so nothing is fetched: two overlapping drains
+  // used to SELECT the same rows and POST every event twice; one account's endpoints filled
+  // the shared drain's passes.
+  await db.execute(sql`DELETE FROM webhook_endpoints WHERE user_id = ${USER}`);
+  const busy = await seedEndpoint({ url: "https://busy.example.com/hook" });
+  const quiet = await seedEndpoint({ url: "https://quiet.example.com/hook" });
+  const past = new Date(Date.now() - 60_000);
+  for (let i = 0; i < 12; i++) {
+    await db.execute(sql`INSERT INTO outbound_webhook_deliveries (user_id, endpoint_id, event_id, event_type, payload, status, next_attempt_at)
+      VALUES (${USER}, ${busy}, ${"evt_busy_" + i}, 'contact.created', '{}'::jsonb, 'pending', ${new Date(past.getTime() - (12 - i) * 1000)})`);
+  }
+  await db.execute(sql`INSERT INTO outbound_webhook_deliveries (user_id, endpoint_id, event_id, event_type, payload, status, next_attempt_at)
+    VALUES (${USER}, ${quiet}, 'evt_quiet_0', 'contact.created', '{}'::jsonb, 'pending', ${past})`);
+  const now = new Date();
+  const [first, second] = await Promise.all([
+    claimDueDeliveries({ max: 200, now, token: "drain-a" }),
+    claimDueDeliveries({ max: 200, now, token: "drain-b" }),
+  ]);
+  const ids = [...first, ...second].map((r) => r.id);
+  check("two overlapping claims never take the same row", new Set(ids).size === ids.length, `${first.length}+${second.length}`);
+  const busyTaken = [...first, ...second].filter((r) => r.endpoint_id === busy).length;
+  check(`one endpoint takes at most ${MAX_PER_ENDPOINT_PER_PASS} per pass`, first.filter((r) => r.endpoint_id === busy).length <= MAX_PER_ENDPOINT_PER_PASS, String(busyTaken));
+  check("a quiet endpoint is not starved by a busy one", [...first, ...second].some((r) => r.endpoint_id === quiet));
+  check("claimed rows carry their endpoint's url and secret", [...first, ...second].every((r) => typeof r.url === "string" && typeof r.secret_encrypted === "string"));
+  const third = await claimDueDeliveries({ max: 200, now, token: "drain-c" });
+  check("a live claim is not taken again", third.every((r) => !ids.includes(r.id)));
+  const later = await claimDueDeliveries({ max: 200, now: new Date(now.getTime() + DELIVERY_CLAIM_MS + 1000), token: "drain-d" });
+  check("an expired claim is taken over", later.some((r) => ids.includes(r.id)));
 
   await db.execute(sql`DELETE FROM webhook_endpoints WHERE user_id = ${USER}`);
   await db.execute(sql`DELETE FROM user_settings WHERE user_id = ${USER}`);
