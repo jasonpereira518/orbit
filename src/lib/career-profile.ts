@@ -38,7 +38,7 @@ export type YouCurrent = {
 };
 
 /** What Settings already lists, then the file's new ones — added, never replaced. */
-function mergedSchools(current: string[], incoming: string[]): string[] {
+export function mergedSchools(current: string[], incoming: string[]): string[] {
   const seen = new Set(current.map((s) => s.toLowerCase()));
   return [...current, ...incoming.filter((s) => !seen.has(s.toLowerCase()))].slice(0, MAX_SCHOOLS);
 }

@@ -166,6 +166,7 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 function ContactSection({ item }: { item: ReminderRow }) {
   const [drafting, start] = useTransition();
   const [draft, setDraft] = useState<string | null>(null);
+  const [purpose, setPurpose] = useState("");
   const action = cn(buttonVariants({ variant: "outline", size: "sm" }), "h-8 gap-1.5");
   const showDraft =
     item.actionKind === "follow_up" || item.actionKind === "email" || item.actionKind === "task";
@@ -175,6 +176,7 @@ function ContactSection({ item }: { item: ReminderRow }) {
       try {
         const result = await draftFollowUpResponse(item.id);
         setDraft(result.body);
+        setPurpose(result.purpose);
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t draft that follow-up — try again?"));
       }
@@ -237,6 +239,11 @@ function ContactSection({ item }: { item: ReminderRow }) {
                 <Copy className="size-3" /> Copy
               </Button>
             </div>
+            {purpose ? (
+              <p className="mb-1.5 text-xs text-muted-foreground">
+                <span className="font-medium">Purpose</span> · {purpose}
+              </p>
+            ) : null}
             <p className="whitespace-pre-wrap text-sm text-muted-foreground">{draft}</p>
             <DraftLinkWarning text={draft} />
           </div>

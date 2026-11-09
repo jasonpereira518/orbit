@@ -2870,1516 +2870,6 @@
     "alerts": [],
     "alertDot": false
   },
-  "loader: knowledge base": {
-    "stats": {
-      "people": 25,
-      "messages": 13,
-      "notes": 53,
-      "meetings": 13,
-      "withSummary": 25,
-      "withKeyFacts": 17,
-      "embeddings": 0,
-      "entriesTotal": 136
-    },
-    "entries": [
-      {
-        "contactId": "<contacts:Tom Bennett>",
-        "contactName": "Tom Bennett",
-        "company": "Stripe",
-        "title": "Staff Software Engineer",
-        "date": "<ts>",
-        "id": "summary:<contacts:Tom Bennett>",
-        "kind": "summary",
-        "snippet": "Tom Bennett is Staff Software Engineer at Stripe. How you met: Open-source contributor on a library I maintain. Reviewed a gnarly PR of mine and stayed to explain why. Works on Stripe's API platform. Happy to review architecture if asked directly.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Tom Bennett>",
-        "contactName": "Tom Bennett",
-        "company": "Stripe",
-        "title": "Staff Software Engineer",
-        "date": "<ts>",
-        "id": "notes:<contacts:Tom Bennett>",
-        "kind": "note",
-        "snippet": "Reviewed a gnarly PR of mine and stayed to explain why. Works on Stripe's API platform. Happy to review architecture if asked directly.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Tom Bennett>",
-        "contactName": "Tom Bennett",
-        "company": "Stripe",
-        "title": "Staff Software Engineer",
-        "date": "<ts>",
-        "id": "fact:<contacts:Tom Bennett>:Works on Stripe's API platform",
-        "kind": "key_fact",
-        "snippet": "Works on Stripe's API platform",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Dr. Elena Vasquez>",
-        "contactName": "Dr. Elena Vasquez",
-        "company": "UNC Chapel Hill",
-        "title": "Professor of Computer Science",
-        "date": "<ts>",
-        "id": "summary:<contacts:Dr. Elena Vasquez>",
-        "kind": "summary",
-        "snippet": "Dr. Elena Vasquez is Professor of Computer Science at UNC Chapel Hill. How you met: Taught my systems course; kept in touch after graduation. Runs the distributed systems lab. Always worth talking to before a design decision. Suggested two students who might want to intern.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Dr. Elena Vasquez>",
-        "contactName": "Dr. Elena Vasquez",
-        "company": "UNC Chapel Hill",
-        "title": "Professor of Computer Science",
-        "date": "<ts>",
-        "id": "notes:<contacts:Dr. Elena Vasquez>",
-        "kind": "note",
-        "snippet": "Runs the distributed systems lab. Always worth talking to before a design decision. Suggested two students who might want to intern.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Dr. Elena Vasquez>",
-        "contactName": "Dr. Elena Vasquez",
-        "company": "UNC Chapel Hill",
-        "title": "Professor of Computer Science",
-        "date": "<ts>",
-        "id": "fact:<contacts:Dr. Elena Vasquez>:Runs the distributed systems lab at UNC",
-        "kind": "key_fact",
-        "snippet": "Runs the distributed systems lab at UNC",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Dr. Elena Vasquez>",
-        "contactName": "Dr. Elena Vasquez",
-        "company": "UNC Chapel Hill",
-        "title": "Professor of Computer Science",
-        "date": "<ts>",
-        "id": "fact:<contacts:Dr. Elena Vasquez>:Knows the Innovate Carolina staff",
-        "kind": "key_fact",
-        "snippet": "Knows the Innovate Carolina staff",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Aisha Rahman>",
-        "contactName": "Aisha Rahman",
-        "company": "Google",
-        "title": "Senior Product Manager",
-        "date": "<ts>",
-        "id": "summary:<contacts:Aisha Rahman>",
-        "kind": "summary",
-        "snippet": "Aisha Rahman is Senior Product Manager at Google. How you met: Former teammate at my first job. Worked together on the billing team. Now on Google Cloud's developer experience org. Reliable sounding board for anything pricing-related.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Aisha Rahman>",
-        "contactName": "Aisha Rahman",
-        "company": "Google",
-        "title": "Senior Product Manager",
-        "date": "<ts>",
-        "id": "notes:<contacts:Aisha Rahman>",
-        "kind": "note",
-        "snippet": "Worked together on the billing team. Now on Google Cloud's developer experience org. Reliable sounding board for anything pricing-related.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Aisha Rahman>",
-        "contactName": "Aisha Rahman",
-        "company": "Google",
-        "title": "Senior Product Manager",
-        "date": "<ts>",
-        "id": "fact:<contacts:Aisha Rahman>:Former teammate",
-        "kind": "key_fact",
-        "snippet": "Former teammate",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Aisha Rahman>",
-        "contactName": "Aisha Rahman",
-        "company": "Google",
-        "title": "Senior Product Manager",
-        "date": "<ts>",
-        "id": "fact:<contacts:Aisha Rahman>:Now on Google Cloud DevEx",
-        "kind": "key_fact",
-        "snippet": "Now on Google Cloud DevEx",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Rachel Adeyemi>",
-        "contactName": "Rachel Adeyemi",
-        "company": "Figma",
-        "title": "Director of Talent",
-        "date": "<ts>",
-        "id": "summary:<contacts:Rachel Adeyemi>",
-        "kind": "summary",
-        "snippet": "Rachel Adeyemi is Director of Talent at Figma. How you met: Panel at a design systems meetup. Spoke on the panel about hiring designers who can code. Said she is always happy to refer people even when Figma is not hiring.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Rachel Adeyemi>",
-        "contactName": "Rachel Adeyemi",
-        "company": "Figma",
-        "title": "Director of Talent",
-        "date": "<ts>",
-        "id": "notes:<contacts:Rachel Adeyemi>",
-        "kind": "note",
-        "snippet": "Spoke on the panel about hiring designers who can code. Said she is always happy to refer people even when Figma is not hiring.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Nina Petrova>",
-        "contactName": "Nina Petrova",
-        "company": "Lumen Health",
-        "title": "Co-founder & CEO",
-        "date": "<ts>",
-        "id": "summary:<contacts:Nina Petrova>",
-        "kind": "summary",
-        "snippet": "Nina Petrova is Co-founder & CEO at Lumen Health. How you met: Y Combinator alumni Slack. Second-time founder, sold her last company. The person I call when something is going badly. Has strong views on hiring the first five engineers.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Nina Petrova>",
-        "contactName": "Nina Petrova",
-        "company": "Lumen Health",
-        "title": "Co-founder & CEO",
-        "date": "<ts>",
-        "id": "notes:<contacts:Nina Petrova>",
-        "kind": "note",
-        "snippet": "Second-time founder, sold her last company. The person I call when something is going badly. Has strong views on hiring the first five engineers.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Nina Petrova>",
-        "contactName": "Nina Petrova",
-        "company": "Lumen Health",
-        "title": "Co-founder & CEO",
-        "date": "<ts>",
-        "id": "fact:<contacts:Nina Petrova>:Second-time founder",
-        "kind": "key_fact",
-        "snippet": "Second-time founder",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Nina Petrova>",
-        "contactName": "Nina Petrova",
-        "company": "Lumen Health",
-        "title": "Co-founder & CEO",
-        "date": "<ts>",
-        "id": "fact:<contacts:Nina Petrova>:Sold her last company in 2024",
-        "kind": "key_fact",
-        "snippet": "Sold her last company in 2024",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:James Okafor>",
-        "contactName": "James Okafor",
-        "company": "Bellwether Ventures",
-        "title": "Partner",
-        "date": "<ts>",
-        "id": "summary:<contacts:James Okafor>",
-        "kind": "summary",
-        "snippet": "James Okafor is Partner at Bellwether Ventures. How you met: Introduced by Elena at the UNC founders dinner. Seed-stage, writes $500k–$1.5M checks, spends most of his time on developer tools. Said he does not take cold decks but always reads a monthly update. Asked to be added to mine.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:James Okafor>",
-        "contactName": "James Okafor",
-        "company": "Bellwether Ventures",
-        "title": "Partner",
-        "date": "<ts>",
-        "id": "notes:<contacts:James Okafor>",
-        "kind": "note",
-        "snippet": "Seed-stage, writes $500k–$1.5M checks, spends most of his time on developer tools. Said he does not take cold decks but always reads a monthly update. Asked to be added to mine.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:James Okafor>",
-        "contactName": "James Okafor",
-        "company": "Bellwether Ventures",
-        "title": "Partner",
-        "date": "<ts>",
-        "id": "fact:<contacts:James Okafor>:Seed investor, $500k–$1.5M checks",
-        "kind": "key_fact",
-        "snippet": "Seed investor, $500k–$1.5M checks",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:James Okafor>",
-        "contactName": "James Okafor",
-        "company": "Bellwether Ventures",
-        "title": "Partner",
-        "date": "<ts>",
-        "id": "fact:<contacts:James Okafor>:Wants to be on the monthly update list",
-        "kind": "key_fact",
-        "snippet": "Wants to be on the monthly update list",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:James Okafor>",
-        "contactName": "James Okafor",
-        "company": "Bellwether Ventures",
-        "title": "Partner",
-        "date": "<ts>",
-        "id": "fact:<contacts:James Okafor>:Does not read cold decks",
-        "kind": "key_fact",
-        "snippet": "Does not read cold decks",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Amara Diallo>",
-        "contactName": "Amara Diallo",
-        "company": "Bellwether Ventures",
-        "title": "Head of Talent",
-        "date": "<ts>",
-        "id": "summary:<contacts:Amara Diallo>",
-        "kind": "summary",
-        "snippet": "Amara Diallo is Head of Talent at Bellwether Ventures. How you met: Works with James at Bellwether. Runs talent across the portfolio. Said she keeps a list of engineers looking to move and shares it with portfolio founders.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Amara Diallo>",
-        "contactName": "Amara Diallo",
-        "company": "Bellwether Ventures",
-        "title": "Head of Talent",
-        "date": "<ts>",
-        "id": "notes:<contacts:Amara Diallo>",
-        "kind": "note",
-        "snippet": "Runs talent across the portfolio. Said she keeps a list of engineers looking to move and shares it with portfolio founders.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Amara Diallo>",
-        "contactName": "Amara Diallo",
-        "company": "Bellwether Ventures",
-        "title": "Head of Talent",
-        "date": "<ts>",
-        "id": "fact:<contacts:Amara Diallo>:Keeps a portfolio-wide candidate list",
-        "kind": "key_fact",
-        "snippet": "Keeps a portfolio-wide candidate list",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Olivia Brooks>",
-        "contactName": "Olivia Brooks",
-        "company": "UNC Chapel Hill",
-        "title": "Alumni Relations Lead",
-        "date": "<ts>",
-        "id": "summary:<contacts:Olivia Brooks>",
-        "kind": "summary",
-        "snippet": "Olivia Brooks is Alumni Relations Lead at UNC Chapel Hill. How you met: Alumni mixer. Knows which alumni are worth an introduction and offers them unprompted.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Olivia Brooks>",
-        "contactName": "Olivia Brooks",
-        "company": "UNC Chapel Hill",
-        "title": "Alumni Relations Lead",
-        "date": "<ts>",
-        "id": "notes:<contacts:Olivia Brooks>",
-        "kind": "note",
-        "snippet": "Knows which alumni are worth an introduction and offers them unprompted.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Ben Carter>",
-        "contactName": "Ben Carter",
-        "company": "UNC Chapel Hill",
-        "title": "Computer Science Student",
-        "date": "<ts>",
-        "id": "summary:<contacts:Ben Carter>",
-        "kind": "summary",
-        "snippet": "Ben Carter is Computer Science Student at UNC Chapel Hill. How you met: Hackathon judging at UNC. Built a genuinely good retrieval demo at HackNC in a weekend. Graduating in May and looking for an internship. Worth staying close to.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Ben Carter>",
-        "contactName": "Ben Carter",
-        "company": "UNC Chapel Hill",
-        "title": "Computer Science Student",
-        "date": "<ts>",
-        "id": "notes:<contacts:Ben Carter>",
-        "kind": "note",
-        "snippet": "Built a genuinely good retrieval demo at HackNC in a weekend. Graduating in May and looking for an internship. Worth staying close to.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Ben Carter>",
-        "contactName": "Ben Carter",
-        "company": "UNC Chapel Hill",
-        "title": "Computer Science Student",
-        "date": "<ts>",
-        "id": "fact:<contacts:Ben Carter>:Graduating May 2027",
-        "kind": "key_fact",
-        "snippet": "Graduating May 2027",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Ben Carter>",
-        "contactName": "Ben Carter",
-        "company": "UNC Chapel Hill",
-        "title": "Computer Science Student",
-        "date": "<ts>",
-        "id": "fact:<contacts:Ben Carter>:Built a retrieval demo at HackNC",
-        "kind": "key_fact",
-        "snippet": "Built a retrieval demo at HackNC",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Priya Nair>",
-        "contactName": "Priya Nair",
-        "company": "Notion",
-        "title": "Founding Engineer",
-        "date": "<ts>",
-        "id": "summary:<contacts:Priya Nair>",
-        "kind": "summary",
-        "snippet": "Priya Nair is Founding Engineer at Notion. How you met: AWS Summit — same afterparty as Sarah. Building agent workflows inside Notion. We compared notes on evaluation harnesses — she has a homegrown one she said she'd write about. Very generous with time.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Priya Nair>",
-        "contactName": "Priya Nair",
-        "company": "Notion",
-        "title": "Founding Engineer",
-        "date": "<ts>",
-        "id": "notes:<contacts:Priya Nair>",
-        "kind": "note",
-        "snippet": "Building agent workflows inside Notion. We compared notes on evaluation harnesses — she has a homegrown one she said she'd write about. Very generous with time.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Priya Nair>",
-        "contactName": "Priya Nair",
-        "company": "Notion",
-        "title": "Founding Engineer",
-        "date": "<ts>",
-        "id": "fact:<contacts:Priya Nair>:Works on agent workflows",
-        "kind": "key_fact",
-        "snippet": "Works on agent workflows",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Priya Nair>",
-        "contactName": "Priya Nair",
-        "company": "Notion",
-        "title": "Founding Engineer",
-        "date": "<ts>",
-        "id": "fact:<contacts:Priya Nair>:Writing a post on eval harnesses",
-        "kind": "key_fact",
-        "snippet": "Writing a post on eval harnesses",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Marcus Webb>",
-        "contactName": "Marcus Webb",
-        "company": "Linear",
-        "title": "Engineering Lead",
-        "date": "<ts>",
-        "id": "summary:<contacts:Marcus Webb>",
-        "kind": "summary",
-        "snippet": "Marcus Webb is Engineering Lead at Linear. How you met: Introduced by Sarah Chen. Owes me a look at their onboarding flow.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Marcus Webb>",
-        "contactName": "Marcus Webb",
-        "company": "Linear",
-        "title": "Engineering Lead",
-        "date": "<ts>",
-        "id": "notes:<contacts:Marcus Webb>",
-        "kind": "note",
-        "snippet": "Owes me a look at their onboarding flow.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Marcus Webb>",
-        "contactName": "Marcus Webb",
-        "company": "Linear",
-        "title": "Engineering Lead",
-        "date": "<ts>",
-        "id": "fact:<contacts:Marcus Webb>:Introduced by Sarah Chen",
-        "kind": "key_fact",
-        "snippet": "Introduced by Sarah Chen",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Marcus Webb>",
-        "contactName": "Marcus Webb",
-        "company": "Linear",
-        "title": "Engineering Lead",
-        "date": "<ts>",
-        "id": "fact:<contacts:Marcus Webb>:Hiring two senior engineers this quarter",
-        "kind": "key_fact",
-        "snippet": "Hiring two senior engineers this quarter",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Andre Silva>",
-        "contactName": "Andre Silva",
-        "company": "Google",
-        "title": "Head of Platform",
-        "date": "<ts>",
-        "id": "summary:<contacts:Andre Silva>",
-        "kind": "summary",
-        "snippet": "Andre Silva is Head of Platform at Google. How you met: Conference talk Q&A. Asked the sharpest question after my talk and we kept talking in the hallway. Time zones make this a slow relationship.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Andre Silva>",
-        "contactName": "Andre Silva",
-        "company": "Google",
-        "title": "Head of Platform",
-        "date": "<ts>",
-        "id": "notes:<contacts:Andre Silva>",
-        "kind": "note",
-        "snippet": "Asked the sharpest question after my talk and we kept talking in the hallway. Time zones make this a slow relationship.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Victor Reyes>",
-        "contactName": "Victor Reyes",
-        "company": "Anthropic",
-        "title": "Software Engineer",
-        "date": "<ts>",
-        "id": "summary:<contacts:Victor Reyes>",
-        "kind": "summary",
-        "snippet": "Victor Reyes is Software Engineer at Anthropic. How you met: UNC alum, found me through the alumni Slack. Graduated two years ahead of me, now on the inference team. Offered to review Orbit's prompt architecture and actually followed through.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Victor Reyes>",
-        "contactName": "Victor Reyes",
-        "company": "Anthropic",
-        "title": "Software Engineer",
-        "date": "<ts>",
-        "id": "notes:<contacts:Victor Reyes>",
-        "kind": "note",
-        "snippet": "Graduated two years ahead of me, now on the inference team. Offered to review Orbit's prompt architecture and actually followed through.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Victor Reyes>",
-        "contactName": "Victor Reyes",
-        "company": "Anthropic",
-        "title": "Software Engineer",
-        "date": "<ts>",
-        "id": "fact:<contacts:Victor Reyes>:UNC alum",
-        "kind": "key_fact",
-        "snippet": "UNC alum",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Victor Reyes>",
-        "contactName": "Victor Reyes",
-        "company": "Anthropic",
-        "title": "Software Engineer",
-        "date": "<ts>",
-        "id": "fact:<contacts:Victor Reyes>:On Anthropic's inference team",
-        "kind": "key_fact",
-        "snippet": "On Anthropic's inference team",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Maya Thompson>",
-        "contactName": "Maya Thompson",
-        "company": "Innovate Carolina",
-        "title": "Program Director",
-        "date": "<ts>",
-        "id": "summary:<contacts:Maya Thompson>",
-        "kind": "summary",
-        "snippet": "Maya Thompson is Program Director at Innovate Carolina. How you met: Runs the venture program I applied to. Gatekeeper in the best sense — knows every founder and funder in the Triangle. Asked me to present at the fall showcase.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Maya Thompson>",
-        "contactName": "Maya Thompson",
-        "company": "Innovate Carolina",
-        "title": "Program Director",
-        "date": "<ts>",
-        "id": "notes:<contacts:Maya Thompson>",
-        "kind": "note",
-        "snippet": "Gatekeeper in the best sense — knows every founder and funder in the Triangle. Asked me to present at the fall showcase.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Maya Thompson>",
-        "contactName": "Maya Thompson",
-        "company": "Innovate Carolina",
-        "title": "Program Director",
-        "date": "<ts>",
-        "id": "fact:<contacts:Maya Thompson>:Runs the Innovate Carolina venture progr",
-        "kind": "key_fact",
-        "snippet": "Runs the Innovate Carolina venture program",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Maya Thompson>",
-        "contactName": "Maya Thompson",
-        "company": "Innovate Carolina",
-        "title": "Program Director",
-        "date": "<ts>",
-        "id": "fact:<contacts:Maya Thompson>:Invited me to the fall showcase",
-        "kind": "key_fact",
-        "snippet": "Invited me to the fall showcase",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Fatima Nasser>",
-        "contactName": "Fatima Nasser",
-        "company": "Stripe",
-        "title": "Product Manager",
-        "date": "<ts>",
-        "id": "summary:<contacts:Fatima Nasser>",
-        "kind": "summary",
-        "snippet": "Fatima Nasser is Product Manager at Stripe. How you met: Marcus introduced us. Owns Stripe's onboarding surface. Offered to walk through how they measure activation.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Fatima Nasser>",
-        "contactName": "Fatima Nasser",
-        "company": "Stripe",
-        "title": "Product Manager",
-        "date": "<ts>",
-        "id": "notes:<contacts:Fatima Nasser>",
-        "kind": "note",
-        "snippet": "Owns Stripe's onboarding surface. Offered to walk through how they measure activation.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Fatima Nasser>",
-        "contactName": "Fatima Nasser",
-        "company": "Stripe",
-        "title": "Product Manager",
-        "date": "<ts>",
-        "id": "fact:<contacts:Fatima Nasser>:Owns Stripe onboarding",
-        "kind": "key_fact",
-        "snippet": "Owns Stripe onboarding",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Fatima Nasser>",
-        "contactName": "Fatima Nasser",
-        "company": "Stripe",
-        "title": "Product Manager",
-        "date": "<ts>",
-        "id": "fact:<contacts:Fatima Nasser>:Offered an activation-metrics walkthroug",
-        "kind": "key_fact",
-        "snippet": "Offered an activation-metrics walkthrough",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:David Kim>",
-        "contactName": "David Kim",
-        "company": "OpenAI",
-        "title": "Engineering Manager",
-        "date": "<ts>",
-        "id": "summary:<contacts:David Kim>",
-        "kind": "summary",
-        "snippet": "David Kim is Engineering Manager at OpenAI. How you met: Sarah introduced us over email. Manages an applied team. We have only exchanged email so far. Sarah said he is the right person to talk to about evaluation infrastructure.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:David Kim>",
-        "contactName": "David Kim",
-        "company": "OpenAI",
-        "title": "Engineering Manager",
-        "date": "<ts>",
-        "id": "notes:<contacts:David Kim>",
-        "kind": "note",
-        "snippet": "Manages an applied team. We have only exchanged email so far. Sarah said he is the right person to talk to about evaluation infrastructure.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:David Kim>",
-        "contactName": "David Kim",
-        "company": "OpenAI",
-        "title": "Engineering Manager",
-        "date": "<ts>",
-        "id": "fact:<contacts:David Kim>:Introduced by Sarah Chen",
-        "kind": "key_fact",
-        "snippet": "Introduced by Sarah Chen",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Daniel Osei>",
-        "contactName": "Daniel Osei",
-        "company": "Northlight Robotics",
-        "title": "Founder & CTO",
-        "date": "<ts>",
-        "id": "summary:<contacts:Daniel Osei>",
-        "kind": "summary",
-        "snippet": "Daniel Osei is Founder & CTO at Northlight Robotics. How you met: Both spoke at the same founders panel. Hardware founder, so most of our advice does not transfer — but he is the best person I know on hiring under uncertainty.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Daniel Osei>",
-        "contactName": "Daniel Osei",
-        "company": "Northlight Robotics",
-        "title": "Founder & CTO",
-        "date": "<ts>",
-        "id": "notes:<contacts:Daniel Osei>",
-        "kind": "note",
-        "snippet": "Hardware founder, so most of our advice does not transfer — but he is the best person I know on hiring under uncertainty.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Hassan Ali>",
-        "contactName": "Hassan Ali",
-        "company": "Notion",
-        "title": "Senior Backend Engineer",
-        "date": "<ts>",
-        "id": "summary:<contacts:Hassan Ali>",
-        "kind": "summary",
-        "snippet": "Hassan Ali is Senior Backend Engineer at Notion. How you met: Priya's team offsite, joined a dinner. Works alongside Priya. Quiet, extremely good at Postgres.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Hassan Ali>",
-        "contactName": "Hassan Ali",
-        "company": "Notion",
-        "title": "Senior Backend Engineer",
-        "date": "<ts>",
-        "id": "notes:<contacts:Hassan Ali>",
-        "kind": "note",
-        "snippet": "Works alongside Priya. Quiet, extremely good at Postgres.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Marcus Lee>",
-        "contactName": "Marcus Lee",
-        "company": "Stripe",
-        "title": "Technical Recruiter",
-        "date": "<ts>",
-        "id": "summary:<contacts:Marcus Lee>",
-        "kind": "summary",
-        "snippet": "Marcus Lee is Technical Recruiter at Stripe. How you met: Reached out on LinkedIn about the payments infra team. Recruits for Stripe's payments infrastructure org. Straightforward, does not spam. Said the team hires in January and July and to check back before the January cycle.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Marcus Lee>",
-        "contactName": "Marcus Lee",
-        "company": "Stripe",
-        "title": "Technical Recruiter",
-        "date": "<ts>",
-        "id": "notes:<contacts:Marcus Lee>",
-        "kind": "note",
-        "snippet": "Recruits for Stripe's payments infrastructure org. Straightforward, does not spam. Said the team hires in January and July and to check back before the January cycle.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Marcus Lee>",
-        "contactName": "Marcus Lee",
-        "company": "Stripe",
-        "title": "Technical Recruiter",
-        "date": "<ts>",
-        "id": "fact:<contacts:Marcus Lee>:Hires for Stripe payments infra",
-        "kind": "key_fact",
-        "snippet": "Hires for Stripe payments infra",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Marcus Lee>",
-        "contactName": "Marcus Lee",
-        "company": "Stripe",
-        "title": "Technical Recruiter",
-        "date": "<ts>",
-        "id": "fact:<contacts:Marcus Lee>:Cycles are January and July",
-        "kind": "key_fact",
-        "snippet": "Cycles are January and July",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Yuki Tanaka>",
-        "contactName": "Yuki Tanaka",
-        "company": "Anthropic",
-        "title": "Research Scientist",
-        "date": "<ts>",
-        "id": "summary:<contacts:Yuki Tanaka>",
-        "kind": "summary",
-        "snippet": "Yuki Tanaka is Research Scientist at Anthropic. How you met: Paper reading group. Works on interpretability. Explained retrieval evaluation to me twice, patiently. Not a networking relationship — a learning one.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Yuki Tanaka>",
-        "contactName": "Yuki Tanaka",
-        "company": "Anthropic",
-        "title": "Research Scientist",
-        "date": "<ts>",
-        "id": "notes:<contacts:Yuki Tanaka>",
-        "kind": "note",
-        "snippet": "Works on interpretability. Explained retrieval evaluation to me twice, patiently. Not a networking relationship — a learning one.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Grace Whitfield>",
-        "contactName": "Grace Whitfield",
-        "company": "Independent",
-        "title": "Angel Investor",
-        "date": "<ts>",
-        "id": "summary:<contacts:Grace Whitfield>",
-        "kind": "summary",
-        "snippet": "Grace Whitfield is Angel Investor at Independent. How you met: Introduced by James Okafor. Writes $25k–$50k angel checks, mostly into Triangle founders. Said she decides fast and expects a short update every quarter.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Grace Whitfield>",
-        "contactName": "Grace Whitfield",
-        "company": "Independent",
-        "title": "Angel Investor",
-        "date": "<ts>",
-        "id": "notes:<contacts:Grace Whitfield>",
-        "kind": "note",
-        "snippet": "Writes $25k–$50k angel checks, mostly into Triangle founders. Said she decides fast and expects a short update every quarter.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Grace Whitfield>",
-        "contactName": "Grace Whitfield",
-        "company": "Independent",
-        "title": "Angel Investor",
-        "date": "<ts>",
-        "id": "fact:<contacts:Grace Whitfield>:Angel, $25k–$50k checks",
-        "kind": "key_fact",
-        "snippet": "Angel, $25k–$50k checks",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Grace Whitfield>",
-        "contactName": "Grace Whitfield",
-        "company": "Independent",
-        "title": "Angel Investor",
-        "date": "<ts>",
-        "id": "fact:<contacts:Grace Whitfield>:Triangle-focused",
-        "kind": "key_fact",
-        "snippet": "Triangle-focused",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "date": "<ts>",
-        "id": "summary:<contacts:Sarah Chen>",
-        "kind": "summary",
-        "snippet": "Sarah Chen is Partnerships Lead at OpenAI. How you met: AWS Summit — hallway track after the inference keynote. Runs partnerships for the Codex team. Spent most of our conversation on the cost of inference at scale and why most startups over-provision GPUs. Offered to look at Orbit's retrieval setup if I send her a write-up. Prefers email over LinkedIn.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "date": "<ts>",
-        "id": "notes:<contacts:Sarah Chen>",
-        "kind": "note",
-        "snippet": "Runs partnerships for the Codex team. Spent most of our conversation on the cost of inference at scale and why most startups over-provision GPUs. Offered to look at Orbit's retrieval setup if I send her a write-up. Prefers email over LinkedIn.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "date": "<ts>",
-        "id": "fact:<contacts:Sarah Chen>:Leads Codex partnerships at OpenAI",
-        "kind": "key_fact",
-        "snippet": "Leads Codex partnerships at OpenAI",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "date": "<ts>",
-        "id": "fact:<contacts:Sarah Chen>:Was previously infra PM at Stripe",
-        "kind": "key_fact",
-        "snippet": "Was previously infra PM at Stripe",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "date": "<ts>",
-        "id": "fact:<contacts:Sarah Chen>:Asked for a one-pager on Orbit's retriev",
-        "kind": "key_fact",
-        "snippet": "Asked for a one-pager on Orbit's retrieval architecture",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Chris Nowak>",
-        "contactName": "Chris Nowak",
-        "company": "Google",
-        "title": "Engineering Manager",
-        "date": "<ts>",
-        "id": "summary:<contacts:Chris Nowak>",
-        "kind": "summary",
-        "snippet": "Chris Nowak is Engineering Manager at Google. How you met: Former coworker's referral. Manages a search infra team. Aisha vouched for him. We have never met in person.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Chris Nowak>",
-        "contactName": "Chris Nowak",
-        "company": "Google",
-        "title": "Engineering Manager",
-        "date": "<ts>",
-        "id": "notes:<contacts:Chris Nowak>",
-        "kind": "note",
-        "snippet": "Manages a search infra team. Aisha vouched for him. We have never met in person.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Sofia Marchetti>",
-        "contactName": "Sofia Marchetti",
-        "company": "Figma",
-        "title": "Design Lead",
-        "date": "<ts>",
-        "id": "summary:<contacts:Sofia Marchetti>",
-        "kind": "summary",
-        "snippet": "Sofia Marchetti is Design Lead at Figma. How you met: Rachel introduced us. Gave Orbit's landing page a brutal and correct critique. Offered another pass whenever there is something new to look at.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Sofia Marchetti>",
-        "contactName": "Sofia Marchetti",
-        "company": "Figma",
-        "title": "Design Lead",
-        "date": "<ts>",
-        "id": "notes:<contacts:Sofia Marchetti>",
-        "kind": "note",
-        "snippet": "Gave Orbit's landing page a brutal and correct critique. Offered another pass whenever there is something new to look at.",
-        "source": "profile_notes"
-      },
-      {
-        "contactId": "<contacts:Sofia Marchetti>",
-        "contactName": "Sofia Marchetti",
-        "company": "Figma",
-        "title": "Design Lead",
-        "date": "<ts>",
-        "id": "fact:<contacts:Sofia Marchetti>:Critiqued the Orbit landing page",
-        "kind": "key_fact",
-        "snippet": "Critiqued the Orbit landing page",
-        "source": "key_facts"
-      },
-      {
-        "contactId": "<contacts:Leo Fernandez>",
-        "contactName": "Leo Fernandez",
-        "company": "Tidepool Analytics",
-        "title": "Founder",
-        "date": "<ts>",
-        "id": "summary:<contacts:Leo Fernandez>",
-        "kind": "summary",
-        "snippet": "Leo Fernandez is Founder at Tidepool Analytics. How you met: Cold outreach that turned into a real conversation. Building analytics for hardware teams. We trade notes on early sales. Slow to reply but always replies.",
-        "source": "demo-seed"
-      },
-      {
-        "contactId": "<contacts:Leo Fernandez>",
-        "contactName": "Leo Fernandez",
-        "company": "Tidepool Analytics",
-        "title": "Founder",
-        "date": "<ts>",
-        "id": "notes:<contacts:Leo Fernandez>",
-        "kind": "note",
-        "snippet": "Building analytics for hardware teams. We trade notes on early sales. Slow to reply but always replies.",
-        "source": "profile_notes"
-      },
-      {
-        "id": "interaction:<interactions:Sent her the revised positioning line. She liked it.>",
-        "kind": "message",
-        "contactId": "<contacts:Nina Petrova>",
-        "contactName": "Nina Petrova",
-        "company": "Lumen Health",
-        "title": "Co-founder & CEO",
-        "snippet": "Sent her the revised positioning line. She liked it.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Thirty minutes on what a Codex integration would need. She w>",
-        "kind": "note",
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "snippet": "Thirty minutes on what a Codex integration would need. She wants a one-page architecture and a short demo video before their partner review.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:She sent two student names for a possible internship and ask>",
-        "kind": "note",
-        "contactId": "<contacts:Dr. Elena Vasquez>",
-        "contactName": "Dr. Elena Vasquez",
-        "company": "UNC Chapel Hill",
-        "title": "Professor of Computer Science",
-        "snippet": "She sent two student names for a possible internship and asked how the showcase prep is going.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Coffee with Marcus. They are hiring two senior engineers thi>",
-        "kind": "meeting",
-        "contactId": "<contacts:Marcus Webb>",
-        "contactName": "Marcus Webb",
-        "company": "Linear",
-        "title": "Engineering Lead",
-        "snippet": "Coffee with Marcus. They are hiring two senior engineers this quarter and asked whether I knew anyone. Offered to look at their onboarding flow.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Swapped links about eval tooling. She's still planning to wr>",
-        "kind": "message",
-        "contactId": "<contacts:Priya Nair>",
-        "contactName": "Priya Nair",
-        "company": "Notion",
-        "title": "Founding Engineer",
-        "snippet": "Swapped links about eval tooling. She's still planning to write the post.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Confirmed the showcase slot and sent the logistics.>",
-        "kind": "note",
-        "contactId": "<contacts:Maya Thompson>",
-        "contactName": "Maya Thompson",
-        "company": "Innovate Carolina",
-        "title": "Program Director",
-        "snippet": "Confirmed the showcase slot and sent the logistics.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Accepted gladly and proposed a couple of times next week.>",
-        "kind": "message",
-        "contactId": "<contacts:Fatima Nasser>",
-        "contactName": "Fatima Nasser",
-        "company": "Stripe",
-        "title": "Product Manager",
-        "snippet": "Accepted gladly and proposed a couple of times next week.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Reviewed Orbit's prompting. Told me to stop asking the model>",
-        "kind": "note",
-        "contactId": "<contacts:Victor Reyes>",
-        "contactName": "Victor Reyes",
-        "company": "Anthropic",
-        "title": "Software Engineer",
-        "snippet": "Reviewed Orbit's prompting. Told me to stop asking the model to count things it cannot see.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Intro from Marcus. She offered a walkthrough of activation m>",
-        "kind": "message",
-        "contactId": "<contacts:Fatima Nasser>",
-        "contactName": "Fatima Nasser",
-        "company": "Stripe",
-        "title": "Product Manager",
-        "snippet": "Intro from Marcus. She offered a walkthrough of activation metrics.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Twenty-minute intro call. He was honest that headcount is fr>",
-        "kind": "note",
-        "contactId": "<contacts:Marcus Lee>",
-        "contactName": "Marcus Lee",
-        "company": "Stripe",
-        "title": "Technical Recruiter",
-        "snippet": "Twenty-minute intro call. He was honest that headcount is frozen until January. Offered to make an intro to the platform team lead in the meantime.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:She walked me through her eval harness. Golden sets per work>",
-        "kind": "note",
-        "contactId": "<contacts:Priya Nair>",
-        "contactName": "Priya Nair",
-        "company": "Notion",
-        "title": "Founding Engineer",
-        "snippet": "She walked me through her eval harness. Golden sets per workflow, graded weekly.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Introduced me to David Kim on her team for the evaluation-in>",
-        "kind": "note",
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "snippet": "Introduced me to David Kim on her team for the evaluation-infrastructure conversation.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Intro email from Sarah. He replied, said to ping him in a fe>",
-        "kind": "note",
-        "contactId": "<contacts:David Kim>",
-        "contactName": "David Kim",
-        "company": "OpenAI",
-        "title": "Engineering Manager",
-        "snippet": "Intro email from Sarah. He replied, said to ping him in a few weeks.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Dinner in Boston. Talked through Orbit's positioning — she p>",
-        "kind": "meeting",
-        "contactId": "<contacts:Nina Petrova>",
-        "contactName": "Nina Petrova",
-        "company": "Lumen Health",
-        "title": "Co-founder & CEO",
-        "snippet": "Dinner in Boston. Talked through Orbit's positioning — she pushed hard on picking one user, not four.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Sent a first draft of the write-up. She replied same day, sa>",
-        "kind": "note",
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "snippet": "Sent a first draft of the write-up. She replied same day, said she'd share it with her team and to ping her after their planning cycle.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Judged his HackNC project. Retrieval over course notes, ship>",
-        "kind": "meeting",
-        "contactId": "<contacts:Ben Carter>",
-        "contactName": "Ben Carter",
-        "company": "UNC Chapel Hill",
-        "title": "Computer Science Student",
-        "snippet": "Judged his HackNC project. Retrieval over course notes, shipped in a weekend, and he could explain every choice.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Introduced me to Grace Whitfield, an angel in Durham.>",
-        "kind": "note",
-        "contactId": "<contacts:James Okafor>",
-        "contactName": "James Okafor",
-        "company": "Bellwether Ventures",
-        "title": "Partner",
-        "snippet": "Introduced me to Grace Whitfield, an angel in Durham.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Intro call from James. Direct, decides fast, wants quarterly>",
-        "kind": "note",
-        "contactId": "<contacts:Grace Whitfield>",
-        "contactName": "Grace Whitfield",
-        "company": "Independent",
-        "title": "Angel Investor",
-        "snippet": "Intro call from James. Direct, decides fast, wants quarterly updates.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Quick check-in. She's hiring a PM and asked if I knew anyone>",
-        "kind": "message",
-        "contactId": "<contacts:Aisha Rahman>",
-        "contactName": "Aisha Rahman",
-        "company": "Google",
-        "title": "Senior Product Manager",
-        "snippet": "Quick check-in. She's hiring a PM and asked if I knew anyone.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Dinner with Priya's team. Talked about Postgres indexing.>",
-        "kind": "meeting",
-        "contactId": "<contacts:Hassan Ali>",
-        "contactName": "Hassan Ali",
-        "company": "Notion",
-        "title": "Senior Backend Engineer",
-        "snippet": "Dinner with Priya's team. Talked about Postgres indexing.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:She replied asking for the retrieval write-up by email rathe>",
-        "kind": "message",
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "snippet": "She replied asking for the retrieval write-up by email rather than here.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Connected on LinkedIn and thanked her for the conversation a>",
-        "kind": "message",
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "snippet": "Connected on LinkedIn and thanked her for the conversation about inference costs.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:He talked me out of a bad first hire.>",
-        "kind": "note",
-        "contactId": "<contacts:Daniel Osei>",
-        "contactName": "Daniel Osei",
-        "company": "Northlight Robotics",
-        "title": "Founder & CTO",
-        "snippet": "He talked me out of a bad first hire.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Accepted into the fall cohort. She sent the programme calend>",
-        "kind": "note",
-        "contactId": "<contacts:Maya Thompson>",
-        "contactName": "Maya Thompson",
-        "company": "Innovate Carolina",
-        "title": "Program Director",
-        "snippet": "Accepted into the fall cohort. She sent the programme calendar.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Met at the AWS Summit after the inference keynote. Talked th>",
-        "kind": "meeting",
-        "contactId": "<contacts:Sarah Chen>",
-        "contactName": "Sarah Chen",
-        "company": "OpenAI",
-        "title": "Partnerships Lead",
-        "snippet": "Met at the AWS Summit after the inference keynote. Talked through AI infrastructure costs — she thinks most teams over-provision by 3-4x. Mentioned the Codex partnerships team is looking at developer-tool integrations.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Met at the AWS Summit afterparty through Sarah. Long convers>",
-        "kind": "meeting",
-        "contactId": "<contacts:Priya Nair>",
-        "contactName": "Priya Nair",
-        "company": "Notion",
-        "title": "Founding Engineer",
-        "snippet": "Met at the AWS Summit afterparty through Sarah. Long conversation about agent evaluation — she runs a homegrown harness and offered to share the design.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Sent her the redesign. She replied with six specific fixes; >",
-        "kind": "message",
-        "contactId": "<contacts:Sofia Marchetti>",
-        "contactName": "Sofia Marchetti",
-        "company": "Figma",
-        "title": "Design Lead",
-        "snippet": "Sent her the redesign. She replied with six specific fixes; four shipped.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:He found me in the UNC alumni Slack.>",
-        "kind": "message",
-        "contactId": "<contacts:Victor Reyes>",
-        "contactName": "Victor Reyes",
-        "company": "Anthropic",
-        "title": "Software Engineer",
-        "snippet": "He found me in the UNC alumni Slack.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Met through James. Offered access to the candidate list.>",
-        "kind": "note",
-        "contactId": "<contacts:Amara Diallo>",
-        "contactName": "Amara Diallo",
-        "company": "Bellwether Ventures",
-        "title": "Head of Talent",
-        "snippet": "Met through James. Offered access to the candidate list.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Introduced me to James Okafor at the UNC founders dinner.>",
-        "kind": "note",
-        "contactId": "<contacts:Dr. Elena Vasquez>",
-        "contactName": "Dr. Elena Vasquez",
-        "company": "UNC Chapel Hill",
-        "title": "Professor of Computer Science",
-        "snippet": "Introduced me to James Okafor at the UNC founders dinner.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Met at the UNC founders dinner. Asked good questions about r>",
-        "kind": "meeting",
-        "contactId": "<contacts:James Okafor>",
-        "contactName": "James Okafor",
-        "company": "Bellwether Ventures",
-        "title": "Partner",
-        "snippet": "Met at the UNC founders dinner. Asked good questions about retention rather than growth. Wants the monthly update, not a deck.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Asked her about eval design; she sent three papers.>",
-        "kind": "message",
-        "contactId": "<contacts:Yuki Tanaka>",
-        "contactName": "Yuki Tanaka",
-        "company": "Anthropic",
-        "title": "Research Scientist",
-        "snippet": "Asked her about eval design; she sent three papers.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Replied with my resume and said I'm optimising for infra dep>",
-        "kind": "message",
-        "contactId": "<contacts:Marcus Lee>",
-        "contactName": "Marcus Lee",
-        "company": "Stripe",
-        "title": "Technical Recruiter",
-        "snippet": "Replied with my resume and said I'm optimising for infra depth over title.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:First LinkedIn message about the payments infra team. Asked >",
-        "kind": "message",
-        "contactId": "<contacts:Marcus Lee>",
-        "contactName": "Marcus Lee",
-        "company": "Stripe",
-        "title": "Technical Recruiter",
-        "snippet": "First LinkedIn message about the payments infra team. Asked for my resume and what I'm optimising for.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Founders panel green room. Long talk about hiring.>",
-        "kind": "meeting",
-        "contactId": "<contacts:Daniel Osei>",
-        "contactName": "Daniel Osei",
-        "company": "Northlight Robotics",
-        "title": "Founder & CTO",
-        "snippet": "Founders panel green room. Long talk about hiring.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Screen-shared on API versioning. He argued for date-based ve>",
-        "kind": "note",
-        "contactId": "<contacts:Tom Bennett>",
-        "contactName": "Tom Bennett",
-        "company": "Stripe",
-        "title": "Staff Software Engineer",
-        "snippet": "Screen-shared on API versioning. He argued for date-based versions.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Talked me through structuring the first engineering offer. E>",
-        "kind": "note",
-        "contactId": "<contacts:Nina Petrova>",
-        "contactName": "Nina Petrova",
-        "company": "Lumen Health",
-        "title": "Co-founder & CEO",
-        "snippet": "Talked me through structuring the first engineering offer. Equity over salary, but not by much.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Program intro meeting. She mapped out who to meet in the Tri>",
-        "kind": "meeting",
-        "contactId": "<contacts:Maya Thompson>",
-        "contactName": "Maya Thompson",
-        "company": "Innovate Carolina",
-        "title": "Program Director",
-        "snippet": "Program intro meeting. She mapped out who to meet in the Triangle.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Coffee on campus. Walked her through Orbit's data model; she>",
-        "kind": "meeting",
-        "contactId": "<contacts:Dr. Elena Vasquez>",
-        "contactName": "Dr. Elena Vasquez",
-        "company": "UNC Chapel Hill",
-        "title": "Professor of Computer Science",
-        "snippet": "Coffee on campus. Walked her through Orbit's data model; she pushed back on storing derived scores and was right.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Compared early sales motions. He does founder-led demos.>",
-        "kind": "note",
-        "contactId": "<contacts:Leo Fernandez>",
-        "contactName": "Leo Fernandez",
-        "company": "Tidepool Analytics",
-        "title": "Founder",
-        "snippet": "Compared early sales motions. He does founder-led demos.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Introduced me to Sofia Marchetti for a landing-page critique>",
-        "kind": "note",
-        "contactId": "<contacts:Rachel Adeyemi>",
-        "contactName": "Rachel Adeyemi",
-        "company": "Figma",
-        "title": "Director of Talent",
-        "snippet": "Introduced me to Sofia Marchetti for a landing-page critique.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:First call, introduced by Rachel. Ran through the landing pa>",
-        "kind": "meeting",
-        "contactId": "<contacts:Sofia Marchetti>",
-        "contactName": "Sofia Marchetti",
-        "company": "Figma",
-        "title": "Design Lead",
-        "snippet": "First call, introduced by Rachel. Ran through the landing page live.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Intro call from the YC alumni Slack. Immediately useful on e>",
-        "kind": "note",
-        "contactId": "<contacts:Nina Petrova>",
-        "contactName": "Nina Petrova",
-        "company": "Lumen Health",
-        "title": "Co-founder & CEO",
-        "snippet": "Intro call from the YC alumni Slack. Immediately useful on early hiring.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Met after her panel at the design systems meetup. Swapped co>",
-        "kind": "meeting",
-        "contactId": "<contacts:Rachel Adeyemi>",
-        "contactName": "Rachel Adeyemi",
-        "company": "Figma",
-        "title": "Director of Talent",
-        "snippet": "Met after her panel at the design systems meetup. Swapped contacts.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Met at the paper reading group.>",
-        "kind": "note",
-        "contactId": "<contacts:Yuki Tanaka>",
-        "contactName": "Yuki Tanaka",
-        "company": "Anthropic",
-        "title": "Research Scientist",
-        "snippet": "Met at the paper reading group.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:He cold-emailed me; the second reply was worth it.>",
-        "kind": "note",
-        "contactId": "<contacts:Leo Fernandez>",
-        "contactName": "Leo Fernandez",
-        "company": "Tidepool Analytics",
-        "title": "Founder",
-        "snippet": "He cold-emailed me; the second reply was worth it.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Catch-up call. She walked me through how Cloud thinks about >",
-        "kind": "note",
-        "contactId": "<contacts:Aisha Rahman>",
-        "contactName": "Aisha Rahman",
-        "company": "Google",
-        "title": "Senior Product Manager",
-        "snippet": "Catch-up call. She walked me through how Cloud thinks about free tiers.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Alumni mixer. She offered two introductions.>",
-        "kind": "meeting",
-        "contactId": "<contacts:Olivia Brooks>",
-        "contactName": "Olivia Brooks",
-        "company": "UNC Chapel Hill",
-        "title": "Alumni Relations Lead",
-        "snippet": "Alumni mixer. She offered two introductions.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Sent her the first Orbit prototype. She replied with a page >",
-        "kind": "note",
-        "contactId": "<contacts:Dr. Elena Vasquez>",
-        "contactName": "Dr. Elena Vasquez",
-        "company": "UNC Chapel Hill",
-        "title": "Professor of Computer Science",
-        "snippet": "Sent her the first Orbit prototype. She replied with a page of questions about consistency.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:First contact through a PR review on the library.>",
-        "kind": "message",
-        "contactId": "<contacts:Tom Bennett>",
-        "contactName": "Tom Bennett",
-        "company": "Stripe",
-        "title": "Staff Software Engineer",
-        "snippet": "First contact through a PR review on the library.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Referral intro from Aisha. Brief exchange.>",
-        "kind": "note",
-        "contactId": "<contacts:Chris Nowak>",
-        "contactName": "Chris Nowak",
-        "company": "Google",
-        "title": "Engineering Manager",
-        "snippet": "Referral intro from Aisha. Brief exchange.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Hallway conversation after the talk about multi-region write>",
-        "kind": "note",
-        "contactId": "<contacts:Andre Silva>",
-        "contactName": "Andre Silva",
-        "company": "Google",
-        "title": "Head of Platform",
-        "snippet": "Hallway conversation after the talk about multi-region writes.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Took her distributed systems course. Stayed after lectures m>",
-        "kind": "note",
-        "contactId": "<contacts:Dr. Elena Vasquez>",
-        "contactName": "Dr. Elena Vasquez",
-        "company": "UNC Chapel Hill",
-        "title": "Professor of Computer Science",
-        "snippet": "Took her distributed systems course. Stayed after lectures most weeks.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      },
-      {
-        "id": "interaction:<interactions:Joined the billing team together. She owned the invoicing ro>",
-        "kind": "note",
-        "contactId": "<contacts:Aisha Rahman>",
-        "contactName": "Aisha Rahman",
-        "company": "Google",
-        "title": "Senior Product Manager",
-        "snippet": "Joined the billing team together. She owned the invoicing roadmap.",
-        "date": "<ts>",
-        "source": "demo-seed"
-      }
-    ]
-  },
   "action: getContact": {
     "id": "<contacts:Sarah Chen>",
     "userId": "demo-user",
@@ -5989,6 +4479,133 @@
                   "maximum": 50
                 }
               }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "list_events",
+            "title": "List events",
+            "description": "The user's events (conferences, meetups, mixers) from Orbit's events page: upcoming, past or both, with how many are on each roster and how many of those are already contacts. Use an event's id with get_event_roster or who_to_talk_to.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "when": {
+                  "default": "all",
+                  "type": "string",
+                  "enum": [
+                    "upcoming",
+                    "past",
+                    "all"
+                  ]
+                },
+                "limit": {
+                  "default": 10,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_event_roster",
+            "title": "Who is at an event",
+            "description": "The roster of one event: each person's attendeeId, name, company, title, role, whether the user marked that they spoke to them, and their contact id when they are already a contact. Filter to the people the user spoke to, or to people already in their contacts.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "eventId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "spoke_to": {
+                  "description": "Only people the user did (true) or did not (false) speak to.",
+                  "type": "boolean"
+                },
+                "in_contacts": {
+                  "description": "Only people already in (true) or not in (false) the user's contacts.",
+                  "type": "boolean"
+                },
+                "limit": {
+                  "default": 50,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              },
+              "required": [
+                "eventId"
+              ]
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "who_to_talk_to",
+            "title": "Who to talk to at an event",
+            "description": "Orbit's ranking of the people on one event's roster worth meeting (upcoming) or following up with (past), with the reasons — the same list the event page shows.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "eventId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "limit": {
+                  "default": 5,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                }
+              },
+              "required": [
+                "eventId"
+              ]
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "events_with_contact",
+            "title": "Events shared with someone",
+            "description": "Every event a contact was on the roster of, newest first, and whether the user spoke to them there.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "contactId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                }
+              },
+              "required": [
+                "contactId"
+              ]
             },
             "annotations": {
               "readOnlyHint": true
@@ -8196,7 +6813,9 @@
         "preferredName": null,
         "company": "OpenAI",
         "title": "Golden Title",
-        "goalRelevance": 1
+        "goalRelevance": 1,
+        "reason": "goal",
+        "companyName": null
       },
       {
         "id": "<contacts:Amara Diallo>",
@@ -8204,7 +6823,9 @@
         "preferredName": null,
         "company": "Bellwether Ventures",
         "title": "Head of Talent",
-        "goalRelevance": 1
+        "goalRelevance": 1,
+        "reason": "goal",
+        "companyName": null
       },
       {
         "id": "<contacts:Marcus Webb>",
@@ -8212,7 +6833,9 @@
         "preferredName": null,
         "company": "Linear",
         "title": "Engineering Lead",
-        "goalRelevance": 1
+        "goalRelevance": 1,
+        "reason": "goal",
+        "companyName": null
       },
       {
         "id": "<contacts:Sofia Marchetti>",
@@ -8220,7 +6843,9 @@
         "preferredName": null,
         "company": "Figma",
         "title": "Design Lead",
-        "goalRelevance": 1
+        "goalRelevance": 1,
+        "reason": "goal",
+        "companyName": null
       },
       {
         "id": "<contacts:Tom Bennett>",
@@ -8228,7 +6853,9 @@
         "preferredName": null,
         "company": "Stripe",
         "title": "Staff Software Engineer",
-        "goalRelevance": 0.666667
+        "goalRelevance": 0.666667,
+        "reason": "goal",
+        "companyName": null
       }
     ],
     "closenessById": {

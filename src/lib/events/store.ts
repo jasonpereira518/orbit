@@ -19,6 +19,7 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, eventAttendees, events, type EventRecord } from "@/db/schema";
+import { del } from "@/lib/blob-lazy";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { personKeyOf } from "@/lib/events/people";
 import { UserFacingError } from "@/lib/errors";
@@ -38,6 +39,7 @@ export type EventListRow = Pick<
   | "title"
   | "startsAt"
   | "endsAt"
+  | "timezone"
   | "venue"
   | "city"
   | "url"
@@ -117,7 +119,7 @@ export async function listEventsForUser(
       ? sql`e.starts_at ASC NULLS LAST, e.id ASC`
       : sql`e.starts_at DESC NULLS LAST, e.id DESC`;
   const rows = await db.execute(sql`
-    SELECT e.id, e.title, e.starts_at, e.ends_at, e.venue, e.city, e.url, e.role, e.source,
+    SELECT e.id, e.title, e.starts_at, e.ends_at, e.timezone, e.venue, e.city, e.url, e.role, e.source,
            e.cover_image_url, e.theme_color, e.discovered_via, e.rsvp_status,
            COALESCE(a.total, 0)     AS attendee_count,
            COALESCE(a.connected, 0) AS connected_count
@@ -141,6 +143,7 @@ export async function listEventsForUser(
     title: string;
     starts_at: string | Date | null;
     ends_at: string | Date | null;
+    timezone: string | null;
     venue: string | null;
     city: string | null;
     url: string | null;
@@ -160,6 +163,7 @@ export async function listEventsForUser(
     title: r.title,
     startsAt: r.starts_at ? new Date(r.starts_at) : null,
     endsAt: r.ends_at ? new Date(r.ends_at) : null,
+    timezone: r.timezone,
     venue: r.venue,
     city: r.city,
     url: r.url,
@@ -263,7 +267,18 @@ export type CreateEventInput = {
   themeSource?: EventRecord["themeSource"];
   attendeeCount?: number | null;
   notes?: string | null;
+  rsvpStatus?: EventRecord["rsvpStatus"];
 };
+
+/**
+ * The last line before the driver: an Invalid Date reaching `.values()` throws `RangeError`
+ * from inside drizzle as a 500 (audit M-04). Callers validate at the boundary
+ * (`optionalClientDate`); this keeps a caller that forgot — a sync adapter, a script — from
+ * failing a whole write over one unreadable time. Unreadable means "no time stated".
+ */
+function validDateOrNull(value: Date | null | undefined): Date | null {
+  return value instanceof Date && !Number.isNaN(value.getTime()) ? value : null;
+}
 
 export async function createEventForUser(
   userId: string,
@@ -275,8 +290,8 @@ export async function createEventForUser(
     .values({
       userId,
       title: input.title.trim(),
-      startsAt: input.startsAt ?? null,
-      endsAt: input.endsAt ?? null,
+      startsAt: validDateOrNull(input.startsAt),
+      endsAt: validDateOrNull(input.endsAt),
       timezone: input.timezone ?? null,
       venue: input.venue ?? null,
       city: input.city ?? null,
@@ -295,6 +310,7 @@ export async function createEventForUser(
       themeSource: input.themeSource ?? null,
       attendeeCount: input.attendeeCount ?? null,
       notes: input.notes ?? null,
+      rsvpStatus: input.rsvpStatus ?? null,
     })
     .returning();
   return row!;
@@ -318,14 +334,42 @@ export async function updateEventForUser(
   };
   await db
     .update(events)
-    .set({ ...safe, updatedAt: new Date() })
+    .set({
+      ...safe,
+      ...("startsAt" in safe ? { startsAt: validDateOrNull(safe.startsAt as Date | null | undefined) } : {}),
+      ...("endsAt" in safe ? { endsAt: validDateOrNull(safe.endsAt as Date | null | undefined) } : {}),
+      updatedAt: new Date(),
+    })
     .where(and(eq(events.id, eventId), eq(events.userId, userId)));
 }
 
-export async function deleteEventForUser(userId: string, eventId: string): Promise<void> {
+/** A cover Orbit stored itself (`src/lib/events/cover.ts`), as opposed to a remote image URL. */
+export function isStoredEventCover(url: string | null | undefined): url is string {
+  return Boolean(url && /^https:\/\/[^/]+\.blob\.vercel-storage\.com\/event-covers\//.test(url));
+}
+
+export async function deleteEventForUser(
+  userId: string,
+  eventId: string,
+  deleteBlob: (url: string) => Promise<unknown> = (url) => del(url)
+): Promise<void> {
   const db = await getDb();
   // Attendees cascade; the contacts they were connected to are deliberately left alone.
-  await db.delete(events).where(and(eq(events.id, eventId), eq(events.userId, userId)));
+  const [gone] = await db
+    .delete(events)
+    .where(and(eq(events.id, eventId), eq(events.userId, userId)))
+    .returning();
+  // The cover sits at a public, guessable path (`event-covers/<eventId>`) with nothing else
+  // pointing at it, so it goes with its event (audit L-08). Best-effort: the event is gone
+  // either way, and an orphaned object is a cost problem, not a reason to fail the delete.
+  const cover = gone?.coverImageUrl;
+  if (isStoredEventCover(cover)) {
+    try {
+      await deleteBlob(cover);
+    } catch {
+      // See above.
+    }
+  }
 }
 
 /**
@@ -459,6 +503,22 @@ export async function linkAttendeesToContacts(
   `);
 }
 
+/** The rows `upsertEventAttendees` wrote, by the identity keys it was given (it returns a count). */
+async function attendeeRowsByIdentityKey(userId: string, eventId: string, keys: string[]) {
+  if (keys.length === 0) return [];
+  const db = await getDb();
+  return db
+    .select({ id: eventAttendees.id, identityKey: eventAttendees.identityKey })
+    .from(eventAttendees)
+    .where(
+      and(eq(eventAttendees.userId, userId), eq(eventAttendees.eventId, eventId), inArray(eventAttendees.identityKey, keys))
+    );
+}
+
+export async function attendeeIdsByIdentityKey(userId: string, eventId: string, keys: string[]): Promise<string[]> {
+  return (await attendeeRowsByIdentityKey(userId, eventId, keys)).map((r) => r.id);
+}
+
 /**
  * "Log who you met": mark the contacts a capture just saved as met at this event.
  *
@@ -528,17 +588,9 @@ export async function recordMetAtEvent(userId: string, eventId: string, contactI
   }
   if (added.length) {
     await upsertEventAttendees(userId, eventId, added, "capture");
-    const rows = await db
-      .select({ id: eventAttendees.id, identityKey: eventAttendees.identityKey })
-      .from(eventAttendees)
-      .where(
-        and(
-          eq(eventAttendees.userId, userId),
-          eq(eventAttendees.eventId, eventId),
-          inArray(eventAttendees.identityKey, [...keyToContact.keys()])
-        )
-      );
-    for (const row of rows) links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
+    for (const row of await attendeeRowsByIdentityKey(userId, eventId, [...keyToContact.keys()])) {
+      links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
+    }
   }
   await linkAttendeesToContacts(userId, links);
   return links.length;

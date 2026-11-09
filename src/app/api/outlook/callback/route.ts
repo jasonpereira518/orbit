@@ -1,4 +1,5 @@
 import { NextResponse, after } from "next/server";
+import { recordAccountAudit } from "@/lib/account-audit";
 import { canConnect } from "@/lib/connection-limits";
 import { auth } from "@clerk/nextjs/server";
 import { kickSyncPass } from "@/lib/sync-kick";
@@ -85,6 +86,7 @@ export async function GET(request: Request) {
     const tokens = await exchangeCodeForTokens(code);
     const email = await fetchMicrosoftProfileEmail(tokens.access_token);
     const { row: connection, switchedFrom } = await upsertOutlookConnection(sessionUserId, tokens, email);
+    await recordAccountAudit({ userId: sessionUserId, action: "integration.connect", resourceType: "outlook", resourceId: connection.id, detail: { switched: Boolean(switchedFrom) } });
 
     // The upsert has already run by here — whatever it did (including swapping the account
     // and resetting scopes/cursor to the new grant alone) is true regardless of what the

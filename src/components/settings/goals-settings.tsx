@@ -116,7 +116,7 @@ export function GoalsSettings({ initialGoals }: { initialGoals: UserGoal[] }) {
         <Field label="New goal" hideLabel error={error} className="min-w-0 flex-1">
           <Input
             ref={inputRef}
-            placeholder="e.g. Raise seed round, hire engineers…"
+            placeholder="e.g. Land a summer 2027 internship in product design"
             value={text}
             onChange={(e) => {
               setText(e.target.value);

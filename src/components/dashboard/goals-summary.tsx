@@ -23,6 +23,8 @@ type GoalAlignedContact = {
   company?: string | null;
   title?: string | null;
   goalRelevance: number;
+  reason: "target_company" | "goal";
+  companyName: string | null;
 };
 
 export function GoalsSummary({
@@ -131,7 +133,7 @@ export function GoalsSummary({
               {goalAlignedContacts.map((c) => (
                 <li key={c.id}>
                   <IntentLink
-                    href={`/contacts/${c.id}`}
+                    href={`/contacts/${c.id}#follow-up`}
                     className={cn(
                       "flex items-center justify-between px-2 py-1.5",
                       ROW_HOVER_INSET,
@@ -154,10 +156,17 @@ export function GoalsSummary({
                           )}
                         </span>
                       )}
+                      <span className="block text-xs text-muted-foreground">
+                        {c.reason === "target_company" && c.companyName
+                          ? `Works at ${c.companyName}, one of your targets`
+                          : "Matches your goals"}
+                      </span>
                     </span>
-                    <span className="text-xs tabular-nums text-muted-foreground">
-                      {Math.round(c.goalRelevance * 100)}% match
-                    </span>
+                    {c.reason === "goal" && (
+                      <span className="text-xs tabular-nums text-muted-foreground">
+                        {Math.round(c.goalRelevance * 100)}% match
+                      </span>
+                    )}
                   </IntentLink>
                 </li>
               ))}

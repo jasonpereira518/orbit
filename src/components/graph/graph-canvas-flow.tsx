@@ -10,6 +10,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -573,9 +574,9 @@ const NO_IDS: ReadonlySet<string> = new Set();
  * changed, and the old entries are simply collected. `key` encodes every value the copy was
  * built from; the same key means the same copy, and React Flow sees an unchanged object.
  */
-const emphasisCache = new WeakMap<object, { key: string; value: unknown }>();
+const emphasisCache = new WeakMap<object, { key: string | number; value: unknown }>();
 
-function withEmphasis<T>(base: object, key: string, build: () => T): T {
+function withEmphasis<T>(base: object, key: string | number, build: () => T): T {
   const hit = emphasisCache.get(base);
   if (hit && hit.key === key) return hit.value as T;
   const value = build();
@@ -884,10 +885,31 @@ function GraphCanvasInner({
   // From the layout rather than `orbitNodes`: positions and data are the same, and this way
   // React Flow reporting a measurement does not rebuild it.
   const skyLayoutNodes = sky.layout.nodes;
-  const contactById = useMemo(() => {
+  const { contactById, contactSpatialGrid } = useMemo(() => {
     const map = new Map<string, LayoutNodes[number]>();
-    for (const n of skyLayoutNodes) if (n.type === "contact") map.set(n.id, n);
-    return map;
+    const GRID_CELL_SIZE = 500;
+    const cells = new Map<string, LayoutNodes[number][]>();
+    const allContacts: LayoutNodes[number][] = [];
+
+    for (const n of skyLayoutNodes) {
+      if (n.type !== "contact") continue;
+      map.set(n.id, n);
+      allContacts.push(n);
+
+      const gx = Math.floor(n.position.x / GRID_CELL_SIZE);
+      const gy = Math.floor(n.position.y / GRID_CELL_SIZE);
+      const cellKey = `${gx},${gy}`;
+      let cell = cells.get(cellKey);
+      if (!cell) {
+        cell = [];
+        cells.set(cellKey, cell);
+      }
+      cell.push(n);
+    }
+    return {
+      contactById: map,
+      contactSpatialGrid: { cellSize: GRID_CELL_SIZE, cells, allContacts },
+    };
   }, [skyLayoutNodes]);
 
   /**
@@ -1125,18 +1147,43 @@ function GraphCanvasInner({
     const cx = (w.x0 + w.x1) / 2;
     const cy = (w.y0 + w.y1) / 2;
     const inside: Array<{ id: string; d: number }> = [];
-    for (const n of contactById.values()) {
-      const { x, y } = n.position;
-      if (x < w.x0 || x > w.x1 || y < w.y0 || y > w.y1) continue;
-      inside.push({ id: n.id, d: (x - cx) ** 2 + (y - cy) ** 2 });
+
+    const { cellSize, cells, allContacts } = contactSpatialGrid;
+    const minGx = Math.floor(w.x0 / cellSize);
+    const maxGx = Math.floor(w.x1 / cellSize);
+    const minGy = Math.floor(w.y0 / cellSize);
+    const maxGy = Math.floor(w.y1 / cellSize);
+
+    const cellCount = (maxGx - minGx + 1) * (maxGy - minGy + 1);
+    if (cellCount > 0 && cellCount < 300) {
+      for (let gx = minGx; gx <= maxGx; gx++) {
+        for (let gy = minGy; gy <= maxGy; gy++) {
+          const bucket = cells.get(`${gx},${gy}`);
+          if (!bucket) continue;
+          for (let i = 0; i < bucket.length; i++) {
+            const n = bucket[i];
+            const { x, y } = n.position;
+            if (x < w.x0 || x > w.x1 || y < w.y0 || y > w.y1) continue;
+            inside.push({ id: n.id, d: (x - cx) ** 2 + (y - cy) ** 2 });
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i < allContacts.length; i++) {
+        const n = allContacts[i];
+        const { x, y } = n.position;
+        if (x < w.x0 || x > w.x1 || y < w.y0 || y > w.y1) continue;
+        inside.push({ id: n.id, d: (x - cx) ** 2 + (y - cy) ** 2 });
+      }
     }
+
     inside.sort((a, b) => a.d - b.d);
     return inside.map((c) => c.id);
     // `activeWindow` is a fresh object only when `starWindow` is null; its bounds are the key.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     windowing,
-    contactById,
+    contactSpatialGrid,
     activeWindow?.x0,
     activeWindow?.y0,
     activeWindow?.x1,
@@ -1148,8 +1195,25 @@ function GraphCanvasInner({
   );
 
   const [mounted, setMounted] = useState<ReadonlySet<string>>(NO_IDS);
-  const adding = wanted !== null && wanted.slice(0, STAR_WINDOW_MAX).some((id) => !mounted.has(id));
-  const removing = mounted.size > 0 && [...mounted].some((id) => !target.has(id));
+  let adding = false;
+  if (wanted !== null) {
+    const limit = Math.min(wanted.length, STAR_WINDOW_MAX);
+    for (let i = 0; i < limit; i++) {
+      if (!mounted.has(wanted[i])) {
+        adding = true;
+        break;
+      }
+    }
+  }
+  let removing = false;
+  if (mounted.size > 0) {
+    for (const id of mounted) {
+      if (!target.has(id)) {
+        removing = true;
+        break;
+      }
+    }
+  }
   useEffect(() => {
     if (!adding && !removing) return;
     const raf = requestAnimationFrame(() => {
@@ -1282,6 +1346,7 @@ function GraphCanvasInner({
       x: number;
       y: number;
       r2: number;
+      reach: number;
     }> = [];
     for (const n of sky.layout.nodes) {
       if (n.type !== "nebula") continue;
@@ -1295,6 +1360,7 @@ function GraphCanvasInner({
         x: n.position.x,
         y: n.position.y,
         r2: reach * reach,
+        reach,
       });
     }
     return circles;
@@ -1315,7 +1381,9 @@ function GraphCanvasInner({
       const { x, y } = screenToFlowPosition({ x: clientX, y: clientY });
       let best: (typeof clusterCircles)[number] | null = null;
       let bestD = Infinity;
-      for (const c of clusterCircles) {
+      for (let i = 0; i < clusterCircles.length; i++) {
+        const c = clusterCircles[i];
+        if (Math.abs(x - c.x) > c.reach || Math.abs(y - c.y) > c.reach) continue;
         const d = (x - c.x) ** 2 + (y - c.y) ** 2;
         if (d <= c.r2 && d < bestD) {
           bestD = d;
@@ -1366,17 +1434,26 @@ function GraphCanvasInner({
   // Only over stars that can be drawn: the summary's mounted hits, or the star window. Over the
   // whole sky this ran on every keystroke of a search — 10,000 label boxes to name a handful.
   const labelled = useMemo(() => {
-    let candidates: Iterable<LayoutNodes[number]> = contactById.values();
+    const list: LayoutNodes[number][] = [];
     if (summary) {
-      candidates =
-        searchDimActive && searchHitIds.size <= SUMMARY_MOUNT_HITS_MAX
-          ? [...searchHitIds].flatMap((id) => contactById.get(id) ?? [])
-          : [];
+      if (searchDimActive && searchHitIds.size <= SUMMARY_MOUNT_HITS_MAX) {
+        for (const id of searchHitIds) {
+          const n = contactById.get(id);
+          if (n) list.push(n);
+        }
+      }
     } else if (wanted) {
-      candidates = [...target].flatMap((id) => contactById.get(id) ?? []);
+      for (const id of target) {
+        const n = contactById.get(id);
+        if (n) list.push(n);
+      }
+    } else {
+      for (const n of contactById.values()) {
+        list.push(n);
+      }
     }
     return labelWinners(
-      candidates,
+      list,
       labelZoom,
       (id) => searchDimActive && searchHitIds.has(id)
     );
@@ -1631,10 +1708,16 @@ function GraphCanvasInner({
         const nameHidden = !clusterNamesShown.has(n.id);
         // The name under the pointer sits above the rest, since it is the one being read.
         const nameRaised = label.label === hoveredCluster;
+        const labelFlags =
+          (summary ? 1 : 0) |
+          (pinnable ? 2 : 0) |
+          (nameHidden ? 4 : 0) |
+          (nameRaised ? 8 : 0);
+        const labelKey = (labelFlags << 8) | Math.round(opacity * 100);
         out.push(
           withEmphasis(
             n,
-            `${opacity}|${summary}|${pinnable}|${nameHidden}|${nameRaised}`,
+            labelKey,
             () =>
               ({
                 ...n,
@@ -1699,10 +1782,20 @@ function GraphCanvasInner({
       const raised = isHovered || emphasis.selected;
       const entering = sky.entering.has(n.id);
 
+      const flags =
+        (emphasis.selected ? 1 : 0) |
+        (emphasis.spotlight ? 2 : 0) |
+        (emphasis.spotlightSolo ? 4 : 0) |
+        (raised ? 8 : 0) |
+        (labelPinned ? 16 : 0) |
+        (labelHidden ? 32 : 0) |
+        (entering ? 64 : 0);
+      const starEmphasisKey = (flags << 8) | Math.round(emphasis.opacity * 100);
+
       out.push(
         withEmphasis(
           n,
-          `${emphasis.opacity}|${emphasis.selected}|${emphasis.spotlight}|${emphasis.spotlightSolo}|${raised}|${labelPinned}|${labelHidden}|${entering}`,
+          starEmphasisKey,
           () =>
             ({
               ...n,
@@ -1759,34 +1852,39 @@ function GraphCanvasInner({
     return ids;
   }, [nodes]);
 
+  const eligibleEdges = useMemo(() => {
+    return layout.edges.filter((e) => {
+      const kind = e.data?.kind;
+      return kind === "constellation" || kind === "knows";
+    });
+  }, [layout.edges]);
+
   const edges = useMemo(() => {
     // A figure line needs both its stars drawn (`drawnIds`). Not cleared outright for the
     // summary view: the stars leave a batch a frame, and their lines go with them rather than
     // all in the one frame the summary begins.
-    return layout.edges
-      .filter((e) => {
-        if (!drawnIds.has(e.source) || !drawnIds.has(e.target)) return false;
-        const kind = e.data?.kind;
-        // Peer constellation / knows links only — sun rays are injected below
-        return kind === "constellation" || kind === "knows";
-      })
-      .map((e) => {
-        const { opacity, strokeWidth } = edgeEmphasis(
-          {
-            source: e.source,
-            target: e.target,
-            opacity: Number(e.style?.opacity ?? 0.5),
-            strokeWidth: Number(e.style?.strokeWidth ?? 1),
-            kind: e.data?.kind,
-          },
-          { ...focusState, focusCluster }
-        );
+    const out: Edge[] = [];
+    for (let i = 0; i < eligibleEdges.length; i++) {
+      const e = eligibleEdges[i];
+      if (!drawnIds.has(e.source) || !drawnIds.has(e.target)) continue;
+      const { opacity, strokeWidth } = edgeEmphasis(
+        {
+          source: e.source,
+          target: e.target,
+          opacity: Number(e.style?.opacity ?? 0.5),
+          strokeWidth: Number(e.style?.strokeWidth ?? 1),
+          kind: e.data?.kind,
+        },
+        { ...focusState, focusCluster }
+      );
 
-        // Same identity rule as the nodes: an edge whose emphasis is unchanged keeps its
-        // object, so React Flow does not re-render it.
-        return withEmphasis(
+      // Same identity rule as the nodes: an edge whose emphasis is unchanged keeps its
+      // object, so React Flow does not re-render it.
+      const edgeKey = (Math.round(opacity * 100) << 8) | Math.round(strokeWidth * 10);
+      out.push(
+        withEmphasis(
           e,
-          `${opacity}|${strokeWidth}`,
+          edgeKey,
           () =>
             ({
               ...e,
@@ -1796,9 +1894,11 @@ function GraphCanvasInner({
               data: { ...e.data, label: undefined },
               style: { ...e.style, opacity, strokeWidth },
             }) as Edge
-        );
-      });
-  }, [layout.edges, focusCluster, focusState, drawnIds]);
+        )
+      );
+    }
+    return out;
+  }, [eligibleEdges, focusCluster, focusState, drawnIds]);
 
   /**
    * Frame a set of people, whether or not they are mounted.
@@ -2176,10 +2276,16 @@ function GraphCanvasInner({
         proOptions={PRO_OPTIONS}
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
         nodesDraggable={false}
+        preventScrolling={!compact}
+        zoomOnPinch
+        panOnDrag={!compact}
         ref={stageRef}
         onMoveStart={onMoveStart}
         onMoveEnd={onMoveEnd}
-        className="constellation-stage"
+        className={cn(
+          "constellation-stage select-none [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none]",
+          compact ? "touch-pan-y" : "touch-none overscroll-none"
+        )}
       >
         <DefaultViewFitter
           key={`${homeToken}:${sky.epoch}`}

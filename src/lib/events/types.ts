@@ -68,7 +68,10 @@ export type EventConnectionProvider =
   | EventProviderId
   | "luma_ics"
   | "partiful_ics"
-  /** Not a platform: the user's existing Google grant, opted in to a mailbox scan. */
+  /**
+   * The retired confirmation-email scan. No new rows; old ones are hidden from the card and
+   * deleted by the sync pass the first time it claims them.
+   */
   | "gmail";
 
 export type EventConnectionAuthKind =

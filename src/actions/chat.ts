@@ -1,5 +1,6 @@
 "use server";
 
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { and, asc, desc, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
@@ -19,6 +20,8 @@ import {
   type ChatSuggestion,
 } from "@/lib/chat-suggestions";
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
+import { markTurnStopped } from "@/lib/chat-persist";
+import { isUuid } from "@/lib/input/ids";
 import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -171,6 +174,7 @@ export async function getChatThread(threadId: string) {
 export async function createChatThread() {
   try {
     const userId = await requireUserForSurface("page.chat");
+    await consumeDailyCap("chatThreadDaily", userId);
     const db = await getDb();
     const [row] = await db.insert(chatThreads).values({ userId }).returning();
     if (!row) throw new Error("Could not create chat thread");
@@ -351,6 +355,18 @@ export async function deleteChatThread(threadId: string) {
   await db
     .delete(chatThreads)
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+  return { ok: true as const };
+}
+
+/**
+ * The person pressed Stop on a streaming answer (audit L-25). The stream's abort alone reads
+ * the same as a dropped connection, which keeps the question; this says it was on purpose,
+ * so the unanswered question is discarded. Ownership is enforced inside `markTurnStopped`.
+ */
+export async function stopChatTurn(threadId: string, turnId: string) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(threadId) || !isUuid(turnId)) return { ok: false as const };
+  await markTurnStopped(userId, threadId, turnId);
   return { ok: true as const };
 }
 

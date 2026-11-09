@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ensureOnboarded, skipConnectIfShown, untilHydrated } from "./helpers";
+import { ensureOnboarded, skipAboutStep, skipConnectIfShown, untilHydrated } from "./helpers";
 
 /**
  * The guided tour over the real pages. Started from Settings → Help so it works whatever
@@ -38,7 +38,8 @@ test("the guided tour walks the real pages with example people, then removes the
     },
     () => expect(start).toBeHidden({ timeout: 5_000 })
   );
-  // The tour is welcome → connect → launch; connect shows only where an OAuth client is set up.
+  // The tour is welcome → about → connect → launch; connect shows only where an OAuth client is set up.
+  await skipAboutStep(page);
   await skipConnectIfShown(page, page.getByRole("heading", { name: "Setting the stage" }));
   await expect(page).toHaveURL(/\/dashboard$/, { timeout: 60_000 });
 
