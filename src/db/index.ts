@@ -759,17 +759,23 @@ CREATE TABLE IF NOT EXISTS calendar_subscriptions (
 CREATE INDEX IF NOT EXISTS calendar_subscriptions_user_idx ON calendar_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS contacts_company_idx ON contacts(user_id, company);
 CREATE INDEX IF NOT EXISTS contacts_follow_up_idx ON contacts(user_id, next_follow_up_at);
+CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL;
 CREATE INDEX IF NOT EXISTS tags_user_id_idx ON tags(user_id);
 CREATE INDEX IF NOT EXISTS contact_tags_contact_idx ON contact_tags(contact_id);
+CREATE INDEX IF NOT EXISTS contact_tags_tag_idx ON contact_tags(tag_id);
+CREATE UNIQUE INDEX IF NOT EXISTS contact_tags_pair_uidx ON contact_tags(contact_id, tag_id);
 CREATE INDEX IF NOT EXISTS interactions_contact_idx ON interactions(contact_id);
 CREATE INDEX IF NOT EXISTS interactions_user_idx ON interactions(user_id);
 CREATE INDEX IF NOT EXISTS interactions_user_type_idx ON interactions(user_id, interaction_type);
 CREATE INDEX IF NOT EXISTS interactions_user_contact_type_date_idx ON interactions(user_id, contact_id, interaction_type, interaction_date);
 CREATE INDEX IF NOT EXISTS interactions_user_contact_direction_idx ON interactions(user_id, contact_id, direction) WHERE interaction_type = 'linkedin_message';
 CREATE UNIQUE INDEX IF NOT EXISTS interactions_user_external_uidx ON interactions(user_id, external_id) WHERE external_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS interactions_user_date_idx ON interactions(user_id, interaction_date DESC);
 CREATE INDEX IF NOT EXISTS reminders_user_status_idx ON reminders(user_id, status);
 CREATE INDEX IF NOT EXISTS reminders_due_idx ON reminders(user_id, due_date);
 CREATE INDEX IF NOT EXISTS reminders_list_idx ON reminders(user_id, list_id);
+CREATE INDEX IF NOT EXISTS reminders_user_contact_idx ON reminders(user_id, contact_id);
+CREATE INDEX IF NOT EXISTS reminders_user_status_due_idx ON reminders(user_id, status, due_date);
 CREATE INDEX IF NOT EXISTS ai_suggestions_user_idx ON ai_suggestions(user_id, status);
 CREATE INDEX IF NOT EXISTS embeddings_user_idx ON contact_embeddings(user_id);
 CREATE INDEX IF NOT EXISTS embeddings_contact_idx ON contact_embeddings(contact_id);
@@ -3021,7 +3027,10 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // and share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). Renumbered
 // 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
-export const SCHEMA_VERSION = 208;
+//
+// 209 = Production scaling index pack: contact_tags_tag_idx, contact_tags_pair_uidx,
+// interactions_user_date_idx, contacts_user_email_idx, reminders_user_status_due_idx.
+export const SCHEMA_VERSION = 209;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3425,6 +3434,7 @@ export const SCALE_DDL: string[] = [
   // every reminder write, calendar sync, and the import engine's per-chunk `inArray` dedupe.
   // Each of those was a per-user index scan plus a filter instead of a point lookup.
   `CREATE INDEX IF NOT EXISTS reminders_user_contact_idx ON reminders(user_id, contact_id)`,
+  `CREATE INDEX IF NOT EXISTS reminders_user_status_due_idx ON reminders(user_id, status, due_date)`,
   // Company/school concentration in `src/lib/closeness-materialize.ts` counts with
   // `lower(trim(company)) = $1`. A b-tree on the bare column cannot serve that — Postgres
   // could only use the user_id prefix and then filter every one of that user's entries —

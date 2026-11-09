@@ -146,8 +146,8 @@ export async function loadGraphData(
     // round trip saved there. In the Server Action refetches `cache()` is a pass-through and
     // this is the same single read the old `findFirst` was.
     ensureUserSettings(userId),
-    // Donates the scan above rather than repeating it.
-    getClosenessCohort(userId, contactRowsPromise),
+    // Donates the scan above rather than repeating it. Slim projection avoids fetching full breakdown jsonb.
+    getClosenessCohort(userId, contactRowsPromise, { slim: true }),
     // The one statement this feature adds — a one-row select on a singleton table, and the
     // reason `smoke-page-budgets` allows the graph 9 statements rather than 8. Memoised per
     // instance for a few seconds, so most renders skip it.

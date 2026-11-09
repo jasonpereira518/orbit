@@ -178,13 +178,24 @@ const cohortStore = cache(() => new Map<string, Promise<ClosenessCohortResult>>(
  */
 export function getClosenessCohort(
   userId: string,
-  preloadedRows?: ClosenessCohortRow[] | Promise<ClosenessCohortRow[]>
-): Promise<ClosenessCohortResult> {
+  preloadedRows?: ClosenessCohortRow[] | Promise<ClosenessCohortRow[]>,
+  options?: { slim?: false }
+): Promise<ClosenessCohortResult>;
+export function getClosenessCohort(
+  userId: string,
+  preloadedRows: ClosenessCohortRow[] | Promise<ClosenessCohortRow[]> | undefined,
+  options: { slim: true }
+): Promise<ClosenessCohortSlimResult>;
+export function getClosenessCohort(
+  userId: string,
+  preloadedRows?: ClosenessCohortRow[] | Promise<ClosenessCohortRow[]>,
+  options?: { slim?: boolean }
+): Promise<ClosenessCohortResult | ClosenessCohortSlimResult> {
   const store = cohortStore();
   const existing = store.get(userId);
   if (existing) return existing;
 
-  const pending = resolveCohortResult(userId, preloadedRows) as Promise<ClosenessCohortResult>;
+  const pending = resolveCohortResult(userId, preloadedRows, options) as Promise<ClosenessCohortResult>;
   store.set(userId, pending);
   return pending;
 }

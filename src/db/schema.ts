@@ -933,6 +933,7 @@ export const contacts = pgTable(
     // without these, each lookup is a full per-user scan.
     index("contacts_user_linkedin_idx").on(t.userId, t.linkedinUrl),
     index("contacts_user_x_idx").on(t.userId, t.xHandle),
+    index("contacts_user_email_idx").on(t.userId, t.email),
   ]
 );
 
@@ -1153,7 +1154,11 @@ export const contactTags = pgTable(
       .notNull()
       .references(() => tags.id, { onDelete: "cascade" }),
   },
-  (t) => [index("contact_tags_contact_idx").on(t.contactId)]
+  (t) => [
+    index("contact_tags_contact_idx").on(t.contactId),
+    index("contact_tags_tag_idx").on(t.tagId),
+    uniqueIndex("contact_tags_pair_uidx").on(t.contactId, t.tagId),
+  ]
 );
 
 export const interactions = pgTable(
@@ -1236,6 +1241,7 @@ export const interactions = pgTable(
     uniqueIndex("interactions_user_external_uidx").on(t.userId, t.externalId),
     // ADMIN_V2_STATEMENTS: the activity union's per-account time scan.
     index("interactions_user_created_idx").on(t.userId, t.createdAt),
+    index("interactions_user_date_idx").on(t.userId, t.interactionDate.desc()),
   ]
 );
 
@@ -1340,6 +1346,7 @@ export const reminders = pgTable(
     index("reminders_user_contact_idx").on(t.userId, t.contactId),
     // ADMIN_V2_STATEMENTS (v187): the activity union's per-account time scan.
     index("reminders_user_created_idx").on(t.userId, t.createdAt),
+    index("reminders_user_status_due_idx").on(t.userId, t.status, t.dueDate),
   ]
 );
 
