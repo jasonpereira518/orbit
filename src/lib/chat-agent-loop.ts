@@ -204,6 +204,7 @@ export function promptArgsFromContext(
     recruitersContext: ctx.modelRecruiters,
     focusProfile: ctx.focusProfile,
     attachedContext: ctx.attachedContext,
+    attachedFiles: ctx.attachedFiles,
     goals: ctx.goals,
     attentionLite: ctx.attentionLite,
     evidence: extra.evidence,
