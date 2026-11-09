@@ -22,6 +22,17 @@ if [ "${VERCEL_ENV:-}" = "production" ]; then
   exit 1
 fi
 
+# A preview of a push that only touched files the app never reads (CI config, docs, e2e
+# specs, smoke scripts, the extension) is the same app as the last one, and every build counts
+# against the Hobby build quota. Skip only when the last commit's changed files ALL match; an
+# unknown file, a failed `git diff` or an empty diff (a merge) builds.
+NON_APP='^(\.github/|docs/|e2e/|extension/|playwright\.config\.ts$|\.gitleaks\.toml$|[^/]*\.md$|scripts/smoke-[^/]*$)'
+if changed=$(git diff --name-only HEAD^ HEAD 2>/dev/null) && [ -n "$changed" ] \
+  && ! printf '%s\n' "$changed" | grep -Evq "$NON_APP"; then
+  echo "ignore-build: only non-app files changed, skipping the preview"
+  exit 0
+fi
+
 case "$ref" in
   claude/*) ;;
   *)
