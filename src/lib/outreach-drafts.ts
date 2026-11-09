@@ -2,6 +2,7 @@ import { z } from "zod";
 import { completeJson } from "@/lib/ai";
 import { AI_INCOMPLETE_MESSAGE } from "@/lib/errors";
 import { classifyAiError } from "@/lib/errors";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio } from "@/lib/sender-profile-server";
@@ -78,7 +79,20 @@ function scrubPlaceholders(text: string) {
 const outreachDraftWire = z.object({ subject: z.string().nullable(), body: z.string() });
 const outreachDraftReply = z.object({ subject: z.string().nullish(), body: z.string() });
 
+/**
+ * One outreach draft: one model call, one unit of the `draft` bucket (audit M-07). A
+ * campaign's bulk generation goes through `generateOutreachDraftsBatch` instead, which is
+ * charged per ten drafts.
+ */
 export async function generateOutreachDraft(
+  userId: string,
+  input: DraftInput
+): Promise<GeneratedDraft> {
+  await consumeBucket("draft", userId, RATE_LIMITS.draft);
+  return draftOutreachMessage(userId, input);
+}
+
+async function draftOutreachMessage(
   userId: string,
   input: DraftInput
 ): Promise<GeneratedDraft> {
@@ -164,6 +178,9 @@ ${input.templateSeed ? `Template seed:\n${input.templateSeed}` : ""}`,
   };
 }
 
+/** How many drafts of a bulk run count as one unit of the `draft` bucket. */
+const DRAFTS_PER_UNIT = 10;
+
 /**
  * One draft per input; a draft that failed is `null`, not a failure of the batch.
  *
@@ -179,6 +196,11 @@ export async function generateOutreachDraftsBatch(
   concurrency = 5
 ): Promise<Array<GeneratedDraft | null>> {
   const results: Array<GeneratedDraft | null> = new Array(inputs.length).fill(null);
+  // One click drafts the whole selection, so it is charged as a click per ten drafts rather
+  // than per draft: a 50-prospect campaign is 5 units of `draft`, not a refusal (M-07).
+  if (inputs.length) {
+    await consumeBucket("draft", userId, RATE_LIMITS.draft, Math.ceil(inputs.length / DRAFTS_PER_UNIT));
+  }
   let index = 0;
   let halted = false;
   let firstError: unknown = null;
@@ -193,7 +215,7 @@ export async function generateOutreachDraftsBatch(
           `Variant ${current + 1} of ${inputs.length}`,
       };
       try {
-        results[current] = await generateOutreachDraft(userId, input);
+        results[current] = await draftOutreachMessage(userId, input);
       } catch (err) {
         firstError ??= err;
         const kind = classifyAiError(err);

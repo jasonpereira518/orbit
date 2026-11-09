@@ -2,6 +2,7 @@
 
 import { startJobInOwnInvocation } from "@/lib/import-stall";
 import { recordAccountAudit } from "@/lib/account-audit";
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -362,6 +363,7 @@ export async function startGmailRecruiterScan(): Promise<
 > {
   return asActionResult(async () => {
     const userId = await requireRecruitersUser();
+    await consumeDailyCap("importDaily", userId);
     const demoEmail = await demoWorkspaceEmail(userId);
     if (demoEmail) {
       return { importId: await recordDemoRecruiterScan(userId, GMAIL_SCAN_IMPORT_TYPE, demoEmail) };

@@ -1,3 +1,4 @@
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { gunzipSync } from "node:zlib";
 import { getDb } from "@/db";
@@ -44,6 +45,7 @@ async function ownStagingExport(userId: string, importId: string) {
 }
 
 export async function beginExport(userId: string, fileName: string): Promise<{ importId: string }> {
+  await consumeDailyCap("importDaily", userId);
   const db = await getDb();
   const [row] = await db
     .insert(imports)

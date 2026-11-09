@@ -1259,6 +1259,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_started_at timestamptz NOT NULL DEFAULT now(),
   count integer NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at);
 CREATE TABLE IF NOT EXISTS job_feed_sources (
   id text PRIMARY KEY,
   label text NOT NULL,
@@ -2990,23 +2991,26 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // same connection pays no search. NOT 198/199: claude/duplicates-view-merge-training-7c9a92
 // holds 198 and main 199; 201-206 are claimed by other branches. Rescanned every ref Nov 8 2026.
 //
-// 203 = the Phase 2 integrity fixes of the security audit (ported from #474, where they were 172
-// and 173): contacts_user_closeness_nl_idx (closeness sort NULLS LAST, M-12),
+// 205 = rate_limit_buckets_window_started_idx: the bucket prune deletes by window age, which was a
+// sequential scan of a table that gains a row per (scope, key); the per-user AI buckets and daily
+// caps (audit M-07, L-22) grow it faster. Ported from the audit branch (built as 176). NOT 201:
+// #551; 202: leads-p2-teams-port; 203: #554; 204: leads-p3-pipeline-port. Rescanned every remote
+// ref on Nov 8 2026: 204 was the highest claimed anywhere.
+//
+// 208 = the Phase 2 integrity fixes (built as 203, ported from #474 where they were 172 and
+// 173): contacts_user_closeness_nl_idx (closeness sort NULLS LAST, M-12),
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
 // L-20), and chat_threads.stopped_turn_id + chat_messages.client_turn_id (a dropped chat
-// connection keeps the person's question; only an explicit Stop discards it, L-25). NOT 201: #551 (audit Phase 1) claims it. NOT 202: the unpushed contact-relationship-engine
-// worktree claims it. Rescanned every remote ref and worktree on Nov 7 2026: 202 was the highest
-// claimed anywhere.
-//
-// 206 = FIX_PLAN 3.5 / 3.6 of the security audit (ported from #474, where it was 177):
-// account_audit_log (new table, L-23); user_settings.credit_email_unsub_token_hash (L-05) and
-// clerk_user_updated_at (L-07); interest_list_signups.unsubscribe_token_hash / _encrypted and
-// share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). NOT 201: #551;
-// 202: leads-p2-teams-port; 203: #554; 204: leads-p3-pipeline-port; 205: #557. Rescanned every
-// remote ref on Nov 8 2026: 205 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 206;
+// connection keeps the person's question; only an explicit Stop discards it, L-25) — plus
+// FIX_PLAN 3.5 / 3.6 (built as 206, ported from #474 where it was 177): account_audit_log (new
+// table, L-23); user_settings.credit_email_unsub_token_hash (L-05) and clerk_user_updated_at
+// (L-07); interest_list_signups.unsubscribe_token_hash / _encrypted and share_token_hash /
+// _encrypted, with unsubscribe_token made nullable (L-05). Renumbered 203/206 → 208 on Nov 8
+// 2026 to land above #557 (205), the Phase 1 port (206) and this PR's Phase 2 half (207): a
+// database stamped above the old numbers would never run their DDL.
+export const SCHEMA_VERSION = 208;
 
 /**
  * The generated expression behind `contacts.linkedin_slug`, byte-for-byte the one in the
@@ -3359,15 +3363,17 @@ export const SCALE_DDL: string[] = [
   // descending id. The cursor is a row-value comparison, which needs every element ordered
   // the same way, so the index has to be declared that way to serve it.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_idx ON contacts(user_id, closeness DESC, id DESC)`,
-  // v203: the contacts list's closeness sort is NULLS LAST (audit M-12), which the index
+  // v205: the rate-limit prune's range scan (FIX_PLAN 3.3). See `pruneRateLimitBuckets`.
+  `CREATE INDEX IF NOT EXISTS rate_limit_buckets_window_started_idx ON rate_limit_buckets(window_started_at)`,
+  // v208: the contacts list's closeness sort is NULLS LAST (audit M-12), which the index
   // above (DESC = NULLS FIRST) cannot serve. Kept alongside it: other readers order that way.
   `CREATE INDEX IF NOT EXISTS contacts_user_closeness_nl_idx ON contacts(user_id, closeness DESC NULLS LAST, id DESC)`,
-  // v203: the outbound webhook drain's claim (audit M-03). See `claimDueDeliveries`.
+  // v208: the outbound webhook drain's claim (audit M-03). See `claimDueDeliveries`.
   `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_by text`,
   `ALTER TABLE outbound_webhook_deliveries ADD COLUMN IF NOT EXISTS claimed_until timestamptz`,
-  // v203: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
+  // v208: the referral tier notice's claim (audit L-20). See `notifyIfTierUnlocked`.
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
-  // v203: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
+  // v208: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
@@ -5374,7 +5380,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS relationship_engine_enabled integer NOT NULL DEFAULT 1`,
   // Schema v148: sender labels the owner picked as "me" in chat exports (WhatsApp has no "Me").
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS chat_self_names jsonb NOT NULL DEFAULT '[]'`,
-  // Schema v206 (FIX_PLAN 3.5 / 3.6): hash-bound credit-email unsubscribe (audit L-05), Clerk
+  // Schema v208 (FIX_PLAN 3.5 / 3.6): hash-bound credit-email unsubscribe (audit L-05), Clerk
   // user.updated ordering (L-07), and interest-list tokens hashed at rest (L-05). The plaintext
   // token columns become nullable; `backfillInterestListTokens` moves old rows over in place.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_unsub_token_hash text`,

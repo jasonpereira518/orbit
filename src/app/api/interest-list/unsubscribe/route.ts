@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
 import { escapeHtml } from "@/lib/interest-list-email";
+import { recordUnsubscribeMiss, unsubscribeAttemptsExhausted } from "@/lib/unsubscribe-guard";
 
 // Clicked from an email by someone who has never signed in — authenticated by the opaque
 // token in the query string, same pattern as the calendar feed's token-in-path route.
@@ -74,6 +75,12 @@ export async function GET(request: NextRequest) {
 async function unsubscribe(request: NextRequest) {
   const token = tokenOf(request);
   if (!token) return missingToken();
+  if (await unsubscribeAttemptsExhausted(request)) {
+    return new NextResponse(page("Too many invalid links from this network. Try again in an hour."), {
+      status: 429,
+      headers: { ...HTML_HEADERS, "Retry-After": "3600" },
+    });
+  }
 
   const db = await getDb();
   // COALESCE rather than an unconditional `now()`: clicking an already-used unsubscribe
@@ -88,6 +95,7 @@ async function unsubscribe(request: NextRequest) {
   if (!rows[0]) {
     // 404 rather than a more specific error: this endpoint answers with the same shape
     // whether the token was mistyped or never existed, revealing nothing about validity.
+    await recordUnsubscribeMiss(request);
     return new NextResponse(page("This link is invalid."), {
       status: 404,
       headers: HTML_HEADERS,
