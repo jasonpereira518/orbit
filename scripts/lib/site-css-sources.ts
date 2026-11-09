@@ -8,10 +8,12 @@ import ts from "typescript";
  *
  * site.css generates Tailwind utilities ONLY from these files, so a class used by a file
  * missing here silently has no CSS on the marketing pages. The list is therefore the whole
- * import graph of every `(site)` route file and the root-level files that render without a
- * route group (root layout, not-found, global-error) — client components and dynamic
- * `import()`s included, since both render there. Generated (`npm run css:site`) and checked
- * by `smoke-site-css-sources`, never hand-edited.
+ * import graph of every `(site)` route file plus the root layout (which renders on them) —
+ * client components and dynamic `import()`s included, since both render there. The root
+ * not-found and global-error are deliberately absent: neither renders Tailwind classes (a CSS
+ * module and inline styles respectively), and importing site.css from them put the whole
+ * marketing sheet on every app route. Generated (`npm run css:site`) and checked by
+ * `smoke-site-css-sources`, never hand-edited.
  */
 export const SITE_SOURCES_FILE = "src/app/site-sources.css";
 
@@ -20,7 +22,7 @@ export function siteCssSourceFiles(): string[] {
   const entries = execFileSync("find", ["src/app/(site)", "-name", "*.tsx"], { encoding: "utf8" })
     .trim()
     .split("\n")
-    .concat(["src/app/layout.tsx", "src/app/not-found.tsx", "src/app/global-error.tsx"]);
+    .concat(["src/app/layout.tsx"]);
   const seen = new Set<string>();
   const queue = entries.map((e) => resolve(e));
 
