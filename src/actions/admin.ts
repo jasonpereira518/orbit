@@ -51,6 +51,18 @@ import {
 } from "@/lib/site-invites";
 import { UserFacingError } from "@/lib/errors";
 import { blockSharedAvatar, unblockSharedAvatar } from "@/lib/admin-avatars";
+import { getAppBaseUrl } from "@/lib/app-url";
+import { MAX_THREAD_MESSAGE, THANKS_CREDIT_OPTIONS } from "@/lib/feedback-report";
+import {
+  buildFeedbackReplyEmail,
+  grantFeedbackThanks,
+  loadThread,
+  markThreadRead,
+  postThreadMessage,
+  reporterEmail,
+  type FeedbackThread,
+} from "@/lib/feedback-thread";
+import { sendSiteInviteEmail } from "@/lib/site-invite-email";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -1042,6 +1054,91 @@ export async function setFeedbackStatusAction(input: {
 
   revalidateFeedback();
   return { ok: true, from: moved.from };
+}
+
+/**
+ * The operator's side of a feedback conversation, polled by the detail page while it is open.
+ * Reading it marks the reporter's messages seen.
+ */
+export async function getFeedbackThreadAdminAction(id: string): Promise<FeedbackThread | null> {
+  await requireAdminUserId();
+  const thread = await loadThread(id, "operator");
+  if (thread) await markThreadRead(id, "operator");
+  return thread;
+}
+
+/**
+ * Reply to a feedback report — which opens the conversation on the reporter's side — with
+ * the optional extras that make a reply worth getting: resolve it, thank them with bonus
+ * credits (once per report), and email them a copy.
+ *
+ * Throws on failure like every action here. The extras never fail the reply: the message is
+ * the contract, and an email or a credit grant that didn't land is reported back instead.
+ */
+export async function replyToFeedbackAction(input: {
+  id: string;
+  body: string;
+  resolve: boolean;
+  thankCredits: number | null;
+  email: boolean;
+}): Promise<{ ok: true; thread: FeedbackThread; emailed: boolean; credited: boolean }> {
+  const adminUserId = await requireAdminUserId();
+  const body = input.body.trim();
+  if (!body) throw new UserFacingError("Write a reply first.");
+  if (body.length > MAX_THREAD_MESSAGE) {
+    throw new UserFacingError(`Keep it under ${MAX_THREAD_MESSAGE} characters.`);
+  }
+  const credits =
+    input.thankCredits == null
+      ? null
+      : (THANKS_CREDIT_OPTIONS as readonly number[]).includes(input.thankCredits)
+        ? input.thankCredits
+        : (() => {
+            throw new UserFacingError("Pick 25, 50 or 100 credits.");
+          })();
+
+  const posted = await postThreadMessage({ feedbackId: input.id, author: "operator", body });
+  if (!posted) throw new UserFacingError("Only feedback sent from the app can be replied to.");
+
+  const credited = credits
+    ? await grantFeedbackThanks({ feedbackId: input.id, userId: posted.reporterId, credits })
+    : false;
+
+  if (input.resolve) {
+    // Already resolved is fine here — replying to a resolved report is just a reply.
+    await adminFeedback.setFeedbackStatus({ id: input.id, status: "resolved", adminUserId });
+  }
+
+  let emailed = false;
+  if (input.email) {
+    const to = await reporterEmail(posted.reporterId);
+    if (to) {
+      emailed = await sendSiteInviteEmail(
+        buildFeedbackReplyEmail({
+          reply: body,
+          report: posted.report,
+          credits: credited ? credits : null,
+          threadUrl: `${getAppBaseUrl()}/feedback/${input.id}`,
+        }),
+        to,
+        "feedback.reply"
+      );
+    }
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: "feedback.reply",
+    resourceType: "feedback",
+    resourceId: input.id,
+    detail: { resolved: input.resolve, credits: credited ? credits : null, emailed },
+    reason: "Replied to feedback",
+  });
+
+  revalidateFeedback();
+  const thread = await loadThread(input.id, "operator");
+  if (!thread) throw new UserFacingError("That feedback entry no longer exists.");
+  return { ok: true, thread, emailed, credited };
 }
 
 /**

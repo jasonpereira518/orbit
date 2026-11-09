@@ -4779,6 +4779,15 @@ export const feedback = pgTable(
      * (no operator account, AI unavailable). See `src/lib/feedback-triage.ts`.
      */
     triage: jsonb("triage").$type<FeedbackTriage>(),
+    /**
+     * Bonus AI credits the operator thanked them with, once per report. Set only by the call
+     * that created the grant (`adj:feedback:<id>`), so a second thank-you is a no-op.
+     */
+    thanksCredits: integer("thanks_credits"),
+    /** When the reporter last opened the conversation. Operator messages after it are unread. */
+    userReadAt: timestamp("user_read_at", { withTimezone: true }),
+    /** When the operator last opened it. The reporter's messages after it are unread. */
+    operatorReadAt: timestamp("operator_read_at", { withTimezone: true }),
     /** Where they were when they said it — route, plan, contact count. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -4848,6 +4857,35 @@ export const feedbackScreenshots = pgTable(
   (t) => [
     index("feedback_screenshots_feedback_idx").on(t.feedbackId, t.position),
     index("feedback_screenshots_user_idx").on(t.userId),
+  ]
+);
+
+/**
+ * The conversation on one feedback report, between the reporter and the operator.
+ *
+ * Opens when the operator first replies — the report itself is the opening message and stays
+ * on `feedback.text`. See `src/lib/feedback-thread.ts`.
+ */
+export const feedbackMessages = pgTable(
+  "feedback_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    feedbackId: uuid("feedback_id")
+      .notNull()
+      .references(() => feedback.id, { onDelete: "cascade" }),
+    /**
+     * The REPORTER, whoever wrote this message — denormalised so the purge finds every row of
+     * a deleted account's conversations, operator replies included, and the smoke-purge sweep
+     * (which only discovers tables with `user_id`) covers the table.
+     */
+    userId: text("user_id").notNull(),
+    author: text("author").$type<"user" | "operator">().notNull(),
+    body: text("body").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("feedback_messages_feedback_idx").on(t.feedbackId, t.createdAt),
+    index("feedback_messages_user_idx").on(t.userId),
   ]
 );
 

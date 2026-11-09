@@ -273,10 +273,14 @@ export function siteInviteSender(): string | null {
  * Never throws. Returns whether Resend accepted the message, which the admin console shows:
  * the invitation itself already exists in Clerk, so a failed send means "copy the link",
  * not "try again".
+ *
+ * Also the operator's one-to-one sender for anything else signed "— Jason" (a reply to
+ * someone's feedback): `kind` labels the error event so a failure says which email it was.
  */
 export async function sendSiteInviteEmail(
   message: { subject: string; html: string; text: string },
-  to: string
+  to: string,
+  kind = "site.invite"
 ): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = siteInviteSender();
@@ -300,7 +304,7 @@ export async function sendSiteInviteEmail(
       console.error("[site-invites] Resend rejected the invitation email", error);
       await recordErrorEvent({
         source: ERROR_SOURCES.resendRejected,
-        kind: "site.invite",
+        kind,
         message: error,
         context: { phase: "rejected", name: error.name },
       });
@@ -311,7 +315,7 @@ export async function sendSiteInviteEmail(
     console.error("[site-invites] Failed to send the invitation email", err);
     await recordErrorEvent({
       source: ERROR_SOURCES.resendRejected,
-      kind: "site.invite",
+      kind,
       message: err,
       context: { phase: "threw" },
     });

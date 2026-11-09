@@ -94,6 +94,8 @@ export type FeedbackListRow = {
   contactOk: boolean | null;
   /** The AI triage pass's reading — see `src/lib/feedback-triage.ts`. Null until it has run. */
   triage: FeedbackTriage | null;
+  /** The reporter replied in the conversation since the operator last opened it. */
+  unreadReply: boolean;
 };
 
 export type FeedbackSummary = {
@@ -236,6 +238,8 @@ function listSelection() {
     submitterEmail: userSettings.email,
     contactOk: sql<boolean | null>`(${feedback.context} ->> 'contactOk')::boolean`,
     triage: feedback.triage,
+    // Written out rather than interpolated — see the unqualified-column trap.
+    unreadReply: sql<boolean>`exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.author = 'user' and m.created_at > coalesce(feedback.operator_read_at, 'epoch'::timestamptz))`,
   };
 }
 

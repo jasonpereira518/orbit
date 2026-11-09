@@ -1382,6 +1382,9 @@ CREATE TABLE IF NOT EXISTS feedback (
   status_changed_by text,
   resolution_note text,
   triage jsonb,
+  thanks_credits integer,
+  user_read_at timestamptz,
+  operator_read_at timestamptz,
   context jsonb NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -1405,6 +1408,16 @@ CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, create
 CREATE INDEX IF NOT EXISTS feedback_status_created_idx ON feedback(status, created_at);
 CREATE INDEX IF NOT EXISTS feedback_screenshots_feedback_idx ON feedback_screenshots(feedback_id, position);
 CREATE INDEX IF NOT EXISTS feedback_screenshots_user_idx ON feedback_screenshots(user_id);
+CREATE TABLE IF NOT EXISTS feedback_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  feedback_id uuid NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  author text NOT NULL,
+  body text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS feedback_messages_feedback_idx ON feedback_messages(feedback_id, created_at);
+CREATE INDEX IF NOT EXISTS feedback_messages_user_idx ON feedback_messages(user_id);
 CREATE TABLE IF NOT EXISTS interest_list_signups (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL,
@@ -3026,7 +3039,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 209 = feedback.triage (jsonb): the AI triage pass's one-line summary, severity and
 // duplicate-of for each feedback report, read by the Slack DM and the admin console. See
 // src/lib/feedback-triage.ts.
-export const SCHEMA_VERSION = 209;
+//
+// 210 = the feedback conversation: feedback_messages (new table — reporter and operator
+// messages on one report) and feedback.thanks_credits / user_read_at / operator_read_at (the
+// once-per-report credit thank-you and each side's read marker). See src/lib/feedback-thread.ts.
+export const SCHEMA_VERSION = 210;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4416,6 +4433,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "status_changed_by", "text");
   await ensureColumn(client, "feedback", "resolution_note", "text");
   await ensureColumn(client, "feedback", "triage", "jsonb");
+  await ensureColumn(client, "feedback", "thanks_credits", "integer");
+  await ensureColumn(client, "feedback", "user_read_at", "timestamptz");
+  await ensureColumn(client, "feedback", "operator_read_at", "timestamptz");
   // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
   await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
   await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
@@ -4913,6 +4933,9 @@ const alters = [
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status_changed_by text`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS resolution_note text`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS triage jsonb`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS thanks_credits integer`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_read_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS operator_read_at timestamptz`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,

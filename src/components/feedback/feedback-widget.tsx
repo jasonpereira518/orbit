@@ -232,7 +232,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     // screen. The button's check is the acknowledgement while the panel is still up; this
     // is what remains once it has gone, and it is also how the success reaches a screen
     // reader, through sonner's live region.
-    if (wasSent) toast.success(`Sent to ${FEEDBACK_RECIPIENT} — thank you`);
+    if (wasSent) toast.success(`Sent to ${FEEDBACK_RECIPIENT}. Replies show up in your notifications.`);
 
     setSentBeat(false);
     setOffset({ x: 0, y: 0 });

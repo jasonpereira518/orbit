@@ -295,6 +295,11 @@ export default async function AdminFeedbackPage({
                       {row.triage?.summary ||
                         row.excerpt?.trim() || <span className="text-muted-foreground">(no text)</span>}
                     </Link>
+                    {row.unreadReply && (
+                      <span className="ml-2 rounded-full bg-primary/15 px-1.5 py-0.5 align-middle text-[0.625rem] font-medium text-primary">
+                        new reply
+                      </span>
+                    )}
                     {row.triage && (
                       <span className="ml-2 inline-flex items-center gap-1.5 align-middle">
                         <span

@@ -122,3 +122,31 @@ export async function notifyFeedbackSubmitted(entry: SubmittedFeedback): Promise
   const submitter = await loadSubmitter(entry.userId);
   await sendSlackDM(buildFeedbackDm(entry, submitter, getAppBaseUrl())).catch(() => {});
 }
+
+/** The DM for a reporter's reply in a feedback conversation. Pure, like `buildFeedbackDm`. */
+export function buildFeedbackReplyDm(
+  input: { feedbackId: string; body: string },
+  submitter: Submitter,
+  baseUrl: string
+): string {
+  const body = input.body.trim();
+  const clipped = body.length > DM_TEXT_MAX ? `${body.slice(0, DM_TEXT_MAX)}…` : body;
+  return [
+    `:left_speech_bubble: *Reply on feedback* from ${submitter.email ? slackEscape(submitter.email) : "an unknown account"}`,
+    slackEscape(clipped)
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n"),
+    `${baseUrl}/admin/feedback/${input.feedbackId}`,
+  ].join("\n");
+}
+
+/** Fire-and-forget, like `notifyFeedbackSubmitted`. */
+export async function notifyFeedbackReply(input: {
+  feedbackId: string;
+  userId: string;
+  body: string;
+}): Promise<void> {
+  const submitter = await loadSubmitter(input.userId);
+  await sendSlackDM(buildFeedbackReplyDm(input, submitter, getAppBaseUrl())).catch(() => {});
+}

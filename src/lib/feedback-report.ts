@@ -67,6 +67,30 @@ export type FeedbackTriage = {
   duplicateOf: string | null;
 };
 
+/**
+ * One-tap starts for the operator's reply, in the order they're offered. Each drops into the
+ * composer to be edited, never sent as-is, so they can stay short and generic.
+ */
+export const QUICK_ANSWERS: ReadonlyArray<{ label: string; text: string }> = [
+  { label: "Fixed", text: "Thanks for flagging this — it's fixed now. Give it another try and tell me if anything's still off." },
+  { label: "On the list", text: "Love this idea — it's on the list. I'll message you here when it ships." },
+  { label: "Need detail", text: "Thanks! Could you tell me a bit more — what were you trying to do, and what did you expect to happen?" },
+  { label: "Screenshot?", text: "Could you send a screenshot of what you're seeing? It'll help me track this down quickly." },
+  { label: "Can't reproduce", text: "I can't reproduce this yet. Which browser and device are you on, and does it happen every time?" },
+  { label: "Not planned", text: "Thanks for the suggestion. It's not something I'm planning right now, because " },
+  { label: "Thank you", text: "Thank you — this genuinely made my day." },
+];
+
+/** Bonus AI credits the operator can thank someone with, per report. */
+export const THANKS_CREDIT_OPTIONS = [25, 50, 100] as const;
+export type ThanksCredits = (typeof THANKS_CREDIT_OPTIONS)[number];
+
+/** One chat message, either side. Long enough for a real answer, short of an essay. */
+export const MAX_THREAD_MESSAGE = 2000;
+
+/** How often an open conversation checks for new messages, both sides. */
+export const THREAD_POLL_MS = 4000;
+
 /** Before, the error, after. A fourth shot has never told anyone anything new. */
 export const MAX_SCREENSHOTS = 3;
 

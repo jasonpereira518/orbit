@@ -17,6 +17,7 @@ import {
   Clock,
   FileText,
   Loader2,
+  MessageSquareText,
   NotebookPen,
   Radar,
   Shield,
@@ -73,13 +74,18 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
   const jobs = useBackgroundJobs();
   const kept = useKeptNotifications();
   const dueItems = useMemo(
-    () => data?.items.filter((i) => i.urgency === "due") ?? [],
+    // A feedback reply is "due" for the badge but lives under "Waiting on you": there is
+    // nothing to mark done or snooze, only a conversation to open.
+    () => data?.items.filter((i) => i.urgency === "due" && i.kind !== "feedback_reply") ?? [],
     [data]
   );
   // Captured notes waiting for review (or that failed) are the one "info" item worth a
   // slot here: the user has to act on them, and nothing else will surface them.
   const captureItems = useMemo(
-    () => data?.items.filter((i) => i.kind === "capture_review" || i.kind === "cloud_notes") ?? [],
+    () =>
+      data?.items.filter(
+        (i) => i.kind === "feedback_reply" || i.kind === "capture_review" || i.kind === "cloud_notes"
+      ) ?? [],
     [data]
   );
   const alerts = data?.alerts ?? [];
@@ -529,7 +535,9 @@ function NotificationRow({
         ? NotebookPen
         : item.kind === "cloud_notes"
           ? FileText
-          : Bell;
+          : item.kind === "feedback_reply"
+            ? MessageSquareText
+            : Bell;
   const when = item.dueAt
     ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
     : item.kind === "capture_review" || item.kind === "cloud_notes"

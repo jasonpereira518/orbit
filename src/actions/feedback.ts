@@ -14,7 +14,14 @@ import {
   type FeedbackScreenshotInput,
   type FeedbackSubmissionInput,
 } from "@/lib/feedback-submission";
-import { notifyFeedbackSubmitted } from "@/lib/feedback-notify";
+import { notifyFeedbackReply, notifyFeedbackSubmitted } from "@/lib/feedback-notify";
+import { MAX_THREAD_MESSAGE } from "@/lib/feedback-report";
+import {
+  loadThread,
+  markThreadRead,
+  postThreadMessage,
+  type FeedbackThread,
+} from "@/lib/feedback-thread";
 import { triageFeedback } from "@/lib/feedback-triage";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
@@ -154,4 +161,45 @@ export async function submitFeedback(
     });
     return { ok: false, message: "That didn’t save — try again in a moment" };
   }
+}
+
+/**
+ * The reporter's side of a feedback conversation: read it (which marks it read), and reply.
+ *
+ * Polled every `THREAD_POLL_MS` by the chat page while it is on screen. Null when the report
+ * isn't theirs — the page shows a 404 for that, never a "not yours".
+ */
+export async function getMyFeedbackThread(feedbackId: string): Promise<FeedbackThread | null> {
+  const userId = await requireUserId();
+  const thread = await loadThread(feedbackId, { userId });
+  if (!thread) return null;
+  // Only when there is something of the operator's to have seen, so opening a report nobody
+  // has answered yet doesn't hide the NEXT reply's notification behind an early read stamp.
+  if (thread.open) await markThreadRead(feedbackId, "user", userId);
+  return thread;
+}
+
+export async function sendFeedbackMessage(
+  feedbackId: string,
+  body: string
+): Promise<{ ok: true; thread: FeedbackThread } | { ok: false; message: string }> {
+  const userId = await requireUserId();
+  const text = body.trim();
+  if (!text) return { ok: false, message: "Write something before sending." };
+  if (text.length > MAX_THREAD_MESSAGE) {
+    return { ok: false, message: `Keep it under ${MAX_THREAD_MESSAGE} characters.` };
+  }
+  try {
+    await consumeBucket("feedbackChat", userId, RATE_LIMITS.feedbackChat);
+  } catch (err) {
+    if (isRateLimitedError(err)) return { ok: false, message: err.message };
+    throw err;
+  }
+
+  const posted = await postThreadMessage({ feedbackId, author: "user", body: text, userId });
+  if (!posted) return { ok: false, message: "This conversation isn’t open yet." };
+  after(() => notifyFeedbackReply({ feedbackId, userId, body: text }));
+
+  const thread = await loadThread(feedbackId, { userId });
+  return thread ? { ok: true, thread } : { ok: false, message: "That conversation is gone." };
 }

@@ -13,7 +13,9 @@ import {
   DeleteFeedbackScreenshotButton,
   FeedbackStatusActions,
 } from "@/components/admin/feedback-status-actions";
+import { FeedbackConversation } from "@/components/admin/feedback-conversation";
 import { loadFeedbackDetail } from "@/lib/admin-feedback";
+import { loadThread, markThreadRead } from "@/lib/feedback-thread";
 
 export const metadata = { title: "Admin · Feedback entry" };
 
@@ -39,6 +41,10 @@ export default async function AdminFeedbackDetailPage({
   if (!detail) notFound();
 
   const { entry, screenshots, submitter } = detail;
+  // Only in-app reports (and ones logged from a text) have a conversation; PMF and churn
+  // answers don't. Opening the page counts as reading the person's replies.
+  const thread = entry.kind === "freeform" ? await loadThread(feedbackId, "operator") : null;
+  if (thread) await markThreadRead(feedbackId, "operator");
   const contextEntries = Object.entries(entry.context ?? {});
 
   return (
@@ -70,6 +76,16 @@ export default async function AdminFeedbackDetailPage({
             <p className="mt-3 text-xs text-muted-foreground">PMF score: {entry.score}/3</p>
           )}
         </AdminPanel>
+
+        {thread && (
+          <AdminPanel title={thread.open ? "Conversation" : "Reply"}>
+            <FeedbackConversation
+              initial={thread}
+              reporterLabel={submitter?.email ?? "Them"}
+              hasEmail={Boolean(submitter?.email)}
+            />
+          </AdminPanel>
+        )}
 
         {entry.triage && (
           <AdminPanel title="Triage">

@@ -680,6 +680,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-toast-undo": "pglite",
   "smoke-feedback-admin": "pglite",
   "smoke-feedback-submit": "pglite",
+  "smoke-feedback-thread": "pglite",
   "smoke-provider-connections": "pglite",
   "smoke-provider-status": "pglite",
   "smoke-purge": "pglite",

@@ -102,6 +102,14 @@ async function seed() {
     byteSize: 5,
   });
 
+  // The conversation on it — every row carries the reporter's id, operator replies included.
+  await db.insert(schema.feedbackMessages).values({
+    feedbackId: feedbackRow.id,
+    userId: USER,
+    author: "operator",
+    body: "the operator's reply to them",
+  });
+
   await db.insert(schema.gateEvents).values({
     userId: USER,
     feature: "contacts",
