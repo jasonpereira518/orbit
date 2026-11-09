@@ -184,14 +184,17 @@ investigate.
 
 ### Recommended branch protection (Settings → Branches → `main`)
 
-None of this is enforced yet: `main` only blocks deletion and force-pushes. To make the checks
-above a real gate:
+`main` blocks deletion and force-pushes, requires a pull request, and requires the status checks
+below with "require branches to be up to date". Approving reviews are not required (set to 0)
+yet. To keep it a real gate:
 
-1. **Require a pull request before merging**, with at least 1 approval, and dismiss stale approvals
-   on new commits.
+1. **Require a pull request before merging.** Add at least 1 approval and dismiss stale approvals
+   on new commits when there is more than one maintainer.
 2. **Require status checks to pass**, with "require branches to be up to date": `typecheck · lint ·
-   build`, `smoke suite (PGlite)`, `browser flows (Playwright)`. (The audit, dependency
-   review and secret scan run inside `typecheck · lint · build`.)
+   build`, `smoke suite (PGlite)`, `browser flows (Playwright)`. (The audit, dependency review and
+   secret scan run inside `typecheck · lint · build`.) `smoke suite (PGlite)` and
+   `browser flows (Playwright)` are stable gate jobs over the shards, so the shard count can
+   change without leaving a PR waiting on a check that never starts.
 3. `ci.yml` has no `paths-ignore`, so every PR reports these checks — docs-only ones too —
    and requiring them cannot leave a PR waiting on checks that never start.
 4. Keep **block force-pushes and deletion** (already on). Not linear history: PRs merge with
