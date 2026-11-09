@@ -13,6 +13,7 @@ import {
   MessageCircleQuestion,
   NotebookPen,
   Orbit,
+  Target,
   Telescope,
   Upload,
   Users,
@@ -24,6 +25,7 @@ import {
   ConstellationPreview,
   EverywherePreview,
   FollowUpsPreview,
+  GoalsPreview,
   OutreachPreview,
   PeoplePreview,
 } from "@/components/onboarding/highlights/previews";
@@ -87,6 +89,22 @@ export type HighlightChapter = {
 };
 
 export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
+  // First, and static on purpose: it reads the same for someone who skipped About you, and it
+  // names no companies.
+  {
+    id: "goals",
+    icon: Target,
+    label: "Your goals",
+    title: "People who fit your goals",
+    blurb:
+      "Tell Orbit what you’re going for, and it puts the people who can help first: on your dashboard, in your follow-ups and in what your drafts ask for.",
+    bullets: [
+      { label: "Your dashboard leads with people at the companies you’re aiming for" },
+      { label: "Drafts ask for what you’re going for" },
+      { label: "Your goal on your dashboard, yours to change any time" },
+    ],
+    Preview: GoalsPreview,
+  },
   {
     id: "capture",
     icon: NotebookPen,
@@ -202,7 +220,7 @@ export const HIGHLIGHT_CHAPTERS: HighlightChapter[] = [
     bullets: [
       { label: "Recruiters, kept apart from friends", entitlement: "canUseRecruiters" },
       { label: "Outreach drafts for every person", soon: true },
-      { label: "Events and who you’ll see there", soon: true },
+      { label: "Events, and the people you met there" },
       { label: "A Chrome extension for LinkedIn", soon: !EXTENSION_PUBLISHED },
       { label: "Orbit in Claude and ChatGPT, free" },
     ],

@@ -222,6 +222,36 @@ async function main() {
   check("progress for a made-up token is nothing", (await getProgressByShareToken(`${PREFIX}nobody`)) === null);
   check("progress for an empty token is nothing", (await getProgressByShareToken("")) === null);
 
+  console.log("\na threshold crossed by two joins at once (audit L-20)…");
+  {
+    // Seed 3 gets one friend (move-up mailed), then the count goes 1 → 3 with no notice run and
+    // the next join counts four: past three without the notice ever seeing exactly three.
+    const [recruiter] = await db
+      .select({ id: interestListSignups.id })
+      .from(interestListSignups)
+      .where(eq(interestListSignups.shareToken, `${PREFIX}share-3`));
+    const refThree = `${PREFIX}share-3`;
+    await join("racer1", refThree);
+    const mailedBefore = tierMail.length;
+    // The concurrent pair: written without running the notice, as the losing join's was.
+    await db.insert(interestListSignups).values(
+      [2, 3].map((n) => ({
+        email: `${PREFIX}racer${n}@example.test`,
+        unsubscribeToken: generateUnsubscribeToken(),
+        shareToken: `${PREFIX}share-racer${n}`,
+        welcomePlanet: "earth",
+        referredById: recruiter!.id,
+      }))
+    );
+    await join("racer4", refThree);
+    const mailed = tierMail.slice(mailedBefore).filter((m) => m.email === `${PREFIX}seed3@example.test`);
+    check(
+      "priority beta is still mailed when the count skips past three",
+      mailed.length === 1 && mailed[0].tier === "priority-beta",
+      JSON.stringify(mailed)
+    );
+  }
+
   await cleanup();
   console.log("\nwaitlist line: all checks passed");
   process.exit(0);

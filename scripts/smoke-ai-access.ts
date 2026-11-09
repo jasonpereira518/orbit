@@ -25,6 +25,9 @@ import "./smoke/_env";
 // Production's key rules: the local-dev key names are ignored on Vercel, so the only managed
 // key is the explicit one set here. Set BEFORE the gate is imported or first called.
 process.env.VERCEL = "1";
+// On Vercel a missing ENCRYPTION_SECRET is refused rather than defaulted (audit L-06). A
+// test value, so the BYOK keys below can be encrypted and read back.
+process.env.ENCRYPTION_SECRET ||= "smoke-ai-access-test-secret-not-a-real-one-000";
 for (const name of ["GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
   delete process.env[name];
   delete process.env[`ORBIT_MANAGED_${name}`];
@@ -53,7 +56,7 @@ import {
   userSettings,
 } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
-import { priceFor } from "../src/lib/ai-pricing";
+import { openAiSearchInputTokens, priceFor, WEB_SEARCH_FEE_MICROS } from "../src/lib/ai-pricing";
 import type { AiOperationId } from "../src/lib/ai-operations";
 import { DEFAULT_MODELS } from "../src/lib/ai-providers";
 import {
@@ -382,6 +385,22 @@ function purePolicy() {
   check("Orbit never pays for Gemini: a managed Gemini key alone is not a route",
     pick(facts({ eligibility: "plan", managed: geminiOnly })) === "refused:managed_unavailable" &&
     !(MANAGED_PROVIDER_ORDER as readonly string[]).includes("gemini"));
+  // Web search on Orbit's key goes to the cheaper search first: the per-search fee plus any
+  // per-search token floor on the fast model searches run on. A price change that makes the
+  // second provider cheaper fails here instead of silently costing more (Jason, Nov 7 2026).
+  const searchCostMicros = (p: "anthropic" | "openai") => {
+    const model = managedModel(p, null, "fast");
+    const floorTokens = p === "openai" ? openAiSearchInputTokens(model, 0, 1) ?? 0 : 0;
+    return WEB_SEARCH_FEE_MICROS[p] + floorTokens * (priceFor(model)?.input ?? 0);
+  };
+  const [firstSearch, ...laterSearch] = MANAGED_PROVIDER_ORDER.filter(
+    (p): p is "anthropic" | "openai" => p === "anthropic" || p === "openai"
+  );
+  check(
+    "the first managed provider is the cheapest for a web search",
+    firstSearch !== undefined && laterSearch.every((p) => searchCostMicros(firstSearch) <= searchCostMicros(p)),
+    MANAGED_PROVIDER_ORDER.map((p) => (p === "anthropic" || p === "openai" ? `${p}=${searchCostMicros(p)}` : p)).join(" ")
+  );
   // Web search on Orbit's key never runs on its Gemini key.
   const search = (f: KeyFacts) => {
     const c = chooseCompletionKey(f, { skipManaged: WEB_SEARCH_MANAGED_EXCLUDED });
@@ -767,6 +786,26 @@ async function realGate() {
     threw = true;
   }
   check("a Gemini grant does not open an OpenAI client", threw);
+
+  // Audit L-15: a web search Anthropic pauses is resumed on the SAME grant, each resume a
+  // billed round. The grant's hold covered only the first; each resume now holds its own.
+  console.log("\nA multi-round call reserves credits per round (L-15)");
+  await db.delete(creditHolds).where(eq(creditHolds.userId, U.proNone));
+  const access = await resolveAiAccess(U.proNone);
+  const metered = await access.completion("research.person");
+  const heldNow = async () => (await db.select().from(creditHolds).where(eq(creditHolds.userId, U.proNone))).length;
+  check("the grant holds its first round", (await heldNow()) === 1, await heldNow());
+  const step = await access.holdStep(metered);
+  check("a resume on a managed grant places its own hold", typeof step === "string" && (await heldNow()) === 2, { step, held: await heldNow() });
+  await access.releaseStepHold(metered, step!);
+  check("…released by id, leaving the grant's own for its settle", (await heldNow()) === 1, await heldNow());
+  await db.delete(creditHolds).where(eq(creditHolds.userId, U.proNone));
+  const ownGrant = await (await resolveAiAccess(U.proOwn)).completion("research.person");
+  check("a call on the account's own key holds nothing per round", (await (await resolveAiAccess(U.proOwn)).holdStep(ownGrant)) === null);
+  const aiSource = readFileSync("src/lib/ai.ts", "utf8");
+  const loop = aiSource.slice(aiSource.indexOf("const stepHolds"), aiSource.indexOf("const stepHolds") + 3_000);
+  check("webSearchJson's resume loop holds per round and releases in finally",
+    /access\.holdStep\(grant\)/.test(loop) && /finally \{\s*for \(const id of stepHolds\) await access\.releaseStepHold\(grant, id\)/.test(loop));
 }
 
 async function transitions() {
