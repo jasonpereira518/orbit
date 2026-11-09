@@ -91,6 +91,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
   "smoke-a11y-patterns": "pure",
+  "smoke-page-shell": "pure", // design-drift ratchet against smoke-page-shell.baseline.json (docs/brand.md)
   "smoke-action-user-scope": "pure",
   "smoke-consume-bucket-args": "pure",
   "smoke-toast-copy": "pure",
