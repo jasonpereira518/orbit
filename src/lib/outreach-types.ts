@@ -1,4 +1,40 @@
+import { type Plan } from "@/lib/plans/plan-config";
+
 export type OutreachChannel = "email" | "linkedin" | "sms";
+
+export type OutreachSendProvider = "gmail" | "outlook" | "resend";
+
+export type FiveHourQuota = {
+  plan: Plan;
+  limit: number;
+  used: number;
+  remaining: number;
+  resetsAt: Date;
+  canSend: boolean;
+};
+
+/**
+ * Replaces {{variable}} tokens in templates with recipient data
+ */
+export function interpolateMailMerge(
+  template: string,
+  variables: {
+    first_name?: string | null;
+    full_name?: string | null;
+    company?: string | null;
+    title?: string | null;
+    recent_signal?: string | null;
+    sender_name?: string | null;
+    [key: string]: string | null | undefined;
+  }
+): string {
+  let result = template;
+  for (const [key, val] of Object.entries(variables)) {
+    const regex = new RegExp(`{{\\s*${key}\\s*}}`, "gi");
+    result = result.replace(regex, val || "");
+  }
+  return result;
+}
 
 export type OutreachMessageStatus =
   | "draft"
@@ -34,7 +70,7 @@ export type AudienceFilters = {
   organizationDomains?: string[];
 };
 
-export type OutreachSearchSource = "demo" | "apollo";
+export type OutreachSearchSource = "demo" | "apollo" | "brightdata" | "brightdata_deep_search";
 
 export type NormalizedProspect = {
   externalId: string;
@@ -92,11 +128,11 @@ export const OUTREACH_REPLY_CTAS = [
 export type OutreachReplyCta = (typeof OUTREACH_REPLY_CTAS)[number];
 
 export const REPLY_CTA_LABELS: Record<OutreachReplyCta, string> = {
-  book_intro: "Book an intro / call",
-  ask_referral: "Ask for a referral",
-  get_feedback: "Get feedback",
-  explore_partnership: "Explore a partnership",
-  other: "Other (from message intent)",
+  book_intro: "Book a 15-min coffee chat / intro",
+  ask_referral: "Ask for an internship or job referral",
+  get_feedback: "Get resume / portfolio feedback",
+  explore_partnership: "Explore a project or partnership",
+  other: "Custom request (from message intent)",
 };
 
 export const OUTCOME_LABELS: Record<OutreachMessageOutcome, string> = {

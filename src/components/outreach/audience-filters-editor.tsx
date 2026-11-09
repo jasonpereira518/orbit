@@ -25,7 +25,7 @@ export function AudienceFiltersEditor({
   showDemoWarning?: boolean;
 }) {
   return (
-    <div className="space-y-3 rounded-xl border border-border/60 bg-muted/20 p-4">
+    <div className="space-y-3 rounded-2xl border border-border/60 bg-muted/20 p-4">
       <div>
         <p className="text-sm font-medium text-ink">Confirm search filters</p>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -34,9 +34,8 @@ export function AudienceFiltersEditor({
       </div>
 
       {showDemoWarning && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          No Apollo API key configured. Search will use clearly labeled demo prospects
-          (not real Capital One people). Add a key in Settings → Outreach for live results.
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+          BrightData live scraping is in preview mode. High-fidelity candidate profiles are shown.
         </div>
       )}
 
@@ -46,6 +45,7 @@ export function AudienceFiltersEditor({
           <Input
             id="filter-orgs"
             value={listToText(filters.organizationNames)}
+            className="rounded-xl"
             onChange={(e) =>
               onChange({
                 ...filters,
@@ -60,6 +60,7 @@ export function AudienceFiltersEditor({
           <Input
             id="filter-domains"
             value={listToText(filters.organizationDomains)}
+            className="rounded-xl"
             onChange={(e) =>
               onChange({
                 ...filters,
@@ -74,6 +75,7 @@ export function AudienceFiltersEditor({
           <Input
             id="filter-titles"
             value={listToText(filters.titles)}
+            className="rounded-xl"
             onChange={(e) =>
               onChange({
                 ...filters,
@@ -88,6 +90,7 @@ export function AudienceFiltersEditor({
           <Input
             id="filter-locations"
             value={listToText(filters.locations)}
+            className="rounded-xl"
             onChange={(e) =>
               onChange({
                 ...filters,

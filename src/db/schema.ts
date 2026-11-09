@@ -2885,6 +2885,17 @@ export type OutreachSequenceStep = {
   intent?: string;
 };
 
+export type CampaignBackgroundJob = {
+  status: "idle" | "running" | "completed" | "failed";
+  phase?: "news_scan" | "people_discovery" | "drafting" | "followups" | "completed";
+  startedAt?: string;
+  completedAt?: string;
+  prospectsAdded?: number;
+  followUpsGenerated?: number;
+  message?: string;
+  error?: string;
+};
+
 export const outreachCampaigns = pgTable(
   "outreach_campaigns",
   {
@@ -2902,6 +2913,7 @@ export const outreachCampaigns = pgTable(
       .$type<OutreachSequenceStep[]>()
       .default([]),
     lastSearchSource: text("last_search_source"),
+    backgroundJob: jsonb("background_job").$type<CampaignBackgroundJob | null>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

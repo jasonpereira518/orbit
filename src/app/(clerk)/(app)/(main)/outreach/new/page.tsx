@@ -25,7 +25,7 @@ export default async function NewOutreachPage() {
           New outreach campaign
         </h1>
         <p className="mt-1 text-muted-foreground">
-          Define a tight audience, a desired reply, and personalized drafts optimized for response rate
+          Connect with alumni, recruiters, engineers, and business leaders for coffee chats, internships, and referrals
         </p>
       </div>
       <OutreachWizard />
