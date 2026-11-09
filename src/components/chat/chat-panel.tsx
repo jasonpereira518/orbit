@@ -74,6 +74,7 @@ import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
+import { notifyAnswerLanded } from "@/lib/chat-answer-notify";
 import { afterTurn, enqueue, setSteering, steeredId, type QueuedMessage } from "@/lib/chat-queue";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
@@ -867,6 +868,7 @@ export function ChatPanel({
         void awaitPendingAnswer(id, () => !stopped && seq === loadSeqRef.current && threadIdRef.current === id)
           .then((landed) => {
             if (landed) landedRef.current = true;
+            if (landed) notifyAnswerLanded({ threadId: id, messageId: null, title: landed.thread.title });
             if (landed) applyThread(landed, { opening: false });
           })
           .finally(() => {
@@ -1144,6 +1146,7 @@ export function ChatPanel({
                 persisted: Boolean(info.messageId),
               }));
               if (info.notice) toast.message(info.notice);
+              notifyAnswerLanded({ threadId: activeId, messageId: info.messageId, title: info.title });
               // The header names the thread ON SCREEN; the list update is about the answered
               // thread wherever the person is (see @/lib/chat-answer-landed).
               const headerTitle = headerTitleAfterAnswer(activeId, threadIdRef.current, info.title);
