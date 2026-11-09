@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { Input } from "@/components/ui/input";
@@ -106,13 +107,19 @@ export function ProviderCard({
   status,
   active,
   model,
+  includedCovers = false,
+  recommended = false,
   onSave,
   onClear,
 }: {
-  provider: { id: AiProvider; label: string; keyPlaceholder: string };
+  provider: { id: AiProvider; label: string; keyPlaceholder: string; keyPageUrl?: string; keyPageLabel?: string };
   /** This account's state for the provider, or undefined before settings arrive. */
   status?: ProviderCardStatus;
   active: boolean;
+  /** Orbit's included AI is running for this account, so a key here is optional. */
+  includedCovers?: boolean;
+  /** The provider a person without any key is pointed to first (`RECOMMENDED_KEY_PROVIDER`). */
+  recommended?: boolean;
   /** The stored model, when this is the active provider — otherwise null, so no tier reads
    *  as chosen on a card that is not the one in use. */
   model: string | null;
@@ -152,7 +159,9 @@ export function ProviderCard({
       ? "Key saved"
       : status?.managedAvailable
         ? "Covered by Orbit"
-        : "No key";
+        : includedCovers
+          ? "Optional · Orbit’s AI covers you"
+          : "No key";
   const dot = active && usable ? "on" : hasKey || status?.managedAvailable ? "partial" : "off";
   /**
    * An active account can sit on an id no tier button carries — an untagged preset, a custom
@@ -195,6 +204,11 @@ export function ProviderCard({
         <h4 id={`provider-card-name-${provider.id}`} className="text-sm font-medium text-ink">
           {provider.label}
         </h4>
+        {recommended && !hasKey ? (
+          <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+            Recommended
+          </span>
+        ) : null}
       </div>
 
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -297,6 +311,18 @@ export function ProviderCard({
             <p id={keyErrorId} role="alert" className="text-sm text-destructive">
               {keyError}
             </p>
+          ) : null}
+          {provider.keyPageUrl && provider.keyPageLabel ? (
+            <a
+              href={provider.keyPageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
+            >
+              {provider.keyPageLabel}
+              <ExternalLink className="size-3" aria-hidden />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
           ) : null}
         </div>
       ) : null}

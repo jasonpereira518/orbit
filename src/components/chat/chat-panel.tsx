@@ -269,6 +269,7 @@ type LoadedThread = Awaited<ReturnType<typeof getChatThread>>;
 
 export function ChatPanel({
   initialThreads = null,
+  aiBlocked = false,
 }: {
   /**
    * The history list's first page as the page read it on the server, so the rail paints with
@@ -276,6 +277,12 @@ export function ChatPanel({
    * then loads it itself, as it always did, and shows a placeholder list until that settles.
    */
   initialThreads?: ChatThreadPage | null;
+  /**
+   * AI cannot answer for this account right now (the page shows why, above the panel). Past
+   * conversations stay readable; the composer and the suggestions are switched off, so nobody
+   * types a question only to have it refused.
+   */
+  aiBlocked?: boolean;
 } = {}) {
   const { planConfig } = useViewerPlan();
   const [threads, setThreads] = useState<ThreadSummary[]>(() => initialThreads?.threads ?? []);
@@ -934,7 +941,7 @@ export function ChatPanel({
   const sendQuestion = useCallback(
     (raw: string, opts?: { contextContactIds?: readonly string[] }) => {
       const q = raw.trim();
-      if (!q || busy || loadingThread) return;
+      if (!q || busy || loadingThread || aiBlocked) return;
 
       setLastUserQuery(q);
       // A fresh turn starts a fresh slot; the switcher belongs to whichever turn is last.
@@ -1108,7 +1115,7 @@ export function ChatPanel({
         setStreaming(false);
       })();
     },
-    [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
+    [aiBlocked, attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
   );
 
   /**
@@ -1706,7 +1713,7 @@ export function ChatPanel({
                 )}
               >
                 <ComposerToolsMenu
-                  disabled={busy || loadingThread}
+                  disabled={busy || loadingThread || aiBlocked}
                   onInsert={onToolInsert}
                 />
                 {/* No vertical padding on the field box: the mirror is `inset-0` of it, so
@@ -1740,7 +1747,7 @@ export function ChatPanel({
                   onCompositionChange={setComposing}
                   rows={1}
                   maxLength={CHAT_QUESTION_MAX_CHARS}
-                  placeholder="Ask about your network…"
+                  placeholder={aiBlocked ? "Chat needs AI, which can’t run right now" : "Ask about your network…"}
                   // The placeholder vanishes once there's text, so it can't be the name.
                   aria-label="Message Orbit"
                   data-dictating={dictation.listening || undefined}
@@ -1759,7 +1766,7 @@ export function ChatPanel({
                     showMirror && "text-transparent caret-ink selection:text-foreground",
                   )}
                   style={dictation.listening ? { scrollbarGutter: "stable" } : undefined}
-                  disabled={busy || loadingThread}
+                  disabled={busy || loadingThread || aiBlocked}
                 >
                   {showMirror && interimRange && (
                     <ComposerMirror
@@ -1773,7 +1780,7 @@ export function ChatPanel({
                 <DictationButton
                   state={dictation.state}
                   level={dictation.level}
-                  disabled={busy || loadingThread}
+                  disabled={busy || loadingThread || aiBlocked}
                   onToggle={(source) => {
                     dictation.toggle();
                     // Pointer users want to carry straight on into the field; keyboard
@@ -1787,6 +1794,7 @@ export function ChatPanel({
                   disabled={
                     busy ||
                     loadingThread ||
+                    aiBlocked ||
                     (!question.trim() && !lastUserQuery)
                   }
                   onStop={stopStreaming}
@@ -1810,8 +1818,11 @@ export function ChatPanel({
               {/* Only while the thread is empty. The footer is `shrink-0` above a message
                   list with no floor, so a permanent row would take that height out of the
                   answers for the whole conversation. The skeleton is the same size as the
-                  cards, so nothing moves when they land. */}
+                  cards, so nothing moves when they land. Not at all while AI cannot run: every
+                  card would be a question that cannot be sent, and a row of disabled cards is
+                  a scroller with nothing in it to focus. */}
               {showSuggestions &&
+                !aiBlocked &&
                 (suggestions === null ? (
                   <SuggestionCardsSkeleton />
                 ) : (

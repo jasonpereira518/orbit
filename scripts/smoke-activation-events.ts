@@ -327,32 +327,35 @@ async function main() {
   const onboarding = await import("../src/actions/onboarding");
   const tour = await import("../src/actions/tour");
   await db.update(userSettings).set({ onboardingPath: null, onboardingStep: null, tourStop: null }).where(eq(userSettings.userId, DEMO));
-  await onboarding.startOnboardingPath("quick", "people");
-  await onboarding.startOnboardingPath("quick", "people");
+  await onboarding.startOnboardingPath("quick", "capture");
+  await onboarding.startOnboardingPath("quick", "capture");
   const chosen = await events(DEMO, "onboarding_path_chosen");
   check("startOnboardingPath records one onboarding_path_chosen", chosen.length === 1 && props(chosen[0]!).path === "quick", chosen.map(props));
-  await onboarding.saveOnboardingStep("people");
+  await onboarding.saveOnboardingStep("capture");
   check("staying on a step completes nothing", (await events(DEMO, "onboarding_step_completed")).length === 0);
-  await onboarding.saveOnboardingStep("connect");
-  let stepRows = await events(DEMO, "onboarding_step_completed");
-  check("moving past a step completes it, once", stepRows.length === 1 && props(stepRows[0]!).step === "people" && props(stepRows[0]!).path === "quick", stepRows.map(props));
-  await onboarding.saveOnboardingStep("connect");
+  await onboarding.saveOnboardingStep("manual");
   await onboarding.saveOnboardingStep("people");
+  check("a side step in the same stage completes nothing", (await events(DEMO, "onboarding_step_completed")).length === 0);
+  await onboarding.saveOnboardingStep("first-win");
+  const stepRows = await events(DEMO, "onboarding_step_completed");
+  check("moving past a stage completes it, once, by its stage name", stepRows.length === 1 && props(stepRows[0]!).step === "capture" && props(stepRows[0]!).path === "quick", stepRows.map(props));
+  await onboarding.saveOnboardingStep("first-win");
+  await onboarding.saveOnboardingStep("capture");
   check("going back completes nothing", (await events(DEMO, "onboarding_step_completed")).length === 1);
-  await onboarding.saveOnboardingStep("connect");
-  check("…and walking forward again is the same step, not a second event", (await events(DEMO, "onboarding_step_completed")).length === 1);
+  await onboarding.saveOnboardingStep("first-win");
+  check("…and walking forward again is the same stage, not a second event", (await events(DEMO, "onboarding_step_completed")).length === 1);
   await onboarding.saveOnboardingStep("overview");
-  stepRows = await events(DEMO, "onboarding_step_completed");
-  check("the next step completes the next", stepRows.map((r) => props(r).step).sort().join() === "connect,people");
+  await onboarding.saveOnboardingStep("connect");
+  check("the first win's own side screens complete nothing", (await events(DEMO, "onboarding_step_completed")).length === 1);
   await onboarding.saveOnboardingStep("not-a-step");
-  check("an unknown step records nothing", (await events(DEMO, "onboarding_step_completed")).length === 2);
-  // Replay: reset and walk the same path again.
-  await db.update(userSettings).set({ onboardingStep: "people" }).where(eq(userSettings.userId, DEMO));
-  await onboarding.startOnboardingPath("quick", "people");
-  await onboarding.saveOnboardingStep("connect");
-  await onboarding.saveOnboardingStep("overview");
-  check("a replayed path records no second path_chosen and no repeated steps",
-    (await events(DEMO, "onboarding_path_chosen")).length === 1 && (await events(DEMO, "onboarding_step_completed")).length === 2);
+  check("an unknown step records nothing", (await events(DEMO, "onboarding_step_completed")).length === 1);
+  // Replay: reset and walk the same path again, this time by hand.
+  await db.update(userSettings).set({ onboardingStep: "capture" }).where(eq(userSettings.userId, DEMO));
+  await onboarding.startOnboardingPath("quick", "capture");
+  await onboarding.saveOnboardingStep("manual");
+  await onboarding.saveOnboardingStep("first-win");
+  check("a replayed path records no second path_chosen and no repeated stages",
+    (await events(DEMO, "onboarding_path_chosen")).length === 1 && (await events(DEMO, "onboarding_step_completed")).length === 1);
 
   await tour.saveTourStop("contacts.search");
   let tourRows = (await events(DEMO, "onboarding_step_completed")).filter((r) => props(r).path === "tour");

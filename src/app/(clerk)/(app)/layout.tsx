@@ -9,7 +9,7 @@ import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { shouldShowTermsNotice } from "@/lib/legal";
 import { AppShell } from "@/components/layout/app-shell";
 import { ViewerPlanProvider } from "@/components/viewer-plan";
-import { managedKeysConfigured } from "@/lib/ai-access";
+import { managedKeysConfigured, managedOutage } from "@/lib/ai-access";
 import { SectionFlash } from "@/components/layout/section-flash";
 import { TermsUpdateNotice } from "@/components/legal/terms-update-notice";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
@@ -142,11 +142,14 @@ export default async function AppLayout({
   // schools that the curated table does not know, plus which ones it has not looked up yet.
   // Those are learned after the response is sent, so a newly added company shows its own
   // color from the next page load on. A failed read costs only the colors, never the page.
-  const [{ plan, canUseMeetings }, visibility, linkedinReminder, brandColors] = await Promise.all([
+  // The outage read shares the gate's 30-second cache, and costs nothing on a deployment with
+  // no managed key; a failed read falls back to the presence-only answer, never a failed page.
+  const [{ plan, canUseMeetings }, visibility, linkedinReminder, brandColors, aiOutage] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
     getLinkedInReminderState(userId, settings),
     loadOrgBrandColors(userId).catch(() => ({ learned: [], missing: [] })),
+    managedOutage().catch(() => null),
   ]);
   // The server-component realm has its own copy of the registry; the client component below
   // fills the SSR and browser ones.
@@ -155,10 +158,10 @@ export default async function AppLayout({
     after(() => learnOrgBrandColors(userId, brandColors.missing).catch(() => {}));
   }
 
-  // Whether included AI can run on this deployment at all — see ViewerPlanProvider.
-  const includedAiAvailable = Object.values(managedKeysConfigured()).some(Boolean);
+  // Whether included AI can run at all right now — see ViewerPlanProvider.
+  const includedAiAvailable = Object.values(managedKeysConfigured()).some(Boolean) && !aiOutage;
   const planConfig = await getEffectivePlanConfig();
-  const aiReason = aiDenialFromSettings(userId, settings, planConfig);
+  const aiReason = aiDenialFromSettings(userId, settings, planConfig, aiOutage);
   const creditsResetAt = planConfig[plan].monthlyCredits ? creditPeriodFor(settings).end.toISOString() : null;
   // The one-time "your AI credits are here" screen. Free: answered from the row already read.
   const creditsIntroDue = isCreditsIntroDue({
@@ -170,7 +173,7 @@ export default async function AppLayout({
   });
 
   return (
-    <ViewerPlanProvider value={{ plan, includedAiAvailable, aiReason, creditsResetAt, planConfig }}>
+    <ViewerPlanProvider value={{ plan, includedAiAvailable, aiReason, aiOutage, creditsResetAt, planConfig }}>
       {/* Renders nothing. Before AppShell, not inside it: siblings render in order, so every
           color the shell and the page ask for is registered by then. */}
       <LearnedBrandColors brands={brandColors.learned} />

@@ -1,6 +1,6 @@
 import { track } from "@/lib/product-events";
 import { eventId } from "@/lib/product-event-ids";
-import { PATH_STAGES, type OnboardingPath } from "@/lib/onboarding-steps";
+import { PATH_STAGES, RETIRED_STEPS, isOnboardingStep, stageOf, type OnboardingPath } from "@/lib/onboarding-steps";
 import { TOUR_STOP_IDS_LIST } from "@/lib/tour/tour-stops";
 
 /**
@@ -34,8 +34,11 @@ function trackStepCompleted(userId: string, path: OnboardingPath, step: string):
 }
 
 /**
- * Moving to `next` finishes `previous` when `next` is further along the path. A step that is
- * not on the path's main line (a retired id resumed from storage) finishes nothing.
+ * Moving to `next` finishes the stage `previous` belongs to (`stageOf`) when `next` is in a later
+ * stage, and the event names that stage. A side step counts toward its stage: adding someone by
+ * hand, or importing LinkedIn, then reaching the first win finishes "capture" just as the notes
+ * box does. Moving within a stage, going back, or a retired id resumed from storage finishes
+ * nothing.
  */
 export function trackOnboardingStepAdvance(
   userId: string,
@@ -45,11 +48,13 @@ export function trackOnboardingStepAdvance(
 ): void {
   if (path !== "tour" && path !== "quick") return;
   if (!previous || previous === next) return;
+  if (!isOnboardingStep(previous) || !isOnboardingStep(next)) return;
+  if (RETIRED_STEPS.includes(previous) || RETIRED_STEPS.includes(next)) return;
   const stages: readonly string[] = PATH_STAGES[path];
-  const from = stages.indexOf(previous);
-  const to = stages.indexOf(next);
+  const from = stages.indexOf(stageOf(previous, path));
+  const to = stages.indexOf(stageOf(next, path));
   if (from < 0 || to < 0 || to <= from) return;
-  trackStepCompleted(userId, path, previous);
+  trackStepCompleted(userId, path, stages[from]!);
 }
 
 /** The in-app tour: a null previous stop means the first stop. */

@@ -1,4 +1,4 @@
-import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import type { AiAccessDenial, ManagedOutage } from "@/lib/managed-ai-policy";
 import {
   FREE_STARTER_CREDITS,
   PLAN_CONFIG,
@@ -28,6 +28,9 @@ import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-confi
  * `key_required` is the long-standing `MISSING_AI_API_KEY_MESSAGE`, reproduced here so a
  * gate refusal and the pre-gate code paths read identically.
  */
+/** Every provider a person can bring a key for (`SELECTABLE_AI_PROVIDERS`), as notices name them. */
+export const OWN_KEY_PROVIDERS = "Gemini, OpenAI, or Anthropic";
+
 export const AI_ACCESS_COPY: Record<AiAccessDenial, string> = {
   key_required: "Add your AI API key in Settings to use this",
   // The plan-neutral wording (no pack, no plan move), for a refusal raised without a plan.
@@ -107,23 +110,54 @@ export const AI_NOTICE_COPY: Record<
 > = {
   key_required: {
     title: (verb) => `Add an AI API key to ${verb}`,
-    body: "AI runs on your own Gemini, OpenAI, or Anthropic key.",
+    body: `AI runs on your own ${OWN_KEY_PROVIDERS} key.`,
     offer: "upgrade",
     linkToKeys: true,
   },
   managed_limit: {
     title: () => "You’ve used your AI credits",
-    body: "AI is paused until your allowance resets — nothing is charged automatically. To keep going now, add your own Gemini, OpenAI, or Anthropic key.",
+    body: `AI is paused until your allowance resets — nothing is charged automatically. To keep going now, add your own ${OWN_KEY_PROVIDERS} key.`,
     offer: null,
     linkToKeys: true,
   },
+  // For a caller that cannot tell why Orbit's AI is off. It promises no return date: the admin
+  // pause has none, and a prepaid pool never refills on its own.
   managed_unavailable: {
     title: () => "Orbit’s AI isn’t available right now",
-    body: "Included AI comes back on its own. To keep going now, add your own Gemini, OpenAI, or Anthropic key.",
+    body: `You can still add people and set follow-ups by hand. To use AI now, add your own ${OWN_KEY_PROVIDERS} key.`,
     offer: null,
     linkToKeys: true,
   },
 };
+
+/**
+ * `managed_unavailable`, worded for why. `outage` is the layout's `managedOutage()`: paused
+ * (no date, so none is promised), out of budget (until a date when there is one), or null —
+ * Orbit's AI is running, so a refusal that still says unavailable was one call the provider
+ * turned away, and trying again is the honest advice.
+ */
+export function unavailableCopyFor(outage: ManagedOutage | null): NoticeCopy {
+  const base = { offer: null, linkToKeys: true } as const;
+  if (!outage) {
+    return {
+      ...base,
+      title: () => "Orbit’s AI couldn’t answer just now",
+      body: `Try again in a moment. If it keeps happening, add your own ${OWN_KEY_PROVIDERS} key to keep going.`,
+    };
+  }
+  if (outage.kind === "paused") {
+    return {
+      ...base,
+      title: () => "Orbit’s AI is paused right now",
+      body: `You can still add people and set follow-ups by hand. To use AI now, add your own ${OWN_KEY_PROVIDERS} key — it takes a few minutes.`,
+    };
+  }
+  return {
+    ...base,
+    title: () => (outage.refillsAt ? `Orbit’s AI is out until ${formatAllowanceReset(outage.refillsAt)}` : "Orbit’s AI is out for now"),
+    body: `Orbit’s shared AI budget is used up for now. You can still add people and set follow-ups by hand, or add your own ${OWN_KEY_PROVIDERS} key to keep AI going.`,
+  };
+}
 
 /** The one-line version, for hints under a field. */
 export const AI_HINT_COPY: Record<AiAccessDenial, string> = {
@@ -181,8 +215,11 @@ export function noticeCopyFor(
   plan: Plan,
   resetsAt: string | null,
   /** The effective plan table (`useViewerPlan().planConfig`); the code default otherwise. */
-  config: Record<Plan, PlanConfig> = PLAN_CONFIG
+  config: Record<Plan, PlanConfig> = PLAN_CONFIG,
+  /** Why Orbit's AI is off (`managedOutage()`), when the caller knows; omit when it does not. */
+  outage?: ManagedOutage | null
 ): NoticeCopy {
+  if (reason === "managed_unavailable" && outage !== undefined) return unavailableCopyFor(outage);
   if (reason === "managed_limit" && config[plan].features.creditPacks) {
     const free = plan === "free";
     const next = nextPlanFor(plan, config);

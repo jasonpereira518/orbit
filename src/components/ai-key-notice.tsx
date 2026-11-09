@@ -18,7 +18,8 @@ import type { AiAccessDenial } from "@/lib/managed-ai-policy";
  *  - Out of credits: buy a $5 pack, or (Free) compare plans, or (Pro) upgrade to Max, or use a key.
  *    Lifetime has no packs and nothing above it, so it gets the key alone. Nothing is charged
  *    automatically; this is where the person chooses.
- *  - Orbit's AI briefly unavailable: it comes back; a key keeps you going meanwhile.
+ *  - Orbit's AI off: paused (no date promised), out of budget (until a date when there is
+ *    one), or one call turned away while it runs (try again). A key keeps you going meanwhile.
  *
  * `compact` drops the explanation below `sm`, leaving the headline and the actions. On /chat
  * the notice shares a viewport-bounded page with the chat card, and at full length on a
@@ -33,8 +34,8 @@ export function AiKeyNotice({
   reason?: AiAccessDenial | null;
   compact?: boolean;
 }) {
-  const { plan, includedAiAvailable, creditsResetAt, planConfig } = useViewerPlan();
-  const copy = noticeCopyFor(reason ?? null, plan, creditsResetAt, planConfig);
+  const { plan, includedAiAvailable, creditsResetAt, planConfig, aiOutage } = useViewerPlan();
+  const copy = noticeCopyFor(reason ?? null, plan, creditsResetAt, planConfig, aiOutage);
   // Free at zero keeps everything on phones too: the refill date is the point of that state.
   const freeOut = reason === "managed_limit" && plan === "free";
   const extra = compact && !freeOut ? "hidden sm:inline" : undefined;

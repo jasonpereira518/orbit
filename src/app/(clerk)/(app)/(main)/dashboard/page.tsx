@@ -83,8 +83,6 @@ export default async function DashboardPage() {
             {radarBriefing && <MorningBriefingSection briefing={radarBriefing} />}
           </div>
 
-          {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn import exists. */}
-          <LinkedInExportNudgeSection />
 
           {/* Above every other card, and outside the surface-visibility switches: a message
               waiting to go out is the only thing on this page that needs a decision rather
@@ -96,6 +94,12 @@ export default async function DashboardPage() {
           <SetupChecklistSection />
 
           {show("dashboard.stats") && <StatsSection bundle={bundle} />}
+
+          {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn
+              import exists. Below the stats, not above them: the export takes a day to arrive,
+              so it is never the first thing to do — on a phone it used to fill the whole first
+              screen of a brand-new account, above "add someone". */}
+          <LinkedInExportNudgeSection />
 
           {/* Flex for the same reason as the row below: the Network depth card removes itself
               on an empty network (it can only draw zeros), and the constellation preview

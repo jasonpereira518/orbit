@@ -49,11 +49,36 @@ const raised = applyPlanOverrides(PLAN_CONFIG, parsePlanRules([limitRuleRow("fre
 check("…and follows the effective plan table", freeAiExplainer(raised).startsWith("Free includes 80 AI credits a month"), freeAiExplainer(raised));
 check("the highlights name the plan a locked line unlocks on", highlights.includes("unlockTagPlan("));
 
+// Capture-first onboarding (R4, R2, R8): one thing to do on the welcome, a by-hand way in that
+// still sets a follow-up when AI cannot run, and the first win shown back after the save.
+const welcome = readFileSync("src/components/onboarding/steps/welcome-step.tsx", "utf8");
+check("the welcome has one primary action: add someone you met", welcome.includes("Add someone you met") && (welcome.match(/<Button\s[^>]*size="lg"/g) ?? []).length === 1);
+check("the tour is still one click, as a secondary link", welcome.includes("Show me around with example people first") && /variant="link"[\s\S]{0,120}onClick=\{onTour\}/.test(welcome));
+check("the tour is no longer the recommended card", !/Recommended/.test(welcome));
+check("skipping is offered on the welcome itself", welcome.includes("Skip for now"));
+check("the credits line names both numbers from the live plan table", /planConfig\.free\.monthlyCredits/.test(welcome) && /FREE_STARTER_CREDITS/.test(welcome));
+check("the capture step leads with the by-hand form when AI cannot run",
+  /!hasApiKey && !notesAnyway[\s\S]{0,400}<ContactForm[^>]*followUpChoice/.test(captureStep), captureStep.slice(0, 200));
+check("…and keeps a LinkedIn URL one click away", captureStep.includes("Paste the URL instead"));
+check("…and offers a way out of the notes box when AI can run", captureStep.includes("Type their details instead") && captureStep.includes("Other ways to add people"));
+const manual = readFileSync("src/components/onboarding/steps/manual-step.tsx", "utf8");
+check("adding someone by hand sets a follow-up", /<ContactForm[^>]*followUpChoice/.test(manual));
+const contactForm = readFileSync("src/components/contacts/contact-form.tsx", "utf8");
+check("the contact form schedules the chosen follow-up after creating", /followUpChoice && followUpDays > 0[\s\S]{0,200}scheduleContactFollowUp\(c\.id, followUpDays\)/.test(contactForm));
+const flow = readFileSync("src/components/onboarding/onboarding-flow.tsx", "utf8");
+check("a saved first person goes on to the first win, not the feature overview", /advance\("capture"\)/.test(flow) && !/advance\("people"\)/.test(flow));
+const firstWin = readFileSync("src/components/onboarding/steps/first-win-step.tsx", "utf8");
+check("the first win names the date Orbit will remind them", firstWin.includes("Orbit will remind you on"));
+check("…offers a follow-up when none was set", firstWin.includes("Want a nudge to stay in touch with"));
+check("…and keeps its one motion still for reduced motion", /useReducedMotionConfig\(\)/.test(firstWin) && /initial=\{still \? false/.test(firstWin));
+const capturePage = readFileSync("src/components/capture/capture-flow.tsx", "utf8");
+check("/capture offers adding someone by hand while AI cannot run, never from inside onboarding",
+  /manualHref=\{onSaved \? null : "\/contacts\/new\?quick=1"\}/.test(capturePage));
+
 // The About you step: skippable on every screen, never waits on the self-lookup, and only a
 // confident lookup prefills or is sent to the save.
 const about = readFileSync("src/components/onboarding/steps/about-step.tsx", "utf8");
-const flow = readFileSync("src/components/onboarding/onboarding-flow.tsx", "utf8");
-check("the stage renders the About you step", /step === "about" && \([\s\S]{0,200}<AboutStep/.test(flow));
+check("the stage renders the About you step", /step === "about" && \([\s\S]{0,400}<AboutStep/.test(flow));
 check("'Skip for now' is a Button that skips without saving", /<Button[^>]*onClick=\{onSkip\}[^>]*>\s*Skip for now/.test(about));
 check("there is a no-LinkedIn way through", about.includes("I don’t use LinkedIn"));
 check("an unconfirmed lookup says so", about.includes("We couldn’t confirm this is you"));
@@ -75,19 +100,22 @@ check("the URL field has a visible label", /<Field[^>]*label="Your LinkedIn prof
 
 // The visual revision: path cards say how long each path takes, the mark replaces the app
 // logo inside onboarding only, and it moves by CSS (stopped by the reduced-motion clamp).
-const welcome = readFileSync("src/components/onboarding/steps/welcome-step.tsx", "utf8");
-check("the tour card says About 5 minutes", /title="Guided tour"[\s\S]{0,200}time="About 5 minutes\."/.test(welcome));
-check("quick setup says About 2 minutes", /title="Quick setup"[\s\S]{0,200}time="About 2 minutes\."/.test(welcome));
 check("the old 'about a minute' line is gone", !/About a minute/i.test(welcome));
 const launch = readFileSync("src/components/onboarding/steps/launch-step.tsx", "utf8");
 check("onboarding uses OnboardingMark, not OrbitLogo",
-  [flow, welcome, launch].every((src) => src.includes("<OnboardingMark") && !src.includes("OrbitLogo")));
+  [flow, welcome, launch, firstWin].every((src) => src.includes("<OnboardingMark") && !src.includes("OrbitLogo")));
 const mark = readFileSync("src/components/onboarding/onboarding-mark.tsx", "utf8");
 check("the mark's moon is a CSS rotation, not SMIL", !/<animate/.test(mark) && /animate-\[spin_5s_linear_infinite\]/.test(mark));
 check("the mark is decorative", /aria-hidden/.test(mark));
 check("the goals chapter comes first", /HIGHLIGHT_CHAPTERS: HighlightChapter\[\] = \[[\s\S]{0,300}id: "goals"/.test(chapters));
 const dashboard = readFileSync("src/components/dashboard/dashboard-sections.tsx", "utf8");
 check("the setup checklist asks for a goal when none is set", /id: "about",\s*label: "Tell Orbit what you’re going for"/.test(dashboard));
+
+// Combined with About you: it follows the first win and finishes setup; the welcome keeps one
+// primary action and says how long each route takes.
+check("the first win continues to About you", /onDone=\{\(\) => advance\("first-win"\)\}/.test(flow) && firstWin.includes("Continue"));
+check("About you, done or skipped, finishes setup", /<AboutStep[\s\S]{0,300}onNext=\{\(\) => leave\(true\)\}[\s\S]{0,80}onSkip=\{\(\) => leave\(true\)\}/.test(flow));
+check("the welcome says how long each route takes", welcome.includes("About 2 minutes") && welcome.includes("About 5 minutes"));
 
 if (failures) {
   console.error(`\n${failures} failure(s)`);

@@ -6,13 +6,19 @@
  * refreshes the contacts you are looking at.
  */
 import { useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { finishBackgroundJob, getBackgroundJob, startBackgroundJob } from "@/lib/background-jobs";
+import { usePathname, useRouter } from "next/navigation";
+import { dismissBackgroundJob, finishBackgroundJob, getBackgroundJob, startBackgroundJob } from "@/lib/background-jobs";
 import { useCaptureJob } from "@/lib/capture/job-store";
 import { countDecisions } from "@/lib/capture/review-reducer";
 
+/** The pages that show the review cards themselves, where the cards are the news. */
+function reviewOnScreen(pathname: string | null): boolean {
+  return pathname === "/capture" || pathname === "/onboarding";
+}
+
 export function CaptureJobWatcher() {
   const router = useRouter();
+  const pathname = usePathname();
   const { job } = useCaptureJob();
   const seen = useRef<{ id: string; status: string } | null>(null);
 
@@ -31,10 +37,14 @@ export function CaptureJobWatcher() {
         startBackgroundJob({ id: extractId, kind: "capture-extract", label: "Reading your notes", startedAt: Date.now(), done: 0, total: 0 });
       }
     } else if (job.status === "ready" && getBackgroundJob(extractId)) {
-      finishBackgroundJob(extractId, {
-        status: "completed",
-        resultMessage: n === 0 ? "Nothing to review — just dates" : `${n} ${n === 1 ? "person" : "people"} ready to review`,
-      });
+      // Where the cards are already on screen, a "ready to review" note over them only hid the
+      // first card's name field on a phone. Anywhere else it is how the person hears of it.
+      if (reviewOnScreen(pathname)) dismissBackgroundJob(extractId);
+      else
+        finishBackgroundJob(extractId, {
+          status: "completed",
+          resultMessage: n === 0 ? "Nothing to review — just dates" : `${n} ${n === 1 ? "person" : "people"} ready to review`,
+        });
     } else if (job.status === "saving") {
       const counts = countDecisions(job.result?.items ?? [], job.decisions);
       if (!getBackgroundJob(saveId)) {
@@ -61,7 +71,7 @@ export function CaptureJobWatcher() {
     } else if (job.status === "discarded") {
       if (getBackgroundJob(extractId)) finishBackgroundJob(extractId, { status: "cancelled", resultMessage: "Capture cleared" });
     }
-  }, [job, router]);
+  }, [job, router, pathname]);
 
   return null;
 }

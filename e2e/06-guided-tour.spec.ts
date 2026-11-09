@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ensureOnboarded, skipAboutStep, skipConnectIfShown, untilHydrated } from "./helpers";
+import { ensureOnboarded, skipConnectIfShown, untilHydrated } from "./helpers";
 
 /**
  * The guided tour over the real pages. Started from Settings → Help so it works whatever
@@ -30,7 +30,7 @@ test("the guided tour walks the real pages with example people, then removes the
   );
   await expect(page.getByRole("heading", { name: "Welcome to Orbit" })).toBeVisible();
   const consent = page.getByRole("checkbox", { name: /Terms of Service/ });
-  const start = page.getByRole("button", { name: "Start the tour" });
+  const start = page.getByRole("button", { name: "Show me around with example people first" });
   await untilHydrated(
     async () => {
       if (await consent.isVisible()) await consent.check();
@@ -38,8 +38,8 @@ test("the guided tour walks the real pages with example people, then removes the
     },
     () => expect(start).toBeHidden({ timeout: 5_000 })
   );
-  // The tour is welcome → about → connect → launch; connect shows only where an OAuth client is set up.
-  await skipAboutStep(page);
+  // The tour is welcome → connect → launch (no About you: that follows a first win, which the
+  // tour does not make); connect shows only where an OAuth client is set up.
   await skipConnectIfShown(page, page.getByRole("heading", { name: "Setting the stage" }));
   await expect(page).toHaveURL(/\/dashboard$/, { timeout: 60_000 });
 

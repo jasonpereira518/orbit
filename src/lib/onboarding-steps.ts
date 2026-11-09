@@ -5,25 +5,33 @@
  * Pure — no React, no icons — so `src/actions/onboarding.ts` can validate against it
  * without pulling a client component into the server bundle.
  *
- * Two paths: the **guided tour** (welcome → about you → connect → a coach rail over the real pages) and
- * **quick setup** (welcome → about you → your people → connect → a paged overview). Both open
- * with About you (a LinkedIn link and three taps, all skippable) so suggestions and drafts know
- * the goal; on quick setup people come next, since the person's own contacts are the easy win.
+ * Two paths: the **guided tour** (welcome → connect → a coach rail over the real pages) and
+ * **quick setup**, the default: welcome → one real person (capture, or by hand) → the first
+ * win, that person and the follow-up Orbit set → About you (a LinkedIn link and three taps,
+ * all skippable), so suggestions and drafts know the goal. About you comes after the first win,
+ * never before it: nothing is asked of someone until Orbit has done something for them.
+ * Everything that waits on something else — a Google or Outlook connection, a LinkedIn export,
+ * the tour of every page — is offered from the first win rather than standing between someone
+ * and it. The tour has no About you step; the dashboard's setup card asks instead.
+ *
+ * The tuple is in the order a person travels, because the slide transition reads direction
+ * from it (`stepDirection`). Retired ids sit at the end: they still parse, never render.
  */
 
 export const ONBOARDING_STEPS = [
   "welcome",
-  "about",
-  "linkedin",
-  "import",
-  "ai-key",
-  "connect",
   "people",
   "capture",
   "manual",
+  "import",
   "triage",
+  "first-win",
+  "connect",
   "overview",
+  "about",
   "launch",
+  "linkedin",
+  "ai-key",
 ] as const;
 
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
@@ -39,7 +47,6 @@ export type OnboardingPath = (typeof ONBOARDING_PATHS)[number];
  */
 const STEP_IDS: Record<OnboardingStep, true> = {
   welcome: true,
-  about: true,
   linkedin: true,
   import: true,
   "ai-key": true,
@@ -48,7 +55,9 @@ const STEP_IDS: Record<OnboardingStep, true> = {
   capture: true,
   manual: true,
   triage: true,
+  "first-win": true,
   overview: true,
+  about: true,
   launch: true,
 };
 
@@ -63,14 +72,19 @@ export function isOnboardingPath(value: string | null | undefined): value is Onb
 }
 
 /**
- * The two main lines, both opening with About you. Quick setup then goes to the person's own
- * people; the tour shows them around. `linkedin` and `ai-key` left both lines (Sprint B): the LinkedIn export is a
- * dashboard card now, and Free includes AI. Their ids stay in ONBOARDING_STEPS so a stored
- * step still parses, and `resumeStep` moves it onto the path's first step.
+ * The two main lines. Quick setup goes from the welcome straight to capturing one real person,
+ * shows what that made (`first-win`), then asks about them (`about`); the tour shows them
+ * around. On quick, `people` (every way to add someone), `manual`, `import` and `triage` branch
+ * off the capture node, and `connect` and `overview` (the paged tour of features) branch off
+ * the first win.
+ *
+ * `linkedin` and `ai-key` left both lines in Sprint B: the LinkedIn export is a dashboard card
+ * now, and Free includes AI. Their ids stay in ONBOARDING_STEPS so a stored step still parses,
+ * and `resumeStep` moves it onto the path's first step.
  */
 export const PATH_STAGES = {
-  tour: ["welcome", "about", "connect", "launch"],
-  quick: ["welcome", "about", "people", "connect", "overview"],
+  tour: ["welcome", "connect", "launch"],
+  quick: ["welcome", "capture", "first-win", "about"],
 } as const satisfies Record<OnboardingPath, readonly OnboardingStep[]>;
 
 export type OnboardingStage = (typeof PATH_STAGES)[OnboardingPath][number];
@@ -79,29 +93,32 @@ export const RETIRED_STEPS: readonly OnboardingStep[] = ["linkedin", "ai-key"];
 
 export const STAGE_LABELS: Record<OnboardingStage, string> = {
   welcome: "Welcome",
+  capture: "Your first person",
+  "first-win": "Your first win",
   about: "About you",
-  people: "Your people",
   connect: "Your accounts",
-  overview: "What Orbit does",
   launch: "The tour",
 };
 
 /** Which progress node a step lights. Branch steps share their parent's node. */
 export function stageOf(step: OnboardingStep, path: OnboardingPath): OnboardingStage {
-  void path;
   switch (step) {
     case "welcome":
     case "about":
-    case "connect":
-    case "overview":
     case "launch":
       return step;
+    case "connect":
+      // A main step on the tour; on quick setup a branch off the first win.
+      return path === "tour" ? "connect" : "first-win";
     case "people":
     case "capture":
     case "manual":
     case "triage":
     case "import":
-      return "people";
+      return "capture";
+    case "first-win":
+    case "overview":
+      return "first-win";
     case "linkedin":
     case "ai-key":
       // Retired: `resumeStep` never lands here. Welcome is the harmless answer.
@@ -111,7 +128,8 @@ export function stageOf(step: OnboardingStep, path: OnboardingPath): OnboardingS
 
 export function stepAllowedOnPath(step: OnboardingStep, path: OnboardingPath): boolean {
   if (RETIRED_STEPS.includes(step)) return false;
-  if (step === "welcome" || step === "about" || step === "connect") return true;
+  if (step === "welcome" || step === "connect") return true;
+  if (step === "about") return path === "quick";
   return path === "quick" ? step !== "launch" : step === "launch";
 }
 
@@ -184,4 +202,21 @@ export function resumeStep(
 /** Direction of travel between two steps, for the slide transition. */
 export function stepDirection(from: OnboardingStep, to: OnboardingStep): 1 | -1 {
   return ONBOARDING_STEPS.indexOf(to) >= ONBOARDING_STEPS.indexOf(from) ? 1 : -1;
+}
+
+/**
+ * Whether first-run guidance may show — the dashboard's setup checklist, the LinkedIn export
+ * card, the no-key alert: setup was finished or skipped (`onboarding_completed_at`), or the
+ * person saw it and went elsewhere (`onboarding_step` is set the moment the stage mounts, and
+ * nothing renders it outside `/onboarding`). The second half is the fix: someone who opened
+ * setup and wandered off never got the completion stamp, and so lost all three for good.
+ *
+ * Deliberately not a write: stamping completion on the way out would count everyone who left
+ * at the welcome as "onboarded" in the admin funnel.
+ */
+export function onboardingSeen(settings: {
+  onboardingCompletedAt?: Date | string | null;
+  onboardingStep?: string | null;
+}): boolean {
+  return settings.onboardingCompletedAt != null || settings.onboardingStep != null;
 }

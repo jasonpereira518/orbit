@@ -16,6 +16,7 @@ import { StaggerItem, StepLayout } from "@/components/onboarding/onboarding-ui";
 import { AboutStep } from "@/components/onboarding/steps/about-step";
 import { CaptureStep } from "@/components/onboarding/steps/capture-step";
 import { ConnectStep } from "@/components/onboarding/steps/connect-step";
+import { FirstWinStep } from "@/components/onboarding/steps/first-win-step";
 import { HighlightsStep, type PlanFlags } from "@/components/onboarding/steps/highlights-step";
 import { ImportStep } from "@/components/onboarding/steps/import-step";
 import { LaunchStep } from "@/components/onboarding/steps/launch-step";
@@ -64,6 +65,8 @@ export type OnboardingFlowProps = {
   comingSoon: string[];
   connect: Record<ConnectProvider, ConnectAccount>;
   planFlags: PlanFlags;
+  /** A Free account on Orbit's included AI: the welcome says what it starts with. */
+  showCredits: boolean;
 };
 
 /**
@@ -78,10 +81,10 @@ const HISTORY_KEY = "orbitOnboardingStep";
 const TRIAGE_MIN = 8;
 
 /**
- * The first-run stage. Two paths share it: the guided tour (setup, then a handoff to the
- * coach rail over the real pages) and quick setup (setup, first people, the overview). It
- * replaced a 10-step auto-advancing tour and a separate setup wizard that most people never
- * reached.
+ * The first-run stage. Two paths share it: quick setup, the default (one real person, then
+ * the first win: that person and the follow-up Orbit set), and the guided tour (setup, then a
+ * handoff to the coach rail over the real pages). It replaced a 10-step auto-advancing tour
+ * and a separate setup wizard that most people never reached.
  *
  * Steps slide in the direction of travel with `mode="popLayout"`, so the outgoing step
  * leaves while the next arrives rather than after it. The stage is the full viewport, not a
@@ -101,6 +104,7 @@ export function OnboardingFlow({
   comingSoon,
   connect,
   planFlags,
+  showCredits,
 }: OnboardingFlowProps) {
   const [pending, start] = useTransition();
 
@@ -254,14 +258,25 @@ export function OnboardingFlow({
     [],
   );
 
-  // After the quick path adds people: rate a screenful if there is one, else the overview.
+  /** "Skip for now" on the welcome: consent first, as either path asks, then straight out. */
+  const skipFromWelcome = () =>
+    start(async () => {
+      if (!termsDone) {
+        await acceptTerms();
+        setTermsDone(true);
+      }
+      const res = await completeOnboarding({ finished: false });
+      window.location.replace(res.redirectTo);
+    });
+
+  // After the quick path adds people: rate a screenful if there is one, else the first win.
   // The import branch usually has produced nothing yet (the job runs in the background), so
   // it skips straight on — which is right, and avoids rating a list that is still arriving.
   const afterPeople = useCallback(() => {
     start(async () => {
       const candidates = await getTriageCandidates().catch(() => []);
       if (candidates.length >= TRIAGE_MIN) return goTo("triage");
-      advance("people");
+      advance("capture");
     });
   }, [goTo, advance]);
 
@@ -274,7 +289,10 @@ export function OnboardingFlow({
 
   const stages = path ? mainLine(path, facts) : [];
   const stage = path ? stageOf(step, path) : null;
-  const showSkip = step !== "welcome" && step !== "launch";
+  // Not on the first win either: setup is done there, and its own button says where to next.
+  // Not on the first win or About you either: the first has its own way on, and About you is
+  // already skippable on every screen.
+  const showSkip = step !== "welcome" && step !== "launch" && step !== "first-win" && step !== "about";
 
   return (
     // From md up the shell is exactly one screen tall, so a step that outgrows it scrolls its
@@ -345,17 +363,26 @@ export function OnboardingFlow({
           >
             {step === "welcome" && (
               <Centered>
-                <WelcomeStep needsTerms={!termsDone} pending={pending} onChoose={choosePath} />
+                <WelcomeStep
+                  needsTerms={!termsDone}
+                  pending={pending}
+                  showCredits={showCredits}
+                  onStart={() => choosePath("quick")}
+                  onTour={() => choosePath("tour")}
+                  onSkip={skipFromWelcome}
+                />
               </Centered>
             )}
 
             {step === "about" && (
+              // After the first win, never before it, and the last step on quick setup: done or
+              // skipped, setup is finished — the person already has someone in their network.
               <AboutStep
                 initialUrl={linkedinUrl}
                 pending={pending}
-                onNext={() => advance("about")}
-                onSkip={() => advance("about")}
-                onBack={() => retreat("about")}
+                onNext={() => leave(true)}
+                onSkip={() => leave(true)}
+                onBack={() => backTo("first-win")}
               />
             )}
 
@@ -367,35 +394,37 @@ export function OnboardingFlow({
                 onBack={() => backTo("people")}
               >
                 <ImportStep
-                  onContinue={(started) => (started ? afterPeople() : goTo("people"))}
+                  onContinue={(started) => (started ? afterPeople() : backTo("people"))}
                 />
               </BranchStep>
             )}
 
             {step === "connect" && (
+              // A main step on the tour; on quick setup a choice offered by the first win, which
+              // Back returns to, and finishing it moves on to About you.
               <ConnectStep
                 initial={connect}
-                onContinue={() => advance("connect")}
-                onBack={() => retreat("connect")}
+                onContinue={() => (path === "tour" ? advance("connect") : goTo("about"))}
+                onBack={() => (path === "tour" ? retreat("connect") : backTo("first-win"))}
               />
             )}
 
             {step === "people" && (
               <PeopleStep
-                onBack={() => retreat("people")}
-                onLater={() => advance("people")}
+                onBack={() => backTo("capture")}
+                onLater={() => goTo("first-win")}
                 onChoose={goTo}
               />
             )}
 
             {step === "capture" && (
               <BranchStep
-                eyebrow="Your people"
-                title="Capture from notes"
-                description="Paste anything: meeting notes, a list of names, a brain dump after an event."
+                eyebrow="Your first person"
+                title="Who did you meet recently?"
+                description="Write a line or two: where you met and what you said you’d do. A list of names or notes from an event works too."
                 onBack={() => {
                   setCaptureJob(null);
-                  backTo("people");
+                  retreat("capture");
                 }}
               >
                 <CaptureStep
@@ -406,18 +435,42 @@ export function OnboardingFlow({
                     setCaptureJob(null);
                     afterPeople();
                   }}
+                  onManual={() => {
+                    setCaptureJob(null);
+                    goTo("manual");
+                  }}
+                  onOtherWays={() => {
+                    setCaptureJob(null);
+                    goTo("people");
+                  }}
                 />
               </BranchStep>
             )}
 
             {step === "manual" && (
               <BranchStep
-                eyebrow="Your people"
+                eyebrow="Your first person"
                 title="Add someone by hand"
-                onBack={() => backTo("people")}
+                description="Who they are, how you met, and when to reach back out."
+                onBack={() => backTo("capture")}
               >
                 <ManualStep onCreated={afterPeople} />
               </BranchStep>
+            )}
+
+            {step === "first-win" && (
+              <Centered>
+                <FirstWinStep
+                  onDone={() => advance("first-win")}
+                  onAddAnother={() => {
+                    setCaptureJob(null);
+                    goTo("capture");
+                  }}
+                  onConnect={facts.connectConfigured ? () => goTo("connect") : null}
+                  onSeeMore={() => goTo("overview")}
+                  onTour={switchToTour}
+                />
+              </Centered>
             )}
 
             {step === "triage" && (
@@ -436,7 +489,7 @@ export function OnboardingFlow({
                 comingSoon={comingSoonSet}
                 planFlags={planFlags}
                 facts={{ linkedinPending: requested && !linkedinImported }}
-                onBack={() => retreat("overview")}
+                onBack={() => backTo("first-win")}
                 onDone={() => leave(true)}
                 onTour={switchToTour}
               />

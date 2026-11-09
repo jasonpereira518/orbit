@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
-import type { AiAccessDenial } from "@/lib/managed-ai-policy";
+import type { AiAccessDenial, ManagedOutage } from "@/lib/managed-ai-policy";
 import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config";
 
 /**
@@ -11,14 +11,17 @@ import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config
  * Free account, Max only to a Pro account, and never included AI a deployment would
  * then refuse.
  *
- * It also carries the settings-level AI denial (why AI cannot run, short of credits) and when
- * this account's monthly credits refill, so a notice can say "they refill on November 1".
+ * It also carries the settings-level AI denial (why AI cannot run, short of credits), why
+ * Orbit's own AI is off when it is (paused, or out of budget until a date), and when this
+ * account's monthly credits refill, so a notice can say which, and when.
  */
 export type ViewerPlan = {
   plan: Plan;
   includedAiAvailable: boolean;
-  /** Why AI cannot run, from settings alone (no credits); null = it would run. */
+  /** Why AI cannot run, short of credits (key presence plus Orbit's AI being off); null = it would run. */
   aiReason: AiAccessDenial | null;
+  /** Why Orbit's own AI is off for everyone right now, or null while it runs. */
+  aiOutage: ManagedOutage | null;
   /** When this account's monthly credits refill (ISO), or null when the plan has none. */
   creditsResetAt: string | null;
   /**
@@ -33,6 +36,7 @@ const ViewerPlanContext = createContext<ViewerPlan>({
   plan: "free",
   includedAiAvailable: false,
   aiReason: null,
+  aiOutage: null,
   creditsResetAt: null,
   planConfig: PLAN_CONFIG,
 });

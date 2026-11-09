@@ -2,40 +2,47 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Clock, Compass, Zap, type LucideIcon } from "lucide-react";
+import { ArrowRight, Clock } from "lucide-react";
 import { OnboardingMark } from "@/components/onboarding/onboarding-mark";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  CARD,
-  IconBadge,
-  RecommendedTag,
-  Stagger,
-  StaggerItem,
-} from "@/components/onboarding/onboarding-ui";
-import type { OnboardingPath } from "@/lib/onboarding-steps";
-import { cn } from "@/lib/utils";
+import { Stagger, StaggerItem } from "@/components/onboarding/onboarding-ui";
+import { useViewerPlan } from "@/components/viewer-plan";
+import { FREE_STARTER_CREDITS } from "@/lib/plans/plan-config";
 
 /**
- * The first screen: the mark, one sentence, the choice of path, and consent when Clerk did not
- * record one. The guided tour is the primary card on purpose — it is the one that teaches the
- * real pages — and quick setup is the honest short route beside it. Each card says how long
- * it takes: the tour itself is three minutes, plus About you and accounts.
+ * The first screen: the mark, one sentence, consent when Clerk did not record one, and one
+ * thing to do — add someone you met. A real person with a follow-up is what Orbit is for, so
+ * it is the default, a screen away; About you follows the first win rather than standing in
+ * front of it. The guided tour (six example people across every page) is still one click, for
+ * anyone who would rather look first; so is skipping. Each route says how long it takes.
+ *
+ * It replaced a choice of two equal cards with the tour recommended, which ended most first
+ * sessions with no real person in them at all.
  */
 export function WelcomeStep({
   needsTerms,
   pending,
-  onChoose,
+  showCredits,
+  onStart,
+  onTour,
+  onSkip,
 }: {
   needsTerms: boolean;
   pending: boolean;
-  onChoose: (path: OnboardingPath) => void;
+  /** A Free account on Orbit's included AI: say what it starts with and what adding someone costs. */
+  showCredits: boolean;
+  onStart: () => void;
+  onTour: () => void;
+  onSkip: () => void;
 }) {
   const [agreed, setAgreed] = useState(false);
+  // The live plan table, so the line follows what Free gets on this deployment today.
+  const freeMonthly = useViewerPlan().planConfig.free.monthlyCredits;
   const blocked = pending || (needsTerms && !agreed);
 
   return (
-    <Stagger className="mx-auto flex w-full max-w-3xl flex-col items-center text-center">
+    <Stagger className="mx-auto flex w-full max-w-xl flex-col items-center text-center">
       <StaggerItem className="mb-3">
         <OnboardingMark size={68} />
       </StaggerItem>
@@ -47,36 +54,10 @@ export function WelcomeStep({
       </StaggerItem>
       <StaggerItem>
         <p className="mt-2 max-w-md text-sm text-muted-foreground text-pretty sm:text-[0.9375rem]">
-          Orbit remembers the people you meet and tells you when to reach back out. Pick how you’d
-          like to start.
+          Orbit remembers the people you meet and tells you when to reach back out. Start with one
+          person you met recently.
         </p>
       </StaggerItem>
-
-      <Stagger as="ul" className="mt-6 grid w-full gap-3 text-left sm:grid-cols-2">
-        <StaggerItem as="li">
-          <PathCard
-            primary
-            icon={Compass}
-            title="Guided tour"
-            body="About you, connect your accounts, then a three-minute tour of the real pages."
-            time="About 5 minutes."
-            action="Start the tour"
-            disabled={blocked}
-            onClick={() => onChoose("tour")}
-          />
-        </StaggerItem>
-        <StaggerItem as="li">
-          <PathCard
-            icon={Zap}
-            title="Quick setup"
-            body="About you, your people, your accounts, then a quick look at what Orbit does."
-            time="About 2 minutes."
-            action="Set up quickly"
-            disabled={blocked}
-            onClick={() => onChoose("quick")}
-          />
-        </StaggerItem>
-      </Stagger>
 
       {needsTerms && (
         <StaggerItem className="mt-4 w-full max-w-lg">
@@ -100,62 +81,46 @@ export function WelcomeStep({
           </label>
         </StaggerItem>
       )}
-    </Stagger>
-  );
-}
 
-function PathCard({
-  primary,
-  icon,
-  title,
-  body,
-  time,
-  action,
-  disabled,
-  onClick,
-}: {
-  primary?: boolean;
-  icon: LucideIcon;
-  title: string;
-  body: string;
-  time: string;
-  action: string;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <div
-      className={cn(
-        CARD,
-        "flex h-full flex-col gap-4 p-4 sm:p-5",
-        primary && "border-primary shadow-[0_8px_20px_-10px] shadow-primary/30",
-      )}
-    >
-      <div className="flex min-w-0 items-start gap-3">
-        <IconBadge icon={icon} tone={primary ? "teal" : "gold"} />
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-base font-semibold text-ink">{title}</h2>
-            {primary && <RecommendedTag />}
-          </div>
-          <p className="text-[0.8125rem] leading-snug text-muted-foreground">{body}</p>
-          <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
-            <Clock className="size-3.5 text-gold" aria-hidden />
-            {time}
+      <StaggerItem className="mt-6 w-full max-w-md">
+        <Button
+          type="button"
+          size="lg"
+          className="h-11 w-full text-[15px]"
+          disabled={blocked}
+          onClick={onStart}
+        >
+          Add someone you met
+          <ArrowRight className="size-4" aria-hidden />
+        </Button>
+        <p className="mt-2 flex items-center justify-center gap-1.5 text-xs font-medium text-ink">
+          <Clock className="size-3.5 text-gold" aria-hidden />
+          About 2 minutes
+        </p>
+        {showCredits && freeMonthly ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Free includes {freeMonthly} AI credits a month plus {FREE_STARTER_CREDITS} to start.
+            Adding someone uses about one
           </p>
-        </div>
-      </div>
-      <Button
-        type="button"
-        size="lg"
-        variant={primary ? "default" : "outline"}
-        className="mt-auto h-10 w-full text-sm"
-        disabled={disabled}
-        onClick={onClick}
-      >
-        {action}
-        <ArrowRight className="size-4" aria-hidden />
-      </Button>
-    </div>
+        ) : null}
+      </StaggerItem>
+
+
+      <StaggerItem className="mt-5 flex flex-col items-center gap-1 text-sm">
+        <Button type="button" variant="link" className="h-auto p-1 text-primary" disabled={blocked} onClick={onTour}>
+          Show me around with example people first
+        </Button>
+        <span className="text-xs text-muted-foreground">About 5 minutes</span>
+        <Button
+          type="button"
+          variant="link"
+          className="mt-1 h-auto p-1 font-normal text-muted-foreground"
+          disabled={blocked}
+          onClick={onSkip}
+        >
+          Skip for now
+        </Button>
+      </StaggerItem>
+    </Stagger>
   );
 }

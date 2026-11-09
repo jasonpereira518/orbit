@@ -86,7 +86,11 @@ export function useCreditsOverview() {
   return { overview, nudge: <MaxNudgeDialog open={nudgeOpen} onOpenChange={setNudgeOpen} /> };
 }
 
-function facts(overview: CreditsOverview, planConfig: ReturnType<typeof useViewerPlan>["planConfig"]) {
+/**
+ * `held`: Orbit's AI is paused or out of budget for everyone (`aiOutage`), so no credit can be
+ * spent. The balance stays on show (it is kept), but nothing is sold against it.
+ */
+function facts(overview: CreditsOverview, { planConfig, aiOutage }: ReturnType<typeof useViewerPlan>) {
   const { balance, monthlyCredits, plan } = overview;
   const allowance = balance.allowance;
   return {
@@ -101,14 +105,15 @@ function facts(overview: CreditsOverview, planConfig: ReturnType<typeof useViewe
     used: allowance ? allowancePercentUsed(allowance) : 100,
     out: monthlyCredits > 0 && balance.spendable <= 0,
     resets: allowance ? formatAllowanceReset(allowance.periodEnd) : plan === "free" ? "the 1st" : "your plan renews",
+    held: aiOutage !== null,
   };
 }
 
 /** Credits left, the month's bar, and the one action that adds more. */
 export function CreditsTile({ overview }: { overview: CreditsOverview | null | undefined }) {
-  const { planConfig } = useViewerPlan();
+  const viewer = useViewerPlan();
   if (!overview) return <StatTile label="Credits" value={overview} />;
-  const f = facts(overview, planConfig);
+  const f = facts(overview, viewer);
   return (
     <StatTile
       label="Credits"
@@ -132,7 +137,7 @@ export function CreditsTile({ overview }: { overview: CreditsOverview | null | u
         <Link href="/pricing" className="mt-2 inline-block text-xs font-medium text-primary underline-offset-2 hover:underline">
           Compare plans
         </Link>
-      ) : f.monthlyCredits > 0 && f.packsSold && !f.out ? (
+      ) : f.monthlyCredits > 0 && f.packsSold && !f.out && !f.held ? (
         <div className="mt-2">
           <BuyPackButton variant="outline" label="Add credits" />
         </div>
@@ -141,11 +146,18 @@ export function CreditsTile({ overview }: { overview: CreditsOverview | null | u
   );
 }
 
-/** Only when something needs doing: out of credits, or a Free account nearly out. */
+/** Only when something needs doing: AI on hold, out of credits, or a Free account nearly out. */
 export function CreditsNotice({ overview }: { overview: CreditsOverview | null | undefined }) {
-  const { planConfig } = useViewerPlan();
+  const viewer = useViewerPlan();
   if (!overview) return null;
-  const f = facts(overview, planConfig);
+  const f = facts(overview, viewer);
+  if (f.held) {
+    return (
+      <p role="status" className="rounded-xl border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
+        Orbit’s AI is paused right now, so these credits are on hold. They’re still yours when it’s back
+      </p>
+    );
+  }
   if (f.out) {
     return (
       <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl border border-warning-border bg-warning-surface p-3 text-sm text-foreground">
@@ -175,8 +187,8 @@ export function CreditsNotice({ overview }: { overview: CreditsOverview | null |
 
 /** The rest, for Advanced: where the credits come from, what they buy, and the emails. */
 export function CreditsDetails({ overview }: { overview: CreditsOverview }) {
-  const { planConfig } = useViewerPlan();
-  const f = facts(overview, planConfig);
+  const viewer = useViewerPlan();
+  const f = facts(overview, viewer);
   const line = equivalentsLine(overview.equivalents);
   return (
     <div className="space-y-2 text-sm text-muted-foreground">
@@ -186,7 +198,7 @@ export function CreditsDetails({ overview }: { overview: CreditsOverview }) {
         </p>
       ) : null}
       {f.starterLeft > 0 ? <p>{fmt(f.starterLeft)} starter credits · used after monthly</p> : null}
-      {(f.packsSold || f.packsFrozen) && (f.packLeft > 0 || f.monthlyCredits > 0) ? (
+      {(f.packsSold || f.packsFrozen) && (f.packLeft > 0 || (f.monthlyCredits > 0 && !f.held)) ? (
         <p>
           {f.packsFrozen
             ? `${fmt(f.packLeft)} pack credits kept · back when your plan can use them`
@@ -196,7 +208,7 @@ export function CreditsDetails({ overview }: { overview: CreditsOverview }) {
         </p>
       ) : null}
       {line ? <p>{line}</p> : null}
-      {f.monthlyCredits > 0 && f.packsSold && f.plan === "orbit" && !f.out ? <UpgradeToMaxButton /> : null}
+      {f.monthlyCredits > 0 && f.packsSold && f.plan === "orbit" && !f.out && !f.held ? <UpgradeToMaxButton /> : null}
       {f.monthlyCredits > 0 && f.packsSold ? <CreditEmailToggle initial={overview.creditEmailEnabled} /> : null}
     </div>
   );

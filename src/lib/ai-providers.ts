@@ -72,6 +72,28 @@ export function isSelectableAiProvider(id: AiProvider): boolean {
   return SELECTABLE_AI_PROVIDERS.some((p) => p.id === id);
 }
 
+/**
+ * Which provider a pasted key belongs to, from its prefix, or null when the prefix says
+ * nothing. Most specific first: Anthropic's and OpenRouter's keys also start with "sk-", so
+ * OpenAI is whatever "sk-" is left. Only a hint — the save still verifies the key with the
+ * provider — so a key in an unknown shape simply stays on the card it was pasted into.
+ */
+export function detectKeyProvider(key: string): AiProvider | null {
+  const k = key.trim();
+  if (k.startsWith("sk-ant-")) return "anthropic";
+  if (k.startsWith("sk-or-")) return "openrouter";
+  if (k.startsWith("AIza")) return "gemini";
+  if (k.startsWith("sk-")) return "openai";
+  return null;
+}
+
+/**
+ * The provider a person without a key is pointed to first. Gemini: a Google account is all it
+ * takes, and it is already Orbit's default provider (`resolveAiProvider`), so the card it
+ * lands on is the one in use.
+ */
+export const RECOMMENDED_KEY_PROVIDER: AiProvider = "gemini";
+
 export type ModelTier = "cheapest" | "balanced" | "best";
 
 const TIER_ORDER: readonly ModelTier[] = ["cheapest", "balanced", "best"];

@@ -11,7 +11,9 @@ import {
 } from "@/actions/settings";
 import {
   AI_PROVIDERS,
+  RECOMMENDED_KEY_PROVIDER,
   SELECTABLE_AI_PROVIDERS,
+  detectKeyProvider,
   isSelectableAiProvider,
   DEFAULT_MODELS,
   PROVIDER_MODELS,
@@ -30,7 +32,7 @@ import { formatAllowanceReset, noticeCopyFor } from "@/lib/ai-access-copy";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { managedModel } from "@/lib/managed-ai-policy";
 import { setAiKeyPreference } from "@/actions/credits";
-import { Briefcase, MessageSquare } from "lucide-react";
+import { Briefcase, ExternalLink, MessageSquare } from "lucide-react";
 import { CreditsDetails, CreditsNotice, CreditsTile, useCreditsOverview } from "@/components/credits/credits-card";
 import { SegmentedControl, StatTile, SwitchRow } from "@/components/settings/account-rows";
 import { AiUsageDetails, useAiUsage } from "@/components/settings/ai-usage-card";
@@ -99,6 +101,9 @@ export function AiSettings({
   // Every plan: AI included on Orbit's keys (unless paused).
   const onIncluded = ai.eligibility === "plan" && ai.managedConfigured && !ai.managedPaused;
   const hasAnyPersonalKey = settings.providers.some((p) => p.hasPersonalKey);
+  // Someone who needs a key to use AI at all gets the step-by-step; anyone covered by included
+  // AI (or a dev server's own keys) only gets the "create a key" link on each card.
+  const showKeyGuide = !hasAnyPersonalKey && !onLocalDevKeys && (ai.reason !== null || !onIncluded);
   // What Orbit's key would run for the provider on screen, when it is the one paying.
   const managedRuns = activeProviderStatus?.managedAvailable
     ? managedModel(provider, model)
@@ -115,25 +120,33 @@ export function AiSettings({
     model?: string;
     apiKey?: string;
   }): Promise<string | null | typeof SAVE_THREW> {
+    // A key pasted into the wrong card goes to the provider it belongs to, rather than being
+    // refused by the one it was pasted into. Only a key's prefix decides; the save verifies it.
+    const detected = input.apiKey ? detectKeyProvider(input.apiKey) : null;
+    const target = detected && detected !== input.provider && isSelectableAiProvider(detected) ? detected : input.provider;
+    const moved = target !== input.provider;
     try {
       const res = await saveAiSettings({
-        provider: input.provider,
+        provider: target,
         // Saving a key on a provider that is not the active one moves the account to it, so
         // the stored model has to move too — otherwise it keeps the old provider's id.
         model:
-          input.model ??
-          (input.provider === settings.aiProvider ? undefined : DEFAULT_MODELS[input.provider]),
+          (moved ? undefined : input.model) ??
+          (target === settings.aiProvider ? undefined : DEFAULT_MODELS[target]),
         apiKey: input.apiKey,
       });
       if (!res.ok) return res.error;
       const next = await getSettings();
       setSettings(next);
       setCustomModel(next.aiModel);
+      const targetLabel = AI_PROVIDERS.find((p) => p.id === target)?.label ?? target;
       toast.success(
-        res.keyNote ??
-          (res.embeddingReset
-            ? "Saved — search will re-index for the new provider"
-            : "AI settings saved")
+        moved
+          ? `That looks like ${/^[aeiou]/i.test(targetLabel) ? "an" : "a"} ${targetLabel} key, so Orbit saved it there`
+          : (res.keyNote ??
+              (res.embeddingReset
+                ? "Saved — search will re-index for the new provider"
+                : "AI settings saved"))
       );
       return null;
     } catch (err) {
@@ -200,6 +213,8 @@ export function AiSettings({
       <CreditsNotice overview={credits.overview} />
       {credits.nudge}
 
+      {showKeyGuide && <OwnKeyGuide />}
+
       {onIncluded && hasAnyPersonalKey && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-ink">Run AI on</p>
@@ -235,6 +250,8 @@ export function AiSettings({
             status={settings.providers.find((s) => s.id === p.id)}
             active={p.id === provider}
             model={p.id === provider ? model : null}
+            includedCovers={onIncluded}
+            recommended={showKeyGuide && p.id === RECOMMENDED_KEY_PROVIDER}
             onSave={save}
             onClear={clearKey}
           />
@@ -430,6 +447,61 @@ export function AiSettings({
         </div>
       </Disclosure>
     </SettingsSection>
+  );
+}
+
+/**
+ * Step by step, for someone who needs a key to use AI at all: one provider recommended, three
+ * steps, and the link straight to where the key is made. The other cards each carry their own
+ * link. Nothing here saves anything — the key still goes in a card below.
+ */
+function OwnKeyGuide() {
+  const meta = AI_PROVIDERS.find((p) => p.id === RECOMMENDED_KEY_PROVIDER)!;
+  return (
+    <section aria-labelledby="own-key-guide" className="space-y-3 rounded-xl border border-border/70 bg-card p-4">
+      <div className="space-y-1">
+        <h3 id="own-key-guide" className="font-heading text-base text-ink">
+          Use your own AI key
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          Orbit can run on an AI account of your own. You pay the provider directly, and it never uses your Orbit
+          credits
+        </p>
+      </div>
+      <div className="space-y-2">
+        <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
+          {meta.label}
+          <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+            Recommended
+          </span>
+        </p>
+        <ol className="list-decimal space-y-1.5 pl-5 text-sm text-foreground marker:text-muted-foreground">
+          <li>
+            Open Google AI Studio and sign in with your Google account.{" "}
+            <a
+              href={meta.keyPageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
+            >
+              {meta.keyPageLabel}
+              <ExternalLink className="size-3" aria-hidden />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          </li>
+          <li>Press Create API key, then copy it</li>
+          <li>Paste it into the {meta.label} card below and press Save. Orbit checks it straight away</li>
+        </ol>
+        <p className="text-xs text-muted-foreground">
+          Google’s free tier has usage limits and its own data terms. Check them before you use it for notes about
+          other people
+        </p>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Prefer OpenAI or Anthropic? Their cards below link to where you make a key, and a key pasted into the wrong
+        card still lands in the right one
+      </p>
+    </section>
   );
 }
 

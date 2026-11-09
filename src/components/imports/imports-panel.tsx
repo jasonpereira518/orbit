@@ -15,6 +15,7 @@ import { getEntitlements } from "@/lib/entitlements";
 import { CHAT_IMPORTS_SURFACE_KEY } from "@/lib/surfaces";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import type { ProviderCalendarInput } from "@/lib/imports/calendar-sources";
+import { onboardingSeen } from "@/lib/onboarding-steps";
 
 /**
  * The import hub, as the Imports tab on /capture (`?mode=imports`). Rendered only when that
@@ -74,7 +75,7 @@ export async function ImportsPanel({ userId }: { userId: string }) {
       {linkedinCardState({
         imported: linkedinImported,
         requestedAt: settings.linkedinExportRequestedAt ?? null,
-        onboardingDone: Boolean(settings.onboardingCompletedAt),
+        onboardingDone: onboardingSeen(settings),
       }).show && <LinkedInExportCard where="imports" requestedAt={settings.linkedinExportRequestedAt?.toISOString() ?? null} />}
 
       <ImportHub

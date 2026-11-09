@@ -69,6 +69,31 @@ export function poolWindowStart(pool: ManagedPool, now: Date): Date {
 }
 
 /**
+ * When a resetting pool's current window closes, its next `monthlyResetDay` at 00:00 UTC
+ * after `now`; null for a pool that never resets. The date a spent pool's provider comes back.
+ */
+export function poolWindowEnd(pool: ManagedPool, now: Date): Date | null {
+  if (!pool.monthlyResetDay) return null;
+  const day = pool.monthlyResetDay;
+  let end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), day));
+  if (end <= now) end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, day));
+  return end;
+}
+
+/**
+ * Why Orbit's own AI is not running for anyone right now, so a notice can say which:
+ *
+ *  - `paused`  the admin switch or the env kill switch is off, or this deployment holds no
+ *              managed key. No date: it comes back when someone turns it back on.
+ *  - `spent`   every provider Orbit holds a key for has used its pool. `refillsAt` (ISO) is
+ *              when the first of them opens again, or null when none of them resets on a
+ *              date (a prepaid pool, or a provider that ran dry mid-window).
+ *
+ * Client-safe on purpose: `ai-access.ts` works it out, the layout hands it down.
+ */
+export type ManagedOutage = { kind: "paused" } | { kind: "spent"; refillsAt: string | null };
+
+/**
  * The earliest start among every pool's current window, or null with no pools: spend from
  * before it is no pool's concern. Used only by `managedPoolsSpent`, to bound its single
  * per-provider spend read. The usage_events retention sweep does NOT use it: it keeps rows

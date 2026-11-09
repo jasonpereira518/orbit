@@ -41,12 +41,15 @@ let preloaded: typeof import("@/components/chat/chat-panel").ChatPanel | null = 
 
 export function ChatPanelLazy({
   initialThreads = null,
+  aiBlocked = false,
 }: {
   /** The history list's first page, read by the page; see `ChatPanel`. */
   initialThreads?: ChatThreadPage | null;
+  /** AI cannot answer for this account right now; see `ChatPanel`. */
+  aiBlocked?: boolean;
 }) {
   // Decided once per mount, so the panel never swaps component (and loses its state) when a
   // preload lands mid-visit. The server never preloads, so SSR and hard loads stay dynamic.
   const [Panel] = useState(() => preloaded ?? ChatPanel);
-  return <Panel initialThreads={initialThreads} />;
+  return <Panel initialThreads={initialThreads} aiBlocked={aiBlocked} />;
 }
