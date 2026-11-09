@@ -20,7 +20,7 @@ import {
   type ChatSuggestion,
 } from "@/lib/chat-suggestions";
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
-import { markTurnStopped } from "@/lib/chat-persist";
+import { addTurnSteer, markTurnStopped } from "@/lib/chat-persist";
 import { isUuid } from "@/lib/input/ids";
 import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
@@ -367,6 +367,24 @@ export async function stopChatTurn(threadId: string, turnId: string) {
   const userId = await requireUserForSurface("page.chat");
   if (!isUuid(threadId) || !isUuid(turnId)) return { ok: false as const };
   await markTurnStopped(userId, threadId, turnId);
+  return { ok: true as const };
+}
+
+/** A steer is a nudge, not a new question: long ones go through the queue as their own turn. */
+const STEER_MAX_CHARS = 1000;
+
+/**
+ * The person sent a message to steer the answer being written. It waits on the thread for
+ * the running turn to read between lookup rounds; the turn confirms with a `steer:<id>` step.
+ * Ownership is enforced inside `addTurnSteer`.
+ */
+export async function steerChatTurn(threadId: string, turnId: string, id: string, text: string) {
+  const userId = await requireUserForSurface("page.chat");
+  const note = typeof text === "string" ? text.trim() : "";
+  if (!isUuid(threadId) || !isUuid(turnId) || !isUuid(id) || !note || note.length > STEER_MAX_CHARS) {
+    return { ok: false as const };
+  }
+  await addTurnSteer(userId, threadId, turnId, { id, text: note });
   return { ok: true as const };
 }
 

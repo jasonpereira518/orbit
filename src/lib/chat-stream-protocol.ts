@@ -159,7 +159,9 @@ export type ChatStepKind =
   /** The research loop before a multi-step answer — one step, relabelled per lookup. */
   | "gather"
   | "answer"
-  | "verify";
+  | "verify"
+  /** A message the person sent mid-answer that the turn took in (`steerChatTurn`). */
+  | "steer";
 
 /** A record a step touched, so the expanded view can link to the thing itself. */
 export type ChatStepRef = {
