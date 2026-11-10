@@ -217,9 +217,10 @@ export async function unlockRecruiterContact(recruiterId: string): Promise<
     }
 
     // 3. Settle 1 credit in the ledger
+    const ledgerOp = "recruiter.unlock";
     await settleCredits({
       userId,
-      operation: "recruiter.unlock",
+      operation: ledgerOp,
       micros: creditsToMicros(1),
     });
 

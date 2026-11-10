@@ -13,6 +13,7 @@
  * Run: npx tsx scripts/smoke-recruiter-redesign.ts
  */
 import "./smoke/_env";
+import { run } from "./smoke/_env";
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
@@ -376,14 +377,9 @@ async function runTests() {
   await cleanup();
 
   if (failures > 0) {
-    console.error(`\n${failures} checks failed!`);
-    process.exit(1);
-  } else {
-    console.log("\nAll redesigned recruiter checks passed successfully!");
+    throw new Error(`${failures} check(s) failed`);
   }
+  console.log("\nAll redesigned recruiter checks passed successfully!");
 }
 
-runTests().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+run(runTests);
