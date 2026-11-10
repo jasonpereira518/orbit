@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { replyToFeedbackAction } from "@/actions/admin";
-import { ThreadMessages, useLiveThread } from "@/components/feedback/feedback-thread-view";
+import { markFeedbackTypingAdminAction, replyToFeedbackAction } from "@/actions/admin";
+import { ThreadMessages, useLiveThread, useTypingPing } from "@/components/feedback/feedback-thread-view";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { friendlyError } from "@/lib/errors";
@@ -33,6 +33,8 @@ export function FeedbackConversation({
   hasEmail: boolean;
 }) {
   const { thread, setThread, showPending } = useLiveThread(initial, "operator");
+  // The reporter sees your typing dots while you write.
+  const typed = useTypingPing(initial.id, markFeedbackTypingAdminAction);
   const [body, setBody] = useState("");
   const [resolve, setResolve] = useState(initial.status !== "resolved");
   const [credits, setCredits] = useState<ThanksCredits | null>(null);
@@ -103,7 +105,10 @@ export function FeedbackConversation({
           rows={4}
           placeholder={thread.open ? "Reply…" : "Reply to start the conversation…"}
           aria-label="Your reply"
-          onChange={(e) => setBody(e.target.value)}
+          onChange={(e) => {
+            setBody(e.target.value);
+            if (e.target.value.trim()) typed();
+          }}
           onKeyDown={(e) => {
             // ⌘/Ctrl+Enter sends here: an operator writes longer replies with line breaks.
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {

@@ -39,7 +39,16 @@ export type FeedbackThread = {
   messages: ThreadMessage[];
   /** The operator has replied, so the reporter can write back. */
   open: boolean;
+  /** The kind it was filed as (or triage's reading), for the conversation's header line. */
+  category: string | null;
+  /** When each side last had it open — the "Read" under your last message. ISO, or null. */
+  readAt: { user: string | null; operator: string | null };
+  /** Who is typing right now (a keystroke within `TYPING_FRESH_MS`). */
+  typing: { user: boolean; operator: boolean };
 };
+
+/** How recent a keystroke has to be to show the typing dots. */
+export const TYPING_FRESH_MS = 5_000;
 
 /**
  * Read one conversation. `viewer` decides who may see it: the reporter (their own report
@@ -63,6 +72,11 @@ export async function loadThread(
       status: feedback.status,
       thanksCredits: feedback.thanksCredits,
       thanksSeenAt: feedback.thanksSeenAt,
+      category: feedback.category,
+      userReadAt: feedback.userReadAt,
+      operatorReadAt: feedback.operatorReadAt,
+      userTypingAt: feedback.userTypingAt,
+      operatorTypingAt: feedback.operatorTypingAt,
       createdAt: feedback.createdAt,
     })
     .from(feedback)
@@ -91,7 +105,38 @@ export async function loadThread(
     thanksSeen: entry.thanksSeenAt !== null,
     messages: rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),
     open: rows.some((r) => r.author === "operator"),
+    category: entry.category,
+    readAt: {
+      user: entry.userReadAt?.toISOString() ?? null,
+      operator: entry.operatorReadAt?.toISOString() ?? null,
+    },
+    typing: {
+      user: isFresh(entry.userTypingAt),
+      operator: isFresh(entry.operatorTypingAt),
+    },
   };
+}
+
+function isFresh(at: Date | null): boolean {
+  return at !== null && Date.now() - at.getTime() < TYPING_FRESH_MS;
+}
+
+/**
+ * Record a keystroke for the typing dots. The reporter can only mark their own report; the
+ * caller has already checked an operator is an operator. Sending a message clears it.
+ */
+export async function setTyping(feedbackId: string, side: "user" | "operator", userId?: string) {
+  if (!isUuid(feedbackId)) return;
+  const db = await getDb();
+  if (side === "user") {
+    if (!userId) return;
+    await db
+      .update(feedback)
+      .set({ userTypingAt: new Date() })
+      .where(and(eq(feedback.id, feedbackId), eq(feedback.userId, userId)));
+    return;
+  }
+  await db.update(feedback).set({ operatorTypingAt: new Date() }).where(eq(feedback.id, feedbackId));
 }
 
 /** The viewer has seen everything up to now. The reporter can only mark their own report. */
@@ -152,6 +197,11 @@ export async function postThreadMessage(input: {
     credits: input.author === "operator" ? (input.credits ?? null) : null,
   });
   await markThreadRead(input.feedbackId, input.author, entry.userId);
+  // The message is what they were typing: the dots stop the moment it lands.
+  await db
+    .update(feedback)
+    .set(input.author === "user" ? { userTypingAt: null } : { operatorTypingAt: null })
+    .where(eq(feedback.id, input.feedbackId));
   return { reporterId: entry.userId, report: entry.text };
 }
 
@@ -279,12 +329,16 @@ export type MyFeedbackRow = {
   unread: boolean;
   /** A thank-you is waiting to be unwrapped. */
   giftWaiting: boolean;
+  /** The newest message in the conversation (the report itself when nobody has replied). */
+  last: { author: "user" | "operator"; body: string; at: Date };
+  /** The operator has opened it at least once. */
+  operatorRead: boolean;
 };
 
 /** The reporter's own reports, newest first, for "Your feedback". */
 export async function listMyFeedback(userId: string, limit = 20): Promise<MyFeedbackRow[]> {
   const db = await getDb();
-  return db
+  const rows = await db
     .select({
       id: feedback.id,
       subject: feedback.subject,
@@ -299,11 +353,26 @@ export async function listMyFeedback(userId: string, limit = 20): Promise<MyFeed
       // Only a gift with a card to open: a reply has to carry it (spelled out — see above).
       giftWaiting: sql<boolean>`(feedback.thanks_seen_at is null and exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.credits is not null))`,
       unread: sql<boolean>`exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.author = 'operator' and m.created_at > coalesce(feedback.user_read_at, 'epoch'::timestamptz))`,
+      lastAuthor: sql<"user" | "operator" | null>`(select m.author from feedback_messages m where m.feedback_id = feedback.id order by m.created_at desc limit 1)`,
+      lastBody: sql<string | null>`(select left(m.body, 140) from feedback_messages m where m.feedback_id = feedback.id order by m.created_at desc limit 1)`,
+      lastAt: sql<string | null>`(select max(m.created_at) from feedback_messages m where m.feedback_id = feedback.id)`,
+      operatorRead: sql<boolean>`(feedback.operator_read_at is not null)`,
     })
     .from(feedback)
     .where(and(eq(feedback.userId, userId), eq(feedback.kind, "freeform")))
-    .orderBy(desc(feedback.createdAt))
+    // Newest activity first, like any messages app: a reply brings a conversation to the top.
+    .orderBy(
+      desc(sql`coalesce((select max(m.created_at) from feedback_messages m where m.feedback_id = feedback.id), feedback.created_at)`)
+    )
     .limit(limit);
+
+  return rows.map(({ lastAuthor, lastBody, lastAt, ...row }) => ({
+    ...row,
+    last:
+      lastAuthor && lastBody != null && lastAt
+        ? { author: lastAuthor, body: lastBody, at: new Date(lastAt) }
+        : { author: "user" as const, body: row.excerpt, at: row.createdAt },
+  }));
 }
 
 /** Who sent a report. */

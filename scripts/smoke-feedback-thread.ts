@@ -20,6 +20,7 @@ import {
   loadThread,
   markThreadRead,
   postThreadMessage,
+  setTyping,
   unreadRepliesFor,
   unwrapThanks,
 } from "../src/lib/feedback-thread";
@@ -75,6 +76,23 @@ async function main() {
     check("messages come back in order", thread?.messages.map((m) => m.author).join(",") === "operator,user");
   }
 
+  console.log("\nTyping, read times and the list");
+  {
+    await setTyping(id, "user", B);
+    check("someone else can't type in it", (await loadThread(id, "operator"))?.typing.user === false);
+    await setTyping(id, "user", A);
+    check("the reporter typing shows on the operator's side", (await loadThread(id, "operator"))?.typing.user === true);
+    await setTyping(id, "operator");
+    check("...and the operator's on theirs", (await loadThread(id, { userId: A }))?.typing.operator === true);
+    await postThreadMessage({ feedbackId: id, author: "operator", body: "Typed it" });
+    const after = await loadThread(id, { userId: A });
+    check("sending a message stops your own dots", after?.typing.operator === false);
+    check("the operator's read time is reported", typeof after?.readAt.operator === "string");
+    const [row] = await listMyFeedback(A);
+    check("the list previews the newest message and who sent it", row?.last.author === "operator" && row.last.body === "Typed it");
+    check("...and knows the operator has opened it", row?.operatorRead === true);
+  }
+
   console.log("\nUnread");
   {
     // The reporter's own message stamped them read; a second operator reply is new again.
@@ -83,7 +101,7 @@ async function main() {
     const unread = await unreadRepliesFor(A);
     check("an unopened reply is unread", unread.length === 1 && unread[0].latest === "Great!\nSecond line");
     check("it shows on the list", (await listMyFeedback(A))[0]?.unread === true);
-    check("...with the operator's reply count", (await listMyFeedback(A))[0]?.replies === 2);
+    check("...with the operator's reply count", (await listMyFeedback(A))[0]?.replies === 3);
     await markThreadRead(id, "user", B);
     check("someone else can't mark it read", (await unreadRepliesFor(A)).length === 1);
     await markThreadRead(id, "user", A);

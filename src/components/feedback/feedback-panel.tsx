@@ -1,12 +1,13 @@
 "use client";
 
-import { ArrowLeft, Camera, X } from "lucide-react";
+import { ArrowLeft, Camera, SquarePen, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getMyFeedbackThread, listMyFeedbackAction, submitFeedback } from "@/actions/feedback";
-import { FeedbackChat } from "@/components/feedback/feedback-chat";
+import { FeedbackChat, threadMeta } from "@/components/feedback/feedback-chat";
 import { FeedbackList } from "@/components/feedback/feedback-list";
+import { ThreadAvatar } from "@/components/feedback/feedback-thread-view";
 import type { DraftShot } from "@/components/feedback/feedback-widget";
 import { SendButton } from "@/components/feedback/send-button";
 import { Button } from "@/components/ui/button";
@@ -260,17 +261,39 @@ export function FeedbackPanel({
    * panel opens and again whenever that tab is shown, so a reply that arrived meanwhile shows.
    */
   const [mine, setMine] = useState<MyFeedbackRow[] | null>(null);
+  /**
+   * Once per opening: a plain press of the button lands on a new message — the fast path —
+   * unless a reply or a thank-you is waiting, when it lands on the conversations instead so
+   * that is the first thing seen. Never moves someone who already started writing.
+   */
+  const routed = useRef(false);
+  const draftRef = useRef(false);
+  const viewRef = useRef(target.view);
+  useEffect(() => {
+    draftRef.current = message.trim().length > 0 || subject.trim().length > 0 || shots.length > 0;
+    viewRef.current = target.view;
+  });
+  useEffect(() => {
+    if (!open) routed.current = false;
+  }, [open]);
   useEffect(() => {
     if (!open || target.view === "thread") return;
     let live = true;
     listMyFeedbackAction()
-      .then((rows) => live && setMine(rows))
+      .then((rows) => {
+        if (!live) return;
+        setMine(rows);
+        if (!routed.current) {
+          routed.current = true;
+          const waiting = rows.some((r) => r.unread || r.giftWaiting);
+          if (waiting && viewRef.current === "compose" && !draftRef.current) onTargetChange({ view: "list" });
+        }
+      })
       .catch(() => live && setMine((prev) => prev ?? []));
     return () => {
       live = false;
     };
-  }, [open, target.view]);
-  const unread = mine?.filter((r) => r.unread).length ?? 0;
+  }, [open, target.view, onTargetChange]);
 
   async function send() {
     if (!canSend) return;
@@ -344,70 +367,47 @@ export function FeedbackPanel({
       }}
     >
       <SheetContent
-        // Docked to the right edge and full height: a place to read past conversations as
-        // well as write a new one, which a small floating window never was.
+        // Docked to the right edge and full height: a messages app — your conversations with
+        // the operator, one of them open, or a new one being written.
         side="right"
-        // The sheet's own surface, like the other right-side panels. Not `.liquid-glass`: that
-        // class pins the element to `position: relative`, which un-docks a fixed sheet.
-        // `sm:max-w-[34rem]` so the four kinds fit on one line beside the message box.
-        className="gap-5 overflow-y-auto p-6 data-[side=right]:sm:max-w-[34rem]"
+        // The sheet's own surface. Not `.liquid-glass`: that class pins the element to
+        // `position: relative`, which un-docks a fixed sheet. No padding here — each screen
+        // has its own header, scrolling body and pinned footer.
+        className="gap-0 p-0 data-[side=right]:sm:max-w-[34rem]"
         // Lighter than the shared default: the page behind stays legible.
         overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
         showCloseButton
       >
-        <SheetHeader className="shrink-0 gap-3 p-0 pr-8">
-          <SheetTitle className="font-[family-name:var(--font-display)] text-lg">
-            {target.view === "compose"
-              ? `Message ${FEEDBACK_RECIPIENT}`
-              : target.view === "thread"
-                ? `Conversation with ${FEEDBACK_RECIPIENT}`
-                : "Your feedback"}
-          </SheetTitle>
-          <SheetDescription className={target.view === "compose" ? undefined : "sr-only"}>
-            I read every one. Useful reports can earn bonus AI credits.
-          </SheetDescription>
-          <div className="flex gap-1 rounded-full bg-muted/60 p-1 text-sm" role="tablist" aria-label="Feedback">
-            {(
-              [
-                { view: "compose", label: `Message ${FEEDBACK_RECIPIENT}` },
-                { view: "list", label: "Your feedback" },
-              ] as const
-            ).map((tab) => {
-              const active = tab.view === "compose" ? target.view === "compose" : target.view !== "compose";
-              return (
-                <button
-                  key={tab.view}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => onTargetChange({ view: tab.view })}
-                  className={cn(
-                    "flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 transition-colors",
-                    active ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {tab.label}
-                  {tab.view === "list" && unread > 0 && (
-                    <span className="rounded-full bg-primary px-1.5 text-[0.65rem] font-medium text-primary-foreground">
-                      {unread} new
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </SheetHeader>
-
         {target.view === "list" ? (
-          mine === null ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
-          ) : mine.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Nothing yet. Anything you send {FEEDBACK_RECIPIENT} shows up here, with his replies.
-            </p>
-          ) : (
-            <FeedbackList rows={mine} onOpen={(id) => onTargetChange({ view: "thread", id })} />
-          )
+          <>
+            <PanelHeader>
+              <ThreadAvatar label={FEEDBACK_RECIPIENT} size={36} />
+              <div className="min-w-0 flex-1">
+                <SheetTitle className="text-base font-medium">{FEEDBACK_RECIPIENT}</SheetTitle>
+                <SheetDescription className="text-xs">Replies within a day</SheetDescription>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => onTargetChange({ view: "compose" })}>
+                <SquarePen className="size-3.5" aria-hidden />
+                New
+              </Button>
+            </PanelHeader>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {mine === null ? (
+                <p className="px-5 py-4 text-sm text-muted-foreground">Loading…</p>
+              ) : mine.length === 0 ? (
+                <div className="grid gap-3 px-5 py-8 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No conversations yet. Anything you send {FEEDBACK_RECIPIENT} lands here, with his replies.
+                  </p>
+                  <Button className="mx-auto" onClick={() => onTargetChange({ view: "compose" })}>
+                    Message {FEEDBACK_RECIPIENT}
+                  </Button>
+                </div>
+              ) : (
+                <FeedbackList rows={mine} onOpen={(id) => onTargetChange({ view: "thread", id })} />
+              )}
+            </div>
+          </>
         ) : target.view === "thread" ? (
           <PanelThread
             id={target.id}
@@ -416,6 +416,41 @@ export function FeedbackPanel({
           />
         ) : (
         <>
+        <PanelHeader>
+          {(mine?.length ?? 0) > 0 && (
+            <button
+              type="button"
+              aria-label="Back to your conversations"
+              onClick={() => onTargetChange({ view: "list" })}
+              className="-ml-1 rounded-md p-1 text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft className="size-4" aria-hidden />
+            </button>
+          )}
+          <div className="min-w-0 flex-1">
+            <SheetTitle className="text-base font-medium">New message</SheetTitle>
+            <SheetDescription className="text-xs">To {FEEDBACK_RECIPIENT} · I read every one</SheetDescription>
+          </div>
+        </PanelHeader>
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+        {/* The subject line, required — like an email, so both sides can find the
+            conversation again by what it was about. Enter moves on to the message. */}
+        <Input
+          value={subject}
+          maxLength={MAX_FEEDBACK_SUBJECT}
+          required
+          autoFocus={subject.trim().length === 0}
+          aria-label="Subject"
+          placeholder="Subject — what's this about?"
+          className="h-10 shrink-0"
+          onChange={(e) => onSubjectChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+            e.preventDefault();
+            textareaRef.current?.focus();
+          }}
+        />
+
         {/* The four kinds, on one line, all optional. Scrolls sideways on a narrow phone
             rather than wrapping into a block that reads as a form to fill in. */}
         <div
@@ -440,24 +475,6 @@ export function FeedbackPanel({
             </button>
           ))}
         </div>
-
-        {/* The subject line, required — like an email, so both sides can find the
-            conversation again by what it was about. Enter moves on to the message. */}
-        <Input
-          value={subject}
-          maxLength={MAX_FEEDBACK_SUBJECT}
-          required
-          autoFocus={subject.trim().length === 0}
-          aria-label="Subject"
-          placeholder="Subject — what's this about?"
-          className="h-10 shrink-0"
-          onChange={(e) => onSubjectChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
-            e.preventDefault();
-            textareaRef.current?.focus();
-          }}
-        />
 
         {/* The one block that gives, so that everything else always fits on screen.
  *
@@ -673,7 +690,11 @@ export function FeedbackPanel({
           )}
         </div>
 
-        <div className="mt-auto flex shrink-0 justify-end gap-2">
+        <p className="shrink-0 text-xs text-muted-foreground">
+          Useful reports can earn bonus AI credits.
+        </p>
+        </div>
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 px-5 py-3">
           <Button
             type="button"
             variant="ghost"
@@ -755,6 +776,15 @@ export function FeedbackPanel({
   );
 }
 
+/** A screen's top bar: room on the right for the sheet's own close button. */
+function PanelHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <SheetHeader className="flex shrink-0 flex-row items-center gap-3 border-b border-border/60 px-5 py-3 pr-12">
+      {children}
+    </SheetHeader>
+  );
+}
+
 /** Names what is actually about to be lost, rather than asking in the abstract. */
 function describeDraft(message: string, shots: number): string {
   const hasText = message.trim().length > 0;
@@ -789,22 +819,32 @@ function PanelThread({
   }, [id]);
 
   return (
-    <div className="grid gap-3">
-      <button
-        type="button"
-        onClick={onBack}
-        className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" aria-hidden />
-        Your feedback
-      </button>
+    <>
+      <PanelHeader>
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="Back to your conversations"
+          className="-ml-1 rounded-md p-1 text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" aria-hidden />
+        </button>
+        <div className="min-w-0 flex-1">
+          <SheetTitle className="truncate text-base font-medium">
+            {thread?.report.subject || thread?.report.text?.split("\n")[0] || "Conversation"}
+          </SheetTitle>
+          <SheetDescription className="truncate text-xs">
+            {thread ? threadMeta(thread) : `With ${FEEDBACK_RECIPIENT}`}
+          </SheetDescription>
+        </div>
+      </PanelHeader>
       {thread === undefined ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="px-5 py-4 text-sm text-muted-foreground">Loading…</p>
       ) : thread === null ? (
-        <p className="text-sm text-muted-foreground">That conversation isn’t available.</p>
+        <p className="px-5 py-4 text-sm text-muted-foreground">That conversation isn’t available.</p>
       ) : (
         <FeedbackChat key={thread.id} initial={thread} onNavigate={onNavigate} />
       )}
-    </div>
+    </>
   );
 }

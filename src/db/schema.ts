@@ -4807,6 +4807,13 @@ export const feedback = pgTable(
     operatorReadAt: timestamp("operator_read_at", { withTimezone: true }),
     /** When the reporter unwrapped the credit thank-you. Null while it is still wrapped. */
     thanksSeenAt: timestamp("thanks_seen_at", { withTimezone: true }),
+    /**
+     * Each side's last keystroke in the conversation, for the typing dots. A row column rather
+     * than server memory because a serverless deploy has none shared between requests; "typing"
+     * means within the last few seconds (`TYPING_FRESH_MS` in feedback-thread.ts).
+     */
+    userTypingAt: timestamp("user_typing_at", { withTimezone: true }),
+    operatorTypingAt: timestamp("operator_typing_at", { withTimezone: true }),
     /** Where they were when they said it — route, plan, contact count. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

@@ -1387,6 +1387,8 @@ CREATE TABLE IF NOT EXISTS feedback (
   user_read_at timestamptz,
   operator_read_at timestamptz,
   thanks_seen_at timestamptz,
+  user_typing_at timestamptz,
+  operator_typing_at timestamptz,
   context jsonb NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -3048,7 +3050,9 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // plus feedback.thanks_credits / user_read_at / operator_read_at, see src/lib/feedback-thread.ts;
 // and the thank-you gift — feedback_messages.credits (on the reply that carried it) and
 // feedback.thanks_seen_at (null while still wrapped); and feedback.subject (the subject line a
-// new message to the operator starts with).
+// new message to the operator starts with); and feedback.user_typing_at / operator_typing_at
+// (each side's last keystroke, for the typing dots — a serverless deploy has no shared memory
+// to hold them in).
 export const SCHEMA_VERSION = 213;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
@@ -4444,6 +4448,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "user_read_at", "timestamptz");
   await ensureColumn(client, "feedback", "operator_read_at", "timestamptz");
   await ensureColumn(client, "feedback", "thanks_seen_at", "timestamptz");
+  await ensureColumn(client, "feedback", "user_typing_at", "timestamptz");
+  await ensureColumn(client, "feedback", "operator_typing_at", "timestamptz");
   await ensureColumn(client, "feedback", "subject", "text");
   await ensureColumn(client, "feedback_messages", "credits", "integer");
   // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
@@ -4948,6 +4954,8 @@ const alters = [
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_read_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS operator_read_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS thanks_seen_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_typing_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS operator_typing_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS subject text`,
   `ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS credits integer`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,

@@ -26,6 +26,7 @@ import {
   loadThread,
   markThreadRead,
   postThreadMessage,
+  setTyping,
   unwrapThanks,
   type FeedbackThread,
   type MyFeedbackRow,
@@ -244,4 +245,10 @@ export async function unwrapFeedbackThanks(
     balance = null;
   }
   return { credits, balance };
+}
+
+/** The reporter is typing in one of their conversations — for the dots on the other side. */
+export async function markFeedbackTyping(feedbackId: string): Promise<void> {
+  const userId = await requireUserId();
+  await setTyping(feedbackId, "user", userId);
 }

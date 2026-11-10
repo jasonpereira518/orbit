@@ -23,13 +23,20 @@ const STREAM_MS = 55_000;
 const TICK_MS = 1_000;
 const HEARTBEAT_MS = 15_000;
 
-/** What, if it differs, is worth sending: new messages, a status change, the gift opened. */
-function signature(thread: FeedbackThread): string {
+/**
+ * What, if it differs, is worth sending: new messages, a status change, the gift opened, and
+ * the OTHER side reading or typing. Never the viewer's own read stamp — every push stamps it,
+ * so including it would make each push trigger the next, once a second, forever.
+ */
+function signature(thread: FeedbackThread, side: "user" | "operator"): string {
+  const other = side === "user" ? "operator" : "user";
   return JSON.stringify([
     thread.messages.map((m) => m.id),
     thread.status,
     thread.thanksCredits,
     thread.thanksSeen,
+    thread.readAt[other],
+    thread.typing[other],
   ]);
 }
 
@@ -87,7 +94,8 @@ export async function GET(
       };
 
       write("retry: 1000\n\n");
-      let last = signature(first);
+      const side = asOperator ? ("operator" as const) : ("user" as const);
+      let last = signature(first, side);
       await send(first);
 
       const started = Date.now();
@@ -101,7 +109,7 @@ export async function GET(
             write("event: gone\ndata: {}\n\n");
             break;
           }
-          const next = signature(thread);
+          const next = signature(thread, side);
           if (next !== last) {
             last = next;
             quietSince = Date.now();

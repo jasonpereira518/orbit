@@ -62,6 +62,7 @@ import {
   postThreadMessage,
   reporterEmail,
   reporterOf,
+  setTyping,
   type FeedbackThread,
 } from "@/lib/feedback-thread";
 import { sendSiteInviteEmail } from "@/lib/site-invite-email";
@@ -1094,6 +1095,12 @@ export async function logFeedbackAction(input: {
   });
   revalidateFeedback();
   return { ok: true, id: logged.id };
+}
+
+/** The operator is typing a reply — for the dots on the reporter's side. */
+export async function markFeedbackTypingAdminAction(id: string): Promise<void> {
+  await requireAdminUserId();
+  await setTyping(id, "operator");
 }
 
 /**
