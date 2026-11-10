@@ -1623,6 +1623,75 @@ export function ChatPanel({
     }
   }
 
+  /**
+   * Attach, Deep research and Web search. Built once and placed twice: inside the pill from
+   * `sm` up, and in a row above it on a phone, where six controls in the pill left the text
+   * field about eighty pixels wide. Tailwind picks which is shown, so it is right on the first
+   * paint; the hidden copy is `display: none` and out of the accessibility tree.
+   */
+  const composerExtras = {
+    attach: (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="size-9 shrink-0 rounded-full text-muted-foreground"
+        aria-label="Attach a file"
+        title="Attach a photo, PDF or text file. Reading a photo or PDF uses AI credits."
+        disabled={loadingThread || fileChips.length >= CHAT_ATTACHMENTS_MAX}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <Paperclip className="size-4" />
+      </Button>
+    ),
+    deep: (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-pressed={deep}
+        aria-label="Deep research"
+        title={
+          deep
+            ? "Deep research is on: a thorough answer that can take a few minutes and uses more AI credits"
+            : "Deep research: a thorough answer that can take a few minutes and uses more AI credits"
+        }
+        disabled={loadingThread}
+        onClick={() => {
+          setDeep(!deep);
+          writeChatDeep(!deep);
+        }}
+        className={cn(
+          "size-9 shrink-0 rounded-full",
+          deep ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
+        )}
+      >
+        <Telescope className="size-4" />
+      </Button>
+    ),
+    web: (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-pressed={web}
+        aria-label="Web search"
+        title={web ? "Web search is on: answers may look things up on the public web" : "Web search is off: answers use only your own records"}
+        disabled={loadingThread}
+        onClick={() => {
+          setWeb(!web);
+          writeChatWeb(!web);
+        }}
+        className={cn(
+          "size-9 shrink-0 rounded-full",
+          web ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
+        )}
+      >
+        <Globe className="size-4" />
+      </Button>
+    ),
+  };
+
   const headerTitle = threadTitle?.trim() || "New chat";
 
   /** Rename a saved chat. The list changes once the server has it, so a refusal leaves no lie. */
@@ -2110,6 +2179,11 @@ export function ChatPanel({
                   ))}
                 </ul>
               )}
+              <div className="flex items-center gap-1 sm:hidden">
+                {composerExtras.attach}
+                {composerExtras.deep}
+                {composerExtras.web}
+              </div>
               {/* One pill holding every control, rather than a field with satellites.
                   `items-end` keeps the buttons on the last line as the field grows. */}
               <div
@@ -2150,18 +2224,7 @@ export function ChatPanel({
                     e.target.value = "";
                   }}
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-9 shrink-0 rounded-full text-muted-foreground"
-                  aria-label="Attach a file"
-                  title="Attach a photo, PDF or text file. Reading a photo or PDF uses AI credits."
-                  disabled={loadingThread || fileChips.length >= CHAT_ATTACHMENTS_MAX}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Paperclip className="size-4" />
-                </Button>
+                <span className="hidden shrink-0 items-center sm:flex">{composerExtras.attach}</span>
                 {/* No vertical padding on the field box: the mirror is `inset-0` of it, so
                     any padding there would offset the field from its ghost layer. The field
                     and the mirror each carry their own py instead.
@@ -2230,50 +2293,10 @@ export function ChatPanel({
                     />
                   )}
                 </MentionComposer>
-                {/* Two switches for how this question is answered. Each is a toggle button, so
-                    its state is announced (`aria-pressed`) as well as shown. */}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-pressed={deep}
-                  aria-label="Deep research"
-                  title={
-                    deep
-                      ? "Deep research is on: a thorough answer that can take a few minutes and uses more AI credits"
-                      : "Deep research: a thorough answer that can take a few minutes and uses more AI credits"
-                  }
-                  disabled={loadingThread}
-                  onClick={() => {
-                    setDeep(!deep);
-                    writeChatDeep(!deep);
-                  }}
-                  className={cn(
-                    "size-9 shrink-0 rounded-full",
-                    deep ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary" : "text-muted-foreground"
-                  )}
-                >
-                  <Telescope className="size-4" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-pressed={web}
-                  aria-label="Web search"
-                  title={web ? "Web search is on: answers may look things up on the public web" : "Web search is off: answers use only your own records"}
-                  disabled={loadingThread}
-                  onClick={() => {
-                    setWeb(!web);
-                    writeChatWeb(!web);
-                  }}
-                  className={cn(
-                    "size-9 shrink-0 rounded-full",
-                    web ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary" : "text-muted-foreground"
-                  )}
-                >
-                  <Globe className="size-4" />
-                </Button>
+                <span className="hidden shrink-0 items-center gap-1 sm:flex">
+                  {composerExtras.deep}
+                  {composerExtras.web}
+                </span>
                 <DictationButton
                   state={dictation.state}
                   level={dictation.level}
