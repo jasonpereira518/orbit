@@ -69,6 +69,12 @@ export type ScanWindow = {
   windowMonths: number;
 };
 
+function monthsAgo(months: number): Date {
+  const d = new Date();
+  d.setUTCMonth(d.getUTCMonth() - months);
+  return d;
+}
+
 function daysBefore(date: Date, days: number): Date {
   return new Date(date.getTime() - days * 24 * 60 * 60 * 1000);
 }
@@ -134,10 +140,10 @@ export async function resolveScanWindow(
   opts: { full?: boolean; since?: Date | null; cycle?: RecruitingCycle } = {}
 ): Promise<ScanWindow> {
   const state = await getScanState(userId);
-  const cycleStart = getRecruitingCycleStartDate(opts.cycle);
-  // Default to recruiting cycle start date
-  const floor = cycleStart;
   const windowMonths = state?.windowMonths ?? DEFAULT_WINDOW_MONTHS;
+  const floor = opts.cycle
+    ? getRecruitingCycleStartDate(opts.cycle)
+    : monthsAgo(windowMonths);
 
   const ownWatermark = opts.since !== undefined;
   const lastScanAt = ownWatermark ? opts.since : (state?.lastScanAt ?? null);
