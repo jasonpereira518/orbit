@@ -3025,7 +3025,7 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
 // 209 = outreach_campaigns.background_job (asynchronous campaign execution & scout runner)
-// 210 = chat_threads.pending_steer (messages sent to steer the answer being written; the
+// 214 = chat_threads.pending_steer (messages sent to steer the answer being written; the
 // running turn reads them between lookup rounds).
 // 211 = chat_threads.pinned_at (a conversation pinned to the top of the history list).
 // 212 = chat_messages.attachments (the names and read text of files attached to a question).
@@ -3401,9 +3401,9 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
   // v207: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
-  // v210: steering a running answer. See `addTurnSteer`.
+  // v214: steering a running answer. See `addTurnSteer`.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS pending_steer jsonb`,
-  // v211: pinned conversations. See `pinThread`.
+  // v215: pinned conversations. See `pinThread`.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS pinned_at timestamptz`,
   // v212: files attached to a chat question. See `@/lib/chat-attachments`.
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attachments jsonb`,
