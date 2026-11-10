@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import { Check, Copy, ExternalLink } from "lucide-react";
+import { Check, Copy, ExternalLink, Terminal } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { AccountHeader, BrandStrip, FeatureRow } from "@/components/settings/account-page";
 import { PROVIDER_THEMES } from "@/components/settings/provider-themes";
@@ -34,14 +34,15 @@ const ASSISTANTS: Record<
     label: "Claude",
     settingsHref: "https://claude.ai/new#customize/connectors/yours",
     settingsLabel: "Open Claude",
-    addPath: "Customize → Connectors → + → Add custom connector",
+    addPath: "Customize → Connectors → + → Add custom connector (or Settings → Connectors)",
+    note: "Works on Claude.ai with OAuth, or in Claude Desktop / Claude Code with an API key",
   },
   chatgpt: {
     label: "ChatGPT",
     settingsHref: "https://chatgpt.com/plugins",
     settingsLabel: "Open ChatGPT",
-    addPath: "Settings → Apps → Advanced settings → Developer mode, then Create",
-    note: "Developer mode needs a paid ChatGPT plan",
+    addPath: "Settings → Apps → Advanced settings → Developer mode, then Create (or Custom GPT Action)",
+    note: "Developer mode needs a paid ChatGPT plan · Custom GPTs can also use Orbit's OpenAPI schema",
   },
   notion: {
     label: "Notion AI",
@@ -168,6 +169,48 @@ export function AssistantsSettings({ withNotion = false }: { withNotion?: boolea
           onAction={() => {}}
         />
       </ul>
+
+      {assistant === "claude" && url ? (
+        <div className="rounded-lg border border-border/60 bg-muted/30 p-4 text-xs space-y-2">
+          <div className="flex items-center gap-2 font-medium text-foreground">
+            <Terminal className="size-3.5 text-muted-foreground" />
+            <span>Claude Desktop &amp; Claude Code</span>
+          </div>
+          <p className="text-muted-foreground">
+            For Claude Desktop, add Orbit to your{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">claude_desktop_config.json</code> with an API key from Settings → API &amp; connectors:
+          </p>
+          <pre className="overflow-x-auto rounded border border-border/40 bg-background/80 p-2.5 font-mono text-[11px] text-foreground">
+{JSON.stringify(
+  {
+    mcpServers: {
+      orbit: {
+        url,
+        headers: {
+          Authorization: "Bearer <YOUR_ORBIT_API_KEY>",
+        },
+      },
+    },
+  },
+  null,
+  2
+)}
+          </pre>
+        </div>
+      ) : null}
+
+      {assistant === "chatgpt" && url ? (
+        <div className="rounded-lg border border-border/60 bg-muted/30 p-4 text-xs space-y-2">
+          <div className="font-medium text-foreground">Two ways to connect ChatGPT</div>
+          <p className="text-muted-foreground">
+            1. <strong>Developer Mode (MCP):</strong> Use your connector link above in Settings → Apps → Advanced settings → Developer mode.
+          </p>
+          <p className="text-muted-foreground">
+            2. <strong>Custom GPT Actions:</strong> When creating a Custom GPT, import Orbit’s OpenAPI spec at{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{url.replace("/mcp", "/v1/openapi.json")}</code> and authenticate with an Orbit API key.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
