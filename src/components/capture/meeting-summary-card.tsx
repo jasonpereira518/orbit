@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { ChevronDown, CircleHelp, Construction, ListTodo } from "lucide-react";
+import { useMemo, useState, useTransition } from "react";
+import { CalendarClock, ChevronDown, CircleHelp, Construction, ListTodo } from "lucide-react";
 import { loadMeetingTranscript, type MeetingTranscriptView } from "@/actions/meetings";
+import { groupSegmentsIntoParagraphs, speakerDisplayNames } from "@/lib/meeting-digest";
 import type { NoteBatchMeeting } from "@/db/schema";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -126,6 +127,33 @@ export function MeetingSummaryCard({
         onUpdate={update}
       />
 
+      {digest.agenda && digest.agenda.length > 0 && (
+        <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-3">
+          <h3 className="flex items-center gap-1.5 text-sm font-medium text-ink">
+            <CalendarClock className="size-4 text-muted-foreground" />
+            Calendar Agenda Review
+          </h3>
+          <ul className="space-y-1.5 text-xs">
+            {digest.agenda.map((a, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    "size-1.5 rounded-full shrink-0",
+                    a.covered ? "bg-emerald-500" : "bg-muted-foreground/40"
+                  )}
+                />
+                <span className={cn(a.covered ? "text-foreground font-medium" : "text-muted-foreground line-through")}>
+                  {a.item}
+                </span>
+                <span className="text-3xs text-muted-foreground">
+                  ({a.covered ? "Discussed" : "Not covered"})
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {selectable && (
         <p className="text-xs text-muted-foreground">
           Tick anything you want a reminder for. Action items for the people you save below get
@@ -217,6 +245,15 @@ function TranscriptDisclosure({ sessionId }: { sessionId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
+  const names = useMemo(
+    () => (transcript ? speakerDisplayNames(transcript.segments) : new Map<string, string>()),
+    [transcript]
+  );
+  const paragraphs = useMemo(
+    () => (transcript ? groupSegmentsIntoParagraphs(transcript.segments, names) : []),
+    [transcript, names]
+  );
+
   return (
     <div className="border-t border-border/60 pt-3">
       <button
@@ -242,17 +279,18 @@ function TranscriptDisclosure({ sessionId }: { sessionId: string }) {
         <div className="mt-3 max-h-96 space-y-3 overflow-y-auto pr-1 text-sm">
           {pending && <p className="text-muted-foreground">Loading…</p>}
           {error && <p className="text-destructive">{error}</p>}
-          {transcript?.segments
-            .filter((s) => s.text.trim())
-            .map((s) => (
-              <p key={s.seq} className="leading-relaxed">
-                <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
-                  {formatElapsed(s.startMs)}
+          {paragraphs.map((p, i) => (
+            <div key={i} className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                  {formatElapsed(p.startMs)}
                 </span>
-                {s.text}
-              </p>
-            ))}
-          {transcript && transcript.segments.every((s) => !s.text.trim()) && (
+                <span className="font-medium text-foreground">{p.speakerName}:</span>
+              </div>
+              <p className="leading-relaxed pl-6 text-foreground/90">{p.text}</p>
+            </div>
+          ))}
+          {transcript && paragraphs.length === 0 && (
             <p className="text-muted-foreground">Nothing was transcribed.</p>
           )}
         </div>

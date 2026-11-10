@@ -310,6 +310,11 @@ async function main() {
       you.calls[0]!.system.includes('"You:" is the user') &&
         you.calls[0]!.system.includes("renumbered after a line saying the recording reconnected")
     );
+    check(
+      "the system prompt requires speaker context in summary and key points",
+      you.calls[0]!.system.includes("Take the speakers and their roles into full context") &&
+        you.calls[0]!.system.includes("Attribute each key point to the specific speaker")
+    );
     check("…and no longer claims there are no speaker labels", !you.calls[0]!.system.includes("NO speaker labels"));
     check(
       'a commitment spoken on a You: line is extracted with owner "me"',
