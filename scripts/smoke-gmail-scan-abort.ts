@@ -36,6 +36,7 @@ type Classify = ScanDeps["classify"];
 const notRecruiter: Awaited<ReturnType<Classify>> = {
   isRecruiter: false, confidence: 0.1, fullName: null, firm: null,
   companiesMentioned: [], rolesDiscussed: [], summary: null,
+  roleInterviewingFor: null, linkedinUrl: null,
 };
 
 async function seedJob(senders: number): Promise<string> {

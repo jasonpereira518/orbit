@@ -908,6 +908,7 @@ CREATE TABLE IF NOT EXISTS user_recruiter_links (
   ai_summary text,
   companies_mentioned jsonb DEFAULT '[]',
   roles_discussed jsonb DEFAULT '[]',
+  role_interviewing_for text,
   first_email_at timestamptz,
   last_email_at timestamptz,
   email_count integer NOT NULL DEFAULT 0,
@@ -939,6 +940,16 @@ CREATE TABLE IF NOT EXISTS recruiter_messages (
 CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status);
 CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id);
 CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at);
+CREATE TABLE IF NOT EXISTS recruiter_contact_unlocks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  recruiter_id uuid NOT NULL REFERENCES recruiters(id) ON DELETE CASCADE,
+  cost_credits integer NOT NULL DEFAULT 1,
+  unlocked_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_idx ON recruiter_contact_unlocks(user_id);
+CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_recruiter_idx ON recruiter_contact_unlocks(recruiter_id);
+CREATE UNIQUE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_recruiter_uidx ON recruiter_contact_unlocks(user_id, recruiter_id);
 CREATE TABLE IF NOT EXISTS recruiter_scan_state (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -3022,7 +3033,8 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
 // 209 = outreach_campaigns.background_job (asynchronous campaign execution & scout runner)
-export const SCHEMA_VERSION = 209;
+// 210 = recruiter_contact_unlocks (credit-based recruiter contact unlocks) + user_recruiter_links.role_interviewing_for
+export const SCHEMA_VERSION = 210;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -5416,6 +5428,17 @@ const alters = [
   `ALTER TABLE interest_list_signups ALTER COLUMN unsubscribe_token DROP NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_unsub_hash_uidx ON interest_list_signups(unsubscribe_token_hash)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_hash_uidx ON interest_list_signups(share_token_hash)`,
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS role_interviewing_for text`,
+  `CREATE TABLE IF NOT EXISTS recruiter_contact_unlocks (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id text NOT NULL,
+    recruiter_id uuid NOT NULL REFERENCES recruiters(id) ON DELETE CASCADE,
+    cost_credits integer NOT NULL DEFAULT 1,
+    unlocked_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_idx ON recruiter_contact_unlocks(user_id)`,
+  `CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_recruiter_idx ON recruiter_contact_unlocks(recruiter_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_recruiter_uidx ON recruiter_contact_unlocks(user_id, recruiter_id)`,
 ];
 
 /**
