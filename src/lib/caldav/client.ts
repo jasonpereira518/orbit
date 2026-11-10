@@ -184,6 +184,7 @@ export class CalDavStaleSyncTokenError extends Error {
 
 /** Apple's well-known CalDAV entry point. Discovery starts here and nowhere else. */
 const DISCOVERY_URL = "https://caldav.icloud.com/";
+const CARDDAV_DISCOVERY_URL = "https://contacts.icloud.com/";
 
 const XML_CONTENT_TYPES = ["application/xml", "text/xml", "text/calendar"] as const;
 
@@ -336,6 +337,43 @@ function calendarQueryBody(fromUtc: string, toUtc: string): string {
     </C:comp-filter>
   </C:filter>
 </C:calendar-query>`;
+}
+
+const PROPFIND_ADDRESSBOOK_HOME_SET_BODY = `<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:prop>
+    <C:addressbook-home-set/>
+  </D:prop>
+</D:propfind>`;
+
+const PROPFIND_ADDRESSBOOK_LIST_BODY = `<?xml version="1.0" encoding="utf-8"?>
+<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav" xmlns:CS="http://calendarserver.org/ns/">
+  <D:prop>
+    <D:resourcetype/>
+    <D:displayname/>
+    <D:sync-token/>
+    <CS:getctag/>
+  </D:prop>
+</D:propfind>`;
+
+const ADDRESSBOOK_QUERY_BODY = `<?xml version="1.0" encoding="utf-8"?>
+<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:prop>
+    <D:getetag/>
+    <C:address-data/>
+  </D:prop>
+</C:addressbook-query>`;
+
+function addressbookSyncCollectionBody(syncToken: string | null): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<D:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+  <D:sync-token>${syncToken ? escapeXml(syncToken) : ""}</D:sync-token>
+  <D:sync-level>1</D:sync-level>
+  <D:prop>
+    <D:getetag/>
+    <C:address-data/>
+  </D:prop>
+</D:sync-collection>`;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -846,4 +884,150 @@ function firstPropText(xml: string, propName: string): string | null {
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------------------
+// CardDAV (Contacts) API
+// ---------------------------------------------------------------------------------------
+
+export async function discoverAddressBook(
+  creds: CalDavCredentials,
+  deps?: { fetchImpl?: typeof fetch }
+): Promise<{ principalUrl: string; addressBookUrl: string }> {
+  const fetchImpl = deps?.fetchImpl ?? fetch;
+
+  const principal = await davRequest(
+    creds,
+    CARDDAV_DISCOVERY_URL,
+    "PROPFIND",
+    "0",
+    PROPFIND_CURRENT_USER_PRINCIPAL_BODY,
+    fetchImpl
+  );
+  const principalHref = firstPropHref(principal.text, "current-user-principal");
+  if (!principalHref) {
+    throw new Error("iCloud did not return a current-user-principal for CardDAV");
+  }
+  const principalUrl = new URL(principalHref, principal.url).href;
+  assertAppleHost(principalUrl);
+
+  const home = await davRequest(creds, principalUrl, "PROPFIND", "0", PROPFIND_ADDRESSBOOK_HOME_SET_BODY, fetchImpl);
+  const homeHref = firstPropHref(home.text, "addressbook-home-set");
+  if (!homeHref) {
+    throw new Error("iCloud did not return an addressbook-home-set");
+  }
+  const addressBookHomeUrl = new URL(homeHref, home.url).href;
+  assertAppleHost(addressBookHomeUrl);
+
+  const listing = await davRequest(creds, addressBookHomeUrl, "PROPFIND", "1", PROPFIND_ADDRESSBOOK_LIST_BODY, fetchImpl);
+  const ms = parseMultistatus(listing.text);
+  let addressBookUrl: string | null = null;
+  for (const response of toArray(ms.response as XmlNode | XmlNode[] | undefined)) {
+    const href = textOf(response.href);
+    if (!href) continue;
+    for (const propstat of toArray(response.propstat as XmlNode | XmlNode[] | undefined)) {
+      const status = textOf(propstat.status) ?? "";
+      if (!status.includes("200")) continue;
+      const prop = (propstat.prop as XmlNode | undefined) ?? {};
+      if (hasChild(prop.resourcetype, "addressbook")) {
+        addressBookUrl = new URL(href, listing.url).href;
+        break;
+      }
+    }
+    if (addressBookUrl) break;
+  }
+
+  if (!addressBookUrl) {
+    addressBookUrl = new URL("card/", addressBookHomeUrl).href;
+  }
+  assertAppleHost(addressBookUrl);
+
+  return { principalUrl, addressBookUrl };
+}
+
+export async function fetchAddressBookChanges(
+  creds: CalDavCredentials,
+  addressBookUrl: string,
+  syncToken: string | null,
+  deps?: { fetchImpl?: typeof fetch }
+): Promise<{ vCards: string[]; nextSyncToken: string | null; tombstones: number }> {
+  const fetchImpl = deps?.fetchImpl ?? fetch;
+
+  try {
+    const report = await davRequest(
+      creds,
+      addressBookUrl,
+      "REPORT",
+      "1",
+      addressbookSyncCollectionBody(syncToken),
+      fetchImpl
+    );
+    return parseAddressSyncCollectionResponse(report.text);
+  } catch (err) {
+    if (err instanceof CalDavAuthError) throw err;
+    // Fallback to addressbook-query
+    const query = await davRequest(
+      creds,
+      addressBookUrl,
+      "REPORT",
+      "1",
+      ADDRESSBOOK_QUERY_BODY,
+      fetchImpl
+    );
+    return {
+      vCards: allAddressData(query.text),
+      nextSyncToken: null,
+      tombstones: 0,
+    };
+  }
+}
+
+function addressDataOf(propstats: XmlNode[]): string | null {
+  for (const propstat of propstats) {
+    const status = textOf(propstat.status) ?? "";
+    if (!status.includes("200")) continue;
+    const prop = (propstat.prop as XmlNode | undefined) ?? {};
+    const data = textOf(prop["address-data"]);
+    if (data) return data;
+  }
+  return null;
+}
+
+function allAddressData(xml: string): string[] {
+  const ms = parseMultistatus(xml);
+  const docs: string[] = [];
+  for (const response of toArray(ms.response as XmlNode | XmlNode[] | undefined)) {
+    const data = addressDataOf(toArray(response.propstat as XmlNode | XmlNode[] | undefined));
+    if (data) docs.push(data);
+  }
+  return docs;
+}
+
+function parseAddressSyncCollectionResponse(xml: string): {
+  vCards: string[];
+  nextSyncToken: string | null;
+  tombstones: number;
+} {
+  const ms = parseMultistatus(xml);
+  const vCards: string[] = [];
+  let tombstones = 0;
+
+  for (const response of toArray(ms.response as XmlNode | XmlNode[] | undefined)) {
+    const topStatus = textOf(response.status);
+    if (topStatus?.includes("404")) {
+      tombstones++;
+      continue;
+    }
+
+    const propstats = toArray(response.propstat as XmlNode | XmlNode[] | undefined);
+    const removed = propstats.some((p) => (textOf(p.status) ?? "").includes("404"));
+    const data = addressDataOf(propstats);
+    if (data) {
+      vCards.push(data);
+    } else if (removed) {
+      tombstones++;
+    }
+  }
+
+  return { vCards, nextSyncToken: textOf(ms["sync-token"]), tombstones };
 }

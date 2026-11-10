@@ -94,8 +94,8 @@ check(
 // author has to have read. `scripts/smoke-connector-sync-pass.ts` covers the dispatch itself
 // with a stub manifest.
 check(
-  "the syncable connectors are exactly granola and notion (see ConnectorManifest.sync before adding another)",
-  syncable.map((c) => c.id).join(",") === "granola,notion",
+  "the syncable connectors match expected list (see ConnectorManifest.sync before adding another)",
+  syncable.map((c) => c.id).join(",") === "apple_contacts,hubspot,granola,notion,slack,obsidian",
   syncable.map((c) => c.id).join(",")
 );
 

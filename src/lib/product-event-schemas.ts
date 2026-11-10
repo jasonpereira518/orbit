@@ -39,7 +39,7 @@ export const IMPORT_PROVIDERS = [
 ] as const;
 export const FOLLOWUP_ORIGINS = ["manual", "suggestion", "capture", "extension", "mcp"] as const;
 export const FOLLOWUP_VIA = ["list", "dashboard", "touch", "bulk", "extension", "mcp"] as const;
-export const MCP_CLIENTS = ["claude", "chatgpt", "other"] as const;
+export const MCP_CLIENTS = ["claude", "chatgpt", "gemini", "copilot", "other"] as const;
 export const PLANS = ["free", "orbit", "max", "lifetime"] as const;
 export const INTERVALS = ["month", "year", "once"] as const;
 export const GATES = [

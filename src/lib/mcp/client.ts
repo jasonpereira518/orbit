@@ -25,15 +25,19 @@ export type McpClient = (typeof MCP_CLIENTS)[number];
 
 const CLAUDE = /(^|[^a-z0-9])(claude|anthropic|claudebot)([^a-z0-9]|$)/i;
 const CHATGPT = /(^|[^a-z0-9])(chatgpt|openai|gptbot)([^a-z0-9]|$)/i;
+const GEMINI = /(^|[^a-z0-9])(gemini|deepmind|google-vertexai|aistudio)([^a-z0-9]|$)/i;
+const COPILOT = /(^|[^a-z0-9])(copilot|github-copilot|microsoft-copilot)([^a-z0-9]|$)/i;
 
-/** The assistant a piece of text names, or null when it names neither or both. */
+/** The assistant a piece of text names, or null when it names neither or multiple. */
 function classify(text: string | null | undefined): Exclude<McpClient, "other"> | null {
   if (!text) return null;
   const sample = text.slice(0, 300);
-  const claude = CLAUDE.test(sample);
-  const chatgpt = CHATGPT.test(sample);
-  if (claude === chatgpt) return null;
-  return claude ? "claude" : "chatgpt";
+  const matches: Exclude<McpClient, "other">[] = [];
+  if (CLAUDE.test(sample)) matches.push("claude");
+  if (CHATGPT.test(sample)) matches.push("chatgpt");
+  if (GEMINI.test(sample)) matches.push("gemini");
+  if (COPILOT.test(sample)) matches.push("copilot");
+  return matches.length === 1 ? matches[0] : null;
 }
 
 /** Opaque ids learned from a stronger signal on an earlier request. Bounded; per instance. */

@@ -9,10 +9,14 @@
  */
 import type { ConnectorManifest } from "@/lib/connectors/registry";
 import type { DeliverResult, OutboxItem } from "@/lib/connectors/outbox";
+import { deliverHubSpot } from "@/lib/connectors/hubspot-deliver";
 
 export async function deliverOutboxItem(
   manifest: ConnectorManifest,
-  _item: OutboxItem
+  item: OutboxItem
 ): Promise<DeliverResult> {
+  if (manifest.id === "hubspot") {
+    return deliverHubSpot(item);
+  }
   return { ok: false, error: `${manifest.label} cannot receive writes yet`, retryable: false };
 }

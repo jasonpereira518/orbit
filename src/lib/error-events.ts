@@ -47,6 +47,9 @@ export const ERROR_SOURCES = {
   oauthEventbriteCallback: "oauth.eventbrite.callback",
   oauthGranolaCallback: "oauth.granola.callback",
   oauthNotionCallback: "oauth.notion.callback",
+  oauthSlackCallback: "oauth.slack.callback",
+  oauthHubspotCallback: "oauth.hubspot.callback",
+  oauthCalendlyCallback: "oauth.calendly.callback",
   /**
    * A CalDAV request to iCloud (`src/lib/caldav/client.ts`) exhausted its retries. Kept
    * apart from `eventPageFetch` deliberately — the two share `guardedFetchText`'s retry

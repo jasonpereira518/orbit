@@ -19,6 +19,7 @@ import { GET as GET_ROOT_RESOURCE, OPTIONS as OPTIONS_ROOT_RESOURCE } from "../s
 import { GET as GET_SUBPATH_RESOURCE } from "../src/app/.well-known/oauth-protected-resource/api/mcp/route";
 import { GET as GET_OPENID_CONFIG, OPTIONS as OPTIONS_OPENID_CONFIG } from "../src/app/.well-known/openid-configuration/route";
 import { GET as GET_OPENAPI } from "../src/app/api/v1/openapi.json/route";
+import { mcpClientFrom } from "../src/lib/mcp/client";
 
 const USER = "mcp-claude-chatgpt-smoke-user";
 
@@ -262,6 +263,10 @@ run(async () => {
   check("all OpenAPI operations have an operationId", allHaveOperationId);
   const uniqueIds = new Set(operationIds);
   check("all operationIds are unique", uniqueIds.size === operationIds.length, `${operationIds.length} operations`);
+
+  console.log("\n7. Gemini and Copilot MCP Client detection");
+  check("Gemini user agent recognized", mcpClientFrom({ userAgent: "Mozilla/5.0 (Gemini-AIStudio/2.0)" }) === "gemini");
+  check("Copilot user agent recognized", mcpClientFrom({ userAgent: "GitHub-Copilot/1.0" }) === "copilot");
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);

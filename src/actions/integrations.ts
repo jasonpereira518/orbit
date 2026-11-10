@@ -6,6 +6,7 @@ import { listWebhookEndpoints } from "@/actions/webhook-endpoints";
 import { getGmailConnectionStatus } from "@/actions/gmail";
 import { getOutlookConnectionStatus } from "@/actions/outlook";
 import { getLastLinkedInImportAt } from "@/actions/imports";
+import { getAppleConnectionStatus } from "@/actions/apple";
 import { listCalendarSubscriptions } from "@/actions/calendar";
 import { listEventConnections } from "@/lib/events/connections";
 import { getConnectorConnection } from "@/lib/connectors/connections";
@@ -57,7 +58,7 @@ function plural(n: number, word: string) {
  * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola, notion] =
+  const [settings, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola, notion, appleContacts, appleCal, slack, hubspot, obsidian, calendly] =
     await Promise.all([
       settle(getSettings()),
       settle(listApiKeys()),
@@ -69,6 +70,12 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       settle(requireUserId().then((id) => listEventConnections(id))),
       settle(requireUserId().then((id) => getConnectorConnection(id, "granola"))),
       settle(requireUserId().then((id) => getConnectorConnection(id, "notion"))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "apple_contacts"))),
+      settle(getAppleConnectionStatus()),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "slack"))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "hubspot"))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "obsidian"))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "calendly"))),
     ]);
   const now = new Date();
   const pages: IntegrationStatuses["pages"] = {};
@@ -207,6 +214,60 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
           ? { state: "partial", detail: "Reconnect needed" }
           : { state: "on", detail: notion.accountRef ?? "Connected" };
   pages.notion = connectors.notion;
+
+  connectors.apple_contacts =
+    appleContacts === "unknown"
+      ? "unknown"
+      : !appleContacts
+        ? { state: "off", detail: "Not connected" }
+        : appleContacts.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: appleContacts.accountRef ?? "Connected" };
+
+  connectors.apple_calendar =
+    appleCal === "unknown"
+      ? "unknown"
+      : !appleCal.connected
+        ? { state: "off", detail: "Not connected" }
+        : appleCal.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: plural(appleCal.calendars.filter((c) => c.enabled).length, "calendar") };
+
+  connectors.apple_reminders = connectors.zapier;
+
+  connectors.slack =
+    slack === "unknown"
+      ? "unknown"
+      : !slack
+        ? { state: "off", detail: "Not connected" }
+        : slack.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: slack.accountRef ?? "Connected" };
+
+  connectors.hubspot =
+    hubspot === "unknown"
+      ? "unknown"
+      : !hubspot
+        ? { state: "off", detail: "Not connected" }
+        : hubspot.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: hubspot.accountRef ?? "Connected" };
+
+  connectors.obsidian =
+    obsidian === "unknown"
+      ? "unknown"
+      : !obsidian
+        ? { state: "off", detail: "Not connected" }
+        : { state: "on", detail: "Vault connected" };
+
+  connectors.calendly =
+    calendly === "unknown"
+      ? "unknown"
+      : !calendly
+        ? { state: "off", detail: "Not connected" }
+        : calendly.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: calendly.accountRef ?? "Connected" };
 
   // The registry and this action must answer for the same connectors. The smoke test checks
   // the list against the registry; this checks the implementation against the list.

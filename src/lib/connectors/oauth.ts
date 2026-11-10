@@ -39,6 +39,19 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     clientIdEnv: "HUBSPOT_CLIENT_ID",
     clientSecretEnv: "HUBSPOT_CLIENT_SECRET",
   },
+  slack: {
+    authorizeUrl: "https://slack.com/oauth/v2/authorize",
+    tokenUrl: "https://slack.com/api/oauth.v2.access",
+    clientIdEnv: "SLACK_CONNECTOR_CLIENT_ID",
+    clientSecretEnv: "SLACK_CONNECTOR_CLIENT_SECRET",
+    extraAuthParams: { user_scope: "im:history,im:read,users:read,users:read.email" },
+  },
+  calendly: {
+    authorizeUrl: "https://auth.calendly.com/oauth/authorize",
+    tokenUrl: "https://auth.calendly.com/oauth/token",
+    clientIdEnv: "CALENDLY_CLIENT_ID",
+    clientSecretEnv: "CALENDLY_CLIENT_SECRET",
+  },
   // Notion wants HTTP Basic client auth and a JSON body. It may return a refresh token and
   // expiry or neither (older grants never expire); when it does, every refresh rotates the
   // refresh token, so the caller must store the new one each time.
@@ -284,6 +297,12 @@ type TokenResponse = {
   scope?: string;
   error?: string;
   error_description?: string;
+  authed_user?: {
+    id?: string;
+    scope?: string;
+    access_token?: string;
+    token_type?: string;
+  };
 };
 
 /** Caps how much of a provider's error text we fold into an Error message. */
@@ -325,7 +344,8 @@ async function postToken(
     throw new OAuthTokenError(truncateProviderMessage(message), false);
   }
   const json = (await res.json().catch(() => ({}))) as TokenResponse;
-  if (!res.ok || !json.access_token) {
+  const token = json.access_token || json.authed_user?.access_token;
+  if (!res.ok || !token) {
     // 4xx means the grant itself is bad; 5xx is the provider having a bad day and is worth
     // retrying, which is exactly the retryable/needs-reauth split the scheduler acts on. A
     // 2xx response with no access_token is neither — it's a provider deliberately sending a
@@ -336,10 +356,10 @@ async function postToken(
     throw new OAuthTokenError(truncateProviderMessage(rawMessage), needsReauth);
   }
   return {
-    accessToken: json.access_token,
+    accessToken: token,
     refreshToken: json.refresh_token ?? null,
     expiresAt: json.expires_in ? new Date(Date.now() + json.expires_in * 1000) : null,
-    scopes: json.scope ?? null,
+    scopes: json.scope ?? json.authed_user?.scope ?? null,
     raw: json as Record<string, unknown>,
   };
 }

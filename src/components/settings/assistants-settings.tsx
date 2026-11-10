@@ -7,15 +7,17 @@ import { AccountHeader, BrandStrip, FeatureRow } from "@/components/settings/acc
 import { PROVIDER_THEMES } from "@/components/settings/provider-themes";
 import { cn } from "@/lib/utils";
 import { SegmentedControl } from "@/components/settings/account-rows";
-import { AssistantsMark, ChatGptMark, ClaudeMark, NotionMark } from "@/components/settings/provider-marks";
+import { AssistantsMark, ChatGptMark, ClaudeMark, GeminiMark, MicrosoftMark, NotionMark } from "@/components/settings/provider-marks";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-type Assistant = "claude" | "chatgpt" | "notion";
+type Assistant = "claude" | "chatgpt" | "gemini" | "copilot" | "notion";
 
 const MARKS: Record<Assistant, (props: { className?: string }) => React.ReactElement> = {
   claude: ClaudeMark,
   chatgpt: ChatGptMark,
+  gemini: GeminiMark,
+  copilot: MicrosoftMark,
   notion: NotionMark,
 };
 
@@ -44,6 +46,20 @@ const ASSISTANTS: Record<
     addPath: "Settings → Apps → Advanced settings → Developer mode, then Create (or Custom GPT Action)",
     note: "Developer mode needs a paid ChatGPT plan · Custom GPTs can also use Orbit's OpenAPI schema",
   },
+  gemini: {
+    label: "Gemini",
+    settingsHref: "https://aistudio.google.com/",
+    settingsLabel: "Open AI Studio",
+    addPath: "Settings → Extensions → Custom MCP Server",
+    note: "Add Orbit's MCP connector endpoint directly in Google AI Studio or Vertex AI",
+  },
+  copilot: {
+    label: "Copilot",
+    settingsHref: "https://copilotstudio.microsoft.com/",
+    settingsLabel: "Open Copilot Studio",
+    addPath: "Copilot Studio → Custom Connectors → Import OpenAPI (or .copilot/mcp.json in VS Code)",
+    note: "Use Orbit's OpenAPI spec in Copilot Studio, or point GitHub Copilot in VS Code to Orbit's MCP server",
+  },
   notion: {
     label: "Notion AI",
     settingsHref: "https://www.notion.so/",
@@ -56,6 +72,14 @@ const ASSISTANTS: Record<
 /** Derived from wherever Orbit is served, so a preview deployment hands out its own link. */
 const subscribeNever = () => () => {};
 const getConnectorUrl = () => `${window.location.origin}/api/mcp`;
+
+const THEME_MAP: Record<Assistant, keyof typeof PROVIDER_THEMES> = {
+  claude: "claude",
+  chatgpt: "chatgpt",
+  gemini: "google",
+  copilot: "microsoft",
+  notion: "notion",
+};
 
 /**
  * Settings → Integrations → Claude and ChatGPT: Orbit inside the assistant someone already
@@ -74,7 +98,7 @@ export function AssistantsSettings({ withNotion = false }: { withNotion?: boolea
   // No subscription — the origin never changes — and null on the server, which has no window.
   const url = useSyncExternalStore(subscribeNever, getConnectorUrl, () => null);
   const chosen = ASSISTANTS[assistant];
-  const theme = PROVIDER_THEMES[assistant];
+  const theme = PROVIDER_THEMES[THEME_MAP[assistant]];
 
   async function copyLink() {
     if (!url) return;
@@ -209,6 +233,51 @@ export function AssistantsSettings({ withNotion = false }: { withNotion?: boolea
             2. <strong>Custom GPT Actions:</strong> When creating a Custom GPT, import Orbit’s OpenAPI spec at{" "}
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{url.replace("/mcp", "/v1/openapi.json")}</code> and authenticate with an Orbit API key.
           </p>
+        </div>
+      ) : null}
+
+      {assistant === "gemini" && url ? (
+        <div className="rounded-lg border border-border/60 bg-muted/30 p-4 text-xs space-y-2">
+          <div className="font-medium text-foreground">Connecting Google AI Studio &amp; Gemini</div>
+          <p className="text-muted-foreground">
+            In Google AI Studio or Vertex AI Workbench, add a custom Model Context Protocol (MCP) server with the URL:
+          </p>
+          <pre className="overflow-x-auto rounded border border-border/40 bg-background/80 p-2.5 font-mono text-[11px] text-foreground">
+            {url}
+          </pre>
+          <p className="text-muted-foreground">
+            Authentication is completed via OAuth or an Orbit API key Bearer token header.
+          </p>
+        </div>
+      ) : null}
+
+      {assistant === "copilot" && url ? (
+        <div className="rounded-lg border border-border/60 bg-muted/30 p-4 text-xs space-y-2">
+          <div className="font-medium text-foreground">Connecting Microsoft Copilot &amp; GitHub Copilot</div>
+          <p className="text-muted-foreground">
+            1. <strong>Copilot Studio:</strong> Go to Copilot Studio → Custom Connectors → Create from OpenAPI URL, and paste:{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{url.replace("/mcp", "/v1/openapi.json")}</code>.
+          </p>
+          <p className="text-muted-foreground">
+            2. <strong>GitHub Copilot (VS Code):</strong> In your workspace’s{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">.copilot/mcp.json</code>, configure:
+          </p>
+          <pre className="overflow-x-auto rounded border border-border/40 bg-background/80 p-2.5 font-mono text-[11px] text-foreground">
+{JSON.stringify(
+  {
+    mcpServers: {
+      orbit: {
+        url,
+        headers: {
+          Authorization: "Bearer <YOUR_ORBIT_API_KEY>",
+        },
+      },
+    },
+  },
+  null,
+  2
+)}
+          </pre>
         </div>
       ) : null}
     </div>

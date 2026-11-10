@@ -75,6 +75,8 @@ run(async () => {
       "gmail_connections",
       "outlook_connections",
       "connector_connections",
+      "apple_connections",
+      "calendar_sources",
     ]) {
       await db.execute(sql.raw(`DELETE FROM ${table} WHERE user_id = '${USER}'`));
     }
@@ -128,6 +130,35 @@ run(async () => {
     INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, account_ref, access_token_encrypted)
     VALUES (${USER}, 'notion', 'oauth2', 'active', 'Acme HQ', ${encrypt("access")})
   `);
+  await db.execute(sql`
+    INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, account_ref, api_key_encrypted)
+    VALUES (${USER}, 'apple_contacts', 'dav_password', 'active', 'user@icloud.com', ${encrypt("app-pass")})
+  `);
+  await db.execute(sql`
+    INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, account_ref, access_token_encrypted)
+    VALUES (${USER}, 'slack', 'oauth2', 'active', 'Acme Slack', ${encrypt("access")})
+  `);
+  await db.execute(sql`
+    INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, account_ref, access_token_encrypted)
+    VALUES (${USER}, 'hubspot', 'oauth2', 'active', 'Portal 12345', ${encrypt("access")})
+  `);
+  await db.execute(sql`
+    INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, account_ref, api_key_encrypted)
+    VALUES (${USER}, 'obsidian', 'api_key', 'active', 'http://127.0.0.1:27123', ${encrypt("obsidian-key")})
+  `);
+  await db.execute(sql`
+    INSERT INTO connector_connections (user_id, connector_id, auth_kind, status, account_ref, access_token_encrypted)
+    VALUES (${USER}, 'calendly', 'oauth2', 'active', 'user@example.com', ${encrypt("access")})
+  `);
+  const [appleConn] = rowsOf<{ id: string }>(await db.execute(sql`
+    INSERT INTO apple_connections (user_id, email_address, app_password_encrypted, status)
+    VALUES (${USER}, 'user@icloud.com', ${encrypt("app-pass")}, 'active')
+    RETURNING id
+  `));
+  await db.execute(sql`
+    INSERT INTO calendar_sources (user_id, provider, connection_id, calendar_id, display_name, enabled)
+    VALUES (${USER}, 'apple', ${appleConn.id}, 'cal-1', 'Personal', 1)
+  `);
 
   const statuses = await getIntegrationStatuses();
 
@@ -142,6 +173,13 @@ run(async () => {
     zapier: "1 key",
     granola: "Connected",
     notion: "Acme HQ",
+    apple_contacts: "user@icloud.com",
+    apple_calendar: "1 calendar",
+    apple_reminders: "1 key",
+    slack: "Acme Slack",
+    hubspot: "Portal 12345",
+    obsidian: "Vault connected",
+    calendly: "user@example.com",
   };
   for (const id of CONNECTOR_STATUS_LOOKUP_IDS) {
     const status = statuses.connectors[id];

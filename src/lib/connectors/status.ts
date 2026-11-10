@@ -15,8 +15,15 @@ export const CONNECTOR_STATUS_LOOKUP_IDS = [
   "eventbrite",
   "apollo",
   "zapier",
+  "apple_contacts",
+  "apple_calendar",
+  "apple_reminders",
+  "hubspot",
   "granola",
   "notion",
+  "slack",
+  "obsidian",
+  "calendly",
 ] as const;
 
 export type ConnectorStatusId = (typeof CONNECTOR_STATUS_LOOKUP_IDS)[number];

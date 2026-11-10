@@ -3343,6 +3343,12 @@ export type ConnectorSyncCursor = {
   folderIds?: string[] | null;
   /** Notion: the workspace this grant belongs to, and the people database being synced. */
   notion?: NotionCursor | null;
+  /** CardDAV address book URL. */
+  addressBookUrl?: string | null;
+  /** Generic sync token for CardDAV, HubSpot, etc. */
+  syncToken?: string | null;
+  /** HubSpot pagination cursor. */
+  hubspotContactsAfter?: string | null;
 };
 
 /** The `PersonRecord` fields a Notion database column can fill. */

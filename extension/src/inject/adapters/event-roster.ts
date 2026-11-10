@@ -20,6 +20,7 @@ const ADAPTER_VERSION = "event-roster-1";
 const MAX_GUESTS = 400;
 
 const LUMA_HOSTS = new Set(["lu.ma", "luma.com", "www.luma.com"]);
+const PARTIFUL_HOSTS = new Set(["partiful.com", "www.partiful.com"]);
 /** Luma's own pages that sit at one path segment like an event slug does. */
 const LUMA_NON_EVENTS = new Set(["", "home", "discover", "calendar", "settings", "signin", "create", "explore", "pricing"]);
 
@@ -32,7 +33,7 @@ function siteOf(url: URL): PageSite | null {
     if (segments[0] === "e" && segments.length === 2) return "luma";
     return null;
   }
-  if (host === "partiful.com" && /^\/e\/[^/]+$/.test(path)) return "partiful";
+  if (PARTIFUL_HOSTS.has(host) && /^\/(e|events?)\/[^/]+$/.test(path)) return "partiful";
   return null;
 }
 
