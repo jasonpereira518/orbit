@@ -60,6 +60,7 @@ export function useLiveThread(initial: FeedbackThread, viewer: "user" | "operato
         author: viewer,
         body,
         credits: null,
+        shots: [],
         createdAt: new Date().toISOString(),
       };
       setPending((prev) => [...prev, message]);
@@ -110,6 +111,28 @@ function timeLabel(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+/** "just now", "4 min ago", "3 hr ago", "2 days ago" — alongside the clock time. */
+function agoLabel(iso: string, now: number): string {
+  const ms = Math.max(0, now - Date.parse(iso));
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hr ago`;
+  const days = Math.floor(hr / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+/** A clock that ticks every 30s, so "2 min ago" doesn't sit there saying 2 forever. */
+function useNow(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return now;
+}
+
 /** The round avatar beside the other side's messages. */
 export function ThreadAvatar({ label, size = 22 }: { label: string; size?: number }) {
   return (
@@ -147,7 +170,14 @@ export function ThreadMessages({
   const other = viewer === "user" ? "operator" : "user";
   const otherLabel = other === "operator" ? FEEDBACK_RECIPIENT : reporterLabel;
   const bubbles: ThreadMessage[] = [
-    { id: "report", author: "user", body: thread.report.text ?? "", credits: null, createdAt: thread.report.createdAt },
+    {
+      id: "report",
+      author: "user",
+      body: thread.report.text ?? "",
+      credits: null,
+      shots: thread.report.shots,
+      createdAt: thread.report.createdAt,
+    },
     ...thread.messages,
   ];
 
@@ -159,6 +189,7 @@ export function ThreadMessages({
   const readId =
     lastMine && otherReadAt && Date.parse(otherReadAt) >= Date.parse(lastMine.createdAt) ? lastMine.id : null;
   const typing = thread.typing[other];
+  const now = useNow();
 
   const endRef = useRef<HTMLLIElement>(null);
   const count = thread.messages.length;
@@ -196,9 +227,45 @@ export function ThreadMessages({
                 {m.body || <span className="italic opacity-70">(no text)</span>}
               </div>
             </div>
-            {mine && (pending || m.id === readId) && (
-              <span className="mt-0.5 self-end pr-1 text-[0.7rem] text-muted-foreground">
-                {pending ? "Sending…" : "Read"}
+            {/* Screenshots sent with it: tap one for the full picture. */}
+            {m.shots.length > 0 && (
+              <div className={cn("mt-1 flex flex-wrap gap-1.5", mine ? "justify-end" : "pl-7")}>
+                {m.shots.map((shotId, n) => (
+                  <a
+                    key={shotId}
+                    href={`/api/feedback/screenshots/${shotId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block overflow-hidden rounded-xl border border-border focus-visible:outline-2 focus-visible:outline-primary"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element -- served by an auth-checked route */}
+                    <img
+                      src={`/api/feedback/screenshots/${shotId}`}
+                      alt={`Screenshot ${n + 1}`}
+                      loading="lazy"
+                      className="h-24 w-36 object-cover"
+                    />
+                  </a>
+                ))}
+              </div>
+            )}
+            {/* The time under the last message of a run: clock time and how long ago, plus
+                "Read" on your newest once the other side has seen it. */}
+            {(pending || endOfRun || m.id === readId) && (
+              <span
+                className={cn(
+                  "mt-0.5 text-[0.7rem] text-muted-foreground",
+                  mine ? "self-end pr-1" : "pl-8"
+                )}
+              >
+                {pending ? (
+                  "Sending…"
+                ) : (
+                  <>
+                    <time dateTime={m.createdAt}>{timeLabel(m.createdAt)}</time> · {agoLabel(m.createdAt, now)}
+                    {m.id === readId && " · Read"}
+                  </>
+                )}
               </span>
             )}
             {/* The thank-you this reply carried. The reporter unwraps it; the operator just

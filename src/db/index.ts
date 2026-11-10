@@ -1395,6 +1395,7 @@ CREATE TABLE IF NOT EXISTS feedback (
 CREATE TABLE IF NOT EXISTS feedback_screenshots (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   feedback_id uuid NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+  message_id uuid,
   user_id text NOT NULL,
   position integer NOT NULL DEFAULT 0,
   note text,
@@ -3052,7 +3053,8 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // feedback.thanks_seen_at (null while still wrapped); and feedback.subject (the subject line a
 // new message to the operator starts with); and feedback.user_typing_at / operator_typing_at
 // (each side's last keystroke, for the typing dots — a serverless deploy has no shared memory
-// to hold them in).
+// to hold them in); and feedback_screenshots.message_id (a screenshot sent later in the
+// conversation belongs to that message, not the opening report).
 export const SCHEMA_VERSION = 213;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
@@ -4449,6 +4451,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "operator_read_at", "timestamptz");
   await ensureColumn(client, "feedback", "thanks_seen_at", "timestamptz");
   await ensureColumn(client, "feedback", "user_typing_at", "timestamptz");
+  await ensureColumn(client, "feedback_screenshots", "message_id", "uuid");
   await ensureColumn(client, "feedback", "operator_typing_at", "timestamptz");
   await ensureColumn(client, "feedback", "subject", "text");
   await ensureColumn(client, "feedback_messages", "credits", "integer");
@@ -4955,6 +4958,7 @@ const alters = [
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS operator_read_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS thanks_seen_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_typing_at timestamptz`,
+  `ALTER TABLE feedback_screenshots ADD COLUMN IF NOT EXISTS message_id uuid`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS operator_typing_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS subject text`,
   `ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS credits integer`,

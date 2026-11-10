@@ -11,8 +11,13 @@ import "./smoke/_env";
 
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { creditGrants, feedback, feedbackMessages, userSettings } from "../src/db/schema";
-import { createFeedbackSubmission, logDirectFeedback } from "../src/lib/feedback-submission";
+import { creditGrants, feedback, feedbackMessages, feedbackScreenshots, userSettings } from "../src/db/schema";
+import {
+  attachMessageScreenshots,
+  createFeedbackSubmission,
+  decodeScreenshot,
+  logDirectFeedback,
+} from "../src/lib/feedback-submission";
 import {
   buildFeedbackReplyEmail,
   grantFeedbackThanks,
@@ -36,6 +41,7 @@ function check(label: string, condition: boolean, detail?: string) {
 async function cleanup() {
   const db = await getDb();
   for (const user of [A, B]) {
+    await db.delete(feedbackScreenshots).where(eq(feedbackScreenshots.userId, user));
     await db.delete(feedbackMessages).where(eq(feedbackMessages.userId, user));
     await db.delete(feedback).where(eq(feedback.userId, user));
     await db.delete(creditGrants).where(eq(creditGrants.userId, user));
@@ -74,6 +80,24 @@ async function main() {
     check("the reporter can answer now", (await postThreadMessage({ feedbackId: id, author: "user", body: "Works, thanks!", userId: A })) !== null);
     const thread = await loadThread(id, "operator");
     check("messages come back in order", thread?.messages.map((m) => m.author).join(",") === "operator,user");
+  }
+
+  console.log("\nScreenshots later in the conversation");
+  {
+    const pixel = decodeScreenshot("data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAQAcJaQAA3AA/vuUAAA=");
+    check("the test image decodes", pixel !== null);
+    const posted = await postThreadMessage({ feedbackId: id, author: "user", body: "", userId: A });
+    check("a screenshot-only message can be posted", posted !== null);
+    const stored = await attachMessageScreenshots({
+      feedbackId: id,
+      messageId: posted!.messageId,
+      userId: A,
+      screenshots: [{ ...pixel!, note: null, width: 1, height: 1 }],
+    });
+    const thread = await loadThread(id, { userId: A });
+    const withShot = thread?.messages.find((m) => m.id === posted!.messageId);
+    check("it lands on that message", stored === 1 && withShot?.shots.length === 1);
+    check("...not on the opening report", thread?.report.shots.length === 0);
   }
 
   console.log("\nTyping, read times and the list");

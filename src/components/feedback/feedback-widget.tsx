@@ -109,6 +109,15 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   /** The subject line a new message starts with — required, and part of the draft. */
   const [subject, setSubject] = useState("");
   const [shots, setShots] = useState<DraftShot[]>([]);
+  /**
+   * The reply being written in an open conversation, and the screenshots going with it. Up
+   * here for the same reason as the new message's draft: the panel unmounts while a
+   * screenshot is taken, and the words and pictures must be waiting when it comes back.
+   */
+  const [chatBody, setChatBody] = useState("");
+  const [chatShots, setChatShots] = useState<DraftShot[]>([]);
+  /** Which draft the screenshot being taken goes to. */
+  const captureTarget = useRef<"compose" | "chat">("compose");
   const [frame, setFrame] = useState<CapturedFrame | null>(null);
   /**
    * The already-attached shot whose note is open for editing, if any. Screenshots attach on
@@ -120,6 +129,15 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * conversation. Up here so it survives the panel unmounting for a screenshot.
    */
   const [target, setTarget] = useState<FeedbackPanelTarget>({ view: "compose" });
+  /**
+   * The conversation last opened, for the toggle at the top of the panel that flips between
+   * the inbox and it. A ref as well, so a view change can tell whether this is a DIFFERENT
+   * conversation — whose reply draft must not follow you into it.
+   */
+  const [lastThreadId, setLastThreadId] = useState<string | null>(null);
+  const lastThreadRef = useRef<string | null>(null);
+  /** The open-request listener subscribes once; it reads the latest `changeTarget` here. */
+  const changeTargetRef = useRef<(next: FeedbackPanelTarget) => void>(() => {});
   /**
    * The kind, if they picked one. Optional: left blank, the triage pass reads it from the
    * words (`src/lib/feedback-triage.ts` only fills a kind that is still empty).
@@ -187,8 +205,8 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   // attachment; per-shot revocation on removal is handled in `removeShot`.
   const shotsRef = useRef<DraftShot[]>([]);
   useEffect(() => {
-    shotsRef.current = shots;
-  }, [shots]);
+    shotsRef.current = [...shots, ...chatShots];
+  }, [shots, chatShots]);
   // The same for a full-screen capture still waiting on its crop, should the widget
   // unmount mid-selection.
   const frameRef = useRef<CapturedFrame | null>(null);
@@ -261,7 +279,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
       if (requested === null) return;
       // A docked panel has no anchor to sit under; only the view matters. A plain press of
       // the button opens the form; the bell and "Your feedback" open a conversation.
-      setTarget(requested.target ?? { view: "compose" });
+      changeTargetRef.current(requested.target ?? { view: "compose" });
       // From `sent`, hand back a BLANK form. The message and screenshots are still in
       // state — `endSession` only runs at the end of the collapse — so reopening without
       // this would return a draft the person has already sent. Both setStates batch into
@@ -342,8 +360,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     return () => clearTimeout(timer);
   }, [phase]);
 
-  const addScreenshot = useCallback(async () => {
-    if (shots.length >= MAX_SCREENSHOTS) return;
+  const addScreenshot = useCallback(async (target: "compose" | "chat" = "compose") => {
+    if ((target === "chat" ? chatShots : shots).length >= MAX_SCREENSHOTS) return;
+    captureTarget.current = target;
 
     // flushSync, not a plain setState: this handler awaits below, so React's end-of-event
     // flush would land AFTER the browser has already composited the frame with our panel
@@ -379,7 +398,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           toast.error("Couldn’t capture the screen — you can still send your note");
       }
     }
-  }, [shots.length]);
+  }, [shots, chatShots]);
 
   /**
    * Encode the crop and attach it, straight away.
@@ -391,15 +410,18 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   const onCropChosen = useCallback(
     async (crop: CropRect) => {
       if (!frame) return;
+      const forChat = captureTarget.current === "chat";
+      const list = forChat ? chatShots : shots;
+      const setList = forChat ? setChatShots : setShots;
       try {
         const encoded = await cropDownscaleEncode(frame, crop, [], MAX_SCREENSHOT_BYTES);
-        const used = shots.reduce((sum, s) => sum + s.bytes, 0);
+        const used = list.reduce((sum, s) => sum + s.bytes, 0);
         if (used + encoded.bytes > MAX_SUBMISSION_BYTES) {
           toast.error("That screenshot would go over the attachment limit — remove one first");
           setPhase("composing");
           return;
         }
-        setShots((prev) => [
+        setList((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
@@ -421,7 +443,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
         setFrame(null);
       }
     },
-    [frame, shots]
+    [frame, shots, chatShots]
   );
 
   const editingShot = shots.find((s) => s.id === editingShotId) ?? null;
@@ -482,6 +504,40 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     }
   }, [shots, editingShotId]);
 
+  const removeChatShot = useCallback((id: string) => {
+    setChatShots((prev) => {
+      const target = prev.find((s) => s.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((s) => s.id !== id);
+    });
+  }, []);
+
+  /** A conversation reply went out: its draft is spent. */
+  const clearChatDraft = useCallback(() => {
+    setChatShots((prev) => {
+      for (const s of prev) URL.revokeObjectURL(s.previewUrl);
+      return [];
+    });
+    setChatBody("");
+  }, []);
+
+  /** Move the panel; opening a different conversation drops the last one's unsent reply. */
+  const changeTarget = useCallback(
+    (next: FeedbackPanelTarget) => {
+      setTarget(next);
+      if (next.view !== "thread") return;
+      if (lastThreadRef.current !== next.id) {
+        if (lastThreadRef.current !== null) clearChatDraft();
+        lastThreadRef.current = next.id;
+        setLastThreadId(next.id);
+      }
+    },
+    [clearChatDraft]
+  );
+  useEffect(() => {
+    changeTargetRef.current = changeTarget;
+  }, [changeTarget]);
+
   const removeShot = useCallback((id: string) => {
     setShots((prev) => {
       const target = prev.find((s) => s.id === id);
@@ -516,7 +572,8 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           open={phase === "composing" || phase === "sent"}
           sent={sentBeat}
           target={target}
-          onTargetChange={setTarget}
+          onTargetChange={changeTarget}
+          lastThreadId={lastThreadId}
           category={category}
           onCategoryChange={setCategory}
           message={message}
@@ -525,7 +582,16 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           onSubjectChange={setSubject}
           shots={shots}
           canCapture={captureSupported}
-          onAddScreenshot={addScreenshot}
+          onAddScreenshot={() => addScreenshot("compose")}
+          chat={{
+            body: chatBody,
+            onBodyChange: setChatBody,
+            shots: chatShots,
+            canCapture: captureSupported,
+            onAddScreenshot: () => addScreenshot("chat"),
+            onRemoveShot: removeChatShot,
+            onSent: clearChatDraft,
+          }}
           onRemoveShot={removeShot}
           onEditShot={(id) => {
             setEditingShotId(id);

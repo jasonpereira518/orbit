@@ -54,7 +54,7 @@ export {
   type FeedbackCategory,
 };
 
-const screenshotSchema = z.object({
+export const screenshotSchema = z.object({
   /**
    * A `data:image/...;base64,...` string. The declared mime is parsed and then DISCARDED —
    * see `decodeScreenshot`. The length bound here is a cheap early-out on the encoded
@@ -295,6 +295,41 @@ export async function createFeedbackSubmission(input: {
 
   await db.insert(feedbackScreenshots).values(rows);
   return { id: entry.id, screenshotCount: rows.length };
+}
+
+/**
+ * Screenshots sent later in the conversation, attached to the message they came with. Same
+ * storage path and checks as the opening report's (`decodeScreenshot` has already run).
+ */
+export async function attachMessageScreenshots(input: {
+  feedbackId: string;
+  messageId: string;
+  userId: string;
+  screenshots: FeedbackScreenshotInput[];
+}): Promise<number> {
+  if (input.screenshots.length === 0) return 0;
+  const db = await getDb();
+  const rows: (typeof feedbackScreenshots.$inferInsert)[] = [];
+  for (const [index, shot] of input.screenshots.entries()) {
+    // Positions after the report's own, so a blob path never collides with one of them.
+    const stored = await persistScreenshot(input.feedbackId, 100 + index, shot);
+    rows.push({
+      feedbackId: input.feedbackId,
+      messageId: input.messageId,
+      userId: input.userId,
+      position: index,
+      note: shot.note,
+      storage: stored.storage,
+      blobUrl: stored.blobUrl,
+      inlineData: stored.inlineData,
+      contentType: shot.contentType,
+      byteSize: shot.buf.byteLength,
+      width: shot.width,
+      height: shot.height,
+    });
+  }
+  await db.insert(feedbackScreenshots).values(rows);
+  return rows.length;
 }
 
 /**

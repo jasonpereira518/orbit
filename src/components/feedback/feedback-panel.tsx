@@ -5,7 +5,7 @@ import { useTheme } from "next-themes";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getMyFeedbackThread, listMyFeedbackAction, submitFeedback } from "@/actions/feedback";
-import { FeedbackChat, threadMeta } from "@/components/feedback/feedback-chat";
+import { FeedbackChat, threadMeta, type ChatDraft } from "@/components/feedback/feedback-chat";
 import { FeedbackList } from "@/components/feedback/feedback-list";
 import { ThreadAvatar } from "@/components/feedback/feedback-thread-view";
 import type { DraftShot } from "@/components/feedback/feedback-widget";
@@ -61,6 +61,8 @@ export function FeedbackPanel({
   sent,
   target,
   onTargetChange,
+  lastThreadId,
+  chat,
   category,
   onCategoryChange,
   message,
@@ -96,6 +98,10 @@ export function FeedbackPanel({
   /** Which view is showing — the form, your past feedback, or one conversation. */
   target: FeedbackPanelTarget;
   onTargetChange: (next: FeedbackPanelTarget) => void;
+  /** The conversation last opened, for the inbox ⇄ conversation toggle. Null until one is. */
+  lastThreadId: string | null;
+  /** The reply draft for the open conversation, owned by the widget (see `ChatDraft`). */
+  chat: ChatDraft;
   /** The kind they picked, or null to let triage read it from the words. */
   category: FeedbackCategory | null;
   onCategoryChange: (next: FeedbackCategory | null) => void;
@@ -378,6 +384,47 @@ export function FeedbackPanel({
         overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
         showCloseButton
       >
+        {/* Back and forth between the inbox and the conversation you were in, from any screen.
+            Only once there is a conversation to go back to. */}
+        {lastThreadId && (
+          <div
+            role="tablist"
+            aria-label="Feedback"
+            className="flex shrink-0 gap-1 border-b border-border/60 px-5 py-2 pr-12"
+          >
+            {(
+              [
+                { key: "list", label: "Inbox", active: target.view === "list" },
+                {
+                  key: "thread",
+                  label:
+                    mine?.find((r) => r.id === lastThreadId)?.subject ||
+                    mine?.find((r) => r.id === lastThreadId)?.excerpt ||
+                    "Conversation",
+                  active: target.view === "thread" && target.id === lastThreadId,
+                },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={tab.active}
+                onClick={() =>
+                  onTargetChange(tab.key === "list" ? { view: "list" } : { view: "thread", id: lastThreadId })
+                }
+                className={cn(
+                  "min-w-0 max-w-[60%] truncate rounded-full px-3 py-1 text-xs transition-colors",
+                  tab.active
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+              >
+                {tab.key === "list" && (mine?.some((r) => r.unread || r.giftWaiting) ?? false) ? "Inbox •" : tab.label}
+              </button>
+            ))}
+          </div>
+        )}
         {target.view === "list" ? (
           <>
             <PanelHeader>
@@ -413,6 +460,7 @@ export function FeedbackPanel({
             id={target.id}
             onBack={() => onTargetChange({ view: "list" })}
             onNavigate={() => requestClose(false)}
+            draft={chat}
           />
         ) : (
         <>
@@ -802,10 +850,12 @@ function PanelThread({
   id,
   onBack,
   onNavigate,
+  draft,
 }: {
   id: string;
   onBack: () => void;
   onNavigate: () => void;
+  draft: ChatDraft;
 }) {
   const [thread, setThread] = useState<FeedbackThread | null | undefined>(undefined);
   useEffect(() => {
@@ -843,7 +893,7 @@ function PanelThread({
       ) : thread === null ? (
         <p className="px-5 py-4 text-sm text-muted-foreground">That conversation isn’t available.</p>
       ) : (
-        <FeedbackChat key={thread.id} initial={thread} onNavigate={onNavigate} />
+        <FeedbackChat key={thread.id} initial={thread} onNavigate={onNavigate} draft={draft} />
       )}
     </>
   );

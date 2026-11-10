@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { z } from "zod";
 import { after } from "next/server";
 import { requireUserId } from "@/lib/auth";
 import { eq } from "drizzle-orm";
@@ -11,11 +12,14 @@ import { getCreditBalance } from "@/lib/credits/ledger";
 import { getEntitlements } from "@/lib/entitlements";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import {
+  MAX_SCREENSHOTS,
   MAX_SUBMISSION_BYTES,
+  attachMessageScreenshots,
   createFeedbackSubmission,
   decodeScreenshot,
   feedbackSubmissionSchema,
   sanitizePath,
+  screenshotSchema,
   type FeedbackScreenshotInput,
   type FeedbackSubmissionInput,
 } from "@/lib/feedback-submission";
@@ -193,14 +197,33 @@ export async function getMyFeedbackThread(feedbackId: string): Promise<FeedbackT
 
 export async function sendFeedbackMessage(
   feedbackId: string,
-  body: string
+  body: string,
+  /** Screenshots sent with this message — the same shape and limits as the opening report's. */
+  screenshots: unknown[] = []
 ): Promise<{ ok: true; thread: FeedbackThread } | { ok: false; message: string }> {
   const userId = await requireUserId();
   const text = body.trim();
-  if (!text) return { ok: false, message: "Write something before sending." };
+  const shotsParsed = z.array(screenshotSchema).max(MAX_SCREENSHOTS).safeParse(screenshots);
+  if (!shotsParsed.success) return { ok: false, message: `Up to ${MAX_SCREENSHOTS} screenshots per message` };
+  if (!text && shotsParsed.data.length === 0) return { ok: false, message: "Write something before sending." };
   if (text.length > MAX_THREAD_MESSAGE) {
     return { ok: false, message: `Keep it under ${MAX_THREAD_MESSAGE} characters.` };
   }
+
+  // Decode every screenshot before writing anything, exactly as the opening report does: a
+  // message must never land with one of its pictures silently missing.
+  const decoded: FeedbackScreenshotInput[] = [];
+  let totalBytes = 0;
+  for (const [index, shot] of shotsParsed.data.entries()) {
+    const image = decodeScreenshot(shot.dataUrl);
+    if (!image) return { ok: false, message: `Screenshot ${index + 1} isn’t a readable image — remove it and try again` };
+    totalBytes += image.buf.byteLength;
+    if (totalBytes > MAX_SUBMISSION_BYTES) {
+      return { ok: false, message: "Those screenshots are too large together — remove one and try again" };
+    }
+    decoded.push({ ...image, note: shot.note?.trim() || null, width: shot.width ?? null, height: shot.height ?? null });
+  }
+
   try {
     await consumeBucket("feedbackChat", userId, RATE_LIMITS.feedbackChat);
   } catch (err) {
@@ -210,7 +233,20 @@ export async function sendFeedbackMessage(
 
   const posted = await postThreadMessage({ feedbackId, author: "user", body: text, userId });
   if (!posted) return { ok: false, message: "This conversation isn’t open yet." };
-  after(() => notifyFeedbackReply({ feedbackId, userId, body: text }));
+  try {
+    await attachMessageScreenshots({ feedbackId, messageId: posted.messageId, userId, screenshots: decoded });
+  } catch (err) {
+    await recordErrorEvent({
+      source: ERROR_SOURCES.feedbackSubmit,
+      kind: "chat_screenshot_failed",
+      userId,
+      message: err instanceof Error ? err.message : String(err),
+      context: { screenshotCount: decoded.length, totalBytes },
+    });
+    return { ok: false, message: "Your message sent, but a screenshot didn’t — try attaching it again" };
+  }
+  const dmBody = text || `(${decoded.length} screenshot${decoded.length === 1 ? "" : "s"})`;
+  after(() => notifyFeedbackReply({ feedbackId, userId, body: dmBody }));
 
   const thread = await loadThread(feedbackId, { userId });
   return thread ? { ok: true, thread } : { ok: false, message: "That conversation is gone." };

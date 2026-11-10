@@ -4855,6 +4855,12 @@ export const feedbackScreenshots = pgTable(
      * only discovers tables that carry `user_id` — a cascade alone would leave this table
      * permanently outside the leak sweep.
      */
+    /**
+     * The conversation message it was sent with; null for the opening report's screenshots.
+     * No foreign key: the messages table is created after this one, and a message only goes
+     * away with its report, whose delete already cascades here.
+     */
+    messageId: uuid("message_id"),
     userId: text("user_id").notNull(),
     /** 0-based, the order they were attached in. The gallery renders in this order. */
     position: integer("position").notNull().default(0),

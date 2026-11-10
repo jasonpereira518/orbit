@@ -14,7 +14,7 @@
 
 import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { creditGrants, feedback, feedbackMessages, userSettings } from "@/db/schema";
+import { creditGrants, feedback, feedbackMessages, feedbackScreenshots, userSettings } from "@/db/schema";
 import { creditsToMicros } from "@/lib/credits/grants";
 import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
 import { escapeHtml } from "@/lib/interest-list-email";
@@ -25,13 +25,15 @@ export type ThreadMessage = {
   body: string;
   /** Bonus credits this operator reply carried as a thank-you; the gift renders under it. */
   credits: number | null;
+  /** Screenshots sent with this message, served by `/api/feedback/screenshots/[id]`. */
+  shots: string[];
   createdAt: string;
 };
 
 export type FeedbackThread = {
   id: string;
   /** The report itself — the conversation's first message — and the subject it was given. */
-  report: { subject: string | null; text: string | null; createdAt: string; area: string | null };
+  report: { subject: string | null; text: string | null; createdAt: string; area: string | null; shots: string[] };
   status: "new" | "triaged" | "resolved";
   thanksCredits: number | null;
   /** The thank-you has been unwrapped. False while there is a gift still waiting. */
@@ -97,13 +99,29 @@ export async function loadThread(
     .where(eq(feedbackMessages.feedbackId, feedbackId))
     .orderBy(asc(feedbackMessages.createdAt));
 
+  // Screenshots, the report's own (no message) and each message's. Ids only — the image is
+  // served by the auth-checked route, never carried in the thread.
+  const shotRows = await db
+    .select({ id: feedbackScreenshots.id, messageId: feedbackScreenshots.messageId })
+    .from(feedbackScreenshots)
+    .where(eq(feedbackScreenshots.feedbackId, feedbackId))
+    .orderBy(asc(feedbackScreenshots.position));
+  const shotsFor = (messageId: string | null) =>
+    shotRows.filter((r) => r.messageId === messageId).map((r) => r.id);
+
   return {
     id: entry.id,
-    report: { subject: entry.subject, text: entry.text, createdAt: entry.createdAt.toISOString(), area: entry.area },
+    report: {
+      subject: entry.subject,
+      text: entry.text,
+      createdAt: entry.createdAt.toISOString(),
+      area: entry.area,
+      shots: shotsFor(null),
+    },
     status: entry.status,
     thanksCredits: entry.thanksCredits,
     thanksSeen: entry.thanksSeenAt !== null,
-    messages: rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    messages: rows.map((r) => ({ ...r, shots: shotsFor(r.id), createdAt: r.createdAt.toISOString() })),
     open: rows.some((r) => r.author === "operator"),
     category: entry.category,
     readAt: {
@@ -169,7 +187,7 @@ export async function postThreadMessage(input: {
   userId?: string;
   /** Operator only: the thank-you credits this reply carries (already granted). */
   credits?: number | null;
-}): Promise<{ reporterId: string; report: string | null } | null> {
+}): Promise<{ reporterId: string; report: string | null; messageId: string } | null> {
   if (!isUuid(input.feedbackId)) return null;
   const db = await getDb();
   const [entry] = await db
@@ -189,20 +207,23 @@ export async function postThreadMessage(input: {
     if (!operatorMessage) return null;
   }
 
-  await db.insert(feedbackMessages).values({
-    feedbackId: input.feedbackId,
-    userId: entry.userId,
-    author: input.author,
-    body: input.body,
-    credits: input.author === "operator" ? (input.credits ?? null) : null,
-  });
+  const [message] = await db
+    .insert(feedbackMessages)
+    .values({
+      feedbackId: input.feedbackId,
+      userId: entry.userId,
+      author: input.author,
+      body: input.body,
+      credits: input.author === "operator" ? (input.credits ?? null) : null,
+    })
+    .returning();
   await markThreadRead(input.feedbackId, input.author, entry.userId);
   // The message is what they were typing: the dots stop the moment it lands.
   await db
     .update(feedback)
     .set(input.author === "user" ? { userTypingAt: null } : { operatorTypingAt: null })
     .where(eq(feedback.id, input.feedbackId));
-  return { reporterId: entry.userId, report: entry.text };
+  return { reporterId: entry.userId, report: entry.text, messageId: message.id };
 }
 
 /**
