@@ -173,8 +173,8 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    # The skip for docs-only PRs is per step, not per job: branch protection requires the three
-    # shard names, and a job-level skip of a matrix reports under the unexpanded name.
+    # The skip for docs-only PRs is per step, not per job: a job-level skip of a matrix reports
+    # under the unexpanded name, and `smoke-gate` needs every shard to report.
     env:
       RUN: ${{ needs.changes.outputs.code }}
     steps:
@@ -195,16 +195,9 @@ jobs:
       - if: env.RUN == 'true'
         run: npm test -- --shard ${{ matrix.shard }}/4
 
-  # The same suite again under c8, for coverage — on `main` and on demand, NOT on PRs, and
-  # never as the gate. Instrumentation slows scripts several-fold, which is harmless for
-  # most but fails the wall-clock budgets in smoke-constellation-match (80s instrumented vs
-  # ~13s plain), so gating on an instrumented run would make the gate flaky. Each shard keeps
-  # only its Istanbul JSON (a few MB; the raw V8 dumps run to gigabytes) for `coverage` to
-  # merge; a script failing here is reported by `smoke`, so it does not fail this job.
-
-  # One stable check name for branch protection, same pattern as e2e-gate: the shard count can
-  # change without touching the required checks. A docs-only PR skips the shards' steps, so
-  # they still succeed. Skipped with the shards on a draft PR, which GitHub counts as passing.
+  # The bare name branch protection requires; see `e2e-gate` for why a gate job. The shard
+  # count can change without touching the required checks. A docs-only PR skips the shards'
+  # steps, so they still succeed.
   smoke-gate:
     name: smoke suite (PGlite)
     needs: smoke
@@ -213,6 +206,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - run: test "${{ needs.smoke.result }}" = success
+
+  # The same suite again under c8, for coverage — on `main` and on demand, NOT on PRs, and
+  # never as the gate. Instrumentation slows scripts several-fold, which is harmless for
+  # most but fails the wall-clock budgets in smoke-constellation-match (80s instrumented vs
+  # ~13s plain), so gating on an instrumented run would make the gate flaky. Each shard keeps
+  # only its Istanbul JSON (a few MB; the raw V8 dumps run to gigabytes) for `coverage` to
+  # merge; a script failing here is reported by `smoke`, so it does not fail this job.
 
   coverage-shard:
     name: coverage shard ${{ matrix.shard }}/3

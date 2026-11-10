@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/card";
 import { DatePickerButton, toLocalYmd } from "@/components/ui/date-picker";
 import { Textarea } from "@/components/ui/textarea";
+import { DraftPurposeRow, editedPurpose } from "@/components/follow-up/draft-purpose-row";
 import { KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import { promptNotificationsAfterFollowUpAction } from "@/lib/browser-notifications";
@@ -99,7 +100,10 @@ export function ContactFollowUpSection({
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [draft, setDraft] = useState("");
   const [aiError, setAiError] = useState<string | null>(null);
-  const [intent, setIntent] = useState(initialIntent?.trim() || "");
+  const [purpose, setPurpose] = useState("");
+  const [pickedPurpose, setPickedPurpose] = useState("");
+  // The contact the person edited the purpose for: a different contact starts un-overridden.
+  const [purposeEditedFor, setPurposeEditedFor] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [sending, startSend] = useTransition();
   const [marking, startMark] = useTransition();
@@ -185,7 +189,10 @@ export function ContactFollowUpSection({
       try {
         const result = await draftContactFollowUp(contactId, {
           channel: p,
-          intent: intent.trim() || undefined,
+          // A prefill (the related-person reach-out) stays a hint; the purpose is Orbit's
+          // pick unless the person edited the line.
+          intent: initialIntent?.trim() || undefined,
+          purpose: editedPurpose(purpose, purposeEditedFor === contactId),
         });
         if (!result.ok) {
           setAiError(result.error);
@@ -193,6 +200,8 @@ export function ContactFollowUpSection({
         }
         setAiError(null);
         setDraft(result.body);
+        setPurpose(result.purpose);
+        setPickedPurpose(result.purpose);
         toast.success("Draft ready");
       } catch (err) {
         toast.error(
@@ -397,16 +406,6 @@ export function ContactFollowUpSection({
           <p className="mb-2 text-xs font-medium text-muted-foreground">
             Draft for
           </p>
-          {initialIntent || intent ? (
-            <input
-              type="text"
-              value={intent}
-              onChange={(e) => setIntent(e.target.value)}
-              placeholder="Optional intent (e.g. ask for intro)"
-              aria-label="Intent (optional)"
-              className="mb-2 w-full max-w-md rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-            />
-          ) : null}
           <div className="flex flex-wrap gap-1.5">
             {platforms.map((p) => (
               <Button
@@ -453,6 +452,15 @@ export function ContactFollowUpSection({
 
         {draft ? (
           <div className="space-y-3">
+            {pickedPurpose ? (
+              <DraftPurposeRow
+                value={purpose}
+                onChange={(v) => {
+                  setPurpose(v);
+                  setPurposeEditedFor(v.trim() ? contactId : null);
+                }}
+              />
+            ) : null}
             <Textarea
               rows={7}
               aria-label="Follow-up draft"
