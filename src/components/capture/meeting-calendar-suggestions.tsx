@@ -164,8 +164,8 @@ export function MeetingCalendarSuggestions({
               <span>{whoLabel(top)}</span>
             </p>
             {top.agenda && (
-              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground/90 italic bg-background/50 rounded-md p-1.5 border border-border/40">
-                <span className="font-medium not-italic text-foreground/80">Agenda:</span> {top.agenda}
+              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground italic bg-background/50 rounded-md p-1.5 border border-border/40">
+                <span className="font-medium not-italic text-foreground">Agenda:</span> {top.agenda}
               </p>
             )}
           </div>
