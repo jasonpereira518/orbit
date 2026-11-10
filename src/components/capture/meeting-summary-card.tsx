@@ -3,7 +3,8 @@
 import { useMemo, useState, useTransition } from "react";
 import { CalendarClock, ChevronDown, CircleHelp, Construction, ListTodo } from "lucide-react";
 import { loadMeetingTranscript, type MeetingTranscriptView } from "@/actions/meetings";
-import { groupSegmentsIntoParagraphs, speakerDisplayNames } from "@/lib/meeting-digest";
+import { groupSegmentsIntoParagraphs } from "@/lib/transcript-paragraphs";
+import { speakerDisplayNames } from "@/lib/speaker-display";
 import type { NoteBatchMeeting } from "@/db/schema";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
