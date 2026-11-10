@@ -8,9 +8,9 @@
 export type RawSegment = {
   seq: number;
   startMs: number;
-  endMs: number;
+  endMs?: number;
   speaker?: string | null;
-  text: string;
+  text: string | null;
 };
 
 export type TranscriptParagraph = {
@@ -37,8 +37,8 @@ export const MAX_PARAGRAPH_CHARS = 750;
 /**
  * Clean and normalize a text snippet for comparison and concatenation.
  */
-export function cleanText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+export function cleanText(text: string | null | undefined): string {
+  return (text ?? "").replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -114,12 +114,14 @@ export function deduplicateSegments<T extends RawSegment>(segments: readonly T[]
       }
       // If prev is completely contained at the beginning of current (current is a fuller revision)
       if (normCurrent.startsWith(normPrev)) {
+        const prevEnd = prev.endMs ?? prev.startMs + 3_000;
+        const currEnd = current.endMs ?? current.startMs + 3_000;
         result[result.length - 1] = {
           ...current,
           text: currentText,
           seq: prev.seq,
           startMs: Math.min(prev.startMs, current.startMs),
-          endMs: Math.max(prev.endMs, current.endMs),
+          endMs: Math.max(prevEnd, currEnd),
         };
         continue;
       }
@@ -172,13 +174,14 @@ export function groupSegmentsIntoParagraphs(
 
     const speaker = seg.speaker ?? null;
     const speakerName = resolveSpeakerName(speaker, names);
+    const segEndMs = seg.endMs ?? seg.startMs + 3_000;
 
     if (!current) {
       current = {
         speaker,
         speakerName,
         startMs: seg.startMs,
-        endMs: seg.endMs,
+        endMs: segEndMs,
         text,
         seqs: [seg.seq],
       };
@@ -196,7 +199,7 @@ export function groupSegmentsIntoParagraphs(
       if (trimmedText) {
         const needsSpace = !/[.!?,\s]$/.test(current.text);
         current.text = `${current.text}${needsSpace ? " " : " "}${trimmedText}`.trim();
-        current.endMs = Math.max(current.endMs, seg.endMs);
+        current.endMs = Math.max(current.endMs, segEndMs);
         current.seqs.push(seg.seq);
       }
     } else {
@@ -206,7 +209,7 @@ export function groupSegmentsIntoParagraphs(
         speaker,
         speakerName,
         startMs: seg.startMs,
-        endMs: seg.endMs,
+        endMs: segEndMs,
         text,
         seqs: [seg.seq],
       };

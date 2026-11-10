@@ -12,7 +12,7 @@ import { ReauthRequiredError } from "@/lib/errors";
 import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
 import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
 import { meetingCandidatesFrom, meetingCandidatesFromRows, type MeetingCandidate } from "@/lib/meeting-calendar";
-import { findEventByKey, listUpcomingEvents, matchEventForSession } from "@/lib/calendar-events";
+import { findEventByKey, listUpcomingEvents, matchEventForSession, type CalendarEventRow } from "@/lib/calendar-events";
 import { buildMeetingRecap, type MeetingRecap } from "@/lib/meeting-recap";
 import { listMeetingsFor, type MeetingSourceFilter, type MeetingsPage } from "@/lib/meetings-list";
 import {

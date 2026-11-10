@@ -32,6 +32,7 @@ type MeetingSummary = Pick<
   actionItems: { text: string; owner: string | null }[];
   blockers: { text: string; owner: string | null }[];
   openQuestions: { text: string; askedBy: string | null }[];
+  agenda?: { item: string; covered: boolean }[];
 };
 
 /**
@@ -127,14 +128,14 @@ export function MeetingSummaryCard({
         onUpdate={update}
       />
 
-      {digest.agenda && digest.agenda.length > 0 && (
+      {meeting.agenda && meeting.agenda.length > 0 && (
         <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-3">
           <h3 className="flex items-center gap-1.5 text-sm font-medium text-ink">
             <CalendarClock className="size-4 text-muted-foreground" />
             Calendar Agenda Review
           </h3>
           <ul className="space-y-1.5 text-xs">
-            {digest.agenda.map((a, i) => (
+            {meeting.agenda.map((a, i) => (
               <li key={i} className="flex items-center gap-2">
                 <span
                   className={cn(
