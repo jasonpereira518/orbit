@@ -103,7 +103,7 @@ export async function triageFeedback(
   try {
     const db = await getDb();
     const [entry] = await db
-      .select({ text: feedback.text, area: feedback.area, context: feedback.context })
+      .select({ subject: feedback.subject, text: feedback.text, area: feedback.area, context: feedback.context })
       .from(feedback)
       .where(eq(feedback.id, id))
       .limit(1);
@@ -133,6 +133,7 @@ export async function triageFeedback(
     const user = [
       `Area: ${entry.area ?? "unknown"}`,
       path && `Page: ${path}`,
+      entry.subject && `Subject: ${entry.subject}`,
       `Report:\n${entry.text}`,
       earlier.length > 0
         ? `Earlier open reports:\n${earlier.map((r) => `- ${r.id}: ${r.gist}`).join("\n")}`

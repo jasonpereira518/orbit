@@ -1375,6 +1375,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   kind text NOT NULL,
   score integer,
   text text,
+  subject text,
   area text,
   category text,
   status text NOT NULL DEFAULT 'new',
@@ -3046,7 +3047,8 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // src/lib/feedback-triage.ts; and the feedback conversation — feedback_messages (new table)
 // plus feedback.thanks_credits / user_read_at / operator_read_at, see src/lib/feedback-thread.ts;
 // and the thank-you gift — feedback_messages.credits (on the reply that carried it) and
-// feedback.thanks_seen_at (null while still wrapped).
+// feedback.thanks_seen_at (null while still wrapped); and feedback.subject (the subject line a
+// new message to the operator starts with).
 export const SCHEMA_VERSION = 213;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
@@ -4442,6 +4444,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "user_read_at", "timestamptz");
   await ensureColumn(client, "feedback", "operator_read_at", "timestamptz");
   await ensureColumn(client, "feedback", "thanks_seen_at", "timestamptz");
+  await ensureColumn(client, "feedback", "subject", "text");
   await ensureColumn(client, "feedback_messages", "credits", "integer");
   // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
   await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
@@ -4945,6 +4948,7 @@ const alters = [
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_read_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS operator_read_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS thanks_seen_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS subject text`,
   `ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS credits integer`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,

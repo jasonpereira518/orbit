@@ -1065,6 +1065,7 @@ export async function setFeedbackStatusAction(input: {
 export async function logFeedbackAction(input: {
   email: string;
   text: string;
+  subject?: string | null;
   source: string;
   area: string | null;
 }): Promise<{ ok: true; id: string }> {
@@ -1075,6 +1076,7 @@ export async function logFeedbackAction(input: {
   const logged = await logDirectFeedback({
     email: input.email,
     text: input.text,
+    subject: input.subject,
     source: input.source,
     area,
     loggedBy: adminUserId,
@@ -1158,6 +1160,7 @@ export async function replyToFeedbackAction(input: {
         buildFeedbackReplyEmail({
           reply: body,
           report: posted.report,
+          subject: thread.report.subject,
           credits: credited ? credits : null,
           threadUrl: `${getAppBaseUrl()}/feedback/${input.id}`,
         }),

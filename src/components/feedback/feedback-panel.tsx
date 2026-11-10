@@ -24,12 +24,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AREA_LABELS,
   AREA_OPTIONS,
   FEEDBACK_CATEGORIES,
   FEEDBACK_RECIPIENT,
+  MAX_FEEDBACK_SUBJECT,
   MAX_FEEDBACK_TEXT,
   MAX_SCREENSHOTS,
   featureAreaForPath,
@@ -62,6 +64,8 @@ export function FeedbackPanel({
   onCategoryChange,
   message,
   onMessageChange,
+  subject,
+  onSubjectChange,
   area,
   onAreaChange,
   shots,
@@ -96,6 +100,9 @@ export function FeedbackPanel({
   onCategoryChange: (next: FeedbackCategory | null) => void;
   message: string;
   onMessageChange: (value: string) => void;
+  /** The subject line. Required to send; owned by the widget like the message. */
+  subject: string;
+  onSubjectChange: (value: string) => void;
   /** `null` = follow the current page. Owned by the widget so it survives a dismissal. */
   area: FeedbackArea | null;
   onAreaChange: (next: FeedbackArea) => void;
@@ -140,7 +147,7 @@ export function FeedbackPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   /** Something worth asking about before it is thrown away. */
-  const hasDraft = message.trim().length > 0 || shots.length > 0;
+  const hasDraft = message.trim().length > 0 || subject.trim().length > 0 || shots.length > 0;
 
   /** Whether this opening has already had its caret put back. Once per open, at most. */
   const caretRestored = useRef(false);
@@ -194,7 +201,8 @@ export function FeedbackPanel({
 
   const remaining = MAX_FEEDBACK_TEXT - message.length;
   /** Something to send. Kept apart from `canSend` so the button can stay lit while busy. */
-  const hasMessage = message.trim().length > 0;
+  // Both are needed to send: a new message starts with a subject line.
+  const hasMessage = message.trim().length > 0 && subject.trim().length > 0;
   // `!sent` matters: `setSending(false)` runs in a `finally`, AFTER `onSent()` has already
   // started the hold, so without it Send would re-arm for the whole gesture.
   const canSend = hasMessage && !sending && !sent;
@@ -282,6 +290,7 @@ export function FeedbackPanel({
       const client = readClientContext(resolvedTheme);
       const result = await submitFeedback({
         text: message,
+        subject,
         area: effectiveArea,
         category: category ?? undefined,
         path: client.path,
@@ -432,6 +441,23 @@ export function FeedbackPanel({
           ))}
         </div>
 
+        {/* The subject line, required — like an email, so both sides can find the
+            conversation again by what it was about. Enter moves on to the message. */}
+        <Input
+          value={subject}
+          maxLength={MAX_FEEDBACK_SUBJECT}
+          required
+          autoFocus={subject.trim().length === 0}
+          aria-label="Subject"
+          placeholder="Subject — what's this about?"
+          className="h-10 shrink-0"
+          onChange={(e) => onSubjectChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+            e.preventDefault();
+            textareaRef.current?.focus();
+          }}
+        />
 
         {/* The one block that gives, so that everything else always fits on screen.
  *
@@ -463,7 +489,8 @@ export function FeedbackPanel({
         <div className="grid min-h-20 flex-1 grid-rows-[1fr_auto] gap-1.5">
           <Textarea
             ref={attachTextarea}
-            autoFocus
+            // The subject comes first; the message box takes focus once it has one.
+            autoFocus={subject.trim().length > 0}
             // Fills whatever the block has, large or small: the parent is a grid whose auto
             // row stretches. `field-sizing-content` on the primitive still expands it as you
             // type.

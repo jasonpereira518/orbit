@@ -19,6 +19,7 @@ import { friendlyError } from "@/lib/errors";
 import {
   AREA_OPTIONS,
   FEEDBACK_SOURCES,
+  MAX_FEEDBACK_SUBJECT,
   MAX_FEEDBACK_TEXT,
   SOURCE_LABELS,
   type FeedbackSource,
@@ -36,6 +37,7 @@ export function LogFeedbackDialog() {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [text, setText] = useState("");
+  const [subject, setSubject] = useState("");
   const [source, setSource] = useState<FeedbackSource>("text");
   const [area, setArea] = useState("");
   const [pending, start] = useTransition();
@@ -43,6 +45,7 @@ export function LogFeedbackDialog() {
   const reset = () => {
     setEmail("");
     setText("");
+    setSubject("");
     setSource("text");
     setArea("");
   };
@@ -51,7 +54,7 @@ export function LogFeedbackDialog() {
     if (pending || !email.trim() || !text.trim()) return;
     start(async () => {
       try {
-        const { id } = await logFeedbackAction({ email, text, source, area: area || null });
+        const { id } = await logFeedbackAction({ email, text, subject: subject || null, source, area: area || null });
         toast.success("Logged — reply to it to bring them into Orbit");
         setOpen(false);
         reset();
@@ -97,6 +100,15 @@ export function LogFeedbackDialog() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@example.com"
+              />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="text-xs text-muted-foreground">Subject (optional — their first line if blank)</span>
+              <Input
+                value={subject}
+                maxLength={MAX_FEEDBACK_SUBJECT}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="What it's about"
               />
             </label>
             <label className="grid gap-1 text-sm">

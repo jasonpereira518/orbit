@@ -106,6 +106,8 @@ const SENT_HOLD_MS = 640;
 export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: boolean }) {
   const [phase, setPhase] = useState<Phase>("closed");
   const [message, setMessage] = useState("");
+  /** The subject line a new message starts with — required, and part of the draft. */
+  const [subject, setSubject] = useState("");
   const [shots, setShots] = useState<DraftShot[]>([]);
   const [frame, setFrame] = useState<CapturedFrame | null>(null);
   /**
@@ -240,6 +242,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     for (const shot of shotsRef.current) URL.revokeObjectURL(shot.previewUrl);
     setShots([]);
     setMessage("");
+    setSubject("");
     setArea(null);
     setCategory(null);
     setCaret(null);
@@ -518,6 +521,8 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           onCategoryChange={setCategory}
           message={message}
           onMessageChange={setMessage}
+          subject={subject}
+          onSubjectChange={setSubject}
           shots={shots}
           canCapture={captureSupported}
           onAddScreenshot={addScreenshot}

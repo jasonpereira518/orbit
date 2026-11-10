@@ -48,6 +48,7 @@ async function main() {
   const { id } = await createFeedbackSubmission({
     userId: A,
     text: "Search ignores accents",
+    subject: "Search and accents",
     area: "contacts",
     category: null,
     context: {},

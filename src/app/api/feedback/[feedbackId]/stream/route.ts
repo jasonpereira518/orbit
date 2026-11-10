@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { adminAccessEnabled, isAdminUser } from "@/lib/admin";
+import { isAdminUser } from "@/lib/admin";
 import { requireUserId } from "@/lib/auth";
 import { authErrorResponse } from "@/lib/api/route-error";
 import { loadThread, markThreadRead, type FeedbackThread } from "@/lib/feedback-thread";
@@ -57,8 +57,10 @@ export async function GET(
   }
 
   // `?as=operator` is the admin console's side; anyone else only ever sees their own report.
+  // `isAdminUser` alone — the console's own rule (`requireAdminUserId`) — so a local dev server
+  // streams to the console it already lets in.
   const asOperator = new URL(request.url).searchParams.get("as") === "operator";
-  if (asOperator && !(adminAccessEnabled() && isAdminUser(userId))) {
+  if (asOperator && !isAdminUser(userId)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const viewer = asOperator ? ("operator" as const) : { userId };

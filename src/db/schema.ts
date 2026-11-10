@@ -4756,6 +4756,11 @@ export const feedback = pgTable(
     score: integer("score"),
     text: text("text"),
     /**
+     * The subject line someone gives a new message. Required from the in-app form; older
+     * reports, PMF and churn answers have none, and readers fall back to the text.
+     */
+    subject: text("subject"),
+    /**
      * Which part of Orbit this is about, prefilled from the route and confirmable by the
      * person writing. A column rather than a `context` key because the two are different
      * things: `context` is what the SERVER observed, this is what the PERSON asserted, and

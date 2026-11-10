@@ -51,7 +51,7 @@ export default async function AdminFeedbackDetailPage({
   return (
     <>
       <AdminPageHeader
-        title="Feedback"
+        title={entry.subject ?? "Feedback"}
         subtitle={
           <>
             {entry.category ?? entry.kind} · {entry.area ?? "unspecified area"} ·{" "}

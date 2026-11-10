@@ -34,6 +34,8 @@ export type SubmittedFeedback = {
   area: string | null;
   /** What the triage pass decided, or what the row already had. */
   category: string | null;
+  /** The subject line they gave it. */
+  subject?: string | null;
   text: string | null;
   path: string | null;
   screenshotCount: number;
@@ -88,6 +90,7 @@ export function buildFeedbackDm(
   return [
     `:speech_balloon: *${headline || "New feedback"}*${summary}`,
     who,
+    entry.subject ? `*${slackEscape(entry.subject)}*` : null,
     quoted,
     entry.triage?.duplicateOf
       ? `Looks like an earlier report: ${baseUrl}/admin/feedback/${entry.triage.duplicateOf}`

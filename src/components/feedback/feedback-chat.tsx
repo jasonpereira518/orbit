@@ -59,6 +59,9 @@ export function FeedbackChat({
 
   return (
     <div className="grid gap-4">
+      {thread.report.subject && (
+        <h3 className="text-base font-medium text-foreground">{thread.report.subject}</h3>
+      )}
       <p className="text-xs text-muted-foreground">
         Status: <span className="font-medium text-foreground">{STATUS_LABEL[thread.status]}</span>
       </p>

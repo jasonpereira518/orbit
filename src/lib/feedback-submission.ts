@@ -23,6 +23,7 @@ import { safeReturnPath } from "@/lib/safe-return-path";
 import {
   FEEDBACK_AREAS,
   FEEDBACK_CATEGORIES,
+  MAX_FEEDBACK_SUBJECT,
   MAX_FEEDBACK_TEXT,
   MAX_PATH,
   MAX_SCREENSHOTS,
@@ -67,6 +68,8 @@ const screenshotSchema = z.object({
 
 export const feedbackSubmissionSchema = z.object({
   text: z.string().trim().min(1, "Add a note before sending.").max(MAX_FEEDBACK_TEXT),
+  /** Required: a new message to the operator starts with a subject line. */
+  subject: z.string().trim().min(1, "Add a subject before sending.").max(MAX_FEEDBACK_SUBJECT),
   area: z.enum(FEEDBACK_AREAS).optional(),
   category: z.enum(FEEDBACK_CATEGORIES).optional(),
   /** Where they were. Pathname only — see `sanitizePath`. */
@@ -245,6 +248,8 @@ export type FeedbackScreenshotInput = DecodedScreenshot & {
 export async function createFeedbackSubmission(input: {
   userId: string;
   text: string;
+  /** Null for the operator's hand-logged entries when none was given. */
+  subject: string | null;
   area: FeedbackArea | null;
   category: FeedbackCategory | null;
   context: Record<string, unknown>;
@@ -258,6 +263,7 @@ export async function createFeedbackSubmission(input: {
       userId: input.userId,
       kind: "freeform",
       text: input.text,
+      subject: input.subject,
       area: input.area,
       category: input.category,
       context: input.context,
@@ -302,6 +308,8 @@ export async function createFeedbackSubmission(input: {
 export async function logDirectFeedback(input: {
   email: string;
   text: string;
+  /** Optional when logging: the first line of what they said stands in when left blank. */
+  subject?: string | null;
   source: FeedbackSource;
   area: FeedbackArea | null;
   loggedBy: string;
@@ -322,9 +330,13 @@ export async function logDirectFeedback(input: {
     .limit(1);
   if (!person) return { ok: false, message: "No Orbit account with that email" };
 
+  const subject =
+    input.subject?.trim().slice(0, MAX_FEEDBACK_SUBJECT) ||
+    text.split("\n")[0].slice(0, MAX_FEEDBACK_SUBJECT);
   const created = await createFeedbackSubmission({
     userId: person.userId,
     text,
+    subject,
     area: input.area,
     category: null,
     context: { source: input.source, loggedBy: input.loggedBy, loggedAt: new Date().toISOString() },

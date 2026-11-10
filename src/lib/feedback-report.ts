@@ -126,6 +126,9 @@ export const MAX_SHOT_NOTE = 500;
 /** Long enough to be a sentence, short enough not to be a document. */
 export const MAX_FEEDBACK_TEXT = 4000;
 
+/** A subject line, not a second message. */
+export const MAX_FEEDBACK_SUBJECT = 120;
+
 /** Long enough for any real Orbit path, short enough that a URL cannot hide in one. */
 export const MAX_PATH = 200;
 

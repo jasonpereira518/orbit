@@ -22,6 +22,7 @@ import {
   loadFeedbackList,
   type FeedbackFilter,
 } from "@/lib/admin-feedback";
+import { FeedbackInboxLive } from "@/components/admin/feedback-inbox-live";
 import { LogFeedbackDialog } from "@/components/admin/log-feedback-dialog";
 import { SOURCE_LABELS, isFeedbackSource } from "@/lib/feedback-report";
 import { cn } from "@/lib/utils";
@@ -125,6 +126,7 @@ export default async function AdminFeedbackPage({
         }
       />
       <FeedbackTabs />
+      <FeedbackInboxLive />
 
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
         <MetricTile
@@ -297,9 +299,16 @@ export default async function AdminFeedbackPage({
                       href={`/admin/feedback/${row.id}`}
                       className="underline underline-offset-2 hover:text-primary"
                     >
-                      {row.triage?.summary ||
-                        row.excerpt?.trim() || <span className="text-muted-foreground">(no text)</span>}
+                      {row.subject ? (
+                        <span className="font-medium">{row.subject}</span>
+                      ) : (
+                        row.triage?.summary ||
+                        row.excerpt?.trim() || <span className="text-muted-foreground">(no text)</span>
+                      )}
                     </Link>
+                    {row.subject && row.triage?.summary && (
+                      <span className="block text-xs text-muted-foreground">{row.triage.summary}</span>
+                    )}
                     {isFeedbackSource(row.source) && (
                       <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 align-middle text-[0.625rem] text-muted-foreground">
                         via {SOURCE_LABELS[row.source]}

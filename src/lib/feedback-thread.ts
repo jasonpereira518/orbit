@@ -30,8 +30,8 @@ export type ThreadMessage = {
 
 export type FeedbackThread = {
   id: string;
-  /** The report itself — the conversation's first message. */
-  report: { text: string | null; createdAt: string; area: string | null };
+  /** The report itself — the conversation's first message — and the subject it was given. */
+  report: { subject: string | null; text: string | null; createdAt: string; area: string | null };
   status: "new" | "triaged" | "resolved";
   thanksCredits: number | null;
   /** The thank-you has been unwrapped. False while there is a gift still waiting. */
@@ -57,6 +57,7 @@ export async function loadThread(
       id: feedback.id,
       userId: feedback.userId,
       kind: feedback.kind,
+      subject: feedback.subject,
       text: feedback.text,
       area: feedback.area,
       status: feedback.status,
@@ -84,7 +85,7 @@ export async function loadThread(
 
   return {
     id: entry.id,
-    report: { text: entry.text, createdAt: entry.createdAt.toISOString(), area: entry.area },
+    report: { subject: entry.subject, text: entry.text, createdAt: entry.createdAt.toISOString(), area: entry.area },
     status: entry.status,
     thanksCredits: entry.thanksCredits,
     thanksSeen: entry.thanksSeenAt !== null,
@@ -268,6 +269,8 @@ export async function unreadRepliesFor(userId: string): Promise<UnreadReply[]> {
 
 export type MyFeedbackRow = {
   id: string;
+  /** Their subject line; null on reports from before subjects existed. */
+  subject: string | null;
   excerpt: string;
   createdAt: Date;
   status: "new" | "triaged" | "resolved";
@@ -284,6 +287,7 @@ export async function listMyFeedback(userId: string, limit = 20): Promise<MyFeed
   return db
     .select({
       id: feedback.id,
+      subject: feedback.subject,
       excerpt: sql<string>`left(coalesce(${feedback.text}, ''), 140)`,
       createdAt: feedback.createdAt,
       status: feedback.status,
@@ -329,6 +333,8 @@ export async function reporterEmail(userId: string): Promise<string | null> {
 export function buildFeedbackReplyEmail(input: {
   reply: string;
   report: string | null;
+  /** Their subject line, so the reply threads under it in their inbox. */
+  subject?: string | null;
   credits: number | null;
   threadUrl: string;
 }): { subject: string; html: string; text: string } {
@@ -358,7 +364,11 @@ export function buildFeedbackReplyEmail(input: {
       : "",
     `</div>`,
   ].join("");
-  return { subject: `${FEEDBACK_RECIPIENT} replied to your feedback`, html, text };
+  return {
+    subject: input.subject ? `Re: ${input.subject}` : `${FEEDBACK_RECIPIENT} replied to your feedback`,
+    html,
+    text,
+  };
 }
 
 export function isUuid(value: string): boolean {

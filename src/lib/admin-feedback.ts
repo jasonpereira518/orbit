@@ -83,6 +83,8 @@ export type FeedbackListRow = {
   category: string | null;
   status: FeedbackStatus;
   score: number | null;
+  /** The subject line they gave it; null on older reports. */
+  subject: string | null;
   /** Trimmed in SQL — the table shows an excerpt and the detail page shows the whole thing. */
   excerpt: string | null;
   screenshotCount: number;
@@ -179,7 +181,8 @@ function searchFor(q: string | undefined) {
   const term = q?.trim();
   if (!term) return undefined;
   const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
-  return sql`${feedback.text} ilike ${`%${escaped}%`}`;
+  const like = `%${escaped}%`;
+  return sql`(${feedback.text} ilike ${like} or ${feedback.subject} ilike ${like})`;
 }
 
 /** Counts for the tiles. One round trip — all aggregates over the same table. */
@@ -233,6 +236,7 @@ function listSelection() {
     category: feedback.category,
     status: feedback.status,
     score: feedback.score,
+    subject: feedback.subject,
     excerpt: sql<string | null>`left(${feedback.text}, 180)`,
     screenshotCount: screenshotCountSql,
     createdAt: feedback.createdAt,
@@ -295,6 +299,7 @@ export type FeedbackDetail = {
     category: string | null;
     status: FeedbackStatus;
     score: number | null;
+    subject: string | null;
     text: string | null;
     context: Record<string, unknown>;
     createdAt: Date;
@@ -350,6 +355,7 @@ export async function loadFeedbackDetail(id: string): Promise<FeedbackDetail | n
       category: entry.category,
       status: entry.status,
       score: entry.score,
+      subject: entry.subject,
       text: entry.text,
       context: entry.context,
       createdAt: entry.createdAt,
@@ -446,4 +452,29 @@ export async function deleteFeedbackScreenshot(
 
   await db.delete(feedbackScreenshots).where(eq(feedbackScreenshots.id, id));
   return row;
+}
+
+export type FeedbackInboxPulse = {
+  /** Every report ever filed — grows by one for each new report. */
+  reports: number;
+  /** Reporter replies in conversations — grows by one for each reply. */
+  replies: number;
+};
+
+/**
+ * Two counts that move whenever something arrives in the inbox: a new report, or a reporter
+ * answering in a conversation. The live inbox (`/api/admin/feedback/stream`) compares them
+ * once a second and refreshes the console when they change. Counts rather than timestamps so
+ * the difference also says WHAT arrived, for the toast.
+ */
+export async function feedbackInboxPulse(): Promise<FeedbackInboxPulse> {
+  const db = await getDb();
+  const [row] = await db
+    .select({
+      reports: countInt,
+      replies: sql<number>`(select count(*)::int from feedback_messages where author = 'user')`,
+    })
+    .from(feedback)
+    .where(eq(feedback.kind, "freeform"));
+  return { reports: row?.reports ?? 0, replies: row?.replies ?? 0 };
 }

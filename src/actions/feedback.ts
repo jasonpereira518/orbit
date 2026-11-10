@@ -137,6 +137,7 @@ export async function submitFeedback(
     const created = await createFeedbackSubmission({
       userId,
       text: data.text,
+      subject: data.subject,
       area: data.area ?? null,
       category: data.category ?? null,
       context,
@@ -153,6 +154,7 @@ export async function submitFeedback(
         area: data.area ?? null,
         category: triage?.category ?? data.category ?? null,
         text: data.text,
+        subject: data.subject,
         path: sanitizePath(data.path),
         screenshotCount: created.screenshotCount,
         triage,
