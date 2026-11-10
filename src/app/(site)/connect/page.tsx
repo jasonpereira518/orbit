@@ -99,10 +99,13 @@ export default function ConnectPage() {
 
         <DocSection id="chatgpt" index={2} title="ChatGPT">
           <ol>
-            <li>Open Settings → Connectors → Add.</li>
-            <li>Paste the same URL and choose OAuth when it asks how to authenticate.</li>
-            <li>Sign in to Orbit, and approve the connection.</li>
+            <li>Open Settings → Apps → Advanced settings → Developer mode → Create (or Add MCP Server).</li>
+            <li>Paste your Orbit connector URL (ending in <code>/api/mcp</code>).</li>
+            <li>Sign in to Orbit when prompted to approve the connection.</li>
           </ol>
+          <p>
+            Alternatively, if you are building a Custom GPT, choose &ldquo;Create new action&rdquo;, import Orbit&rsquo;s OpenAPI schema at <code>/api/v1/openapi.json</code>, and configure Bearer authentication with an API key from Settings → API &amp; connectors.
+          </p>
         </DocSection>
 
         <DocSection id="cli" index={3} title="Claude Code and Cursor">
