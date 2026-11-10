@@ -204,7 +204,6 @@ async function runTests() {
 
     // Database deduplication lookup
     await cleanup();
-    const db = await getDb();
 
     // Create canonical recruiter
     const initial = await upsertCanonicalRecruiter({
@@ -240,7 +239,6 @@ async function runTests() {
   console.log("\n5. 5-Recruiter Minimum Threshold for Sharing");
   {
     await cleanup();
-    const db = await getDb();
 
     const testNames = [
       "Alice Adams",
@@ -329,7 +327,7 @@ async function runTests() {
     }))!;
 
     // 1. Viewer B before unlock: contact details locked
-    let viewBeforeUnlock = toPublicRecruiter(sharedRecruiter, null, true, false);
+    const viewBeforeUnlock = toPublicRecruiter(sharedRecruiter, null, true, false);
     check("locked view hides email", viewBeforeUnlock.email === null);
     check("locked view hides linkedinUrl", viewBeforeUnlock.linkedinUrl === null);
     check("locked view indicates hasEmail is true", viewBeforeUnlock.hasEmail === true);
@@ -351,7 +349,7 @@ async function runTests() {
     );
 
     // 3. Viewer B after unlock: contact details revealed
-    let viewAfterUnlock = toPublicRecruiter(sharedRecruiter, null, true, true);
+    const viewAfterUnlock = toPublicRecruiter(sharedRecruiter, null, true, true);
     check(
       "unlocked view reveals email",
       viewAfterUnlock.email === sharedRecruiter.email

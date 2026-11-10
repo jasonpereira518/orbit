@@ -69,12 +69,6 @@ export type ScanWindow = {
   windowMonths: number;
 };
 
-function monthsAgo(months: number): Date {
-  const d = new Date();
-  d.setUTCMonth(d.getUTCMonth() - months);
-  return d;
-}
-
 function daysBefore(date: Date, days: number): Date {
   return new Date(date.getTime() - days * 24 * 60 * 60 * 1000);
 }

@@ -697,6 +697,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-route-errors": "pglite",
   "smoke-recruiter-sharing": "pglite",
   "smoke-recruiter-pii": "pglite",
+  "smoke-recruiter-redesign": "pglite",
   "smoke-resend-rejection": "pglite",
   "smoke-schema-bootstrap": "pglite",
   "smoke-schema-fingerprint": "pglite",

@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { cache } from "react";
 import { notFound } from "next/navigation";
-import { Lock, Mail, Phone, ExternalLink } from "lucide-react";
+import { Mail, Phone, ExternalLink } from "lucide-react";
 import { getRecruiter, getRecruiterSharing } from "@/actions/recruiters";
 import { RecruiterLogForm } from "@/components/recruiters/recruiter-log-form";
 import { RecruiterUnlockButton } from "@/components/recruiters/recruiter-unlock-button";
