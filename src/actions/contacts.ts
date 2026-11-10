@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { requirePageUser } from "@/lib/plan-guards";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
-import { and, asc, desc, eq, gte, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { listSchools } from "@/lib/events/target-companies";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
 import { deleteReplacedAvatar } from "@/lib/avatar-blob";
@@ -79,8 +79,7 @@ import {
 } from "@/lib/linkedin-scraper";
 import { readPublicWorkHistory, PUBLIC_WORK_HISTORY_DAYS } from "@/lib/public-work-history";
 import { guessName, isUsernameOrGenericName } from "@/lib/contact-name-guess";
-import { notTourExample } from "@/lib/onboarding-examples/sql";
-import { handleCandidateSql } from "@/lib/contact-name-sweep";
+import { contactRefreshCandidatePredicate } from "@/lib/admin-contact-upkeep";
 import { clientAvatarUrlSql, sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   buildGooglePhotoIndex,
@@ -1070,40 +1069,6 @@ export type LinkedInRefreshTarget = {
   email: string | null;
   linkedinUrl: string | null;
 };
-
-/**
- * SQL predicate matching contacts that need refresh or upkeep:
- * 1. Has LinkedIn URL (to refresh profile info & avatar from LinkedIn)
- * 2. OR missing an avatar with an identifier (email or LinkedIn)
- * 3. OR has a username/handle/slug/generic placeholder name
- */
-export function contactRefreshCandidatePredicate(userId: string) {
-  const hasLinkedIn = sql`${contacts.linkedinUrl} IS NOT NULL AND btrim(${contacts.linkedinUrl}) <> ''`;
-  const hasEmail = sql`${contacts.email} IS NOT NULL AND btrim(${contacts.email}) <> ''`;
-
-  const needsAvatar = or(
-    isNull(contacts.profileImageUrl),
-    sql`btrim(${contacts.profileImageUrl}) = ''`,
-    sql`${contacts.profileImageUrl} LIKE 'orbit:no-photo:%'`,
-    sql`${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%'`
-  );
-
-  const needsName = or(
-    handleCandidateSql(),
-    sql`lower(btrim(${contacts.fullName})) in ('linkedin member', 'member', 'unknown', 'user', 'none', 'n/a', 'unnamed')`,
-    sql`(${contacts.linkedinSlug} is not null and lower(btrim(${contacts.fullName})) = ${contacts.linkedinSlug})`
-  );
-
-  return and(
-    eq(contacts.userId, userId),
-    notTourExample(contacts.source),
-    or(
-      hasLinkedIn,
-      and(or(hasLinkedIn, hasEmail), needsAvatar),
-      needsName
-    )
-  );
-}
 
 /** Contacts that can be refreshed: LinkedIn profiles, handle names to fix, or missing avatars. */
 export async function listLinkedInRefreshTargets(): Promise<{

@@ -16,6 +16,7 @@ import { AdminPanel, MetricTile } from "@/components/admin/primitives";
 import { useLivePoll } from "@/components/admin/use-live-poll";
 import { triggerGlobalContactUpkeepAction } from "@/actions/admin";
 import type { GlobalUpkeepMetrics } from "@/lib/admin-contact-upkeep";
+import { friendlyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
 export function ContactUpkeepPanel({
@@ -54,7 +55,7 @@ export function ContactUpkeepPanel({
         }
       } catch (err) {
         toast.error(
-          err instanceof Error ? err.message : "Failed to run contact upkeep"
+          friendlyError(err, "The contact upkeep run didn’t finish — try again?")
         );
       }
     });

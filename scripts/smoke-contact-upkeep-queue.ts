@@ -24,12 +24,12 @@ import {
   resetLinkedInDirectCooldownForTesting,
 } from "../src/lib/linkedin-scraper";
 import {
+  contactRefreshCandidatePredicate,
   getGlobalUpkeepMetrics,
   globalUpkeepCandidatePredicate,
   runGlobalContactUpkeepBatch,
 } from "../src/lib/admin-contact-upkeep";
 import {
-  contactRefreshCandidatePredicate,
   refreshContactsFromLinkedIn,
 } from "../src/actions/contacts";
 import { checker } from "./smoke/check";

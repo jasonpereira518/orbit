@@ -62,7 +62,6 @@ export function RefreshContactsButton() {
       let refreshed = 0;
       let unmatched = 0;
       let failed = 0;
-      let avatarOnly = true;
       let rateLimited = false;
       let namesFixed = 0;
       let avatarsUpdated = 0;
@@ -77,7 +76,6 @@ export function RefreshContactsButton() {
         failed += result.failed;
         namesFixed += result.namesFixed ?? 0;
         avatarsUpdated += result.avatarsUpdated ?? 0;
-        if (!result.avatarOnly && result.refreshed > 0) avatarOnly = false;
         if (result.rateLimited) rateLimited = true;
         const done = Math.min(i + chunk.length, targets.length);
         setProgress({ done, total: targets.length });

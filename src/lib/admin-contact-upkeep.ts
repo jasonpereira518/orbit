@@ -85,6 +85,42 @@ export type GlobalUpkeepMetrics = {
   } | null;
 };
 
+function weakOrGenericNameSql() {
+  return or(
+    handleCandidateSql(),
+    sql`lower(btrim(${contacts.fullName})) in ('linkedin member', 'member', 'unknown', 'user', 'none', 'n/a', 'unnamed')`,
+    sql`(${contacts.linkedinSlug} is not null and lower(btrim(${contacts.fullName})) = ${contacts.linkedinSlug})`
+  );
+}
+
+/**
+ * SQL predicate matching contacts for a single user that need refresh or upkeep:
+ * 1. Has LinkedIn URL (to refresh profile info & avatar from LinkedIn)
+ * 2. OR missing/placeholder/broken avatar with an identifier (email or LinkedIn)
+ * 3. OR has a username/handle/slug/generic placeholder name
+ */
+export function contactRefreshCandidatePredicate(userId: string) {
+  const hasLinkedIn = sql`${contacts.linkedinUrl} IS NOT NULL AND btrim(${contacts.linkedinUrl}) <> ''`;
+  const hasEmail = sql`${contacts.email} IS NOT NULL AND btrim(${contacts.email}) <> ''`;
+
+  const needsAvatar = or(
+    isNull(contacts.profileImageUrl),
+    sql`btrim(${contacts.profileImageUrl}) = ''`,
+    sql`${contacts.profileImageUrl} LIKE 'orbit:no-photo:%'`,
+    sql`${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%'`
+  );
+
+  return and(
+    eq(contacts.userId, userId),
+    notTourExample(contacts.source),
+    or(
+      hasLinkedIn,
+      and(or(hasLinkedIn, hasEmail), needsAvatar),
+      weakOrGenericNameSql()
+    )
+  );
+}
+
 /**
  * SQL predicate identifying contacts needing upkeep across all accounts:
  * 1. Username, handle, email prefix, slug, or generic placeholder names
@@ -104,17 +140,11 @@ export function globalUpkeepCandidatePredicate() {
     sql`${contacts.profileImageCheckedAt} < now() - interval '30 days'`
   );
 
-  const needsName = or(
-    handleCandidateSql(),
-    sql`lower(btrim(${contacts.fullName})) in ('linkedin member', 'member', 'unknown', 'user', 'none', 'n/a', 'unnamed')`,
-    sql`(${contacts.linkedinSlug} is not null and lower(btrim(${contacts.fullName})) = ${contacts.linkedinSlug})`
-  );
-
   return and(
     notTourExample(contacts.source),
     or(
       and(or(hasLinkedIn, hasEmail), needsAvatar),
-      needsName,
+      weakOrGenericNameSql(),
       and(
         hasLinkedIn,
         or(
@@ -140,11 +170,7 @@ export async function getGlobalUpkeepMetrics(): Promise<GlobalUpkeepMetrics> {
     db
       .select({
         total: sql<number>`count(*)::int`,
-        namesToFix: sql<number>`count(*) filter (where ${or(
-          handleCandidateSql(),
-          sql`lower(btrim(${contacts.fullName})) in ('linkedin member', 'member', 'unknown', 'user', 'none', 'n/a', 'unnamed')`,
-          sql`(${contacts.linkedinSlug} is not null and lower(btrim(${contacts.fullName})) = ${contacts.linkedinSlug})`
-        )})::int`,
+        namesToFix: sql<number>`count(*) filter (where ${weakOrGenericNameSql()})::int`,
         avatarsNeeded: sql<number>`count(*) filter (where ${or(
           isNull(contacts.profileImageUrl),
           sql`btrim(${contacts.profileImageUrl}) = ''`,
