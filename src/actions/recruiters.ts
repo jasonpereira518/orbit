@@ -127,7 +127,7 @@ export async function setRecruiterSharing(enabled: boolean) {
     const count = await getUserRecruiterCount(userId);
     if (count < MIN_RECRUITERS_FOR_SHARING) {
       throw new UserFacingError(
-        `You need at least ${MIN_RECRUITERS_FOR_SHARING} recruiters in your list to join the shared pool (you currently have ${count}/${MIN_RECRUITERS_FOR_SHARING}).`
+        `You need at least ${MIN_RECRUITERS_FOR_SHARING} recruiters in your list to join the shared pool (you currently have ${count}/${MIN_RECRUITERS_FOR_SHARING})`
       );
     }
   }
@@ -163,7 +163,7 @@ export async function unlockRecruiterContact(recruiterId: string): Promise<
     const sharing = await isViewerSharing(userId);
     if (!sharing) {
       throw new UserFacingError(
-        "You must share at least 5 recruiters with the pool to unlock recruiter contact details."
+        "You must share at least 5 recruiters with the pool to unlock recruiter contact details"
       );
     }
 
@@ -212,7 +212,7 @@ export async function unlockRecruiterContact(recruiterId: string): Promise<
     const balance = await getCreditBalance(userId, plan, settings);
     if (balance.spendable < creditsToMicros(1)) {
       throw new UserFacingError(
-        "You need at least 1 credit to unlock this recruiter's contact details."
+        "You need at least 1 credit to unlock this recruiter’s contact details"
       );
     }
 

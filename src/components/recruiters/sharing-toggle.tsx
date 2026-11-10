@@ -40,7 +40,7 @@ export function RecruiterSharingToggle({
 
   function toggle(next: boolean) {
     if (next && recruiterCount < minRequired) {
-      toast.error(`You need at least ${minRequired} recruiters in your list to join the shared pool.`);
+      toast.error(`You need at least ${minRequired} recruiters in your list to join the shared pool`);
       return;
     }
     start(async () => {
