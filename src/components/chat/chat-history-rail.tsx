@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pin, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { groupThreadsByDay, type ThreadLike } from "@/lib/chat-history-groups";
+import { RAIL_CLOSED_WIDTH, RAIL_OPEN_WIDTH } from "@/lib/chat-rail-pref";
 import { EASE_HOUSE } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,9 +34,9 @@ import {
  * there the header keeps a history dropdown.
  */
 
-/** Wide enough for a title to wrap to two lines; the strip is just room for one icon button. */
-export const RAIL_OPEN_WIDTH = 224;
-export const RAIL_CLOSED_WIDTH = 48;
+// The widths live with the rail's other shared facts so the loading placeholder can match
+// them without importing this component (and its menus) into every page that shows a skeleton.
+export { RAIL_CLOSED_WIDTH, RAIL_OPEN_WIDTH };
 
 /** A thread as the rail lists it: `pinnedAt` set means it leads the list under "Pinned". */
 export type RailThread = ThreadLike & { pinnedAt?: Date | string | null };
