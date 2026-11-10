@@ -3035,10 +3035,10 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 209 = outreach_campaigns.background_job (asynchronous campaign execution & scout runner)
 // 214 = chat_threads.pending_steer (messages sent to steer the answer being written; the
 // running turn reads them between lookup rounds).
-// 211 = chat_threads.pinned_at (a conversation pinned to the top of the history list).
-// 212 = chat_messages.attachments (the names and read text of files attached to a question).
-// 213 = chat_memories (new table: things the person asked Orbit to remember across chats).
-export const SCHEMA_VERSION = 213;
+// 215 = chat_threads.pinned_at (a conversation pinned to the top of the history list).
+// 216 = chat_messages.attachments (the names and read text of files attached to a question).
+// 217 = chat_memories (new table: things the person asked Orbit to remember across chats).
+export const SCHEMA_VERSION = 217;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
