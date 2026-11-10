@@ -49,6 +49,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-plain-text": "pure",
   "smoke-markdown-shortcuts": "pure",
   "smoke-meeting-row-details": "pure",
+  "smoke-transcript-paragraphs": "pure",
   "smoke-ai-notice-copy": "pure",
   "smoke-interaction-edit": "pure",
   "smoke-inbox-search": "pure",
