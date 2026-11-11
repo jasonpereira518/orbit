@@ -8,7 +8,7 @@ import Link from "next/link";
 import { and, eq, gte, inArray, lt } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { after } from "next/server";
-import { CalendarDays, Sparkles, Video } from "lucide-react";
+import { CalendarDays, Radio, Sparkles, Video } from "lucide-react";
 import { getDb } from "@/db";
 import { contacts, reminders, type CalendarEventAttendee } from "@/db/schema";
 import { AddAttendeeButton } from "@/components/dashboard/add-attendee-button";
@@ -322,27 +322,32 @@ export async function TodayMeetingsSection({ now }: { now: Date }) {
               </div>
             )}
 
-            {(join || next.known > 0) && (
-              <div className="mt-4 flex flex-wrap justify-end gap-2">
-                {join && (
-                  <a
-                    href={join}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1.5")}
-                  >
-                    <Video aria-hidden />
-                    Join
-                  </a>
-                )}
-                {next.known > 0 && (
-                  <Link href={next.prep} className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
-                    <Sparkles aria-hidden />
-                    Prep
-                  </Link>
-                )}
-              </div>
-            )}
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <Link
+                href={`/meetings?candidate=${encodeURIComponent(next.e.providerEventId)}`}
+                className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "gap-1.5")}
+              >
+                <Radio className="size-3.5 text-rose-500 animate-pulse" aria-hidden />
+                Record
+              </Link>
+              {join && (
+                <a
+                  href={join}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1.5")}
+                >
+                  <Video aria-hidden />
+                  Join
+                </a>
+              )}
+              {next.known > 0 && (
+                <Link href={next.prep} className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
+                  <Sparkles aria-hidden />
+                  Prep
+                </Link>
+              )}
+            </div>
           </section>
         )}
 

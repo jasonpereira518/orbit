@@ -28,6 +28,7 @@ import {
   OUTLOOK_SCAN_IMPORT_TYPE,
   runOutlookRecruiterScanJob,
 } from "@/lib/outlook-scan-processor";
+import { type RecruitingCycle } from "@/lib/recruiter-scan-state";
 import {
   buildMicrosoftAuthUrl,
   getOutlookOAuthConfigSummary,
@@ -334,7 +335,9 @@ function toScanStatus(row: typeof imports.$inferSelect): OutlookScanStatus {
  * only polls. Mirrors `startGmailRecruiterScan`, including returning the messages written
  * for a person as data — a thrown message reaches the browser as a digest in production.
  */
-export async function startOutlookRecruiterScan(): Promise<ActionResult<{ importId: string }>> {
+export async function startOutlookRecruiterScan(opts?: {
+  cycle?: RecruitingCycle;
+}): Promise<ActionResult<{ importId: string }>> {
   return asActionResult(async () => {
     const userId = await requireRecruitersUser();
     await consumeDailyCap("importDaily", userId);
@@ -387,7 +390,11 @@ export async function startOutlookRecruiterScan(): Promise<ActionResult<{ import
         status: "processing",
         totalRows: null,
         rowsProcessed: 0,
-        stats: { discoveryComplete: false, messagesScanned: 0 },
+        stats: {
+          discoveryComplete: false,
+          messagesScanned: 0,
+          cycle: opts?.cycle ?? "current",
+        },
       })
       .returning();
 
