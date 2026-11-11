@@ -415,6 +415,20 @@ export function ContactProfileHero({
               !isDefaultAvatarSrc(previewSrc)
             }
           >
+            {/* Glow: a blurred copy of the photo actually shown (`previewSrc`, which is the
+                gender fallback image when there is no photo) behind the avatar, so the
+                halo takes the colours of the photo's own edges. The Avatar is `relative`
+                and comes later in the DOM, so it paints over this. The browser already
+                has the image cached, so this is no second request in practice. */}
+            {/* eslint-disable-next-line @next/next/no-img-element -- decorative blurred copy */}
+            <img
+              src={previewSrc}
+              alt=""
+              aria-hidden
+              draggable={false}
+              referrerPolicy="no-referrer"
+              className="pointer-events-none absolute inset-0 size-full scale-110 rounded-full object-cover opacity-45 blur-lg"
+            />
             <ContactAvatar
               contactId={contactId}
               firstName={firstName}
