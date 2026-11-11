@@ -96,6 +96,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-action-user-scope": "pure",
   "smoke-consume-bucket-args": "pure",
   "smoke-toast-copy": "pure",
+  "smoke-toast-dedupe": "pure",
   "smoke-drive-picker-token": "pure",
   "smoke-settle-once": "pure",
   "smoke-vercel-ignore-build": "pure",
