@@ -50,6 +50,9 @@ next-env.d.ts
 # Subagent-driven-development scratch workspace (ledger, briefs, review packages)
 .superpowers/
 
+# TypeScript 7 for the Vercel type-check (scripts/ts7/package.json — own lockfile)
+scripts/ts7/node_modules/
+
 # browser extension (separate project — own lockfile, not deployed)
 extension/node_modules/
 extension/dist/

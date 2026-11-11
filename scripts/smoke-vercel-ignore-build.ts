@@ -84,6 +84,23 @@ run("a branch that only contains 'claude/', no pull request", { VERCEL_GIT_COMMI
 run("dependabot/* even with a pull request", { VERCEL_GIT_COMMIT_REF: "dependabot/npm_and_yarn/x", VERCEL_GIT_PULL_REQUEST_ID: "3" }, SKIP);
 run("dependabot/* with [deploy] builds", { VERCEL_GIT_COMMIT_REF: "dependabot/npm_and_yarn/x", VERCEL_GIT_PULL_REQUEST_ID: "3", VERCEL_GIT_COMMIT_MESSAGE: "[deploy]" }, BUILD);
 
+console.log("pure merge pushes (the Nov 11 stacked-PR burst)");
+const mergePr = { ...claude, VERCEL_ENV: "preview", VERCEL_GIT_PULL_REQUEST_ID: "21" };
+const merging = (VERCEL_GIT_COMMIT_MESSAGE: string) => ({ ...mergePr, VERCEL_GIT_COMMIT_MESSAGE });
+run("main merged into a PR branch", merging("Merge origin/main into claude/chat-queue-steer"), SKIP);
+run("a stacked branch merged into the next", merging("Merge claude/chat-export into claude/chat-manage-threads"), SKIP);
+run("git's quoted form", merging("Merge branch 'claude/chat-answer-notify' into claude/chat-queue-steer"), SKIP);
+run("git's remote-tracking form", merging("Merge remote-tracking branch 'origin/main' into radar_flagship_redesign"), SKIP);
+run("a bare 'main' source", merging("Merge main into feature/thing"), SKIP);
+run("with a conflict list in the body", merging("Merge origin/main into claude/x\n\n# Conflicts:\n#\tpackage-lock.json"), SKIP);
+run("a merge that also fixes something", merging("Merge origin/main; fix CI (dvh, site CSS sources, admin detail smoke)"), BUILD);
+run("a merge-conflict resolution titled like a change", merging("merge(main): resolve schema v218, align query budgets"), BUILD);
+run("a pull request merge", merging("Merge pull request #610 from jasonpereira518/claude/mcp-connector"), BUILD);
+run("a commit that only starts with 'Merge'", merging("Merge fixes into the radar page"), BUILD);
+run("a merge with [deploy]", merging("Merge origin/main into claude/x [deploy]"), BUILD);
+run("a merge on production", { ...merging("Merge origin/main into claude/x"), VERCEL_ENV: "production" }, BUILD);
+run("a merge on main", { VERCEL_GIT_COMMIT_REF: "main", VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_MESSAGE: "Merge origin/main into main" }, BUILD);
+
 console.log("pushes diffed against the last build (VERCEL_GIT_PREVIOUS_SHA)");
 const repo = mkdtempSync(join(tmpdir(), "ignore-build-"));
 const git = (...args: string[]) => {

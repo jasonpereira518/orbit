@@ -1,7 +1,7 @@
 /**
  * Build-time migration. Runs in the Vercel build command ahead of `next build`:
  *
- *   npm run check:env && npm run db:migrate && next build
+ *   npm run check:env && npm run typecheck:fast && npm run db:migrate && next build
  *
  * so the schema is current BEFORE the deployment goes live, instead of on the first
  * request of the first cold start — where two concurrent boots raced it, a failing
@@ -45,7 +45,13 @@ async function main() {
   if (verdict.unarmed) console.warn(`migrate: warn  ${verdict.reason}`);
   console.log(`migrate: reconciling schema version ${SCHEMA_VERSION} on ${target}…`);
 
-  const result = await reconcileSchema({ lockWaitMs: BUILD_MIGRATION_LOCK_WAIT_MS, onLockTimeout: "sweep" });
+  // Previews share one database, so a sibling branch's newer stamp would make this build skip
+  // its own DDL and then fail the coverage check below. Production keeps the version gate.
+  const result = await reconcileSchema({
+    lockWaitMs: BUILD_MIGRATION_LOCK_WAIT_MS,
+    onLockTimeout: "sweep",
+    force: process.env.VERCEL_ENV === "preview",
+  });
   if (result.failed.length > 0) {
     console.error(`migrate: ${result.failed.length} DDL statement(s) failed:`);
     for (const f of result.failed) console.error(`  ✗ ${f.statement}\n      ${f.message}`);
