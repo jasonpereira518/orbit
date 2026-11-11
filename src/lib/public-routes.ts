@@ -135,6 +135,11 @@ export const PUBLIC_ROUTES = [
   // is checked against a shape regex before any query, so malformed traffic costs nothing.
   "/scan/(.*)",
   "/api/scan/(.*)",
+  // The public Orbit Card and its vCard download. A stranger scans an Orbit user's QR code
+  // with no account, so a Clerk session here would defeat the point. Authorization is the
+  // unguessable slug in the path (`src/lib/cards/card-store.ts`), checked against a shape
+  // regex before any query; a paused, reset or released-off card loads nothing.
+  "/c/(.*)",
   // Vercel BotID's challenge proxy (next.config.ts `withBotId`). The waitlist join's
   // server-action POSTs carry its proof, so a signed-out visitor must reach it.
   `/${BOTID_PATH_PREFIX}/(.*)`,

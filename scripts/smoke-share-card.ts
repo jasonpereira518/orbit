@@ -19,6 +19,7 @@ import {
   shareCards,
   userSettings,
 } from "../src/db/schema";
+import { GET as vcardGET } from "../src/app/(site)/c/[slug]/vcard/route";
 import { setBotCheckForTests } from "../src/lib/bot-check";
 import { shareBackCore, type ShareBackInput } from "../src/lib/cards/share-back";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
@@ -376,6 +377,34 @@ async function shareBack() {
   setBotCheckForTests(null);
 }
 
+/** Task 6: the vCard download route. */
+async function vcardRoute() {
+  console.log("\nvcard route");
+  const db = await getDb();
+  await db.insert(userSettings).values({ userId: OWNER, firstName: "Zoë", lastName: "Lovelace", email: "ada@example.com" });
+  const { slug } = await saveCard(OWNER, { fields: DEFAULT_CARD_FIELDS, phone: null, tagline: null });
+  await setSurfaceComingSoon(OPERATOR, "page.card", false);
+  const get = (s: string) => vcardGET(new Request(`http://localhost/c/${s}/vcard`), { params: Promise.resolve({ slug: s }) });
+
+  const res = await get(slug);
+  const body = await res.text();
+  const disposition = res.headers.get("content-disposition") ?? "";
+  check("live slug: 200", res.status === 200, String(res.status));
+  check("content type", res.headers.get("content-type") === "text/vcard; charset=utf-8");
+  check(
+    "disposition: ascii and utf-8 names",
+    disposition.startsWith('attachment; filename="Zo Lovelace.vcf"') && disposition.includes("filename*=UTF-8''Zo%C3%AB%20Lovelace.vcf"),
+    disposition
+  );
+  check("no-store", res.headers.get("cache-control") === "no-store");
+  check("noindex", res.headers.get("x-robots-tag") === "noindex");
+  check("body is the card", body.includes("FN:Zoë Lovelace") && body.includes("EMAIL;TYPE=INTERNET:ada@example.com") && body.includes("NOTE:Met via Orbit"));
+
+  await resetCardSlug(OWNER);
+  check("reset slug: 404", (await get(slug)).status === 404);
+  check("junk slug: 404", (await get("../../etc")).status === 404);
+}
+
 async function main() {
   await cleanup();
   await cardStore();
@@ -383,6 +412,8 @@ async function main() {
   await liveEvent();
   await cleanup();
   await shareBack();
+  await cleanup();
+  await vcardRoute();
   await cleanup();
   console.log("\nshare card: all checks passed");
   process.exit(0);
