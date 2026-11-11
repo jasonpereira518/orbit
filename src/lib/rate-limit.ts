@@ -44,6 +44,10 @@ import { rateLimitBuckets } from "@/db/schema";
 
 /** What a bucket scope means to the person hitting it, for the error message. */
 const BUCKET_LABELS: Record<string, string> = {
+  "voice-requests": "Orbit Voice requests",
+  "voice-start-hour": "Orbit Voice sessions this hour",
+  "voice-start-day": "Orbit Voice sessions today",
+  "voice-start-global": "Orbit Voice sessions across Orbit today",
   chat: "chat",
   emailSend: "email send",
   emailAttachmentUpload: "attachment upload",

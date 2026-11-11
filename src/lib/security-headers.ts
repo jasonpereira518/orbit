@@ -88,7 +88,10 @@ export function buildSecurityHeaders(options: {
       "https://accounts.google.com",
       // Live meeting/mic transcription: the browser streams audio straight to Deepgram over a
       // 30-second token our server mints (src/lib/deepgram-live.ts).
-      "wss://api.deepgram.com"
+      "wss://api.deepgram.com",
+      // Private Orbit Voice sessions use the ElevenLabs WebSocket transport.
+      "wss://api.elevenlabs.io",
+      "https://api.elevenlabs.io"
     )}`,
     // Avatars redirect to Blob, LinkedIn's CDN, unavatar and Clerk; the set is open by design.
     `img-src 'self' data: blob: https:`,

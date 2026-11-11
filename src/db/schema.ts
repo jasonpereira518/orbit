@@ -3858,6 +3858,18 @@ export const chatThreads = pgTable(
   ]
 );
 
+export const orbitVoiceSessions = pgTable("orbit_voice_sessions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  threadId: uuid("thread_id").notNull().references(() => chatThreads.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  toolCalls: integer("tool_calls").default(0).notNull(),
+  scope: jsonb("scope").$type<Record<string, Array<[string, string]>>>().default({}).notNull(),
+  timeZone: text("time_zone").default("UTC").notNull(),
+}, (t) => [index("orbit_voice_sessions_user_idx").on(t.userId), index("orbit_voice_sessions_thread_idx").on(t.threadId)]);
+
 export const chatMessages = pgTable(
   "chat_messages",
   {
@@ -5597,6 +5609,9 @@ export const siteSettings = pgTable("site_settings", {
    * any key (`src/lib/web-search-budget.ts`). Null = never set, which reads as running.
    */
   webSearchPaused: boolean("web_search_paused"),
+  /** Orbit Voice is opt-in, including for admins. No row/null means off. */
+  orbitVoiceEnabled: boolean("orbit_voice_enabled").default(false),
+  orbitVoiceChangedAt: timestamp("orbit_voice_changed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
   updatedBy: text("updated_by"),

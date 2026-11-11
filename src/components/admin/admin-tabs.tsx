@@ -55,6 +55,7 @@ export const PRODUCT_TABS: SectionTab[] = [
   { href: "/admin/product/settings", label: "Settings" },
   { href: "/admin/product/constellation", label: "Constellation" },
   { href: "/admin/product/photos", label: "Photos" },
+  { href: "/admin/product/chat", label: "Chat" },
 ];
 
 export const OPS_TABS: SectionTab[] = [
