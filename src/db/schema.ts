@@ -1132,6 +1132,23 @@ export const userGoals = pgTable(
   (t) => [index("user_goals_user_idx").on(t.userId)]
 );
 
+/**
+ * Things the person asked Orbit to keep in mind across chats. Read into every chat prompt
+ * (fenced as data). See `@/lib/chat-memory` for the only two ways one is written.
+ */
+export const chatMemories = pgTable(
+  "chat_memories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    text: text("text").notNull(),
+    /** The chat it was saved from, when it came from a card. Not a foreign key: the memory outlives the chat. */
+    sourceThreadId: uuid("source_thread_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("chat_memories_user_idx").on(t.userId, t.createdAt)]
+);
+
 export const tags = pgTable(
   "tags",
   {

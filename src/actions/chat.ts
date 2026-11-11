@@ -23,6 +23,8 @@ import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
 import { addTurnSteer, markTurnStopped } from "@/lib/chat-persist";
 import { isUuid } from "@/lib/input/ids";
 import { saveDraftEdit } from "@/lib/chat-draft-save";
+import { addMemory, deleteMemory, listMemories, type ChatMemory } from "@/lib/chat-memory";
+import { UserFacingError } from "@/lib/errors";
 import { PINNED_THREADS_MAX, pinThread, renameThread, searchThreads, type ThreadSearchHit } from "@/lib/chat-threads";
 import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
@@ -393,6 +395,30 @@ export async function saveChatDraft(messageId: string, contactId: string, text: 
   const userId = await requireUserForSurface("page.chat");
   if (!isUuid(messageId) || !isUuid(contactId) || typeof text !== "string") return { ok: false as const };
   return { ok: await saveDraftEdit(userId, messageId, contactId, text) };
+}
+
+/** What Orbit is keeping in mind for this person across chats, newest first. */
+export async function listChatMemories(): Promise<ChatMemory[]> {
+  const userId = await requireUserForSurface("page.chat");
+  return listMemories(userId);
+}
+
+/** The person adds a memory themselves, from the Context sheet. */
+export async function addChatMemory(text: string) {
+  const userId = await requireUserForSurface("page.chat");
+  if (typeof text !== "string") return { ok: false as const, error: "There’s nothing to remember there" };
+  try {
+    return { ok: true as const, memory: await addMemory(userId, text) };
+  } catch (err) {
+    if (err instanceof UserFacingError) return { ok: false as const, error: err.message };
+    throw err;
+  }
+}
+
+export async function deleteChatMemory(id: string) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(id)) return { ok: false as const };
+  return { ok: await deleteMemory(userId, id) };
 }
 
 /** Rename a saved conversation. A title, once set, is never overwritten by a later answer. */

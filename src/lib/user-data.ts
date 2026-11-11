@@ -36,6 +36,7 @@ import {
   aiBatchJobs,
   aiResultCache,
   chatMessages,
+  chatMemories,
   chatThreads,
   closenessCohorts,
   companies,
@@ -490,10 +491,11 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   chat: {
-    exports: [own(chatThreads), own(chatMessages)],
+    exports: [own(chatThreads), own(chatMessages), own(chatMemories)],
     counts: [chatThreads],
     run: async (db, userId) => {
       await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
+      await db.delete(chatMemories).where(eq(chatMemories.userId, userId));
     },
   },
   recruiters: {
