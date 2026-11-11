@@ -19,6 +19,16 @@
   }
 }
 
+/* The landing hero's side-by-side layout: a frame at least 1024px wide and at least 6:5.
+ * The 3D scene makes the same test in script (`layoutFor` in
+ * components/landing/hero-choreography.ts), and the two must agree, or the copy and the
+ * system it describes are laid out for different frames. */
+@custom-variant split {
+  @media (min-width: 1024px) and (min-aspect-ratio: 6/5) {
+    @slot;
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -1542,7 +1552,6 @@
 /* Scoped to .landing-root: the dashboard's reminders card also carries id="reminders"
  * with its own, smaller scroll margin, and a bare id selector would override it. */
 .landing-root #groups,
-.landing-root #reminders,
 .landing-root #how,
 .landing-root #features,
 .landing-root #cta {
@@ -1562,24 +1571,22 @@
   }
 }
 
-@keyframes landing-solar-enter {
-  from {
-    opacity: 0;
-    transform: scale(0.92);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
 .landing-fade {
   animation: landing-fade var(--transition-duration-celestial) var(--ease-house)
     both;
 }
 
-.landing-solar-enter {
-  animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
+/* The price ticket's notches (landing-scenes.tsx): two half-circles bitten out of its top
+ * and bottom edges where the stub's tear line meets them, at the 7fr/3fr seam. Cut with a
+ * mask rather than drawn as dark discs, because what shows through is the starfield. Only
+ * from md up: below it the stub sits under the ticket and the tear line runs across. */
+@media (width >= 48rem) {
+  .landing-ticket {
+    mask-image:
+      radial-gradient(circle 14px at 70% 0, transparent 13.5px, #000 14px),
+      radial-gradient(circle 14px at 70% 100%, transparent 13.5px, #000 14px);
+    mask-composite: intersect;
+  }
 }
 
 /* ── Coming soon (`components/coming-soon`) ──
@@ -2464,72 +2471,63 @@
 }
 
 /* Per-scene intrinsic sizes. These live here rather than in inline styles
- * because every scene is TALLER below lg (cards stack, the orbit map becomes
- * a vertical timeline) — and under-estimating is the direction that makes
- * scroll anchoring jump. Re-measure whenever a scene gains or loses content;
- * the audit snippet is in the plan's verification section. */
-/* This scene is min-h-[90svh], so its size is viewport-driven — declaring it
- * in svh stays exact at every window height instead of being right at one. */
+ * because every scene changes height with the viewport, and under-estimating
+ * is the direction that makes scroll anchoring jump. Re-measure whenever a
+ * scene gains or loses content: force content-visibility visible and read each
+ * section's height at 390, 768 and 1440 wide. */
+/* From md up this scene IS its photograph (aspect 4039/3177), so its height
+ * follows the width exactly. */
 .scene-constellations {
-  --scene-size: 90svh;
+  --scene-size: 78.66vw;
 }
-.scene-comets {
-  --scene-size: 575px;
-}
-/* The Earth-journey scene opts out of the skip entirely, so it needs no
- * --scene-size. Its height comes from the pin wrapper's explicit PIN_SVH
- * (how-it-works-choreography.ts), and contain-intrinsic-size would replace
- * exactly that with a guess while the section is off screen — the jump-past
- * hazard the sizes above exist to avoid. The pin only ever paints one
- * viewport, so there is nothing to save by skipping it. */
+/* Measured 2026-11-09 at 1440 and 1920 wide: how 1599, features 696, price 544,
+ * finale 1630 (1024 wide: 1503, 666, 525, 1617). */
 .scene-how {
-  content-visibility: visible;
+  --scene-size: 1620px;
 }
 .scene-features {
-  --scene-size: 2000px;
+  --scene-size: 700px;
 }
-/* Includes the closing wordmark, which grows with the column until max-w-6xl caps it:
- * measured 841 at 1024 and 891 from 1232 up. */
+.scene-price {
+  --scene-size: 560px;
+}
+/* Includes the closing wordmark, which grows with the column until max-w-6xl caps it. */
 .scene-finale {
-  --scene-size: 900px;
+  --scene-size: 1650px;
 }
 
-/* Measured at 500x667 and biased up slightly, since narrower viewports wrap
- * more text. Below lg the constellation scene's content exceeds 90svh, so it
- * needs a px value rather than the viewport-driven one. */
+/* Below lg the how-it-works bands stack their copy over their screenshot.
+ * Measured at 768 wide: how 2121, features 618, price 499, finale 1843. */
 @media (width < 64rem) {
-  .scene-constellations {
-    --scene-size: 820px;
-  }
-  .scene-comets {
-    --scene-size: 540px;
+  .scene-how {
+    --scene-size: 2140px;
   }
   .scene-features {
-    --scene-size: 2900px;
+    --scene-size: 640px;
   }
   .scene-finale {
-    --scene-size: 1140px;
+    --scene-size: 1880px;
   }
 }
 
-/* Below md the mobile pass changed these scenes' heights: constellations lost
- * ~200px of padding, while comets (badge wraps to its own line) and finale
- * (closing CTA is now visible, stacked) grew. Measured at 320/375/767 with
- * content-visibility forced visible, then biased up to the tallest in range —
- * under-estimating is what makes scroll anchoring jump past a section.
- * The 64rem block above still owns 768-1023. */
+/* Below md the constellation scene is its copy and then a 4:5 crop of the photograph.
+ * Measured at 390 wide: constellations 784, how 1732, features 586, price 586,
+ * finale 2048; biased up, since a 360px phone wraps more. */
 @media (width < 48rem) {
   .scene-constellations {
-    --scene-size: 840px;
+    --scene-size: calc(125vw + 330px);
   }
-  .scene-comets {
-    --scene-size: 660px;
+  .scene-how {
+    --scene-size: 1800px;
   }
   .scene-features {
-    --scene-size: 3500px;
+    --scene-size: 640px;
+  }
+  .scene-price {
+    --scene-size: 640px;
   }
   .scene-finale {
-    --scene-size: 1300px;
+    --scene-size: 2250px;
   }
 }
 

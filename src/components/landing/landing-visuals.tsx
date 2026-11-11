@@ -1,7 +1,6 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { HeroSolarCamera } from "@/components/landing/hero-solar-system";
 
 const Starfield = dynamic(
   () =>
@@ -11,22 +10,6 @@ const Starfield = dynamic(
   { ssr: false }
 );
 
-const HeroSolarSystem = dynamic(
-  () =>
-    import("@/components/landing/hero-solar-system").then((m) => ({
-      default: m.HeroSolarSystem,
-    })),
-  {
-    ssr: false,
-    loading: () => (
-      <div
-        aria-hidden
-        className="aspect-square w-full rounded-full bg-[radial-gradient(circle_at_center,rgba(232,243,241,0.08),transparent_65%)]"
-      />
-    ),
-  }
-);
-
 /**
  * `interactive` turns on the cursor gravity well and the signup pulse (see
  * `starfield.tsx`). Off by default: the landing, pricing and docs skies are shared
@@ -34,14 +17,4 @@ const HeroSolarSystem = dynamic(
  */
 export function LandingStarfield({ interactive = false }: { interactive?: boolean }) {
   return <Starfield interactive={interactive} />;
-}
-
-export function LandingSolarSystem({
-  className,
-  camera,
-}: {
-  className?: string;
-  camera?: HeroSolarCamera;
-}) {
-  return <HeroSolarSystem className={className} camera={camera} />;
 }

@@ -1,300 +1,177 @@
 "use client";
 
-import { useRef, useState, type MouseEvent } from "react";
-import {
-  motion,
-  useScroll,
-  useTransform,
-  type MotionValue,
-} from "motion/react";
+import { useRef } from "react";
+import { motion, useScroll, useTransform, type MotionValue } from "motion/react";
 import { scrub01 } from "@/lib/motion";
-import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import {
-  DIPPER_CHAINS,
-  DIPPER_FIELD_STARS,
-  DIPPER_STARS,
-  dipperChainPath,
-} from "@/lib/big-dipper-figure";
 
-const CLUSTER_NAME = "Amazon Web Services (AWS)";
-const CLUSTER_BRAND = "#ff9900";
-const VIEW_W = 280;
-const VIEW_H = 220;
-/** Hover radius in viewBox units — generous so the small stars are easy to hit. */
-const HOVER_R2 = 22 * 22;
+/** The photograph's own pixel grid (`/landing/photos/orion-*`, Akira Fujii). */
+const VIEW_W = 4039;
+const VIEW_H = 3177;
 
-/** Scroll-progress linger after a line crosses a node (0–1 scrub range). */
-const NAME_FADE_IN = 0.012;
-const NAME_HOLD = 0.16;
-const NAME_FADE_OUT = 0.055;
-
-/** Demo people, one per figure star (landing-only; the shared Big Dipper data
- * in src/lib/big-dipper-figure.ts stays name-free). */
-const STAR_NAMES: Record<string, string> = {
-  dubhe: "Maya Patel",
-  merak: "Dan Kowalski",
-  phecda: "Priya Raman",
-  megrez: "Marcus Webb",
-  alioth: "Sarah Chen",
-  mizar: "Nina Shah",
-  alkaid: "Elena Petrova",
-};
-
-const FADE = {
-  transitionDuration: "var(--transition-duration-base)",
-  transitionTimingFunction: "var(--ease-house)",
+/**
+ * Where the real stars sit in the photograph, in its pixels. Measured from the image, not
+ * from a catalogue: the lines have to land on the stars as this lens drew them. If the
+ * photograph is ever replaced or re-cropped, these go with it.
+ */
+const STARS = {
+  betelgeuse: [2948, 1012],
+  bellatrix: [3404, 1112],
+  meissa: [3272, 888],
+  alnitak: [3096, 1584],
+  alnilam: [3172, 1548],
+  mintaka: [3240, 1508],
+  saiph: [2932, 2020],
+  rigel: [3456, 2016],
+  sirius: [2072, 2304],
+  mirzam: [2372, 2428],
+  wezen: [1692, 2868],
+  adhara: [1804, 3044],
+  procyon: [1436, 980],
+  gomeisa: [1632, 820],
 } as const;
+type Star = keyof typeof STARS;
 
-/** Overlapping draw windows — compact so the figure completes quickly. */
-const CHAIN_WINDOWS = [
-  [0, 0.36],
-  [0.18, 0.64],
-  [0.42, 1],
-] as const;
+type Label = { at: [number, number]; anchor: "start" | "end" };
+/**
+ * Three real constellations, each standing for one group of people. The group names and
+ * counts are sample data. `phone` is the label's place when the plate is cropped to its
+ * right-hand side; a figure without one falls outside that crop and is not drawn there.
+ */
+const FIGURES: { id: string; name: string; count: string; chains: Star[][]; wide: Label; phone?: Label }[] = [
+  {
+    id: "orion",
+    name: "Stripe",
+    count: "6 people you know",
+    chains: [
+      ["meissa", "betelgeuse", "alnitak", "saiph", "rigel", "mintaka", "bellatrix", "meissa"],
+      ["alnitak", "alnilam", "mintaka"],
+      ["betelgeuse", "bellatrix"],
+    ],
+    wide: { at: [3560, 1500], anchor: "start" },
+    phone: { at: [3990, 2330], anchor: "end" },
+  },
+  {
+    id: "canis-major",
+    name: "UNC",
+    count: "41 people you know",
+    chains: [["mirzam", "sirius", "wezen", "adhara"]],
+    wide: { at: [2200, 2230], anchor: "start" },
+    phone: { at: [2200, 2700], anchor: "start" },
+  },
+  {
+    id: "canis-minor",
+    name: "Summer internship",
+    count: "9 people you know",
+    chains: [["procyon", "gomeisa"]],
+    wide: { at: [1700, 760], anchor: "start" },
+  },
+];
 
-/** Every time a chain stroke reaches a node — junction stars included,
- * and the same star may appear more than once (Megrez closes the bowl and
- * starts the handle, so it fires three times). */
-const CROSSINGS_BY_STAR: Record<string, number[]> = (() => {
-  const map: Record<string, number[]> = {};
-  DIPPER_CHAINS.forEach((chain, i) => {
-    const [a, b] = CHAIN_WINDOWS[i]!;
-    const segs = Math.max(1, chain.length - 1);
-    chain.forEach((id, j) => {
-      const t = a + (j / segs) * (b - a);
-      (map[id] ??= []).push(t);
-    });
-  });
-  return map;
-})();
+const pathOf = (chain: Star[]) => chain.map((star, i) => `${i ? "L" : "M"}${STARS[star][0]} ${STARS[star][1]}`).join(" ");
 
-function crossingOpacity(v: number, times: number[]) {
-  let max = 0;
-  const window = NAME_FADE_IN + NAME_HOLD + NAME_FADE_OUT;
-
-  for (const t of times) {
-    const dt = v - t;
-    if (dt < 0 || dt > window) continue;
-    if (dt <= NAME_FADE_IN) {
-      max = Math.max(max, dt / NAME_FADE_IN);
-    } else if (dt <= NAME_FADE_IN + NAME_HOLD) {
-      max = Math.max(max, 1);
-    } else {
-      max = Math.max(
-        max,
-        1 - (dt - NAME_FADE_IN - NAME_HOLD) / NAME_FADE_OUT
-      );
-    }
-  }
-
-  return max;
+function Chain({ d, progress, from, reduced }: { d: string; progress: MotionValue<number>; from: number; reduced: boolean }) {
+  const drawn = useTransform(progress, (v) => scrub01(v, from, from + 0.42));
+  return (
+    <motion.path
+      d={d}
+      fill="none"
+      stroke="rgba(242,193,78,0.85)"
+      strokeWidth={1.4}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      vectorEffect="non-scaling-stroke"
+      style={{ pathLength: reduced ? 1 : drawn }}
+    />
+  );
 }
 
-function nearestStarId(x: number, y: number): string | null {
-  let best: string | null = null;
-  let bestD = HOVER_R2;
-  for (const star of DIPPER_STARS) {
-    const d = (star.x - x) ** 2 + (star.y - y) ** 2;
-    if (d < bestD) {
-      bestD = d;
-      best = star.id;
-    }
-  }
-  return best;
+function FigureLabel({
+  name,
+  count,
+  label,
+  size,
+  progress,
+  from,
+  reduced,
+}: {
+  name: string;
+  count: string;
+  label: Label;
+  size: number;
+  progress: MotionValue<number>;
+  from: number;
+  reduced: boolean;
+}) {
+  const shown = useTransform(progress, (v) => scrub01(v, from, from + 0.14));
+  return (
+    // A dark edge under each letter (stroke painted first): the labels sit on a field of
+    // stars, and a star behind a thin stroke takes the letter with it.
+    <motion.g
+      style={{ opacity: reduced ? 1 : shown }}
+      textAnchor={label.anchor}
+      stroke="#03050c"
+      strokeWidth={size * 0.16}
+      strokeLinejoin="round"
+      paintOrder="stroke"
+    >
+      <text x={label.at[0]} y={label.at[1]} fontSize={size} fill="#e8f3f1" style={{ fontFamily: "var(--font-display)" }}>
+        {name}
+      </text>
+      <text x={label.at[0]} y={label.at[1] + size * 1.2} fontSize={size * 0.68} fill="#c9d6d2">
+        {count}
+      </text>
+    </motion.g>
+  );
 }
 
 /**
- * Scene B centerpiece: the Big Dipper draws itself in as the section
- * scrolls through the viewport — scrubbed and reversible, Apple-style.
- * Each chain crossing triggers that node's name; junction stars fire on
- * every line that reaches them. Names hold, then fade. Hover near a star
- * to pin its name. This component is the scene's reduced-motion gate.
+ * The lines of three constellations, drawn over the photograph of them as the section
+ * scrolls in: scrubbed, so they retrace on the way back. Lay it over the photograph in the
+ * same box, with the photograph `object-cover` and positioned to match `anchor` ("center"
+ * with `object-center`, "right" with `object-right`): the viewBox is the photograph's pixel
+ * grid and `slice` crops it exactly as `object-cover` crops the image.
+ *
+ * Decorative: the section's paragraph carries the claim. This component is its own
+ * reduced-motion gate (a scroll-linked binding is not an animation the global clamp sees).
  */
-export function ConstellationFigure({ className }: { className?: string }) {
+export function ConstellationFigure({ anchor, labelSize }: { anchor: "center" | "right"; labelSize: number }) {
+  // A div, not the svg: useScroll's target is typed for HTML elements.
   const ref = useRef<HTMLDivElement>(null);
   const reduced = usePrefersReducedMotion();
-  const [figureHovered, setFigureHovered] = useState(false);
-  const [hoveredStar, setHoveredStar] = useState<string | null>(null);
-
-  // Completes with the figure's centre a third of the way up the viewport
-  // rather than at the midpoint — the draw kept finishing while there was
-  // still a good deal of the scene left to scroll past.
-  const { scrollYProgress } = useScroll({
-    target: ref,
-    offset: ["start 0.78", "center 0.3"],
-  });
-
-  const chainProgress = [
-    useTransform(scrollYProgress, (v) =>
-      scrub01(v, CHAIN_WINDOWS[0][0], CHAIN_WINDOWS[0][1])
-    ),
-    useTransform(scrollYProgress, (v) =>
-      scrub01(v, CHAIN_WINDOWS[1][0], CHAIN_WINDOWS[1][1])
-    ),
-    useTransform(scrollYProgress, (v) =>
-      scrub01(v, CHAIN_WINDOWS[2][0], CHAIN_WINDOWS[2][1])
-    ),
-  ];
-
-  function onMove(e: MouseEvent<HTMLDivElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * VIEW_W;
-    const y = ((e.clientY - rect.top) / rect.height) * VIEW_H;
-    const id = nearestStarId(x, y);
-    setHoveredStar((prev) => (prev === id ? prev : id));
-  }
-
+  // Finished by the time the section's top is a third of the way down the viewport: that
+  // is where it is read, and a label still fading in there is a label at half contrast.
+  const { scrollYProgress } = useScroll({ target: ref, offset: ["start 0.9", "start 0.35"] });
+  const figures = FIGURES.filter((figure) => anchor === "center" || figure.phone);
+  // Each figure starts drawing where the one before it left off.
+  const starts = figures.map((_, i) => figures.slice(0, i).reduce((n, figure) => n + figure.chains.length, 0));
   return (
-    <div
-      ref={ref}
-      aria-hidden
-      className={cn("relative aspect-[4/3] w-full overflow-visible", className)}
-      onMouseEnter={() => setFigureHovered(true)}
-      onMouseMove={onMove}
-      onMouseLeave={() => {
-        setFigureHovered(false);
-        setHoveredStar(null);
-      }}
+    <div ref={ref} aria-hidden className="absolute inset-0">
+    <svg
+      viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+      preserveAspectRatio={anchor === "center" ? "xMidYMid slice" : "xMaxYMid slice"}
+      className="size-full"
     >
-      <svg
-        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-        className="absolute inset-0 h-full w-full overflow-visible"
-      >
-        {DIPPER_FIELD_STARS.map(([x, y], i) => (
-          <circle
-            key={`field-${i}`}
-            cx={x}
-            cy={y}
-            r={0.85}
-            fill="rgba(232,243,241,0.26)"
-          />
-        ))}
-
-        {DIPPER_CHAINS.map((chain, i) => (
-          <motion.path
-            key={i}
-            d={dipperChainPath(chain)}
-            fill="none"
-            stroke="rgba(89,157,231,0.55)"
-            strokeWidth={1.2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={reduced ? { pathLength: 1 } : { pathLength: chainProgress[i] }}
-          />
-        ))}
-
-        {DIPPER_STARS.map((star, i) => (
-          <motion.circle
-            key={star.id}
-            cx={star.x}
-            cy={star.y}
-            r={star.r}
-            fill={star.hotspot ? "#e8f3f1" : "#c5d4d1"}
-            initial={reduced ? false : { opacity: 0 }}
-            animate={reduced ? { opacity: 1 } : { opacity: [0.72, 1, 0.72] }}
-            transition={
-              reduced
-                ? { duration: 0 }
-                : {
-                    duration: 2.4 + (i % 3) * 0.3,
-                    repeat: Infinity,
-                    ease: "easeInOut",
-                    delay: i * 0.05,
-                  }
-            }
-          />
-        ))}
-      </svg>
-
-      {DIPPER_STARS.map((star) => {
-        const name = STAR_NAMES[star.id];
-        const crossings = CROSSINGS_BY_STAR[star.id];
-        if (!name || !crossings?.length) return null;
+      {figures.map((figure, n) => {
+        const first = starts[n];
         return (
-          <StarNameLabel
-            key={`name-${star.id}`}
-            star={star}
-            name={name}
-            crossings={crossings}
-            scrollYProgress={scrollYProgress}
-            reduced={reduced}
-            hovered={hoveredStar === star.id}
-          />
+          <g key={figure.id}>
+            {figure.chains.map((chain, i) => (
+              <Chain key={i} d={pathOf(chain)} progress={scrollYProgress} from={(first + i) * 0.11} reduced={reduced} />
+            ))}
+            <FigureLabel
+              name={figure.name}
+              count={figure.count}
+              label={anchor === "center" ? figure.wide : figure.phone!}
+              size={labelSize}
+              progress={scrollYProgress}
+              from={(first + figure.chains.length - 1) * 0.11 + 0.3}
+              reduced={reduced}
+            />
+          </g>
         );
       })}
-
-      {/* Cluster name — the /graph cluster-label treatment: white text over
-          a brand-color copy offset by 0.75px. Centered over the figure's
-          own width (not the tilt-skewed box) rather than the bowl, so the
-          name reads as the cluster's title instead of a callout on Dubhe. */}
-      <div
-        className={cn(
-          "pointer-events-none absolute left-1/2 top-[2%] -translate-x-1/2 text-center transition-opacity",
-          // Always on below md: hover never fires on touch, so the cluster
-          // name was invisible to every phone visitor.
-          figureHovered ? "opacity-100" : "opacity-100 md:opacity-0"
-        )}
-        style={FADE}
-      >
-        <span className="relative inline-block whitespace-nowrap text-center text-2xs font-semibold tracking-[0.08em]">
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-0 translate-x-[0.75px] translate-y-[0.75px] select-none"
-            style={{ color: CLUSTER_BRAND }}
-          >
-            {CLUSTER_NAME}
-          </span>
-          <span className="relative text-white">{CLUSTER_NAME}</span>
-        </span>
-        <span className="mt-1 block whitespace-nowrap text-3xs font-normal tracking-[0.06em] text-white">
-          The Big Dipper
-        </span>
-      </div>
+    </svg>
     </div>
-  );
-}
-
-function StarNameLabel({
-  star,
-  name,
-  crossings,
-  scrollYProgress,
-  reduced,
-  hovered,
-}: {
-  star: (typeof DIPPER_STARS)[number];
-  name: string;
-  crossings: number[];
-  scrollYProgress: MotionValue<number>;
-  reduced: boolean;
-  hovered: boolean;
-}) {
-  const scrollOpacity = useTransform(scrollYProgress, (v) =>
-    reduced ? 0 : crossingOpacity(v, crossings)
-  );
-
-  // Centring a nowrap label on a star near the viewBox edge pushes it outside
-  // the figure — measured 12-16px for Alkaid at phone widths. Anchor the outer
-  // stars by their inner edge instead; md: restores centring, where the box is
-  // wide enough (520px) that nothing overflows anyway.
-  const pct = (star.x / VIEW_W) * 100;
-
-  return (
-    <motion.div
-      className={cn(
-        "pointer-events-none absolute whitespace-nowrap text-3xs font-medium tracking-wide text-white/95 md:text-2xs",
-        pct < 20 && "translate-x-0 md:-translate-x-1/2",
-        pct > 80 && "-translate-x-full md:-translate-x-1/2",
-        pct >= 20 && pct <= 80 && "-translate-x-1/2"
-      )}
-      style={{
-        left: `${(star.x / VIEW_W) * 100}%`,
-        top: `${((star.y + star.r + 8) / VIEW_H) * 100}%`,
-        opacity: hovered ? 1 : scrollOpacity,
-      }}
-    >
-      {name}
-    </motion.div>
   );
 }

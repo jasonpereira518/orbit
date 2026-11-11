@@ -64,6 +64,13 @@ extension/public/inject/
 /playwright-report/
 /blob-report/
 
+# Landing page art: downloaded originals (public/landing holds only the converted files,
+# src/components/landing/landing-credits.ts records where each came from) and the design
+# skills' working files.
+/assets-src/
+/.taste-skill/
+/.impeccable/review/
+
 # constellation bench fixtures (scripts/bench/constellation-fixtures.ts)
 /.bench-data/
 

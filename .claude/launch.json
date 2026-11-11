@@ -32,6 +32,16 @@
       "port": 3417
     },
     {
+      "name": "orbit-demo-bench",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "ORBIT_BENCH=1 exec bash .claude/preview-demo.sh"
+      ],
+      "port": 3001,
+      "autoPort": true
+    },
+    {
       "name": "orbit-demo",
       "runtimeExecutable": "bash",
       "runtimeArgs": [

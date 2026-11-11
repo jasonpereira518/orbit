@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-09T00:00:00Z",
+  "title": "Design System: Orbit (marketing landing)",
+  "extensions": {
+    "colorMeta": {
+      "space-ground": {
+        "role": "neutral",
+        "displayName": "Space Ground",
+        "canonical": "#03050c",
+        "tonalRamp": ["oklch(12% 0.02 265)", "oklch(22% 0.03 265)", "oklch(34% 0.04 265)", "oklch(46% 0.045 265)", "oklch(58% 0.04 265)", "oklch(70% 0.035 265)", "oklch(83% 0.025 265)", "oklch(95% 0.01 265)"]
+      },
+      "space-void": {
+        "role": "neutral",
+        "displayName": "Space Void",
+        "canonical": "#00010a",
+        "tonalRamp": ["oklch(10% 0.03 270)", "oklch(21% 0.04 270)", "oklch(33% 0.05 270)", "oklch(45% 0.05 270)", "oklch(57% 0.045 270)", "oklch(70% 0.035 270)", "oklch(83% 0.025 270)", "oklch(95% 0.01 270)"]
+      },
+      "scene-navy": {
+        "role": "neutral",
+        "displayName": "Scene Navy",
+        "canonical": "#0b1128",
+        "tonalRamp": ["oklch(15% 0.04 270)", "oklch(25% 0.06 270)", "oklch(36% 0.08 270)", "oklch(48% 0.09 270)", "oklch(60% 0.08 270)", "oklch(72% 0.06 270)", "oklch(84% 0.04 270)", "oklch(95% 0.015 270)"]
+      },
+      "star-gold": {
+        "role": "primary",
+        "displayName": "Star Gold",
+        "canonical": "#f2c14e",
+        "tonalRamp": ["oklch(18% 0.04 85)", "oklch(30% 0.07 85)", "oklch(44% 0.1 85)", "oklch(58% 0.125 85)", "oklch(72% 0.14 85)", "oklch(83% 0.14 85)", "oklch(90% 0.09 85)", "oklch(96% 0.04 85)"]
+      },
+      "starlight": {
+        "role": "neutral",
+        "displayName": "Starlight",
+        "canonical": "#e8f3f1",
+        "tonalRamp": ["oklch(15% 0.01 180)", "oklch(28% 0.015 180)", "oklch(42% 0.02 180)", "oklch(56% 0.02 180)", "oklch(70% 0.02 180)", "oklch(82% 0.018 180)", "oklch(90% 0.015 180)", "oklch(95% 0.012 180)"]
+      },
+      "pure-white": {
+        "role": "neutral",
+        "displayName": "Pure White",
+        "canonical": "#ffffff",
+        "tonalRamp": ["oklch(15% 0 0)", "oklch(28% 0 0)", "oklch(42% 0 0)", "oklch(56% 0 0)", "oklch(70% 0 0)", "oklch(82% 0 0)", "oklch(92% 0 0)", "oklch(100% 0 0)"]
+      },
+      "deep-teal": {
+        "role": "secondary",
+        "displayName": "Deep Teal",
+        "canonical": "#0f3d3e",
+        "tonalRamp": ["oklch(16% 0.025 198)", "oklch(26% 0.04 198)", "oklch(33% 0.05 198)", "oklch(45% 0.06 198)", "oklch(58% 0.06 198)", "oklch(72% 0.05 198)", "oklch(85% 0.035 198)", "oklch(95% 0.015 198)"]
+      },
+      "deep-teal-pressed": {
+        "role": "secondary",
+        "displayName": "Deep Teal, pressed",
+        "canonical": "#0b2e2f",
+        "tonalRamp": ["oklch(15% 0.02 198)", "oklch(22% 0.03 198)", "oklch(27% 0.04 198)", "oklch(40% 0.055 198)", "oklch(55% 0.06 198)", "oklch(70% 0.05 198)", "oklch(84% 0.035 198)", "oklch(95% 0.015 198)"]
+      },
+      "dust-grey": {
+        "role": "neutral",
+        "displayName": "Dust Grey",
+        "canonical": "#9aada8",
+        "tonalRamp": ["oklch(15% 0.008 180)", "oklch(28% 0.012 180)", "oklch(42% 0.018 180)", "oklch(56% 0.02 180)", "oklch(72% 0.022 180)", "oklch(82% 0.018 180)", "oklch(90% 0.012 180)", "oklch(95% 0.008 180)"]
+      },
+      "field-teal-1": {
+        "role": "tertiary",
+        "displayName": "Field Teal 1",
+        "canonical": "#06131a",
+        "tonalRamp": ["oklch(17% 0.025 225)", "oklch(27% 0.035 225)", "oklch(38% 0.045 225)", "oklch(50% 0.05 225)", "oklch(62% 0.045 225)", "oklch(74% 0.04 225)", "oklch(85% 0.03 225)", "oklch(95% 0.012 225)"]
+      },
+      "field-teal-2": {
+        "role": "tertiary",
+        "displayName": "Field Teal 2",
+        "canonical": "#091c21",
+        "tonalRamp": ["oklch(16% 0.02 210)", "oklch(21% 0.03 210)", "oklch(33% 0.04 210)", "oklch(46% 0.05 210)", "oklch(59% 0.05 210)", "oklch(72% 0.04 210)", "oklch(85% 0.03 210)", "oklch(95% 0.012 210)"]
+      },
+      "field-teal-3": {
+        "role": "tertiary",
+        "displayName": "Field Teal 3",
+        "canonical": "#0d2728",
+        "tonalRamp": ["oklch(16% 0.02 198)", "oklch(25% 0.03 198)", "oklch(36% 0.04 198)", "oklch(48% 0.05 198)", "oklch(60% 0.05 198)", "oklch(73% 0.04 198)", "oklch(85% 0.03 198)", "oklch(95% 0.012 198)"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The hero headline; the finale headline and the poster lines are sibling sizes at the same weight and tracking." },
+      "headline": { "displayName": "Headline", "purpose": "Every section heading." },
+      "title": { "displayName": "Title", "purpose": "Step titles and smaller Fraunces titles." },
+      "body": { "displayName": "Body", "purpose": "Paragraphs, capped at 28rem; 1rem below 640px." },
+      "label": { "displayName": "Label", "purpose": "Buttons, chips, slider label and result, credits, fine print." }
+    },
+    "shadows": [
+      {
+        "name": "header-pill",
+        "value": "0 0 0 1px rgba(255,255,255,0.06), inset 0 1px 0 0 rgba(255,255,255,0.12), inset 0 -1px 0 0 rgba(0,0,0,0.4), 0 16px 48px -12px rgba(0,0,0,0.65), 0 4px 14px -4px rgba(0,0,0,0.45)",
+        "purpose": "The one lifted surface: the floating header pill over moving content."
+      }
+    ],
+    "motion": [
+      { "name": "ease-house", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "House curve for reveals and the hero copy's mount rise." },
+      { "name": "duration-fast", "value": "120ms", "purpose": "Colour transitions on hover and focus." },
+      { "name": "duration-celestial", "value": "700ms", "purpose": "Landing reveals (18px rise) and the hero copy's mount." },
+      { "name": "reveal-stagger", "value": "80ms to 120ms", "purpose": "Delay between sibling reveals in one section." },
+      { "name": "spring-tap", "value": "spring(stiffness 600, damping 30), scale 0.99", "purpose": "Glass card press feedback." },
+      { "name": "hero-pin", "value": "400svh, scrubbed by native scroll", "purpose": "Three beats: star and worlds, overhead system with the slider, the comet." },
+      { "name": "edge-mask", "value": "linear-gradient(to bottom, transparent, black 16%, black 84%, transparent)", "purpose": "Dissolves a photograph or video into the starfield ground." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "split", "value": "(min-width: 1024px) and (min-aspect-ratio: 6/5)" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one light pill per view that carries the action.",
+      "html": "<a class=\"ds-btn-primary\" href=\"#\">Create your free account</a>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; background: #e8f3f1; color: #0f3d3e; padding: 1rem 2rem; border-radius: 9999px; font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; font-size: 1rem; font-weight: 500; text-decoration: none; transition: background-color 120ms cubic-bezier(0, 0, 0.2, 1); } .ds-btn-primary:hover { background: #ffffff; } .ds-btn-primary:focus-visible { outline: 2px solid #f2c14e; outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary action, always beside a primary.",
+      "html": "<a class=\"ds-btn-ghost\" href=\"#\">Watch the demo</a>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.05); color: #e8f3f1; border: 1px solid rgba(255,255,255,0.2); padding: 1rem 2rem; border-radius: 9999px; font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; font-size: 1rem; text-decoration: none; transition: background-color 120ms, border-color 120ms; } .ds-btn-ghost:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.35); } .ds-btn-ghost:focus-visible { outline: 2px solid #f2c14e; outline-offset: 2px; }"
+    },
+    {
+      "name": "Glass Card with Status Chip",
+      "kind": "card",
+      "refersTo": "glass-card",
+      "description": "A glass surface used only where the card is the content; here the sample contact with its follow-up chip.",
+      "html": "<div class=\"ds-glass\"><div class=\"ds-glass-avatar\">PR</div><div class=\"ds-glass-text\"><p class=\"ds-glass-name\">Priya Raman</p><p class=\"ds-glass-meta\">Coffee chat, 5 weeks ago</p></div><span class=\"ds-chip-gold\">Follow up today</span></div>",
+      "css": ".ds-glass { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; max-width: 24rem; padding: 1.25rem; border-radius: 1rem; border: 1px solid rgba(232,243,241,0.08); background: linear-gradient(180deg, rgba(232,243,241,0.045) 0%, rgba(232,243,241,0.015) 100%), #03050c; backdrop-filter: blur(12px); font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; transition: transform 120ms; } .ds-glass:active { transform: scale(0.99); } .ds-glass-avatar { display: flex; align-items: center; justify-content: center; width: 2.5rem; height: 2.5rem; border-radius: 9999px; background: #0f3d3e; color: #e8f3f1; font-size: 0.875rem; font-weight: 500; } .ds-glass-text { flex: 1 1 10rem; min-width: 0; } .ds-glass-name { margin: 0; font-size: 0.875rem; font-weight: 500; color: #e8f3f1; } .ds-glass-meta { margin: 0; font-size: 0.875rem; color: rgba(232,243,241,0.85); } .ds-chip-gold { border-radius: 9999px; background: rgba(242,193,78,0.15); color: #f2c14e; padding: 0.25rem 0.75rem; font-size: 0.875rem; }"
+    },
+    {
+      "name": "Ring Label",
+      "kind": "chip",
+      "refersTo": "ring-label",
+      "description": "Names an orbit and its threshold over the scene.",
+      "html": "<span class=\"ds-ring-label\"><span class=\"ds-ring-name\">Gone quiet</span><span class=\"ds-ring-note\">30 days without contact</span></span>",
+      "css": ".ds-ring-label { display: inline-block; white-space: nowrap; border-radius: 9999px; background: rgba(3,5,12,0.75); padding: 0.25rem 0.75rem; text-align: center; } .ds-ring-name { display: block; font-family: var(--font-display), 'Fraunces', Georgia, serif; font-size: 0.875rem; line-height: 1.25; color: #f2c14e; } .ds-ring-note { display: block; font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; font-size: 0.75rem; line-height: 1.25; color: #9aada8; }"
+    },
+    {
+      "name": "Last Talked Slider",
+      "kind": "input",
+      "refersTo": "input-email",
+      "description": "The page's one live control: a native range input that moves a world across the rings.",
+      "html": "<div class=\"ds-slider\"><label for=\"ds-slider-input\">Pick someone you know. When did you last talk?</label><input id=\"ds-slider-input\" type=\"range\" min=\"0\" max=\"14\" step=\"1\" value=\"3\"><output for=\"ds-slider-input\"><span class=\"ds-slider-stop\">2 weeks ago.</span> In touch. Nothing to do yet.</output></div>",
+      "css": ".ds-slider { display: flex; flex-direction: column; align-items: flex-start; max-width: 24rem; font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; font-size: 0.875rem; background: #03050c; padding: 1rem; } .ds-slider label { color: #e8f3f1; } .ds-slider input { margin-top: 0.25rem; height: 2.75rem; width: 100%; cursor: pointer; border-radius: 9999px; accent-color: #f2c14e; } .ds-slider input:focus-visible { outline: 2px solid #f2c14e; outline-offset: 2px; } .ds-slider output { color: #9aada8; } .ds-slider-stop { display: inline-block; color: #f2c14e; } .ds-slider-stop::first-letter { text-transform: uppercase; }"
+    },
+    {
+      "name": "Email Field",
+      "kind": "input",
+      "refersTo": "input-email",
+      "description": "The mailing-list field inside the finale's glass card.",
+      "html": "<input class=\"ds-input-email\" type=\"email\" placeholder=\"you@company.com\">",
+      "css": ".ds-input-email { width: 100%; max-width: 24rem; border-radius: 0.875rem; border: 1px solid rgba(232,243,241,0.14); background: rgba(5,7,15,0.5); padding: 0.875rem 1.125rem; color: #e8f3f1; font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; font-size: 1rem; } .ds-input-email::placeholder { color: #6d807c; } .ds-input-email:focus { border-color: rgba(242,193,78,0.5); outline: none; } .ds-input-email:focus-visible { box-shadow: 0 0 0 3px rgba(242,193,78,0.7); }"
+    },
+    {
+      "name": "Price Ticket",
+      "kind": "custom",
+      "refersTo": "price-ticket",
+      "description": "The price printed on a light ticket with a dashed tear line and masked notches.",
+      "html": "<div class=\"ds-ticket\"><div class=\"ds-ticket-main\"><p class=\"ds-ticket-head\">Free for your first 500 contacts.</p><p class=\"ds-ticket-body\">Import everyone, see who has gone quiet, and follow up.</p></div><div class=\"ds-ticket-stub\"><p class=\"ds-ticket-price\">$0</p><a class=\"ds-ticket-btn\" href=\"#\">See pricing</a></div></div>",
+      "css": ".ds-ticket { display: grid; grid-template-columns: 7fr 3fr; max-width: 56rem; border-radius: 1.5rem; background: #e8f3f1; color: #0f3d3e; -webkit-mask-image: radial-gradient(circle 14px at 70% 0, transparent 13.5px, #000 14px), radial-gradient(circle 14px at 70% 100%, transparent 13.5px, #000 14px); mask-image: radial-gradient(circle 14px at 70% 0, transparent 13.5px, #000 14px), radial-gradient(circle 14px at 70% 100%, transparent 13.5px, #000 14px); -webkit-mask-composite: source-in; mask-composite: intersect; } .ds-ticket-main { padding: 3rem; } .ds-ticket-head { margin: 0; font-family: var(--font-display), 'Fraunces', Georgia, serif; font-size: clamp(2.25rem, 5vw, 3.75rem); line-height: 1.03; letter-spacing: -0.03em; } .ds-ticket-body { margin: 1rem 0 0; max-width: 28rem; font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; font-size: 1rem; line-height: 1.625; color: rgba(15,61,62,0.85); } .ds-ticket-stub { display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 1.5rem; padding: 2.5rem; border-left: 1px dashed rgba(15,61,62,0.35); } .ds-ticket-price { margin: 0; font-family: var(--font-display), 'Fraunces', Georgia, serif; font-size: 3.75rem; line-height: 1; } .ds-ticket-btn { display: inline-flex; min-height: 2.75rem; align-items: center; justify-content: center; border-radius: 9999px; background: #0f3d3e; color: #e8f3f1; padding: 0.75rem 1.5rem; font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; font-size: 0.875rem; font-weight: 500; text-decoration: none; transition: background-color 120ms; } .ds-ticket-btn:hover { background: #0b2e2f; } .ds-ticket-btn:focus-visible { outline: 2px solid #0f3d3e; outline-offset: 2px; }"
+    },
+    {
+      "name": "Field Band Step",
+      "kind": "custom",
+      "refersTo": "product-crop",
+      "description": "One How it works band: flat teal field, gold numeral, Fraunces title, one sentence.",
+      "html": "<div class=\"ds-band\"><p class=\"ds-band-num\" aria-hidden=\"true\">3</p><h3 class=\"ds-band-title\">Each week, a short list.</h3><p class=\"ds-band-body\">Who to follow up with today, and why.</p></div>",
+      "css": ".ds-band { background: #0d2728; padding: 3.5rem 2rem; } .ds-band-num { margin: 0; font-family: var(--font-display), 'Fraunces', Georgia, serif; font-size: 3rem; line-height: 1; color: #f2c14e; } .ds-band-title { margin: 1rem 0 0; font-family: var(--font-display), 'Fraunces', Georgia, serif; font-weight: 400; font-size: clamp(1.5rem, 2.4vw, 2rem); line-height: 1.25; letter-spacing: -0.02em; color: #e8f3f1; } .ds-band-body { margin: 0.75rem 0 0; max-width: 24rem; font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; font-size: 1rem; line-height: 1.625; color: rgba(232,243,241,0.85); }"
+    },
+    {
+      "name": "Header Pill",
+      "kind": "nav",
+      "refersTo": "",
+      "description": "The floating header after the hero: near-opaque dark glass with section links and the header-size primary.",
+      "html": "<nav class=\"ds-header\"><span class=\"ds-header-mark\">Orbit</span><span class=\"ds-header-links\"><a class=\"ds-header-link\" href=\"#\">Constellations</a><a class=\"ds-header-link ds-header-link-active\" href=\"#\">How it works</a><a class=\"ds-header-link\" href=\"#\">Pricing</a></span><a class=\"ds-header-cta\" href=\"#\">Get Started</a></nav>",
+      "css": ".ds-header { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1.5rem; border-radius: 22px; border: 1px solid rgba(232,243,241,0.18); background: linear-gradient(165deg, rgba(18,24,36,0.96) 0%, rgba(10,14,24,0.94) 45%, rgba(6,8,16,0.92) 100%); box-shadow: 0 0 0 1px rgba(255,255,255,0.06), inset 0 1px 0 0 rgba(255,255,255,0.12), inset 0 -1px 0 0 rgba(0,0,0,0.4), 0 16px 48px -12px rgba(0,0,0,0.65), 0 4px 14px -4px rgba(0,0,0,0.45); backdrop-filter: blur(24px) saturate(1.4); font-family: var(--font-sans), 'Outfit', system-ui, sans-serif; } .ds-header-mark { font-family: var(--font-display), 'Fraunces', Georgia, serif; font-size: 1.25rem; letter-spacing: -0.025em; color: #e8f3f1; } .ds-header-links { display: flex; flex: 1; justify-content: center; gap: 0.25rem; } .ds-header-link { border-radius: 0.625rem; padding: 0.25rem 0.625rem; font-size: 0.875rem; color: #9aada8; text-decoration: none; transition: color 120ms; } .ds-header-link:hover { color: #e8f3f1; } .ds-header-link:focus-visible { outline: 2px solid #f2c14e; outline-offset: 2px; } .ds-header-link-active { color: #e8f3f1; background: rgba(232,243,241,0.06); } .ds-header-cta { border-radius: 9999px; background: #e8f3f1; color: #0f3d3e; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; white-space: nowrap; text-decoration: none; transition: background-color 120ms; } .ds-header-cta:hover { background: #ffffff; } .ds-header-cta:focus-visible { outline: 2px solid #f2c14e; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "A Real Planetary System",
+    "overview": "The visitor's network is shown as a real planetary system: they are the star, each person is a world, and distance from the star is time since they last talked. Everything on the page is the real thing or a measurement of it. The hero is one real-time 3D system with textured planets, a real star map and a real small-body model; below it are full-bleed photographs (Orion, the Carina Nebula) and footage of Earth at night. Headlines sit directly on that imagery, left-aligned, with nothing between the type and the sky but a scrim where legibility needs one.\n\nThe page is always dark. Its ground is not a flat colour but a fixed starfield on near-black navy, and every picture dissolves into it instead of ending at an edge. Colour is committed and narrow: near-black navy, one gold, one pale ink. \"How it works\" is the single deliberate change of ground, three flat teal fields butted together, each holding a real crop of the product.\n\nMotion has one grammar per place. The hero is scrubbed by native scroll through three beats; each section below gets one quiet rise as it enters; the constellation lines draw with scroll. All copy ships in the document and reads with motion off, without WebGL, and without script.",
+    "keyCharacteristics": [
+      "Always dark, on a starfield ground of near-black navy",
+      "Real imagery only: textured worlds, star map, JWST and Hubble photography, ISS footage, real product crops; every outside asset credited",
+      "Fraunces headlines set directly on the image, left-aligned to one page-wide left edge",
+      "Gold is a signal, not a fill",
+      "Pictures dissolve into the ground; nothing photographic has a hard edge",
+      "A card appears only where a card is the content",
+      "Three delivery paths for the hero: live scene, poster, static stills"
+    ],
+    "rules": [
+      { "name": "The Gold Is A Signal Rule", "body": "Gold marks the star, a line, a numeral, a label or a state. It is never a filled button at rest, never a background, never body text.", "section": "colors" },
+      { "name": "The Light Action Rule", "body": "The primary action is the one Starlight pill on a dark page. Gold does not compete with it. (The direction contract planned gold for the primary action; the build shipped it light, and the build is the record.)", "section": "colors" },
+      { "name": "The Alpha Ink Rule", "body": "Secondary text is Starlight at 85 to 90% alpha, not a separate grey. Dust Grey is reserved for the third tier.", "section": "colors" },
+      { "name": "The Two Voices Rule", "body": "Fraunces states, Outfit explains. A Fraunces line is a headline, a name or a number; never a paragraph.", "section": "typography" },
+      { "name": "The No Eyebrow Rule", "body": "No small label sits above a headline. Where a section's list is its own headline, the heading is kept for the outline only (visually hidden).", "section": "typography" },
+      { "name": "The Dissolve Rule", "body": "A photograph never ends at a hard edge or a rounded corner. It is masked to transparent (top and bottom 16%, or radially for a square still) so the ground shows through. Fade with a mask, never with a gradient to a fixed colour: the ground is a starfield, and a fade to one colour leaves a line.", "section": "elevation" },
+      { "name": "The Scrim Is Not Decoration Rule", "body": "A dark gradient exists only under type that would otherwise sit on bright imagery, on the side the type is on.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep the page dark on the starfield ground (`space-ground`), with `starlight` as the only text colour family on dark.",
+      "Do use real imagery with a recorded source: every outside picture, model or clip gets an entry in `landing-credits.ts` and appears in the visible credits line.",
+      "Do dissolve every photograph and video into the ground with a mask (transparent, black at 16%, black at 84%, transparent).",
+      "Do start every section's type on the same left edge: gutter on the outer box, a 72rem column inside, copy capped at 28rem.",
+      "Do set headlines in Fraunces directly on the image, with a scrim only where the picture is bright under the type.",
+      "Do show the product as real crops at their own pixel size, with a phone capture for phones.",
+      "Do make every scroll-linked piece its own reduced-motion gate and keep all copy in the server-rendered document.",
+      "Do give a self-starting loop longer than five seconds a visible pause control."
+    ],
+    "donts": [
+      "Don't fill a button or a surface with gold; gold is the star, lines, numerals, labels and states.",
+      "Don't box a photograph or give it a corner radius.",
+      "Don't fade a picture to a fixed colour; the ground is not one colour.",
+      "Don't add a glass card as a frame for ordinary copy; a card appears only where a card is the content.",
+      "Don't put a small label above a headline.",
+      "Don't add a second ground change; the teal fields belong to \"How it works\" alone.",
+      "Don't invent testimonials, logos, statistics or illustrative stand-ins for imagery; sample people in cards and figures are labelled as sample data in the source.",
+      "Don't let the hero scene load in the page's first bundle or block the poster."
+    ]
+  }
+}

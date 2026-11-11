@@ -240,7 +240,7 @@ export const config = {
     // by type the browser commits to that URL and never falls back to the <img>. That is
     // exactly how `avif` broke every planet on the marketing hero. Add new static
     // extensions here when you add them to public/.
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|avif|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|avif|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest|glb|mp4|webm)).*)",
     "/(api|trpc)(.*)",
     "/__clerk/:path*",
   ],

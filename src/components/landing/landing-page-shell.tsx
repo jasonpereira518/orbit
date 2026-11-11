@@ -11,6 +11,7 @@ export function LandingPageShell({
   signedIn = false,
   heroCopy,
   claim,
+  cometClaim,
   children,
 }: {
   clerkOn: boolean;
@@ -18,6 +19,7 @@ export function LandingPageShell({
   signedIn?: boolean;
   heroCopy: ReactNode;
   claim: ReactNode;
+  cometClaim: ReactNode;
   children: ReactNode;
 }) {
   const [heroPinEl, setHeroPinEl] = useState<HTMLElement | null>(null);
@@ -36,7 +38,7 @@ export function LandingPageShell({
       {/* On phones the page ends a fade's height lower, so its last links can scroll clear of
           the fixed waitlist pill and social icons (landing-page.tsx). */}
       <main id="main-content" className="max-md:pb-[calc(5rem+env(safe-area-inset-bottom))]">
-        <HeroPin ref={setHeroPinNode} heroCopy={heroCopy} claim={claim} />
+        <HeroPin ref={setHeroPinNode} heroCopy={heroCopy} claim={claim} cometClaim={cometClaim} />
         {children}
       </main>
     </>

@@ -29,7 +29,9 @@ import { adminRedirects } from "./src/lib/admin-redirects";
  */
 const STATIC_IMAGE_CACHE = "public, max-age=86400, stale-while-revalidate=604800";
 const staticAssetCaching = [
-  "/landing/:file(.+\\.(?:avif|png|webp))",
+  // glb/mp4/webm: the landing hero's 3D model and the finale's video loop. Not images, but
+  // the same policy fits: unfingerprinted, so their filenames carry a version (`-v1`).
+  "/landing/:file(.+\\.(?:avif|png|webp|glb|mp4|webm))",
   "/guides/:file(.+\\.png)",
   "/avatars/:file(.+\\.png)",
   "/integrations/:file(.+\\.png)",
