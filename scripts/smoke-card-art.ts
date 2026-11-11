@@ -4,7 +4,7 @@
  * dangerouslySetInnerHTML and embedded in the link-preview image, so that last one is the
  * safety property. Pure: no database, no network.
  */
-import { ACCENTS, ACCENT_KEYS, artLayout, backLayout, cardArt, cardArtSvg, cardSeed, isAccentKey } from "../src/lib/cards/card-art";
+import { ACCENTS, ACCENT_KEYS, artLayout, backLayout, cardArt, cardArtSvg, cardSeed, isAccentKey, planetBox } from "../src/lib/cards/card-art";
 import { checker } from "./smoke/check";
 
 const t = checker();
@@ -41,6 +41,7 @@ let boundsOk = true;
 let finiteOk = true;
 let bandsOk = true;
 let layoutOk = true;
+let planetOk = true;
 const detail: string[] = [];
 for (let i = 0; i < 50; i++) {
   const art = cardArt(cardSeed(`seed-${i}-${Math.random().toString(36).slice(2)}`, i), null);
@@ -50,6 +51,18 @@ for (let i = 0; i < 50; i++) {
   }
   if (!art.stars.every((s) => s.x >= 0 && s.x <= 1 && s.y >= 0 && s.y <= 1)) boundsOk = false;
   if (art.planet.bands.length < 2 || art.planet.bands.length > 4) bandsOk = false;
+  for (const { width, height } of SIZES) {
+    // Planet, ring and moon stay inside the glass pane with a margin, and clear of the stars.
+    const { s, inset, box } = artLayout(width, height);
+    const p = planetBox(art, width, height);
+    const m = inset + 0.02 * s;
+    const inPane = p.x0 >= m && p.y0 >= m && p.x1 <= width - m && p.y1 <= height - m;
+    const clearOfStars = box.x1 <= p.x0 || box.y0 >= p.y1;
+    if (!inPane || !clearOfStars || [p.x0, p.x1, p.y0, p.y1].some((v) => !Number.isFinite(v))) {
+      planetOk = false;
+      detail.push(`planet ${width}x${height} ring=${art.planet.ring} moon=${!!art.planet.moon} ${JSON.stringify(p)}`);
+    }
+  }
   for (const size of SIZES) {
     for (const part of ["front", "back"] as const) {
       const svg = cardArtSvg(art, { ...size, part });
@@ -75,6 +88,7 @@ for (const { width, height } of SIZES) {
 t.check("6–9 constellation stars", shapeOk, detail.join(", "));
 t.check("stars stay inside the safe area", boundsOk);
 t.check("2–4 planet bands", bandsOk);
+t.check("planet, ring and moon stay inside the pane, clear of the stars", planetOk, detail.join(", "));
 t.check("no NaN/Infinity/undefined in any SVG", finiteOk, detail.join(", "));
 t.check("safe area clear of the planet; QR tile inside the ring", layoutOk, detail.join(", "));
 

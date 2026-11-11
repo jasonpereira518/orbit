@@ -129,8 +129,8 @@ export function cardArt(seed: string, accent: AccentKey | null): CardArt {
   }));
   const ring = rand() < 0.55;
   const hasMoon = rand() < 0.45;
-  // Off to the planet's left, where the card has room for it.
-  const moon = { angle: between(rand, 150, 225), dist: ring ? between(rand, 2, 2.2) : between(rand, 1.5, 1.8), r: between(rand, 0.14, 0.22) };
+  // Off to the planet's left, where the card has room for it, and never above or below the disc.
+  const moon = { angle: between(rand, 160, 200), dist: ring ? between(rand, 2, 2.2) : between(rand, 1.5, 1.8), r: between(rand, 0.14, 0.22) };
 
   return {
     id: `oc${hash.toString(36)}`,
@@ -142,20 +142,56 @@ export function cardArt(seed: string, accent: AccentKey | null): CardArt {
   };
 }
 
+/** The ring's half-axes and the moon's furthest reach, in planet radii. */
+const RING_RX = 1.75;
+const RING_RY = 0.36;
+const MOON_REACH = 2.2 + 0.22;
+
 /** Where things sit on the front, in the SVG's own units. */
 export function artLayout(width: number, height: number) {
   const s = Math.min(width, height);
   const inset = 0.04 * s;
-  const r = 0.17 * s;
-  const ringRx = 1.75 * r;
-  const cx = width - inset - 0.3 * s;
-  const cy = inset + 0.27 * s;
+  const margin = 0.04 * s;
+  const r = 0.15 * s;
+  const ringRx = RING_RX * r;
+  // The ring's tip a margin inside the pane; the disc's top a margin below it (a ring tilted at
+  // most 26° never reaches higher than the disc does).
+  const cx = width - inset - margin - ringRx;
+  const cy = inset + margin + r;
   const landscape = width >= height;
   // Left of the planet on a landscape card; below it on a portrait one. Clear of the name either way.
   const box = landscape
-    ? { x0: inset + 0.08 * s, x1: cx - ringRx - 0.05 * s, y0: inset + 0.1 * s, y1: height * 0.58 }
+    ? { x0: inset + 0.08 * s, x1: cx - MOON_REACH * r - 0.04 * s, y0: inset + 0.1 * s, y1: height * 0.58 }
     : { x0: inset + 0.08 * s, x1: width - inset - 0.08 * s, y0: cy + r + 0.12 * s, y1: height * 0.64 };
   return { s, inset, planet: { cx, cy, r, ringRx }, box };
+}
+
+function moonCircle(moon: NonNullable<CardArt["planet"]["moon"]>, cx: number, cy: number, r: number) {
+  const a = (moon.angle * Math.PI) / 180;
+  return { x: cx + Math.cos(a) * moon.dist * r, y: cy + Math.sin(a) * moon.dist * r, r: moon.r * r };
+}
+
+/** The planet's whole footprint — disc, tilted ring, moon — for keeping it inside the pane. */
+export function planetBox(art: CardArt, width: number, height: number) {
+  const { cx, cy, r } = artLayout(width, height).planet;
+  const t = (art.planet.tilt * Math.PI) / 180;
+  let hx = r;
+  let hy = r;
+  if (art.planet.ring) {
+    const rx = RING_RX * r;
+    const ry = RING_RY * r;
+    hx = Math.max(hx, Math.hypot(rx * Math.cos(t), ry * Math.sin(t)));
+    hy = Math.max(hy, Math.hypot(rx * Math.sin(t), ry * Math.cos(t)));
+  }
+  const box = { x0: cx - hx, x1: cx + hx, y0: cy - hy, y1: cy + hy };
+  if (art.planet.moon) {
+    const m = moonCircle(art.planet.moon, cx, cy, r);
+    box.x0 = Math.min(box.x0, m.x - m.r);
+    box.x1 = Math.max(box.x1, m.x + m.r);
+    box.y0 = Math.min(box.y0, m.y - m.r);
+    box.y1 = Math.max(box.y1, m.y + m.r);
+  }
+  return box;
 }
 
 /** Where the gold ring and the QR tile sit on the back, in the SVG's own units. */
@@ -203,16 +239,14 @@ function planetSvg(art: CardArt, w: number, h: number) {
   const hex = ACCENTS[art.accent].hex;
   const { tilt, bands, ring, moon } = art.planet;
   const ringEl = (half: "back" | "front") =>
-    `<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(r * 1.75)}" ry="${n(r * 0.36)}" fill="none" stroke="${mix(hex, "#ffffff", 0.45)}" stroke-opacity="${half === "back" ? 0.4 : 0.7}" stroke-width="${n(r * 0.07)}" clip-path="url(#${p}-${half})"/>`;
+    `<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(r * RING_RX)}" ry="${n(r * RING_RY)}" fill="none" stroke="${mix(hex, "#ffffff", 0.45)}" stroke-opacity="${half === "back" ? 0.4 : 0.7}" stroke-width="${n(r * 0.07)}" clip-path="url(#${p}-${half})"/>`;
   const bandEls = bands
     .map((b) => `<rect x="${n(cx - r)}" y="${n(cy + b.y * r)}" width="${n(2 * r)}" height="${n(b.h * r)}" fill="${b.light ? "#ffffff" : CARD_NAVY}" fill-opacity="${n(b.alpha)}"/>`)
     .join("");
   const moonEl = moon
     ? (() => {
-        const a = (moon.angle * Math.PI) / 180;
-        const mx = cx + Math.cos(a) * moon.dist * r;
-        const my = cy + Math.sin(a) * moon.dist * r;
-        return `<circle cx="${n(mx)}" cy="${n(my)}" r="${n(moon.r * r)}" fill="url(#${p}-moon)"/>`;
+        const m = moonCircle(moon, cx, cy, r);
+        return `<circle cx="${n(m.x)}" cy="${n(m.y)}" r="${n(m.r)}" fill="url(#${p}-moon)"/>`;
       })()
     : "";
   return {
