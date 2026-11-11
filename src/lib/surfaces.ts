@@ -280,6 +280,13 @@ export const CLOUD_NOTES_SURFACE_KEY = "feature.cloud-notes";
 export const NOTION_SURFACE_KEY = "feature.notion";
 const FEATURES: Surface[] = [
   {
+    key: "feature.also-here",
+    kind: "feature",
+    label: "Orbit people here",
+    description: "See other Orbit users at the same event while it's on, if you both turn it on.",
+    comingSoon: true,
+  },
+  {
     key: COMPOSE_SURFACE_KEY,
     kind: "feature",
     label: "Compose email",

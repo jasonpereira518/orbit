@@ -3154,7 +3154,9 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 226 = share_cards + card_shares — Orbit Card (a personal contact card shared by QR/link, and
 // what visitors send back). Renumbered to 226 on the main merge: 223–225 are claimed by open
 // branches (custom constellations, Radar PR 2, Radar off by default).
-export const SCHEMA_VERSION = 226;
+// 227 = user_settings.discoverable_at + events.discovery_hidden_at + event_aliases match indexes —
+// Also here (people at the same event, docs/superpowers/specs/2026-11-11-people-near-you-design.md).
+export const SCHEMA_VERSION = 227;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3388,6 +3390,9 @@ export const SCALE_DDL: string[] = [
   // --- v226: Orbit Card — FK lookups so deleting a contact/event does not scan card_shares ---
   `CREATE INDEX IF NOT EXISTS card_shares_contact_idx ON card_shares(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS card_shares_event_idx ON card_shares(event_id) WHERE event_id IS NOT NULL`,
+  // --- v227: Also here — match people at the same event across users ---------------
+  `CREATE INDEX IF NOT EXISTS event_aliases_kind_value_idx ON event_aliases(kind, value) WHERE event_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS event_aliases_uid_idx ON event_aliases((substring(value from position(':' in value) + 1))) WHERE kind = 'source_ref' AND event_id IS NOT NULL AND (value LIKE 'gcal:%' OR value LIKE 'ics:%')`,
   // --- v62: meeting-notes workflow ---------------------------------------------------
   //
   // A cadence the notes actually stated ("check in monthly"). Days, because every consumer
@@ -4210,6 +4215,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // because a local database created before either existed only ever sees this list.
   await ensureColumn(client, "user_settings", "schools", "jsonb DEFAULT '[]'::jsonb");
   await ensureColumn(client, "events", "kind", "text");
+  await ensureColumn(client, "events", "discovery_hidden_at", "timestamptz");
   await ensureColumn(client, "contacts", "preferred_name", "text");
   await ensureColumn(client, "contacts", "website", "text");
   await ensureColumn(client, "interactions", "external_id", "text");
@@ -4563,6 +4569,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // queries need. Same reasoning as the block above — the DDL template only helps a
   // database that does not have `user_settings` yet.
   await ensureColumn(client, "user_settings", "suspended_at", "timestamptz");
+  await ensureColumn(client, "user_settings", "discoverable_at", "timestamptz");
   await ensureColumn(client, "user_settings", "suspended_reason", "text");
   await ensureColumn(client, "user_settings", "suspended_by", "text");
 
@@ -4867,6 +4874,7 @@ const alters = [
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS rsvp_status text`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS role_source text`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS dismissed_at timestamptz`,
+  `ALTER TABLE events ADD COLUMN IF NOT EXISTS discovery_hidden_at timestamptz`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_due_at timestamptz`,
   `ALTER TABLE events ADD COLUMN IF NOT EXISTS enrich_attempts integer NOT NULL DEFAULT 0`,
   // v48 (event platform), cross-event identity. `identity_key` cannot answer "same person at another event":
@@ -5172,6 +5180,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id)`,
   `CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at)`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS discoverable_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_reason text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS suspended_by text`,
   // Schema v17: note processing provenance columns.
