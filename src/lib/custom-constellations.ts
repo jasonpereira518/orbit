@@ -9,6 +9,7 @@
 import { completeJson, parseAiJson } from "@/lib/ai";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { understandQuery } from "@/lib/chat-retrieval";
+import { EMBED_SOFT_TIMEOUT_MS } from "@/lib/contact-ranking";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { UserFacingError } from "@/lib/errors";
 import { hybridSearchContacts, listContactsMatching, type RankedContact } from "@/lib/hybrid-search";
@@ -69,9 +70,11 @@ export async function proposeMembers(userId: string, prompt: string, deps: Propo
   }
 
   const query = parsed.semanticQuery.trim() || asked;
-  // Pending, not awaited, same as rankContacts: the lexical arms run while it is fetched.
+  // Pending, not awaited, same as rankContacts: the lexical arms run while it is fetched. The
+  // soft timeout (rankContacts' own) turns a slow provider into the lexical-only path; the
+  // request keeps running and lands in the cache.
   const embedding =
-    query.length >= 3 && shouldUseSemanticArm(query) ? embed(userId, query).catch(() => null) : null;
+    query.length >= 3 && shouldUseSemanticArm(query) ? embed(userId, query, undefined, undefined, { softTimeoutMs: EMBED_SOFT_TIMEOUT_MS }).catch(() => null) : null;
   const candidates = await search(userId, {
     query,
     embedding,

@@ -159,6 +159,26 @@ run(async () => {
     `${JSON.stringify(seenFilters)} calls=${judgeCalls}`
   );
 
+  let embedOptions: { softTimeoutMs?: number } | undefined;
+  await proposeMembers(
+    USER,
+    "mentors who could introduce me",
+    stubs({
+      understand: parse({ semanticQuery: "mentors who could introduce me" }),
+      embed: async (_u: string, _q: string, _e: unknown, _s: unknown, o: { softTimeoutMs?: number }) => {
+        embedOptions = o;
+        return [0.1];
+      },
+      search: async () => [card("c1")],
+      complete: async () => JSON.stringify({ name: "Mentors", members: [{ id: "c1" }] }),
+    })
+  );
+  check(
+    "query embedding is bounded by a soft timeout",
+    typeof embedOptions?.softTimeoutMs === "number" && embedOptions.softTimeoutMs > 0,
+    JSON.stringify(embedOptions)
+  );
+
   let nothingError: unknown;
   await proposeMembers(
     USER,
