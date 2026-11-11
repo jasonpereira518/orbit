@@ -623,6 +623,10 @@ export async function saveInputFromParse(ctx: ParseSaveContext): Promise<SaveNot
         anchorIso: s.anchorIso,
         dueDateIso: o.dueDateIso ?? s.dueDateIso,
         origin: s.origin ?? "explicit",
+        priority: s.priority,
+        category: s.category,
+        timingRationale: s.timingRationale,
+        importanceReason: s.importanceReason,
       };
     });
 

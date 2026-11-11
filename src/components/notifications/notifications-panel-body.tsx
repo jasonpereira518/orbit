@@ -546,8 +546,18 @@ function NotificationRow({
         onClick={onNavigate}
         className="min-w-0 flex-1 hover:underline"
       >
-        <span className="block truncate text-sm font-medium text-ink">
-          {item.title}
+        <span className="flex items-center gap-1.5 truncate text-sm font-medium text-ink">
+          {item.priority === "critical" && (
+            <span className="shrink-0 rounded bg-rose-500/15 px-1.5 py-0.2 text-2xs font-semibold text-rose-700 dark:text-rose-300">
+              Critical
+            </span>
+          )}
+          {item.priority === "high" && (
+            <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.2 text-2xs font-semibold text-amber-700 dark:text-amber-300">
+              High
+            </span>
+          )}
+          <span className="truncate">{item.title}</span>
         </span>
         <span className="mt-0.5 block truncate text-xs text-muted-foreground">
           {when}

@@ -24,6 +24,7 @@ import {
   type ReminderPlanParticipant,
 } from "@/lib/note-batches";
 import type { OpportunityKind } from "@/lib/opportunity-kinds";
+import type { ReminderPriority } from "@/db/schema";
 
 export type CapturePhase =
   | "input"
@@ -187,16 +188,23 @@ export const IMPLIED_AUTO_TICK_SCORE = 80;
 
 /** Default ticks for the review list. */
 export function defaultReminderKeys(
-  suggestions: readonly { key: string; confidenceScore: number; origin?: "explicit" | "implied" }[]
+  suggestions: readonly {
+    key: string;
+    confidenceScore: number;
+    origin?: "explicit" | "implied";
+    priority?: ReminderPriority;
+  }[]
 ): string[] {
   return suggestions
-    .filter((s) =>
-      // `origin` is optional so a `CaptureReminderChoices` written before implied steps
-      // existed still reads as explicit rather than falling off the list.
-      s.origin === "implied"
+    .filter((s) => {
+      // High-importance curation: when priority is known, only critical & high are pre-ticked
+      if (s.priority && s.priority !== "critical" && s.priority !== "high") {
+        return false;
+      }
+      return s.origin === "implied"
         ? s.confidenceScore >= IMPLIED_AUTO_TICK_SCORE
-        : s.confidenceScore >= EXPLICIT_AUTO_TICK_CONFIDENCE
-    )
+        : s.confidenceScore >= EXPLICIT_AUTO_TICK_CONFIDENCE;
+    })
     .map((s) => s.key);
 }
 

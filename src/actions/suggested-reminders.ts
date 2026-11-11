@@ -7,6 +7,8 @@ import {
   reminders,
   suggestedReminders,
   type ReminderActionKind,
+  type ReminderPriority,
+  type ReminderCategory,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import {
@@ -33,6 +35,10 @@ export type SuggestedReminderRow = {
   sourceExcerpt: string;
   actionKind: ReminderActionKind;
   confidenceScore: number | null;
+  priority: ReminderPriority;
+  category: ReminderCategory;
+  timingRationale: string | null;
+  importanceReason: string | null;
   contactId: string | null;
   contactName: string | null;
   createdAt: Date;
@@ -87,6 +93,10 @@ export async function listSuggestedReminders(options?: {
     sourceExcerpt: r.sourceExcerpt,
     actionKind: r.actionKind,
     confidenceScore: r.confidenceScore,
+    priority: r.priority as ReminderPriority,
+    category: r.category as ReminderCategory,
+    timingRationale: r.timingRationale,
+    importanceReason: r.importanceReason,
     contactId: r.contactId,
     contactName: r.contactId ? nameById.get(r.contactId) ?? null : null,
     createdAt: r.createdAt,
@@ -168,6 +178,10 @@ export async function confirmSuggestedReminder(
       reminderType: EXTRACTED_DATE_REMINDER_TYPE,
       actionKind,
       createdBy: "ai",
+      priority: row.priority,
+      category: row.category,
+      timingRationale: row.timingRationale,
+      importanceReason: row.importanceReason,
     })
     .returning();
 

@@ -9,6 +9,7 @@ import {
   deleteGoalForUser,
   listActiveGoalTextsForUser,
   restoreGoalForUser,
+  updateGoalProgressForUser,
   type GoalSnapshot,
 } from "@/lib/user-goals";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
@@ -28,9 +29,20 @@ export async function listActiveGoalTexts() {
 }
 
 /** Validation comes back as data — see `asActionResult` in lib/errors.ts. */
-export async function addGoal(text: string) {
+export async function addGoal(
+  text: string,
+  options?: { progress?: string | null; category?: string | null }
+) {
   return asActionResult(async () => {
-    const row = await addGoalForUser(await requireUserId(), text);
+    const row = await addGoalForUser(await requireUserId(), text, options);
+    revalidateGoalPaths();
+    return row;
+  });
+}
+
+export async function updateGoalProgress(id: string, progress: string | null) {
+  return asActionResult(async () => {
+    const row = await updateGoalProgressForUser(await requireUserId(), id, progress);
     revalidateGoalPaths();
     return row;
   });

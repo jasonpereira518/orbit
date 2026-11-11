@@ -101,7 +101,21 @@ export async function loadAppPulse(
   const dueItems = panel.items
     .filter((i) => i.urgency === "due" && !notified.has(i.id))
     .slice(0, DESKTOP_BATCH)
-    .map((i) => ({ id: i.id, title: i.title, body: i.body || undefined, url: i.url }));
+    .map((i) => {
+      let title = i.title;
+      if (i.priority === "critical") {
+        title = `🔥 [Critical] ${i.title}`;
+      } else if (i.priority === "high") {
+        title = `⭐ [High Priority] ${i.title}`;
+      }
+      const contextParts = [i.importanceReason || i.timingRationale, i.body].filter(Boolean);
+      return {
+        id: i.id,
+        title,
+        body: contextParts.join(" · ") || undefined,
+        url: i.url,
+      };
+    });
   return {
     panel,
     dueItems,

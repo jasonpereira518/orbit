@@ -15,6 +15,8 @@ import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { DueFollowUpRow } from "@/components/dashboard/due-follow-up-row";
 import { GenerateFollowUpsButton } from "@/components/dashboard/generate-follow-ups-button";
 import { GoalsSummary } from "@/components/dashboard/goals-summary";
+import { SmartOpportunitiesCard } from "@/components/opportunities/smart-opportunities-card";
+import { listSmartOpportunitiesForUser } from "@/lib/smart-opportunities-engine";
 import { LinkedInExportNudge, LinkedInRefreshNudge } from "@/components/dashboard/linkedin-export-nudge";
 import { LinkedInExportCard } from "@/components/linkedin/linkedin-export-card";
 import { linkedinCardState } from "@/lib/linkedin-export-card";
@@ -475,6 +477,10 @@ export async function RemindersAndFollowUpsSection({
               ? data.contactNameById.get(r.contactId) ?? null
               : null,
             noteBatchId: r.noteBatchId,
+            priority: r.priority,
+            category: r.category,
+            timingRationale: r.timingRationale,
+            importanceReason: r.importanceReason,
           }))}
         />
       </div>
@@ -662,9 +668,13 @@ function describeUpdate(c: {
 
 export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
   const { data, networkStats } = await bundle;
+  const userId = await requireUserId();
   // Both are request-cached (`cache()`), and the layout above has already
   // resolved them for the sidebar's tier ring — so this costs nothing extra.
-  const { plan } = await getEntitlements(await requireUserId());
+  const [{ plan }, smartOpportunities] = await Promise.all([
+    getEntitlements(userId),
+    listSmartOpportunitiesForUser(userId).catch(() => []),
+  ]);
   const freeContactLimit = (await getEffectivePlanConfig()).free.contactLimit;
   return (
     // space-y-6, not the page's space-y-8: these three are a group at the foot of
@@ -684,6 +694,8 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
           companyName: c.companyName,
         }))}
       />
+
+      <SmartOpportunitiesCard initialOpportunities={smartOpportunities} />
 
       <NetworkStatsCard stats={networkStats} />
 

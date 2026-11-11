@@ -226,8 +226,11 @@ CREATE TABLE IF NOT EXISTS user_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   text text NOT NULL,
+  progress text,
+  category text,
   active integer NOT NULL DEFAULT 1,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id);
 CREATE TABLE IF NOT EXISTS tags (
@@ -284,6 +287,10 @@ CREATE TABLE IF NOT EXISTS reminders (
   status text NOT NULL DEFAULT 'pending',
   reminder_type text NOT NULL DEFAULT 'manual',
   action_kind text NOT NULL DEFAULT 'task',
+  priority text NOT NULL DEFAULT 'normal',
+  category text NOT NULL DEFAULT 'action_item',
+  timing_rationale text,
+  importance_reason text,
   created_by text NOT NULL DEFAULT 'user',
   note_batch_id uuid,
   import_id uuid,
@@ -311,6 +318,10 @@ CREATE TABLE IF NOT EXISTS suggested_reminders (
   source_hash text NOT NULL,
   item_hash text NOT NULL,
   action_kind text NOT NULL DEFAULT 'task',
+  priority text NOT NULL DEFAULT 'normal',
+  category text NOT NULL DEFAULT 'action_item',
+  timing_rationale text,
+  importance_reason text,
   confidence_score integer,
   status text NOT NULL DEFAULT 'pending',
   reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
@@ -318,6 +329,8 @@ CREATE TABLE IF NOT EXISTS suggested_reminders (
   resolved_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS suggested_reminders_user_status_idx ON suggested_reminders(user_id, status);
+CREATE INDEX IF NOT EXISTS suggested_reminders_user_priority_idx ON suggested_reminders(user_id, priority, status);
+CREATE INDEX IF NOT EXISTS reminders_user_priority_idx ON reminders(user_id, priority, status);
 CREATE INDEX IF NOT EXISTS suggested_reminders_batch_idx ON suggested_reminders(capture_batch_id);
 CREATE UNIQUE INDEX IF NOT EXISTS suggested_reminders_user_item_uidx ON suggested_reminders(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS note_batches (
@@ -406,6 +419,27 @@ CREATE INDEX IF NOT EXISTS contact_opportunities_user_contact_idx ON contact_opp
 CREATE INDEX IF NOT EXISTS contact_opportunities_user_status_due_idx ON contact_opportunities(user_id, status, due_date);
 CREATE INDEX IF NOT EXISTS contact_opportunities_status_kind_idx ON contact_opportunities(status, kind);
 CREATE UNIQUE INDEX IF NOT EXISTS contact_opportunities_user_item_hash_uidx ON contact_opportunities(user_id, item_hash);
+CREATE TABLE IF NOT EXISTS smart_opportunities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  goal_id uuid REFERENCES user_goals(id) ON DELETE SET NULL,
+  title text NOT NULL,
+  opportunity_type text NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  synthesis_rationale text NOT NULL,
+  suggested_action text NOT NULL,
+  confidence_score integer NOT NULL DEFAULT 80,
+  impact_score text NOT NULL DEFAULT 'high',
+  related_contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  contact_excerpts jsonb NOT NULL DEFAULT '[]'::jsonb,
+  item_hash text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  closed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS smart_opportunities_user_status_idx ON smart_opportunities(user_id, status);
+CREATE INDEX IF NOT EXISTS smart_opportunities_user_goal_idx ON smart_opportunities(user_id, goal_id);
+CREATE UNIQUE INDEX IF NOT EXISTS smart_opportunities_user_item_hash_uidx ON smart_opportunities(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS contact_briefs (
   contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
   user_id text NOT NULL,
@@ -3021,7 +3055,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // and share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). Renumbered
 // 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
-export const SCHEMA_VERSION = 208;
+// 209 = Reminders Engine Redesign: reminders and suggested_reminders priority, category,
+// timing_rationale, and importance_reason columns for smart contextual reminder curation.
+// 210 = Smart Opportunities: user_goals progress/category/updated_at and smart_opportunities
+// table for cross-contact note synthesis aligned with personal goals & progress.
+export const SCHEMA_VERSION = 210;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -5413,6 +5451,42 @@ const alters = [
   `ALTER TABLE interest_list_signups ALTER COLUMN unsubscribe_token DROP NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_unsub_hash_uidx ON interest_list_signups(unsubscribe_token_hash)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_hash_uidx ON interest_list_signups(share_token_hash)`,
+  // Schema v209: reminders engine redesign — priority, category, timing_rationale, and importance_reason
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal'`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'action_item'`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS timing_rationale text`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS importance_reason text`,
+  `CREATE INDEX IF NOT EXISTS reminders_user_priority_idx ON reminders (user_id, priority, status)`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal'`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'action_item'`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS timing_rationale text`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS importance_reason text`,
+  `CREATE INDEX IF NOT EXISTS suggested_reminders_user_priority_idx ON suggested_reminders (user_id, priority, status)`,
+  // Schema v210: smart opportunities from cross-contact note synthesis and goal progress
+  `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS progress text`,
+  `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS category text`,
+  `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`,
+  `CREATE TABLE IF NOT EXISTS smart_opportunities (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id text NOT NULL,
+    goal_id uuid REFERENCES user_goals(id) ON DELETE SET NULL,
+    title text NOT NULL,
+    opportunity_type text NOT NULL,
+    status text NOT NULL DEFAULT 'open',
+    synthesis_rationale text NOT NULL,
+    suggested_action text NOT NULL,
+    confidence_score integer NOT NULL DEFAULT 80,
+    impact_score text NOT NULL DEFAULT 'high',
+    related_contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    contact_excerpts jsonb NOT NULL DEFAULT '[]'::jsonb,
+    item_hash text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    closed_at timestamptz
+  )`,
+  `CREATE INDEX IF NOT EXISTS smart_opportunities_user_status_idx ON smart_opportunities(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS smart_opportunities_user_goal_idx ON smart_opportunities(user_id, goal_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS smart_opportunities_user_item_hash_uidx ON smart_opportunities(user_id, item_hash)`,
 ];
 
 /**
