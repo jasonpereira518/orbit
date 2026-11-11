@@ -69,6 +69,9 @@ import {
   managedKeysConfigured,
   forgetManagedAiPause,
   managedPoolState,
+  managedPoolsSpent,
+  noteDecisionFailure,
+  ORBIT_PAID_DECISIONS,
   resolveAiAccess,
   runOnGrant,
   typesafeClient,
@@ -112,6 +115,8 @@ import {
 import { __clearEmbeddingCacheForTests, defaultResolveScope, getQueryEmbedding } from "../src/lib/embedding-cache";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { friendlyError, isMissingAiApiKeyError } from "../src/lib/errors";
+import { loadManagedAiOpsFacts } from "../src/lib/managed-ai-ops";
+import { TypeSafeApiError } from "../src/lib/typesafe-api";
 import { run } from "./smoke/_env";
 
 let failures = 0;
@@ -546,6 +551,8 @@ const U = {
   shared: "smoke-aia-shared",
   other: "smoke-aia-other",
   openrouterOnly: "smoke-aia-openrouter-only",
+  jevOrbit: "smoke-aia-jev-orbit",
+  jevOwn: "smoke-aia-jev-own",
 };
 
 async function account(userId: string, cols: Partial<typeof userSettings.$inferInsert>) {
@@ -1310,6 +1317,106 @@ async function sharedAccess() {
 }
 
 /**
+ * Orbit's own TypeSafe key (spec 2026-11-10-jev-work-history-design.md): it answers ONLY the
+ * two work-history gates, counts against the Anthropic pool, stops with every managed-AI stop,
+ * and a dry or refused key takes it out for two hours — while an account's own key carries on.
+ */
+async function orbitPaidJev() {
+  console.log("\nOrbit's TypeSafe key: work-history gates only");
+  const db = await getDb();
+  const RECHECK = "contact.work_history.recheck.gate";
+  const typesafeEvents = and(eq(errorEvents.source, "ai.managed"), sql`${errorEvents.context}->>'provider' = 'typesafe'`);
+  const rowsOfTypesafe = async () => (await db.select().from(errorEvents).where(typesafeEvents)).length;
+  process.env.ORBIT_MANAGED_TYPESAFE_API_KEY = "managed-typesafe-key";
+  await account(U.jevOrbit, { ...PRO });
+  await account(U.jevOwn, { ...PRO, typesafeApiKeyEncrypted: encrypt("user-typesafe-key") });
+  const poolRows: string[] = [];
+  try {
+    forgetManagedAiPause();
+    check("ORBIT_PAID_DECISIONS is exactly the two work-history gates",
+      ORBIT_PAID_DECISIONS.size === 2 && ORBIT_PAID_DECISIONS.has(RECHECK) && ORBIT_PAID_DECISIONS.has("contact.work_history.verify.gate"));
+    let access = await resolveAiAccess(U.jevOrbit);
+    const orbitGrant = access.decision(RECHECK);
+    check("a Pro account with no TypeSafe key gets Orbit's key for the re-check gate",
+      orbitGrant?.provider === "typesafe" && orbitGrant.keyOwner === "orbit", JSON.stringify(orbitGrant));
+    check("…but not for any other decision", access.decision("chat.rerank.decide") === null);
+    check("…and it has a decision model to open", access.hasDecisionModel());
+    const own = (await resolveAiAccess(U.jevOwn)).decision("chat.rerank.decide");
+    check("an account's own TypeSafe key still answers every decision", own?.keyOwner === "user", JSON.stringify(own));
+
+    process.env.ORBIT_JEV = "off";
+    check("ORBIT_JEV=off stops Orbit's key", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    delete process.env.ORBIT_JEV;
+    process.env.ORBIT_MANAGED_AI = "off";
+    forgetManagedAiPause();
+    check("ORBIT_MANAGED_AI=off stops Orbit's key", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    delete process.env.ORBIT_MANAGED_AI;
+    await db.insert(siteSettings).values({ id: 1, managedAiPaused: true }).onConflictDoUpdate({ target: siteSettings.id, set: { managedAiPaused: true } });
+    forgetManagedAiPause();
+    check("the admin pause stops Orbit's key", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    await db.update(siteSettings).set({ managedAiPaused: false }).where(eq(siteSettings.id, 1));
+
+    console.log("\nOrbit's TypeSafe spend is in the Anthropic pool");
+    forgetManagedAiPause();
+    const before = (await managedPoolsSpent()).anthropic ?? 0;
+    const [ts] = await db.insert(usageEvents).values({
+      userId: U.jevOrbit, operation: RECHECK, provider: "typesafe", model: "jev-1.13.0", kind: "completion",
+      keyOwner: "orbit", estimatedCostMicros: 1_000_000,
+    }).returning();
+    poolRows.push(ts.id);
+    const after = (await managedPoolsSpent()).anthropic ?? 0;
+    check("a 1,000,000-micro TypeSafe row raises the Anthropic pool by exactly that", after - before === 1_000_000, { before, after });
+    const [cap] = await db.insert(usageEvents).values({
+      userId: U.jevOrbit, operation: "smoke.pool", provider: "anthropic", model: "stub", kind: "completion",
+      keyOwner: "orbit", estimatedCostMicros: MANAGED_AI_POOLS.anthropic!.capMicros,
+    }).returning();
+    poolRows.push(cap.id);
+    forgetManagedAiPause();
+    check("a spent Anthropic pool stops Orbit's key", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    await db.delete(usageEvents).where(inArray(usageEvents.id, poolRows));
+    poolRows.length = 0;
+
+    console.log("\nOrbit's TypeSafe key runs dry");
+    forgetManagedAiPause();
+    access = await resolveAiAccess(U.jevOrbit);
+    const live = access.decision(RECHECK)!;
+    const ownGrant = (await resolveAiAccess(U.jevOwn)).decision("chat.rerank.decide")!;
+    await noteDecisionFailure(ownGrant, new TypeSafeApiError(402, "TypeSafe 402: payment required"));
+    check("an account's own key running dry records nothing", (await rowsOfTypesafe()) === 0);
+    delete process.env.VERCEL;
+    await noteDecisionFailure(live, new TypeSafeApiError(402, "TypeSafe 402: payment required"));
+    process.env.VERCEL = "1";
+    check("off Vercel (a dev key) a dry key records nothing in the shared DB", (await rowsOfTypesafe()) === 0);
+    await noteDecisionFailure(live, new TypeSafeApiError(500, "TypeSafe 500: overloaded"));
+    check("a plain server error does not take it out", (await rowsOfTypesafe()) === 0);
+    await noteDecisionFailure(live, new TypeSafeApiError(402, "TypeSafe 402: payment required"));
+    check("on Vercel a dry Orbit key records one error event naming typesafe", (await rowsOfTypesafe()) === 1);
+    check("…this instance stops asking at once", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    forgetManagedAiPause();
+    check("…and so does every instance (a fresh pool read)", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    check("…while an account's own key carries on", (await resolveAiAccess(U.jevOwn)).decision("chat.rerank.decide")?.keyOwner === "user");
+    check("…and ops hears about it", (await loadManagedAiOpsFacts(new Date())).failingProviders.includes("typesafe"));
+    check("…without pretending a chat provider is spent", !(await managedPoolState()).spent.has("typesafe" as never));
+    await db.update(errorEvents).set({ createdAt: new Date(Date.now() - 3 * 3_600_000) }).where(typesafeEvents);
+    forgetManagedAiPause();
+    check("after two hours it is tried again", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) !== null);
+
+    await noteDecisionFailure(live, new TypeSafeApiError(401, "TypeSafe 401: invalid api key"));
+    forgetManagedAiPause();
+    check("a refused (401) Orbit key takes it out too", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+  } finally {
+    if (poolRows.length) await db.delete(usageEvents).where(inArray(usageEvents.id, poolRows));
+    await db.delete(errorEvents).where(typesafeEvents);
+    await db.update(siteSettings).set({ managedAiPaused: false }).where(eq(siteSettings.id, 1));
+    delete process.env.ORBIT_MANAGED_TYPESAFE_API_KEY;
+    delete process.env.ORBIT_JEV;
+    delete process.env.ORBIT_MANAGED_AI;
+    process.env.VERCEL = "1";
+    forgetManagedAiPause();
+  }
+}
+
+/**
  * `run-smoke` shares one PGlite directory across scripts, and the ops sweep and admin
  * readers scan every account — so the Lifetime accounts, managed usage and managed-failure
  * events this script creates would open alerts in `smoke-ops-sweep` if left behind.
@@ -1334,6 +1441,7 @@ run(async () => {
     await realGate();
     await transitions();
     await localDevAndByok();
+    await orbitPaidJev();
     await sharedAccess();
   } finally {
     await cleanup();

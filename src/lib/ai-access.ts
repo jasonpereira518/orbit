@@ -6,7 +6,7 @@ import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { usageEvents, userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
@@ -62,6 +62,7 @@ import {
   BACKGROUND_OPERATIONS,
   MANAGED_AI_ENABLED,
   MANAGED_AI_POOLS,
+  POOL_ALSO_COUNTS,
   earliestPoolWindowStart,
   poolWindowStart,
   MANAGED_PROVIDER_ORDER,
@@ -145,10 +146,22 @@ const LOCAL_ENV: Record<AiProvider, string> = {
 };
 
 /**
- * TypeSafe (Jev, the decision model) is BYOK only — Jason's call, Sep 21 2026 — so it has no
- * managed name at all. This one is read on a dev server alone, like `LOCAL_ENV`.
+ * TypeSafe (Jev, the decision model). This one is read on a dev server alone, like `LOCAL_ENV`.
  */
 const LOCAL_TYPESAFE_ENV = "TYPESAFE_API_KEY";
+
+/**
+ * Orbit's own TypeSafe key (Jason, Nov 10 2026 — reversing "BYOK only"): it pays for the
+ * decisions that save Orbit web searches, and ONLY those (`ORBIT_PAID_DECISIONS`). Every other
+ * decision still needs the account's own key. Spec: 2026-11-10-jev-work-history-design.md.
+ */
+const MANAGED_TYPESAFE_ENV = "ORBIT_MANAGED_TYPESAFE_API_KEY";
+
+/** The decisions Orbit's TypeSafe key answers. Widening this is its own rollout. */
+export const ORBIT_PAID_DECISIONS: ReadonlySet<string> = new Set([
+  "contact.work_history.recheck.gate",
+  "contact.work_history.verify.gate",
+]);
 
 /**
  * `ORBIT_JEV=off` — the decision model's emergency stop. Every decision call site falls
@@ -181,11 +194,22 @@ export function managedAiSwitchedOff(): boolean {
  * for has spent its pool.
  */
 const PAUSE_TTL_MS = 30_000;
-type PoolState = { paused: boolean; spent: ReadonlySet<AiProvider>; webSearchPaused: boolean };
+type PoolState = {
+  paused: boolean;
+  spent: ReadonlySet<AiProvider>;
+  webSearchPaused: boolean;
+  /** Orbit's TypeSafe key ran dry or was refused within the last 2 hours (`noteDecisionFailure`). */
+  typesafeOut: boolean;
+};
 let pauseCache: (PoolState & { at: number }) | null = null;
 
 export function managedAiPausedDefault(): boolean {
   return false;
+}
+
+/** The `usage_events.provider` values one pool pays for: its own, plus `POOL_ALSO_COUNTS`. */
+function poolProviders(provider: AiProvider): Array<(typeof usageEvents.$inferSelect)["provider"]> {
+  return [provider, ...(POOL_ALSO_COUNTS[provider] ?? [])] as Array<(typeof usageEvents.$inferSelect)["provider"]>;
 }
 
 /** Orbit-paid spend on one provider since its pool's window opened, in micros. */
@@ -199,7 +223,7 @@ export async function managedPoolSpentMicros(provider: AiProvider, now = new Dat
     .where(
       and(
         eq(usageEvents.keyOwner, "orbit"),
-        eq(usageEvents.provider, provider),
+        inArray(usageEvents.provider, poolProviders(provider)),
         gte(usageEvents.createdAt, poolWindowStart(pool, now))
       )
     );
@@ -219,7 +243,7 @@ export async function managedPoolsSpent(now = new Date()): Promise<Partial<Recor
   const columns = Object.fromEntries(
     providers.map((p, i) => [
       p,
-      sql<string>`coalesce(sum(${managedCostSql()}) FILTER (WHERE ${usageEvents.provider} = ${p} AND ${usageEvents.createdAt} >= ${starts[i]}), 0)::bigint`,
+      sql<string>`coalesce(sum(${managedCostSql()}) FILTER (WHERE ${inArray(usageEvents.provider, poolProviders(p))} AND ${usageEvents.createdAt} >= ${starts[i]}), 0)::bigint`,
     ])
   );
   const db = await getDb();
@@ -245,25 +269,36 @@ export async function managedPoolState(now = Date.now()): Promise<PoolState> {
                (SELECT web_search_paused FROM site_settings WHERE id = 1) AS web_search_paused,
                (SELECT array_agg(DISTINCT context->>'provider') FROM error_events
                  WHERE source = ${ERROR_SOURCES.managedAi} AND kind = 'quota'
-                   AND created_at > now() - interval '2 hours') AS dry
+                   AND created_at > now() - interval '2 hours') AS dry,
+               EXISTS (SELECT 1 FROM error_events
+                 WHERE source = ${ERROR_SOURCES.managedAi} AND kind IN ('quota', 'auth')
+                   AND context->>'provider' = 'typesafe'
+                   AND created_at > now() - interval '2 hours') AS typesafe_out
       `),
       managedPoolsSpent(new Date(now)),
     ]);
-    const [row] = rowsOf<{ paused: boolean | null; web_search_paused: boolean | null; dry: string[] | null }>(result);
+    const [row] = rowsOf<{
+      paused: boolean | null;
+      web_search_paused: boolean | null;
+      dry: string[] | null;
+      typesafe_out: boolean | null;
+    }>(result);
     const spent = new Set<AiProvider>([
       ...(Object.keys(spentMicros) as AiProvider[]).filter((p) => (spentMicros[p] ?? 0) >= MANAGED_AI_POOLS[p]!.capMicros),
-      ...((row?.dry ?? []) as AiProvider[]),
+      // TypeSafe is no chat provider: its own window is `typesafeOut`.
+      ...((row?.dry ?? []).filter((p) => p !== "typesafe") as AiProvider[]),
     ]);
     pauseCache = {
       paused: row?.paused ?? managedAiPausedDefault(),
       spent,
       webSearchPaused: row?.web_search_paused ?? false,
+      typesafeOut: Boolean(row?.typesafe_out),
       at: now,
     };
     return pauseCache;
   } catch {
     // Web search stays up on a read failure: its budget buckets are writes that fail closed.
-    return pauseCache ?? { paused: true, spent: new Set(), webSearchPaused: false };
+    return pauseCache ?? { paused: true, spent: new Set(), webSearchPaused: false, typesafeOut: true };
   }
 }
 
@@ -559,6 +594,34 @@ export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>
   }
 }
 
+/**
+ * A decision call failed. When it ran on ORBIT's TypeSafe key and TypeSafe ran dry (402) or
+ * refused the key (401), take Orbit's key out — on this instance at once, and on every other
+ * through the error event `managedPoolState` reads — for two hours. Every gate then runs its
+ * call as before, without waiting on a dead one; ops hears about it through the event.
+ *
+ * An account's own key, a dev server's key (no `VERCEL`), or any other failure: nothing.
+ * Never throws.
+ */
+export async function noteDecisionFailure(grant: DecisionGrant, err: unknown): Promise<void> {
+  try {
+    if (grant.keyOwner !== "orbit" || !process.env.VERCEL) return;
+    const kind = classifyAiError(err);
+    if (kind !== "quota" && kind !== "auth") return;
+    if (pauseCache) pauseCache = { ...pauseCache, typesafeOut: true };
+    if (shouldRecordThrottled(`ai.managed:typesafe:${kind}`)) {
+      await recordErrorEvent({
+        source: ERROR_SOURCES.managedAi,
+        kind,
+        message: err,
+        context: { provider: "typesafe", model: grant.model, operation: grant.operation },
+      });
+    }
+  } catch {
+    // Best effort: the caller has already fallen back.
+  }
+}
+
 /* ------------------------------------------------------------------ account read ----- */
 
 type AccountRow = typeof userSettings.$inferSelect;
@@ -608,8 +671,11 @@ export class AiAccess {
     readonly preference: AiKeyPreference,
     private readonly personal: Partial<Record<AiProvider, string>>,
     private readonly managed: Partial<Record<AiProvider, string>>,
-    /** The decision model's key: the account's own, or on `next dev` the developer's. */
-    private readonly decisionKey: { key: string; source: AiKeySource } | null,
+    /**
+     * The decision model's key: the account's own, on `next dev` the developer's, or Orbit's
+     * (`orbitPaid`, which answers only `ORBIT_PAID_DECISIONS`).
+     */
+    private readonly decisionKey: { key: string; source: AiKeySource; orbitPaid?: true } | null,
   ) {}
 
   static async open(userId: string, opts: AiAccessOptions = {}): Promise<AiAccess> {
@@ -648,18 +714,25 @@ export class AiAccess {
       }
     }
 
-    // BYOK only. The one exception is the dev server's own `.env.local`, on the same terms
-    // as every other provider there (a localhost demo account) — so it can never become an
-    // Orbit-paid key.
+    // The account's own key first; then the dev server's own `.env.local`, on the same terms
+    // as every other provider there (a localhost demo account); then Orbit's, for an account
+    // on included AI — stopped by every managed-AI stop, a spent Anthropic pool (which it
+    // counts against), and two hours after it ran dry or was refused.
     const devDecisionKey =
       eligibility === "demo" && localDevAiEnabled()
         ? process.env[LOCAL_TYPESAFE_ENV]?.trim() || null
+        : null;
+    const orbitDecisionKey =
+      eligibility === "plan" && pools && !pools.paused && !pools.typesafeOut && !pools.spent.has("anthropic") && !managedAiSwitchedOff()
+        ? process.env[MANAGED_TYPESAFE_ENV]?.trim() || null
         : null;
     const decisionKey = ownDecisionKey
       ? { key: ownDecisionKey, source: "personal" as const }
       : devDecisionKey
         ? { key: devDecisionKey, source: "managed" as const }
-        : null;
+        : orbitDecisionKey
+          ? { key: orbitDecisionKey, source: "managed" as const, orbitPaid: true as const }
+          : null;
 
     const preference = (row?.aiKeyPreference ?? null) as AiKeyPreference;
     return new AiAccess(userId, row, plan, eligibility, preference, personal, managed, decisionKey);
@@ -836,7 +909,13 @@ export class AiAccess {
    */
   decision(operation: string): DecisionGrant | null {
     if (!this.decisionKey || jevSwitchedOff()) return null;
+    if (this.decisionKey.orbitPaid && (pauseCache?.typesafeOut || !ORBIT_PAID_DECISIONS.has(operation))) return null;
     return mintDecision(JEV_MODEL, this.decisionKey.source, this.decisionKey.key, operation);
+  }
+
+  /** Whether any decision model may answer for this account — `openDecider`'s probe. */
+  hasDecisionModel(): boolean {
+    return Boolean(this.decisionKey) && !jevSwitchedOff();
   }
 
   /**
