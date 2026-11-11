@@ -62,6 +62,11 @@ export function AlsoHereCard({ eventId, view }: { eventId: string; view: AlsoHer
             </Link>{" "}
             to see who else is here.
           </p>
+        ) : !view.syncedEvent ? (
+          <p className="text-muted-foreground">
+            Orbit only shows who&rsquo;s here at events from your calendar or an RSVP &mdash; not ones
+            added from a link.
+          </p>
         ) : hidden ? (
           <p className="text-muted-foreground">You&rsquo;re hidden at this event, so you won&rsquo;t see anyone either.</p>
         ) : view.people.length === 0 ? (

@@ -10,7 +10,7 @@ import { getDb } from "../src/db";
 import { appSurfaceFlags, eventAliases, events, shareCards, userSettings } from "../src/db/schema";
 import { DEFAULT_CARD_FIELDS, loadPublicCardForOwner, saveCard, setCardPaused } from "../src/lib/cards/card-store";
 import { isDiscoverable, setDiscoverable, setHiddenAtEvent } from "../src/lib/nearby/discoverability";
-import { alsoHereFor, isLiveAttendedEvent } from "../src/lib/nearby/also-here";
+import { alsoHereDetail, alsoHereFor, isLiveAttendedEvent } from "../src/lib/nearby/also-here";
 import { liveEventFor } from "../src/lib/cards/live-event";
 import { invalidateHiddenSurfaceKeys, setSurfaceComingSoon } from "../src/lib/surface-visibility";
 
@@ -43,7 +43,14 @@ async function seedUser(userId: string, first: string, last: string) {
 /** An attended event for `userId` that started `startedMinsAgo` ago, with the given alias keys. */
 async function seedEvent(
   userId: string,
-  opts: { startedMinsAgo?: number; endsInMins?: number | null; keys?: Array<["provider" | "url" | "source_ref", string]>; title?: string } = {}
+  opts: {
+    startedMinsAgo?: number;
+    endsInMins?: number | null;
+    keys?: Array<["provider" | "url" | "source_ref", string]>;
+    title?: string;
+    /** Where the row came from. Default: the user's own Luma RSVP feed (a synced attendance). */
+    origin?: { discoveredVia: "gcal" | "ics" | "luma_ics" | "partiful_ics" | "gmail" | null; source?: "manual" | "page" | "luma" | "eventbrite"; role?: "attended" | "hosted" };
+  } = {}
 ): Promise<string> {
   const db = await getDb();
   const now = Date.now();
@@ -54,7 +61,9 @@ async function seedEvent(
       title: opts.title ?? "Founders night",
       startsAt: new Date(now - (opts.startedMinsAgo ?? 60) * 60_000),
       endsAt: opts.endsInMins == null ? null : new Date(now + opts.endsInMins * 60_000),
-      source: "manual",
+      source: opts.origin?.source ?? "manual",
+      discoveredVia: opts.origin ? opts.origin.discoveredVia : "luma_ics",
+      role: opts.origin?.role ?? "attended",
     } as typeof events.$inferInsert)
     .returning();
   for (const [kind, value] of opts.keys ?? []) {
@@ -244,6 +253,45 @@ async function finalReviewFixes() {
   check("…and no paused card is shown", crowd.people.every((p) => p.fullName === "Zed Live"));
 }
 
+async function syncedOnly() {
+  console.log("Synced attendance only (Jason, Nov 11): no matching on events added from a pasted link");
+  await setDiscoverable(A, true);
+  await setDiscoverable(B, true);
+  const pasted = { discoveredVia: null, source: "page" as const };
+
+  await resetEvents();
+  let a = await seedEvent(A, { keys: [["provider", "luma:evt-s"]], origin: pasted });
+  await seedEvent(B, { keys: [["provider", "luma:evt-s"]] });
+  const pastedViewer = await alsoHereDetail(A, a);
+  check("viewer's event came from a pasted link → nobody", pastedViewer.findable === false && pastedViewer.people.length === 0);
+  check("…and the view says the event isn't synced", pastedViewer.syncedEvent === false);
+  const bSide = await seedEvent(B, { keys: [["provider", "luma:evt-s2"]] });
+  await seedEvent(A, { keys: [["provider", "luma:evt-s2"]], origin: pasted });
+  check("a pasted-link viewer is never shown to others", (await alsoHereFor(B, bSide)).people.length === 0);
+
+  await resetEvents();
+  a = await seedEvent(A, { keys: [["provider", "luma:evt-s"]] });
+  await seedEvent(B, { keys: [["provider", "luma:evt-s"]], origin: pasted });
+  check("other person's event came from a pasted link → absent", !(await seesB(a)));
+
+  await resetEvents();
+  a = await seedEvent(A, { keys: [["provider", "luma:evt-s"]] });
+  await seedEvent(B, { keys: [["provider", "luma:evt-s"]], origin: { discoveredVia: "gmail" } });
+  check("event found only in an email → absent", !(await seesB(a)));
+
+  await resetEvents();
+  a = await seedEvent(A, { keys: [["provider", "luma:evt-s"]] });
+  await seedEvent(B, { keys: [["provider", "luma:evt-s"]], origin: { discoveredVia: null, source: "luma", role: "hosted" } });
+  check("host synced from the Luma host API → present", await seesB(a));
+
+  await resetEvents();
+  a = await seedEvent(A, { keys: [["source_ref", "gcal:UID-sync"]], origin: { discoveredVia: "gcal" } });
+  await seedEvent(B, { keys: [["source_ref", "ics:UID-sync"]], origin: { discoveredVia: "ics" } });
+  check("calendar invite (gcal) and ICS feed → present", await seesB(a));
+  const synced = await alsoHereDetail(A, a);
+  check("…and the view says the event is synced", synced.syncedEvent === true);
+}
+
 async function main() {
   await cleanup();
   await setSurfaceComingSoon(OPERATOR, "page.card", false);
@@ -254,6 +302,7 @@ async function main() {
     await task2();
     await task3();
     await finalReviewFixes();
+    await syncedOnly();
   } finally {
     await setSurfaceComingSoon(OPERATOR, "page.card", true);
     await (await getDb()).delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, LIVE_ALSO_HERE));

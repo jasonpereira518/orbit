@@ -11,7 +11,13 @@ import { isSurfaceReleased } from "@/lib/surface-visibility";
 export type AlsoHerePerson = Omit<PublicCard, "ownerId" | "slug">;
 export type AlsoHere = { findable: boolean; people: AlsoHerePerson[] };
 /** `AlsoHere` plus the viewer's own state, for the event page card — read once, not twice. */
-export type AlsoHereDetail = AlsoHere & { discoverable: boolean; hasCard: boolean; hiddenHere: boolean };
+export type AlsoHereDetail = AlsoHere & {
+  discoverable: boolean;
+  hasCard: boolean;
+  hiddenHere: boolean;
+  /** The viewer's event came from a synced calendar or RSVP — the only kind that is matched. */
+  syncedEvent: boolean;
+};
 
 const SURFACE = "feature.also-here";
 const MAX_PEOPLE = 20;
@@ -22,6 +28,16 @@ const liveAt = (now: Date) =>
   sql`(e.starts_at <= ${now} AND ${now} <= COALESCE(e.ends_at, e.starts_at + interval '3 hours'))`;
 
 const isUuid = (id: string) => /^[0-9a-f-]{36}$/i.test(id);
+
+/**
+ * Attendance Orbit didn't take the user's word for (Jason, Nov 11): a calendar invite or feed
+ * (`gcal`, `ics`), the user's own Luma/Partiful RSVP feed, or the host API (`source` = the
+ * provider, written only by provider-writes.ts). An event added from a pasted link
+ * (`discovered_via` null) or seen only in an email (`gmail`) is never matched — otherwise anyone
+ * could paste a public link and see who is there. Expects alias `e`.
+ */
+const syncedEventFilter = () =>
+  sql`(e.discovered_via IN ('gcal', 'ics', 'luma_ics', 'partiful_ics') OR e.source IN ('luma', 'eventbrite'))`;
 
 /**
  * Whether this is one of the user's attended events and it is live now. Unlike `liveEventFor`,
@@ -56,12 +72,12 @@ export async function alsoHereDetail(viewerId: string, eventId: string, now: Dat
     isUuid(eventId)
       ? db
           .execute(sql`
-            SELECT e.discovery_hidden_at IS NOT NULL AS hidden FROM events e
+            SELECT e.discovery_hidden_at IS NOT NULL AS hidden, ${syncedEventFilter()} AS synced FROM events e
             WHERE e.id = ${eventId} AND e.user_id = ${viewerId}
               AND ${attendedEventFilter()} AND ${liveAt(now)}
             LIMIT 1`)
-          .then((r) => r.rows as Array<{ hidden: boolean }>)
-      : Promise.resolve([] as Array<{ hidden: boolean }>),
+          .then((r) => r.rows as Array<{ hidden: boolean; synced: boolean }>)
+      : Promise.resolve([] as Array<{ hidden: boolean; synced: boolean }>),
     isDiscoverable(viewerId),
     loadPublicCardForOwner(viewerId),
     // Release flags are global rows (only an admin's own override differs), so they are read
@@ -70,9 +86,15 @@ export async function alsoHereDetail(viewerId: string, eventId: string, now: Dat
     isSurfaceReleased(viewerId, SURFACE),
   ]);
   const hiddenHere = ownRows[0]?.hidden === true;
-  const base = { discoverable, hasCard: !!viewerCard, hiddenHere };
+  const syncedEvent = ownRows[0]?.synced === true;
+  const base = { discoverable, hasCard: !!viewerCard, hiddenHere, syncedEvent };
   const viewerFindable =
-    ownRows.length > 0 && !hiddenHere && discoverable && !!viewerCard && (hereReleased || isAdminUser(viewerId));
+    ownRows.length > 0 &&
+    syncedEvent &&
+    !hiddenHere &&
+    discoverable &&
+    !!viewerCard &&
+    (hereReleased || isAdminUser(viewerId));
   if (!viewerFindable) return { ...base, findable: false, people: [] };
 
   const keyRows = (
@@ -107,7 +129,7 @@ export async function alsoHereDetail(viewerId: string, eventId: string, now: Dat
       WHERE a.user_id <> ${viewerId}
         AND a.event_id IS NOT NULL
         AND (${sql.join(matches, sql` OR `)})
-        AND ${attendedEventFilter()} AND ${liveAt(now)}
+        AND ${attendedEventFilter()} AND ${liveAt(now)} AND ${syncedEventFilter()}
         AND e.discovery_hidden_at IS NULL
         AND us.discoverable_at IS NOT NULL
         AND us.suspended_at IS NULL
