@@ -20,11 +20,15 @@ Push to `main`. CI (`typecheck · lint · build`, `smoke suite`) must be green; 
 runs `npm run check:env && npm run db:migrate && next build`. A missing production
 variable or a failing DDL statement fails the build and the previous deployment stays live.
 
-**A `claude/*` branch with no pull request does not build a preview.** Vercel's Ignored Build
-Step (`vercel.json` → `scripts/vercel-ignore-build.sh`) skips it, because every retained
-deployment's function bundles count against Functions Storage. It builds once the branch has a
+**Previews are skipped when nobody would open them.** Hobby allows 100 deployments a day
+(cancelled and failed builds count), and every retained deployment's function bundles count
+against Functions Storage. Vercel's Ignored Build Step (`vercel.json` →
+`scripts/vercel-ignore-build.sh`) skips a preview for: any non-`main` branch with no pull
+request, any `dependabot/*` branch (CI already builds it), and a PR push that only touches
+files the app never reads (`docs/`, `.github/`, `e2e/`, `extension/`, `*.md`, smoke scripts)
+since the branch's last build. A branch builds once it has a
 PR and gets a push. To get a preview sooner, put `[deploy]` in the commit message, or redeploy
-from the dashboard. Everything else (main, other branches, production) always builds.
+from the dashboard. `main` and production always build.
 
 ## Roll back
 

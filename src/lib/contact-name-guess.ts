@@ -40,6 +40,56 @@ export function isHandle(name: string | null | undefined, email?: string | null)
   return !/\s/.test(n) && /[\d._@]/.test(n);
 }
 
+const GENERIC_NAMES = new Set([
+  "linkedin member",
+  "member",
+  "unknown",
+  "user",
+  "none",
+  "n/a",
+  "unnamed",
+  "no name",
+  "contact",
+]);
+
+/**
+ * Checks whether a contact's stored name is really a username, handle, email prefix,
+ * LinkedIn slug artifact, or generic placeholder, rather than an actual person name.
+ */
+export function isUsernameOrGenericName(
+  name: string | null | undefined,
+  email?: string | null,
+  linkedinUrl?: string | null
+): boolean {
+  const n = (name ?? "").trim();
+  if (!n) return true;
+  const lower = n.toLowerCase();
+
+  // 1. Generic placeholder names
+  if (GENERIC_NAMES.has(lower)) return true;
+
+  // 2. Email or address handles
+  if (isHandle(n, email)) return true;
+
+  // 3. Exact match with LinkedIn slug (e.g. "satya-nadella-12345" or "satyanadella")
+  if (linkedinUrl) {
+    const slug = linkedinUrl.match(/linkedin\.com\/in\/([^/?#]+)/i)?.[1]?.toLowerCase();
+    if (slug) {
+      const cleanSlug = slug.replace(/[\s\-_.]/g, "");
+      const cleanName = lower.replace(/[\s\-_.]/g, "");
+      if (cleanSlug && (cleanName === cleanSlug || cleanName === slug)) return true;
+    }
+  }
+
+  // 4. Starts with '@' (social handle like @jason)
+  if (n.startsWith("@")) return true;
+
+  // 5. No whitespace and length > 20 (random string or ID)
+  if (!/\s/.test(n) && n.length > 20) return true;
+
+  return false;
+}
+
 /** Pieces of a handle that are never part of anyone's name: "jdoe_dev", "the.real.jane". */
 const NOT_NAME = new Set(
   "dev eng hq official real the mr ms mrs dr info work mail admin team hello contact me its im".split(" ")

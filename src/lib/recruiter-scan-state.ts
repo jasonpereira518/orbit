@@ -18,7 +18,38 @@ import { imports, recruiterScanState } from "@/db/schema";
  */
 export const RECRUITER_PROMPT_VERSION = 1;
 
-/** Default reach of a full scan. */
+export type RecruitingCycle = "current" | "july" | "august" | "january";
+
+/**
+ * Start date of the recruiting cycle.
+ * - July cycle (Fall): starts July 1st.
+ * - January cycle (Spring): starts January 1st.
+ * - Current cycle: July 1st of current year if currently in Jul-Dec; January 1st of current year if in Jan-Jun.
+ */
+export function getRecruitingCycleStartDate(
+  cycle: RecruitingCycle = "current",
+  now = new Date()
+): Date {
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth(); // 0 = Jan, 6 = Jul, 7 = Aug
+
+  if (cycle === "july" || cycle === "august") {
+    const y = month >= 6 ? year : year - 1;
+    return new Date(Date.UTC(y, 6, 1, 0, 0, 0));
+  }
+  if (cycle === "january") {
+    return new Date(Date.UTC(year, 0, 1, 0, 0, 0));
+  }
+
+  // "current":
+  if (month >= 6) {
+    return new Date(Date.UTC(year, 6, 1, 0, 0, 0));
+  } else {
+    return new Date(Date.UTC(year, 0, 1, 0, 0, 0));
+  }
+}
+
+/** Default reach of a full scan when not using recruiting cycles. */
 export const DEFAULT_WINDOW_MONTHS = 24;
 
 /**
@@ -106,11 +137,13 @@ export async function lastCompletedScanStart(
  */
 export async function resolveScanWindow(
   userId: string,
-  opts: { full?: boolean; since?: Date | null } = {}
+  opts: { full?: boolean; since?: Date | null; cycle?: RecruitingCycle } = {}
 ): Promise<ScanWindow> {
   const state = await getScanState(userId);
   const windowMonths = state?.windowMonths ?? DEFAULT_WINDOW_MONTHS;
-  const floor = monthsAgo(windowMonths);
+  const floor = opts.cycle
+    ? getRecruitingCycleStartDate(opts.cycle)
+    : monthsAgo(windowMonths);
 
   const ownWatermark = opts.since !== undefined;
   const lastScanAt = ownWatermark ? opts.since : (state?.lastScanAt ?? null);
@@ -121,8 +154,7 @@ export async function resolveScanWindow(
     return { after: floor, isFull: true, promptVersion: RECRUITER_PROMPT_VERSION, windowMonths };
   }
 
-  // Never resume from before the window floor — shrinking `windowMonths` must not be
-  // overridden by an older watermark.
+  // Never resume from before the window floor
   const resume = daysBefore(lastScanAt, INCREMENTAL_OVERLAP_DAYS);
   return {
     after: resume > floor ? resume : floor,
