@@ -38,6 +38,7 @@ import {
 import type { ChatStep, ChatStreamEvent } from "@/lib/chat-stream-protocol";
 import type { ChatRecommendation } from "@/db/schema";
 import { ChatActivity } from "@/components/chat/chat-activity";
+import { notifyAnswerLanded } from "@/lib/chat-answer-notify";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
@@ -498,6 +499,7 @@ export function FloatingAskBar() {
               ensurePlaceholder();
               patch((m) => ({ ...m, retrieved: info.retrieved, messageId: info.messageId, streaming: false }));
               if (info.notice) toast.message(info.notice);
+              notifyAnswerLanded({ threadId, messageId: info.messageId, title: info.title });
             },
             onError: (message) => {
               smoother.cancel();
