@@ -104,6 +104,10 @@ export const AI_OPERATIONS = {
   // A real name for a contact saved under a handle ("jsmith42"), when the address book and
   // the handle itself say nothing. A few words out; `@/lib/contact-name-sweep`.
   "contact.name_guess": { label: "Contacts: reading names from handles", tier: "fast", thinking: "minimal", background: true },
+  // Reading a feedback report for the operator: a one-line summary, a kind, a severity and an
+  // earlier report it repeats. Runs on the OPERATOR's account, never the reporter's — see
+  // `src/lib/feedback-triage.ts`. Unattended and a few dozen tokens out, so the fast tier.
+  "feedback.triage": { label: "Feedback: reading reports for the operator", tier: "fast", thinking: "minimal", background: true },
   // The fast tier, like the other background extraction: nobody reads this answer directly,
   // it runs unattended on the person's own key, and the costly part of a searched answer is
   // the result pages it reads as input — which cost per token on the pricier model too. The

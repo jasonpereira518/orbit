@@ -48,6 +48,7 @@ import type {
   ThreadDecision,
 } from "@/lib/email-intel/types";
 import type { MemorySourceKind } from "@/lib/memory-chunks";
+import type { FeedbackTriage } from "@/lib/feedback-report";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -4854,6 +4855,11 @@ export const feedback = pgTable(
     score: integer("score"),
     text: text("text"),
     /**
+     * The subject line someone gives a new message. Required from the in-app form; older
+     * reports, PMF and churn answers have none, and readers fall back to the text.
+     */
+    subject: text("subject"),
+    /**
      * Which part of Orbit this is about, prefilled from the route and confirmable by the
      * person writing. A column rather than a `context` key because the two are different
      * things: `context` is what the SERVER observed, this is what the PERSON asserted, and
@@ -4883,6 +4889,30 @@ export const feedback = pgTable(
     statusChangedBy: text("status_changed_by"),
     /** What was done about it. Operator prose, not the user's. */
     resolutionNote: text("resolution_note"),
+    /**
+     * The AI triage pass's reading of the report — one-line summary, severity, and an earlier
+     * open report it repeats. Null until the pass has run, and for good if it never could
+     * (no operator account, AI unavailable). See `src/lib/feedback-triage.ts`.
+     */
+    triage: jsonb("triage").$type<FeedbackTriage>(),
+    /**
+     * Bonus AI credits the operator has thanked them with on this report, added up across
+     * every thank-you (each its own `adj:feedback:<id>:<uuid>` grant).
+     */
+    thanksCredits: integer("thanks_credits"),
+    /** When the reporter last opened the conversation. Operator messages after it are unread. */
+    userReadAt: timestamp("user_read_at", { withTimezone: true }),
+    /** When the operator last opened it. The reporter's messages after it are unread. */
+    operatorReadAt: timestamp("operator_read_at", { withTimezone: true }),
+    /** When the reporter last unwrapped a thank-you. Gifts sent after it are still wrapped. */
+    thanksSeenAt: timestamp("thanks_seen_at", { withTimezone: true }),
+    /**
+     * Each side's last keystroke in the conversation, for the typing dots. A row column rather
+     * than server memory because a serverless deploy has none shared between requests; "typing"
+     * means within the last few seconds (`TYPING_FRESH_MS` in feedback-thread.ts).
+     */
+    userTypingAt: timestamp("user_typing_at", { withTimezone: true }),
+    operatorTypingAt: timestamp("operator_typing_at", { withTimezone: true }),
     /** Where they were when they said it — route, plan, contact count. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -4924,6 +4954,12 @@ export const feedbackScreenshots = pgTable(
      * only discovers tables that carry `user_id` — a cascade alone would leave this table
      * permanently outside the leak sweep.
      */
+    /**
+     * The conversation message it was sent with; null for the opening report's screenshots.
+     * No foreign key: the messages table is created after this one, and a message only goes
+     * away with its report, whose delete already cascades here.
+     */
+    messageId: uuid("message_id"),
     userId: text("user_id").notNull(),
     /** 0-based, the order they were attached in. The gallery renders in this order. */
     position: integer("position").notNull().default(0),
@@ -4952,6 +4988,37 @@ export const feedbackScreenshots = pgTable(
   (t) => [
     index("feedback_screenshots_feedback_idx").on(t.feedbackId, t.position),
     index("feedback_screenshots_user_idx").on(t.userId),
+  ]
+);
+
+/**
+ * The conversation on one feedback report, between the reporter and the operator.
+ *
+ * Opens when the operator first replies — the report itself is the opening message and stays
+ * on `feedback.text`. See `src/lib/feedback-thread.ts`.
+ */
+export const feedbackMessages = pgTable(
+  "feedback_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    feedbackId: uuid("feedback_id")
+      .notNull()
+      .references(() => feedback.id, { onDelete: "cascade" }),
+    /**
+     * The REPORTER, whoever wrote this message — denormalised so the purge finds every row of
+     * a deleted account's conversations, operator replies included, and the smoke-purge sweep
+     * (which only discovers tables with `user_id`) covers the table.
+     */
+    userId: text("user_id").notNull(),
+    author: text("author").$type<"user" | "operator">().notNull(),
+    body: text("body").notNull(),
+    /** Bonus credits this operator reply carried as a thank-you; the gift card renders under it. */
+    credits: integer("credits"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("feedback_messages_feedback_idx").on(t.feedbackId, t.createdAt),
+    index("feedback_messages_user_idx").on(t.userId),
   ]
 );
 

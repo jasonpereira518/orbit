@@ -1418,18 +1418,27 @@ CREATE TABLE IF NOT EXISTS feedback (
   kind text NOT NULL,
   score integer,
   text text,
+  subject text,
   area text,
   category text,
   status text NOT NULL DEFAULT 'new',
   status_changed_at timestamptz,
   status_changed_by text,
   resolution_note text,
+  triage jsonb,
+  thanks_credits integer,
+  user_read_at timestamptz,
+  operator_read_at timestamptz,
+  thanks_seen_at timestamptz,
+  user_typing_at timestamptz,
+  operator_typing_at timestamptz,
   context jsonb NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS feedback_screenshots (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   feedback_id uuid NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+  message_id uuid,
   user_id text NOT NULL,
   position integer NOT NULL DEFAULT 0,
   note text,
@@ -1447,6 +1456,17 @@ CREATE INDEX IF NOT EXISTS feedback_user_created_idx ON feedback(user_id, create
 CREATE INDEX IF NOT EXISTS feedback_status_created_idx ON feedback(status, created_at);
 CREATE INDEX IF NOT EXISTS feedback_screenshots_feedback_idx ON feedback_screenshots(feedback_id, position);
 CREATE INDEX IF NOT EXISTS feedback_screenshots_user_idx ON feedback_screenshots(user_id);
+CREATE TABLE IF NOT EXISTS feedback_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  feedback_id uuid NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+  user_id text NOT NULL,
+  author text NOT NULL,
+  body text NOT NULL,
+  credits integer,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS feedback_messages_feedback_idx ON feedback_messages(feedback_id, created_at);
+CREATE INDEX IF NOT EXISTS feedback_messages_user_idx ON feedback_messages(user_id);
 CREATE TABLE IF NOT EXISTS interest_list_signups (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL,
@@ -3076,7 +3096,20 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // (user_settings.radar_daily_enabled, radar_auto_projects, radar_discovery_enabled),
 // prospective people discovery (recommendations.discovered_person), and 1-click calendar invites
 // (recommendations.suggested_calendar_invite).
-export const SCHEMA_VERSION = 218;
+//
+// 219 = the feedback rework, in one bump (built as 209 + 210, renumbered to 213 on Nov 9 2026
+// and to 219 on Nov 10 when main reached 217 — radar_flagship_redesign took 218 — since a
+// preview database stamped above a branch's number skips its DDL):
+// feedback.triage (jsonb) — the AI triage pass's summary, severity and duplicate-of, see
+// src/lib/feedback-triage.ts; and the feedback conversation — feedback_messages (new table)
+// plus feedback.thanks_credits / user_read_at / operator_read_at, see src/lib/feedback-thread.ts;
+// and the thank-you gift — feedback_messages.credits (on the reply that carried it) and
+// feedback.thanks_seen_at (null while still wrapped); and feedback.subject (the subject line a
+// new message to the operator starts with); and feedback.user_typing_at / operator_typing_at
+// (each side's last keystroke, for the typing dots — a serverless deploy has no shared memory
+// to hold them in); and feedback_screenshots.message_id (a screenshot sent later in the
+// conversation belongs to that message, not the opening report).
+export const SCHEMA_VERSION = 219;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4472,6 +4505,16 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "feedback", "status_changed_at", "timestamptz");
   await ensureColumn(client, "feedback", "status_changed_by", "text");
   await ensureColumn(client, "feedback", "resolution_note", "text");
+  await ensureColumn(client, "feedback", "triage", "jsonb");
+  await ensureColumn(client, "feedback", "thanks_credits", "integer");
+  await ensureColumn(client, "feedback", "user_read_at", "timestamptz");
+  await ensureColumn(client, "feedback", "operator_read_at", "timestamptz");
+  await ensureColumn(client, "feedback", "thanks_seen_at", "timestamptz");
+  await ensureColumn(client, "feedback", "user_typing_at", "timestamptz");
+  await ensureColumn(client, "feedback_screenshots", "message_id", "uuid");
+  await ensureColumn(client, "feedback", "operator_typing_at", "timestamptz");
+  await ensureColumn(client, "feedback", "subject", "text");
+  await ensureColumn(client, "feedback_messages", "credits", "integer");
   // v51: the phone scan handoff appends to a capture job; the job keeps its photos' ids.
   await ensureColumn(client, "capture_handoffs", "capture_job_id", "uuid");
   await ensureColumn(client, "capture_jobs", "photo_ids", "jsonb NOT NULL DEFAULT '[]'::jsonb");
@@ -4969,6 +5012,16 @@ const alters = [
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status_changed_at timestamptz`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS status_changed_by text`,
   `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS resolution_note text`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS triage jsonb`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS thanks_credits integer`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_read_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS operator_read_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS thanks_seen_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS user_typing_at timestamptz`,
+  `ALTER TABLE feedback_screenshots ADD COLUMN IF NOT EXISTS message_id uuid`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS operator_typing_at timestamptz`,
+  `ALTER TABLE feedback ADD COLUMN IF NOT EXISTS subject text`,
+  `ALTER TABLE feedback_messages ADD COLUMN IF NOT EXISTS credits integer`,
   `CREATE UNIQUE INDEX IF NOT EXISTS user_settings_calendar_feed_token_uidx ON user_settings(calendar_feed_token) WHERE calendar_feed_token IS NOT NULL`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stated_closeness integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS sender_bio text`,

@@ -65,6 +65,7 @@ import {
   extensionUsage,
   externalLinks,
   feedback,
+  feedbackMessages,
   feedbackScreenshots,
   gateEvents,
   productEvents,
@@ -637,8 +638,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   feedback: {
-    exports: [own(feedback), withUrl(own(feedbackScreenshots), "/api/feedback/screenshots/")],
-    counts: [feedback, feedbackScreenshots],
+    exports: [own(feedback), withUrl(own(feedbackScreenshots), "/api/feedback/screenshots/"), own(feedbackMessages)],
+    counts: [feedback, feedbackScreenshots, feedbackMessages],
     run: async (db, userId) => {
       // Both are personal — one is literally the user's own words — so erasure means
       // erasure, even though the churn reasons are exactly the feedback that leaves with the
@@ -664,6 +665,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         }
       }
 
+      // The conversations too, operator replies included: every row carries the reporter's id.
+      await db.delete(feedbackMessages).where(eq(feedbackMessages.userId, userId));
       await db.delete(feedback).where(eq(feedback.userId, userId));
     },
   },

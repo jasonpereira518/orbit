@@ -13,7 +13,10 @@ import {
   DeleteFeedbackScreenshotButton,
   FeedbackStatusActions,
 } from "@/components/admin/feedback-status-actions";
-import { loadFeedbackDetail } from "@/lib/admin-feedback";
+import { FeedbackConversation } from "@/components/admin/feedback-conversation";
+import { loadFeedbackDetail, relatedReports } from "@/lib/admin-feedback";
+import { SOURCE_LABELS, isFeedbackSource } from "@/lib/feedback-report";
+import { loadThread, markThreadRead } from "@/lib/feedback-thread";
 
 export const metadata = { title: "Admin · Feedback entry" };
 
@@ -39,15 +42,22 @@ export default async function AdminFeedbackDetailPage({
   if (!detail) notFound();
 
   const { entry, screenshots, submitter } = detail;
+  // Only in-app reports (and ones logged from a text) have a conversation; PMF and churn
+  // answers don't. Opening the page counts as reading the person's replies.
+  const thread = entry.kind === "freeform" ? await loadThread(feedbackId, "operator") : null;
+  // Other open reports about the same thing, so one reply can reach them all.
+  const related = thread ? await relatedReports(feedbackId) : [];
+  if (thread) await markThreadRead(feedbackId, "operator");
   const contextEntries = Object.entries(entry.context ?? {});
 
   return (
     <>
       <AdminPageHeader
-        title="Feedback"
+        title={entry.subject ?? "Feedback"}
         subtitle={
           <>
             {entry.category ?? entry.kind} · {entry.area ?? "unspecified area"} ·{" "}
+            {isFeedbackSource(entry.context?.source) && <>via {SOURCE_LABELS[entry.context.source]} · </>}
             <RelativeTime date={entry.createdAt} />{" "}
             <Link
               href="/admin/feedback"
@@ -59,7 +69,13 @@ export default async function AdminFeedbackDetailPage({
         }
       />
 
-      <div className="grid gap-6">
+      {/* Conversation first, the way it's actually worked: the report is its opening
+          bubble, so there's no separate "what they said" panel. Everything about the person
+          and the report sits in the sidebar. PMF and churn answers have no conversation and
+          keep the plain text panel. */}
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+        <div className="grid gap-6 lg:sticky lg:top-4">
+        {!thread && (
         <AdminPanel title="What they said">
           {entry.text ? (
             <p className="whitespace-pre-wrap text-sm leading-relaxed">{entry.text}</p>
@@ -70,55 +86,20 @@ export default async function AdminFeedbackDetailPage({
             <p className="mt-3 text-xs text-muted-foreground">PMF score: {entry.score}/3</p>
           )}
         </AdminPanel>
-
-        <AdminPanel title={`Screenshots (${screenshots.length})`}>
-          {screenshots.length === 0 ? (
-            <EmptyState>Nothing was attached.</EmptyState>
-          ) : (
-            <ul className="grid gap-6 md:grid-cols-2">
-              {screenshots.map((shot) => (
-                <li key={shot.id} className="grid gap-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- served by an
-                      auth-gated API route, not a remote origin next/image can optimise. */}
-                  <img
-                    src={`/api/feedback/screenshots/${shot.id}`}
-                    alt={shot.note ?? `Screenshot ${shot.position + 1}`}
-                    loading="lazy"
-                    className="w-full rounded-md border border-border"
-                  />
-                  {shot.note && <p className="text-sm">{shot.note}</p>}
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>
-                      {shot.width && shot.height ? `${shot.width}×${shot.height} · ` : ""}
-                      {kb(shot.byteSize)} · {shot.contentType}
-                    </span>
-                    <DeleteFeedbackScreenshotButton id={shot.id} />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </AdminPanel>
-
-        <AdminPanel title="Where they were">
-          <dl>
-            {contextEntries.length === 0 ? (
-              <EmptyState>No context was recorded.</EmptyState>
-            ) : (
-              contextEntries.map(([key, value]) => (
-                <DefinitionRow key={key} label={key}>
-                  {typeof value === "object" && value !== null ? (
-                    <CodeDetail>{JSON.stringify(value)}</CodeDetail>
-                  ) : (
-                    String(value ?? "—")
-                  )}
-                </DefinitionRow>
-              ))
-            )}
-          </dl>
-        </AdminPanel>
-
-        <AdminPanel title="Submitter">
+        )}
+        {thread && (
+          <AdminPanel title={thread.open ? "Conversation" : "Reply"}>
+            <FeedbackConversation
+              initial={thread}
+              reporterLabel={submitter?.email ?? "Them"}
+              hasEmail={Boolean(submitter?.email)}
+              related={related.map((r) => ({ id: r.id, label: r.subject || r.excerpt || "Report" }))}
+            />
+          </AdminPanel>
+        )}
+        </div>
+        <aside className="grid gap-4">
+        <AdminPanel title="Person">
           <dl>
             <DefinitionRow label="Email">
               {submitter?.email ?? (
@@ -143,8 +124,29 @@ export default async function AdminFeedbackDetailPage({
             )}
           </dl>
         </AdminPanel>
-
-        <AdminPanel title="Triage">
+        {entry.triage && (
+          <AdminPanel title="Triage">
+            <dl>
+              <DefinitionRow label="Summary">{entry.triage.summary}</DefinitionRow>
+              <DefinitionRow label="Severity">{entry.triage.severity}</DefinitionRow>
+              {entry.triage.duplicateOf && (
+                <DefinitionRow label="Looks like">
+                  <Link
+                    href={`/admin/feedback/${entry.triage.duplicateOf}`}
+                    className="underline underline-offset-2 hover:text-primary"
+                  >
+                    an earlier open report
+                  </Link>
+                </DefinitionRow>
+              )}
+            </dl>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Read by AI when it arrived. The kind above came from the same pass unless it was
+              set by hand.
+            </p>
+          </AdminPanel>
+        )}
+        <AdminPanel title="Status">
           <dl className="mb-4">
             <DefinitionRow label="Status">{entry.status}</DefinitionRow>
             {entry.statusChangedAt && (
@@ -163,6 +165,52 @@ export default async function AdminFeedbackDetailPage({
           </dl>
           <FeedbackStatusActions id={entry.id} status={entry.status} />
         </AdminPanel>
+        <AdminPanel title={`Screenshots (${screenshots.length})`}>
+          {screenshots.length === 0 ? (
+            <EmptyState>Nothing was attached.</EmptyState>
+          ) : (
+            <ul className="grid gap-3">
+              {screenshots.map((shot) => (
+                <li key={shot.id} className="grid gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- served by an
+                      auth-gated API route, not a remote origin next/image can optimise. */}
+                  <img
+                    src={`/api/feedback/screenshots/${shot.id}`}
+                    alt={shot.note ?? `Screenshot ${shot.position + 1}`}
+                    loading="lazy"
+                    className="w-full rounded-md border border-border"
+                  />
+                  {shot.note && <p className="text-sm">{shot.note}</p>}
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>
+                      {shot.width && shot.height ? `${shot.width}×${shot.height} · ` : ""}
+                      {kb(shot.byteSize)} · {shot.contentType}
+                    </span>
+                    <DeleteFeedbackScreenshotButton id={shot.id} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </AdminPanel>
+        <AdminPanel title="Where they were">
+          <dl>
+            {contextEntries.length === 0 ? (
+              <EmptyState>No context was recorded.</EmptyState>
+            ) : (
+              contextEntries.map(([key, value]) => (
+                <DefinitionRow key={key} label={key}>
+                  {typeof value === "object" && value !== null ? (
+                    <CodeDetail>{JSON.stringify(value)}</CodeDetail>
+                  ) : (
+                    String(value ?? "—")
+                  )}
+                </DefinitionRow>
+              ))
+            )}
+          </dl>
+        </AdminPanel>
+        </aside>
       </div>
     </>
   );
