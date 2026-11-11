@@ -178,9 +178,9 @@ export function AssistantsSettings({ withNotion = false }: { withNotion?: boolea
           </div>
           <p className="text-muted-foreground">
             For Claude Desktop, add Orbit to your{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">claude_desktop_config.json</code> with an API key from Settings → API &amp; connectors:
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-2xs">claude_desktop_config.json</code> with an API key from Settings → API &amp; connectors:
           </p>
-          <pre className="overflow-x-auto rounded border border-border/40 bg-background/80 p-2.5 font-mono text-[11px] text-foreground">
+          <pre className="overflow-x-auto rounded border border-border/40 bg-background/80 p-2.5 font-mono text-2xs text-foreground">
 {JSON.stringify(
   {
     mcpServers: {
@@ -207,7 +207,7 @@ export function AssistantsSettings({ withNotion = false }: { withNotion?: boolea
           </p>
           <p className="text-muted-foreground">
             2. <strong>Custom GPT Actions:</strong> When creating a Custom GPT, import Orbit’s OpenAPI spec at{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{url.replace("/mcp", "/v1/openapi.json")}</code> and authenticate with an Orbit API key.
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-2xs">{url.replace("/mcp", "/v1/openapi.json")}</code> and authenticate with an Orbit API key.
           </p>
         </div>
       ) : null}
