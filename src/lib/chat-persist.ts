@@ -84,6 +84,8 @@ export async function persistAssistantTurn(
       threadId,
       userId,
       role: "assistant",
+      // Voice policy must not capture text proposals in a thread that also hosts calls.
+      clientTurnId: turn.proposedActions?.length ? "chat-proposal" : null,
       content: turn.answer,
       recommendations: turn.recommendations,
       activity: turn.activity ?? [],

@@ -7,6 +7,7 @@ import { consumeBucket } from "@/lib/rate-limit";
 import { voicePublicState, VoiceUnavailableError } from "@/lib/voice/settings";
 import { VoiceProviderError } from "@/lib/voice/providers";
 import {
+  saveVoiceTurn,
   startVoiceSession,
   callVoiceTool,
   endVoiceSession,
@@ -24,6 +25,7 @@ const json = (data: unknown, status = 200) =>
 const command = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("start"),
+    threadId: z.string().uuid().optional(),
     fallback: z.boolean().default(false),
     history: z
       .array(
@@ -52,6 +54,9 @@ const command = z.discriminatedUnion("action", [
     sessionId: z.string().uuid(),
     tool: z.string().max(80),
     input: z.record(z.string(), z.unknown()),
+  }),
+  z.object({ action: z.literal("transcript"), sessionId: z.string().uuid(),
+    turn: z.object({ id: z.string().uuid(), source: z.enum(["user", "ai"]), text: z.string().min(1).max(4000), interrupted: z.boolean().default(false), revision: z.number().int().min(1).max(1000000) }),
   }),
   z.object({ action: z.literal("heartbeat"), sessionId: z.string().uuid() }),
   z.object({ action: z.literal("connected"), sessionId: z.string().uuid() }),
@@ -107,12 +112,16 @@ export async function POST(request: Request) {
             body.timeZone,
             body.fallback,
             body.history,
+            body.threadId,
           ),
         );
       case "tool":
         return json(
           await callVoiceTool(userId, body.sessionId, body.tool, body.input),
         );
+      case "transcript":
+        await saveVoiceTurn(userId, body.sessionId, body.turn);
+        return json({ ok: true });
       case "heartbeat":
         await heartbeatVoiceSession(userId, body.sessionId);
         return json({ ok: true });

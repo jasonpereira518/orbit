@@ -4015,7 +4015,9 @@ export const chatMessages = pgTable(
     /**
      * The id the client minted for the turn that wrote this question, so a Stop that reaches
      * the server after the question was saved can find and discard it. Null on assistant rows,
-     * versioned turns and every row from before SCHEMA_VERSION 174.
+     * versioned turns and every row from before SCHEMA_VERSION 174. Assistant proposal
+     * rows may carry chat/voice origin markers; finalized voice turns carry their session
+     * and transcript revision so late retries cannot overwrite a correction.
      */
 /**
      * Files attached to this question: their names and the text read from them (never the
