@@ -446,11 +446,12 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         );
 
         // No proof, no card: the index is only what this run read (its signals' source rows and
-        // its candidates), so a card can only cite something real. Before the rerank, so no AI
+        // its candidates), each tied to the person it was read for, so a card can only cite
+        // something real about its own person, never a namesake's row. Before the rerank, so no AI
         // is spent on a card that would be dropped.
         const proofIndex = buildProofIndex([
-          ...allSignals.flatMap((s) => (s.source ? [s.source] : [])),
-          ...candidates.map((c) => ({ table: "contacts" as const, id: c.id })),
+          ...allSignals.flatMap((s) => (s.source ? [{ ...s.source, contactId: s.contactId }] : [])),
+          ...candidates.map((c) => ({ table: "contacts" as const, id: c.id, contactId: c.id })),
         ]);
         const verified = verifyPicks(scored, proofIndex);
         const picks = verified.kept;

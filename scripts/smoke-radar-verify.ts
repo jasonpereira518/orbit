@@ -85,4 +85,40 @@ const { kept: list, dropped } = verifyPicks(
 );
 t.check("verifyPicks keeps the proven and counts the rest", list.length === 1 && dropped === 2, `${list.length} kept, ${dropped} dropped`);
 
+console.log("\nnamesakes: a proof belongs to one person");
+{
+  // Two people the run read, both called Sam. The quote is real and the row is real, but the
+  // row is about the other Sam.
+  const people = buildProofIndex([
+    { table: "action_items", id: "sam-a", contactId: "sam-1", text: "Send Sam the deck" },
+    { table: "action_items", id: "sam-b", contactId: "sam-2", text: "Send Sam the deck" },
+    // One email event the ranker matched to two people: it backs a card for each.
+    { table: "email_events", id: "ev1", contactId: "sam-1" },
+    { table: "email_events", id: "ev1", contactId: "sam-2" },
+    { table: "contact_signals", id: "post", contactId: "sam-2", text: "Hiring a designer", urls: ["https://www.linkedin.com/posts/sam-2"] },
+    { table: "contacts", id: "sam-1", contactId: "sam-1" },
+  ]);
+  const quoteOf = (id: string) => ({ type: "quote" as const, table: "action_items" as const, id, quote: "Send Sam the deck" });
+  t.check("a quote from this person's own row holds", proofHolds(quoteOf("sam-a"), people, "sam-1"));
+  t.check("the same quote from the other Sam's row does not", !proofHolds(quoteOf("sam-b"), people, "sam-1"));
+  t.check("a shared row holds for every person it was read for", proofHolds({ type: "record", table: "email_events", id: "ev1" }, people, "sam-1") && proofHolds({ type: "record", table: "email_events", id: "ev1" }, people, "sam-2"));
+  t.check("but not for someone it was never read for", !proofHolds({ type: "record", table: "email_events", id: "ev1" }, people, "sam-3"));
+  t.check("a contact record proves only that contact", proofHolds({ type: "record", table: "contacts", id: "sam-1" }, people, "sam-1") && !proofHolds({ type: "record", table: "contacts", id: "sam-1" }, people, "sam-2"));
+  t.check("a link a person's row handed over holds for them", proofHolds({ type: "url", url: "https://www.linkedin.com/posts/sam-2" }, people, "sam-2"));
+  t.check("and not for the other Sam", !proofHolds({ type: "url", url: "https://www.linkedin.com/posts/sam-2" }, people, "sam-1"));
+
+  const owedSam: RadarReason = { code: "action_item_open", label: "Open item: Send Sam the deck", points: 26 };
+  const namesake = verifyPick(
+    { contactId: "sam-1", reasons: [owedSam], evidence: [{ label: "Open", at: null, code: "action_item_open", proof: quoteOf("sam-b") }] },
+    people
+  );
+  t.check("a card proven only by the other Sam's row is dropped", namesake === null);
+  const own = verifyPick(
+    { contactId: "sam-1", reasons: [owedSam], evidence: [{ label: "Open", at: null, code: "action_item_open", proof: quoteOf("sam-a") }, { label: "Also", at: null, code: "action_item_open", proof: quoteOf("sam-b") }] },
+    people
+  );
+  t.check("on a proven card, the other Sam's evidence is stripped", own !== null && own.evidence.length === 1 && (own.evidence[0]!.proof as { id: string }).id === "sam-a");
+}
+
+
 t.done("radar proof check");
