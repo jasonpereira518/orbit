@@ -925,7 +925,9 @@ export function NetworkGraph({
         // app and defers while one is busy, so a refresh costs nothing when nothing else
         // wants the thread.
         if (!done) await yieldToApp();
-        if (result.graph) {
+        // The batch's graph is the whole engaged network; a sky keeps its own members and is
+        // redrawn by the server once the loop ends (below).
+        if (result.graph && !inSkyRef.current) {
           lastFetchAt.current = Date.now();
           // Updated in place: the chart keeps its camera and its mounted stars, and only the
           // people this batch changed re-render. It used to remount the whole sky per batch,
@@ -938,6 +940,8 @@ export function NetworkGraph({
         status: "completed",
         resultMessage: anyFailed ? "Constellation refreshed, with some people skipped" : "Constellation refreshed",
       });
+      // A sky's cards changed on the server; redraw them through the sky's own path.
+      if (inSkyRef.current) router.refresh();
     } catch (err) {
       console.error(err);
       finishBackgroundJob(jobId, {
@@ -949,7 +953,7 @@ export function NetworkGraph({
       refreshJobIdRef.current = null;
       setRefreshing(false);
     }
-  }, [refreshing, plan, creditsResetAt, planConfig]);
+  }, [refreshing, plan, creditsResetAt, planConfig, router]);
 
   const cometContacts = useMemo(() => {
     if (!data) return [];
