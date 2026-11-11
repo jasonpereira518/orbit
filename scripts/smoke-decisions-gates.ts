@@ -101,6 +101,20 @@ async function main() {
     return s2.last?.operation;
   }))).size === GATES.length);
 
+  console.log("\nWork-history gates ship off (spec 2026-11-10), still measurable");
+  for (const [gate, operation] of [
+    ["workHistoryRecheck", "contact.work_history.recheck.gate"],
+    ["workHistoryVerify", "contact.work_history.verify.gate"],
+  ] as const) {
+    check(`${gate}: threshold is null`, SKIP_GATE_TUNING.skipAtOrBelow[gate] === null);
+    const off = scripted(0.01);
+    check(`${gate}: an off gate never skips`, !(await gateSkips(off, gate, {})));
+    check(`${gate}: an off gate is never asked`, off.asked === 0);
+    const measured = scripted(0.2);
+    check(`${gate}: the eval still reads its probability`, (await gateProbability(measured, gate, {})) === 0.2);
+    check(`${gate}: asked under its own operation`, measured.last?.operation === operation, measured.last?.operation);
+  }
+
   console.log("\nLong inputs");
   const long = "x".repeat(SKIP_GATE_TUNING.inputChars + 5_000);
   check("gateText trims to the cap", gateText(long).length === SKIP_GATE_TUNING.inputChars);
