@@ -216,7 +216,7 @@ async function seed() {
 async function pending() {
   const db = await getDb();
   return db
-    .select({ id: recommendations.id, contactId: recommendations.contactId, kind: recommendations.kind, aiNote: recommendations.aiNote })
+    .select({ id: recommendations.id, contactId: recommendations.contactId, kind: recommendations.kind, aiNote: recommendations.aiNote, evidence: recommendations.evidence })
     .from(recommendations)
     .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")));
 }
@@ -237,6 +237,13 @@ run(async () => {
   const queries = capturedQueries();
   check("the run succeeds", first.ok, JSON.stringify(first));
   const rows = await pending();
+  // No proof, no card: every producer hands its source row over, so nothing real is dropped.
+  check("every card the run built carried proof", first.unproven === 0, `unproven=${first.unproven}`);
+  check(
+    "and the stored evidence says which reason it proves and how",
+    rows.length > 0 && rows.every((r) => r.evidence.some((e) => typeof e.code === "string" && e.proof !== undefined)),
+    JSON.stringify(rows.map((r) => r.evidence))
+  );
   const kindOf = (id: string) => rows.filter((r) => r.contactId === id).map((r) => r.kind).join(",");
   check("a dormant close tie is a reconnect", kindOf(ids.dormant) === "reconnect", kindOf(ids.dormant));
   check("a fresh import is not a reach_out: first and last interaction are the import's, not a meeting", kindOf(ids.intro) === "", kindOf(ids.intro));
@@ -391,7 +398,10 @@ run(async () => {
   // (`loadUserFocus`) and the email-insights opt-in check (`produceEmailSignals`, one statement
   // that returns nothing for an account that has not opted in); see smoke-page-budgets.
   // 29: plus active-projects read folded alongside user_settings (which now provides focus, tz, plan, and toggles).
-  check("and a bounded number of them", statements <= 29, String(statements));
+  // 30 (Radar revision PR 3): the news probe is gone (PR 1), and two constant reads joined the
+  // signal batch: open threads the person owes (relationship_digests) and the latest real
+  // encounter per contact (met_recently). Neither grows with the size of the network.
+  check("and a bounded number of them", statements <= 30, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);

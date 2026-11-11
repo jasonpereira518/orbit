@@ -192,6 +192,7 @@ const MANIFEST: Record<string, Tier> = {
   // Fixed contact bugs, promoted from the bug tier.
   "smoke-merge-children": "pglite",
   "smoke-merge-email-sends": "pglite",
+  "smoke-merge-radar-opportunities": "pglite",
   "smoke-contact-delete-ghost-suggestion": "pglite",
   "smoke-linkedin-slug": "pglite",
   // Contacts, exports, billing and AI validation.
@@ -234,6 +235,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-event-discovery": "pure",
   "smoke-event-relevance": "pure",
   "smoke-radar-score": "pure",
+  "smoke-radar-verify": "pure",
   "smoke-radar-email-score": "pure",
   "smoke-event-parse": "pure",
   "smoke-event-resync": "pure",
@@ -647,6 +649,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-job-feed-fetch": "pure",
   "smoke-job-feed-sweep": "pglite",
   "smoke-radar-run": "pglite",
+  "smoke-radar-follow-up": "pglite",
   "smoke-radar-activation": "pglite",
   "smoke-radar-discovery-cleanup": "pglite",
   "smoke-radar-email-signals": "pglite",

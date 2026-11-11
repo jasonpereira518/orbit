@@ -62,6 +62,7 @@ import { listActiveProjectsForUser, scoreProjectMatch, type UserProject } from "
 import { extractActiveProjectsForUser } from "@/lib/projects/extract";
 import { prepareSuggestedCalendarInvite } from "@/lib/radar/invites";
 import { leadReason } from "@/lib/radar/types";
+import { buildProofIndex, verifyPicks } from "@/lib/radar/verify";
 
 const HOUR_MS = 3_600_000;
 
@@ -118,6 +119,8 @@ export type RadarRunStats = {
   posts: number;
   /** Signals read from the user's mail this run (accounts that opted in to email insights). */
   emailSignals: number;
+  /** Cards dropped because their lead reason had no proof that held (`verify.ts`). */
+  unproven: number;
   durationMs: number;
 };
 
@@ -326,6 +329,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     autopilot: 0,
     posts: 0,
     emailSignals: 0,
+    unproven: 0,
     durationMs: 0,
   };
   const db = await getDb();
@@ -427,9 +431,10 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         stats.posts = posts.length;
         // Email signals first: a card keeps at most two pieces of evidence, and the one from
         // mail is the one an accept needs to find its email again.
-        const picks = scorePicks(
+        const allSignals = [...emailSignals, ...signals, ...posts];
+        const scored = scorePicks(
           candidates,
-          [...emailSignals, ...signals, ...posts],
+          allSignals,
           targetKeys,
           goals,
           suppressions,
@@ -439,6 +444,18 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           userTz,
           activeProjects
         );
+
+        // No proof, no card: the index is only what this run read (its signals' source rows and
+        // its candidates), each tied to the person it was read for, so a card can only cite
+        // something real about its own person, never a namesake's row. Before the rerank, so no AI
+        // is spent on a card that would be dropped.
+        const proofIndex = buildProofIndex([
+          ...allSignals.flatMap((s) => (s.source ? [{ ...s.source, contactId: s.contactId }] : [])),
+          ...candidates.map((c) => ({ table: "contacts" as const, id: c.id, contactId: c.id })),
+        ]);
+        const verified = verifyPicks(scored, proofIndex);
+        const picks = verified.kept;
+        stats.unproven = verified.dropped;
 
         let ranked: NewRecommendation[] = picks;
         if (access && RADAR_RERANK_ENABLED && radarLimits.aiExplanations) {
