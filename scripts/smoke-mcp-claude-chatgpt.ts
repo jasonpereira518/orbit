@@ -14,7 +14,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { productEvents } from "../src/db/schema";
 import { generateApiKey } from "../src/lib/api/keys";
-import { POST, GET, OPTIONS } from "../src/app/api/mcp/route";
+import { POST, OPTIONS } from "../src/app/api/mcp/route";
 import { GET as GET_ROOT_RESOURCE, OPTIONS as OPTIONS_ROOT_RESOURCE } from "../src/app/.well-known/oauth-protected-resource/route";
 import { GET as GET_SUBPATH_RESOURCE } from "../src/app/.well-known/oauth-protected-resource/api/mcp/route";
 import { GET as GET_OPENID_CONFIG, OPTIONS as OPTIONS_OPENID_CONFIG } from "../src/app/.well-known/openid-configuration/route";
