@@ -750,6 +750,10 @@ async function seed() {
     .insert(schema.chatThreads)
     .values({ userId: USER, title: "thread" })
     .returning();
+  await db.insert(schema.orbitVoiceSessions).values({
+    userId: USER, threadId: thread.id, expiresAt: new Date(Date.now() + 600000),
+    scope: { contacts: [[contact.id, "Ada Lovelace"]] },
+  });
   await db.insert(schema.chatMessages).values({
     threadId: thread.id,
     userId: USER,

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Check, Loader2, Paintbrush, Palette, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +32,7 @@ export function ThemePalettePicker({
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(currentColor.toLowerCase());
   const [customHex, setCustomHex] = useState(currentColor);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   function applyColor(hex: string) {
     if (!/^#[0-9a-f]{6}$/i.test(hex)) {

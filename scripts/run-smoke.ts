@@ -42,6 +42,7 @@ type Tier = "pure" | "pglite" | "manual" | "bug";
 
 /** Every smoke script, by tier. `--check` fails when a script on disk is missing here. */
 const MANIFEST: Record<string, Tier> = {
+  "smoke-orbit-voice": "pglite",
   // pure ------------------------------------------------------------------------------
   "smoke-test-harness": "pure", // the fixtures, fetch mock and known-bug exit codes themselves
   "smoke-friendly-error": "pure",
@@ -98,6 +99,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-action-user-scope": "pure",
   "smoke-consume-bucket-args": "pure",
   "smoke-toast-copy": "pure",
+  "smoke-toast-dedupe": "pure",
   "smoke-drive-picker-token": "pure",
   "smoke-settle-once": "pure",
   "smoke-vercel-ignore-build": "pure",
@@ -154,6 +156,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-split-meetings": "pure",
   "smoke-chat-route": "pure",
   "smoke-chat-directives": "pure",
+  "smoke-chat-web-decision": "pure",
   "smoke-chat-limits": "pure",
   "smoke-decisions-gates": "pure",
   "smoke-chat-search-notice": "pure",
@@ -220,6 +223,11 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-clerk-session-hint": "pure",
   "smoke-closeness": "pure",
   "smoke-command-palette": "pure",
+  "smoke-command-palette-coverage": "pure",
+  "smoke-nav-parity": "pure",
+  "smoke-guess-gender": "pure",
+  "smoke-single-flight": "pure",
+  "smoke-reminder-phrase": "pure",
   "smoke-reminder-due-bucket": "pure",
   "smoke-triage-keys": "pure",
   "smoke-event-canonical-url": "pure",
@@ -269,6 +277,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ai-request-options": "pure",
   "smoke-eval-ai-score": "pure",
   "smoke-feedback-image": "pure",
+  "smoke-feedback-dock": "pure",
   "smoke-feedback-triage": "pure",
   "smoke-follow-up-cadence": "pure",
   "smoke-gmail-batch": "pure",
@@ -443,6 +452,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-threads": "pglite",
   "smoke-chat-memory": "pglite",
   "smoke-chat-draft-save": "pglite",
+  "smoke-chat-draft-block": "pglite",
   "smoke-chat-photos": "pglite",
   "smoke-clear-api-key": "pglite",
   "smoke-connector-registry": "pglite", // imports entitlements + rate-limit, which reach @/db
@@ -609,6 +619,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-poll-routes": "pglite",
   "smoke-latency-depth": "pglite",
   "smoke-avatar-sql-classify": "pglite",
+  "smoke-avatar-upgrade": "pglite",
   "smoke-related-sql-lower": "pglite",
   "smoke-chat-lookup-tools": "pglite",
   "smoke-calendar-events": "pglite",
@@ -638,6 +649,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-job-feed-fetch": "pure",
   "smoke-job-feed-sweep": "pglite",
   "smoke-radar-run": "pglite",
+  "smoke-radar-discovery-cleanup": "pglite",
   "smoke-radar-email-signals": "pglite",
   "smoke-radar-email-run": "pglite",
   "smoke-radar-email-accept": "pglite",

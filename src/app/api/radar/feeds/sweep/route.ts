@@ -20,7 +20,7 @@ import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { runNewsSweep } from "@/lib/radar/feeds/sweep";
 import { reportError } from "@/lib/report-error";
-import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
+import { getComingSoonKeys, getHiddenSurfaceKeys } from "@/lib/surface-visibility";
 
 export const maxDuration = 300;
 
@@ -42,8 +42,8 @@ export async function POST(request: Request) {
 
   const handle = await startCronRun("radar.feeds");
   try {
-    const hidden = await getHiddenSurfaceKeys();
-    if (hidden.has(SURFACE_KEY) || !(await anyoneUsesRadar())) {
+    const [hidden, soon] = await Promise.all([getHiddenSurfaceKeys(), getComingSoonKeys()]);
+    if (hidden.has(SURFACE_KEY) || soon.has(SURFACE_KEY) || !(await anyoneUsesRadar())) {
       await finishCronRun(handle, { status: "ok", stats: { standDown: true } });
       return NextResponse.json({ ok: true, standDown: true });
     }

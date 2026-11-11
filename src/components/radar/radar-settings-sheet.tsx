@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -69,7 +70,7 @@ function Toggle({
 export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [state, setState] = useState(settings);
 
   const save = (apply: (s: RadarSettingsView) => RadarSettingsView, run: () => Promise<RadarActionResult>) =>

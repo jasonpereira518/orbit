@@ -148,7 +148,7 @@ export function AppShell({
   if (isOnboarding) {
     return (
       <MotionPreferenceConfig>
-        <div className="min-h-dvh bg-background">
+        <div data-dock-squeeze className="min-h-dvh bg-background">
           <ThemeSync theme={theme} />
           <ConnectivityBanner />
           {children}
@@ -213,6 +213,9 @@ export function AppShell({
               header and the bottom nav, which are not page content. */}
           <div
             id="app-main-scroll"
+            // The feedback dock's room is padding on THIS column, so its scrollbar stays at the
+            // screen's right edge, beside the panel, and the page (and its bell) narrow inside.
+            data-dock-squeeze
             className={cn(
               "relative flex h-full min-h-0 flex-1 flex-col",
               // A locked page (Chat, the constellation) fits itself to the viewport. Under
@@ -282,7 +285,12 @@ export function AppShell({
 
             <div
               className={cn(
-                "fixed right-5 z-30 hidden md:right-8 md:block",
+                // `--orbit-dock-w` is the room the feedback dock is taking (0 unless it is open
+                // and docked): the bell stays at the page's right edge as the page narrows,
+                // and slides with it on the same curve. Once the dock is open it also tucks 1.25rem
+                // closer to the panel (the `min()` is 0 while the dock is closed), which leaves that
+                // much more air between the page's content and the bell.
+                "fixed right-5 z-30 hidden md:block md:right-[calc(2rem+var(--orbit-dock-w)-min(1.25rem,var(--orbit-dock-w)))] md:transition-[right] md:duration-slow md:ease-house",
                 // The preview banner is in the layout flow but this button is fixed to the
                 // viewport, so it has to step down out from under it by hand.
                 viewingAsUser ? "top-12" : "top-5 md:top-6"

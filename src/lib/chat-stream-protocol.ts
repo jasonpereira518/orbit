@@ -159,6 +159,8 @@ export type ChatStepKind =
   /** The research loop before a multi-step answer — one step, relabelled per lookup. */
   | "gather"
   | "answer"
+  /** Web search turned itself on, or could not be (`@/lib/chat-web-decision`). */
+  | "web"
   | "verify"
   /** A message the person sent mid-answer that the turn took in (`steerChatTurn`). */
   | "steer";

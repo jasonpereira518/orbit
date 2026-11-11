@@ -18,6 +18,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages } from "@/db/schema";
+import { guardVoiceProposal } from "@/lib/voice/sessions";
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { UserFacingError } from "@/lib/errors";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
@@ -124,6 +125,7 @@ export type CommitResult =
  */
 export async function commitProposedAction(messageId: string, actionId: string): Promise<CommitResult> {
   const userId = await requireUserForSurface("page.chat");
+  await guardVoiceProposal(userId, messageId);
   const claimed = await claim(userId, messageId, actionId, "committing");
   if (!claimed.ok) return { ok: false, reason: REASON_COPY[claimed.reason] };
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Button } from "@/components/ui/button";
 import { SettingsRow } from "@/components/settings/settings-section";
 import { setRadarDigest } from "@/actions/radar";
@@ -11,7 +12,7 @@ import { syncTimeZoneCookie } from "@/lib/tz-cookie";
 /** Radar's Monday email. Shown only to viewers who can open Radar. */
 export function RadarDigestSetting({ initialEnabled }: { initialEnabled: boolean }) {
   const [enabled, setEnabled] = useState(initialEnabled);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   // The email is timed by this browser's zone; keep the cookie the server reads current.
   useEffect(() => syncTimeZoneCookie(), []);

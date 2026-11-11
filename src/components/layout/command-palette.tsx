@@ -38,7 +38,7 @@ export function CommandPalette({
 }: {
   /** Surfaces hidden from this viewer; the palette leaves out anything leading to one. */
   hidden: ReadonlySet<string>;
-  /** Surfaces showing a teaser to this viewer; their shortcuts stay out of Actions. */
+  /** Pages marked coming soon: listed, and tagged "Coming soon" as the sidebar tags them. */
   comingSoon: ReadonlySet<string>;
   askMode: PaletteAskMode;
 }) {
@@ -91,6 +91,12 @@ export function CommandPalette({
 
   if (!loaded) return null;
   return (
-    <CommandPaletteDialog open={open} onOpenChange={setOpen} hidden={hidden} comingSoon={comingSoon} askMode={askMode} />
+    <CommandPaletteDialog
+      open={open}
+      onOpenChange={setOpen}
+      hidden={hidden}
+      comingSoon={comingSoon}
+      askMode={askMode}
+    />
   );
 }

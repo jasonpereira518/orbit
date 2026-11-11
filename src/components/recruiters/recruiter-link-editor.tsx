@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { setLinkShared, updateMyLink } from "@/actions/recruiters";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -35,7 +36,7 @@ export function RecruiterLinkEditor({
   sharingEnabled: boolean;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [shared, setShared] = useState(sharedToPool);
   const [form, setForm] = useState({
     status,

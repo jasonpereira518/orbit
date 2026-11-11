@@ -12,7 +12,8 @@
  * The fold only ever fills blanks on the target, so nothing on either side is overwritten.
  */
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Merge, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -39,7 +40,7 @@ export function MergeContactButton({ id, name }: { id: string; name: string }) {
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<ContactPickerOption[]>([]);
   const [target, setTarget] = useState<ContactPickerOption | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [pending, startTransition] = useGuardedTransition();
   // Guards against an earlier, slower search overwriting a later one's results.
   const requestRef = useRef(0);
 

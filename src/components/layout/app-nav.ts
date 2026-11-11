@@ -159,6 +159,12 @@ export const MOBILE_BOTTOM_NAV: Array<
   { id: "more", label: "More", icon: MoreHorizontal },
 ];
 
+/**
+ * Everything the phone bar does not carry, so together with `MOBILE_BOTTOM_NAV` it reaches every
+ * page the desktop sidebar lists (`APP_NAV`). Settings is last: it is the one destination the
+ * phone nav used to leave out, so on a phone it was only reachable through ⌘K's search.
+ * `scripts/smoke-nav-parity.ts` fails when a sidebar page is missing from the two lists.
+ */
 export const MOBILE_MORE_NAV = [
   RADAR,
   REMINDERS,
@@ -168,6 +174,7 @@ export const MOBILE_MORE_NAV = [
   OUTREACH,
   CARD,
   KNOWLEDGE,
+  APP_NAV_SETTINGS,
 ];
 
 /**

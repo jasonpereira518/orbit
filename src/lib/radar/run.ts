@@ -62,7 +62,6 @@ import { focusFitComponent, type UserFocus } from "@/lib/focus-fit";
 import { localClock } from "@/lib/radar/digest";
 import { listActiveProjectsForUser, scoreProjectMatch, type UserProject } from "@/lib/projects/store";
 import { extractActiveProjectsForUser } from "@/lib/projects/extract";
-import { discoverNewPeople } from "@/lib/radar/signals/discovery";
 import { prepareSuggestedCalendarInvite } from "@/lib/radar/invites";
 import { leadReason } from "@/lib/radar/types";
 
@@ -361,7 +360,6 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
               lastRunAt: userSettings.radarLastRunAt,
               dailyEnabled: userSettings.radarDailyEnabled,
               autoProjects: userSettings.radarAutoProjects,
-              discoveryEnabled: userSettings.radarDiscoveryEnabled,
               careerProfile: userSettings.careerProfile,
               compedPlan: userSettings.compedPlan,
               lifetimePurchasedAt: userSettings.lifetimePurchasedAt,
@@ -404,22 +402,10 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           }).catch(() => activeProjects);
         }
 
-        // People discovery: find new prospective builders/researchers matching active projects (paid tiers)
-        let discoverySignals: Extract<RadarSignal, { kind: "discovery" }>[] = [];
-        if (
-          radarLimits.discoveryEnabled &&
-          settingsRow?.discoveryEnabled !== 0 &&
-          (opts.trigger === "schedule" || opts.trigger === "manual") &&
-          activeProjects.length
-        ) {
-          discoverySignals = await discoverNewPeople(userId, activeProjects, now, { limit: 3 }).catch((err) => {
-            reportUnlessQuiet(err, { where: "job.radar.discovery", userId, level: "warning" });
-            return [];
-          });
-        }
-
+        // No outbound people discovery here: Radar never writes to `contacts`. New people are
+        // shown as opportunities the user chooses to save (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
         const [candidates, suppressions] = await Promise.all([
-          loadCandidates(userId, [...emailSignals, ...signals, ...discoverySignals].map((s) => s.contactId)),
+          loadCandidates(userId, [...emailSignals, ...signals].map((s) => s.contactId)),
           loadSuppressions(userId, live, now),
         ]);
 
@@ -446,7 +432,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         // mail is the one an accept needs to find its email again.
         const picks = scorePicks(
           candidates,
-          [...emailSignals, ...signals, ...news, ...posts, ...discoverySignals],
+          [...emailSignals, ...signals, ...news, ...posts],
           targetKeys,
           goals,
           suppressions,

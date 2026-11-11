@@ -70,13 +70,19 @@ export function answerMatch(json: string): "confident" | "unsure" | "none" | nul
  * it confirms or rules out that candidate instead of starting over. A confident answer and a
  * "none" both stop at one: a second look rarely turns nobody into somebody. The two calls'
  * sources are merged, so the answer still cites what the first search read.
+ *
+ * `vetoVerify` (work history only): asked about an unsure first answer before the second
+ * search; true means "clearly someone else" — stop at one, `vetoed`, and the caller writes
+ * nothing. It may only ever SAVE a search, never accept the candidate.
  */
 export async function searchOnceThenVerify(
   call: (user: string, maxSearches: number) => Promise<{ json: string; sources: WebSource[] }>,
   prompt: string,
-): Promise<{ json: string; sources: WebSource[] }> {
+  opts: { vetoVerify?: (firstJson: string) => Promise<boolean> } = {},
+): Promise<{ json: string; sources: WebSource[]; vetoed?: true }> {
   const first = await call(prompt, 1);
   if (answerMatch(first.json) !== "unsure") return first;
+  if (opts.vetoVerify && (await opts.vetoVerify(first.json).catch(() => false))) return { ...first, vetoed: true };
   const hint = `A first search found a possible match but was not sure it is this person. Its answer:\n\n${fenceUntrusted("first_answer", first.json.slice(0, 2_000))}\n\nSearch once more to confirm or rule out that candidate.`;
   const second = await call(`${prompt}\n\n${hint}`, 1);
   return { json: second.json, sources: [...first.sources, ...second.sources] };

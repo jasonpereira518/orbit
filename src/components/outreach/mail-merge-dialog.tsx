@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +39,7 @@ export function MailMergeDialog({
   onSent?: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [quotaData, setQuotaData] = useState<{
     quota: FiveHourQuota;
     providers: {

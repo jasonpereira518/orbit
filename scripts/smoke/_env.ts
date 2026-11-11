@@ -45,6 +45,8 @@ export const PROVIDER_KEY_ENV = [
   "ORBIT_MANAGED_GEMINI_API_KEY",
   "ORBIT_MANAGED_OPENAI_API_KEY",
   "ORBIT_MANAGED_ANTHROPIC_API_KEY",
+  // Orbit's own TypeSafe key (the work-history gates): a live one would bill Orbit per smoke.
+  "ORBIT_MANAGED_TYPESAFE_API_KEY",
   "TYPESAFE_API_KEY",
   "APOLLO_API_KEY",
   "BRIGHTDATA_API_KEY",
@@ -53,6 +55,8 @@ export const PROVIDER_KEY_ENV = [
   // smoke-ai-access's "transcription refused, nothing sent" assertions stop asserting anything
   // and the suite reaches the live Deepgram API instead. ORBIT_DEEPGRAM rides along so a smoke
   // cannot re-enable the feature out from under the key being gone.
+  "ELEVENLABS_API_KEY",
+  "ELEVENLABS_AGENT_ID",
   "DEEPGRAM_API_KEY",
   "ORBIT_DEEPGRAM",
 ] as const;

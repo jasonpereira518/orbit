@@ -1140,6 +1140,7 @@ export async function getDashboardData(
       preferredName: d.preferredName,
       company: light.company ?? null,
       title: d.title,
+      profileImageUrl: d.profileImageUrl,
       goalRelevance,
       reason,
       companyName,

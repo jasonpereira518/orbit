@@ -22,6 +22,7 @@ export function ReminderCreateForm({
   onOpenChange,
   compactTrigger = false,
   defaultDue,
+  defaultTitle,
 }: {
   listId: string | null;
   lists: Array<{ id: string; name: string }>;
@@ -31,12 +32,17 @@ export function ReminderCreateForm({
   compactTrigger?: boolean;
   /** YYYY-MM-DD to prefill — today, when created from the Today view. */
   defaultDue?: string | null;
+  /** Prefill for the title: a sentence typed into the palette ("remind me to call Sam friday"). */
+  defaultTitle?: string | null;
 }) {
   const [openState, setOpenState] = useState(false);
   const open = openProp ?? openState;
   const setOpen = onOpenChange ?? setOpenState;
   // Memoized: the form re-initializes whenever `initial` changes identity.
-  const initial = useMemo(() => (defaultDue ? { dueDate: defaultDue } : null), [defaultDue]);
+  const initial = useMemo(
+    () => (defaultDue || defaultTitle ? { dueDate: defaultDue ?? null, title: defaultTitle ?? "" } : null),
+    [defaultDue, defaultTitle]
+  );
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

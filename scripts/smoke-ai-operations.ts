@@ -147,6 +147,8 @@ console.log("\nDerived lists");
         "capture.parse.identify.bg",
         "contact.name_guess",
         "contact.work_history",
+        "contact.work_history.recheck.gate",
+        "contact.work_history.verify.gate",
         "duplicates.same_person",
         "email.understand",
         "feedback.triage",

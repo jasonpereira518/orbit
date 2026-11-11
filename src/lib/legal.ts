@@ -43,9 +43,13 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // one or confirm a suggestion, listed and removable in the chat's Context panel, sent with every
 // chat question), and the text of files you attach to a question is kept with that chat and sent
 // to the AI provider, a photo or PDF being read by it first.
-// 2026-11-11: Orbit card — fields you switch on are public via your card link; details shared
+// 2026-11-11: TypeSafe on Orbit's own account for every account — Jev decides whether a
+// contact's work history needs another web search, reading the stored job history and short
+// summaries of the user's notes and messages since the last check (never the notes, an email
+// address or a phone number), and may judge an unsure search's public answer to be someone else.
+// 2026-11-11.2: Orbit card — fields you switch on are public via your card link; details shared
 // back are stored in your Orbit only.
-export const TERMS_VERSION = "2026-11-11";
+export const TERMS_VERSION = "2026-11-11.2";
 export const LEGAL_LAST_UPDATED = "November 11, 2026";
 
 /**
