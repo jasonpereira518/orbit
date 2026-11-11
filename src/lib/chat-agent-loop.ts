@@ -52,12 +52,20 @@ import {
   pastTense,
 } from "@/lib/tools/chat-executor";
 
-/** The answer stream is cut here, so it ends inside `maxDuration` (60s) with room left to persist. */
+/** A quick answer's stream is cut here, well inside the route's `maxDuration`, with room left to persist. */
 export const ANSWER_ENDS_BY_MS = 55_000;
 
+/**
+ * How hard one answer may work. "quick" is what chat has always done. "deep" is the person
+ * asking for a thorough answer: more rounds, more lookups, more web searches and several
+ * minutes instead of one. It costs more AI usage, which the composer says where it is chosen.
+ * Both end inside the route's `maxDuration` (300s) with room left to save the answer.
+ */
+export type ChatMode = "quick" | "deep";
+
 /** Ms left for the answer stream. Floored at 1s: `AbortSignal.timeout` throws on a negative delay. */
-export function answerDeadlineMs(requestStartedAt: number, now = Date.now()): number {
-  return Math.max(1_000, requestStartedAt + ANSWER_ENDS_BY_MS - now);
+export function answerDeadlineMs(requestStartedAt: number, now = Date.now(), mode: ChatMode = "quick"): number {
+  return Math.max(1_000, requestStartedAt + CHAT_MODES[mode].answerEndsByMs - now);
 }
 
 /** Rounds include the last, tools-off one. Most answers need one round; a lookup makes two. */
@@ -74,6 +82,54 @@ export const WEB_LOOKUP_LIMIT = {
   max: 1,
   message: "One web lookup per answer. Answer with what you found, or suggest Find people (/find) for more.",
 } as const;
+
+/** Each mode's budget. Quick is the constants above, unchanged. */
+export const CHAT_MODES = {
+  quick: {
+    bounds: AGENT_BOUNDS,
+    lookupsEndByMs: LOOKUPS_END_BY_MS,
+    answerEndsByMs: ANSWER_ENDS_BY_MS,
+    webLookups: WEB_LOOKUP_LIMIT.max as number,
+  },
+  deep: {
+    bounds: { maxRounds: 8, maxCalls: 16, maxResultChars: 6_000 },
+    lookupsEndByMs: 150_000,
+    answerEndsByMs: 240_000,
+    webLookups: 3,
+  },
+} as const satisfies Record<ChatMode, unknown>;
+
+/** The per-answer cap on web lookups for a mode. */
+export function webLimitFor(mode: ChatMode) {
+  const max = CHAT_MODES[mode].webLookups;
+  return max === WEB_LOOKUP_LIMIT.max
+    ? WEB_LOOKUP_LIMIT
+    : {
+        tools: WEB_LOOKUP_LIMIT.tools,
+        max,
+        message: `${max} web lookups per answer, and they are used. Answer with what you found, or suggest Find people (/find) for more.`,
+      };
+}
+
+const WEB_RULE =
+  "Web lookups (research_person, research_company, find_people) are slow and paid: use at most one per answer, and only when the user asks about someone or something outside their records.";
+
+/**
+ * `AGENT_RULES` as this answer should hear them. With web search switched off the web tools
+ * are not offered at all, so the rule says so instead of naming tools the model cannot call.
+ */
+export function agentRulesFor(mode: ChatMode, web: boolean): string {
+  const webRule = !web
+    ? "The user has switched web search off for this question: you have no web lookups. Answer from their records, and when the question needs the public web, say that web search is off rather than guessing."
+    : mode === "deep"
+      ? WEB_RULE.replace("at most one per answer", `at most ${CHAT_MODES.deep.webLookups} per answer`)
+      : WEB_RULE;
+  const thorough =
+    mode === "deep"
+      ? " The user asked for a thorough answer and is willing to wait: check more than one place before you conclude, follow a promising lead with a second lookup, and cover the whole question. Still write only what the records and lookups support."
+      : "";
+  return `${AGENT_RULES.replace(WEB_RULE, webRule)}${thorough}`;
+}
 
 /**
  * What the answer is told about its tools. Appended to the shared system prompt, before the
@@ -147,6 +203,8 @@ export async function runChatAgent(input: {
   now?: () => number;
   /** What the person sent mid-answer. See `ToolLoopOptions.steer`. */
   steer?: SteerSource;
+  /** The cap on web lookups; `WEB_LOOKUP_LIMIT` when absent. */
+  webLimit?: { tools: ReadonlySet<string>; max: number; message: string };
 }): Promise<ChatAgentRun> {
   const bounds = input.bounds ?? AGENT_BOUNDS;
   let started = 0;
@@ -167,7 +225,7 @@ export async function runChatAgent(input: {
     signal: input.signal,
     maxResultChars: bounds.maxResultChars,
     now: input.now,
-    limited: WEB_LOOKUP_LIMIT,
+    limited: input.webLimit ?? WEB_LOOKUP_LIMIT,
     steer: input.steer,
   });
   if (outcome.stoppedBy === "done") {
@@ -246,6 +304,10 @@ export async function answerWithLookups(
     access?: AiAccess;
     /** What the person sent mid-answer, read between rounds. */
     steer?: SteerSource;
+    /** How hard to work on it. See `ChatMode`. */
+    mode?: ChatMode;
+    /** False when the person switched web search off: the web tools are not offered. */
+    web?: boolean;
     /** Test seam: builds a fake driver, handed the callback its rounds stream prose into. */
     driver?: (onText: (delta: string) => void) => ToolDriver;
     /** Test seam: a fake executor in place of the registry. */
@@ -260,7 +322,10 @@ export async function answerWithLookups(
   const prompt = buildChatPrompt(
     promptArgsFromContext(ctx, { evidence: null, notePassages: options.notePassages ?? ctx.notePassages ?? [] })
   );
-  const system = `${prompt.systemCore}${AGENT_RULES}${WRITE_RULES}${CHAT_STREAM_TAIL}`;
+  const mode = options.mode ?? "quick";
+  const web = options.web !== false;
+  const budget = CHAT_MODES[mode];
+  const system = `${prompt.systemCore}${agentRulesFor(mode, web)}${WRITE_RULES}${CHAT_STREAM_TAIL}`;
   options.onEvidence?.(prompt.evidence);
 
   // Auto-apply (`@/lib/chat-auto-apply`): off unless the person switched it on, and off for the
@@ -287,7 +352,8 @@ export async function answerWithLookups(
   }, { timeZone: ctx.timeZone });
   const proposers = proposerTools(sink);
   const proposerNames = new Set(proposers.map((t) => t.name));
-  const tools = options.execute ? [] : await chatToolsFor(userId);
+  const offered = options.execute ? [] : await chatToolsFor(userId);
+  const tools = web ? offered : offered.filter((t) => !WEB_LOOKUP_LIMIT.tools.has(t.name));
   const modelTools: ModelTool[] = [...tools, ...proposers].map((t) => ({
     name: t.name,
     description: t.description,
@@ -400,8 +466,10 @@ export async function answerWithLookups(
       execute,
       onRound: () => joiner.newRound(),
       steer: options.steer,
-      lookupDeadline: options.requestStartedAt + LOOKUPS_END_BY_MS,
-      answerDeadline: options.requestStartedAt + ANSWER_ENDS_BY_MS,
+      lookupDeadline: options.requestStartedAt + budget.lookupsEndByMs,
+      answerDeadline: options.requestStartedAt + budget.answerEndsByMs,
+      bounds: budget.bounds,
+      webLimit: webLimitFor(mode),
       signal,
       now,
     });

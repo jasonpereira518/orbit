@@ -92,6 +92,10 @@ export async function streamChat(
     turnId?: string;
     /** Files attached to the question: names and the text read from them. */
     attachments?: ChatAttachment[];
+    /** "deep" asks for a thorough answer that may take minutes. Absent is a quick one. */
+    mode?: "quick" | "deep";
+    /** False switches web lookups off for this question. */
+    web?: boolean;
   },
   handlers: ChatStreamHandlers,
   signal?: AbortSignal
