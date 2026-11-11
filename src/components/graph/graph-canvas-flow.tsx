@@ -47,7 +47,7 @@ import type {
   GraphChartProps,
   GraphPayload,
 } from "@/components/graph/graph-chart-types";
-import { setCameraMoving } from "@/components/graph/camera-motion";
+import { setCameraMoving, setSkyDrift } from "@/components/graph/camera-motion";
 import { useGraphLayout } from "@/components/graph/use-graph-layout";
 import {
   buildHybridGraphLayout,
@@ -1071,6 +1071,7 @@ function GraphCanvasInner({
     () => () => {
       if (stopTimerRef.current !== undefined) window.clearTimeout(stopTimerRef.current);
       setCameraMoving(false);
+      setSkyDrift(0, 0);
     },
     []
   );
@@ -2229,6 +2230,14 @@ function GraphCanvasInner({
   // ReactFlow calls these with (event, viewport); both are ignored, as before.
   const onMoveStart = useCallback(() => setMoving(true), [setMoving]);
   const onMoveEnd = useCallback(() => setMoving(false), [setMoving]);
+  // The starfield trails the camera (camera-motion.ts); written outside React, like the flag above.
+  const onMove = useCallback(
+    (_: unknown, vp: { x: number; y: number }) => {
+      const { width, height } = storeApi.getState();
+      setSkyDrift(vp.x - width / 2, vp.y - height / 2);
+    },
+    [storeApi]
+  );
 
   const isEmpty = filteredContacts.length === 0;
   const flowNodes = useHiddenBeforeRemoved(useSameArrayIfUnchanged(nodes));
@@ -2282,6 +2291,7 @@ function GraphCanvasInner({
         ref={stageRef}
         onMoveStart={onMoveStart}
         onMoveEnd={onMoveEnd}
+        onMove={onMove}
         className={cn(
           "constellation-stage select-none [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none]",
           compact ? "touch-pan-y" : "touch-none overscroll-none"
