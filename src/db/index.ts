@@ -5888,6 +5888,15 @@ export type ReconcileOptions = {
   lockWaitMs?: number;
   /** When another holder keeps the lease past `lockWaitMs`: "sweep" (build, default) or "skip" (runtime). */
   onLockTimeout?: "sweep" | "skip";
+  /**
+   * Run the sweep even when the recorded version says this build is current, or older than the
+   * database. For PREVIEW builds only (`scripts/migrate.ts`): previews share one database, so a
+   * sibling branch's higher stamp makes `isSchemaCurrent` skip this branch's DDL under the
+   * never-downgrade rule, and the build then fails its coverage check ("column missing after
+   * migrate"): 13 of 100 deployments in Nov 2026. Safe because every statement is idempotent
+   * and `recordSchemaVersion` still never lowers the stamp. Never set by a runtime boot.
+   */
+  force?: boolean;
 };
 
 /**
@@ -5914,11 +5923,14 @@ export async function reconcileSchema(options: ReconcileOptions = {}): Promise<S
 
   // Every cold start lands here before its first real query, so the common case — the build
   // already migrated — has to be ONE round trip, not three.
-  if (await schemaIsCurrentFast(run)) {
+  if (!options.force && (await schemaIsCurrentFast(run))) {
     return { version: SCHEMA_VERSION, applied: false, failed: [] };
   }
 
-  if (await schemaIsCurrent(run)) {
+  // Awaited before `force` is consulted: it also creates `schema_migrations`, which the
+  // version stamp below needs even on a database that has never been swept.
+  const current = await schemaIsCurrent(run);
+  if (current && !options.force) {
     // pgvector/pg_trgm availability lives in module state, not in the database, so it
     // still has to be established on a boot that skips the DDL.
     await detectExtensions(run);
@@ -5929,7 +5941,7 @@ export async function reconcileSchema(options: ReconcileOptions = {}): Promise<S
   const sweep = async (): Promise<SchemaReconcileResult> => {
     // Re-check inside the lock. Whoever held it before us may have just finished the very
     // sweep we were about to run — this is the whole reason the lock is worth taking.
-    if (await schemaIsCurrent(run)) {
+    if (!options.force && (await schemaIsCurrent(run))) {
       await detectExtensions(run);
       return { version: SCHEMA_VERSION, applied: false, failed: [] };
     }

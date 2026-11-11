@@ -17,8 +17,13 @@ What to do when something is wrong, and how the routine things are done. Short o
 ## Deploy
 
 Push to `main`. CI (`typecheck · lint · build`, `smoke suite`) must be green; Vercel then
-runs `npm run check:env && npm run db:migrate && next build`. A missing production
-variable or a failing DDL statement fails the build and the previous deployment stays live.
+runs `npm run check:env && npm run typecheck:fast && npm run db:migrate && next build`. A missing
+production variable, a type error or a failing DDL statement fails the build and the previous
+deployment stays live. `typecheck:fast` is TypeScript 7 from `scripts/ts7` (installed by
+`vercel.json`'s `installCommand`), and `next.config.ts` turns Next's own, slower type-check off
+on Vercel only; CI still runs both. A preview build also runs the migration with `force`, because
+previews share one database and a sibling branch's newer schema stamp would otherwise hide this
+branch's DDL.
 
 **Previews are skipped when nobody would open them.** Hobby allows 100 deployments a day
 (cancelled and failed builds count), and every retained deployment's function bundles count
@@ -26,7 +31,11 @@ against Functions Storage. Vercel's Ignored Build Step (`vercel.json` →
 `scripts/vercel-ignore-build.sh`) skips a preview for: any non-`main` branch with no pull
 request, any `dependabot/*` branch (CI already builds it), and a PR push that only touches
 files the app never reads (`docs/`, `.github/`, `e2e/`, `extension/`, `*.md`, smoke scripts)
-since the branch's last build. A branch builds once it has a
+since the branch's last build, and a push whose commit is only a merge (`Merge origin/main into
+X`, `Merge branch 'a' into b`; any extra text in the subject builds it). Hobby runs one build at a
+time, so a burst of stacked-PR merges used to queue the last preview ~40 minutes.
+`node scripts/dev/vercel-build-report.mjs --project … --team …` prints queue, build time and
+phase breakdowns. A branch builds once it has a
 PR and gets a push. To get a preview sooner, put `[deploy]` in the commit message, or redeploy
 from the dashboard. `main` and production always build.
 
