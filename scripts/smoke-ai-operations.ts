@@ -157,6 +157,7 @@ console.log("\nDerived lists");
         "notes.detect",
         "notes.detect.llm",
         "radar.draft",
+        "radar.projects.extract",
         "radar.rerank",
         "radar.why",
         "recruiter.gate",

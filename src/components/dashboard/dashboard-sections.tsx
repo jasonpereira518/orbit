@@ -340,17 +340,28 @@ export async function ChartsSection({ bundle }: { bundle: DashboardBundle }) {
  * Radar's morning briefing, the dashboard's hero for viewers who can open Radar. Renders
  * nothing until their first run: that account keeps the legacy suggestions card below.
  */
-export async function MorningBriefingSection({ briefing }: { briefing: Promise<RadarBriefing> }) {
-  const b = await briefing.catch(() => null);
+export async function MorningBriefingSection({
+  briefing,
+  bundle,
+}: {
+  briefing: Promise<RadarBriefing>;
+  bundle?: DashboardBundle;
+}) {
+  const [b, bundleResult] = await Promise.all([
+    briefing.catch(() => null),
+    bundle ? bundle.catch(() => null) : Promise.resolve(null),
+  ]);
   if (!b?.hasRun) return null;
   return (
-    <div className="reveal-mount min-w-0 lg:flex-1 lg:basis-0" style={revealDelay(0)}>
+    <div className="reveal-mount min-w-0 w-full" style={revealDelay(0)}>
       <MorningBriefing
         total={b.total}
         today={b.today}
         drafts={b.drafts}
         changes={b.changes}
         paused={b.paused}
+        networkStats={b.networkStats ?? bundleResult?.networkStats}
+        activeProjectsCount={b.activeProjectsCount}
         items={b.top.map((r) => ({
           id: r.id,
           contactId: r.contactId,
@@ -365,6 +376,8 @@ export async function MorningBriefingSection({ briefing }: { briefing: Promise<R
           company: r.company,
           tier: r.tier,
           avatarUrl: r.avatarUrl,
+          suggestedCalendarInvite: r.suggestedCalendarInvite,
+          discoveredPerson: r.discoveredPerson,
         }))}
       />
     </div>

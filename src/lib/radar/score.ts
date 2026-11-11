@@ -32,6 +32,8 @@ import {
   JOB_LEFT_CODE,
   JOB_MOVE_CODE,
   KIND_PRIORITY,
+  type RadarCalendarInvite,
+  type RadarDiscoveredPerson,
   type RadarEvidence,
   type RadarModel,
   type RadarReason,
@@ -96,6 +98,7 @@ export const RADAR_WEIGHTS = {
   goalFit: 10,
   // skills and watched job titles from the LinkedIn export; smaller than goals, which the user typed
   focusFit: 8,
+  projectFit: 12,
   // what the person already did or has
   recentTouchPenalty: -25,
   dismissedPenalty: -30,
@@ -174,6 +177,8 @@ export type RadarContact = {
   goalFit: number;
   /** 0..1 from `focusFitComponent` (skills + watched job titles). Absent means 0. */
   focusFit?: number;
+  /** Score and title from matching user's active projects. */
+  projectFit?: { score: number; projectTitle: string };
   /**
    * Whether the closeness score rests on real evidence (`closeness_evidence` at or above
    * `EVIDENCE_FLOOR`). Every import stamps `last_interaction_at`, so without this a month-old
@@ -225,6 +230,8 @@ export type RadarPick = {
   reasons: RadarReason[];
   evidence: RadarEvidence[];
   expiresAt: Date;
+  suggestedCalendarInvite?: RadarCalendarInvite | null;
+  discoveredPerson?: RadarDiscoveredPerson | null;
 };
 
 function daysBetween(later: Date, earlier: Date): number {
@@ -457,6 +464,23 @@ export function scoreContactKinds(
         );
         break;
       }
+      case "discovery": {
+        add(
+          drafts,
+          "opportunity",
+          {
+            code: "discovery",
+            label: `Discovered on ${s.platform}: ${s.title}${s.matchingProjectTitle ? ` · Matches ${s.matchingProjectTitle}` : ""}`.slice(0, 200),
+            points: 32,
+          },
+          {
+            label: s.platform === "research" ? "Research Paper" : s.platform === "github" ? "GitHub" : "Web Discovery",
+            at: iso(s.at),
+            url: s.url,
+          }
+        );
+        break;
+      }
       case "company_news": {
         const age = daysSince(s.at, now) ?? 0;
         if (age > RADAR_WINDOWS.newsMax) break;
@@ -600,6 +624,13 @@ export function scoreContactKinds(
     const focusPoints = Math.round(W.focusFit * Math.min(1, Math.max(0, contact.focusFit ?? 0)));
     if (focusPoints > 0) {
       reasons.push({ code: "focus_match", label: "Fits your skills and the roles you’re watching", points: focusPoints });
+    }
+    if (contact.projectFit && contact.projectFit.score > 0) {
+      reasons.push({
+        code: "project_match",
+        label: `Matches your active project: ${contact.projectFit.projectTitle}`,
+        points: Math.min(contact.projectFit.score, 18),
+      });
     }
     if (touchedRecently && (kind === "reach_out" || kind === "reconnect")) {
       reasons.push({ code: "touched_recently", label: "You spoke recently", points: W.recentTouchPenalty });

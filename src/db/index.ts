@@ -149,7 +149,10 @@ CREATE TABLE IF NOT EXISTS user_settings (
   radar_digest_enabled integer NOT NULL DEFAULT 1,
   radar_digest_tz text,
   radar_digest_last_week text,
-  radar_digest_unsub_token_hash text
+  radar_digest_unsub_token_hash text,
+  radar_daily_enabled integer NOT NULL DEFAULT 1,
+  radar_auto_projects integer NOT NULL DEFAULT 1,
+  radar_discovery_enabled integer NOT NULL DEFAULT 1
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
@@ -230,6 +233,22 @@ CREATE TABLE IF NOT EXISTS user_goals (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id);
+CREATE TABLE IF NOT EXISTS user_projects (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  title text NOT NULL,
+  summary text,
+  topics jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL DEFAULT 'active',
+  detected_from text NOT NULL,
+  source_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
+  confidence integer NOT NULL DEFAULT 80,
+  last_activity_at timestamptz NOT NULL DEFAULT now(),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS user_projects_user_status_idx ON user_projects(user_id, status);
+CREATE INDEX IF NOT EXISTS user_projects_user_activity_idx ON user_projects(user_id, last_activity_at);
 CREATE TABLE IF NOT EXISTS chat_memories (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -546,6 +565,8 @@ CREATE TABLE IF NOT EXISTS recommendations (
   ai_angle text,
   draft jsonb,
   autopilot jsonb,
+  suggested_calendar_invite jsonb,
+  discovered_person jsonb,
   first_seen_at timestamptz,
   last_seen_at timestamptz,
   seen_count integer NOT NULL DEFAULT 0,
@@ -3070,9 +3091,14 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 215 = chat_threads.pinned_at (a conversation pinned to the top of the history list).
 // 216 = chat_messages.attachments (the names and read text of files attached to a question).
 // 217 = chat_memories (new table: things the person asked Orbit to remember across chats).
+// 218 = Radar flagship redesign (built as 209; renumbered above main's 217): active projects
+// extraction (user_projects table), daily 5am local-time runner toggle
+// (user_settings.radar_daily_enabled, radar_auto_projects, radar_discovery_enabled),
+// prospective people discovery (recommendations.discovered_person), and 1-click calendar invites
+// (recommendations.suggested_calendar_invite).
 //
 // 219 = the feedback rework, in one bump (built as 209 + 210, renumbered to 213 on Nov 9 2026
-// and to 219 on Nov 10 when main reached 217 — radar_flagship_redesign claims 218 — since a
+// and to 219 on Nov 10 when main reached 217 — radar_flagship_redesign took 218 — since a
 // preview database stamped above a branch's number skips its DDL):
 // feedback.triage (jsonb) — the AI triage pass's summary, severity and duplicate-of, see
 // src/lib/feedback-triage.ts; and the feedback conversation — feedback_messages (new table)
@@ -5514,6 +5540,18 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_idx ON recruiter_contact_unlocks(user_id)`,
   `CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_recruiter_idx ON recruiter_contact_unlocks(recruiter_id)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_recruiter_uidx ON recruiter_contact_unlocks(user_id, recruiter_id)`,
+  // Schema v218 (renumbered from 209): Radar flagship redesign — active projects extraction (user_projects table), daily 5am local-time
+  // runner toggle (user_settings.radar_daily_enabled, radar_auto_projects, radar_discovery_enabled),
+  // prospective people discovery (recommendations.discovered_person), and 1-click calendar invites
+  // (recommendations.suggested_calendar_invite).
+  `CREATE TABLE IF NOT EXISTS user_projects (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL, title text NOT NULL, summary text, topics jsonb NOT NULL DEFAULT '[]'::jsonb, status text NOT NULL DEFAULT 'active', detected_from text NOT NULL, source_refs jsonb NOT NULL DEFAULT '[]'::jsonb, confidence integer NOT NULL DEFAULT 80, last_activity_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS user_projects_user_status_idx ON user_projects(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS user_projects_user_activity_idx ON user_projects(user_id, last_activity_at)`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_daily_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_auto_projects integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_discovery_enabled integer NOT NULL DEFAULT 1`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS suggested_calendar_invite jsonb`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS discovered_person jsonb`,
 ];
 
 /**

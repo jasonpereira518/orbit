@@ -207,6 +207,8 @@
 @source "../lib/errors.ts";
 @source "../lib/events/wall-clock.ts";
 @source "../lib/fact-lists.ts";
+@source "../lib/feedback-events.ts";
+@source "../lib/floating-panel.ts";
 @source "../lib/format-elapsed.ts";
 @source "../lib/gate-events.ts";
 @source "../lib/google-scopes.ts";

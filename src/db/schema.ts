@@ -21,6 +21,8 @@ import type {
   RadarAiNote,
   RadarAutopilot,
   RadarAutopilotAction,
+  RadarCalendarInvite,
+  RadarDiscoveredPerson,
   RadarDraft,
   RadarEvidence,
   RadarFeedbackAction,
@@ -680,6 +682,12 @@ export const userSettings = pgTable("user_settings", {
   /** ISO week ("2026-W40") of the last digest sent, claimed in one statement before sending. */
   radarDigestLastWeek: text("radar_digest_last_week"),
   radarDigestUnsubTokenHash: text("radar_digest_unsub_token_hash"),
+  /** 1 = the daily 5:00 AM local-time pass is enabled. Integer, per house convention. */
+  radarDailyEnabled: integer("radar_daily_enabled").default(1).notNull(),
+  /** 1 = automatically extract active projects from Gmail, calendar, notes. */
+  radarAutoProjects: integer("radar_auto_projects").default(1).notNull(),
+  /** 1 = outbound web discovery for prospective connections matching projects/goals. */
+  radarDiscoveryEnabled: integer("radar_discovery_enabled").default(1).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -1131,6 +1139,28 @@ export const userGoals = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("user_goals_user_idx").on(t.userId)]
+);
+
+export const userProjects = pgTable(
+  "user_projects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    topics: jsonb("topics").$type<string[]>().default([]).notNull(),
+    status: text("status").$type<"active" | "dormant" | "completed">().default("active").notNull(),
+    detectedFrom: text("detected_from").$type<"gmail" | "calendar" | "notes" | "manual">().notNull(),
+    sourceRefs: jsonb("source_refs").$type<Array<{ type: string; id: string; snippet?: string }>>().default([]),
+    confidence: integer("confidence").default(80).notNull(),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("user_projects_user_status_idx").on(t.userId, t.status),
+    index("user_projects_user_activity_idx").on(t.userId, t.lastActivityAt),
+  ]
 );
 
 /**
@@ -2729,6 +2759,10 @@ export const recommendations = pgTable(
     draft: jsonb("draft").$type<RadarDraft>(),
     /** What autopilot scheduled for this card, so Undo can reverse exactly that. */
     autopilot: jsonb("autopilot").$type<RadarAutopilotAction>(),
+    /** A suggested calendar invite, prepared ahead of time so the user can send/confirm in 1 click. */
+    suggestedCalendarInvite: jsonb("suggested_calendar_invite").$type<RadarCalendarInvite>(),
+    /** Prospective new connection discovered outside the user's current network. */
+    discoveredPerson: jsonb("discovered_person").$type<RadarDiscoveredPerson>(),
     /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
@@ -6968,3 +7002,5 @@ export type SiteInvite = typeof siteInvites.$inferSelect;
 export type NewSiteInvite = typeof siteInvites.$inferInsert;
 export type ProductEvent = typeof productEvents.$inferSelect;
 export type NewProductEvent = typeof productEvents.$inferInsert;
+export type UserProject = typeof userProjects.$inferSelect;
+export type NewUserProject = typeof userProjects.$inferInsert;

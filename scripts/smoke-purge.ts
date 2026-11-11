@@ -500,6 +500,7 @@ async function seed() {
     action: "never",
   });
   await db.insert(schema.radarRuns).values({ userId: USER, trigger: "manual" });
+  await db.insert(schema.userProjects).values({ userId: USER, title: "Smoke project", detectedFrom: "manual" });
   await db.insert(schema.contactSignals).values({
     userId: USER,
     contactId: contact.id,

@@ -119,7 +119,7 @@ export function FeedbackConversation({
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border border-border/60">
       {/* The conversation as the person sees it, with room to read. */}
-      <div className="max-h-[60vh] min-h-72 overflow-y-auto p-4">
+      <div className="max-h-[60dvh] min-h-72 overflow-y-auto p-4">
         <ThreadMessages thread={thread} viewer="operator" reporterLabel={reporterLabel} />
       </div>
 

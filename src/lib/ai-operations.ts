@@ -133,6 +133,8 @@ export const AI_OPERATIONS = {
   // the card is review-and-send. The same prompt as "followup.draft"; background because
   // nobody is waiting on it.
   "radar.draft": { label: "Radar: drafts for Today", tier: "user", background: true },
+  // Extracts ongoing user projects from interactions, calendar, and notes during Radar runs.
+  "radar.projects.extract": { label: "Radar: extracting active projects", tier: "fast", thinking: "minimal", background: true },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
   // "Talking points" on a meeting's prep card: the user asked, so a foreground operation.
