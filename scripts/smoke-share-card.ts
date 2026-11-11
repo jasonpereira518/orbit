@@ -52,7 +52,7 @@ async function cardStore() {
   const priorAdmins = process.env.ADMIN_USER_IDS;
   const priorClerk = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
   try {
-    check("page.card starts closed", (await saveCard(OWNER, { fields: DEFAULT_CARD_FIELDS, phone: null, tagline: null })).slug.length === 11);
+    check("first save mints an 11-character slug", (await saveCard(OWNER, { fields: DEFAULT_CARD_FIELDS, phone: null, tagline: null })).slug.length === 11);
     const { slug } = (await getCardForOwner(OWNER))!;
     check("closed surface hides the card", (await loadPublicCard(slug)) === null);
 
@@ -61,8 +61,15 @@ async function cardStore() {
     check("card loads once released", card?.fullName === "Ada Lovelace" && card.firstName === "Ada" && card.ownerId === OWNER);
     check("cardId is the row id", card.cardId === (await db.select().from(shareCards).where(eq(shareCards.slug, slug)))[0].id);
     check("email on, phone off by default", card.email === "ada@example.com" && card.phone === null);
-    check("role, headline, location come from the career profile", card.title === "Engineer" && card.company === "Engine Co" && card.headline === "Analyst" && card.location === "London");
-    check("non-http links are dropped", card.linkedinUrl === "https://linkedin.com/in/ada" && card.websiteUrl === null);
+    check("role and headline come from the career profile", card.title === "Engineer" && card.company === "Engine Co" && card.headline === "Analyst");
+    check("website and location are off by default", card.websiteUrl === null && card.location === null);
+    check("linkedin is on by default", card.linkedinUrl === "https://linkedin.com/in/ada");
+
+    await saveCard(OWNER, { fields: { ...DEFAULT_CARD_FIELDS, location: true, website: true }, phone: null, tagline: null });
+    const opted = (await loadPublicCard(slug))!;
+    check("location shows once opted in; a javascript: website is dropped", opted.location === "London" && opted.websiteUrl === null);
+    await db.update(userSettings).set({ socialLinks: { linkedin: "https://linkedin.com/in/ada", website: "https://ada.example.com" } }).where(eq(userSettings.userId, OWNER));
+    check("an https website shows through when opted in", (await loadPublicCard(slug))!.websiteUrl === "https://ada.example.com");
     check("cardUrl", cardUrl(slug).endsWith(`/c/${slug}`));
 
     await saveCard(OWNER, { fields: { ...DEFAULT_CARD_FIELDS, email: false, phone: true }, phone: "  555\n0100 ", tagline: "Met at the demo" });

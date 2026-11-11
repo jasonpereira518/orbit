@@ -15,8 +15,8 @@ export const DEFAULT_CARD_FIELDS: CardFields = {
   linkedin: true,
   email: true,
   phone: false,
-  website: true,
-  location: true,
+  website: false,
+  location: false,
 };
 
 export type CardDraft = { fields: CardFields; phone: string | null; tagline: string | null };
