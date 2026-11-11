@@ -392,7 +392,12 @@ async function downloadAndPersist(
   if (isDurableAvatarUrl(imageUrl)) return "contactId" in target ? imageUrl : null;
   if (isUnfetchableImageUrl(imageUrl)) return null;
 
-  const downloaded = await downloadImageBytes(imageUrl, deps);
+  // The bigger LinkedIn size first, the URL we were given if that is refused (the signed
+  // query string may not allow a size it was not issued for). A quota error from the first
+  // try is not swallowed: the second would only repeat it.
+  const larger = largerLinkedInPhotoUrl(imageUrl);
+  const downloaded =
+    (larger && (await downloadImageBytes(larger, deps))) || (await downloadImageBytes(imageUrl, deps));
   if (!downloaded) return null;
   return persistAvatar(target, downloaded.buf, downloaded.contentType, imageUrl);
 }
@@ -422,6 +427,30 @@ function isVectorContentType(contentType: string): boolean {
 function looksLikeSvg(buf: Buffer): boolean {
   const head = buf.subarray(0, 1024).toString("utf8").trimStart().toLowerCase();
   return head.startsWith("<") || head.includes("<svg");
+}
+
+/**
+ * A JPEG starts FFD8 and ends FFD9. One with the first and not the last was cut short. Looks
+ * at the final few bytes rather than the very last two: some encoders pad after the marker.
+ */
+export function isTruncatedJpeg(buf: Buffer): boolean {
+  if (buf.byteLength < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return false;
+  return !buf.subarray(-16).includes(Buffer.from([0xff, 0xd9]));
+}
+
+/**
+ * LinkedIn serves each photo at the size named in its URL (`profile-displayphoto-shrink_100_100`
+ * is a 100px thumbnail). A capture from a feed or list holds the small one, which is what made
+ * some photos so soft. Ask for the 800px one instead; null when the URL is not a LinkedIn photo
+ * or is already big enough. The caller falls back to the original if LinkedIn refuses.
+ */
+export function largerLinkedInPhotoUrl(url: string): string | null {
+  if (!isLinkedInProfilePhoto(url)) return null;
+  const bigger = url.replace(
+    /(profile-(?:display|framed)photo-shrink_)(\d+)_(\d+)/g,
+    (m, prefix: string, w: string) => (Number(w) >= 800 ? m : `${prefix}800_800`)
+  );
+  return bigger === url ? null : bigger;
 }
 
 /**
@@ -560,6 +589,12 @@ async function encodeAvatar(
     ) {
       return null;
     }
+    // A JPEG cut off mid-download is the one image the encoder is RIGHT to refuse. Stored
+    // raw, browsers still draw it: sharp where the data ran out, a coarse blocky band
+    // across the face where the last scan was half-sent, and it stays that way forever
+    // because a stored photo is never looked at again. Refuse it, so the caller tries the
+    // next source instead.
+    if (isTruncatedJpeg(buf)) return null;
     return { buf, contentType };
   }
 }

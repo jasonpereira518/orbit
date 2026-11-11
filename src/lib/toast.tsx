@@ -278,55 +278,79 @@ function withReport(
   return { ...rest, action: { label: "Tell Jason", onClick: () => reportProblem(message) } };
 }
 
+/**
+ * One toast per message, however many times it is asked for.
+ *
+ * Identical toasts stacking up is never what anyone meant: the same save fired from two
+ * places (a child and the parent that handles its callback), a handler run twice by a double
+ * click, or an effect React's dev StrictMode runs twice (the OAuth "X connected" toasts).
+ * Rather than hunt each caller, the helpers below key a toast by its variant, title and
+ * description; asking again while that toast is still on screen updates it in place (a
+ * sonner call with the same `id`) instead of adding a second copy.
+ *
+ * Left alone, because their content is not the whole identity: a toast with its own action
+ * (each Undo carries a different callback, and two "Marked done" rows are two undos), one
+ * that already names its `id` (the import watcher updates its own), and a non-string
+ * message, which has no stable key.
+ */
+const onScreen = new Map<string, string | number>();
+const ONSCREEN_MAX = 50;
+
+function deduped(
+  variant: string,
+  message: string | ReactNode,
+  data: OrbitToastData | undefined,
+  fire: (data: OrbitToastData | undefined) => string | number
+): string | number {
+  if (typeof message !== "string" || data?.action || data?.id !== undefined) return fire(data);
+  const key = `${variant}\u0000${message}\u0000${typeof data?.description === "string" ? data.description : ""}`;
+  const prev = onScreen.get(key);
+  const live = prev !== undefined && sonnerToast.getToasts().some((t) => t.id === prev);
+  const id = fire(live ? { ...data, id: prev } : data);
+  onScreen.delete(key);
+  onScreen.set(key, id);
+  if (onScreen.size > ONSCREEN_MAX) onScreen.delete(onScreen.keys().next().value as string);
+  return id;
+}
+
+/** `message`, `warning`, `success` and `info` differ only in the sonner call they make. */
+function plain(
+  variant: "message" | "warning" | "success" | "info",
+  message: string | ReactNode,
+  data: OrbitToastData | undefined
+): string | number {
+  const fn = (t: ReactNode, d?: ExternalToast) => sonnerToast[variant](t, d);
+  return deduped(variant, message, data, (d) => {
+    if (!d?.action || d.keep === false) return send(fn, message, "default", stripKeep(d));
+    return withKeep("action", message, d, (dd) => send(fn, message, "default", dd));
+  });
+}
+
 export const toast = {
   ...sonnerToast,
   error(message: string | ReactNode, rawData?: OrbitToastData & { report?: boolean }) {
-    const data = withReport(message, rawData);
-    if (data?.keep === false) {
-      return send((t, d) => sonnerToast.error(t, d), message, "error", {
-        ...stripKeep(data),
-        duration: data.duration ?? 10_000,
-      });
-    }
-    return withKeep("error", message, data, (d) =>
-      send((t, dd) => sonnerToast.error(t, dd), message, "error", {
-        ...d,
-        duration: d.duration ?? 10_000,
-      })
-    );
+    // Keyed on what the caller passed: `withReport` adds a "Tell Jason" action to every
+    // error, and that must not exempt errors from the check.
+    return deduped("error", message, rawData, (d) => {
+      const data = withReport(message, d);
+      if (data?.keep === false) {
+        return send((t, dd) => sonnerToast.error(t, dd), message, "error", {
+          ...stripKeep(data),
+          duration: data.duration ?? 10_000,
+        });
+      }
+      return withKeep("error", message, data, (dd) =>
+        send((t, ddd) => sonnerToast.error(t, ddd), message, "error", {
+          ...dd,
+          duration: dd.duration ?? 10_000,
+        })
+      );
+    });
   },
-  message(message: string | ReactNode, data?: OrbitToastData) {
-    if (!data?.action || data.keep === false) {
-      return send((t, d) => sonnerToast.message(t, d), message, "default", stripKeep(data));
-    }
-    return withKeep("action", message, data, (d) =>
-      send((t, dd) => sonnerToast.message(t, dd), message, "default", d)
-    );
-  },
-  warning(message: string | ReactNode, data?: OrbitToastData) {
-    if (!data?.action || data.keep === false) {
-      return send((t, d) => sonnerToast.warning(t, d), message, "default", stripKeep(data));
-    }
-    return withKeep("action", message, data, (d) =>
-      send((t, dd) => sonnerToast.warning(t, dd), message, "default", d)
-    );
-  },
-  success(message: string | ReactNode, data?: OrbitToastData) {
-    if (!data?.action || data.keep === false) {
-      return send((t, d) => sonnerToast.success(t, d), message, "default", stripKeep(data));
-    }
-    return withKeep("action", message, data, (d) =>
-      send((t, dd) => sonnerToast.success(t, dd), message, "default", d)
-    );
-  },
-  info(message: string | ReactNode, data?: OrbitToastData) {
-    if (!data?.action || data.keep === false) {
-      return send((t, d) => sonnerToast.info(t, d), message, "default", stripKeep(data));
-    }
-    return withKeep("action", message, data, (d) =>
-      send((t, dd) => sonnerToast.info(t, dd), message, "default", d)
-    );
-  },
+  message: (message: string | ReactNode, data?: OrbitToastData) => plain("message", message, data),
+  warning: (message: string | ReactNode, data?: OrbitToastData) => plain("warning", message, data),
+  success: (message: string | ReactNode, data?: OrbitToastData) => plain("success", message, data),
+  info: (message: string | ReactNode, data?: OrbitToastData) => plain("info", message, data),
 };
 
 /**

@@ -9,6 +9,7 @@ import { RemindersStageSkeleton } from "@/components/loading/page-skeletons";
 import { isReminderActionKind } from "@/lib/reminder-action-kind";
 import { isReminderSource, isReminderView } from "@/lib/reminders-page";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { REMINDER_TITLE_MAX } from "@/lib/capture/review-reducer";
 
 export const metadata = { title: "Reminders" };
 
@@ -21,7 +22,20 @@ type Params = {
   contact?: string;
   /** From the ⌘K palette's "New reminder": open the create form on arrival. */
   new?: string;
+  /** With `new`: what the palette read out of a typed sentence ("remind me to call Sam friday"). */
+  title?: string;
+  due?: string;
 };
+
+/** A title and a `YYYY-MM-DD` to pre-fill the create form with; anything else is dropped. */
+function createDefaultsFrom(params: Params) {
+  if (params.new !== "1") return null;
+  const title = params.title?.trim().slice(0, REMINDER_TITLE_MAX) || null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(params.due ?? "");
+  const real = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+  const due = m && real && real.getMonth() === Number(m[2]) - 1 && real.getDate() === Number(m[3]) ? params.due! : null;
+  return title || due ? { title, due } : null;
+}
 
 export default async function RemindersPage({
   searchParams,
@@ -87,6 +101,7 @@ async function RemindersContent({ searchParams }: { searchParams: Promise<Params
       filters={{ q, kinds, sources, contact: page.contactFilter ?? null }}
       suggested={suggested}
       openCreate={params.new === "1"}
+      createDefaults={createDefaultsFrom(params)}
       calendar={
         calendar
           ? {

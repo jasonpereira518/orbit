@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState, useRef } from "react";
 import { motion } from "motion/react";
 import { MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pin, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -133,8 +133,17 @@ function ChatHistoryRailImpl<T extends RailThread>({
     };
   }, [onSearch, searchFor]);
 
+  // One commit per rename. The field commits on Enter AND on blur, and removing it after Enter
+  // can blur it again from the same stale `renaming`: the title was saved twice. Escape counts
+  // as ended too, or the blur that follows it would save the rename that was just cancelled.
+  const renameEnded = useRef(false);
+  const startRename = (id: string, value: string) => {
+    renameEnded.current = false;
+    setRenaming({ id, value });
+  };
   const commitRename = () => {
-    if (!renaming) return;
+    if (!renaming || renameEnded.current) return;
+    renameEnded.current = true;
     const title = renaming.value.trim();
     if (title) onRename?.(renaming.id, title);
     setRenaming(null);
@@ -174,7 +183,10 @@ function ChatHistoryRailImpl<T extends RailThread>({
             onBlur={commitRename}
             onKeyDown={(e) => {
               if (e.key === "Enter") commitRename();
-              if (e.key === "Escape") setRenaming(null);
+              if (e.key === "Escape") {
+                renameEnded.current = true;
+                setRenaming(null);
+              }
             }}
             className="w-full rounded-lg border border-ring bg-background px-2 py-1.5 text-sm leading-snug outline-none ring-2 ring-ring/20"
           />
@@ -226,7 +238,7 @@ function ChatHistoryRailImpl<T extends RailThread>({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-40">
             {onRename && (
-              <DropdownMenuItem onClick={() => setRenaming({ id: thread.id, value: label })}>Rename</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => startRename(thread.id, label)}>Rename</DropdownMenuItem>
             )}
             {onPin && (
               <DropdownMenuItem onClick={() => onPin(thread.id, !thread.pinnedAt)}>

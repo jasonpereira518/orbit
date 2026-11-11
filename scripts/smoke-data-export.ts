@@ -35,7 +35,8 @@ async function seed() {
   await db.insert(schema.gmailConnections).values({ userId: USER, emailAddress: "e@x.test", accessTokenEncrypted: encrypt("a"), refreshTokenEncrypted: encrypt("r") });
   await db.insert(schema.events).values({ userId: USER, title: "Summit" });
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet people" });
-  await db.insert(schema.chatThreads).values({ userId: USER, title: "thread" });
+  const [voiceThread] = await db.insert(schema.chatThreads).values({ userId: USER, title: "thread" }).returning();
+  await db.insert(schema.orbitVoiceSessions).values({ userId: USER, threadId: voiceThread.id, expiresAt: new Date(Date.now() + 600000) });
   const [recruiter] = await db.insert(schema.recruiters).values({ fullName: "Rec", nameNormalized: "rec" }).returning();
   await db.insert(schema.userRecruiterLinks).values({ userId: USER, recruiterId: recruiter.id, email: "rec@x.test" });
   await db.insert(schema.apiKeys).values({ userId: USER, name: "key", prefix: "orb_live_export", keyHash: "0".repeat(64), scopes: ["read"] });
@@ -58,6 +59,7 @@ async function main() {
 
     console.log("\nThe export");
     const out = await collectUserExport(USER);
+    check("voice metadata is included with chat data", out.categories.chat.orbit_voice_sessions?.length === 1);
     for (const id of DATA_CATEGORY_IDS) {
       const rows = Object.values(out.categories[id] ?? {}).flat();
       check(`${id}: at least one row`, rows.length > 0);

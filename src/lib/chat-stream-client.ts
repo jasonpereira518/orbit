@@ -94,8 +94,8 @@ export async function streamChat(
     attachments?: ChatAttachment[];
     /** "deep" asks for a thorough answer that may take minutes. Absent is a quick one. */
     mode?: "quick" | "deep";
-    /** False switches web lookups off for this question. */
-    web?: boolean;
+    /** The chat's web choice: "on" / "off", or absent for auto (the question decides, server-side). */
+    web?: "on" | "off";
   },
   handlers: ChatStreamHandlers,
   signal?: AbortSignal

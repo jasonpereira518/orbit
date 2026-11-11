@@ -592,6 +592,8 @@ export function FloatingAskBar() {
       transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
       className={cn(
         "pointer-events-none fixed inset-x-0 z-50 justify-center px-4",
+        // Centred on the page, not the screen, while the feedback dock has the right edge.
+        "md:right-(--orbit-dock-w) md:transition-[right] md:duration-slow md:ease-house",
         // On mobile the bar is intrusive if left permanently floating above
         // the bottom nav — keep it fully out of the layout there until the
         // "Ask your network" item in the More sheet opens it. Desktop keeps

@@ -13,6 +13,7 @@ import {
   date,
   bigint,
 } from "drizzle-orm/pg-core";
+import type { VoiceConfig, VoiceHealthMap, VoiceProvider } from "@/lib/voice/config";
 import { relations, sql } from "drizzle-orm";
 import type {
   ContactSignalKind,
@@ -3932,6 +3933,23 @@ export const chatThreads = pgTable(
   ]
 );
 
+export const orbitVoiceSessions = pgTable("orbit_voice_sessions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  threadId: uuid("thread_id").notNull().references(() => chatThreads.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  toolCalls: integer("tool_calls").default(0).notNull(),
+  scope: jsonb("scope").$type<Record<string, Array<[string, string]>>>().default({}).notNull(),
+  timeZone: text("time_zone").default("UTC").notNull(),
+  provider: text("provider").$type<VoiceProvider>().default("elevenlabs").notNull(),
+  fallback: boolean("fallback").default(false).notNull(),
+  connectedAt: timestamp("connected_at", { withTimezone: true }),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  outcome: text("outcome").$type<"starting" | "connected" | "ended" | "failed">().default("starting").notNull(),
+}, (t) => [index("orbit_voice_sessions_user_idx").on(t.userId), index("orbit_voice_sessions_thread_idx").on(t.threadId)]);
+
 export const chatMessages = pgTable(
   "chat_messages",
   {
@@ -5671,6 +5689,11 @@ export const siteSettings = pgTable("site_settings", {
    * any key (`src/lib/web-search-budget.ts`). Null = never set, which reads as running.
    */
   webSearchPaused: boolean("web_search_paused"),
+  /** Orbit Voice is opt-in, including for admins. No row/null means off. */
+  orbitVoiceEnabled: boolean("orbit_voice_enabled").default(false),
+  orbitVoiceChangedAt: timestamp("orbit_voice_changed_at", { withTimezone: true }),
+  orbitVoiceConfig: jsonb("orbit_voice_config").$type<VoiceConfig>(),
+  orbitVoiceHealth: jsonb("orbit_voice_health").$type<VoiceHealthMap>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
   updatedBy: text("updated_by"),

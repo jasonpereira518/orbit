@@ -1070,7 +1070,7 @@ function AlphabetScrubber({
     <nav
       aria-label="Contacts A to Z"
       className={cn(
-        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-4",
+        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-[calc(1rem+var(--orbit-dock-w))] md:transition-[right] md:duration-slow md:ease-house",
         // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
         // viewport it rose into the header and covered the notification bell, and its
         // 27 letters had about 6pt each between the header and the nav. The gutter it

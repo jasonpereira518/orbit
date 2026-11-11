@@ -38,6 +38,7 @@ import {
   chatMessages,
   chatMemories,
   chatThreads,
+  orbitVoiceSessions,
   closenessCohorts,
   companies,
   connectorConnections,
@@ -501,9 +502,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   chat: {
-    exports: [own(chatThreads), own(chatMessages), own(chatMemories)],
+    exports: [own(chatThreads), own(chatMessages), own(chatMemories), own(orbitVoiceSessions)],
     counts: [chatThreads],
     run: async (db, userId) => {
+      await db.delete(orbitVoiceSessions).where(eq(orbitVoiceSessions.userId, userId));
       await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
       await db.delete(chatMemories).where(eq(chatMemories.userId, userId));
     },

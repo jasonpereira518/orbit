@@ -107,6 +107,16 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
 
   const refresh = () => refreshPanel(true);
 
+  // Only what is already over can be cleared: missed toasts and finished jobs. Due
+  // reminders are real tasks (clearing one would mean marking it done), and running jobs
+  // are still running, so both stay.
+  const finishedJobs = jobs.filter((j) => j.status !== "running");
+  const clearable = kept.length + finishedJobs.length > 0;
+  function clearAll() {
+    clearKeptNotifications();
+    for (const j of finishedJobs) dismissBackgroundJob(j.id);
+  }
+
   function markDone(reminderId: string) {
     start(() =>
       runToastAction({
@@ -154,6 +164,18 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
     <>
     <div className="min-h-[7rem] flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3 [scrollbar-width:thin]">
       {data && <ExtensionPromo />}
+
+      {clearable && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={clearAll}
+          >
+            Clear notifications
+          </button>
+        </div>
+      )}
 
       {loading && !data ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -246,15 +268,6 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
                 }}
               />
             ))}
-            {kept.length > 1 && (
-              <button
-                type="button"
-                className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() => clearKeptNotifications()}
-              >
-                Clear all
-              </button>
-            )}
           </Section>
         </div>
       )}

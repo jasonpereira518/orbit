@@ -26,6 +26,24 @@ type ChangeInput = {
 
 export type ChangeLine = { id: string; contactId: string; contactName: string; label: string };
 
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** The briefing's headline. The dashboard's small card and its full card say the same thing. */
+export function briefingHeadline(today: number): string {
+  return today > 0 ? `${plural(today, "person", "people")} worth a message today` : "All clear today";
+}
+
+/** "2 drafts ready to review · 4 more queued": the line under the headline, empty when there is nothing to say. */
+export function briefingSubline(b: { drafts: number; total: number; today: number; paused: boolean }): string {
+  return [
+    b.drafts > 0 ? `${plural(b.drafts, "draft", "drafts")} ready to review` : null,
+    b.total > b.today ? `${b.total - b.today} more queued` : null,
+    b.paused ? "Radar is paused" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 /**
  * The cards that are news: a signal from outside behind them, and either not yet seen or
  * made in the last day and a half. In list order (best first), at most `max`.
