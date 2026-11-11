@@ -14,7 +14,7 @@ import { loadPublicCard } from "@/lib/cards/card-store";
  *
  * Public under `/c/` (see `PUBLIC_ROUTES`). Only what the card itself shows: `loadPublicCard`
  * has already nulled the hidden fields, and a paused, reset or unreleased card is the same
- * as one that never existed — a 308 to the one generic Orbit card, so every bogus slug
+ * as one that never existed — a 307 to the one generic Orbit card, so every bogus slug
  * collapses onto a single CDN entry and a single render.
  *
  * The art SVG carries no user text (lib/cards/card-art.ts), so it goes in as a data URI.
@@ -119,7 +119,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
   if (card === null) {
     return new Response(null, {
-      status: 308,
+      // 307, not 308: a paused or reset card can come back, and a permanent redirect would stick.
+      status: 307,
       headers: { Location: new URL(`/c/${GENERIC}/image`, request.nextUrl).toString(), "Cache-Control": CACHE_CONTROL },
     });
   }
