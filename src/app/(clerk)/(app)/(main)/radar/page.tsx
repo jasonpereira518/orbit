@@ -16,7 +16,7 @@ async function RadarBody({ searchParams }: { searchParams: Promise<Params> }) {
   // Radar is off by default: until it is turned on, the page is the Turn on screen and loads
   // nothing else (`fetchRadar` would build a list).
   const activation = await fetchRadarActivation();
-  if (!activation.on) return <RadarActivation faces={activation.faces} everOn={activation.everOn} />;
+  if (!activation.on) return <RadarActivation faces={activation.faces} />;
   const [{ page, networkStats }, params] = await Promise.all([fetchRadar(), searchParams]);
   const focus = typeof params.focus === "string" ? params.focus.slice(0, 64) : null;
   return (

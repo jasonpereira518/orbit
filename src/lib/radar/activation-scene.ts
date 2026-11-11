@@ -7,29 +7,19 @@
  * image: the person's photo, or a planet when they have none. No connecting lines.
  */
 
-/** Beat starts, in ms from the press. */
+/**
+ * Beat starts, in ms from the press: about 5.8s in all, the same every time Radar is turned
+ * on (Jason, Nov 11: a 1s replay felt like nothing happened).
+ */
 export const BEAT = {
   press: 0,
-  charge: 250,
-  ignite: 1300,
-  spin: 1700,
-  sweep: 2700,
-  land: 3600,
-  end: 4200,
+  charge: 300,
+  ignite: 1700,
+  spin: 2300,
+  sweep: 3700,
+  land: 5000,
+  end: 5800,
 } as const;
-
-/** The 1s cut a returning person sees: ignition, then the landing. */
-export const SHORT_IGNITE_MS = BEAT.spin - BEAT.ignite;
-export const SHORT_END_MS = SHORT_IGNITE_MS + (BEAT.end - BEAT.land);
-
-/** Scene time for elapsed wall time. The short cut plays ignition, then jumps to the landing. */
-export function sceneTime(elapsed: number, short: boolean): number {
-  if (!short) return elapsed;
-  return elapsed < SHORT_IGNITE_MS ? BEAT.ignite + elapsed : BEAT.land + (elapsed - SHORT_IGNITE_MS);
-}
-
-/** How long a play lasts, full or short. */
-export const playLength = (short: boolean) => (short ? SHORT_END_MS : BEAT.end);
 
 /** The planets a person without a photo is drawn as (`public/landing/planets/`). */
 export const PLANETS = ["mercury", "venus", "mars", "jupiter", "saturn", "uranus", "neptune"] as const;

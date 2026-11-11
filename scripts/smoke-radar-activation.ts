@@ -3,10 +3,10 @@
  *   - a new account starts off: the activation read says so and lists its people, closest
  *     first, with no photo bytes (only browser-safe URLs or null);
  *   - turning on stamps the first time once, clears a pause, and the read flips to on;
- *   - turning off and on again keeps the first stamp, so the short cut plays;
+ *   - turning off and on again keeps the first stamp;
  *   - the scene's layout: stable per network, three rings, every node an image, a tiny network
  *     drawn with planets, and the outer ring inside a 375px phone;
- *   - the timeline: the short cut is ignition then landing, and both end on the same frame.
+ *   - the timeline: beats in order, and long enough to feel like something happened.
  * The gates that keep an off account from running (nightly claim, first build, digest) are
  * pinned in smoke-radar-run and smoke-radar-digest. Leaves nothing behind.
  */
@@ -20,11 +20,8 @@ import {
   BEAT,
   PLANETS,
   RING_CAPACITY,
-  SHORT_END_MS,
   placeNodes,
-  playLength,
   ringLayout,
-  sceneTime,
 } from "../src/lib/radar/activation-scene";
 import { loadRadarActivation } from "../src/lib/radar/page-data";
 import { loadRadarState, turnOnRadarForUser } from "../src/lib/radar/run";
@@ -58,7 +55,6 @@ async function main() {
   console.log("\na new account starts off");
   const off = await loadRadarActivation(USER);
   check("Radar is off", off.on === false);
-  check("and was never on", off.everOn === false);
   check("its people are listed closest first", off.faces.map((f) => f.name).join(",") === "Close Cara,Base64 Bea,Middle Mo,Unknown Uma", off.faces.map((f) => f.name).join(","));
   check("no photo bytes leave the database", off.faces.every((f) => f.photo === null || !f.photo.startsWith("data:")), JSON.stringify(off.faces.map((f) => f.photo)));
   check("a stored photo becomes the avatar route", off.faces[1]?.photo?.startsWith("/api/avatars/") === true, String(off.faces[1]?.photo));
@@ -77,7 +73,6 @@ async function main() {
   await db.update(userSettings).set({ radarPaused: 1 }).where(eq(userSettings.userId, USER));
   const again = await loadRadarActivation(USER);
   check("off again shows the Turn on screen", again.on === false && again.faces.length === 4);
-  check("and remembers it was on (short cut)", again.everOn === true);
   await turnOnRadarForUser(USER);
   const [second] = await db.select({ at: userSettings.radarEnabledAt }).from(userSettings).where(eq(userSettings.userId, USER));
   check("the first stamp is never overwritten", second?.at?.getTime() === first?.at?.getTime());
@@ -103,10 +98,9 @@ async function main() {
   }
 
   console.log("\nthe timeline");
-  check("the full play ends at the end beat", playLength(false) === BEAT.end);
-  check("the short cut opens on ignition", sceneTime(0, true) === BEAT.ignite);
-  check("and ends on the same frame as the full play", sceneTime(SHORT_END_MS, true) === BEAT.end);
-  check("the full play is untouched", sceneTime(1234, false) === 1234);
+  const beats = Object.values(BEAT);
+  check("the beats run in order", beats.every((b, i) => i === 0 || b > beats[i - 1]!), beats.join(","));
+  check("the play lasts at least five seconds", BEAT.end >= 5000, String(BEAT.end));
 
   await reset();
   if (failures > 0) {

@@ -162,8 +162,6 @@ export type ActivationFace = { contactId: string; name: string; photo: string | 
 
 export type RadarActivation = {
   on: boolean;
-  /** Turned on at least once before: a turn-on plays the short cut, not the full scene. */
-  everOn: boolean;
   /** Closest people first; empty when Radar is on (the scene is not drawn). */
   faces: ActivationFace[];
 };
@@ -178,8 +176,7 @@ export const ACTIVATION_FACES = 27;
 export async function loadRadarActivation(userId: string): Promise<RadarActivation> {
   const state = await loadRadarState(userId);
   const on = state ? !state.paused : false;
-  const everOn = Boolean(state?.enabledAt);
-  if (on) return { on, everOn, faces: [] };
+  if (on) return { on, faces: [] };
   const db = await getDb();
   const rows = await db
     .select({ contactId: contacts.id, name: contacts.fullName, photo: clientAvatarUrlSql.as("photo") })
@@ -187,5 +184,5 @@ export async function loadRadarActivation(userId: string): Promise<RadarActivati
     .where(eq(contacts.userId, userId))
     .orderBy(sql`${contacts.closeness} DESC NULLS LAST`, sql`${contacts.lastInteractionAt} DESC NULLS LAST`, desc(contacts.id))
     .limit(ACTIVATION_FACES);
-  return { on, everOn, faces: rows.map((r) => ({ contactId: r.contactId, name: r.name, photo: r.photo ?? null })) };
+  return { on, faces: rows.map((r) => ({ contactId: r.contactId, name: r.name, photo: r.photo ?? null })) };
 }

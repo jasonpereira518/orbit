@@ -19,11 +19,10 @@ type Phase = "off" | "playing" | "landing";
 
 /**
  * Radar is off by default. This is what the page shows until it is turned on: your network,
- * dim, around you, and one button. Pressing it plays the full-screen scene (the short cut if
- * Radar was on before) while `turnOnRadar` saves the switch and starts the first plan.
+ * dim, around you, and one button. Pressing it plays the full-screen scene while `turnOnRadar` saves the switch and starts the first plan.
  * Reduced motion skips the scene: the page just swaps to "Building your first plan".
  */
-export function RadarActivation({ faces, everOn }: { faces: SceneFace[]; everOn: boolean }) {
+export function RadarActivation({ faces }: { faces: SceneFace[] }) {
   const router = useRouter();
   const nodes = useMemo(() => placeNodes(faces), [faces]);
   const heroRef = useRef<HTMLDivElement | null>(null);
@@ -98,14 +97,14 @@ export function RadarActivation({ faces, everOn }: { faces: SceneFace[]; everOn:
           size="lg"
           onClick={turnOn}
           disabled={phase !== "off"}
-          className="bg-[#c4a35a] text-[#0B1220] hover:bg-[#c4a35a]/90 active:scale-[0.97]"
+          className="bg-[#f2c94c] text-[#0B1220] hover:bg-[#f5d36b] active:scale-[0.97]"
         >
           <Radar className="size-4" aria-hidden />
           Turn on Radar
         </Button>
       </div>
       {phase === "playing" && (
-        <ActivationStage nodes={nodes} short={everOn} hero={heroRect} onDone={() => void settle()} />
+        <ActivationStage nodes={nodes} hero={heroRect} onDone={() => void settle()} />
       )}
     </section>
   );

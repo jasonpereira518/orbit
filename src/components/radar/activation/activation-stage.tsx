@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { drawScene, fitCanvas, FIELD, preloadImages } from "@/components/radar/activation/activation-canvas";
-import { BEAT, playLength, ringLayout, sceneTime, SHORT_IGNITE_MS, type SceneNode } from "@/lib/radar/activation-scene";
+import { BEAT, ringLayout, type SceneNode } from "@/lib/radar/activation-scene";
 import { useModalTakeover } from "@/lib/use-modal-takeover";
 
 /** The fade that lifts the navy at the end of the landing. */
@@ -33,12 +33,10 @@ function landingTarget(w: number, h: number): { dx: number; dy: number } | null 
  */
 export function ActivationStage({
   nodes,
-  short,
   hero,
   onDone,
 }: {
   nodes: readonly SceneNode[];
-  short: boolean;
   /** The in-page hero's box, so beat 1 grows out of it. */
   hero: DOMRect | null;
   onDone: () => void;
@@ -48,7 +46,7 @@ export function ActivationStage({
   const skipRef = useRef<HTMLButtonElement | null>(null);
   const t0 = useRef(0);
   const doneRef = useRef(onDone);
-  const [status, setStatus] = useState(short ? "" : statusFor(0));
+  const [status, setStatus] = useState(statusFor(0));
   const [landed, setLanded] = useState(false);
   const [lifting, setLifting] = useState(false);
   useModalTakeover(rootRef);
@@ -74,7 +72,7 @@ export function ActivationStage({
 
     // Beat 1 starts where the hero sat, scaled to match its ring size.
     const from =
-      hero && !short
+      hero
         ? {
             cx: hero.left + hero.width / 2,
             cy: hero.top + hero.height / 2,
@@ -82,14 +80,14 @@ export function ActivationStage({
           }
         : null;
     const to = landingTarget(w, h);
-    const length = playLength(short);
+    const length = BEAT.end;
     t0.current = performance.now();
     let raf = 0;
     let lastStatus = "";
     let finished = false;
     const frame = (now: number) => {
       const elapsed = Math.min(now - t0.current, length);
-      const t = sceneTime(elapsed, short);
+      const t = elapsed;
       drawScene(ctx, { t, w, h, nodes, from, to });
       const s = statusFor(t);
       if (s !== lastStatus) {
@@ -129,9 +127,8 @@ export function ActivationStage({
 
   // Skip = jump time to the landing.
   const skip = () => {
-    const landAt = short ? SHORT_IGNITE_MS : BEAT.land;
     const elapsed = performance.now() - t0.current;
-    if (elapsed < landAt) t0.current = performance.now() - landAt;
+    if (elapsed < BEAT.land) t0.current = performance.now() - BEAT.land;
   };
 
   useEffect(() => {
@@ -140,7 +137,6 @@ export function ActivationStage({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Portalled to <body>: the page's reveal animation transforms an ancestor, which would
