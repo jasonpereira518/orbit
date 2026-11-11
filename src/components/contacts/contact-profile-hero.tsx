@@ -415,7 +415,8 @@ export function ContactProfileHero({
               !isDefaultAvatarSrc(previewSrc)
             }
           >
-            {/* Glow: a blurred copy of the photo actually shown (`previewSrc`, which is the
+            {/* Glow (a touch quieter in dark mode, where a bright photo's halo reads as milky
+                against the dark page): a blurred copy of the photo actually shown (`previewSrc`, which is the
                 gender fallback image when there is no photo) behind the avatar, so the
                 halo takes the colours of the photo's own edges. The Avatar is `relative`
                 and comes later in the DOM, so it paints over this. The browser already
@@ -427,7 +428,7 @@ export function ContactProfileHero({
               aria-hidden
               draggable={false}
               referrerPolicy="no-referrer"
-              className="pointer-events-none absolute inset-0 size-full scale-110 rounded-full object-cover opacity-45 blur-lg"
+              className="pointer-events-none absolute inset-0 size-full scale-110 rounded-full object-cover opacity-45 blur-lg dark:opacity-30"
             />
             <ContactAvatar
               contactId={contactId}
