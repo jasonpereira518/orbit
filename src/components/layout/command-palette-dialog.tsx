@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { searchContactsForPicker } from "@/actions/contacts";
 import { openCompose } from "@/lib/compose-events";
+import { createReminder, deleteReminderAction } from "@/actions/reminders";
 import { saveThemePreference } from "@/actions/settings";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { useFullPrefetch } from "@/lib/intent-prefetch";
@@ -49,6 +50,8 @@ import {
 } from "@/lib/command-palette";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen, useFeedbackAvailable } from "@/lib/feedback-events";
 import { parseReminderPhrase } from "@/lib/reminder-phrase";
+import { runToastAction } from "@/lib/toast";
+import { TOAST_COPY } from "@/lib/toast-copy";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 import type { ContactPickerOption } from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
@@ -65,6 +68,8 @@ type Row = {
   hintAlways?: boolean;
   icon: ReactNode;
   run: () => void;
+  /** Shift+Enter, when a row has a second, more deliberate reading (see the reminder row). */
+  alt?: () => void;
   /** A route worth fetching in full while this row is highlighted — a person's profile. */
   prefetchHref?: string;
 };
@@ -272,23 +277,36 @@ export function CommandPaletteDialog({
           }
         : null;
 
-    // "remind me to call Sam friday": the sentence says what it is, so Enter opens a New reminder
-    // already filled in — the title, and the day when it names one. Nothing is saved until the
-    // person has seen the form.
+    // "remind me to call Sam friday": the sentence says what it is, so Enter SETS the reminder
+    // (title, and the day when it names one) and says so in a toast with an Undo. Shift+Enter is
+    // the slower reading: the New reminder form, already filled in, for notes or a list first.
     const reminder = remindersVisible && term ? parseReminderPhrase(term) : null;
+    const dueText = reminder?.due ? format(parseISO(reminder.due), "EEE, MMM d") : null;
     const reminderRow: Row | null = reminder
       ? {
           id: "reminder-this",
           group: "Reminder",
           label: (
             <>
-              New reminder: <span className="font-medium text-ink">&ldquo;{reminder.title}&rdquo;</span>
+              Set reminder: <span className="font-medium text-ink">&ldquo;{reminder.title}&rdquo;</span>
             </>
           ),
-          hint: reminder.due ? format(parseISO(reminder.due), "EEE, MMM d") : "No date",
+          hint: `${dueText ?? "No date"} · ⇧↵ to edit first`,
           hintAlways: true,
           icon: <CommandIcon icon={BellPlus} />,
-          run: () =>
+          run: () => {
+            close();
+            void runToastAction({
+              run: () => createReminder({ title: reminder.title, dueDate: reminder.due ?? undefined }),
+              success: `${TOAST_COPY.reminderSet}: \u201c${reminder.title}\u201d${dueText ? ` \u00b7 ${dueText}` : ""}`,
+              failure: "Couldn’t set that reminder — try again?",
+              refresh: () => router.refresh(),
+              // Undo is the reminder list's own delete (a soft dismiss), so it can be brought back.
+              undo: (row) => (row?.id ? () => deleteReminderAction(row.id) : null),
+              undone: "Reminder removed",
+            });
+          },
+          alt: () =>
             go(
               `/reminders?new=1&title=${encodeURIComponent(reminder.title)}${reminder.due ? `&due=${reminder.due}` : ""}`
             ),
@@ -458,7 +476,8 @@ export function CommandPaletteDialog({
       setActiveIndex(rows.length - 1);
     } else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      active?.run();
+      if (e.shiftKey && active?.alt) active.alt();
+      else active?.run();
     }
   }
 
