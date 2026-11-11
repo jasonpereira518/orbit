@@ -102,7 +102,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "api",
     label: "API keys and webhooks",
     description:
-      "Personal API keys, webhook endpoints and their delivery log. Anything built against them stops working immediately.",
+      "Personal API keys, webhook endpoints and their delivery log, and the browsers allowed to show Orbit notifications. Anything built against them stops working immediately.",
   },
   {
     id: "activity",

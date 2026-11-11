@@ -25,6 +25,7 @@ import {
 } from "../src/lib/radar/actions-core";
 import { loadRadarMetrics, summarizeRadarMetrics } from "../src/lib/radar/metrics";
 import { detectRadarOutcomes, markRecommendationsSeen, RADAR_SEEN_DEBOUNCE_MS } from "../src/lib/radar/store";
+import { RECOMMENDATION_KINDS } from "../src/lib/radar/types";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-radar-metrics-user";
@@ -206,7 +207,7 @@ async function main() {
     });
     check("an empty window has no rates, not zero rates",
       empty.totals.acceptRate === null && empty.totals.convertRate === null && empty.totals.ignoreRate === null);
-    check("and lists every kind", empty.kinds.length === 6);
+    check("and lists every kind", empty.kinds.length === RECOMMENDATION_KINDS.length && RECOMMENDATION_KINDS.length === 9);
   }
 
   console.log("\nthe admin page");

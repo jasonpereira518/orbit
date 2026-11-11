@@ -36,7 +36,7 @@ import { eq } from "drizzle-orm";
 import { setRadarAutopilotForUser, undoAutopilotForUser } from "@/lib/radar/autopilot";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
-import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS, type RecommendationKind } from "@/lib/radar/types";
 import type { NetworkStats } from "@/lib/network-stats";
 
 const SURFACE = "page.radar";
@@ -203,7 +203,7 @@ export async function undoAutopilot(id: string): Promise<RadarActionResult> {
 /** Turn autopilot on or off for one kind of card. Autopilot schedules; it never sends. */
 export async function setRadarAutopilot(kind: RecommendationKind, on: boolean): Promise<RadarActionResult> {
   const userId = await requireUserForReleasedSurface(SURFACE);
-  if (!RECOMMENDATION_KINDS.includes(kind)) return { ok: false, message: "That isn’t a kind of card Radar makes" };
+  if (!(AUTOPILOT_KINDS as readonly string[]).includes(kind)) return { ok: false, message: "Autopilot doesn’t run on that kind of card" };
   await setRadarAutopilotForUser(userId, kind, on);
   revalidateRadar();
   return { ok: true, message: on ? `Autopilot on for ${KIND_LABELS[kind]}` : `Autopilot off for ${KIND_LABELS[kind]}` };

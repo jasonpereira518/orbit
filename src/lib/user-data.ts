@@ -89,6 +89,8 @@ import {
   pageViews,
   planUpgradeEvents,
   radarRuns,
+  pushSubscriptions,
+  radarOpportunities,
   userProjects,
   contactSignals,
   emailEvents,
@@ -258,8 +260,8 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(userProjects), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(emailThreads), own(emailEvents)],
-    counts: [aiSuggestions, recommendations, userProjects, contactEmbeddings, memoryChunks, closenessCohorts, emailThreads, emailEvents],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(radarOpportunities), own(userProjects), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(emailThreads), own(emailEvents)],
+    counts: [aiSuggestions, recommendations, radarOpportunities, userProjects, contactEmbeddings, memoryChunks, closenessCohorts, emailThreads, emailEvents],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
       // holding this person's prompts, and deleting our row would only lose the handle to
@@ -293,6 +295,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
       // Projects Radar inferred from the person's mail, calendar and notes: derived, so insights.
       await db.delete(userProjects).where(eq(userProjects.userId, userId));
+      // Radar's Opportunities lane: events, people and openings found for this person.
+      await db.delete(radarOpportunities).where(eq(radarOpportunities.userId, userId));
       // Relationship engine output: run history is deleted; per-contact digests have their
       // derived text cleared (the memory_chunks precedent) but the rows stay. A digest row
       // is also the read watermark: deleting it would make every conversation pending again
@@ -314,6 +318,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
           radarNextAt: null,
           radarLeaseUntil: null,
           radarModel: null,
+          radarWebNextAt: null,
+          radarMomentLastDay: null,
           // A later re-enable backfills from scratch. The switch itself is not reset here:
           // turning the feature off is `deleteEmailIntelData`'s job, and a full purge already
           // re-inserts settings at the default of 0.
@@ -576,6 +582,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(outboundWebhookDeliveries),
       own(apiIdempotencyKeys, "idempotency_key"),
       own(agentSendRequests),
+      own(pushSubscriptions),
     ],
     counts: [
       apiKeys,
@@ -583,8 +590,12 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       outboundWebhookDeliveries,
       apiIdempotencyKeys,
       agentSendRequests,
+      pushSubscriptions,
     ],
     run: async (db, userId) => {
+      // Web push subscriptions: the address of every browser this person allowed Radar to
+      // reach. A subscription that outlives the data would still deliver to that device.
+      await db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
       // `api_keys` matters most: a key that outlives the data it reaches is a live credential
       // with nothing behind it. The deliveries go before the endpoints they reference,
       // because the FK cascades and the other order would rewrite rows on the way to

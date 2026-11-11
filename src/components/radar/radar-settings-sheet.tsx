@@ -15,11 +15,11 @@ import {
 } from "@/actions/radar";
 import { friendlyError } from "@/lib/errors";
 import type { RadarSettingsView } from "@/lib/radar/page-data";
-import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS } from "@/lib/radar/types";
 import { toast } from "@/lib/toast";
 
 /** What autopilot would do for each kind, in the words a person decides on. */
-const AUTOPILOT_HINTS: Record<RecommendationKind, string> = {
+const AUTOPILOT_HINTS: Record<(typeof AUTOPILOT_KINDS)[number], string> = {
   prep: "Sets a reminder the day before the meeting",
   heads_up: "Sets a follow-up three days out",
   follow_up: "Sets a follow-up three days out",
@@ -126,7 +126,7 @@ export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }
                 For the kinds you pick, Radar puts the follow-up on your calendar for up to five of Today’s cards a night.
                 Each one shows under “Autopilot did this” with Undo.
               </p>
-              {RECOMMENDATION_KINDS.map((kind) => (
+              {AUTOPILOT_KINDS.map((kind) => (
                 <Toggle
                   key={kind}
                   id={`radar-autopilot-${kind}`}

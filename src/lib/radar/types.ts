@@ -21,8 +21,18 @@ export const RECOMMENDATION_KINDS = [
   "opportunity",
   "reach_out",
   "reconnect",
+  // Connect lane: links between the person's notes and the people they know.
+  "introduce",
+  "ask",
+  "share",
 ] as const;
 export type RecommendationKind = (typeof RECOMMENDATION_KINDS)[number];
+
+/**
+ * The kinds autopilot may act on. Not the Connect kinds: an introduction or an ask involves a
+ * second person, so it only ever happens when the person chooses it.
+ */
+export const AUTOPILOT_KINDS = ["prep", "heads_up", "follow_up", "opportunity", "reach_out", "reconnect"] as const satisfies readonly RecommendationKind[];
 
 export const KIND_PRIORITY: Record<RecommendationKind, number> = {
   prep: 6,
@@ -31,6 +41,9 @@ export const KIND_PRIORITY: Record<RecommendationKind, number> = {
   opportunity: 3,
   reach_out: 2,
   reconnect: 1,
+  introduce: 3,
+  ask: 2,
+  share: 1,
 };
 
 /** The chip on a card. Short, because it sits beside a name. */
@@ -41,6 +54,9 @@ export const KIND_LABELS: Record<RecommendationKind, string> = {
   opportunity: "Opportunity",
   reach_out: "Reach out",
   reconnect: "Reconnect",
+  introduce: "Introduce",
+  ask: "Ask",
+  share: "Share",
 };
 
 /** The section a kind is grouped under below "Today". */
@@ -51,6 +67,29 @@ export const KIND_SECTION_TITLES: Record<RecommendationKind, string> = {
   opportunity: "Opportunities",
   reach_out: "Waiting on you",
   reconnect: "Drifting",
+  introduce: "People to connect",
+  ask: "Who could help",
+  share: "Worth passing on",
+};
+
+/**
+ * Radar's three lanes (docs/superpowers/specs/2026-11-10-radar-analyst-design.md). Follow up:
+ * people the person has met where something is open. Connect: links between their notes and
+ * their people. Opportunities: things to go after, with someone they know attached.
+ */
+export const RADAR_LANES = ["follow_up", "connect", "opportunities"] as const;
+export type RadarLane = (typeof RADAR_LANES)[number];
+
+export const LANE_OF_KIND: Record<RecommendationKind, RadarLane> = {
+  prep: "follow_up",
+  heads_up: "follow_up",
+  follow_up: "follow_up",
+  reach_out: "follow_up",
+  reconnect: "follow_up",
+  introduce: "connect",
+  ask: "connect",
+  share: "connect",
+  opportunity: "opportunities",
 };
 
 export const RECOMMENDATION_BUCKETS = ["today", "soon", "later"] as const;
@@ -248,6 +287,15 @@ export type ContactSignalPayload = {
 
 /** The retired global news tables' source kinds (`external_sources.kind`); the tables drop in Radar PR 12. */
 export type ExternalSourceKind = "rss" | "atom" | "hn" | "edgar";
+
+/**
+ * An opportunity with no contact row (`radar_opportunities`): an event near the person, someone
+ * new to meet, an opening, a program or deadline. Nothing here becomes a contact until saved.
+ */
+export const RADAR_OPPORTUNITY_KINDS = ["event", "person", "opening", "program"] as const;
+export type RadarOpportunityKind = (typeof RADAR_OPPORTUNITY_KINDS)[number];
+/** `found` = checked but not shown yet; `pending` = on the page; `saved` = the person kept it. */
+export type RadarOpportunityStatus = "found" | "pending" | "saved" | "dismissed" | "expired";
 
 /** What a person did with a recommendation, recorded so the next run respects it. */
 export type RadarFeedbackAction = "accepted" | "dismissed" | "snoozed" | "never";
