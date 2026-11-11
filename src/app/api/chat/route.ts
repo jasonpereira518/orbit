@@ -19,6 +19,7 @@ import {
   persistAssistantTurn,
   supersedeDanglingQuestion,
   trackChatAnswerFailed,
+  readTurnSteers,
   wasTurnStopped,
 } from "@/lib/chat-persist";
 import { isUuid } from "@/lib/input/ids";
@@ -268,6 +269,21 @@ export async function POST(request: Request) {
         let blocks = buildChatBlocks(ctx);
         send({ type: "blocks", blocks });
 
+        // What the person sends while this answer is being written (`steerChatTurn`). Read
+        // between lookup rounds; each note taken is confirmed with a step, which also puts it
+        // in the saved trail. Only a turn with an id can be addressed.
+        let steersTaken = 0;
+        const steer =
+          detached && threadId && turnId
+            ? async () => {
+                const notes = await readTurnSteers(userId, threadId, turnId);
+                const fresh = notes.slice(steersTaken);
+                steersTaken = notes.length;
+                for (const note of fresh) steps.done("steer", { id: `steer:${note.id}`, label: "You added", detail: note.text });
+                return fresh.map((note) => note.text);
+              }
+            : undefined;
+
         steps.start("answer", "Writing the answer");
         // Secrets and fence markers are scrubbed from the LIVE stream, not only from what is
         // stored afterwards — see `createStreamRedactor`. (A scrub is recorded once the
@@ -297,6 +313,7 @@ export async function POST(request: Request) {
               },
               // Cards appear as the loop drafts them, not only once the answer is done.
               onProposed: (items) => send({ type: "actions", items }),
+              steer,
             }),
           { userId }
         );

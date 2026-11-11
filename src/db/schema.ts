@@ -3778,6 +3778,12 @@ export const chatThreads = pgTable(
      * apart: only a stopped turn's question is discarded. See `markTurnStopped`.
      */
     stoppedTurnId: text("stopped_turn_id"),
+    /**
+     * Messages the person sent to steer the answer being written, keyed by its client turn
+     * id. The running turn reads them between lookup rounds (`readTurnSteers`); a new turn's
+     * first steer replaces the last turn's. See `addTurnSteer`.
+     */
+    pendingSteer: jsonb("pending_steer").$type<{ turnId: string; notes: { id: string; text: string }[] }>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

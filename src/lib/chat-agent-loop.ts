@@ -34,7 +34,14 @@ import type { AiAccess } from "@/lib/ai-access";
 import type { EvidenceSource } from "@/lib/chat-evidence";
 import { NULL_STEPS, toRefs, type StepEmitter } from "@/lib/chat-steps";
 import { createAnswerSplitter, type SplitResult } from "@/lib/chat-stream-protocol";
-import { runToolLoop, type ExecutedCall, type ToolExecutor, type ToolLoopOutcome } from "@/lib/chat-tool-loop";
+import {
+  applySteer,
+  runToolLoop,
+  type ExecutedCall,
+  type SteerSource,
+  type ToolExecutor,
+  type ToolLoopOutcome,
+} from "@/lib/chat-tool-loop";
 import type { ChatContext } from "@/lib/chat-context";
 import {
   chatToolsFor,
@@ -138,6 +145,8 @@ export async function runChatAgent(input: {
   signal: AbortSignal;
   bounds?: { maxRounds: number; maxCalls: number; maxResultChars: number };
   now?: () => number;
+  /** What the person sent mid-answer. See `ToolLoopOptions.steer`. */
+  steer?: SteerSource;
 }): Promise<ChatAgentRun> {
   const bounds = input.bounds ?? AGENT_BOUNDS;
   let started = 0;
@@ -147,6 +156,7 @@ export async function runChatAgent(input: {
       return input.driver.step(signal, options);
     },
     addResults: (results) => input.driver.addResults(results),
+    addUserText: (text) => input.driver.addUserText(text),
   };
   const outcome = await runToolLoop(driver, input.execute, {
     // One round is kept back for the tools-off finish.
@@ -158,6 +168,7 @@ export async function runChatAgent(input: {
     maxResultChars: bounds.maxResultChars,
     now: input.now,
     limited: WEB_LOOKUP_LIMIT,
+    steer: input.steer,
   });
   if (outcome.stoppedBy === "done") {
     return { calls: outcome.calls, rounds: outcome.rounds, stoppedBy: "done", finishedWithoutTools: false };
@@ -168,6 +179,8 @@ export async function runChatAgent(input: {
   // A provider failure before anything was looked up is the answer failing, not a lookup:
   // surface it as the error it is.
   if (outcome.stoppedBy === "error" && outcome.rounds === 0) throw outcome.error;
+  // The last chance to steer: the loop only asks after a round that ran lookups.
+  await applySteer(driver, input.steer);
   await driver.step(input.signal, { noTools: true });
   return {
     calls: outcome.calls,
@@ -230,6 +243,8 @@ export async function answerWithLookups(
     /** Test seam: the auto-apply gate. Built from the person's setting when absent. */
     autoApply?: AutoApplyGate;
     access?: AiAccess;
+    /** What the person sent mid-answer, read between rounds. */
+    steer?: SteerSource;
     /** Test seam: builds a fake driver, handed the callback its rounds stream prose into. */
     driver?: (onText: (delta: string) => void) => ToolDriver;
     /** Test seam: a fake executor in place of the registry. */
@@ -383,6 +398,7 @@ export async function answerWithLookups(
       driver,
       execute,
       onRound: () => joiner.newRound(),
+      steer: options.steer,
       lookupDeadline: options.requestStartedAt + LOOKUPS_END_BY_MS,
       answerDeadline: options.requestStartedAt + ANSWER_ENDS_BY_MS,
       signal,

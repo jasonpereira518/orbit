@@ -41,6 +41,7 @@ import {
   deleteChatThread,
   getChatThread,
   listChatThreads,
+  steerChatTurn,
   stopChatTurn,
   switchChatVersion,
   updateChatThreadContext,
@@ -73,6 +74,7 @@ import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
+import { afterTurn, enqueue, setSteering, steeredId, type QueuedMessage } from "@/lib/chat-queue";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
@@ -400,6 +402,12 @@ export function ChatPanel({
   /** Ends that wait at once — what Stop does to a reopened thread's answer. */
   const resumeStopRef = useRef<(() => void) | null>(null);
   const busy = pending || streaming || resuming;
+  // Typed while an answer was being written: sent in order as each answer lands, or handed
+  // to the running answer as a steer. See `@/lib/chat-queue`.
+  const [queued, setQueued] = useState<QueuedMessage[]>([]);
+  // Whether the last turn ended in an answer. A stopped or failed turn holds the queue
+  // rather than firing the next message into a conversation that just went wrong.
+  const landedRef = useRef(false);
   // The "searching" bubble makes sense until the first token; after that the answer
   // itself is the progress indicator.
   const awaitingFirstToken =
@@ -604,6 +612,7 @@ export function ChatPanel({
   const clearComposer = useCallback(() => {
     resetQuestion("");
     setAttached([]);
+    setQueued([]);
   }, [resetQuestion]);
 
   /** The open thread, readable from async work (the history list and the prefetcher check it). */
@@ -857,6 +866,7 @@ export function ChatPanel({
         setResuming(true);
         void awaitPendingAnswer(id, () => !stopped && seq === loadSeqRef.current && threadIdRef.current === id)
           .then((landed) => {
+            if (landed) landedRef.current = true;
             if (landed) applyThread(landed, { opening: false });
           })
           .finally(() => {
@@ -1000,6 +1010,7 @@ export function ChatPanel({
       const q = raw.trim();
       if (!q || busy || loadingThread) return;
 
+      landedRef.current = false;
       setLastUserQuery(q);
       // A fresh turn starts a fresh slot; the switcher belongs to whichever turn is last.
       setVersions([]);
@@ -1037,7 +1048,8 @@ export function ChatPanel({
           // message was the wrong fallback here.
           toast.error(friendlyError(err, TOAST_COPY.chatStartFailed));
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
-          resetQuestion(q);
+          // Not over a follow-up typed in the meantime.
+          if (!lastValueRef.current.trim()) resetQuestion(q);
           setStreaming(false);
           return;
         }
@@ -1105,6 +1117,9 @@ export function ChatPanel({
               // old blank wait. Steps are keyed by id, so a stage finishing updates its own
               // line in place instead of appending a second copy of itself.
               ensurePlaceholder();
+              // The turn took a steer: it is in the trail now, so it leaves the queue.
+              const steered = steeredId(step.id);
+              if (steered) setQueued((prev) => prev.filter((item) => item.id !== steered));
               patch((m) => {
                 const steps = m.steps ?? [];
                 const at = steps.findIndex((s) => s.id === step.id);
@@ -1115,6 +1130,7 @@ export function ChatPanel({
               });
             },
             onDone: (info) => {
+              landedRef.current = true;
               smoother.flush();
               ensurePlaceholder();
               emitTourEvent("chat.answered");
@@ -1151,7 +1167,8 @@ export function ChatPanel({
                 toast.error(message);
                 setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               }
-              resetQuestion(q);
+              // Not over a follow-up typed in the meantime.
+              if (!lastValueRef.current.trim()) resetQuestion(q);
             },
           },
           controller.signal
@@ -1171,10 +1188,61 @@ export function ChatPanel({
         clearTurnInFlight(activeId, turnId);
         if (turnRef.current?.turnId === turnId) turnRef.current = null;
         abortRef.current = null;
+        // A steer the turn never confirmed waits its turn like any other queued message.
+        setQueued(afterTurn);
         setStreaming(false);
       })();
     },
     [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
+  );
+
+  // The next queued message goes out once the answer before it has landed. An effect rather
+  // than a call from the turn's own tail: `sendQuestion` there still closes over `busy`.
+  useEffect(() => {
+    if (busy || loadingThread || !landedRef.current) return;
+    const next = queued[0];
+    if (!next) return;
+    setQueued((prev) => prev.filter((item) => item.id !== next.id));
+    sendQuestion(next.text, { contextContactIds: next.contextContactIds });
+  }, [busy, loadingThread, queued, sendQuestion]);
+
+  /**
+   * Hand a queued message to the answer being written. Only a live stream can be steered:
+   * its confirmation arrives as a step on that stream. If the server refuses it (too long,
+   * the turn's steers used up) it simply stays queued.
+   */
+  const steerQueued = useCallback(
+    (item: QueuedMessage) => {
+      const turn = turnRef.current;
+      if (!streaming || !turn) return;
+      const back = () => setQueued((prev) => setSteering(prev, item.id, false));
+      setQueued((prev) => setSteering(prev, item.id, true));
+      void steerChatTurn(turn.threadId, turn.turnId, item.id, item.text)
+        .then((res) => {
+          if (!res.ok) back();
+        })
+        .catch(back);
+    },
+    [streaming]
+  );
+
+  /** Enter while an answer is being written: queue it, and with `steer`, send it in now. */
+  const queueQuestion = useCallback(
+    (raw: string, steer: boolean) => {
+      const text = raw.trim();
+      const item: QueuedMessage = {
+        id: crypto.randomUUID(),
+        text,
+        contextContactIds: activeMentions(text, attached).map((p) => p.id),
+      };
+      const next = enqueue(queued, item);
+      // Full, or nothing typed: the text stays in the box.
+      if (next === queued) return;
+      setQueued(next);
+      resetQuestion("");
+      if (steer) steerQueued(item);
+    },
+    [attached, queued, resetQuestion, steerQueued]
   );
 
   /**
@@ -1424,7 +1492,9 @@ export function ChatPanel({
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendQuestion(question);
+      // Mid-answer, Enter queues and Cmd/Ctrl+Enter steers the answer being written.
+      if (busy) queueQuestion(question, e.metaKey || e.ctrlKey);
+      else sendQuestion(question);
     }
   }
 
@@ -1758,6 +1828,46 @@ export function ChatPanel({
             {/* `relative`: the `@` type-ahead anchors to this box's top edge, which is the
                 top of the composer pill. */}
             <div className="relative mx-auto max-w-3xl space-y-2.5">
+              {queued.length > 0 && (
+                <ul aria-label="Queued messages" aria-live="polite" className="space-y-1">
+                  {queued.map((item) => (
+                    <li
+                      key={item.id}
+                      className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/40 py-1 pl-3 pr-1 text-sm"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-foreground/80">{item.text}</span>
+                      {item.steering ? (
+                        <span className="shrink-0 px-2 text-xs text-muted-foreground">Steering…</span>
+                      ) : (
+                        <>
+                          {(streaming || !busy) && (
+                            <button
+                              type="button"
+                              title={streaming ? "Send it to the answer being written" : undefined}
+                              onClick={() => {
+                                if (streaming) return steerQueued(item);
+                                setQueued((prev) => prev.filter((q) => q.id !== item.id));
+                                sendQuestion(item.text, { contextContactIds: item.contextContactIds });
+                              }}
+                              className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            >
+                              Send now
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            aria-label={`Remove queued message: ${item.text}`}
+                            onClick={() => setQueued((prev) => prev.filter((q) => q.id !== item.id))}
+                            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {/* One pill holding every control, rather than a field with satellites.
                   `items-end` keeps the buttons on the last line as the field grows. */}
               <div
@@ -1800,14 +1910,14 @@ export function ChatPanel({
                   // Off while the recogniser owns the box — an accepted row splices text
                   // the dictated span is anchored against. (Mid-IME is the composer's own
                   // business and it shuts itself.)
-                  menuEnabled={!dictation.listening && !busy && !loadingThread}
+                  menuEnabled={!dictation.listening && !loadingThread}
                   boxClassName={COMPOSER_TEXT_BOX}
                   onKeyDown={onComposerKeyDown}
                   onSelectionCollapsedChange={setSelectionCollapsed}
                   onCompositionChange={setComposing}
                   rows={1}
                   maxLength={CHAT_QUESTION_MAX_CHARS}
-                  placeholder="Ask about your network…"
+                  placeholder={busy ? "Add a follow-up…" : "Ask about your network…"}
                   // The placeholder vanishes once there's text, so it can't be the name.
                   aria-label="Message Orbit"
                   data-dictating={dictation.listening || undefined}
@@ -1826,7 +1936,8 @@ export function ChatPanel({
                     showMirror && "text-transparent caret-ink selection:text-foreground",
                   )}
                   style={dictation.listening ? { scrollbarGutter: "stable" } : undefined}
-                  disabled={busy || loadingThread}
+                  // Not while busy: a follow-up can be typed, queued or sent to steer.
+                  disabled={loadingThread}
                 >
                   {showMirror && interimRange && (
                     <ComposerMirror
