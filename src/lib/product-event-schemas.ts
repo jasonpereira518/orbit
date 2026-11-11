@@ -52,7 +52,7 @@ export const SURVEYS = ["post_first_capture", "day7_not_activated", "followup_us
 export const CANCEL_REASONS = ["too_expensive", "not_using", "missing_feature", "privacy", "season_over", "other"] as const;
 export const SHARE_CHANNELS = ["copy", "x", "linkedin", "native", "ticket"] as const;
 export const SEARCH_SURFACES = ["contacts_page", "command_palette", "api"] as const;
-export const NOTIFICATION_KINDS = ["due", "meeting", "test"] as const;
+export const NOTIFICATION_KINDS = ["due", "meeting", "chat", "test"] as const;
 /** Query length is capped, never exact past this: a long query's length is close to a fingerprint. */
 export const SEARCH_QUERY_LENGTH_CAP = 64;
 export const SEARCH_RESULT_COUNT_CAP = 1000;

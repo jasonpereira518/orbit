@@ -5,6 +5,15 @@
  * the rail will: a sidebar that appears (or vanishes) the moment the panel finishes loading
  * reads as it having been closed and reopened.
  */
+/**
+ * The rail's two widths. Here, not in the rail component, because the loading placeholder
+ * needs them and is rendered by page skeletons far outside chat: importing them from the
+ * component pulled the whole rail into those pages' bundles.
+ * Open is wide enough for a title to wrap to two lines; closed is room for one icon button.
+ */
+export const RAIL_OPEN_WIDTH = 224;
+export const RAIL_CLOSED_WIDTH = 48;
+
 export const RAIL_OPEN_KEY = "orbit:chat-rail-open";
 
 /** Open unless the person closed it: a first visit, or storage that cannot be read, gets the rail. */

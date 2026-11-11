@@ -64,7 +64,26 @@ export type ToolLoopOptions = {
    * twenty seconds. Calls past `max` are answered with `message` instead of running.
    */
   limited?: { tools: ReadonlySet<string>; max: number; message: string };
+  /**
+   * Anything the person sent to steer this answer since the last call. Asked after each
+   * round's results are in, so the next round reads it beside them.
+   */
+  steer?: SteerSource;
 };
+
+export type SteerSource = () => Promise<string[]>;
+
+/**
+ * Hand the driver whatever the person sent since the last call. A source that throws is
+ * treated as silence: a steer must never be the reason an answer fails.
+ */
+export async function applySteer(driver: ToolDriver, steer: SteerSource | undefined): Promise<void> {
+  if (!steer) return;
+  const notes = await steer().catch(() => [] as string[]);
+  for (const note of notes) {
+    driver.addUserText(`The user added this while you were working. Take it into account in your answer:\n${note}`);
+  }
+}
 
 function capped(value: unknown, max: number): string {
   const text = typeof value === "string" ? value : JSON.stringify(value);
@@ -190,5 +209,6 @@ export async function runToolLoop(
         content: JSON.stringify({ error: "Lookup budget for this question is used up. Answer with what you have." }),
       })),
     ]);
+    await applySteer(driver, options.steer);
   }
 }

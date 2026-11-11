@@ -36,6 +36,7 @@ import type { AimKind, Field, Timeline } from "@/lib/about-you";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
+import type { ChatAttachment } from "@/lib/chat-attachments";
 import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
 import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
 import type {
@@ -1132,6 +1133,23 @@ export const userGoals = pgTable(
   (t) => [index("user_goals_user_idx").on(t.userId)]
 );
 
+/**
+ * Things the person asked Orbit to keep in mind across chats. Read into every chat prompt
+ * (fenced as data). See `@/lib/chat-memory` for the only two ways one is written.
+ */
+export const chatMemories = pgTable(
+  "chat_memories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    text: text("text").notNull(),
+    /** The chat it was saved from, when it came from a card. Not a foreign key: the memory outlives the chat. */
+    sourceThreadId: uuid("source_thread_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("chat_memories_user_idx").on(t.userId, t.createdAt)]
+);
+
 export const tags = pgTable(
   "tags",
   {
@@ -2154,6 +2172,8 @@ export type ImportStats = {
    */
   scanAfter?: string;
   scanIsFull?: boolean;
+  /** Recruiting cycle mode requested for the scan. */
+  cycle?: "current" | "july" | "august" | "january";
   /**
    * Job start, used to advance the watermark on completion. Deliberately the start and not
    * the finish — mail that arrived mid-scan was never in this job's result set.
@@ -3215,6 +3235,8 @@ export const userRecruiterLinks = pgTable(
     aiSummary: text("ai_summary"),
     companiesMentioned: jsonb("companies_mentioned").$type<string[]>().default([]),
     rolesDiscussed: jsonb("roles_discussed").$type<string[]>().default([]),
+    /** Specific role being interviewed for, extracted from recruiter threads or manually logged. */
+    roleInterviewingFor: text("role_interviewing_for"),
     firstEmailAt: timestamp("first_email_at", { withTimezone: true }),
     lastEmailAt: timestamp("last_email_at", { withTimezone: true }),
     emailCount: integer("email_count").default(0).notNull(),
@@ -3281,6 +3303,31 @@ export const recruiterMessages = pgTable(
     index("recruiter_messages_recruiter_idx").on(t.recruiterId),
     // Backs the daily send cap, which counts this user's sends since midnight.
     index("recruiter_messages_sent_idx").on(t.userId, t.sentAt),
+  ]
+);
+
+/**
+ * Tracks credit-based contact reveals for shared community recruiters.
+ * When unlocked, contact details (email, LinkedIn) remain permanently viewable by this user.
+ */
+export const recruiterContactUnlocks = pgTable(
+  "recruiter_contact_unlocks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    recruiterId: uuid("recruiter_id")
+      .notNull()
+      .references(() => recruiters.id, { onDelete: "cascade" }),
+    costCredits: integer("cost_credits").default(1).notNull(),
+    unlockedAt: timestamp("unlocked_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiter_contact_unlocks_user_idx").on(t.userId),
+    index("recruiter_contact_unlocks_recruiter_idx").on(t.recruiterId),
+    uniqueIndex("recruiter_contact_unlocks_user_recruiter_uidx").on(
+      t.userId,
+      t.recruiterId
+    ),
   ]
 );
 
@@ -3734,6 +3781,11 @@ export type ChatRecommendation = {
   reason: string;
   suggested_action: string;
   draft_message: string | null;
+  /**
+   * The draft as the person last left it on the card: written on demand, edited or rewritten.
+   * Shown in place of `draft_message`, which stays the model's original. See `saveDraftEdit`.
+   */
+  edited_draft?: string | null;
 };
 
 export const chatThreads = pgTable(
@@ -3750,6 +3802,14 @@ export const chatThreads = pgTable(
      * apart: only a stopped turn's question is discarded. See `markTurnStopped`.
      */
     stoppedTurnId: text("stopped_turn_id"),
+    /**
+     * Messages the person sent to steer the answer being written, keyed by its client turn
+     * id. The running turn reads them between lookup rounds (`readTurnSteers`); a new turn's
+     * first steer replaces the last turn's. See `addTurnSteer`.
+     */
+    pendingSteer: jsonb("pending_steer").$type<{ turnId: string; notes: { id: string; text: string }[] }>(),
+    /** When the person pinned this conversation to the top of their history; null when not pinned. */
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -3826,7 +3886,12 @@ export const chatMessages = pgTable(
      * the server after the question was saved can find and discard it. Null on assistant rows,
      * versioned turns and every row from before SCHEMA_VERSION 174.
      */
-    clientTurnId: text("client_turn_id"),
+/**
+     * Files attached to this question: their names and the text read from them (never the
+     * bytes). Only on user rows. See `@/lib/chat-attachments`.
+     */
+    attachments: jsonb("attachments").$type<ChatAttachment[]>(),
+        clientTurnId: text("client_turn_id"),
     /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
@@ -6441,6 +6506,7 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type Recruiter = typeof recruiters.$inferSelect;
 export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
 export type RecruiterMessage = typeof recruiterMessages.$inferSelect;
+export type RecruiterContactUnlock = typeof recruiterContactUnlocks.$inferSelect;
 export type RecruiterScanState = typeof recruiterScanState.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;

@@ -166,7 +166,7 @@ Respond with JSON only:
   ]
 }
 
-"name" is their full name as their own profile spells it. "summary" is two or three plain sentences on who they are professionally. "talkingPoints" are at most 3 recent, specific things worth mentioning (a talk, a launch, a post, a move), each with the page it came from. List experiences most recent first — at most 8 roles and 3 schools. No other fields, no commentary.`;
+"name" is their full name as their own profile spells it. "headline" is their LinkedIn headline copied word for word, punctuation and all; never reword, shorten or write one yourself, and use null when no page shows it. "summary" is two or three plain sentences on who they are professionally. "talkingPoints" are at most 3 recent, specific things worth mentioning (a talk, a launch, a post, a move), each with the page it came from. List experiences most recent first — at most 8 roles and 3 schools. No other fields, no commentary.`;
 
 function clean(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -289,7 +289,7 @@ export function toPersonDossier(
 
   const org = clean(raw.current?.organization, 120);
   dossier.name = clean(raw.name, MAX_NAME);
-  dossier.headline = clean(raw.headline, 200);
+  dossier.headline = clean(raw.headline, 220);
   dossier.current = org ? { organization: org, title: clean(raw.current?.title, 120) } : null;
   dossier.location = clean(raw.location, 120);
   dossier.summary = clean(raw.summary, MAX_SUMMARY);

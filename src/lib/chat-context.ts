@@ -1,3 +1,6 @@
+import { listMemories } from "@/lib/chat-memory";
+import { memoriesForPrompt } from "@/lib/chat-memory-text";
+import { attachmentsForPrompt, type ChatAttachment } from "@/lib/chat-attachments";
 import { nowInZone } from "@/lib/user-clock";
 import { loadChatCalendar, type ChatCalendar } from "@/lib/chat-calendar";
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
@@ -126,7 +129,12 @@ export function renderAboutUser(
   return parts.length ? `About the user — ${parts.join("; ")}`.slice(0, ABOUT_USER_MAX_CHARS) : null;
 }
 
-type PriorRow = { role: string; content: string; recommendations?: ChatRecommendation[] | null };
+type PriorRow = {
+  role: string;
+  content: string;
+  recommendations?: ChatRecommendation[] | null;
+  attachments?: ChatAttachment[] | null;
+};
 
 /**
  * Oldest first, and an assistant turn carries the names it suggested. The cards are not in
@@ -141,9 +149,16 @@ function rowsToTurns(rows: PriorRow[]): ChatTurn[] {
       // Capped: a stored answer can hold a 200-row list table, and replaying it whole would
       // crowd this question's own context out of the prompt.
       const content = m.content.length > PRIOR_TURN_CHARS ? `${m.content.slice(0, PRIOR_TURN_CHARS)}…` : m.content;
+      // Only the names here: the files' text returns inside the prompt's fenced files block.
+      const files = (m.attachments ?? []).map((a) => a.name);
       return {
         role: m.role as ChatTurn["role"],
-        content: m.role === "assistant" && names.length ? `${content}\n(Suggested, in order: ${names.join(", ")})` : content,
+        content:
+          m.role === "assistant" && names.length
+            ? `${content}\n(Suggested, in order: ${names.join(", ")})`
+            : files.length
+              ? `${content}\n(Attached: ${files.join(", ")})`
+              : content,
       };
     });
 }
@@ -167,6 +182,10 @@ export type ChatContext = {
   scopedQuestion: string;
   /** Freeform context the user typed for this conversation, if any — never extracted into contacts. */
   userContext: string | null;
+  /** What the person asked Orbit to keep in mind across chats, for the prompt's fenced block. */
+  memories: string | null;
+  /** The text of files attached to this question and earlier in the thread, for the prompt's fenced block. */
+  attachedFiles: string | null;
   /** One line to show under the answer when the semantic arm was unavailable. */
   searchNotice: string | null;
   /**
@@ -777,6 +796,8 @@ export async function prepareChatContext(
     timeZone?: string | null;
     /** The request's own signal, passed to the model calls retrieval makes. */
     signal?: AbortSignal;
+    /** Files attached to this question, already checked (`sanitizeAttachments`). */
+    attachments?: readonly ChatAttachment[];
   }
 ): Promise<ChatContext> {
   const db = await getDb();
@@ -799,6 +820,8 @@ export async function prepareChatContext(
   // ROUTING (decisions/chat-route.ts). Read from the question parse retrieval already makes,
   // so it costs no extra round trip; the branches it gates (attention brief, recruiter list)
   // chain off it while the search runs. A failed parse routes to the one-pass default.
+  // Read beside everything else; an answer never fails because memories could not be read.
+  const memoriesP = listMemories(userId).catch(() => []);
   const priorRowsP = threadId
     ? db.query.chatMessages
         .findMany({
@@ -810,7 +833,7 @@ export async function prepareChatContext(
           ),
           orderBy: [desc(chatMessages.createdAt)],
           limit: PRIOR_TURN_LIMIT,
-          columns: { role: true, content: true, recommendations: true },
+          columns: { role: true, content: true, recommendations: true, attachments: true },
         })
         .then((rows) =>
           // A stopped turn persists its question with no reply. Newest-first, so that is
@@ -1269,6 +1292,11 @@ export async function prepareChatContext(
     snippets,
     scopedQuestion,
     userContext,
+    memories: memoriesForPrompt(await memoriesP),
+    attachedFiles: attachmentsForPrompt(
+      options.attachments ?? [],
+      priorRows.flatMap((row) => (row.role === "user" ? (row.attachments ?? []) : []))
+    ),
     searchNotice: retrieval.searchNotice,
     goals: retrieval.goals,
     userSchools: retrieval.userSchools,

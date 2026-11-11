@@ -21,7 +21,6 @@
 @source "layout.tsx";
 @source "../components/analytics/pageview-beacon.tsx";
 @source "../components/analytics/vercel-telemetry.tsx";
-@source "../components/chat/chat-history-rail.tsx";
 @source "../components/chat/chat-rail-placeholder.tsx";
 @source "../components/dashboard/closeness-tier-badge.tsx";
 @source "../components/error-fallback.tsx";
@@ -146,7 +145,6 @@
 @source "../lib/capture/closeness.ts";
 @source "../lib/capture/person-enrichment.ts";
 @source "../lib/chat-evidence.ts";
-@source "../lib/chat-history-groups.ts";
 @source "../lib/chat-rail-pref.ts";
 @source "../lib/chat-stream-protocol.ts";
 @source "../lib/clerk-session-hint.ts";

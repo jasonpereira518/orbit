@@ -47,7 +47,7 @@ export default async function RecruitersPage({
   const tab = params.tab === "discover" ? "discover" : "mine";
   const q = params.q || "";
 
-  const [{ enabled: sharing }, mine, gmail, scan, outlook, outlookScan, discover] = await Promise.all([
+  const [{ enabled: sharing, recruiterCount, minRequired }, mine, gmail, scan, outlook, outlookScan, discover] = await Promise.all([
     getRecruiterSharing(),
     listMyRecruiters(),
     getGmailConnectionStatus(),
@@ -101,7 +101,11 @@ export default async function RecruitersPage({
     >
       <RenderStamp />
       <div className="space-y-6">
-        <RecruiterSharingToggle enabled={sharing} />
+        <RecruiterSharingToggle
+          enabled={sharing}
+          recruiterCount={recruiterCount}
+          minRequired={minRequired}
+        />
         <GmailImportPanel connection={gmail} initialScan={scan} />
         {/* The Outlook callback defaults to /imports (the contacts import lives there), so the
             scan panel says where it wants to land. */}
@@ -139,11 +143,15 @@ export default async function RecruitersPage({
           // The empty Discover tab is the incentive made visible. Hiding it entirely
           // would also hide the offer, so it renders the reason instead of a list.
           <div className="rounded-2xl border border-dashed border-border/70 bg-card px-5 py-12 text-center">
-            <p className="font-medium text-ink">Nothing to discover yet</p>
+            <p className="font-medium text-ink">
+              {recruiterCount < minRequired
+                ? `Log at least ${minRequired} recruiters to unlock Discover`
+                : "Join the shared recruiter pool"}
+            </p>
             <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-              Discover shows recruiters other people have logged. It fills up
-              when you share your own list — that&apos;s the trade. Your notes and
-              interaction summaries stay private either way.
+              {recruiterCount < minRequired
+                ? `Discover shows recruiters other candidates have interviewed with. You've logged ${recruiterCount} of the ${minRequired} recruiters needed to unlock community access. Scan your emails from this recruiting cycle to reach 5!`
+                : "Discover lets you access recruiters other job seekers have added. Turn on sharing above to contribute yours and get access to the whole community pool."}
             </p>
           </div>
         ) : (

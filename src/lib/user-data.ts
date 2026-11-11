@@ -36,6 +36,7 @@ import {
   aiBatchJobs,
   aiResultCache,
   chatMessages,
+  chatMemories,
   chatThreads,
   closenessCohorts,
   companies,
@@ -93,6 +94,7 @@ import {
   emailThreads,
   recommendationFeedback,
   recommendations,
+  recruiterContactUnlocks,
   recruiterMessages,
   recruiters,
   recruiterScanState,
@@ -490,10 +492,11 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   chat: {
-    exports: [own(chatThreads), own(chatMessages)],
+    exports: [own(chatThreads), own(chatMessages), own(chatMemories)],
     counts: [chatThreads],
     run: async (db, userId) => {
       await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
+      await db.delete(chatMemories).where(eq(chatMemories.userId, userId));
     },
   },
   recruiters: {
@@ -501,8 +504,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       joined("user_recruiter_links", (userId, limit, offset) => sql`SELECT l.*, r.full_name AS recruiter_full_name, r.firm AS recruiter_firm FROM user_recruiter_links l JOIN recruiters r ON r.id = l.recruiter_id WHERE l.user_id = ${userId} ORDER BY l.id LIMIT ${limit} OFFSET ${offset}`),
       own(recruiterMessages),
       own(recruiterScanState),
+      own(recruiterContactUnlocks),
     ],
-    counts: [userRecruiterLinks, recruiterMessages],
+    counts: [userRecruiterLinks, recruiterMessages, recruiterContactUnlocks],
     run: async (db, userId) => {
       // `recruiters.avg_rating` / `rating_count` / `log_count` are denormalized counters over
       // `user_recruiter_links`, and nothing recomputes them on delete. Without the recompute
@@ -523,6 +527,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // `outlook_connections` and `suggested_reminders`. `scripts/smoke-purge.ts` derives its
       // list from `schema.ts` precisely so a new one fails the suite — it did, and the
       // failure was sitting red on main.
+      await db.delete(recruiterContactUnlocks).where(eq(recruiterContactUnlocks.userId, userId));
       await db.delete(recruiterMessages).where(eq(recruiterMessages.userId, userId));
       await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, userId));
 

@@ -66,6 +66,8 @@ export type MeetingFormState = {
   calendarEventKey: string | null;
   /** …and its recurring series, so the next occurrence can say what happened last time. */
   calendarSeriesId: string | null;
+  /** The invite's description/agenda from the calendar event. */
+  calendarAgenda?: string | null;
 };
 
 /** Everything the engine owns. */
@@ -126,6 +128,8 @@ export type MeetingSession = MeetingEngineSlice & {
   applyCalendarMeeting: (meeting: MeetingCandidate) => void;
   /** When the calendar event this recording was started from ends, if it was. */
   calendarEndIso: string | null;
+  /** The calendar agenda if started from a calendar event. */
+  calendarAgenda?: string | null;
 };
 
 /** The slice a page needs to coordinate with a meeting. Changes rarely, unlike the above. */
@@ -271,6 +275,7 @@ export function MeetingSessionProvider({
     endIso: string | null;
     eventKey: string | null;
     seriesId: string | null;
+    agenda?: string | null;
   } | null>(null);
   // Only while the form still names that event: a retitled or fresh recording is not it.
   const linked = calendarMeeting && calendarMeeting.title === title ? calendarMeeting : null;
@@ -283,8 +288,9 @@ export function MeetingSessionProvider({
       emailsRef,
       calendarEventKey: linked?.eventKey ?? null,
       calendarSeriesId: linked?.seriesId ?? null,
+      calendarAgenda: linked?.agenda ?? null,
     }),
-    [title, attendeesText, includeMic, linked?.eventKey, linked?.seriesId]
+    [title, attendeesText, includeMic, linked?.eventKey, linked?.seriesId, linked?.agenda]
   );
 
   const applyCalendarMeeting = (meeting: MeetingCandidate) => {
@@ -293,6 +299,7 @@ export function MeetingSessionProvider({
       endIso: meeting.endIso,
       eventKey: meeting.eventKey,
       seriesId: meeting.seriesId,
+      agenda: meeting.agenda ?? null,
     });
     emailsRef.current = Object.fromEntries(
       meeting.attendees.filter((a) => a.email).map((a) => [a.name.trim().toLowerCase(), a.email])
@@ -319,6 +326,7 @@ export function MeetingSessionProvider({
     setIncludeMic,
     applyCalendarMeeting,
     calendarEndIso: linked?.endIso ?? null,
+    calendarAgenda: linked?.agenda ?? null,
   };
 
   const busy = engine?.flow.busy ?? false;

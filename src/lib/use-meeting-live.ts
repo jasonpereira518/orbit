@@ -37,6 +37,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { openDeepgramLive, type LiveHandle, type LiveResult } from "@/lib/deepgram-live";
 import { listenParams } from "@/lib/deepgram-params";
 import { claimedYou, labelSpeakers, type LiveWord, type SpeakerTimeline } from "@/lib/speaker-map";
+import { trimBoundaryOverlap } from "@/lib/transcript-paragraphs";
 import { LiveCoverageGate } from "@/lib/meeting-live-coverage";
 import { TARGET_SAMPLE_RATE } from "@/lib/voice-recording";
 import type { RecordedMeetingChunk } from "@/lib/use-meeting-recorder";
@@ -385,13 +386,25 @@ export function useMeetingLive(options: UseMeetingLiveOptions): MeetingLiveHandl
 
       if (connectionFromSeqRef.current === null) connectionFromSeqRef.current = seq;
       const speakerId = dominantSpeaker(result.words);
-      const speaker = speakerId === null ? null : (labelsRef.current.get(speakerId) ?? null);
+      let speaker = speakerId === null ? null : (labelsRef.current.get(speakerId) ?? null);
+      if (!speaker) {
+        const src = cb.current.loudness().audioSource?.(base + result.startMs, base + result.endMs);
+        if (src === "microphone") speaker = "you";
+      }
+
+      let text = result.text.trim();
+      const prev = batchRef.current[batchRef.current.length - 1];
+      if (prev && prev.speaker === speaker) {
+        text = trimBoundaryOverlap(prev.text, text);
+      }
+      if (!text) return;
+
       const segment: LiveSegment = {
         seq,
         startMs: Math.round(meetingMs(base + result.startMs)),
         endMs: Math.round(meetingMs(base + result.endMs)),
         speaker,
-        text: result.text,
+        text,
       };
       lastFinalMsRef.current = Math.max(lastFinalMsRef.current, result.endMs);
       batchRef.current.push(segment);
