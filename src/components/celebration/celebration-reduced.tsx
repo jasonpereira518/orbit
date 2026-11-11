@@ -1,5 +1,6 @@
 "use client";
 
+import { Check } from "lucide-react";
 import type { TierTheme } from "@/lib/celebration/tier-theme";
 import { CelebrationLockup } from "@/components/celebration/celebration-lockup";
 
@@ -56,10 +57,11 @@ export function CelebrationReduced({
               className="flex items-center gap-2.5 py-1.5"
               style={{ color: theme.ink }}
             >
-              <span
+              <Check
                 aria-hidden
-                className="h-2 w-2 shrink-0 rounded-full"
-                style={{ backgroundColor: theme.ink }}
+                className="size-4 shrink-0"
+                strokeWidth={3}
+                style={{ color: theme.ink }}
               />
               <span className="text-sm">{perk}</span>
             </li>
@@ -69,7 +71,7 @@ export function CelebrationReduced({
         <button
           type="button"
           onClick={onDismiss}
-          className="mt-8 w-full rounded-[8px] py-3 font-semibold uppercase outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+          className="mt-8 w-full rounded-full py-3 font-semibold uppercase outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
           style={{
             letterSpacing: "0.14em",
             backgroundColor: theme.onField,

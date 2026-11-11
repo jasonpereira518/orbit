@@ -12,14 +12,24 @@ import "./smoke/_env";
 
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, publicWorkHistory, rateLimitBuckets } from "../src/db/schema";
-import { readPublicWorkHistory, sweepPublicWorkHistory, writePublicWorkHistory } from "../src/lib/public-work-history";
+import { contacts, interactions, publicWorkHistory, rateLimitBuckets } from "../src/db/schema";
+import {
+  PUBLIC_WORK_HISTORY_DAYS,
+  readPublicWorkHistory,
+  sweepPublicWorkHistory,
+  writePublicWorkHistory,
+} from "../src/lib/public-work-history";
+import { SKIP_GATE_TUNING } from "../src/lib/decisions/catalog";
+import type { Engines } from "../src/lib/decisions/engine";
+import { parseAnswers, type Decider, type DecisionRequest, type QuestionMap } from "../src/lib/decisions/jev";
+import { recheckGateState, shapeRecheckGateState, WORK_HISTORY_GATE_LIMITS } from "../src/lib/work-history-gates";
 import { anthropicWebSearchToolType } from "../src/lib/ai";
 import { RateLimitedError } from "../src/lib/rate-limit";
 import { aiOperationThinking, aiOperationTier } from "../src/lib/ai-operations";
 import { getContactProfile, saveContactProfile, type IncomingExperience } from "../src/lib/contact-profile";
 import {
   contactsNeedingWorkHistory,
+  jevMarkerUpdate,
   linkedInCaptureContactIds,
   researchContactWorkHistory,
   researchWorkHistories,
@@ -30,6 +40,26 @@ import {
 } from "../src/lib/work-history-research";
 
 const USER = "smoke-work-history-user";
+
+/** Engines whose Jev answers every question with `p` (null: no answer), counting the asks. */
+function scripted(p: number | null): Engines & { asked: number; last: DecisionRequest<QuestionMap> | null } {
+  const state = { asked: 0, last: null as DecisionRequest<QuestionMap> | null };
+  const jev = {
+    async ask(req: DecisionRequest<QuestionMap>) {
+      state.asked += 1;
+      state.last = req;
+      if (p === null) return null;
+      const answers = parseAnswers(req.questions, {
+        answers: Object.fromEntries(Object.keys(req.questions).map((k) => [k, { noul: p }])),
+      });
+      return answers ? { answers, model: "scripted" } : null;
+    },
+  } as unknown as Decider;
+  return { jev, llm: null, get asked() { return state.asked; }, get last() { return state.last; } } as unknown as Engines & {
+    asked: number;
+    last: DecisionRequest<QuestionMap> | null;
+  };
+}
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -82,6 +112,17 @@ function fake(answer: Partial<WorkHistoryAnswer>) {
 
 async function main() {
   await reset();
+
+  // --- the Jev skip marker: set by a skip or veto, cleared by a real search -----------
+  const t = new Date("2026-11-11T00:00:00Z");
+  check("a Jev skip sets the marker", jevMarkerUpdate("jev_skipped", t) === t);
+  check("a Jev veto sets the marker", jevMarkerUpdate("jev_vetoed", t) === t);
+  for (const searched of ["saved", "unchanged", "not_found", "unsure"] as const) {
+    check(`a real search (${searched}) clears it`, jevMarkerUpdate(searched, t) === null);
+  }
+  for (const untouched of ["fresh", "rate_limited", "no_ai", "outranked", "error"] as const) {
+    check(`no search ran (${untouched}): left alone`, jevMarkerUpdate(untouched, t) === undefined);
+  }
 
   // --- a confident answer is stored as a "web" profile ------------------------------
   const priya = await makeContact("Priya Rao", "https://www.linkedin.com/in/priya-rao");
@@ -306,6 +347,177 @@ async function main() {
     force: true,
   });
   check("the profile's button (force) skips the re-check and searches in full", forcedFull.asked.length === 1 && checkerAsked.length === before);
+
+  // --- Jev's re-check gate: the sweep only, never twice in a row (spec 2026-11-10) ----------
+  await reset();
+  const gated = await makeContact("Gate Rao", "https://www.linkedin.com/in/gate-rao");
+  await researchContactWorkHistory(USER, gated, {
+    researcher: fake({ experiences: [role("Stripe", { isCurrent: true, title: "PM" })] }).researcher,
+  });
+  const stillStripe = checker({ organization: "Stripe", title: "PM" });
+  const savedThreshold = SKIP_GATE_TUNING.skipAtOrBelow.workHistoryRecheck;
+  SKIP_GATE_TUNING.skipAtOrBelow.workHistoryRecheck = 0.2;
+  try {
+    const DAY = 86_400_000;
+    let clock = recheckAt.getTime();
+    const later = () => new Date((clock += (WORK_HISTORY_REFRESH_DAYS + PUBLIC_WORK_HISTORY_DAYS + 10) * DAY));
+    const gatedRow = async () => (await getDb()).query.contacts.findFirst({ where: eq(contacts.id, gated) });
+    const userBuckets = async () =>
+      (await getDb()).select().from(rateLimitBuckets).where(like(rateLimitBuckets.bucket, `%${USER}%`));
+    await (await getDb()).delete(rateLimitBuckets).where(like(rateLimitBuckets.bucket, `%${USER}%`));
+
+    const checkedBefore = (await getContactProfile(USER, gated))?.capturedAt.getTime();
+    const asked0 = checkerAsked.length;
+    const low = scripted(0.1);
+    const t1 = later();
+    const skipped = await researchContactWorkHistory(USER, gated, { gates: low, checker: stillStripe, researcher: fake({}).researcher, now: t1 });
+    check("a confident 'no move' from Jev skips the sweep's re-check", skipped === "jev_skipped", skipped);
+    check("…asked under the re-check gate's operation", low.last?.operation === "contact.work_history.recheck.gate", String(low.last?.operation));
+    check("…the re-check search never runs", checkerAsked.length === asked0);
+    check("…the last-checked date is untouched", (await getContactProfile(USER, gated))?.capturedAt.getTime() === checkedBefore);
+    check("…no web-search allowance is spent", (await userBuckets()).length === 0);
+    const afterSkip = await gatedRow();
+    check("…no miss is counted", afterSkip?.workHistoryMisses === 0, String(afterSkip?.workHistoryMisses));
+    check("…the marker is set", afterSkip?.workHistoryJevSkippedAt?.getTime() === t1.getTime());
+    const dueIn = ((afterSkip?.workHistoryDueAt?.getTime() ?? 0) - t1.getTime()) / DAY;
+    check("…and it is due again one interval out (cold: 180 days ±20%)", dueIn >= 144 && dueIn <= 216, String(dueIn));
+
+    const lowAgain = scripted(0.1);
+    const again = await researchContactWorkHistory(USER, gated, { gates: lowAgain, checker: stillStripe, researcher: fake({}).researcher, now: later() });
+    check("never twice in a row: the run after a skip is not gated", lowAgain.asked === 0 && again === "unchanged", again);
+    check("…and that real search clears the marker", (await gatedRow())?.workHistoryJevSkippedAt === null);
+
+    const high = scripted(0.9);
+    const asked1 = checkerAsked.length;
+    await researchContactWorkHistory(USER, gated, { gates: high, checker: stillStripe, researcher: fake({}).researcher, now: later() });
+    check("a likely move runs the re-check", high.asked === 1 && checkerAsked.length === asked1 + 1);
+
+    const silent = scripted(null);
+    await researchContactWorkHistory(USER, gated, { gates: silent, checker: stillStripe, researcher: fake({}).researcher, now: later() });
+    check("no answer from Jev runs the re-check", silent.asked === 1 && checkerAsked.length === asked1 + 2);
+
+    const plain = await researchContactWorkHistory(USER, gated, { checker: stillStripe, researcher: fake({}).researcher, now: later() });
+    check("without the sweep's engines (a refresh someone asked for) nothing is gated", plain === "unchanged" && checkerAsked.length === asked1 + 3, plain);
+
+    const forcedGate = scripted(0.1);
+    await researchContactWorkHistory(USER, gated, { gates: forcedGate, checker: stillStripe, researcher: fake({}).researcher, force: true });
+    check("the profile's button (force) is never gated", forcedGate.asked === 0);
+
+    // Review Focus 3: a stored history with no current role goes straight to the full search.
+    const left = await makeContact("Left Rao", "https://www.linkedin.com/in/left-rao");
+    await researchContactWorkHistory(USER, left, { researcher: fake({ experiences: [role("Stripe", { isCurrent: false, endYear: 2024 })] }).researcher });
+    const leftGate = scripted(0.1);
+    const leftFull = fake({ experiences: [role("Ramp", { isCurrent: true })] });
+    await researchContactWorkHistory(USER, left, { gates: leftGate, checker: stillStripe, researcher: leftFull.researcher, now: later() });
+    check("no current role on file: the gate is not asked and the full search runs", leftGate.asked === 0 && leftFull.asked.length === 1);
+  } finally {
+    SKIP_GATE_TUNING.skipAtOrBelow.workHistoryRecheck = savedThreshold;
+  }
+
+  // Review Focus 4: what the gate reads is trimmed, recent, and never the raw note.
+  const lastCheckedAt = new Date("2026-06-01T00:00:00Z");
+  const db4 = await getDb();
+  await db4.insert(interactions).values([
+    { userId: USER, contactId: gated, interactionDate: new Date("2026-05-01T00:00:00Z"), aiSummary: "Before the last check" },
+    { userId: USER, contactId: gated, interactionDate: new Date("2026-07-01T00:00:00Z"), aiSummary: "x".repeat(1_000), rawNotes: "RAW-SECRET" },
+    ...Array.from({ length: 12 }, (_, i) => ({
+      userId: USER,
+      contactId: gated,
+      interactionDate: new Date(Date.UTC(2026, 7, 1 + i)),
+      aiSummary: `Catch-up ${i}`,
+    })),
+  ]);
+  const state = await recheckGateState(USER, gated, {
+    lastCheckedAt,
+    roles: [{ organization: "Stripe", title: "PM", startYear: 2020, startMonth: 1, isCurrent: true }],
+    closenessTier: null,
+    title: "PM",
+    company: "Stripe",
+    now: new Date("2026-11-11T00:00:00Z"),
+  });
+  const since = (state.since_last_check as { interactions: Array<{ date: string; summary: string | null }> }).interactions;
+  check("the gate reads at most 10 interactions", since.length === WORK_HISTORY_GATE_LIMITS.interactions, String(since.length));
+  check("…only ones after the last check", since.every((i) => new Date(i.date) > lastCheckedAt));
+  check("…newest first", since[0]?.summary === "Catch-up 11", since[0]?.summary ?? "");
+  check("…each summary trimmed", since.every((i) => (i.summary ?? "").length <= WORK_HISTORY_GATE_LIMITS.summaryChars));
+  check("…and never the raw note", !JSON.stringify(state).includes("RAW-SECRET"));
+  const shaped = JSON.stringify(
+    shapeRecheckGateState({
+      roles: [],
+      title: null,
+      company: null,
+      closenessTier: null,
+      lastCheckedAt,
+      now: new Date("2026-11-11T00:00:00Z"),
+      interactions: [{ type: "email", date: new Date("2026-08-01T00:00:00Z"), summary: "Reach me at priya.rao@gmail.com or +1 (415) 555-0134; back 2019-2024 at Stripe, next call 2026-11-20." }],
+      digest: { whatTheyDo: "PM — call 415.555.0199", workingOn: "write to me: p@ramp.com" },
+    }),
+  );
+  check("summaries never carry an email address", !/@/.test(shaped) && shaped.includes("[email]"), shaped);
+  check("…or a phone number", !shaped.includes("555-0134") && !shaped.includes("555.0199") && shaped.includes("[phone]"), shaped);
+  check("…while dates and year ranges survive", shaped.includes("2019-2024") && shaped.includes("2026-11-20"), shaped);
+
+  // --- Jev's veto of the verify search: any non-forced full search, never twice in a row ----
+  await reset();
+  /** Asks the veto the way researchWithWebSearch does after an unsure first search. */
+  const vetoing = () => {
+    const seen: Array<((firstJson: string) => Promise<boolean>) | undefined> = [];
+    const researcher: WorkHistoryResearcher = async (_u, _s, opts) => {
+      seen.push(opts?.vetoVerify);
+      if (await opts?.vetoVerify?.(JSON.stringify({ match: "unsure", experiences: [] }))) {
+        return { confident: false, experiences: [], headline: null, sources: [], vetoed: true };
+      }
+      return { confident: true, experiences: [role("Ramp", { isCurrent: true, title: "Staff PM" })], headline: null, sources: [] };
+    };
+    return { researcher, seen };
+  };
+  const savedVerify = SKIP_GATE_TUNING.skipAtOrBelow.workHistoryVerify;
+  SKIP_GATE_TUNING.skipAtOrBelow.workHistoryVerify = 0.2;
+  try {
+    const stranger = await makeContact("Veto Rao", "https://www.linkedin.com/in/veto-rao");
+    const sure = scripted(0.1);
+    const v1 = vetoing();
+    const vetoedOutcome = await researchContactWorkHistory(USER, stranger, { researcher: v1.researcher, gates: sure });
+    check("a confident 'someone else' vetoes the verify search", vetoedOutcome === "jev_vetoed", vetoedOutcome);
+    check("…asked under the verify gate's operation", sure.last?.operation === "contact.work_history.verify.gate", String(sure.last?.operation));
+    check("…nothing is written to the contact", (await getContactProfile(USER, stranger)) === null);
+    check("…nothing is shared with other accounts", (await readPublicWorkHistory("veto-rao", 30)) === null);
+    const vetoRow = await (await getDb()).query.contacts.findFirst({ where: eq(contacts.id, stranger) });
+    check("…no miss is counted", vetoRow?.workHistoryMisses === 0, String(vetoRow?.workHistoryMisses));
+    check("…and the marker is set", vetoRow?.workHistoryJevSkippedAt instanceof Date);
+
+    const v2 = vetoing();
+    const retried = await researchContactWorkHistory(USER, stranger, { researcher: v2.researcher, gates: scripted(0.1) });
+    check("never twice in a row: the next run offers no veto", v2.seen[0] === undefined && retried === "saved", retried);
+
+    const v3 = vetoing();
+    await researchContactWorkHistory(USER, stranger, { researcher: v3.researcher, gates: scripted(0.1), force: true });
+    check("the profile's button (force) offers no veto", v3.seen.length === 1 && v3.seen[0] === undefined);
+
+    const newcomer = await makeContact("First Rao", "https://www.linkedin.com/in/first-rao");
+    const v4 = vetoing();
+    const firstTime = await researchContactWorkHistory(USER, newcomer, { researcher: v4.researcher });
+    check("first-time research outside the sweep can still be vetoed (engines open on demand)", typeof v4.seen[0] === "function");
+    check("…and with no decision model it runs as before", firstTime === "saved", firstTime);
+
+    // Review Focus 5: a re-check that found a new employer tells the veto where they went.
+    const mover = await makeContact("Mover Rao", "https://www.linkedin.com/in/mover-rao");
+    await researchContactWorkHistory(USER, mover, { researcher: fake({ experiences: [role("Stripe", { isCurrent: true })] }).researcher });
+    const watching = scripted(0.9);
+    const v5 = vetoing();
+    const movedOn = await researchContactWorkHistory(USER, mover, {
+      researcher: v5.researcher,
+      checker: checker({ organization: "Ramp", title: "Staff PM" }),
+      gates: watching,
+      now: new Date(Date.now() + (WORK_HISTORY_REFRESH_DAYS + PUBLIC_WORK_HISTORY_DAYS + 5) * 86_400_000),
+    });
+    const vetoState = watching.last?.state as { moved_to?: { organization?: string }; first_answer?: string } | undefined;
+    check("on a move, the veto sees the new employer", vetoState?.moved_to?.organization === "Ramp", JSON.stringify(vetoState?.moved_to));
+    check("…reads the first answer fenced as untrusted", typeof vetoState?.first_answer === "string" && vetoState.first_answer.includes("UNTRUSTED DATA") && vetoState.first_answer.includes("<<<FIRSTANSWER_"));
+    check("…and a likely match is kept, not vetoed", movedOn === "saved", movedOn);
+  } finally {
+    SKIP_GATE_TUNING.skipAtOrBelow.workHistoryVerify = savedVerify;
+  }
 
   // --- cost: background extraction runs on the cheap tier, thinking minimal ----------------
   check("work-history research runs on the fast tier", aiOperationTier("contact.work_history") === "fast");

@@ -3,7 +3,13 @@ import { getDb } from "@/db";
 import { feedback, feedbackScreenshots, userSettings } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
 import { assertRevealable } from "@/lib/admin-redaction";
-import { FEEDBACK_AREAS, FEEDBACK_CATEGORIES, type FeedbackArea, type FeedbackCategory } from "@/lib/feedback-report";
+import {
+  FEEDBACK_AREAS,
+  FEEDBACK_CATEGORIES,
+  type FeedbackArea,
+  type FeedbackCategory,
+  type FeedbackTriage,
+} from "@/lib/feedback-report";
 
 /**
  * The feedback console's read side: what people said, and what has been done about it.
@@ -19,7 +25,19 @@ import { FEEDBACK_AREAS, FEEDBACK_CATEGORIES, type FeedbackArea, type FeedbackCa
 
 export const FEEDBACK_PAGE_SIZE = 50;
 
-export const FEEDBACK_FILTERS = ["all", "new", "triaged", "resolved"] as const;
+export const FEEDBACK_FILTERS = ["all", "needs", "new", "triaged", "resolved"] as const;
+
+/**
+ * "Needs you": an in-app report whose person spoke last — nobody has answered it yet, or they
+ * wrote back. Counts a resolved one too when they wrote AFTER it was resolved ("still
+ * broken"), which would otherwise sit in Resolved unseen.
+ * Written out with the table name (no interpolated columns) — the unqualified-column trap.
+ */
+const NEEDS_YOU = sql`(feedback.kind = 'freeform' and coalesce(
+  (select m.author from feedback_messages m where m.feedback_id = feedback.id order by m.created_at desc limit 1),
+  'user') = 'user' and (feedback.status <> 'resolved' or exists (
+    select 1 from feedback_messages m where m.feedback_id = feedback.id and m.author = 'user'
+      and m.created_at > coalesce(feedback.status_changed_at, 'epoch'::timestamptz))))`;
 export type FeedbackFilter = (typeof FEEDBACK_FILTERS)[number];
 export type FeedbackStatus = "new" | "triaged" | "resolved";
 
@@ -77,6 +95,8 @@ export type FeedbackListRow = {
   category: string | null;
   status: FeedbackStatus;
   score: number | null;
+  /** The subject line they gave it; null on older reports. */
+  subject: string | null;
   /** Trimmed in SQL — the table shows an excerpt and the detail page shows the whole thing. */
   excerpt: string | null;
   screenshotCount: number;
@@ -86,6 +106,14 @@ export type FeedbackListRow = {
   submitterEmail: string | null;
   /** They ticked "you may contact me about this". Null on entries older than the field. */
   contactOk: boolean | null;
+  /** The AI triage pass's reading — see `src/lib/feedback-triage.ts`. Null until it has run. */
+  triage: FeedbackTriage | null;
+  /** The reporter replied in the conversation since the operator last opened it. */
+  unreadReply: boolean;
+  /** Waiting on the operator — see `NEEDS_YOU`. */
+  needsYou: boolean;
+  /** Where feedback the operator logged by hand came from; null for in-app reports. */
+  source: string | null;
 };
 
 export type FeedbackSummary = {
@@ -93,12 +121,15 @@ export type FeedbackSummary = {
   new: number;
   triaged: number;
   resolved: number;
+  /** Open reports waiting on the operator — see `NEEDS_YOU`. */
+  needs: number;
   withScreenshots: number;
   last7Days: number;
 };
 
 function whereFor(filter: FeedbackFilter) {
   if (filter === "all") return undefined;
+  if (filter === "needs") return NEEDS_YOU;
   return eq(feedback.status, filter);
 }
 
@@ -167,7 +198,8 @@ function searchFor(q: string | undefined) {
   const term = q?.trim();
   if (!term) return undefined;
   const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
-  return sql`${feedback.text} ilike ${`%${escaped}%`}`;
+  const like = `%${escaped}%`;
+  return sql`(${feedback.text} ilike ${like} or ${feedback.subject} ilike ${like})`;
 }
 
 /** Counts for the tiles. One round trip — all aggregates over the same table. */
@@ -181,6 +213,7 @@ export async function getFeedbackSummary(): Promise<FeedbackSummary> {
       new: sql<number>`count(*) filter (where ${feedback.status} = 'new')::int`,
       triaged: sql<number>`count(*) filter (where ${feedback.status} = 'triaged')::int`,
       resolved: sql<number>`count(*) filter (where ${feedback.status} = 'resolved')::int`,
+      needs: sql<number>`count(*) filter (where ${NEEDS_YOU})::int`,
       withScreenshots: sql<number>`count(*) filter (where ${screenshotCountSql} > 0)::int`,
       last7Days: sql<number>`count(*) filter (where ${feedback.createdAt} >= ${sevenDaysAgo})::int`,
     })
@@ -191,6 +224,7 @@ export async function getFeedbackSummary(): Promise<FeedbackSummary> {
     new: row?.new ?? 0,
     triaged: row?.triaged ?? 0,
     resolved: row?.resolved ?? 0,
+    needs: row?.needs ?? 0,
     withScreenshots: row?.withScreenshots ?? 0,
     last7Days: row?.last7Days ?? 0,
   };
@@ -221,12 +255,18 @@ function listSelection() {
     category: feedback.category,
     status: feedback.status,
     score: feedback.score,
+    subject: feedback.subject,
     excerpt: sql<string | null>`left(${feedback.text}, 180)`,
     screenshotCount: screenshotCountSql,
     createdAt: feedback.createdAt,
     statusChangedAt: feedback.statusChangedAt,
     submitterEmail: userSettings.email,
     contactOk: sql<boolean | null>`(${feedback.context} ->> 'contactOk')::boolean`,
+    triage: feedback.triage,
+    source: sql<string | null>`${feedback.context} ->> 'source'`,
+    needsYou: sql<boolean>`${NEEDS_YOU}`,
+    // Written out rather than interpolated — see the unqualified-column trap.
+    unreadReply: sql<boolean>`exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.author = 'user' and m.created_at > coalesce(feedback.operator_read_at, 'epoch'::timestamptz))`,
   };
 }
 
@@ -253,7 +293,12 @@ export async function loadFeedbackList(options: {
     .from(feedback)
     .leftJoin(userSettings, eq(userSettings.userId, feedback.userId))
     .where(where)
-    .orderBy(desc(feedback.createdAt))
+    // The inbox as a to-do list: what's waiting on you first, then the newest activity —
+    // a reply brings a conversation back up, like any inbox.
+    .orderBy(
+      desc(NEEDS_YOU),
+      desc(sql`coalesce((select max(m.created_at) from feedback_messages m where m.feedback_id = feedback.id), feedback.created_at)`)
+    )
     .limit(FEEDBACK_PAGE_SIZE)
     .offset((page - 1) * FEEDBACK_PAGE_SIZE);
 
@@ -279,12 +324,14 @@ export type FeedbackDetail = {
     category: string | null;
     status: FeedbackStatus;
     score: number | null;
+    subject: string | null;
     text: string | null;
     context: Record<string, unknown>;
     createdAt: Date;
     statusChangedAt: Date | null;
     statusChangedBy: string | null;
     resolutionNote: string | null;
+    triage: FeedbackTriage | null;
   };
   screenshots: FeedbackScreenshotRow[];
   submitter: { email: string | null; createdAt: Date | null } | null;
@@ -333,12 +380,14 @@ export async function loadFeedbackDetail(id: string): Promise<FeedbackDetail | n
       category: entry.category,
       status: entry.status,
       score: entry.score,
+      subject: entry.subject,
       text: entry.text,
       context: entry.context,
       createdAt: entry.createdAt,
       statusChangedAt: entry.statusChangedAt,
       statusChangedBy: entry.statusChangedBy,
       resolutionNote: entry.resolutionNote,
+      triage: entry.triage,
     },
     screenshots,
     submitter: submitter ?? null,
@@ -428,4 +477,69 @@ export async function deleteFeedbackScreenshot(
 
   await db.delete(feedbackScreenshots).where(eq(feedbackScreenshots.id, id));
   return row;
+}
+
+export type FeedbackInboxPulse = {
+  /** Every report ever filed — grows by one for each new report. */
+  reports: number;
+  /** Reporter replies in conversations — grows by one for each reply. */
+  replies: number;
+};
+
+/**
+ * Two counts that move whenever something arrives in the inbox: a new report, or a reporter
+ * answering in a conversation. The live inbox (`/api/admin/feedback/stream`) compares them
+ * once a second and refreshes the console when they change. Counts rather than timestamps so
+ * the difference also says WHAT arrived, for the toast.
+ */
+export async function feedbackInboxPulse(): Promise<FeedbackInboxPulse> {
+  const db = await getDb();
+  const [row] = await db
+    .select({
+      reports: countInt,
+      replies: sql<number>`(select count(*)::int from feedback_messages where author = 'user')`,
+    })
+    .from(feedback)
+    .where(eq(feedback.kind, "freeform"));
+  return { reports: row?.reports ?? 0, replies: row?.replies ?? 0 };
+}
+
+export type RelatedReport = { id: string; subject: string | null; excerpt: string | null; email: string | null };
+
+/**
+ * Other unresolved in-app reports about the same thing, as the triage pass linked them: the
+ * report this one repeats (`triage.duplicateOf`), and every report that repeats that same
+ * original. Lets one reply — "fixed!" — reach everyone who reported it.
+ *
+ * ponytail: one hop through `duplicateOf` (the triage pass always points at an open report,
+ * so chains stay short). Walk further if triage ever starts linking duplicates of duplicates.
+ */
+export async function relatedReports(id: string): Promise<RelatedReport[]> {
+  const db = await getDb();
+  const [entry] = await db
+    .select({ id: feedback.id, triage: feedback.triage })
+    .from(feedback)
+    .where(eq(feedback.id, id))
+    .limit(1);
+  if (!entry) return [];
+  const original = entry.triage?.duplicateOf ?? entry.id;
+  return db
+    .select({
+      id: feedback.id,
+      subject: feedback.subject,
+      excerpt: sql<string | null>`left(${feedback.text}, 120)`,
+      email: userSettings.email,
+    })
+    .from(feedback)
+    .leftJoin(userSettings, eq(userSettings.userId, feedback.userId))
+    .where(
+      and(
+        eq(feedback.kind, "freeform"),
+        ne(feedback.status, "resolved"),
+        ne(feedback.id, id),
+        sql`(${feedback.id} = ${original} or ${feedback.triage} ->> 'duplicateOf' = ${original})`
+      )
+    )
+    .orderBy(asc(feedback.createdAt))
+    .limit(50);
 }

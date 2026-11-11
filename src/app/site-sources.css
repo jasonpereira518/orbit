@@ -21,7 +21,6 @@
 @source "layout.tsx";
 @source "../components/analytics/pageview-beacon.tsx";
 @source "../components/analytics/vercel-telemetry.tsx";
-@source "../components/chat/chat-history-rail.tsx";
 @source "../components/chat/chat-rail-placeholder.tsx";
 @source "../components/dashboard/closeness-tier-badge.tsx";
 @source "../components/error-fallback.tsx";
@@ -147,7 +146,6 @@
 @source "../lib/capture/closeness.ts";
 @source "../lib/capture/person-enrichment.ts";
 @source "../lib/chat-evidence.ts";
-@source "../lib/chat-history-groups.ts";
 @source "../lib/chat-rail-pref.ts";
 @source "../lib/chat-stream-protocol.ts";
 @source "../lib/clerk-session-hint.ts";
@@ -210,6 +208,8 @@
 @source "../lib/errors.ts";
 @source "../lib/events/wall-clock.ts";
 @source "../lib/fact-lists.ts";
+@source "../lib/feedback-events.ts";
+@source "../lib/floating-panel.ts";
 @source "../lib/format-elapsed.ts";
 @source "../lib/gate-events.ts";
 @source "../lib/google-scopes.ts";
@@ -239,6 +239,10 @@
 @source "../lib/microsoft-scopes.ts";
 @source "../lib/motion-preference.ts";
 @source "../lib/motion.ts";
+@source "../lib/names/classify.ts";
+@source "../lib/names/key.ts";
+@source "../lib/names/nicknames.ts";
+@source "../lib/names/parse.ts";
 @source "../lib/nav-timing.ts";
 @source "../lib/net-guard.ts";
 @source "../lib/note-batches.ts";

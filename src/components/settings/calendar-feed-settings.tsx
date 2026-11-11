@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Apple, CalendarDays, Link2, Mail, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -59,7 +60,7 @@ export function CalendarFeedSettings() {
   const [loadFailure, setLoadFailure] = useState<"timeout" | "error" | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const regenFocus = useConfirmFocus(confirmingRegen ? "regen" : null);
 
   // A failed load must be visible and recoverable. Without this the section sits on
@@ -118,51 +119,59 @@ export function CalendarFeedSettings() {
     <SettingsRow
       id="settings-calendar"
       title="Reminders in your calendar"
-      description="Your reminders with a due date, in Google, Apple or Outlook calendar."
+      description={
+        <>
+          Due reminders in Google, Apple or Outlook ·{" "}
+          <span role="status">{statusLine}</span>
+        </>
+      }
+      action={
+        loadFailure && !status ? null : (
+          <>
+            {status && !status.enabled ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() => run("Calendar feed created", enableCalendarFeed)}
+              >
+                Create feed
+              </Button>
+            ) : null}
+            {status?.enabled ? (
+              <>
+                {confirmingRegen ? null : (
+                  <Button
+                    ref={regenFocus.triggerRef("regen")}
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => setConfirmingRegen(true)}
+                  >
+                    <RefreshCw aria-hidden />
+                    Replace link
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => run("Calendar feed turned off", disableCalendarFeed)}
+                >
+                  Turn off
+                </Button>
+              </>
+            ) : null}
+          </>
+        )
+      }
     >
       {loadFailure && !status ? (
         <LoadError what="calendar feed settings" onRetry={() => setReloadKey((k) => k + 1)} />
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          {status && !status.enabled ? (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pending}
-              onClick={() => run("Calendar feed created", enableCalendarFeed)}
-            >
-              Create feed
-            </Button>
-          ) : null}
-          {status?.enabled ? (
-            <>
-              {confirmingRegen ? null : (
-                <Button
-                  ref={regenFocus.triggerRef("regen")}
-                  type="button"
-                  variant="outline"
-                  disabled={pending}
-                  onClick={() => setConfirmingRegen(true)}
-                >
-                  <RefreshCw aria-hidden />
-                  Replace link
-                </Button>
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={pending}
-                onClick={() => run("Calendar feed turned off", disableCalendarFeed)}
-              >
-                Turn off
-              </Button>
-            </>
-          ) : null}
-          <span className="text-sm text-muted-foreground" role="status">
-            {statusLine}
-          </span>
-        </div>
-      )}
+      ) : null}
       {status?.enabled ? (
         <>
           {confirmingRegen ? (

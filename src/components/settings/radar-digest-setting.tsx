@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Button } from "@/components/ui/button";
 import { SettingsRow } from "@/components/settings/settings-section";
 import { setRadarDigest } from "@/actions/radar";
@@ -11,7 +12,7 @@ import { syncTimeZoneCookie } from "@/lib/tz-cookie";
 /** Radar's Monday email. Shown only to viewers who can open Radar. */
 export function RadarDigestSetting({ initialEnabled }: { initialEnabled: boolean }) {
   const [enabled, setEnabled] = useState(initialEnabled);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   // The email is timed by this browser's zone; keep the cookie the server reads current.
   useEffect(() => syncTimeZoneCookie(), []);
@@ -35,16 +36,17 @@ export function RadarDigestSetting({ initialEnabled }: { initialEnabled: boolean
   return (
     <SettingsRow
       title="Radar’s Monday email"
-      description="Your week’s top people to write to, and how many drafts are waiting, early on Monday in your time zone. Nothing is sent to anyone else."
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" disabled={pending} onClick={toggle}>
+      description={
+        <>
+          Your week’s top people to write to, early Monday · only to you ·{" "}
+          <span role="status">{enabled ? "On" : "Off"}</span>
+        </>
+      }
+      action={
+        <Button type="button" size="sm" variant="outline" disabled={pending} onClick={toggle}>
           {enabled ? "Turn off" : "Turn on"}
         </Button>
-        <span className="text-sm text-muted-foreground" role="status">
-          {enabled ? "On" : "Off"}
-        </span>
-      </div>
-    </SettingsRow>
+      }
+    />
   );
 }

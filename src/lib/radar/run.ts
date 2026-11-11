@@ -12,7 +12,7 @@
  * `runRadarForUser` never throws. A failure is reported, recorded on the `radar_runs` row,
  * and retried sooner than a success would be.
  */
-import { userTimeZone } from "@/lib/meeting-context";
+import { resolveTimeZone } from "@/lib/reminder-due-bucket";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite } from "@/db";
 import { radarRuns, userSettings } from "@/db/schema";
@@ -45,18 +45,23 @@ import { buildRadarModel } from "@/lib/radar/model";
 import { RADAR_RERANK_TIMEOUT_MS, rerankPicks, rerankUnchanged } from "@/lib/radar/rerank";
 import { applyAutopilot, loadRadarAutopilot } from "@/lib/radar/autopilot";
 import { draftTodayForRun } from "@/lib/radar/drafts";
-import { probeCompanyNews } from "@/lib/radar/signals/news";
 import { loadPostSignals } from "@/lib/radar/signals/activity";
 import { produceEmailSignals } from "@/lib/radar/signals/email";
-import { pollSocialPosts } from "@/lib/radar/signals/social";
 import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
 import { runSettledPool } from "@/lib/sync-scheduler";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
-import { loadUserFocus } from "@/lib/career-profile-server";
+import { focusFromCareerProfile } from "@/lib/career-profile-server";
+import { resolvePlan } from "@/lib/entitlements";
+import { getRadarLimitsForPlan } from "@/lib/plans/plan-config";
 import { focusFitComponent, type UserFocus } from "@/lib/focus-fit";
+import { localClock } from "@/lib/radar/digest";
+import { listActiveProjectsForUser, scoreProjectMatch, type UserProject } from "@/lib/projects/store";
+import { extractActiveProjectsForUser } from "@/lib/projects/extract";
+import { prepareSuggestedCalendarInvite } from "@/lib/radar/invites";
+import { leadReason } from "@/lib/radar/types";
 
 const HOUR_MS = 3_600_000;
 
@@ -109,20 +114,36 @@ export type RadarRunStats = {
   /** Drafts written for Today's cards, and follow-ups autopilot scheduled. */
   drafts: number;
   autopilot: number;
-  /** Headlines about someone's company that became signals this run. */
-  news: number;
-  /** New public posts found by tonight's check. */
+  /** Saved LinkedIn posts the run read for its candidates. */
   posts: number;
   /** Signals read from the user's mail this run (accounts that opted in to email insights). */
   emailSignals: number;
   durationMs: number;
 };
 
-/** The next nightly slot at least `MIN_GAP_MS` away. */
-export function nextNightlyRunAt(now: Date): Date {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), RADAR_NIGHTLY_HOUR_UTC, 0, 0));
-  while (d.getTime() - now.getTime() < MIN_GAP_MS) d.setUTCDate(d.getUTCDate() + 1);
-  return d;
+/**
+ * Computes the next 5:00 AM local time for a given timezone, at least MIN_GAP_MS away.
+ */
+export function nextLocal5am(now: Date, tz: string = "UTC"): Date {
+  const { hour, ymd } = localClock(now, tz);
+  const [y, m, d] = ymd.split("-").map(Number);
+  const targetDay = new Date(Date.UTC(y!, m! - 1, d! + (hour < 4 ? 0 : 1)));
+  const ymdTarget = targetDay.toISOString().slice(0, 10);
+  const guess = new Date(`${ymdTarget}T05:00:00Z`);
+  const check = localClock(guess, tz);
+  let hourDiff = 5 - check.hour;
+  if (hourDiff > 12) hourDiff -= 24;
+  if (hourDiff < -12) hourDiff += 24;
+  let target = new Date(guess.getTime() + hourDiff * HOUR_MS);
+  while (target.getTime() - now.getTime() < MIN_GAP_MS) {
+    target = new Date(target.getTime() + 24 * HOUR_MS);
+  }
+  return target;
+}
+
+/** The next daily 5:00 AM local run slot at least `MIN_GAP_MS` away. */
+export function nextNightlyRunAt(now: Date, tz: string = "UTC"): Date {
+  return nextLocal5am(now, tz);
 }
 
 /**
@@ -168,13 +189,15 @@ function toRadarContact(
   row: RadarCandidateRow,
   targetKeys: Map<string, number>,
   goals: string[],
-  focus: UserFocus | null = null
+  focus: UserFocus | null = null,
+  projects: readonly UserProject[] = []
 ): RadarContact {
   let targetPriority: 1 | 2 | 3 | null = null;
   for (const key of companyMatchKeys(row.company)) {
     const p = targetKeys.get(key);
     if (p !== undefined && (targetPriority === null || p < targetPriority)) targetPriority = Math.min(3, Math.max(1, p)) as 1 | 2 | 3;
   }
+  const projectMatch = scoreProjectMatch(projects, `${row.fullName} ${row.title ?? ""} ${row.company ?? ""}`);
   return {
     id: row.id,
     company: row.company,
@@ -191,6 +214,7 @@ function toRadarContact(
     targetPriority,
     goalFit: goals.length ? goalRelevanceComponent({ company: row.company, title: row.title, industry: row.industry }, goals) : 0,
     focusFit: focus ? focusFitComponent({ title: row.title, industry: row.industry }, focus) : 0,
+    projectFit: projectMatch.bestProject ? { score: projectMatch.score, projectTitle: projectMatch.bestProject.title } : undefined,
     hasEvidence: row.hasEvidence,
   };
 }
@@ -205,9 +229,10 @@ export function scoreCandidates(
   now: Date,
   model: RadarModel | null = null,
   focus: UserFocus | null = null,
-  timeZone = "UTC"
+  timeZone = "UTC",
+  projects: readonly UserProject[] = []
 ): NewRecommendation[] {
-  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model, focus, timeZone), RADAR_CAPS);
+  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model, focus, timeZone, projects), RADAR_CAPS);
 }
 
 /** Every person's winning card, before the caps: what the rerank chooses its shortlist from. */
@@ -220,7 +245,8 @@ export function scorePicks(
   now: Date,
   model: RadarModel | null = null,
   focus: UserFocus | null = null,
-  timeZone = "UTC"
+  timeZone = "UTC",
+  projects: readonly UserProject[] = []
 ): NewRecommendation[] {
   const byContact = new Map<string, RadarSignal[]>();
   for (const s of signals) {
@@ -232,10 +258,21 @@ export function scorePicks(
   const rowById = new Map<string, RadarCandidateRow>();
   for (const row of candidates) {
     rowById.set(row.id, row);
-    const contact = toRadarContact(row, targetKeys, goals, focus);
+    const contact = toRadarContact(row, targetKeys, goals, focus, projects);
     const kinds = scoreContactKinds(contact, byContact.get(row.id) ?? [], suppressions.get(row.id) ?? NO_SUPPRESSION, now, model, timeZone);
     const pick = pickWinner(row.id, kinds, now);
-    if (pick) picks.push(pick);
+    if (pick) {
+      if (row.email && (pick.bucket === "today" || pick.score >= 45)) {
+        const lead = leadReason(pick.reasons);
+        pick.suggestedCalendarInvite = prepareSuggestedCalendarInvite(
+          { fullName: (row.preferredName ?? "").trim() || row.fullName, email: row.email },
+          lead?.label ?? pick.kind,
+          now,
+          timeZone
+        );
+      }
+      picks.push(pick);
+    }
   }
   return picks.map((pick) => {
     const row = rowById.get(pick.contactId)!;
@@ -273,7 +310,6 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     rerankCached: false,
     drafts: 0,
     autopilot: 0,
-    news: 0,
     posts: 0,
     emailSignals: 0,
     durationMs: 0,
@@ -282,6 +318,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
   let runId: string | null = null;
   let error: unknown = null;
   let learned: RadarModel | null = null;
+  let userTz = "UTC";
 
   try {
     await traced(
@@ -290,7 +327,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
         runId = run!.id;
 
-        const [signals, emailSignals, goals, targetKeys, focus, live, outcomes, tallies] = await Promise.all([
+        const [signals, emailSignals, goals, targetKeys, live, outcomes, tallies, settingsRow, initialProjects] = await Promise.all([
           produceInternalSignals(userId, now),
           // Events read from the user's mail, for accounts that opted in. A failure costs the
           // run these signals, never its list.
@@ -300,12 +337,6 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           }),
           listActiveGoalTextsForUser(userId, { limit: 8 }),
           loadTargetKeys(userId),
-          // Skills and watched job titles from the LinkedIn export. A failure costs the nudge,
-          // never the run.
-          loadUserFocus(userId).catch((err) => {
-            reportUnlessQuiet(err, { where: "job.radar.focus", userId, level: "warning" });
-            return null;
-          }),
           loadLiveRecommendations(userId),
           // Measurement, not ranking: which accepts turned into conversations. It never
           // blocks the list, so a failure here costs the stat, not the run.
@@ -318,49 +349,85 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
             reportUnlessQuiet(err, { where: "job.radar.model", userId, level: "warning" });
             return null;
           }),
+          db
+            .select({
+              tz: userSettings.radarDigestTz,
+              lastRunAt: userSettings.radarLastRunAt,
+              dailyEnabled: userSettings.radarDailyEnabled,
+              autoProjects: userSettings.radarAutoProjects,
+              careerProfile: userSettings.careerProfile,
+              compedPlan: userSettings.compedPlan,
+              lifetimePurchasedAt: userSettings.lifetimePurchasedAt,
+              subscriptionPlan: userSettings.subscriptionPlan,
+              subscriptionStatus: userSettings.subscriptionStatus,
+              subscriptionPeriodEnd: userSettings.subscriptionPeriodEnd,
+            })
+            .from(userSettings)
+            .where(eq(userSettings.userId, userId))
+            .limit(1)
+            .then(([r]) => r ?? null)
+            .catch(() => null),
+          listActiveProjectsForUser(userId).catch(() => [] as UserProject[]),
         ]);
         stats.outcomes = outcomes;
+        userTz = resolveTimeZone(settingsRow?.tz);
+        const focus = focusFromCareerProfile(settingsRow?.careerProfile);
         const model = tallies ? buildRadarModel(tallies, now) : null;
         learned = model;
+
+        const aiDeadline = deadlineAfter(Math.min(opts.budgetMs ?? RADAR_AI_BUDGET_MS, RADAR_AI_BUDGET_MS));
+        const access = opts.ai ? await openRadarAi(userId) : null;
+        if (opts.ai && !access) stats.skippedNoKey = true;
+
+        // Plan tiering and capabilities (derived from settingsRow without extra queries)
+        const { plan: userPlan } = resolvePlan(settingsRow, now);
+        const radarLimits = getRadarLimitsForPlan(userPlan);
+
+        // Active projects: extract/refresh only when AI is available (or seed from goals once)
+        let activeProjects: UserProject[] = initialProjects;
+        if (
+          settingsRow?.autoProjects !== 0 &&
+          (opts.trigger === "schedule" || opts.trigger === "manual") &&
+          (access || (activeProjects.length === 0 && goals.length > 0))
+        ) {
+          activeProjects = await extractActiveProjectsForUser(userId, access ?? undefined, {
+            since: settingsRow?.lastRunAt ?? undefined,
+            goals,
+            existingProjects: activeProjects,
+          }).catch(() => activeProjects);
+        }
+
+        // No outbound people discovery here: Radar never writes to `contacts`. New people are
+        // shown as opportunities the user chooses to save (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
         const [candidates, suppressions] = await Promise.all([
           loadCandidates(userId, [...emailSignals, ...signals].map((s) => s.contactId)),
           loadSuppressions(userId, live, now),
         ]);
 
-        // Headlines about the companies these people work at, from the global news tables.
-        // One indexed read; a failure costs the run its news, never its list.
-        const news = await probeCompanyNews(userId, candidates, now).catch((err) => {
-          reportUnlessQuiet(err, { where: "job.radar.news", userId, level: "warning" });
-          return [];
-        });
-        stats.news = news.length;
-        // Public posts, checked on the nightly pass only (it talks to other servers), then
-        // read back with the LinkedIn activity the extension saved: one read either way.
-        if (opts.trigger === "schedule") {
-          stats.posts = await pollSocialPosts(userId, candidates, now).catch((err) => {
-            reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
-            return 0;
-          });
-        }
+        // Posts the person saved from LinkedIn with the extension. The news sweep and the
+        // Bluesky/Mastodon polling are gone (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
         const posts = await loadPostSignals(userId, new Set(candidates.map((c) => c.id)), now).catch((err) => {
           reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
           return [];
         });
+        stats.posts = posts.length;
         // Email signals first: a card keeps at most two pieces of evidence, and the one from
         // mail is the one an accept needs to find its email again.
-        const timeZone = await userTimeZone(userId);
-        const picks = scorePicks(candidates, [...emailSignals, ...signals, ...news, ...posts], targetKeys, goals, suppressions, now, model, focus, timeZone);
-
-        // AI, on the account's own key, in one shared budget. First the rerank, which may
-        // nudge the shortlist before the caps choose the final list; then, once the list is
-        // safely written, the why-lines. A missing key or a slow provider costs the run its
-        // AI, never its list: every failure leaves the scorer's own order.
-        const aiDeadline = deadlineAfter(Math.min(opts.budgetMs ?? RADAR_AI_BUDGET_MS, RADAR_AI_BUDGET_MS));
-        const access = opts.ai ? await openRadarAi(userId) : null;
-        if (opts.ai && !access) stats.skippedNoKey = true;
+        const picks = scorePicks(
+          candidates,
+          [...emailSignals, ...signals, ...posts],
+          targetKeys,
+          goals,
+          suppressions,
+          now,
+          model,
+          focus,
+          userTz,
+          activeProjects
+        );
 
         let ranked: NewRecommendation[] = picks;
-        if (access && RADAR_RERANK_ENABLED) {
+        if (access && RADAR_RERANK_ENABLED && radarLimits.aiExplanations) {
           const profiles = new Map(candidates.map((c) => [c.id, { title: c.title, company: c.company, tier: c.tier }]));
           const result = await rerankPicks(userId, access, picks, { goals, profiles }, now, {
             timeoutMs: Math.min(RADAR_RERANK_TIMEOUT_MS, Math.max(1_000, aiDeadline - Date.now())),
@@ -374,7 +441,11 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           stats.rerankCached = result.status === "cached";
         }
 
-        const next = rankPicks(ranked, RADAR_CAPS);
+        const runCaps = {
+          pending: Math.min(RADAR_CAPS.pending, radarLimits.maxRecommendations),
+          perKind: Math.min(RADAR_CAPS.perKind, Math.max(1, Math.floor(radarLimits.maxRecommendations / 2))),
+        };
+        const next = rankPicks(ranked, runCaps);
         const counts = planRunResult(live, next, now);
         await writeRunResult(userId, runId, next, now);
 
@@ -392,7 +463,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
             return 0;
           });
         }
-        if (access && !deadlineReached(aiDeadline)) {
+        if (access && !deadlineReached(aiDeadline) && radarLimits.aiExplanations) {
           stats.aiNotes = await explainTopForRun(userId, access, {
             budgetMs: Math.max(1_000, aiDeadline - Date.now()),
           }).catch((err) => {
@@ -418,7 +489,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
   }
 
   stats.durationMs = Date.now() - startedMs;
-  await finishRun(userId, runId, stats, error, now, learned).catch((err) =>
+  await finishRun(userId, runId, stats, error, now, learned, userTz).catch((err) =>
     reportError(err, { where: "job.radar.finish", userId, level: "warning" })
   );
   return stats;
@@ -430,7 +501,8 @@ async function finishRun(
   stats: RadarRunStats,
   error: unknown,
   now: Date,
-  model: RadarModel | null
+  model: RadarModel | null,
+  tz: string = "UTC"
 ) {
   const db = await getDb();
   const { ok, ...counts } = stats;
@@ -457,7 +529,7 @@ async function finishRun(
           ok
             ? {
                 radarLastRunAt: now,
-                radarNextAt: nextNightlyRunAt(now),
+                radarNextAt: nextNightlyRunAt(now, tz),
                 radarLeaseUntil: null,
                 // Saved for the admin view and the next reader; the run itself always
                 // rebuilds from rows, so a stale copy here can never steer a ranking.
@@ -545,6 +617,7 @@ export async function claimRadarUsers(limit: number, now: Date, opts: { includeU
        WHERE id IN (
          SELECT id FROM user_settings
           WHERE radar_paused = 0
+            AND radar_daily_enabled = 1
             AND (radar_next_at IS NULL OR radar_next_at <= ${now})
             AND (radar_lease_until IS NULL OR radar_lease_until < ${now})
             AND last_active_at > ${activeSince}

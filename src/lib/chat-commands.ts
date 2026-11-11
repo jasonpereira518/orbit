@@ -59,6 +59,14 @@ export const CHAT_COMMANDS: readonly ChatCommand[] = [
     prefill: { text: "Who should I introduce @ to?", mention: false },
   },
   {
+    id: "cmd:remember",
+    slug: "remember",
+    label: "Remember something",
+    hint: "Keep a fact or preference in mind for future chats",
+    keywords: "remember memory keep in mind preference from now on always",
+    prefill: { text: "Remember that ", mention: false },
+  },
+  {
     id: "cmd:remind",
     slug: "remind",
     label: "New reminder",

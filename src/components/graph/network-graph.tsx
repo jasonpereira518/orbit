@@ -912,7 +912,10 @@ export function NetworkGraph({
       <div
         ref={stageRef}
         className={cn(
-          "relative overflow-hidden border border-white/10 shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
+          // `@container`: the toolbar below keys off the STAGE's width, not the viewport's. The
+          // feedback dock narrows the page without narrowing the screen, and a viewport `lg:` kept
+          // the one-row toolbar on a stage too narrow for it.
+          "@container relative overflow-hidden border border-white/10 shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
           // Transparent only while the intro is behind it, and never in the dashboard's
           // preview or in fullscreen — both are cases where there is nothing behind to show
           // and a see-through stage would just be the page bleeding into the sky.
@@ -933,7 +936,7 @@ export function NetworkGraph({
           !compact && "[@media(max-height:500px)]:h-[26rem] [@media(max-height:500px)]:max-h-none",
           fullscreenActive &&
             "rounded-none border-0 !h-dvh !max-h-none",
-          cssFullscreen && "!fixed inset-0 z-[100] w-screen"
+          cssFullscreen && "!fixed inset-0 z-[100] w-screen md:w-auto md:right-(--orbit-dock-w)"
         )}
       >
         <Starfield />
@@ -1014,7 +1017,7 @@ export function NetworkGraph({
             {/* Second row below md: at 375px the 92vw search box ran straight through the
                 Clusters chip on the left and Re-engage / Refresh on the right, so all
                 three were unreadable and partly untappable. */}
-            <div className="absolute left-1/2 top-14 z-20 flex w-[min(92%,420px)] -translate-x-1/2 items-center gap-2 lg:top-3">
+            <div className="absolute left-1/2 top-14 z-20 flex w-[min(92%,420px)] -translate-x-1/2 items-center gap-2 @3xl:top-3">
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
                 <Input
@@ -1277,7 +1280,7 @@ export function NetworkGraph({
                 )}
                 {/* Icon-only below sm: with the label, this row's three pills were
                     14px wider than a 375px canvas and Re-engage sat on top of Clusters. */}
-                <span className="max-lg:sr-only">Refresh</span>
+                <span className="@max-3xl:sr-only">Refresh</span>
               </Button>
             </div>
 

@@ -20,6 +20,13 @@ import { FREE_CONTACT_LIMIT, PLAN_LABELS, type Plan } from "@/lib/plans/plan-con
 const PAID_TIER = {
   orbit: {
     Icon: Sparkles,
+    /**
+     * The plan name in the heading. Fixed, like the sky: `text-tier-accent` flips with the
+     * theme and is the DARK variant in light mode (Max `#8a6423`, Pro `#2f68b0`) because it
+     * is chosen to read on a light page, which on this always-dark card came out as muddy
+     * brown-gold and low-contrast blue.
+     */
+    name: "text-[#8ec4f5]",
     /** Star and glow colour as `r,g,b` — fixed values, since the sky is the same in both themes. */
     rgb: "142,196,245",
     limb: "rgba(91,157,230,0.32), rgba(91,157,230,0.08) 55%",
@@ -27,12 +34,14 @@ const PAID_TIER = {
   },
   max: {
     Icon: Sparkles,
+    name: "text-[#f7d15f]",
     rgb: "242,193,78",
     limb: "rgba(242,193,78,0.30), rgba(242,193,78,0.08) 55%",
     shadow: "hover:shadow-[0_0_48px_-12px_rgba(242,193,78,0.45)]",
   },
   lifetime: {
     Icon: InfinityIcon,
+    name: "text-[#dfe4ea]",
     rgb: "197,204,214",
     limb: "rgba(197,204,214,0.26), rgba(197,204,214,0.07) 55%",
     shadow: "hover:shadow-[0_0_48px_-12px_rgba(197,204,214,0.4)]",
@@ -78,7 +87,7 @@ export function PlanLaunchCard({
               <span className="relative">{name}</span>
             </span>
             <h2 className="font-[family-name:var(--font-display)] text-2xl leading-tight tracking-tight text-[#e8f3f1]">
-              You&apos;re on <span className="text-tier-accent">{name}</span>.
+              You&apos;re on <span className={tier.name}>{name}</span>.
             </h2>
             <p className="text-sm leading-relaxed text-[#9aada8]">{planCopy(plan).tagline}</p>
           </div>

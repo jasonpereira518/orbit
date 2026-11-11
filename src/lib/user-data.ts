@@ -36,7 +36,9 @@ import {
   aiBatchJobs,
   aiResultCache,
   chatMessages,
+  chatMemories,
   chatThreads,
+  orbitVoiceSessions,
   closenessCohorts,
   companies,
   connectorConnections,
@@ -64,6 +66,7 @@ import {
   extensionUsage,
   externalLinks,
   feedback,
+  feedbackMessages,
   feedbackScreenshots,
   gateEvents,
   productEvents,
@@ -87,11 +90,13 @@ import {
   pageViews,
   planUpgradeEvents,
   radarRuns,
+  userProjects,
   contactSignals,
   emailEvents,
   emailThreads,
   recommendationFeedback,
   recommendations,
+  recruiterContactUnlocks,
   recruiterMessages,
   recruiters,
   recruiterScanState,
@@ -254,8 +259,8 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(emailThreads), own(emailEvents)],
-    counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts, emailThreads, emailEvents],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(userProjects), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(emailThreads), own(emailEvents)],
+    counts: [aiSuggestions, recommendations, userProjects, contactEmbeddings, memoryChunks, closenessCohorts, emailThreads, emailEvents],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
       // holding this person's prompts, and deleting our row would only lose the handle to
@@ -287,6 +292,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(recommendations).where(eq(recommendations.userId, userId));
       await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
       await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
+      // Projects Radar inferred from the person's mail, calendar and notes: derived, so insights.
+      await db.delete(userProjects).where(eq(userProjects.userId, userId));
       // Relationship engine output: run history is deleted; per-contact digests have their
       // derived text cleared (the memory_chunks precedent) but the rows stay. A digest row
       // is also the read watermark: deleting it would make every conversation pending again
@@ -489,10 +496,12 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   chat: {
-    exports: [own(chatThreads), own(chatMessages)],
+    exports: [own(chatThreads), own(chatMessages), own(chatMemories), own(orbitVoiceSessions)],
     counts: [chatThreads],
     run: async (db, userId) => {
+      await db.delete(orbitVoiceSessions).where(eq(orbitVoiceSessions.userId, userId));
       await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
+      await db.delete(chatMemories).where(eq(chatMemories.userId, userId));
     },
   },
   recruiters: {
@@ -500,8 +509,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       joined("user_recruiter_links", (userId, limit, offset) => sql`SELECT l.*, r.full_name AS recruiter_full_name, r.firm AS recruiter_firm FROM user_recruiter_links l JOIN recruiters r ON r.id = l.recruiter_id WHERE l.user_id = ${userId} ORDER BY l.id LIMIT ${limit} OFFSET ${offset}`),
       own(recruiterMessages),
       own(recruiterScanState),
+      own(recruiterContactUnlocks),
     ],
-    counts: [userRecruiterLinks, recruiterMessages],
+    counts: [userRecruiterLinks, recruiterMessages, recruiterContactUnlocks],
     run: async (db, userId) => {
       // `recruiters.avg_rating` / `rating_count` / `log_count` are denormalized counters over
       // `user_recruiter_links`, and nothing recomputes them on delete. Without the recompute
@@ -522,6 +532,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // `outlook_connections` and `suggested_reminders`. `scripts/smoke-purge.ts` derives its
       // list from `schema.ts` precisely so a new one fails the suite — it did, and the
       // failure was sitting red on main.
+      await db.delete(recruiterContactUnlocks).where(eq(recruiterContactUnlocks.userId, userId));
       await db.delete(recruiterMessages).where(eq(recruiterMessages.userId, userId));
       await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, userId));
 
@@ -629,8 +640,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   feedback: {
-    exports: [own(feedback), withUrl(own(feedbackScreenshots), "/api/feedback/screenshots/")],
-    counts: [feedback, feedbackScreenshots],
+    exports: [own(feedback), withUrl(own(feedbackScreenshots), "/api/feedback/screenshots/"), own(feedbackMessages)],
+    counts: [feedback, feedbackScreenshots, feedbackMessages],
     run: async (db, userId) => {
       // Both are personal — one is literally the user's own words — so erasure means
       // erasure, even though the churn reasons are exactly the feedback that leaves with the
@@ -656,6 +667,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         }
       }
 
+      // The conversations too, operator replies included: every row carries the reporter's id.
+      await db.delete(feedbackMessages).where(eq(feedbackMessages.userId, userId));
       await db.delete(feedback).where(eq(feedback.userId, userId));
     },
   },

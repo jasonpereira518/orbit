@@ -8,6 +8,7 @@ import {
   ChartsSection,
   LinkedInExportNudgeSection,
   MorningBriefingSection,
+  RadarWidgetSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
   SetupChecklistSection,
@@ -20,6 +21,7 @@ import { listPendingAgentSends } from "@/lib/agent-sends";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { RadarDockProvider } from "@/components/radar/radar-dock";
 import { fetchRadarBriefing } from "@/actions/radar";
 
 export const metadata = { title: "Dashboard" };
@@ -62,9 +64,22 @@ export default async function DashboardPage() {
   const showSuggestedRow = show("dashboard.suggested-outreach");
 
   return (
-    <div className="space-y-8">
+    <RadarDockProvider className="space-y-8">
       <RenderStamp />
-      <DashboardHeader />
+      {/* Radar's collapsed card sits in the header's corner (from `lg`; below that the full
+          briefing shows, as before). The row only exists for viewers who can open Radar, and
+          the card renders nothing before their first run, so everyone else gets the plain
+          header. The card streams in beside the title, so it moves nothing vertically. */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+        <div className="min-w-0">
+          <DashboardHeader />
+        </div>
+        {radarBriefing && (
+          <Suspense fallback={null}>
+            <RadarWidgetSection briefing={radarBriefing} />
+          </Suspense>
+        )}
+      </div>
 
       {/* One boundary for everything below the header. The optional leading cards are
           data-dependent — today's meetings, the LinkedIn nudge, agent drafts and the setup
@@ -75,12 +90,13 @@ export default async function DashboardPage() {
           immediately, so first paint is unchanged. */}
       <Suspense fallback={<DashboardBodySkeleton />}>
         <div className="space-y-8">
-          {/* Today's meetings (when the calendar has any) beside the morning briefing. Each child
-              carries its own `lg:flex-1`, so one alone fills the row, and `empty:hidden` drops the
-              row — and its share of the page gap — when neither renders. */}
-          <div className="flex flex-col gap-6 empty:hidden lg:flex-row">
+          {/* Radar's morning briefing. Closed behind the corner card from `lg` up; the drawer
+              is the section's own root so it can give back this list's gap while closed. */}
+          {radarBriefing && <MorningBriefingSection briefing={radarBriefing} bundle={bundle} />}
+
+          {/* Today's meetings (when the calendar has any). Drops row when neither renders. */}
+          <div className="empty:hidden">
             <TodayMeetingsSection now={new Date()} />
-            {radarBriefing && <MorningBriefingSection briefing={radarBriefing} />}
           </div>
 
           {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn import exists. */}
@@ -138,6 +154,6 @@ export default async function DashboardPage() {
           {show("dashboard.tail") && <TailSection bundle={bundle} />}
         </div>
       </Suspense>
-    </div>
+    </RadarDockProvider>
   );
 }

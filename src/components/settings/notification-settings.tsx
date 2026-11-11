@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { playDing, setDingMuted, useDingMuted } from "@/lib/ding";
@@ -27,7 +28,7 @@ export function NotificationSettings({
   const [permission, setPermission] =
     useState<NotificationPermissionState>("default");
   const [enabled, setEnabled] = useState(Boolean(initialAccountEnabled));
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   useEffect(() => {
     // A never-recorded account adopts this device's old local-only choice (and writes it
@@ -75,109 +76,77 @@ export function NotificationSettings({
     });
   }
 
+  // One status line where the description was: what's on, and what (if anything) to do.
+  const status = unsupported
+    ? "This browser can’t show notifications."
+    : !enabled
+      ? "Alerts when follow-ups are due · Off"
+      : permission === "granted"
+        ? "Alerts when follow-ups are due · On for this device"
+        : permission === "denied"
+          ? "On, but this browser blocks them · allow them in its site settings"
+          : "On for your account · allow this browser to show them";
+
+  function sendTest() {
+    start(async () => {
+      const res = await sendTestDesktopNotification();
+      setPermission(res.permission === "unsupported" ? "unsupported" : res.permission);
+      // Every result passes `keep: false`: a test is not news, and the notification
+      // center's Missed list is no place for it.
+      if (res.ok) {
+        toast.success("Test notification sent", {
+          description:
+            "If nothing pops up, check Notification Center — and System Settings → Notifications for this browser (Focus / alert style)",
+          duration: 8000,
+          keep: false,
+        });
+      } else if (res.permission === "denied") {
+        toast.error("Notifications are blocked — allow them in your browser’s settings", { keep: false });
+      } else if (res.permission === "unsupported") {
+        toast.error("This browser doesn’t support notifications", { keep: false });
+      } else {
+        toast.message("Allow notifications when prompted, then try again", { keep: false });
+      }
+    });
+  }
+
   return (
     <>
-    <SettingsRow
-      id="settings-notifications"
-      title="Desktop notifications"
-      description="Alerts when follow-ups are due. Each browser asks for permission once."
-    >
-      <p className="text-sm text-muted-foreground" role="status">
-        {unsupported ? (
-          "This browser can’t show notifications."
-        ) : !enabled ? (
+      <SettingsRow
+        id="settings-notifications"
+        title="Desktop notifications"
+        description={<span role="status">{status}</span>}
+        action={
           <>
-            <span className="font-medium text-ink">Off</span> for your account.
+            {!enabled || needsBrowserPermission ? (
+              <Button type="button" size="sm" disabled={pending || unsupported} onClick={turnOn}>
+                {needsBrowserPermission ? "Allow in this browser" : "Turn on"}
+              </Button>
+            ) : null}
+            {enabled ? (
+              <>
+                <Button type="button" size="sm" variant="ghost" disabled={pending || unsupported} onClick={sendTest}>
+                  Send test
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => {
+                    setDesktopNotificationsPreferred(false);
+                    setEnabled(false);
+                    toast.success("Notifications turned off");
+                  }}
+                >
+                  Turn off
+                </Button>
+              </>
+            ) : null}
           </>
-        ) : permission === "granted" ? (
-          <>
-            <span className="font-medium text-ink">On</span> — alerts appear on
-            this device.
-          </>
-        ) : permission === "denied" ? (
-          <>
-            <span className="font-medium text-ink">On</span> for your account,
-            but this browser blocks notifications — allow them in its site
-            settings.
-          </>
-        ) : (
-          <>
-            <span className="font-medium text-ink">On</span> for your account.
-            This browser hasn’t been allowed to show them yet.
-          </>
-        )}
-      </p>
-
-      <div className="flex flex-wrap gap-2">
-        {!enabled || needsBrowserPermission ? (
-          <Button
-            type="button"
-            disabled={pending || unsupported}
-            className="bg-primary text-primary-foreground"
-            onClick={turnOn}
-          >
-            {needsBrowserPermission ? "Allow in this browser" : "Turn on"}
-          </Button>
-        ) : null}
-        {enabled ? (
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pending || unsupported}
-              onClick={() =>
-                start(async () => {
-                  const res = await sendTestDesktopNotification();
-                  setPermission(
-                    res.permission === "unsupported"
-                      ? "unsupported"
-                      : res.permission
-                  );
-                  // Every result passes `keep: false`: a test is not news, and the
-                  // notification center's Missed list is no place for it.
-                  if (res.ok) {
-                    toast.success("Test notification sent", {
-                      description:
-                        "If nothing pops up, check Notification Center — and System Settings → Notifications for this browser (Focus / alert style)",
-                      duration: 8000,
-                      keep: false,
-                    });
-                  } else if (res.permission === "denied") {
-                    toast.error("Notifications are blocked — allow them in your browser’s settings", {
-                      keep: false,
-                    });
-                  } else if (res.permission === "unsupported") {
-                    toast.error("This browser doesn’t support notifications", {
-                      keep: false,
-                    });
-                  } else {
-                    toast.message(
-                      "Allow notifications when prompted, then try again",
-                      { keep: false }
-                    );
-                  }
-                })
-              }
-            >
-              Send test notification
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={pending}
-              onClick={() => {
-                setDesktopNotificationsPreferred(false);
-                setEnabled(false);
-                toast.success("Notifications turned off");
-              }}
-            >
-              Turn off
-            </Button>
-          </>
-        ) : null}
-      </div>
-    </SettingsRow>
-    <CompletionSoundRow />
+        }
+      />
+      <CompletionSoundRow />
     </>
   );
 }
@@ -189,29 +158,33 @@ function CompletionSoundRow() {
   return (
     <SettingsRow
       title="Completion sound"
-      description="A soft ding when you check off a notification. This setting applies to this browser only."
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            const next = !muted;
-            setDingMuted(next);
-            if (!next) playDing();
-          }}
-        >
-          {muted ? "Unmute" : "Mute"}
-        </Button>
-        {!muted && (
-          <Button type="button" variant="ghost" onClick={() => playDing()}>
-            Play sample
+      description={
+        <>
+          A soft ding when you check off a notification · this browser ·{" "}
+          <span role="status">{muted ? "Muted" : "On"}</span>
+        </>
+      }
+      action={
+        <>
+          {!muted && (
+            <Button type="button" size="sm" variant="ghost" onClick={() => playDing()}>
+              Play
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              const next = !muted;
+              setDingMuted(next);
+              if (!next) playDing();
+            }}
+          >
+            {muted ? "Unmute" : "Mute"}
           </Button>
-        )}
-        <span className="text-sm text-muted-foreground" role="status">
-          {muted ? "Muted" : "On"}
-        </span>
-      </div>
-    </SettingsRow>
+        </>
+      }
+    />
   );
 }

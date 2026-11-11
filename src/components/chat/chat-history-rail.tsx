@@ -1,13 +1,21 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState, useRef } from "react";
 import { motion } from "motion/react";
-import { PanelLeftClose, PanelLeftOpen, Plus, Trash2 } from "lucide-react";
+import { MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pin, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { groupThreadsByDay, type ThreadLike } from "@/lib/chat-history-groups";
+import { RAIL_CLOSED_WIDTH, RAIL_OPEN_WIDTH } from "@/lib/chat-rail-pref";
 import { EASE_HOUSE } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 /**
  * The conversation list beside the chat, grouped Today / Yesterday / Earlier.
@@ -26,11 +34,20 @@ import { Skeleton } from "@/components/ui/skeleton";
  * there the header keeps a history dropdown.
  */
 
-/** Wide enough for a title to wrap to two lines; the strip is just room for one icon button. */
-export const RAIL_OPEN_WIDTH = 224;
-export const RAIL_CLOSED_WIDTH = 48;
+// The widths live with the rail's other shared facts so the loading placeholder can match
+// them without importing this component (and its menus) into every page that shows a skeleton.
+export { RAIL_CLOSED_WIDTH, RAIL_OPEN_WIDTH };
 
-export type ChatHistoryRailProps<T extends ThreadLike> = {
+/** A thread as the rail lists it: `pinnedAt` set means it leads the list under "Pinned". */
+export type RailThread = ThreadLike & { pinnedAt?: Date | string | null };
+
+/** One result of searching past conversations. `snippet` is the matching message text, if any. */
+export type RailSearchHit = { id: string; title: string | null; snippet: string | null };
+
+/** Titles are capped server-side too (`THREAD_TITLE_MAX`). */
+const TITLE_MAX = 120;
+
+export type ChatHistoryRailProps<T extends RailThread> = {
   threads: readonly T[];
   /**
    * The list has not been read yet. An empty `threads` then means "unknown", so the rail shows
@@ -55,6 +72,12 @@ export type ChatHistoryRailProps<T extends ThreadLike> = {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  /** Save a new name for a conversation. */
+  onRename?: (id: string, title: string) => void;
+  /** Pin a conversation to the top, or unpin it. */
+  onPin?: (id: string, pinned: boolean) => void;
+  /** Find conversations by their title or what was said in them. Absent hides the search box. */
+  onSearch?: (query: string) => Promise<RailSearchHit[]>;
   /** The pointer came to rest on a row — a hint to start loading that thread. */
   onIntent?: (id: string) => void;
   /** The pointer left a row. */
@@ -66,7 +89,7 @@ export type ChatHistoryRailProps<T extends ThreadLike> = {
   className?: string;
 };
 
-function ChatHistoryRailImpl<T extends ThreadLike>({
+function ChatHistoryRailImpl<T extends RailThread>({
   threads,
   loading = false,
   hasMore = false,
@@ -79,12 +102,53 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
   onSelect,
   onNew,
   onDelete,
+  onRename,
+  onPin,
+  onSearch,
   onIntent,
   onIntentEnd,
   onIntentNow,
   id,
   className,
 }: ChatHistoryRailProps<T>) {
+  const [query, setQuery] = useState("");
+  // Results carry the query they answer, so a slower earlier search cannot show under a newer one.
+  const [found, setFound] = useState<{ query: string; hits: RailSearchHit[] } | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  const searchFor = query.trim();
+  const searchingNow = searchFor.length >= 2;
+
+  useEffect(() => {
+    if (!onSearch || searchFor.length < 2) return;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      onSearch(searchFor).then(
+        (hits) => live && setFound({ query: searchFor, hits }),
+        () => live && setFound({ query: searchFor, hits: [] })
+      );
+    }, 250);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [onSearch, searchFor]);
+
+  // One commit per rename. The field commits on Enter AND on blur, and removing it after Enter
+  // can blur it again from the same stale `renaming`: the title was saved twice. Escape counts
+  // as ended too, or the blur that follows it would save the rename that was just cancelled.
+  const renameEnded = useRef(false);
+  const startRename = (id: string, value: string) => {
+    renameEnded.current = false;
+    setRenaming({ id, value });
+  };
+  const commitRename = () => {
+    if (!renaming || renameEnded.current) return;
+    renameEnded.current = true;
+    const title = renaming.value.trim();
+    if (title) onRename?.(renaming.id, title);
+    setRenaming(null);
+  };
+
   // A thread row is created the moment a question is sent, but only gets a title once an
   // answer lands. So an untitled row is a chat that never produced anything — a failed send,
   // a stop during retrieval, an abandoned "New chat" — and listing each one buried the real
@@ -94,10 +158,102 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
   // `listChatThreads` already leaves untitled threads out in SQL, so what this still catches
   // is the panel's own additions (a chat just started) and a title JavaScript's `trim()`
   // empties but Postgres's `btrim()` does not (tabs, no-break spaces).
-  const groups = useMemo(
-    () => groupThreadsByDay(threads.filter((t) => t.title?.trim() || t.id === activeId)),
-    [threads, activeId]
-  );
+  const { pinned, groups } = useMemo(() => {
+    const shown = threads.filter((t) => t.title?.trim() || t.id === activeId);
+    const pinned = shown
+      .filter((t) => t.pinnedAt)
+      .sort((a, b) => new Date(b.pinnedAt!).getTime() - new Date(a.pinnedAt!).getTime());
+    return { pinned, groups: groupThreadsByDay(shown.filter((t) => !t.pinnedAt)) };
+  }, [threads, activeId]);
+  const sections = [...(pinned.length ? [{ label: "Pinned", threads: pinned }] : []), ...groups];
+
+  const renderRow = (thread: T) => {
+    const active = thread.id === activeId;
+    const label = thread.title?.trim() || "New chat";
+    if (renaming?.id === thread.id) {
+      return (
+        <li key={thread.id}>
+          <input
+            autoFocus
+            aria-label={`Rename chat: ${label}`}
+            value={renaming.value}
+            maxLength={TITLE_MAX}
+            onChange={(e) => setRenaming({ id: thread.id, value: e.target.value })}
+            onFocus={(e) => e.target.select()}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitRename();
+              if (e.key === "Escape") {
+                renameEnded.current = true;
+                setRenaming(null);
+              }
+            }}
+            className="w-full rounded-lg border border-ring bg-background px-2 py-1.5 text-sm leading-snug outline-none ring-2 ring-ring/20"
+          />
+        </li>
+      );
+    }
+    return (
+      <li key={thread.id} className="group relative">
+        <button
+          type="button"
+          onClick={() => onSelect(thread.id)}
+          onPointerEnter={onIntent ? () => onIntent(thread.id) : undefined}
+          onPointerLeave={onIntentEnd}
+          onFocus={onIntentNow ? () => onIntentNow(thread.id) : undefined}
+          onTouchStart={onIntentNow ? () => onIntentNow(thread.id) : undefined}
+          disabled={busy}
+          aria-current={active ? "true" : undefined}
+          className={cn(
+            "w-full rounded-lg px-2 py-1.5 pr-7 text-left text-sm leading-snug transition-colors",
+            active
+              ? "bg-primary/10 font-medium text-primary"
+              : "text-foreground/80 hover:bg-muted disabled:opacity-50"
+          )}
+        >
+          {/* Keyed on the label so a chat's name fades in when its summary
+              arrives, rather than the row's text changing under the eye. */}
+          <motion.span
+            key={label}
+            className="line-clamp-2"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.25 }}
+          >
+            {label}
+          </motion.span>
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={`Chat options: ${label}`}
+            disabled={busy}
+            render={
+              <button
+                type="button"
+                className="absolute right-1 top-1.5 rounded p-1 text-muted-foreground pointer-fine:opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[popup-open]:opacity-100 disabled:invisible"
+              />
+            }
+          >
+            <MoreHorizontal className="size-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-40">
+            {onRename && (
+              <DropdownMenuItem onClick={() => startRename(thread.id, label)}>Rename</DropdownMenuItem>
+            )}
+            {onPin && (
+              <DropdownMenuItem onClick={() => onPin(thread.id, !thread.pinnedAt)}>
+                {thread.pinnedAt ? "Unpin" : "Pin"}
+              </DropdownMenuItem>
+            )}
+            {(onRename || onPin) && <DropdownMenuSeparator />}
+            <DropdownMenuItem variant="destructive" onClick={() => onDelete(thread.id)}>
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </li>
+    );
+  };
 
   return (
     <motion.div
@@ -143,70 +299,78 @@ function ChatHistoryRailImpl<T extends ThreadLike>({
             </Button>
           </div>
 
+          {onSearch && (
+            <div className="relative shrink-0 px-3 pb-2">
+              <Search className="pointer-events-none absolute left-5 top-2 size-3.5 text-muted-foreground" />
+              <input
+                type="search"
+                aria-label="Search chats"
+                placeholder="Search chats"
+                value={query}
+                maxLength={100}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+                className="h-7.5 w-full rounded-lg border border-input bg-transparent pl-7 pr-7 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/20 [&::-webkit-search-cancel-button]:hidden"
+              />
+              {query && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => setQuery("")}
+                  className="absolute right-4 top-1 rounded p-1 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-            {groups.length === 0 && loading ? (
+            {searchingNow ? (
+              found?.query !== searchFor ? (
+                <p className="px-2 py-3 text-xs text-muted-foreground">Searching…</p>
+              ) : found.hits.length === 0 ? (
+                <p className="px-2 py-3 text-xs text-muted-foreground">No chats mention that.</p>
+              ) : (
+                <ul className="space-y-0.5" aria-label="Search results">
+                  {found.hits.map((hit) => (
+                    <li key={hit.id}>
+                      <button
+                        type="button"
+                        onClick={() => onSelect(hit.id)}
+                        disabled={busy}
+                        className={cn(
+                          "w-full rounded-lg px-2 py-1.5 text-left text-sm leading-snug transition-colors hover:bg-muted disabled:opacity-50",
+                          hit.id === activeId ? "bg-primary/10 text-primary" : "text-foreground/80"
+                        )}
+                      >
+                        <span className="line-clamp-1 font-medium">{hit.title?.trim() || "New chat"}</span>
+                        {hit.snippet && (
+                          <span className="line-clamp-2 text-xs text-muted-foreground">{hit.snippet}</span>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )
+            ) : sections.length === 0 && loading ? (
               <ChatHistoryRailSkeleton />
-            ) : groups.length === 0 ? (
+            ) : sections.length === 0 ? (
               <p className="px-2 py-3 text-xs text-muted-foreground">
                 Your conversations will collect here.
               </p>
             ) : (
-              groups.map((group) => (
+              sections.map((group) => (
                 <section key={group.label} className="mb-3 last:mb-0">
-                  <h2 className="px-2 pb-1 text-2xs font-medium text-muted-foreground">
+                  <h2 className="flex items-center gap-1 px-2 pb-1 text-2xs font-medium text-muted-foreground">
+                    {group.label === "Pinned" && <Pin className="size-3" />}
                     {group.label}
                   </h2>
-                  <ul className="space-y-0.5">
-                    {group.threads.map((thread) => {
-                      const active = thread.id === activeId;
-                      const label = thread.title?.trim() || "New chat";
-                      return (
-                        <li key={thread.id} className="group relative">
-                          <button
-                            type="button"
-                            onClick={() => onSelect(thread.id)}
-                            onPointerEnter={onIntent ? () => onIntent(thread.id) : undefined}
-                            onPointerLeave={onIntentEnd}
-                            onFocus={onIntentNow ? () => onIntentNow(thread.id) : undefined}
-                            onTouchStart={onIntentNow ? () => onIntentNow(thread.id) : undefined}
-                            disabled={busy}
-                            aria-current={active ? "true" : undefined}
-                            className={cn(
-                              "w-full rounded-lg px-2 py-1.5 pr-7 text-left text-sm leading-snug transition-colors",
-                              active
-                                ? "bg-primary/10 font-medium text-primary"
-                                : "text-foreground/80 hover:bg-muted disabled:opacity-50"
-                            )}
-                          >
-                            {/* Keyed on the label so a chat's name fades in when its summary
-                                arrives, rather than the row's text changing under the eye. */}
-                            <motion.span
-                              key={label}
-                              className="line-clamp-2"
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ duration: 0.25 }}
-                            >
-                              {label}
-                            </motion.span>
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Delete chat: ${label}`}
-                            onClick={() => onDelete(thread.id)}
-                            disabled={busy}
-                            className="absolute right-1 top-1.5 rounded p-1 text-muted-foreground pointer-fine:opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100 disabled:invisible"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                  <ul className="space-y-0.5">{group.threads.map(renderRow)}</ul>
                 </section>
               ))
             )}
-            {hasMore && onLoadMore && groups.length > 0 && (
+            {!searchingNow && hasMore && onLoadMore && groups.length > 0 && (
               <Button
                 type="button"
                 variant="ghost"

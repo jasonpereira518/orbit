@@ -5,12 +5,16 @@
 import { useRef, useState } from "react";
 import { saveMeetingNotes } from "@/actions/meetings";
 import { Textarea } from "@/components/ui/textarea";
+import { useSingleFlight } from "@/lib/single-flight";
 import { toast } from "@/lib/toast";
 
 export function MeetingNotesEditor({ sessionId, initial }: { sessionId: string; initial: string }) {
   const [value, setValue] = useState(initial);
   const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
   const saved = useRef(initial);
+  // `saved.current` only moves once the server answers, so a second blur while the first save is
+  // still in flight (blur, refocus, blur) used to send the same text again.
+  const flight = useSingleFlight();
 
   async function save() {
     if (value === saved.current) return;
@@ -43,7 +47,7 @@ export function MeetingNotesEditor({ sessionId, initial }: { sessionId: string; 
           setValue(e.target.value);
           setStatus("idle");
         }}
-        onBlur={() => void save()}
+        onBlur={() => void flight.run(save)}
         placeholder="Nothing yet — jot what you want to remember about this meeting."
         className="min-h-28 resize-y leading-relaxed"
       />

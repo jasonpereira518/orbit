@@ -26,6 +26,7 @@ import type { AiOperationId } from "@/lib/ai-operations";
 import { z } from "zod";
 import type { MeetingDigest } from "@/db/schema";
 import { fenceUntrusted } from "@/lib/ai-security";
+import { nameKey } from "@/lib/names/key";
 
 /** Above this, one call is too slow and too lossy; split and merge instead. */
 export const MAP_THRESHOLD_CHARS = 30_000;
@@ -224,9 +225,6 @@ export type CaptureSelf = {
   linkedinUrl?: string | null;
 };
 
-function foldName(s: string): string {
-  return s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
-}
 
 function linkedinSlugOf(url: string | null | undefined): string | null {
   const m = url?.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
@@ -258,10 +256,10 @@ export function isSelf(
   // A different identifier is a different person, whatever their name.
   if ((email && email !== selfEmail) || (slug && slug !== selfSlug)) return false;
 
-  const n = foldName(name);
+  const n = nameKey(name);
   if (n === "me" || n === "i" || n === "myself") return true;
-  const first = self.firstName ? foldName(self.firstName) : "";
-  const last = self.lastName ? foldName(self.lastName) : "";
+  const first = self.firstName ? nameKey(self.firstName) : "";
+  const last = self.lastName ? nameKey(self.lastName) : "";
   if (!n || !first) return false;
   // A bare first name with a company attached ("Jason from Stripe") is someone else who
   // shares the user's first name. Callers pass `company` only where that reading holds.

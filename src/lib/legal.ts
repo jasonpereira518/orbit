@@ -36,8 +36,19 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // click); and event discovery from confirmation emails is gone, so its description is removed.
 // 2026-11-08: shared public work history — a confident web-search work history found from a
 // public LinkedIn profile is reused across accounts that have the same profile, like shared photos.
-export const TERMS_VERSION = "2026-11-08";
-export const LEGAL_LAST_UPDATED = "November 8, 2026";
+// 2026-11-09: feedback — an AI model on Orbit's account reads each report for the operator
+// (summary, kind, urgency, repeats), and the Slack alert now carries the whole report with the
+// sender's email, plan and account age instead of a short excerpt.
+// 2026-11-10: chat can keep notes you ask it to remember across chats (saved only when you add
+// one or confirm a suggestion, listed and removable in the chat's Context panel, sent with every
+// chat question), and the text of files you attach to a question is kept with that chat and sent
+// to the AI provider, a photo or PDF being read by it first.
+// 2026-11-11: TypeSafe on Orbit's own account for every account — Jev decides whether a
+// contact's work history needs another web search, reading the stored job history and short
+// summaries of the user's notes and messages since the last check (never the notes, an email
+// address or a phone number), and may judge an unsure search's public answer to be someone else.
+export const TERMS_VERSION = "2026-11-11";
+export const LEGAL_LAST_UPDATED = "November 11, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

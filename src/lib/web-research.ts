@@ -70,13 +70,19 @@ export function answerMatch(json: string): "confident" | "unsure" | "none" | nul
  * it confirms or rules out that candidate instead of starting over. A confident answer and a
  * "none" both stop at one: a second look rarely turns nobody into somebody. The two calls'
  * sources are merged, so the answer still cites what the first search read.
+ *
+ * `vetoVerify` (work history only): asked about an unsure first answer before the second
+ * search; true means "clearly someone else" — stop at one, `vetoed`, and the caller writes
+ * nothing. It may only ever SAVE a search, never accept the candidate.
  */
 export async function searchOnceThenVerify(
   call: (user: string, maxSearches: number) => Promise<{ json: string; sources: WebSource[] }>,
   prompt: string,
-): Promise<{ json: string; sources: WebSource[] }> {
+  opts: { vetoVerify?: (firstJson: string) => Promise<boolean> } = {},
+): Promise<{ json: string; sources: WebSource[]; vetoed?: true }> {
   const first = await call(prompt, 1);
   if (answerMatch(first.json) !== "unsure") return first;
+  if (opts.vetoVerify && (await opts.vetoVerify(first.json).catch(() => false))) return { ...first, vetoed: true };
   const hint = `A first search found a possible match but was not sure it is this person. Its answer:\n\n${fenceUntrusted("first_answer", first.json.slice(0, 2_000))}\n\nSearch once more to confirm or rule out that candidate.`;
   const second = await call(`${prompt}\n\n${hint}`, 1);
   return { json: second.json, sources: [...first.sources, ...second.sources] };
@@ -166,7 +172,7 @@ Respond with JSON only:
   ]
 }
 
-"name" is their full name as their own profile spells it. "summary" is two or three plain sentences on who they are professionally. "talkingPoints" are at most 3 recent, specific things worth mentioning (a talk, a launch, a post, a move), each with the page it came from. List experiences most recent first — at most 8 roles and 3 schools. No other fields, no commentary.`;
+"name" is their full name as their own profile spells it. "headline" is their LinkedIn headline copied word for word, punctuation and all; never reword, shorten or write one yourself, and use null when no page shows it. "summary" is two or three plain sentences on who they are professionally. "talkingPoints" are at most 3 recent, specific things worth mentioning (a talk, a launch, a post, a move), each with the page it came from. List experiences most recent first — at most 8 roles and 3 schools. No other fields, no commentary.`;
 
 function clean(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -289,7 +295,7 @@ export function toPersonDossier(
 
   const org = clean(raw.current?.organization, 120);
   dossier.name = clean(raw.name, MAX_NAME);
-  dossier.headline = clean(raw.headline, 200);
+  dossier.headline = clean(raw.headline, 220);
   dossier.current = org ? { organization: org, title: clean(raw.current?.title, 120) } : null;
   dossier.location = clean(raw.location, 120);
   dossier.summary = clean(raw.summary, MAX_SUMMARY);

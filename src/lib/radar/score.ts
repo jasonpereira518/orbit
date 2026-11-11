@@ -32,6 +32,8 @@ import {
   JOB_LEFT_CODE,
   JOB_MOVE_CODE,
   KIND_PRIORITY,
+  type RadarCalendarInvite,
+  type RadarDiscoveredPerson,
   type RadarEvidence,
   type RadarModel,
   type RadarReason,
@@ -68,11 +70,7 @@ export const RADAR_WEIGHTS = {
   jobPosting: 28,
   // heads_up: a job move. A new employer is news; a new title at the same one, less so.
   jobChange: { joined: 32, left: 24, title_change: 18 },
-  // heads_up: their company in the news; more when it is money or a deal.
-  companyNews: 20,
-  companyNewsBig: 6,
-  // heads_up: something they posted. A LinkedIn post the person chose to save counts more.
-  socialPost: 12,
+  // heads_up: a LinkedIn post the person chose to save with the extension.
   savedPost: 16,
   // An event read from the user's own mail, scaled by how well the ranker matched the person
   // (60% to 100% of the base). An interview coming up outranks a reply you owe; both outrank
@@ -96,6 +94,7 @@ export const RADAR_WEIGHTS = {
   goalFit: 10,
   // skills and watched job titles from the LinkedIn export; smaller than goals, which the user typed
   focusFit: 8,
+  projectFit: 12,
   // what the person already did or has
   recentTouchPenalty: -25,
   dismissedPenalty: -30,
@@ -103,7 +102,7 @@ export const RADAR_WEIGHTS = {
 } as const;
 
 /** Half-lives for facts whose value fades. Everything else holds until it stops being true. */
-export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10, companyNews: 5, socialPost: 4, emailJob: 14, emailProcess: 21, emailNews: 5, emailEvent: 7 } as const;
+export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10, socialPost: 4, emailJob: 14, emailProcess: 21, emailNews: 5, emailEvent: 7 } as const;
 
 export const RADAR_BUCKETS = { today: 50, soon: 32, later: 18 } as const;
 
@@ -135,8 +134,6 @@ export const RADAR_WINDOWS = {
   postEventGrace: 1,
   /** A job move older than this is history, not a reason to write. */
   jobChangeMax: 30,
-  /** A headline older than this is not news. */
-  newsMax: 7,
   /** A post older than this is not a reason to write. */
   postMax: 7,
   /** How long an event read from mail still makes someone worth a message. */
@@ -147,7 +144,6 @@ export const RADAR_WINDOWS = {
 } as const;
 
 /** Headlines about money or a deal: worth a little more than a product launch. */
-const BIG_NEWS = /\b(raises?|raised|funding|series [a-f]\b|seed round|acquir\w*|merg\w*|ipo|goes public|files? for|valuation)/i;
 
 /** A reason below this after decay is not worth a line. */
 const MIN_REASON_POINTS = 4;
@@ -174,6 +170,8 @@ export type RadarContact = {
   goalFit: number;
   /** 0..1 from `focusFitComponent` (skills + watched job titles). Absent means 0. */
   focusFit?: number;
+  /** Score and title from matching user's active projects. */
+  projectFit?: { score: number; projectTitle: string };
   /**
    * Whether the closeness score rests on real evidence (`closeness_evidence` at or above
    * `EVIDENCE_FLOOR`). Every import stamps `last_interaction_at`, so without this a month-old
@@ -225,6 +223,8 @@ export type RadarPick = {
   reasons: RadarReason[];
   evidence: RadarEvidence[];
   expiresAt: Date;
+  suggestedCalendarInvite?: RadarCalendarInvite | null;
+  discoveredPerson?: RadarDiscoveredPerson | null;
 };
 
 function daysBetween(later: Date, earlier: Date): number {
@@ -457,28 +457,31 @@ export function scoreContactKinds(
         );
         break;
       }
-      case "company_news": {
-        const age = daysSince(s.at, now) ?? 0;
-        if (age > RADAR_WINDOWS.newsMax) break;
-        const base = W.companyNews + (BIG_NEWS.test(s.title) ? W.companyNewsBig : 0);
+      case "discovery": {
         add(
           drafts,
-          "heads_up",
-          { code: "company_news", label: `${s.company} in the news: ${s.title}`.slice(0, 200), points: decayed(base, age, RADAR_HALF_LIFE_DAYS.companyNews) },
-          { label: s.source, at: iso(s.at), url: s.url }
+          "opportunity",
+          {
+            code: "discovery",
+            label: `Discovered on ${s.platform}: ${s.title}${s.matchingProjectTitle ? ` · Matches ${s.matchingProjectTitle}` : ""}`.slice(0, 200),
+            points: 32,
+          },
+          {
+            label: s.platform === "research" ? "Research Paper" : s.platform === "github" ? "GitHub" : "Web Discovery",
+            at: iso(s.at),
+            url: s.url,
+          }
         );
         break;
       }
       case "social_post": {
         const age = daysSince(s.at, now) ?? 0;
         if (age > RADAR_WINDOWS.postMax) break;
-        const network = s.network === "bluesky" ? "Bluesky" : s.network === "mastodon" ? "Mastodon" : "LinkedIn";
-        const base = s.network === "linkedin" ? W.savedPost : W.socialPost;
         add(
           drafts,
           "heads_up",
-          { code: "social_post", label: `Posted on ${network}: “${s.excerpt.slice(0, 140)}${s.excerpt.length > 140 ? "…" : ""}”`, points: decayed(base, age, RADAR_HALF_LIFE_DAYS.socialPost) },
-          { label: network, at: iso(s.at), url: s.url }
+          { code: "social_post", label: `Posted on LinkedIn: “${s.excerpt.slice(0, 140)}${s.excerpt.length > 140 ? "…" : ""}”`, points: decayed(W.savedPost, age, RADAR_HALF_LIFE_DAYS.socialPost) },
+          { label: "LinkedIn", at: iso(s.at), url: s.url }
         );
         break;
       }
@@ -600,6 +603,13 @@ export function scoreContactKinds(
     const focusPoints = Math.round(W.focusFit * Math.min(1, Math.max(0, contact.focusFit ?? 0)));
     if (focusPoints > 0) {
       reasons.push({ code: "focus_match", label: "Fits your skills and the roles you’re watching", points: focusPoints });
+    }
+    if (contact.projectFit && contact.projectFit.score > 0) {
+      reasons.push({
+        code: "project_match",
+        label: `Matches your active project: ${contact.projectFit.projectTitle}`,
+        points: Math.min(contact.projectFit.score, 18),
+      });
     }
     if (touchedRecently && (kind === "reach_out" || kind === "reconnect")) {
       reasons.push({ code: "touched_recently", label: "You spoke recently", points: W.recentTouchPenalty });

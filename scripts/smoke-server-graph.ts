@@ -24,8 +24,10 @@ const LAYOUT = "src/app/(clerk)/(app)/layout.tsx";
  * are caught by this being far from that and by LAYOUT_BANNED below. Raise it deliberately.
  * Key derivation for rotatable secrets (user-settings reads the credit-email token through
  * secrets.ts, audit 3.6) added two small modules, which fit inside that headroom.
+ * Nov 11 2026: the shared names rules (`src/lib/names/` key, nicknames, classify: pure, no
+ * imports beyond each other) replaced copies inside `duplicates.ts`, net +2 → 106; raised to 108.
  */
-const LAYOUT_MAX_FILES = 104;
+const LAYOUT_MAX_FILES = 108;
 /** Modules that must never load on every page: heavy, and needed only by specific actions. */
 const LAYOUT_BANNED = [
   "src/lib/ai.ts",

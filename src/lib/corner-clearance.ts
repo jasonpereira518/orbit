@@ -24,6 +24,7 @@ import { useEffect, useId, type RefObject } from "react";
 
 const LIFT_VAR = "--orbit-corner-lift";
 const SHIFT_VAR = "--orbit-corner-shift";
+const DOCK_VAR = "--orbit-dock-w";
 
 /**
  * One ref-counted claim store per CSS variable: the variable holds the MAX of the live
@@ -54,6 +55,24 @@ export const claimCornerLift = claimStore(LIFT_VAR);
  * is no room beside it, so toasts overlay it there.
  */
 export const claimCornerShift = claimStore(SHIFT_VAR);
+
+/**
+ * Set (or clear, with null) the width the feedback dock takes from the page. Same store
+ * shape as the shift, but a different variable: the shift also belongs to the notifications
+ * window, which overlays the page and must not narrow it. Read by theme.css (`[data-dock-squeeze]`)
+ * and by the fixed controls that sit on the right edge (bell, feedback button, ask bar, A-Z rail).
+ */
+export const claimDockWidth = claimStore(DOCK_VAR);
+
+/** Narrow the page by `px` for as long as `enabled` holds. */
+export function useDockWidth(px: number, enabled: boolean) {
+  const id = useId();
+  useEffect(() => {
+    if (!enabled) return;
+    claimDockWidth(id, px);
+    return () => claimDockWidth(id, null);
+  }, [id, px, enabled]);
+}
 
 /** Shift the corner left by `px` for as long as `enabled` holds. Release keys off the flag, not unmount. */
 export function useCornerShift(px: number, enabled: boolean) {

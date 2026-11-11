@@ -773,8 +773,10 @@ export async function runCaptureChecksTask({ userId, limit, log }: RunOpts): Pro
  */
 export async function runSkipGatesTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
   const fx = fixture<SkipGatesEvalFixture>("ai-skip-gates-eval.json");
+  // With --labels-dir, the account's own past work-history checks join the synthetic cases.
+  const own = privateLabels<SkipGatesEvalFixture>("work-history-recheck.json")?.cases ?? [];
   const engines = await openEngines(userId);
-  const cases = fx.cases.slice(0, limit);
+  const cases = [...fx.cases, ...own].slice(0, limit);
   const latenciesMs: number[] = [];
   const misses: string[] = [];
   const bins: Array<{ p: number; label: boolean }> = [];

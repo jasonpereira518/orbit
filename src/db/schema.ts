@@ -13,6 +13,7 @@ import {
   date,
   bigint,
 } from "drizzle-orm/pg-core";
+import type { VoiceConfig, VoiceHealthMap, VoiceProvider } from "@/lib/voice/config";
 import { relations, sql } from "drizzle-orm";
 import type {
   ContactSignalKind,
@@ -21,6 +22,8 @@ import type {
   RadarAiNote,
   RadarAutopilot,
   RadarAutopilotAction,
+  RadarCalendarInvite,
+  RadarDiscoveredPerson,
   RadarDraft,
   RadarEvidence,
   RadarFeedbackAction,
@@ -36,6 +39,7 @@ import type { AimKind, Field, Timeline } from "@/lib/about-you";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
+import type { ChatAttachment } from "@/lib/chat-attachments";
 import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
 import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
 import type {
@@ -45,6 +49,7 @@ import type {
   ThreadDecision,
 } from "@/lib/email-intel/types";
 import type { MemorySourceKind } from "@/lib/memory-chunks";
+import type { FeedbackTriage } from "@/lib/feedback-report";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -678,6 +683,12 @@ export const userSettings = pgTable("user_settings", {
   /** ISO week ("2026-W40") of the last digest sent, claimed in one statement before sending. */
   radarDigestLastWeek: text("radar_digest_last_week"),
   radarDigestUnsubTokenHash: text("radar_digest_unsub_token_hash"),
+  /** 1 = the daily 5:00 AM local-time pass is enabled. Integer, per house convention. */
+  radarDailyEnabled: integer("radar_daily_enabled").default(1).notNull(),
+  /** 1 = automatically extract active projects from Gmail, calendar, notes. */
+  radarAutoProjects: integer("radar_auto_projects").default(1).notNull(),
+  /** 1 = outbound web discovery for prospective connections matching projects/goals. */
+  radarDiscoveryEnabled: integer("radar_discovery_enabled").default(1).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -790,6 +801,11 @@ export const contacts = pgTable(
      * streak stops applying by itself — no contact writer has to remember to reset it.
      */
     workHistoryMissSlug: text("work_history_miss_slug"),
+    /**
+     * When Jev last skipped this contact's re-check or vetoed its verify search (schema 220).
+     * Set, the next run asks neither gate — never two in a row — and any real search clears it.
+     */
+    workHistoryJevSkippedAt: timestamp("work_history_jev_skipped_at", { withTimezone: true }),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     /**
      * Closeness the user actually asserted, 1–5. NULL means never rated —
@@ -1129,6 +1145,45 @@ export const userGoals = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("user_goals_user_idx").on(t.userId)]
+);
+
+export const userProjects = pgTable(
+  "user_projects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    topics: jsonb("topics").$type<string[]>().default([]).notNull(),
+    status: text("status").$type<"active" | "dormant" | "completed">().default("active").notNull(),
+    detectedFrom: text("detected_from").$type<"gmail" | "calendar" | "notes" | "manual">().notNull(),
+    sourceRefs: jsonb("source_refs").$type<Array<{ type: string; id: string; snippet?: string }>>().default([]),
+    confidence: integer("confidence").default(80).notNull(),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("user_projects_user_status_idx").on(t.userId, t.status),
+    index("user_projects_user_activity_idx").on(t.userId, t.lastActivityAt),
+  ]
+);
+
+/**
+ * Things the person asked Orbit to keep in mind across chats. Read into every chat prompt
+ * (fenced as data). See `@/lib/chat-memory` for the only two ways one is written.
+ */
+export const chatMemories = pgTable(
+  "chat_memories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    text: text("text").notNull(),
+    /** The chat it was saved from, when it came from a card. Not a foreign key: the memory outlives the chat. */
+    sourceThreadId: uuid("source_thread_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("chat_memories_user_idx").on(t.userId, t.createdAt)]
 );
 
 export const tags = pgTable(
@@ -2153,6 +2208,8 @@ export type ImportStats = {
    */
   scanAfter?: string;
   scanIsFull?: boolean;
+  /** Recruiting cycle mode requested for the scan. */
+  cycle?: "current" | "july" | "august" | "january";
   /**
    * Job start, used to advance the watermark on completion. Deliberately the start and not
    * the finish — mail that arrived mid-scan was never in this job's result set.
@@ -2708,6 +2765,10 @@ export const recommendations = pgTable(
     draft: jsonb("draft").$type<RadarDraft>(),
     /** What autopilot scheduled for this card, so Undo can reverse exactly that. */
     autopilot: jsonb("autopilot").$type<RadarAutopilotAction>(),
+    /** A suggested calendar invite, prepared ahead of time so the user can send/confirm in 1 click. */
+    suggestedCalendarInvite: jsonb("suggested_calendar_invite").$type<RadarCalendarInvite>(),
+    /** Prospective new connection discovered outside the user's current network. */
+    discoveredPerson: jsonb("discovered_person").$type<RadarDiscoveredPerson>(),
     /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
@@ -3214,6 +3275,8 @@ export const userRecruiterLinks = pgTable(
     aiSummary: text("ai_summary"),
     companiesMentioned: jsonb("companies_mentioned").$type<string[]>().default([]),
     rolesDiscussed: jsonb("roles_discussed").$type<string[]>().default([]),
+    /** Specific role being interviewed for, extracted from recruiter threads or manually logged. */
+    roleInterviewingFor: text("role_interviewing_for"),
     firstEmailAt: timestamp("first_email_at", { withTimezone: true }),
     lastEmailAt: timestamp("last_email_at", { withTimezone: true }),
     emailCount: integer("email_count").default(0).notNull(),
@@ -3280,6 +3343,31 @@ export const recruiterMessages = pgTable(
     index("recruiter_messages_recruiter_idx").on(t.recruiterId),
     // Backs the daily send cap, which counts this user's sends since midnight.
     index("recruiter_messages_sent_idx").on(t.userId, t.sentAt),
+  ]
+);
+
+/**
+ * Tracks credit-based contact reveals for shared community recruiters.
+ * When unlocked, contact details (email, LinkedIn) remain permanently viewable by this user.
+ */
+export const recruiterContactUnlocks = pgTable(
+  "recruiter_contact_unlocks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    recruiterId: uuid("recruiter_id")
+      .notNull()
+      .references(() => recruiters.id, { onDelete: "cascade" }),
+    costCredits: integer("cost_credits").default(1).notNull(),
+    unlockedAt: timestamp("unlocked_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiter_contact_unlocks_user_idx").on(t.userId),
+    index("recruiter_contact_unlocks_recruiter_idx").on(t.recruiterId),
+    uniqueIndex("recruiter_contact_unlocks_user_recruiter_uidx").on(
+      t.userId,
+      t.recruiterId
+    ),
   ]
 );
 
@@ -3733,6 +3821,11 @@ export type ChatRecommendation = {
   reason: string;
   suggested_action: string;
   draft_message: string | null;
+  /**
+   * The draft as the person last left it on the card: written on demand, edited or rewritten.
+   * Shown in place of `draft_message`, which stays the model's original. See `saveDraftEdit`.
+   */
+  edited_draft?: string | null;
 };
 
 export const chatThreads = pgTable(
@@ -3749,6 +3842,14 @@ export const chatThreads = pgTable(
      * apart: only a stopped turn's question is discarded. See `markTurnStopped`.
      */
     stoppedTurnId: text("stopped_turn_id"),
+    /**
+     * Messages the person sent to steer the answer being written, keyed by its client turn
+     * id. The running turn reads them between lookup rounds (`readTurnSteers`); a new turn's
+     * first steer replaces the last turn's. See `addTurnSteer`.
+     */
+    pendingSteer: jsonb("pending_steer").$type<{ turnId: string; notes: { id: string; text: string }[] }>(),
+    /** When the person pinned this conversation to the top of their history; null when not pinned. */
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -3757,6 +3858,23 @@ export const chatThreads = pgTable(
     index("chat_threads_user_updated_idx").on(t.userId, t.updatedAt),
   ]
 );
+
+export const orbitVoiceSessions = pgTable("orbit_voice_sessions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  threadId: uuid("thread_id").notNull().references(() => chatThreads.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  toolCalls: integer("tool_calls").default(0).notNull(),
+  scope: jsonb("scope").$type<Record<string, Array<[string, string]>>>().default({}).notNull(),
+  timeZone: text("time_zone").default("UTC").notNull(),
+  provider: text("provider").$type<VoiceProvider>().default("elevenlabs").notNull(),
+  fallback: boolean("fallback").default(false).notNull(),
+  connectedAt: timestamp("connected_at", { withTimezone: true }),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  outcome: text("outcome").$type<"starting" | "connected" | "ended" | "failed">().default("starting").notNull(),
+}, (t) => [index("orbit_voice_sessions_user_idx").on(t.userId), index("orbit_voice_sessions_thread_idx").on(t.threadId)]);
 
 export const chatMessages = pgTable(
   "chat_messages",
@@ -3825,7 +3943,12 @@ export const chatMessages = pgTable(
      * the server after the question was saved can find and discard it. Null on assistant rows,
      * versioned turns and every row from before SCHEMA_VERSION 174.
      */
-    clientTurnId: text("client_turn_id"),
+/**
+     * Files attached to this question: their names and the text read from them (never the
+     * bytes). Only on user rows. See `@/lib/chat-attachments`.
+     */
+    attachments: jsonb("attachments").$type<ChatAttachment[]>(),
+        clientTurnId: text("client_turn_id"),
     /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
@@ -4755,6 +4878,11 @@ export const feedback = pgTable(
     score: integer("score"),
     text: text("text"),
     /**
+     * The subject line someone gives a new message. Required from the in-app form; older
+     * reports, PMF and churn answers have none, and readers fall back to the text.
+     */
+    subject: text("subject"),
+    /**
      * Which part of Orbit this is about, prefilled from the route and confirmable by the
      * person writing. A column rather than a `context` key because the two are different
      * things: `context` is what the SERVER observed, this is what the PERSON asserted, and
@@ -4784,6 +4912,30 @@ export const feedback = pgTable(
     statusChangedBy: text("status_changed_by"),
     /** What was done about it. Operator prose, not the user's. */
     resolutionNote: text("resolution_note"),
+    /**
+     * The AI triage pass's reading of the report — one-line summary, severity, and an earlier
+     * open report it repeats. Null until the pass has run, and for good if it never could
+     * (no operator account, AI unavailable). See `src/lib/feedback-triage.ts`.
+     */
+    triage: jsonb("triage").$type<FeedbackTriage>(),
+    /**
+     * Bonus AI credits the operator has thanked them with on this report, added up across
+     * every thank-you (each its own `adj:feedback:<id>:<uuid>` grant).
+     */
+    thanksCredits: integer("thanks_credits"),
+    /** When the reporter last opened the conversation. Operator messages after it are unread. */
+    userReadAt: timestamp("user_read_at", { withTimezone: true }),
+    /** When the operator last opened it. The reporter's messages after it are unread. */
+    operatorReadAt: timestamp("operator_read_at", { withTimezone: true }),
+    /** When the reporter last unwrapped a thank-you. Gifts sent after it are still wrapped. */
+    thanksSeenAt: timestamp("thanks_seen_at", { withTimezone: true }),
+    /**
+     * Each side's last keystroke in the conversation, for the typing dots. A row column rather
+     * than server memory because a serverless deploy has none shared between requests; "typing"
+     * means within the last few seconds (`TYPING_FRESH_MS` in feedback-thread.ts).
+     */
+    userTypingAt: timestamp("user_typing_at", { withTimezone: true }),
+    operatorTypingAt: timestamp("operator_typing_at", { withTimezone: true }),
     /** Where they were when they said it — route, plan, contact count. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -4825,6 +4977,12 @@ export const feedbackScreenshots = pgTable(
      * only discovers tables that carry `user_id` — a cascade alone would leave this table
      * permanently outside the leak sweep.
      */
+    /**
+     * The conversation message it was sent with; null for the opening report's screenshots.
+     * No foreign key: the messages table is created after this one, and a message only goes
+     * away with its report, whose delete already cascades here.
+     */
+    messageId: uuid("message_id"),
     userId: text("user_id").notNull(),
     /** 0-based, the order they were attached in. The gallery renders in this order. */
     position: integer("position").notNull().default(0),
@@ -4853,6 +5011,37 @@ export const feedbackScreenshots = pgTable(
   (t) => [
     index("feedback_screenshots_feedback_idx").on(t.feedbackId, t.position),
     index("feedback_screenshots_user_idx").on(t.userId),
+  ]
+);
+
+/**
+ * The conversation on one feedback report, between the reporter and the operator.
+ *
+ * Opens when the operator first replies — the report itself is the opening message and stays
+ * on `feedback.text`. See `src/lib/feedback-thread.ts`.
+ */
+export const feedbackMessages = pgTable(
+  "feedback_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    feedbackId: uuid("feedback_id")
+      .notNull()
+      .references(() => feedback.id, { onDelete: "cascade" }),
+    /**
+     * The REPORTER, whoever wrote this message — denormalised so the purge finds every row of
+     * a deleted account's conversations, operator replies included, and the smoke-purge sweep
+     * (which only discovers tables with `user_id`) covers the table.
+     */
+    userId: text("user_id").notNull(),
+    author: text("author").$type<"user" | "operator">().notNull(),
+    body: text("body").notNull(),
+    /** Bonus credits this operator reply carried as a thank-you; the gift card renders under it. */
+    credits: integer("credits"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("feedback_messages_feedback_idx").on(t.feedbackId, t.createdAt),
+    index("feedback_messages_user_idx").on(t.userId),
   ]
 );
 
@@ -5426,6 +5615,11 @@ export const siteSettings = pgTable("site_settings", {
    * any key (`src/lib/web-search-budget.ts`). Null = never set, which reads as running.
    */
   webSearchPaused: boolean("web_search_paused"),
+  /** Orbit Voice is opt-in, including for admins. No row/null means off. */
+  orbitVoiceEnabled: boolean("orbit_voice_enabled").default(false),
+  orbitVoiceChangedAt: timestamp("orbit_voice_changed_at", { withTimezone: true }),
+  orbitVoiceConfig: jsonb("orbit_voice_config").$type<VoiceConfig>(),
+  orbitVoiceHealth: jsonb("orbit_voice_health").$type<VoiceHealthMap>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
   updatedBy: text("updated_by"),
@@ -6374,6 +6568,7 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type Recruiter = typeof recruiters.$inferSelect;
 export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
 export type RecruiterMessage = typeof recruiterMessages.$inferSelect;
+export type RecruiterContactUnlock = typeof recruiterContactUnlocks.$inferSelect;
 export type RecruiterScanState = typeof recruiterScanState.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
@@ -6835,3 +7030,5 @@ export type SiteInvite = typeof siteInvites.$inferSelect;
 export type NewSiteInvite = typeof siteInvites.$inferInsert;
 export type ProductEvent = typeof productEvents.$inferSelect;
 export type NewProductEvent = typeof productEvents.$inferInsert;
+export type UserProject = typeof userProjects.$inferSelect;
+export type NewUserProject = typeof userProjects.$inferInsert;

@@ -20,10 +20,13 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   History,
   Loader2,
   Mail,
   NotebookPen,
+  Paperclip,
+  Telescope,
   Pencil,
   Plus,
   Trash2,
@@ -31,9 +34,11 @@ import {
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { ChatThreadProvider } from "@/components/chat/chat-thread-context";
+import { ComposerTip } from "@/components/chat/composer-tip";
 import { DraftEditor } from "@/components/chat/draft-editor";
 import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
 import { WritingInstructionsField } from "@/components/chat/writing-instructions-field";
+import { ChatMemoriesField } from "@/components/chat/chat-memories-field";
 import { clearSendResume, peekSendResumeFor } from "@/lib/chat-send-resume";
 import { describeOAuthReason, friendlyError } from "@/lib/errors";
 import {
@@ -41,6 +46,11 @@ import {
   deleteChatThread,
   getChatThread,
   listChatThreads,
+  pinChatThread,
+  renameChatThread,
+  saveChatDraft,
+  searchChatThreads,
+  steerChatTurn,
   stopChatTurn,
   switchChatVersion,
   updateChatThreadContext,
@@ -49,6 +59,9 @@ import {
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { readRailOpen, writeRailOpen } from "@/lib/chat-rail-pref";
+import { readChatDeep, readChatWebChoice, writeChatDeep, writeChatWebChoice } from "@/lib/chat-mode-pref";
+import { WebSearchControl } from "@/components/chat/web-search-control";
+import type { WebChoice } from "@/lib/chat-web-decision";
 import { ScanControls } from "@/components/scan/scan-controls";
 import {
   COMPOSER_TEXT_BOX,
@@ -73,7 +86,14 @@ import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
+import { chatAsMarkdown, chatExportFileName, downloadMarkdown } from "@/lib/chat-export";
+import { CHAT_ATTACH_ACCEPT, readAttachment } from "@/lib/chat-attach-client";
+import { CHAT_ATTACHMENTS_MAX, type ChatAttachment } from "@/lib/chat-attachments";
+import { notifyAnswerLanded } from "@/lib/chat-answer-notify";
+import { afterTurn, enqueue, setSteering, steeredId, type QueuedMessage } from "@/lib/chat-queue";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
+import { DraftBlock, type DraftSegment } from "@/components/chat/draft-block";
+import { replaceDraftBlock } from "@/lib/chat-draft-block";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { AnswerActions } from "@/components/chat/answer-actions";
@@ -124,6 +144,7 @@ import { useDictation } from "@/lib/use-dictation";
 import {
   clearTurnInFlight,
   inFlightThreadId,
+  DEEP_RESUME_WINDOW_MS,
   markTurnInFlight,
   pendingTurn,
   RESUME_POLL_MS,
@@ -134,6 +155,8 @@ export type ThreadSummary = {
   title: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
+  /** Set when the person pinned it. */
+  pinnedAt?: Date | string | null;
 };
 
 /**
@@ -165,6 +188,17 @@ type UserMessage = {
    * after a name looks like part of it.
    */
   mentionNames?: string[];
+  /** The names of files attached to this question. */
+  fileNames?: string[];
+};
+
+/** A file in the composer: being read, read and ready to send, or unreadable. */
+type FileChip = {
+  id: string;
+  name: string;
+  status: "reading" | "ready" | "failed";
+  attachment?: ChatAttachment;
+  error?: string;
 };
 
 /**
@@ -400,6 +434,36 @@ export function ChatPanel({
   /** Ends that wait at once — what Stop does to a reopened thread's answer. */
   const resumeStopRef = useRef<(() => void) | null>(null);
   const busy = pending || streaming || resuming;
+  // Typed while an answer was being written: sent in order as each answer lands, or handed
+  // to the running answer as a steer. See `@/lib/chat-queue`.
+  const [queued, setQueued] = useState<QueuedMessage[]>([]);
+  // Whether the last turn ended in an answer. A stopped or failed turn holds the queue
+  // rather than firing the next message into a conversation that just went wrong.
+  const landedRef = useRef(false);
+  // The composer's two switches, remembered per browser. Refs mirror them so the send
+  // callbacks read the current value without being rebuilt on every toggle.
+  const [deep, setDeep] = useState(readChatDeep);
+  // Web search is a choice per chat: auto (the default — the question decides, server-side),
+  // on, or off. The chat's stored choice is read whenever the open chat changes.
+  const [web, setWeb] = useState<WebChoice>("auto");
+  const modeRef = useRef({ deep, web });
+  useEffect(() => {
+    modeRef.current = { deep, web };
+  }, [deep, web]);
+  useEffect(() => {
+    setWeb(readChatWebChoice(threadId));
+  }, [threadId]);
+  const chooseWeb = useCallback(
+    (next: WebChoice) => {
+      setWeb(next);
+      writeChatWebChoice(threadId, next);
+    },
+    [threadId]
+  );
+  // Files attached to the question being written. See `@/lib/chat-attach-client`.
+  const [fileChips, setFileChips] = useState<FileChip[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileReadsRef = useRef(new Map<string, AbortController>());
   // The "searching" bubble makes sense until the first token; after that the answer
   // itself is the progress indicator.
   const awaitingFirstToken =
@@ -604,7 +668,51 @@ export function ChatPanel({
   const clearComposer = useCallback(() => {
     resetQuestion("");
     setAttached([]);
+    setQueued([]);
+    for (const read of fileReadsRef.current.values()) read.abort();
+    fileReadsRef.current.clear();
+    setFileChips([]);
   }, [resetQuestion]);
+
+  /** Start reading files into the composer, up to the limit. Each gets a chip at once. */
+  const fileCount = fileChips.length;
+  const addFiles = useCallback(
+    (files: readonly File[]) => {
+      if (!files.length) return;
+      const room = Math.max(0, CHAT_ATTACHMENTS_MAX - fileCount);
+      if (files.length > room) toast.message(`You can attach up to ${CHAT_ATTACHMENTS_MAX} files to a question`);
+      const fresh = files.slice(0, room).map((file) => ({
+        file,
+        chip: { id: crypto.randomUUID(), name: file.name || "Pasted image", status: "reading" } satisfies FileChip,
+      }));
+      if (!fresh.length) return;
+      setFileChips((prev) => [...prev, ...fresh.map((f) => f.chip)]);
+      for (const { chip, file } of fresh) {
+        const controller = new AbortController();
+        fileReadsRef.current.set(chip.id, controller);
+        void readAttachment(file, controller.signal).then((res) => {
+          fileReadsRef.current.delete(chip.id);
+          if (!res.ok && res.aborted) return;
+          setFileChips((prev) =>
+            prev.map((c) =>
+              c.id !== chip.id
+                ? c
+                : res.ok
+                  ? { ...c, status: "ready", attachment: res.attachment }
+                  : { ...c, status: "failed", error: res.error }
+            )
+          );
+        });
+      }
+    },
+    [fileCount]
+  );
+
+  const removeFile = useCallback((id: string) => {
+    fileReadsRef.current.get(id)?.abort();
+    fileReadsRef.current.delete(id);
+    setFileChips((prev) => prev.filter((c) => c.id !== id));
+  }, []);
 
   /** The open thread, readable from async work (the history list and the prefetcher check it). */
   const threadIdRef = useRef(threadId);
@@ -704,6 +812,8 @@ export function ChatPanel({
   const ensureThread = useCallback(async () => {
     if (threadId) return threadId;
     const created = await createChatThread();
+    // A choice made before the chat had an id belongs to this chat.
+    writeChatWebChoice(created.id, modeRef.current.web);
     setThreadId(created.id);
     setThreadTitle(created.title);
     setThreads((prev) => [
@@ -778,6 +888,7 @@ export function ChatPanel({
             mentionNames: row.attachedContacts?.length
               ? row.attachedContacts.map((c) => c.name)
               : undefined,
+            fileNames: row.attachments?.length ? row.attachments.map((a) => a.name) : undefined,
           }
         : {
             id: row.id,
@@ -857,6 +968,8 @@ export function ChatPanel({
         setResuming(true);
         void awaitPendingAnswer(id, () => !stopped && seq === loadSeqRef.current && threadIdRef.current === id)
           .then((landed) => {
+            if (landed) landedRef.current = true;
+            if (landed) notifyAnswerLanded({ threadId: id, messageId: null, title: landed.thread.title });
             if (landed) applyThread(landed, { opening: false });
           })
           .finally(() => {
@@ -996,10 +1109,22 @@ export function ChatPanel({
   );
 
   const sendQuestion = useCallback(
-    (raw: string, opts?: { contextContactIds?: readonly string[] }) => {
+    (raw: string, opts?: { contextContactIds?: readonly string[]; attachments?: ChatAttachment[] }) => {
       const q = raw.trim();
       if (!q || busy || loadingThread) return;
+      // A queued message brings its own files; a typed one takes what is in the composer.
+      // Still reading: wait, rather than send the question without the file it is about.
+      const fromComposer = !opts?.attachments;
+      if (fromComposer && fileChips.some((c) => c.status === "reading")) {
+        toast.message("Still reading your file — one moment");
+        return;
+      }
+      const sentChips = fromComposer ? fileChips : [];
+      const attachments =
+        opts?.attachments ?? fileChips.flatMap((c) => (c.status === "ready" && c.attachment ? [c.attachment] : []));
+      if (fromComposer) setFileChips([]);
 
+      landedRef.current = false;
       setLastUserQuery(q);
       // A fresh turn starts a fresh slot; the switcher belongs to whichever turn is last.
       setVersions([]);
@@ -1020,7 +1145,10 @@ export function ChatPanel({
         role: "user",
         content: q,
         mentionNames: sending.length ? sending.map((p) => p.name) : undefined,
+        fileNames: attachments.length ? attachments.map((a) => a.name) : undefined,
       };
+      // A send that fails puts the question back; its files go back with it.
+      const restoreFiles = () => setFileChips((prev) => (prev.length ? prev : sentChips));
       stickToBottomRef.current = true;
       setMessages((prev) => [...prev, userMsg]);
       resetQuestion("");
@@ -1037,7 +1165,11 @@ export function ChatPanel({
           // message was the wrong fallback here.
           toast.error(friendlyError(err, TOAST_COPY.chatStartFailed));
           setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
-          resetQuestion(q);
+          // Not over a follow-up typed in the meantime.
+          if (!lastValueRef.current.trim()) {
+            resetQuestion(q);
+            restoreFiles();
+          }
           setStreaming(false);
           return;
         }
@@ -1071,7 +1203,13 @@ export function ChatPanel({
         const controller = new AbortController();
         abortRef.current = controller;
         const turnId = crypto.randomUUID();
-        markTurnInFlight(activeId, { startedAt: Date.now(), turnId, controller });
+        const { deep: asDeep, web: withWeb } = modeRef.current;
+        markTurnInFlight(activeId, {
+          startedAt: Date.now(),
+          turnId,
+          controller,
+          windowMs: asDeep ? DEEP_RESUME_WINDOW_MS : undefined,
+        });
         turnRef.current = { threadId: activeId, turnId };
         await streamChat(
           {
@@ -1079,6 +1217,9 @@ export function ChatPanel({
             threadId: activeId,
             contextContactIds,
             turnId,
+            attachments: attachments.length ? attachments : undefined,
+            mode: asDeep ? "deep" : undefined,
+            web: withWeb === "auto" ? undefined : withWeb,
           },
           {
             onAnswer: (delta) => smoother.push(delta),
@@ -1105,6 +1246,9 @@ export function ChatPanel({
               // old blank wait. Steps are keyed by id, so a stage finishing updates its own
               // line in place instead of appending a second copy of itself.
               ensurePlaceholder();
+              // The turn took a steer: it is in the trail now, so it leaves the queue.
+              const steered = steeredId(step.id);
+              if (steered) setQueued((prev) => prev.filter((item) => item.id !== steered));
               patch((m) => {
                 const steps = m.steps ?? [];
                 const at = steps.findIndex((s) => s.id === step.id);
@@ -1115,6 +1259,7 @@ export function ChatPanel({
               });
             },
             onDone: (info) => {
+              landedRef.current = true;
               smoother.flush();
               ensurePlaceholder();
               emitTourEvent("chat.answered");
@@ -1128,6 +1273,7 @@ export function ChatPanel({
                 persisted: Boolean(info.messageId),
               }));
               if (info.notice) toast.message(info.notice);
+              notifyAnswerLanded({ threadId: activeId, messageId: info.messageId, title: info.title });
               // The header names the thread ON SCREEN; the list update is about the answered
               // thread wherever the person is (see @/lib/chat-answer-landed).
               const headerTitle = headerTitleAfterAnswer(activeId, threadIdRef.current, info.title);
@@ -1151,7 +1297,11 @@ export function ChatPanel({
                 toast.error(message);
                 setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
               }
-              resetQuestion(q);
+              // Not over a follow-up typed in the meantime.
+              if (!lastValueRef.current.trim()) {
+                resetQuestion(q);
+                restoreFiles();
+              }
             },
           },
           controller.signal
@@ -1171,10 +1321,69 @@ export function ChatPanel({
         clearTurnInFlight(activeId, turnId);
         if (turnRef.current?.turnId === turnId) turnRef.current = null;
         abortRef.current = null;
+        // A steer the turn never confirmed waits its turn like any other queued message.
+        setQueued(afterTurn);
         setStreaming(false);
       })();
     },
-    [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom]
+    [attached, busy, loadingThread, ensureThread, resetQuestion, scrollToBottom, fileChips]
+  );
+
+  // The next queued message goes out once the answer before it has landed. An effect rather
+  // than a call from the turn's own tail: `sendQuestion` there still closes over `busy`.
+  useEffect(() => {
+    if (busy || loadingThread || !landedRef.current) return;
+    const next = queued[0];
+    if (!next) return;
+    setQueued((prev) => prev.filter((item) => item.id !== next.id));
+    sendQuestion(next.text, { contextContactIds: next.contextContactIds, attachments: next.attachments ?? [] });
+  }, [busy, loadingThread, queued, sendQuestion]);
+
+  /**
+   * Hand a queued message to the answer being written. Only a live stream can be steered:
+   * its confirmation arrives as a step on that stream. If the server refuses it (too long,
+   * the turn's steers used up) it simply stays queued.
+   */
+  const steerQueued = useCallback(
+    (item: QueuedMessage) => {
+      const turn = turnRef.current;
+      // A steer is words only; a message with files waits its turn and goes out whole.
+      if (!streaming || !turn || item.attachments?.length) return;
+      const back = () => setQueued((prev) => setSteering(prev, item.id, false));
+      setQueued((prev) => setSteering(prev, item.id, true));
+      void steerChatTurn(turn.threadId, turn.turnId, item.id, item.text)
+        .then((res) => {
+          if (!res.ok) back();
+        })
+        .catch(back);
+    },
+    [streaming]
+  );
+
+  /** Enter while an answer is being written: queue it, and with `steer`, send it in now. */
+  const queueQuestion = useCallback(
+    (raw: string, steer: boolean) => {
+      const text = raw.trim();
+      if (fileChips.some((c) => c.status === "reading")) {
+        toast.message("Still reading your file — one moment");
+        return;
+      }
+      const files = fileChips.flatMap((c) => (c.status === "ready" && c.attachment ? [c.attachment] : []));
+      const item: QueuedMessage = {
+        id: crypto.randomUUID(),
+        text,
+        contextContactIds: activeMentions(text, attached).map((p) => p.id),
+        attachments: files.length ? files : undefined,
+      };
+      const next = enqueue(queued, item);
+      // Full, or nothing typed: the text stays in the box.
+      if (next === queued) return;
+      setQueued(next);
+      resetQuestion("");
+      setFileChips([]);
+      if (steer) steerQueued(item);
+    },
+    [attached, queued, resetQuestion, steerQueued, fileChips]
   );
 
   /**
@@ -1244,6 +1453,8 @@ export function ChatPanel({
             question: displayQuestion,
             threadId,
             versionOf: { assistantMessageId, question: newQuestion },
+            mode: modeRef.current.deep ? "deep" : undefined,
+            web: modeRef.current.web === "auto" ? undefined : modeRef.current.web,
           },
           {
             onAnswer: (delta) => smoother.push(delta),
@@ -1424,11 +1635,124 @@ export function ChatPanel({
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendQuestion(question);
+      // Mid-answer, Enter queues and Cmd/Ctrl+Enter steers the answer being written.
+      if (busy) queueQuestion(question, e.metaKey || e.ctrlKey);
+      else sendQuestion(question);
     }
   }
 
+  /**
+   * Attach, Deep research and Web search. Built once and placed twice: inside the pill from
+   * `sm` up, and in a row above it on a phone, where six controls in the pill left the text
+   * field about eighty pixels wide. Tailwind picks which is shown, so it is right on the first
+   * paint; the hidden copy is `display: none` and out of the accessibility tree.
+   */
+  // What auto did on the latest answer (the step trail's own line), so the web button can show it.
+  const lastWebStep = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]!;
+      if (m.role === "assistant") return m.steps?.find((step) => step.kind === "web") ?? null;
+    }
+    return null;
+  }, [messages]);
+  const composerExtras = {
+    attach: (
+      <ComposerTip
+        label="Attach a file"
+        hint="A photo, PDF or text file. Reading a photo or PDF uses AI credits."
+        trigger={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-9 shrink-0 rounded-full text-muted-foreground"
+            aria-label="Attach a file"
+            disabled={loadingThread || fileChips.length >= CHAT_ATTACHMENTS_MAX}
+            onClick={() => fileInputRef.current?.click()}
+          />
+        }
+      >
+        <Paperclip className="size-4" />
+      </ComposerTip>
+    ),
+    deep: (
+      <ComposerTip
+        label={deep ? "Deep research: on" : "Deep research"}
+        hint="A thorough answer that can take a few minutes and uses more AI credits."
+        trigger={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-pressed={deep}
+            aria-label="Deep research"
+            disabled={loadingThread}
+            onClick={() => {
+              setDeep(!deep);
+              writeChatDeep(!deep);
+            }}
+            className={cn(
+              "size-9 shrink-0 rounded-full",
+              deep ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
+            )}
+          />
+        }
+      >
+        <Telescope className="size-4" />
+      </ComposerTip>
+    ),
+    web: (
+      <WebSearchControl
+        choice={web}
+        onChange={chooseWeb}
+        autoOn={lastWebStep?.id === "web:auto"}
+        blocked={lastWebStep?.id === "web:blocked"}
+        note={lastWebStep?.label ?? null}
+        disabled={loadingThread}
+      />
+    ),
+  };
+
   const headerTitle = threadTitle?.trim() || "New chat";
+
+  /** Rename a saved chat. The list changes once the server has it, so a refusal leaves no lie. */
+  const renameThread = useCallback((id: string, title: string) => {
+    void renameChatThread(id, title)
+      .then((res) => {
+        if (!res.ok) throw new Error("rename refused");
+        setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, title: res.title } : t)));
+        if (threadIdRef.current === id) setThreadTitle(res.title);
+      })
+      .catch(() => toast.error("Couldn’t rename that chat — try again?"));
+  }, []);
+
+  const pinThread = useCallback((id: string, pinned: boolean) => {
+    void pinChatThread(id, pinned)
+      .then((res) => {
+        if (res.ok) setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, pinnedAt: res.pinnedAt } : t)));
+        else if (res.reason === "limit") toast.message("You can pin up to 20 chats — unpin one first");
+        else throw new Error("pin refused");
+      })
+      .catch(() => toast.error("Couldn’t pin that chat — try again?"));
+  }, []);
+
+  /** The conversation on screen as Markdown. Built on demand: it is only needed on a click. */
+  const exportMarkdown = () =>
+    chatAsMarkdown(
+      headerTitle,
+      messages.map((m) =>
+        m.role === "user"
+          ? { role: "user" as const, text: m.content }
+          : {
+              role: "assistant" as const,
+              text: directivesAsText(
+                m.answer,
+                (id) => m.recommendations.find((r) => r.contact_id === id)?.name ?? m.blocks?.people[id]?.name,
+                m.blocks?.lists
+              ),
+            }
+      )
+    );
 
   // Bubble handlers that never change identity, so the `memo` on UserBubble/AssistantBubble
   // holds while streaming (a setMessages per frame) and composer keystrokes re-render the
@@ -1459,6 +1783,16 @@ export function ChatPanel({
               ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
               : m
           )
+        ),
+      // A saved edit to a draft block, folded into the message in memory so copy, export and a
+      // remount all read the edited words.
+      draftSaved: (messageId: string, index: number, edit: { subject: string; body: string }) =>
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== messageId || m.role !== "assistant") return m;
+            const answer = replaceDraftBlock(m.answer, index, edit);
+            return answer === null || answer === m.answer ? m : { ...m, answer };
+          })
         ),
       switchVersion: async (version: number) => {
         const { threadId: tid, versionSlot: slot, loadThread: load } = bubbleLive.current;
@@ -1514,6 +1848,9 @@ export function ChatPanel({
           onIntentNow={prefetchHandlers.now}
           onNew={startNewChat}
           onDelete={removeThread}
+          onRename={renameThread}
+          onPin={pinThread}
+          onSearch={searchChatThreads}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">
@@ -1623,6 +1960,40 @@ export function ChatPanel({
             <span className="max-sm:sr-only">New chat</span>
           </Button>
 
+          {messages.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 text-muted-foreground"
+                    aria-label="Export chat"
+                  />
+                }
+              >
+                <Download className="size-4" />
+                <span className="max-sm:sr-only">Export</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => {
+                    void navigator.clipboard
+                      .writeText(exportMarkdown())
+                      .then(() => toast.success(TOAST_COPY.copied))
+                      .catch(() => toast.error(TOAST_COPY.copyFailed));
+                  }}
+                >
+                  Copy chat
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => downloadMarkdown(chatExportFileName(headerTitle), exportMarkdown())}>
+                  Download as Markdown
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
           <Button
             type="button"
             variant="outline"
@@ -1700,6 +2071,7 @@ export function ChatPanel({
                         retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
                         onFollowUp={bubbleHandlers.followUp}
                         onActionSettled={bubbleHandlers.actionSettled}
+                        onDraftSaved={bubbleHandlers.draftSaved}
                         versions={isLastAssistant ? versions : EMPTY_VERSIONS}
                         onSwitchVersion={isLastAssistant ? bubbleHandlers.switchVersion : undefined}
                       />
@@ -1716,7 +2088,7 @@ export function ChatPanel({
                     <div className="flex justify-start">
                       <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
                         <OrbitMark reduceMotion={reduceMotion} />
-                        {resuming ? "Still writing the answer…" : "Starting…"}
+                        {resuming ? "Still writing the answer…" : deep ? "Researching in depth…" : "Starting…"}
                       </div>
                     </div>
                   )}
@@ -1758,10 +2130,105 @@ export function ChatPanel({
             {/* `relative`: the `@` type-ahead anchors to this box's top edge, which is the
                 top of the composer pill. */}
             <div className="relative mx-auto max-w-3xl space-y-2.5">
+              {queued.length > 0 && (
+                <ul aria-label="Queued messages" aria-live="polite" className="space-y-1">
+                  {queued.map((item) => (
+                    <li
+                      key={item.id}
+                      className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/40 py-1 pl-3 pr-1 text-sm"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-foreground/80">
+                        {item.attachments?.length ? <Paperclip className="mr-1.5 inline size-3.5 text-muted-foreground" aria-label={`${item.attachments.length} attached`} /> : null}
+                        {item.text}
+                      </span>
+                      {item.steering ? (
+                        <span className="shrink-0 px-2 text-xs text-muted-foreground">Steering…</span>
+                      ) : (
+                        <>
+                          {((streaming && !item.attachments?.length) || !busy) && (
+                            <button
+                              type="button"
+                              title={streaming ? "Send it to the answer being written" : undefined}
+                              onClick={() => {
+                                if (streaming) return steerQueued(item);
+                                setQueued((prev) => prev.filter((q) => q.id !== item.id));
+                                sendQuestion(item.text, {
+                                  contextContactIds: item.contextContactIds,
+                                  attachments: item.attachments ?? [],
+                                });
+                              }}
+                              className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            >
+                              Send now
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            aria-label={`Remove queued message: ${item.text}`}
+                            onClick={() => setQueued((prev) => prev.filter((q) => q.id !== item.id))}
+                            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {fileChips.length > 0 && (
+                <ul aria-label="Attached files" aria-live="polite" className="flex flex-wrap gap-1.5">
+                  {fileChips.map((chip) => (
+                    <li
+                      key={chip.id}
+                      title={chip.error}
+                      className={cn(
+                        "flex max-w-full items-center gap-1.5 rounded-lg border py-1 pl-2 pr-1 text-xs",
+                        chip.status === "failed"
+                          ? "border-destructive/40 bg-destructive/5 text-destructive"
+                          : "border-border/60 bg-muted/40 text-foreground/80"
+                      )}
+                    >
+                      {chip.status === "reading" ? (
+                        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+                      ) : (
+                        <Paperclip className="size-3.5 shrink-0" aria-hidden />
+                      )}
+                      <span className="min-w-0 truncate">
+                        {chip.name}
+                        {chip.status === "reading" && <span className="text-muted-foreground"> · reading…</span>}
+                        {chip.status === "failed" && <span> · {chip.error || "couldn’t be read"}</span>}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${chip.name}`}
+                        onClick={() => removeFile(chip.id)}
+                        className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex items-center gap-1 sm:hidden">
+                {composerExtras.attach}
+                {composerExtras.deep}
+                {composerExtras.web}
+              </div>
               {/* One pill holding every control, rather than a field with satellites.
                   `items-end` keeps the buttons on the last line as the field grows. */}
               <div
                 {...tourAnchor("chat.composer")}
+                // Files dropped anywhere on the pill attach to the question.
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  if (!e.dataTransfer.files.length) return;
+                  e.preventDefault();
+                  addFiles([...e.dataTransfer.files]);
+                }}
                 className={cn(
                   "flex items-end gap-1 rounded-[1.75rem] border border-input bg-transparent px-1.5 py-1.5 transition-colors",
                   "dark:bg-input/30",
@@ -1776,6 +2243,20 @@ export function ChatPanel({
                   disabled={busy || loadingThread}
                   onInsert={onToolInsert}
                 />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept={CHAT_ATTACH_ACCEPT}
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  onChange={(e) => {
+                    addFiles([...(e.target.files ?? [])]);
+                    e.target.value = "";
+                  }}
+                />
+                <span className="hidden shrink-0 items-center sm:flex">{composerExtras.attach}</span>
                 {/* No vertical padding on the field box: the mirror is `inset-0` of it, so
                     any padding there would offset the field from its ghost layer. The field
                     and the mirror each carry their own py instead.
@@ -1800,14 +2281,20 @@ export function ChatPanel({
                   // Off while the recogniser owns the box — an accepted row splices text
                   // the dictated span is anchored against. (Mid-IME is the composer's own
                   // business and it shuts itself.)
-                  menuEnabled={!dictation.listening && !busy && !loadingThread}
+                  menuEnabled={!dictation.listening && !loadingThread}
                   boxClassName={COMPOSER_TEXT_BOX}
                   onKeyDown={onComposerKeyDown}
+                  onPaste={(e) => {
+                    // A pasted screenshot or file attaches; pasted text is left to the field.
+                    if (!e.clipboardData.files.length) return;
+                    e.preventDefault();
+                    addFiles([...e.clipboardData.files]);
+                  }}
                   onSelectionCollapsedChange={setSelectionCollapsed}
                   onCompositionChange={setComposing}
                   rows={1}
                   maxLength={CHAT_QUESTION_MAX_CHARS}
-                  placeholder="Ask about your network…"
+                  placeholder={busy ? "Add a follow-up…" : "Ask about your network…"}
                   // The placeholder vanishes once there's text, so it can't be the name.
                   aria-label="Message Orbit"
                   data-dictating={dictation.listening || undefined}
@@ -1826,7 +2313,8 @@ export function ChatPanel({
                     showMirror && "text-transparent caret-ink selection:text-foreground",
                   )}
                   style={dictation.listening ? { scrollbarGutter: "stable" } : undefined}
-                  disabled={busy || loadingThread}
+                  // Not while busy: a follow-up can be typed, queued or sent to steer.
+                  disabled={loadingThread}
                 >
                   {showMirror && interimRange && (
                     <ComposerMirror
@@ -1837,6 +2325,10 @@ export function ChatPanel({
                     />
                   )}
                 </MentionComposer>
+                <span className="hidden shrink-0 items-center gap-1 sm:flex">
+                  {composerExtras.deep}
+                  {composerExtras.web}
+                </span>
                 <DictationButton
                   state={dictation.state}
                   level={dictation.level}
@@ -1981,6 +2473,7 @@ export function ChatPanel({
             </div>
           </div>
           <WritingInstructionsField active={contextOpen} />
+          <ChatMemoriesField active={contextOpen} />
         </SheetContent>
       </Sheet>
     </ChatThreadProvider>
@@ -2082,6 +2575,16 @@ const UserBubble = memo(function UserBubble({
         </button>
       )}
       <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm break-words text-primary-foreground">
+        {msg.fileNames?.length ? (
+          <ul aria-label="Attached files" className="mb-1.5 flex flex-wrap gap-1">
+            {msg.fileNames.map((name, i) => (
+              <li key={`${name}-${i}`} className="flex max-w-full items-center gap-1 rounded-md bg-primary-foreground/15 px-1.5 py-0.5 text-xs">
+                <Paperclip className="size-3 shrink-0" aria-hidden />
+                <span className="truncate">{name}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <MentionText text={msg.content} names={msg.mentionNames} />
       </div>
     </div>
@@ -2095,6 +2598,7 @@ const AssistantBubble = memo(function AssistantBubble({
   retryLabel,
   onFollowUp,
   onActionSettled,
+  onDraftSaved,
   versions = [],
   onSwitchVersion,
 }: {
@@ -2106,6 +2610,8 @@ const AssistantBubble = memo(function AssistantBubble({
   retryLabel?: string;
   onFollowUp?: (question: string) => void;
   onActionSettled?: (messageId: string, actionId: string, next: StoredProposedAction) => void;
+  /** A draft block's edit was saved (the message id is this bubble's). */
+  onDraftSaved?: (messageId: string, index: number, edit: { subject: string; body: string }) => void;
   /** Every version of this turn, when it is the last one. Otherwise empty — no switcher. */
   versions?: VersionRow[];
   onSwitchVersion?: (version: number) => void;
@@ -2181,14 +2687,24 @@ const AssistantBubble = memo(function AssistantBubble({
     // stored recommendations — the same people, the latter after the server's checks.
     const recs = ids.flatMap((id): ChatRecommendation[] => {
       const saved = recById.get(id);
-      if (saved) return [saved];
       const person = msg.blocks?.people[id];
+      // An entry added only to hold a saved draft has no reason of its own: keep the role line.
+      if (saved) return [saved.reason ? saved : { ...saved, reason: person?.subtitle ?? "" }];
       return person
         ? [{ contact_id: id, recruiter_id: null, name: person.name, reason: person.subtitle ?? "", suggested_action: "", draft_message: null }]
         : [];
     });
     return recs.length ? <div className="grid gap-2 sm:grid-cols-2">{recs.map(renderCard)}</div> : null;
   };
+  const renderDraft = (draft: DraftSegment) => (
+    <DraftBlock
+      draft={draft}
+      streaming={Boolean(msg.streaming || msg.stopped || msg.failed)}
+      messageId={msg.persisted ? msg.id : undefined}
+      name={draft.contactId ? nameById.get(draft.contactId) ?? msg.blocks?.people[draft.contactId]?.name ?? null : null}
+      onSaved={(index, edit) => onDraftSaved?.(msg.id, index, edit)}
+    />
+  );
   const gridRecs = msg.recommendations.filter((r) => !r.contact_id || !inlineIds.has(r.contact_id));
   const copyText = useMemo(
     () =>
@@ -2218,6 +2734,7 @@ const AssistantBubble = memo(function AssistantBubble({
               // a half-written directive or citation at its end off the screen.
               streaming={Boolean(msg.streaming || msg.stopped || msg.failed)}
               renderPeople={renderPeople}
+              renderDraft={renderDraft}
             >
               {msg.answer}
             </ChatMarkdown>
@@ -2362,15 +2879,27 @@ const RecommendationCard = memo(function RecommendationCard({
   const placed = !rec.recruiter_id && !rec.suggested_action;
   const line = rec.recruiter_id ? "Recruiter" : subtitle || (placed ? rec.reason : undefined);
   // Drafts are written when asked for, not with every answer — most would never be read.
-  const [draft, setDraft] = useState(rec.draft_message);
+  const [draft, setDraft] = useState(rec.edited_draft ?? rec.draft_message);
   const [drafting, setDrafting] = useState(false);
+  // Kept on the saved answer so a reload brings the draft back. Quiet: the text stays on
+  // screen whatever happens, and an unsaved answer has nowhere to keep it yet.
+  const contactId = rec.contact_id;
+  const saveDraft = useMemo(
+    () =>
+      messageId && contactId
+        ? (text: string) => void saveChatDraft(messageId, contactId, text).catch(() => {})
+        : undefined,
+    [messageId, contactId]
+  );
   async function writeDraft() {
     if (!rec.contact_id || drafting) return;
     setDrafting(true);
     try {
       const result = await draftContactFollowUp(rec.contact_id, { channel: "email", intent: question });
-      if (result.ok) setDraft(result.body);
-      else toast.error(result.error);
+      if (result.ok) {
+        setDraft(result.body);
+        saveDraft?.(result.body);
+      } else toast.error(result.error);
     } catch (err) {
       toast.error(friendlyError(err, TOAST_COPY.draftFollowUpFailed));
     } finally {
@@ -2440,6 +2969,7 @@ const RecommendationCard = memo(function RecommendationCard({
         <DraftEditor
           initial={resume?.body ?? draft ?? ""}
           name={rec.name}
+          onSave={saveDraft}
           actions={
             messageId && rec.contact_id
               ? (text) =>

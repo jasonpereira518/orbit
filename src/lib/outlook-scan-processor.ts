@@ -11,6 +11,7 @@ import {
   type ImportStats,
 } from "@/db/schema";
 import { internalFetch } from "@/lib/internal-auth";
+import { isRealHumanName } from "@/lib/recruiter-detect";
 import { failImport, truncateStoredError } from "@/lib/import-job-processor";
 import {
   buildOutlookRecruiterQuery,
@@ -280,13 +281,19 @@ async function processSender(
     return "rejected";
   }
 
+  const name = result.fullName || (isRealHumanName(payload.name).valid ? payload.name : null);
+  if (!name || !isRealHumanName(name).valid) {
+    return "rejected";
+  }
+
   // The sender's address came from THIS user's mailbox; it lands on a shared row only when
   // this user shares. Identical to the Gmail scan — the two must never differ on privacy.
   const recruiter = await upsertCanonicalRecruiter(
     {
-      fullName: result.fullName || payload.name,
+      fullName: name,
       firm: result.firm || payload.firm,
       email: payload.email,
+      linkedinUrl: result.linkedinUrl,
       specialty: result.rolesDiscussed,
     },
     { contributePii: await isViewerSharing(userId), createdByUserId: userId }
@@ -299,6 +306,7 @@ async function processSender(
     source: "outlook",
     // From THIS user's mailbox: it belongs on their own link whether or not they share.
     email: payload.email,
+    linkedinUrl: result.linkedinUrl,
   });
 
   const dates = messages
@@ -311,6 +319,7 @@ async function processSender(
       aiSummary: result.summary,
       companiesMentioned: result.companiesMentioned,
       rolesDiscussed: result.rolesDiscussed,
+      roleInterviewingFor: result.roleInterviewingFor,
       emailCount: payload.messageIds.length,
       firstEmailAt: dates.length ? new Date(Math.min(...dates)) : null,
       lastEmailAt: dates.length ? new Date(Math.max(...dates)) : null,
@@ -375,6 +384,7 @@ export async function runOutlookRecruiterScanJob(
     const window = await resolveScanWindow(userId, {
       full: importRow.stats?.scanIsFull === true,
       since: await lastCompletedScanStart(userId, OUTLOOK_SCAN_IMPORT_TYPE),
+      cycle: (importRow.stats as { cycle?: import("@/lib/recruiter-scan-state").RecruitingCycle } | undefined)?.cycle,
     });
     scanAfter = window.after;
     await patchStats(importId, {

@@ -13,7 +13,6 @@ import {
   PartyPopper,
   Radar,
   AudioLines,
-  UserSearch,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -96,11 +95,6 @@ const MEETINGS: AppNavItem = {
   label: "Meetings",
   icon: AudioLines,
 };
-const FIND: AppNavItem = {
-  href: "/outreach?tab=discover",
-  label: "Find people",
-  icon: UserSearch,
-};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -117,6 +111,8 @@ export const APP_NAV_CORE: AppNavItem[] = [
   REMINDERS,
   CHAT,
   CONSTELLATION,
+  KNOWLEDGE,
+  EVENTS,
 ];
 
 /**
@@ -127,7 +123,13 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
  * default order.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [FIND, EVENTS, OUTREACH, KNOWLEDGE];
+export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH];
+
+/**
+ * Pages the sidebar groups under "Special features", in default order. A page marked coming
+ * soon overrides this and sits under the "Coming soon" divider instead.
+ */
+export const APP_NAV_SPECIAL_HREFS: readonly string[] = ["/events", "/outreach"];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
@@ -151,15 +153,21 @@ export const MOBILE_BOTTOM_NAV: Array<
   { id: "more", label: "More", icon: MoreHorizontal },
 ];
 
+/**
+ * Everything the phone bar does not carry, so together with `MOBILE_BOTTOM_NAV` it reaches every
+ * page the desktop sidebar lists (`APP_NAV`). Settings is last: it is the one destination the
+ * phone nav used to leave out, so on a phone it was only reachable through ⌘K's search.
+ * `scripts/smoke-nav-parity.ts` fails when a sidebar page is missing from the two lists.
+ */
 export const MOBILE_MORE_NAV = [
   RADAR,
   REMINDERS,
   CONSTELLATION,
   MEETINGS,
-  FIND,
   EVENTS,
   OUTREACH,
   KNOWLEDGE,
+  APP_NAV_SETTINGS,
 ];
 
 /**

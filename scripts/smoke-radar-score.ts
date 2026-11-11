@@ -495,16 +495,16 @@ function briefingAndKeys() {
   const changes = whatChanged(
     [
       row("a", "job_change", 30, 200, false),
-      row("b", "company_news", 20, 200, true),
-      row("c", "company_news", 20, 10, true),
+      row("b", "social_post", 20, 200, true),
+      row("c", "social_post", 20, 10, true),
       row("d", "dormant", 30, 1, false),
       row("e", "social_post", 0, 1, false),
     ],
     now
   );
   check("an unseen job move is news", changes.some((c) => c.id === "a" && c.label === "job_change line"));
-  check("a headline already seen days ago is not", !changes.some((c) => c.id === "b"));
-  check("a headline from last night is, even once seen", changes.some((c) => c.id === "c"));
+  check("a saved post already seen days ago is not", !changes.some((c) => c.id === "b"));
+  check("a post saved last night is, even once seen", changes.some((c) => c.id === "c"));
   check("a card with no outside signal is not", !changes.some((c) => c.id === "d"));
   check("a signal that scored nothing is not", !changes.some((c) => c.id === "e"));
   const many = whatChanged(Array.from({ length: 9 }, (_, i) => row(`m${i}`, "social_post", 12, 1, false)), now);

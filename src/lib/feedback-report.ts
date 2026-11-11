@@ -7,6 +7,8 @@
  * lives here and the server module owns storage.
  */
 
+import type { FeedbackThread } from "@/lib/feedback-thread";
+
 /**
  * Which part of Orbit a report is about. Offered by the form (prefilled from the route)
  * and validated by `feedbackSubmissionSchema` in `src/lib/feedback-submission.ts`.
@@ -32,9 +34,80 @@ export const FEEDBACK_AREAS = [
 ] as const;
 export type FeedbackArea = (typeof FEEDBACK_AREAS)[number];
 
-/** What kind of remark it is. Orthogonal to the area — what happened vs. where. */
+/**
+ * Who the feedback window says it goes to.
+ *
+ * A person, not "us": people were texting the founder rather than using the form, and a
+ * message to someone you know is the thing they were already doing. One constant so the
+ * panel, the thank-you and the replies all name the same person.
+ */
+export const FEEDBACK_RECIPIENT = "Jason";
+
+/**
+ * What kind of remark it is. Orthogonal to the area — what happened vs. where.
+ *
+ * The form no longer asks for it; `src/lib/feedback-triage.ts` reads it from the words.
+ */
 export const FEEDBACK_CATEGORIES = ["bug", "idea", "confusing", "praise"] as const;
 export type FeedbackCategory = (typeof FEEDBACK_CATEGORIES)[number];
+
+/** How much it matters, as the triage pass reads it. */
+export const FEEDBACK_SEVERITIES = ["low", "medium", "high"] as const;
+export type FeedbackSeverity = (typeof FEEDBACK_SEVERITIES)[number];
+
+/**
+ * What the triage pass (`src/lib/feedback-triage.ts`) concluded about one report.
+ *
+ * Here rather than in the triage module because the schema types the `feedback.triage`
+ * column with it and the console renders it, and this file is the one both sides can import.
+ */
+export type FeedbackTriage = {
+  /** One line, for the Slack DM and the console's list. */
+  summary: string;
+  severity: FeedbackSeverity;
+  /** An earlier, still-open report this one repeats, if the model saw one. */
+  duplicateOf: string | null;
+};
+
+/**
+ * One-tap starts for the operator's reply, in the order they're offered. Each drops into the
+ * composer to be edited, never sent as-is, so they can stay short and generic.
+ */
+export const QUICK_ANSWERS: ReadonlyArray<{ label: string; text: string }> = [
+  { label: "Fixed", text: "Thanks for flagging this — it's fixed now. Give it another try and tell me if anything's still off." },
+  { label: "On the list", text: "Love this idea — it's on the list. I'll message you here when it ships." },
+  { label: "Need detail", text: "Thanks! Could you tell me a bit more — what were you trying to do, and what did you expect to happen?" },
+  { label: "Screenshot?", text: "Could you send a screenshot of what you're seeing? It'll help me track this down quickly." },
+  { label: "Can't reproduce", text: "I can't reproduce this yet. Which browser and device are you on, and does it happen every time?" },
+  { label: "Not planned", text: "Thanks for the suggestion. It's not something I'm planning right now, because " },
+  { label: "Thank you", text: "Thank you — this genuinely made my day." },
+];
+
+/**
+ * Where feedback the operator logged by hand came from — what someone said by text, in
+ * person, on a call or by email. Stored on `context.source`; an in-app report has none.
+ */
+export const FEEDBACK_SOURCES = ["text", "in_person", "call", "email"] as const;
+export type FeedbackSource = (typeof FEEDBACK_SOURCES)[number];
+export const SOURCE_LABELS: Record<FeedbackSource, string> = {
+  text: "text",
+  in_person: "in person",
+  call: "call",
+  email: "email",
+};
+
+export function isFeedbackSource(value: unknown): value is FeedbackSource {
+  return typeof value === "string" && (FEEDBACK_SOURCES as readonly string[]).includes(value);
+}
+
+/** Bonus AI credits the operator can thank someone with, per report. */
+export const THANKS_CREDIT_OPTIONS = [5, 25, 50] as const;
+/** A custom thank-you: any whole number of credits up to this. */
+export const MAX_THANKS_CREDITS = 500;
+export type ThanksCredits = number;
+
+/** One chat message, either side. Long enough for a real answer, short of an essay. */
+export const MAX_THREAD_MESSAGE = 2000;
 
 /** Before, the error, after. A fourth shot has never told anyone anything new. */
 export const MAX_SCREENSHOTS = 3;
@@ -56,6 +129,9 @@ export const MAX_SHOT_NOTE = 500;
 
 /** Long enough to be a sentence, short enough not to be a document. */
 export const MAX_FEEDBACK_TEXT = 4000;
+
+/** A subject line, not a second message. */
+export const MAX_FEEDBACK_SUBJECT = 120;
 
 /** Long enough for any real Orbit path, short enough that a URL cannot hide in one. */
 export const MAX_PATH = 200;
@@ -183,4 +259,32 @@ export function clampPanelOffset(input: {
     x: startOffset.x + (left - start.left),
     y: startOffset.y + (top - start.top),
   };
+}
+
+const STATUS_LABEL: Record<FeedbackThread["status"], string> = {
+  new: "Sent",
+  triaged: `${FEEDBACK_RECIPIENT}'s looking at it`,
+  resolved: "Done",
+};
+
+const KIND_LABEL: Record<string, string> = {
+  bug: "Broken",
+  idea: "Idea",
+  confusing: "Confusing",
+  praise: "Worked well",
+};
+
+/**
+ * The conversation's one-line context: kind · area · status ("Idea · Contacts · Done").
+ * Here, not beside the chat, because the server-rendered chat page calls it too.
+ */
+export function threadMeta(thread: FeedbackThread): string {
+  const area = thread.report.area;
+  return [
+    thread.category ? KIND_LABEL[thread.category] : null,
+    area && (FEEDBACK_AREAS as readonly string[]).includes(area) ? AREA_LABELS[area as FeedbackArea] : null,
+    STATUS_LABEL[thread.status],
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }

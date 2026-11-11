@@ -238,6 +238,7 @@ export type RadarCandidateRow = {
   title: string | null;
   company: string | null;
   industry: string | null;
+  email?: string | null;
   tier: RadarTier | null;
   hasEvidence: boolean;
   priorityLevel: number;
@@ -249,9 +250,6 @@ export type RadarCandidateRow = {
   constellationPin: "in" | "out" | null;
   cadenceDays: number | null;
   cadencePhrase: string | null;
-  /** Public handles the person added, for the nightly post check. */
-  blueskyHandle?: string | null;
-  mastodonAcct?: string | null;
 };
 
 /**
@@ -273,6 +271,7 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
     title: string | null;
     company: string | null;
     industry: string | null;
+    email: string | null;
     closeness_tier: RadarTier | null;
     closeness_evidence: number | null;
     priority_level: number;
@@ -284,14 +283,11 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
     constellation_pin: "in" | "out" | null;
     cadence_days: number | null;
     cadence_phrase: string | null;
-    bluesky_handle: string | null;
-    mastodon_acct: string | null;
   }>(
     await db.execute(sql`
-      SELECT id, full_name, preferred_name, title, company, industry, closeness_tier, closeness_evidence,
+      SELECT id, full_name, preferred_name, title, company, industry, email, closeness_tier, closeness_evidence,
              priority_level, relationship_score, stated_closeness, first_interaction_at,
-             last_interaction_at, next_follow_up_at, constellation_pin, cadence_days, cadence_phrase,
-             bluesky_handle, mastodon_acct
+             last_interaction_at, next_follow_up_at, constellation_pin, cadence_days, cadence_phrase
         FROM contacts
        WHERE user_id = ${userId}
          AND constellation_pin IS DISTINCT FROM 'out'
@@ -303,9 +299,6 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
            OR relationship_score >= 4
            OR stated_closeness >= 4
            OR (closeness_tier IN ('inner', 'mid') AND closeness_evidence >= ${EVIDENCE_FLOOR})
-           -- Someone whose posts the person asked Radar to follow.
-           OR bluesky_handle IS NOT NULL
-           OR mastodon_acct IS NOT NULL
          )
        ORDER BY (id = ANY(${idArray})) DESC, closeness DESC NULLS LAST, id
        LIMIT ${RADAR_CANDIDATE_CAP}
@@ -318,6 +311,7 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
     title: r.title,
     company: r.company,
     industry: r.industry,
+    email: r.email,
     tier: r.closeness_tier,
     hasEvidence: (r.closeness_evidence ?? 0) >= EVIDENCE_FLOOR,
     priorityLevel: Number(r.priority_level ?? 0),
@@ -329,7 +323,5 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
     constellationPin: r.constellation_pin,
     cadenceDays: r.cadence_days === null ? null : Number(r.cadence_days),
     cadencePhrase: r.cadence_phrase,
-    blueskyHandle: r.bluesky_handle,
-    mastodonAcct: r.mastodon_acct,
   }));
 }

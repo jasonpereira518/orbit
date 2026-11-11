@@ -91,10 +91,13 @@ const recruiterVerdict = (fullName: string): Awaited<ReturnType<Classify>> => ({
   companiesMentioned: ["Acme"],
   rolesDiscussed: ["Engineer"],
   summary: "They reached out about a role.",
+  roleInterviewingFor: "Engineer",
+  linkedinUrl: null,
 });
 const notRecruiter: Awaited<ReturnType<Classify>> = {
   isRecruiter: false, confidence: 0.1, fullName: null, firm: null,
   companiesMentioned: [], rolesDiscussed: [], summary: null,
+  roleInterviewingFor: null, linkedinUrl: null,
 };
 
 const content = (id: string): OutlookMessageContent => ({

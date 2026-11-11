@@ -1,10 +1,11 @@
 /**
  * Vercel Ignored Build Step smoke tests.
  *
- * `scripts/vercel-ignore-build.sh` skips a preview build only for a `claude/*` branch with no
- * pull request. The failure that matters is skipping something that should have built —
- * production above all — so this runs the real script under each scenario and pins the exit
- * code (0 = skip, 1 = build), with the default for anything unrecognised being "build".
+ * `scripts/vercel-ignore-build.sh` skips a preview build for a non-main branch with no pull
+ * request, a dependabot branch, or a PR push that only touched files the app never reads. The failure that matters
+ * is skipping something that should have built — production above all — so this runs the real
+ * script under each scenario and pins the exit code (0 = skip, 1 = build), with the default
+ * for anything unrecognised being "build".
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -42,10 +43,10 @@ function repoWith(files: string[] | null): string {
 const APP_FILE = ["src/app/page.tsx"];
 
 let failed = 0;
-function run(name: string, env: Record<string, string>, expected: number, files: string[] | null = APP_FILE) {
+function run(name: string, env: Record<string, string>, expected: number, files: string[] | null = APP_FILE, cwd?: string) {
   // Only PATH is inherited, so a variable set on the developer's machine cannot leak in.
   const result = spawnSync("bash", [SCRIPT], {
-    cwd: repoWith(files),
+    cwd: cwd ?? repoWith(files),
     env: { PATH: process.env.PATH ?? "", ...env } as unknown as NodeJS.ProcessEnv,
     encoding: "utf8",
   });
@@ -72,10 +73,59 @@ run("claude/* branch, [deploy] on a later line", { ...claude, VERCEL_GIT_COMMIT_
 run("production, even on a claude/* ref", { ...claude, VERCEL_ENV: "production" }, BUILD);
 run("main", { VERCEL_GIT_COMMIT_REF: "main", VERCEL_ENV: "production" }, BUILD);
 run("main as a preview", { VERCEL_GIT_COMMIT_REF: "main", VERCEL_ENV: "preview" }, BUILD);
-run("a non-claude branch with no pull request", { VERCEL_GIT_COMMIT_REF: "feature/thing" }, BUILD);
-run("a cursor/* branch", { VERCEL_GIT_COMMIT_REF: "cursor/thing-1234" }, BUILD);
-run("a branch that only contains 'claude/'", { VERCEL_GIT_COMMIT_REF: "fix/claude/thing" }, BUILD);
+run("a non-claude branch with a pull request", { VERCEL_GIT_COMMIT_REF: "feature/thing", VERCEL_GIT_PULL_REQUEST_ID: "7" }, BUILD);
 run("no git ref at all (a CLI deploy)", {}, BUILD);
+run("PR push, previous SHA unknown to git", { ...claude, VERCEL_GIT_PULL_REQUEST_ID: "9", VERCEL_GIT_PREVIOUS_SHA: "0".repeat(40) }, BUILD);
+
+console.log("skips (any branch)");
+run("a non-claude branch with no pull request", { VERCEL_GIT_COMMIT_REF: "feature/thing" }, SKIP);
+run("a cursor/* branch with no pull request", { VERCEL_GIT_COMMIT_REF: "cursor/thing-1234" }, SKIP);
+run("a branch that only contains 'claude/', no pull request", { VERCEL_GIT_COMMIT_REF: "fix/claude/thing" }, SKIP);
+run("dependabot/* even with a pull request", { VERCEL_GIT_COMMIT_REF: "dependabot/npm_and_yarn/x", VERCEL_GIT_PULL_REQUEST_ID: "3" }, SKIP);
+run("dependabot/* with [deploy] builds", { VERCEL_GIT_COMMIT_REF: "dependabot/npm_and_yarn/x", VERCEL_GIT_PULL_REQUEST_ID: "3", VERCEL_GIT_COMMIT_MESSAGE: "[deploy]" }, BUILD);
+
+console.log("pure merge pushes (the Nov 11 stacked-PR burst)");
+const mergePr = { ...claude, VERCEL_ENV: "preview", VERCEL_GIT_PULL_REQUEST_ID: "21" };
+const merging = (VERCEL_GIT_COMMIT_MESSAGE: string) => ({ ...mergePr, VERCEL_GIT_COMMIT_MESSAGE });
+run("main merged into a PR branch", merging("Merge origin/main into claude/chat-queue-steer"), SKIP);
+run("a stacked branch merged into the next", merging("Merge claude/chat-export into claude/chat-manage-threads"), SKIP);
+run("git's quoted form", merging("Merge branch 'claude/chat-answer-notify' into claude/chat-queue-steer"), SKIP);
+run("git's remote-tracking form", merging("Merge remote-tracking branch 'origin/main' into radar_flagship_redesign"), SKIP);
+run("a bare 'main' source", merging("Merge main into feature/thing"), SKIP);
+run("with a conflict list in the body", merging("Merge origin/main into claude/x\n\n# Conflicts:\n#\tpackage-lock.json"), SKIP);
+run("a merge that also fixes something", merging("Merge origin/main; fix CI (dvh, site CSS sources, admin detail smoke)"), BUILD);
+run("a merge-conflict resolution titled like a change", merging("merge(main): resolve schema v218, align query budgets"), BUILD);
+run("a pull request merge", merging("Merge pull request #610 from jasonpereira518/claude/mcp-connector"), BUILD);
+run("a commit that only starts with 'Merge'", merging("Merge fixes into the radar page"), BUILD);
+run("a merge with [deploy]", merging("Merge origin/main into claude/x [deploy]"), BUILD);
+run("a merge on production", { ...merging("Merge origin/main into claude/x"), VERCEL_ENV: "production" }, BUILD);
+run("a merge on main", { VERCEL_GIT_COMMIT_REF: "main", VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_MESSAGE: "Merge origin/main into main" }, BUILD);
+
+console.log("pushes diffed against the last build (VERCEL_GIT_PREVIOUS_SHA)");
+const repo = mkdtempSync(join(tmpdir(), "ignore-build-"));
+const git = (...args: string[]) => {
+  const r = spawnSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...args], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+  return r.stdout.trim();
+};
+const commit = (files: Record<string, string>) => {
+  for (const [path, body] of Object.entries(files)) {
+    mkdirSync(join(repo, path, ".."), { recursive: true });
+    writeFileSync(join(repo, path), body);
+  }
+  git("add", "-A");
+  git("commit", "-m", "c");
+  return git("rev-parse", "HEAD");
+};
+git("init", "-q");
+const base = commit({ "src/a.ts": "1", "README.md": "1" });
+const pr = { ...claude, VERCEL_GIT_PULL_REQUEST_ID: "12" };
+commit({ "docs/x.md": "2", "CHANGELOG.md": "2", ".github/workflows/ci.yml": "2" });
+run("PR push touching only docs/*.md/.github", { ...pr, VERCEL_GIT_PREVIOUS_SHA: base }, SKIP, undefined, repo);
+commit({ "src/a.ts": "2" });
+run("PR push after skipped docs pushes, code changed since last build", { ...pr, VERCEL_GIT_PREVIOUS_SHA: base }, BUILD, undefined, repo);
+run("docs-only PR push with [deploy]", { ...pr, VERCEL_GIT_PREVIOUS_SHA: base, VERCEL_GIT_COMMIT_MESSAGE: "[deploy]" }, BUILD, undefined, repo);
+run("docs-only on production still builds", { ...pr, VERCEL_ENV: "production", VERCEL_GIT_PREVIOUS_SHA: base }, BUILD, undefined, repo);
 
 console.log("non-app pushes (preview quota)");
 const preview = { VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "feature/thing", VERCEL_GIT_PULL_REQUEST_ID: "7" };

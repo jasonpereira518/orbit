@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { logRecruiter } from "@/actions/recruiters";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/field";
@@ -28,6 +29,7 @@ export function RecruiterLogForm({
   initial?: {
     fullName?: string;
     firm?: string;
+    roleInterviewingFor?: string;
     specialty?: string;
     email?: string;
     linkedinUrl?: string;
@@ -40,12 +42,13 @@ export function RecruiterLogForm({
   className?: string;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   // A refused save stays by the button until the next attempt.
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState({
     fullName: initial?.fullName || "",
     firm: initial?.firm || "",
+    roleInterviewingFor: initial?.roleInterviewingFor || "",
     specialty: initial?.specialty || "",
     email: initial?.email || "",
     linkedinUrl: initial?.linkedinUrl || "",
@@ -80,6 +83,7 @@ export function RecruiterLogForm({
               recruiterId,
               fullName: form.fullName,
               firm: form.firm || undefined,
+              roleInterviewingFor: form.roleInterviewingFor || undefined,
               specialty,
               email: form.email || undefined,
               linkedinUrl: form.linkedinUrl || undefined,
@@ -116,6 +120,11 @@ export function RecruiterLogForm({
             placeholder="Jordan Lee"
             disabled={Boolean(recruiterId) && Boolean(initial?.fullName)}
           />
+          {!recruiterId && (
+            <p className="text-3xs text-muted-foreground">
+              Must be the recruiter&apos;s real human name (first and last). Bot or company names are rejected.
+            </p>
+          )}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="firm">Firm / agency</Label>
@@ -125,6 +134,16 @@ export function RecruiterLogForm({
             value={form.firm}
             onChange={(e) => set("firm", e.target.value)}
             placeholder="Acme Talent"
+          />
+        </div>
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label htmlFor="roleInterviewingFor">Role interviewing for</Label>
+          <Input
+            id="roleInterviewingFor"
+            autoComplete="off"
+            value={form.roleInterviewingFor}
+            onChange={(e) => set("roleInterviewingFor", e.target.value)}
+            placeholder="e.g. Software Engineer Intern, Product Manager"
           />
         </div>
         <div className="space-y-1.5">

@@ -7,6 +7,8 @@
 # so clearing the Clerk key here is what puts the app in demo mode.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# The developer's Anthropic key, and nothing else from .env.local (see the file for why).
+. .claude/local-ai-key.sh
 export DATABASE_URL=""
 export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=""
 export CLERK_SECRET_KEY=""

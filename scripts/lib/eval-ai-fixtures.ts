@@ -317,9 +317,12 @@ export type CaptureChecksEvalFixture = {
 export type SkipGatesEvalFixture = {
   cases: Array<{
     id: string;
-    gate: "dates" | "brief" | "starters" | "enrich" | "timeline";
-    /** The gate's state, verbatim: the same keys the call site passes. */
-    state: Record<string, string>;
+    gate: "dates" | "brief" | "starters" | "enrich" | "timeline" | "workHistoryRecheck" | "workHistoryVerify";
+    /**
+     * The gate's state, verbatim: the same keys the call site passes. The work-history gates'
+     * states are nested objects, built by the real `shapeRecheckGateState` / `verifyGateState`.
+     */
+    state: Record<string, unknown>;
     skip: boolean;
     why?: string;
   }>;

@@ -72,7 +72,6 @@ const CROSS_ORIGIN_ALLOWED: Record<string, string> = {
   "ops/weekly-digest": "cron secret",
   "ops/sweep": "cron secret",
   "radar/digest": "cron secret",
-  "radar/feeds/sweep": "cron secret",
   "radar/run": "cron secret",
   "relationships/run": "cron secret",
   "sync/run": "cron secret",

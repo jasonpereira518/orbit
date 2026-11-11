@@ -1,4 +1,6 @@
 import { isLinkedInProfilePhoto } from "@/lib/contact-avatar-url";
+import { isPersonName } from "@/lib/names/classify";
+import { splitName } from "@/lib/names/parse";
 
 /**
  * Social crawler and browser User-Agents for fetching LinkedIn public profile metadata.
@@ -49,6 +51,10 @@ export function isLinkedInDirectRateLimited(now = Date.now()): boolean {
 
 export function noteLinkedInDirectRateLimit(resetAtMs: number): void {
   directCooldownUntil = Math.max(directCooldownUntil, resetAtMs, Date.now() + 60_000);
+}
+
+export function resetLinkedInDirectCooldownForTesting(): void {
+  directCooldownUntil = 0;
 }
 
 /**
@@ -159,18 +165,15 @@ function cleanText(raw: unknown): string | null {
 }
 
 export function isLikelyPersonName(name: string | null): boolean {
-  if (!name) return false;
-  const trimmed = name.trim();
-  if (trimmed.length < 2 || trimmed.length > 80) return false;
+  const trimmed = name?.trim() ?? "";
+  if (trimmed.length > 80) return false;
   if (/^(linkedin|sign in|log in|join|profile|welcome)/i.test(trimmed)) return false;
-  return true;
+  return isPersonName(trimmed);
 }
 
 export function splitFullName(fullName: string | null): { first: string | null; last: string | null } {
-  if (!fullName) return { first: null, last: null };
-  const parts = fullName.trim().split(/\s+/);
-  if (parts.length <= 1) return { first: parts[0] || null, last: null };
-  return { first: parts[0]!, last: parts.slice(1).join(" ") };
+  const { firstName, lastName } = splitName(fullName);
+  return { first: firstName, last: lastName };
 }
 
 export function splitHeadline(headline: string | null): { title: string | null; company: string | null } {

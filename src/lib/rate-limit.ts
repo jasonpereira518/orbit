@@ -44,6 +44,11 @@ import { rateLimitBuckets } from "@/db/schema";
 
 /** What a bucket scope means to the person hitting it, for the error message. */
 const BUCKET_LABELS: Record<string, string> = {
+  "voice-health": "Voice provider checks",
+  "voice-requests": "Orbit Voice requests",
+  "voice-start-hour": "Orbit Voice sessions this hour",
+  "voice-start-day": "Orbit Voice sessions today",
+  "voice-start-global": "Orbit Voice sessions across Orbit today",
   chat: "chat",
   emailSend: "email send",
   emailAttachmentUpload: "attachment upload",
@@ -57,6 +62,7 @@ const BUCKET_LABELS: Record<string, string> = {
   avatarResolve: "photo lookup",
   avatarFill: "photo fill",
   feedback: "feedback",
+  feedbackChat: "message",
   survey: "survey",
   radarRefresh: "Radar refresh",
   knowledgeRefresh: "refresh",
@@ -278,6 +284,8 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  /** A reply in a feedback conversation: text only, and a chat can be quick back-and-forth. */
+  feedbackChat: { limit: 30, windowSec: 300 },
   /** The micro-survey prompt: a handful of tiny writes per person, once in a long while. */
   survey: { limit: 20, windowSec: 3600 },
   // Each refresh re-scores the whole network and may write up to five AI lines on the

@@ -85,11 +85,10 @@ export const PUBLIC_ROUTES = [
   "/api/ops/rollup",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
-  // Radar's nightly pass, hourly news sweep and Monday email — same CRON_SECRET gate, same
+  // Radar's daily pass and Monday email — same CRON_SECRET gate, same
   // reasons.
   "/api/radar/run",
   "/api/cloud-notes/run",
-  "/api/radar/feeds/sweep",
   "/api/radar/digest",
   // The credit emails, on the ten-minute schedule — same CRON_SECRET gate.
   "/api/credits/notices",

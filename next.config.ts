@@ -51,6 +51,12 @@ const realNodeModulesDir = (() => {
 const nextConfig: NextConfig = {
   // No `X-Powered-By: Next.js`: the exact framework is no one's business but ours.
   poweredByHeader: false,
+  // On Vercel the type-check is `npm run typecheck:fast` (TypeScript 7, ~4x faster), run
+  // ahead of the build by vercel.json, so a type error fails in seconds instead of after the
+  // compile, and Next's own pass (~90s on the 2-core build machine, serial after the compile)
+  // is skipped. Everywhere else it stays on: CI's required `typecheck · lint · build` job runs
+  // tsc and then a full `next build`. Its package is scripts/ts7 (why it is not the root one).
+  typescript: { ignoreBuildErrors: Boolean(process.env.VERCEL) },
   // `*.bench.tsx` routes (the constellation benchmark, src/app/bench) exist only in a build
   // made with ORBIT_BENCH=1, so no deployed build ever contains them.
   pageExtensions: [

@@ -74,10 +74,24 @@ export function countToolCalls(body: unknown): { messages: number; toolCalls: nu
  * `tooLarge` once it passes MAX_MCP_BODY_BYTES; `json` is null when there is none or it is not JSON.
  */
 async function readMcpBody(request: Request): Promise<{ tooLarge: boolean; json: unknown; request: Request }> {
-  if (request.method !== "POST" || !request.body) return { tooLarge: false, json: null, request };
+  const headers = new Headers(request.headers);
+  // The MCP SDK transport strictly checks for both application/json and text/event-stream in Accept.
+  // Standardize the header so clients that send Accept: application/json, */*, or omit it do not get rejected with 406.
+  const accept = headers.get("accept") ?? "";
+  if (!accept.includes("application/json") || !accept.includes("text/event-stream")) {
+    headers.set("accept", "application/json, text/event-stream");
+  }
+
+  if (request.method !== "POST" || !request.body) {
+    const replay = new Request(request.url, {
+      method: request.method,
+      headers,
+      signal: request.signal,
+    });
+    return { tooLarge: false, json: null, request: replay };
+  }
   const raw = await readBodyCapped(new Response(request.body), MAX_MCP_BODY_BYTES);
   if (!raw) return { tooLarge: true, json: null, request };
-  const headers = new Headers(request.headers);
   headers.delete("content-length");
   headers.delete("transfer-encoding");
   const replay = new Request(request.url, {
@@ -252,10 +266,40 @@ export async function handleMcpRequest(
     isReleased: await releaseCheckFor(caller.userId),
   });
   await server.connect(transport);
+  const options = peeked.json ? { parsedBody: peeked.json } : undefined;
+  let response: Response;
   try {
-    return await transport.handleRequest(request);
-  } finally {
-    // One server per request, so nothing survives to leak between users.
+    response = await transport.handleRequest(request, options);
+  } catch (err) {
     await server.close().catch(() => null);
+    throw err;
   }
+
+  const isStream = response.headers.get("content-type")?.includes("text/event-stream");
+  if (!isStream || !response.body) {
+    // One server per request for JSON responses, so nothing survives to leak between users.
+    await server.close().catch(() => null);
+    return response;
+  }
+
+  // Keep server alive while stream is active, closing on completion or disconnect.
+  const [stream1, stream2] = response.body.tee();
+  void (async () => {
+    try {
+      const reader = stream2.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch {
+      // client aborted or error
+    } finally {
+      await server.close().catch(() => null);
+    }
+  })();
+  return new Response(stream1, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }

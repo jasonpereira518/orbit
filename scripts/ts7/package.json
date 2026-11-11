@@ -1,0 +1,8 @@
+{
+  "name": "orbit-typecheck-native",
+  "private": true,
+  "description": "TypeScript 7 (the native compiler) for the Vercel build's type-check, run by `npm run typecheck:fast`. Its own package on purpose: installed beside the root `typescript` its `tsc` bin would replace it, and typescript-eslint (peer typescript <6.1) needs the root one's API. Install with `npm ci --prefix scripts/ts7` (vercel.json's installCommand does).",
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

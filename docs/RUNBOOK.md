@@ -17,14 +17,27 @@ What to do when something is wrong, and how the routine things are done. Short o
 ## Deploy
 
 Push to `main`. CI (`typecheck · lint · build`, `smoke suite`) must be green; Vercel then
-runs `npm run check:env && npm run db:migrate && next build`. A missing production
-variable or a failing DDL statement fails the build and the previous deployment stays live.
+runs `npm run check:env && npm run typecheck:fast && npm run db:migrate && next build`. A missing
+production variable, a type error or a failing DDL statement fails the build and the previous
+deployment stays live. `typecheck:fast` is TypeScript 7 from `scripts/ts7` (installed by
+`vercel.json`'s `installCommand`), and `next.config.ts` turns Next's own, slower type-check off
+on Vercel only; CI still runs both. A preview build also runs the migration with `force`, because
+previews share one database and a sibling branch's newer schema stamp would otherwise hide this
+branch's DDL.
 
-**A `claude/*` branch with no pull request does not build a preview.** Vercel's Ignored Build
-Step (`vercel.json` → `scripts/vercel-ignore-build.sh`) skips it, because every retained
-deployment's function bundles count against Functions Storage. It builds once the branch has a
+**Previews are skipped when nobody would open them.** Hobby allows 100 deployments a day
+(cancelled and failed builds count), and every retained deployment's function bundles count
+against Functions Storage. Vercel's Ignored Build Step (`vercel.json` →
+`scripts/vercel-ignore-build.sh`) skips a preview for: any non-`main` branch with no pull
+request, any `dependabot/*` branch (CI already builds it), and a PR push that only touches
+files the app never reads (`docs/`, `.github/`, `e2e/`, `extension/`, `*.md`, smoke scripts)
+since the branch's last build, and a push whose commit is only a merge (`Merge origin/main into
+X`, `Merge branch 'a' into b`; any extra text in the subject builds it). Hobby runs one build at a
+time, so a burst of stacked-PR merges used to queue the last preview ~40 minutes.
+`node scripts/dev/vercel-build-report.mjs --project … --team …` prints queue, build time and
+phase breakdowns. A branch builds once it has a
 PR and gets a push. To get a preview sooner, put `[deploy]` in the commit message, or redeploy
-from the dashboard. Everything else (main, other branches, production) always builds.
+from the dashboard. `main` and production always build.
 
 ## Roll back
 
@@ -82,8 +95,6 @@ above. Vercel Pro crons remove the rule entirely.
 | `drain.failed` | No outbound webhook is being retried. Run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/webhooks/outbound/drain`; a 500 means the drain throws — Sentry has it. |
 | `radar.schedule_missed` | Radar's nightly pass started once and then went quiet for over 30 hours, so nobody's list is being refreshed overnight. Check the ops workflow ran the 04:17 step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/run`. Pages still rebuild a list older than a day when someone opens Radar. |
 | `radar.run_failed` | The last nightly pass failed or was killed at the 300 s ceiling. Read its `cron_runs` row and the `job.radar` / `job.radar.user` errors, fix, then run it by hand with the same `curl`. One account failing marks the pass `partial`, which is not an alert. |
-| `radarfeeds.schedule_missed` | Radar's hourly news sweep started once and then went quiet for over six hours, so headlines about people's companies stop arriving (cards still come from everything else). Check the ops workflow ran the :53 step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/feeds/sweep`. |
-| `radarfeeds.run_failed` | The last news sweep failed or was killed. Read its `cron_runs` row and the `job.radar.feeds` error. One feed being down marks the sweep `partial`, which is not an alert; `external_sources.consecutive_failures` says which feed and for how long. To turn a feed off, set its `enabled` to false. |
 | `radardigest.schedule_missed` | Radar's Monday email, which runs hourly through Sunday and Monday UTC, has not started for six days, so a whole Sunday passed without a run and nobody gets their weekly list. Check the ops workflow ran the `13 * * * 0,1` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/digest`. A run outside someone's Monday 06:00–09:00 sends them nothing, and the week claim means a repeated run never sends twice. |
 | `radardigest.run_failed` | The last Monday-email run failed or was killed. Read its `cron_runs` row and the `job.radar.digest` error. A send Resend refused marks the run `partial`, which is not an alert: that person's claim is released and the next hour retries; the `resend.rejected` error (kind `radar.digest`) carries Resend's reason, recorded once per run. `notConfigured` in the stats means `RESEND_API_KEY` or `RESEND_FROM_EMAIL` is unset. To stop the email for everyone, hide `page.radar`; for one person, set their `radar_digest_enabled` to 0. |
 | `emailintel.schedule_missed` | The email-insights sweep started once and then went quiet for over two hours (it runs every fifteen minutes), so new application updates are not being noticed. Check the ops workflow ran the `5,20,35,50 * * * *` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/email-intel/sweep`. Never having run is not an alert: the feature is opt-in. |
@@ -121,8 +132,9 @@ above. Vercel Pro crons remove the rule entirely.
 
 ## Radar: switches
 
-Radar (`src/lib/radar/`) is the nightly "who to reach out to" list, with its news sweep and
-Monday email. Every switch, smallest first:
+Radar (`src/lib/radar/`) is the "who to reach out to" list and its
+Monday email. (Its news sweep and Bluesky/Mastodon polling were removed in Nov 2026; see
+`docs/superpowers/specs/2026-11-10-radar-analyst-design.md`.) Every switch, smallest first:
 
 - **One account's email:** `UPDATE user_settings SET radar_digest_enabled = 0 WHERE user_id = '<id>';`
   (the person can do it themselves from Settings, the Radar settings sheet, or the email's link).
@@ -134,15 +146,14 @@ Monday email. Every switch, smallest first:
   `src/lib/radar/run.ts` and deploy. The deterministic order comes back on the next nightly
   run; nothing else changes. Do it if `/admin/analytics/radar` shows cards the rerank promoted
   not beating the ones it demoted after two weeks.
-- **All of Radar:** hide `page.radar` in `/admin/product`. The nightly pass, the news sweep and
-  the Monday email all stand down, and no AI key is spent.
+- **All of Radar:** hide `page.radar` in `/admin/product`. The daily pass and the Monday email
+  both stand down, and no AI key is spent.
 - **Coming soon or released:** Radar ships coming soon (`comingSoon: true` on `page.radar` in
   `src/lib/surfaces.ts`). Either way round can be flipped without a deploy from the coming-soon
   toggle in `/admin/product` (a `live:page.radar` or `soon:page.radar` row, which wins over the
-  code), or in code by deleting or restoring that line. While it is coming soon, the nightly
-  pass runs only for accounts that have opened Radar (admins previewing it, plus anyone who
-  opened it while it was out), the news sweep runs only once one of them has had a pass, and the
-  Monday email sends nothing. Once released, the pass claims every account active in the last
+  code), or in code by deleting or restoring that line. While it is coming soon, the scheduled
+  pass and the Monday email both stand down; "Refresh now" still builds a list for an admin
+  previewing it. Once released, the pass claims every account active in the last
   60 days and the email goes to active accounts with a pending card. It was released on Sep 30
   2026 (#380) and put back behind coming soon the same day.
 

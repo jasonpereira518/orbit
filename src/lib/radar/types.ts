@@ -89,6 +89,7 @@ export const CONTEXT_CODES: ReadonlySet<string> = new Set([
   "target_company",
   "goal_match",
   "focus_match",
+  "project_match",
   "touched_recently",
   "dismissed_recently",
   "already_scheduled",
@@ -168,6 +169,38 @@ export type RadarDraft = {
   generatedAt: string;
 };
 
+/** A suggested calendar invite, prepared ahead of time so the user can send/confirm in 1 click. */
+export type RadarCalendarInvite = {
+  title: string;
+  proposedStartTime: string;
+  durationMinutes: number;
+  agenda: string;
+  attendeeEmail?: string;
+  attendeeName?: string;
+  location?: string;
+  status?: "suggested" | "confirmed" | "declined";
+  calendarEventKey?: string;
+};
+
+/** A new prospective connection discovered outside the user's current network. */
+export type RadarDiscoveredPerson = {
+  fullName: string;
+  title?: string | null;
+  company?: string | null;
+  location?: string | null;
+  bio?: string | null;
+  avatarUrl?: string | null;
+  linkedinUrl?: string | null;
+  twitterHandle?: string | null;
+  githubHandle?: string | null;
+  website?: string | null;
+  sourceUrl?: string | null;
+  sourcePlatform: "linkedin" | "twitter" | "github" | "research" | "event" | "web";
+  matchReason: string;
+  matchingProjectId?: string;
+  matchingProjectTitle?: string;
+};
+
 /**
  * What one account has taught Radar: accept and decline tallies per kind and per reason
  * code, rebuilt from the last 90 days of rows at the end of every run. `a` counts accepts
@@ -194,7 +227,6 @@ export type RadarAutopilot = Partial<Record<RecommendationKind, boolean>>;
  * `contact_signals`, deduplicated per account, and read by the scorer like any other signal.
  */
 export const CONTACT_SIGNAL_KINDS = [
-  "company_news",
   "social_post",
   "linkedin_activity",
 ] as const;
@@ -206,10 +238,7 @@ export type ContactSignalKind = (typeof CONTACT_SIGNAL_KINDS)[number];
  * to a model. `url` has already been through `safeHttpUrl`.
  */
 export type ContactSignalPayload = {
-  /** company_news: the headline and the company it matched. */
-  title?: string;
-  company?: string;
-  /** social_post and linkedin_activity: a short excerpt. */
+  /** social_post and linkedin_activity: a short excerpt. Bluesky and Mastodon rows are history: nothing polls them now. */
   excerpt?: string;
   network?: "bluesky" | "mastodon" | "linkedin";
   url?: string | null;
@@ -217,7 +246,7 @@ export type ContactSignalPayload = {
   sourceLabel?: string;
 };
 
-/** The global news tables' source kinds (`external_sources.kind`). */
+/** The retired global news tables' source kinds (`external_sources.kind`); the tables drop in Radar PR 12. */
 export type ExternalSourceKind = "rss" | "atom" | "hn" | "edgar";
 
 /** What a person did with a recommendation, recorded so the next run respects it. */
@@ -241,24 +270,13 @@ export type RadarSignal =
   | { kind: "inbound_unanswered"; contactId: string; at: Date }
   | { kind: "linkedin_thread_quiet"; contactId: string; at: Date; count: number }
   | { kind: "job_posting"; contactId: string; at: Date; text: string }
-  /** A headline about the company they work at (`src/lib/radar/signals/news.ts`). */
-  | {
-      kind: "company_news";
-      contactId: string;
-      at: Date;
-      title: string;
-      source: string;
-      url: string | null;
-      itemId: string;
-      company: string;
-    }
-  /** A post of theirs: public Bluesky or Mastodon, or LinkedIn saved via the extension. */
+  /** A LinkedIn post of theirs the person saved with the extension. */
   | {
       kind: "social_post";
       contactId: string;
       at: Date;
       excerpt: string;
-      network: "bluesky" | "mastodon" | "linkedin";
+      network: "linkedin";
       url: string | null;
     }
   /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */
@@ -286,6 +304,17 @@ export type RadarSignal =
       hasAsk: boolean;
       /** 0..1: how relevant the ranker found this person. */
       fit: number;
+    }
+  /** A prospective connection discovered outside the network (papers, GitHub, web, Twitter). */
+  | {
+      kind: "discovery";
+      contactId: string;
+      at: Date;
+      platform: "research" | "github" | "twitter" | "linkedin" | "web";
+      title: string;
+      summary: string;
+      url?: string | null;
+      matchingProjectTitle?: string;
     };
 
 export type RadarSignalKind = RadarSignal["kind"];
