@@ -79,9 +79,11 @@ export const PLAN_SHORT_LABELS: Record<Plan, string> = {
  * - `extraConnections`: a second Google or Microsoft account. Free keeps its first one.
  * - `hostedAi`: AI on Orbit's provider keys, metered in credits (every plan).
  * - `creditPacks`: buying a $5 top-up pack (every plan but Lifetime).
- * - `radar`, `events`, `findPeople`, `compose`, `cloudNotes`: features that ship coming soon.
- *   Each is enforced by its surface's own guards (`SURFACE_FEATURE` in `surfaces.ts`), and
- *   defaults to the paid plans — `COMING_SOON_UNLOCK_PLAN` promises them on Pro.
+ * - `radar`, `events`: on every plan (`radar` caps Free via `RADAR_PLAN_LIMITS`; `events` is the
+ *   "who did I meet" loop).
+ * - `findPeople`, `compose`, `cloudNotes`: features that ship coming soon. Each is enforced by its
+ *   surface's own guards (`SURFACE_FEATURE` in `surfaces.ts`), and defaults to the paid plans —
+ *   `COMING_SOON_UNLOCK_PLAN` promises them on Pro.
  *
  * Every flag here is a CODE DEFAULT: an operator can widen or narrow any of them per plan from
  * /admin/product/plans (`plan-overrides.ts`), so server gates read `getEffectivePlanConfig()`.
@@ -172,7 +174,8 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
       hostedAi: true,
       creditPacks: true,
       extraConnections: false,
-      radar: false,
+      // Flagship Radar is enabled on Free with limited, cost-effective caps
+      radar: true,
       // Every plan (Jason, Oct 25 2026): Events is the "who did I meet" loop, not an upsell.
       events: true,
       findPeople: false,
@@ -324,4 +327,42 @@ export function formatSpeechAllowance(seconds: number): string {
 /** Display money: 899 → "$8.99". */
 export function formatPlanPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+export type RadarPlanLimits = {
+  maxRecommendations: number;
+  discoveryEnabled: boolean;
+  aiExplanations: boolean;
+  dailyPassEnabled: boolean;
+};
+
+export const RADAR_PLAN_LIMITS: Record<Plan, RadarPlanLimits> = {
+  free: {
+    maxRecommendations: 3,
+    discoveryEnabled: false,
+    aiExplanations: false,
+    dailyPassEnabled: true,
+  },
+  orbit: {
+    maxRecommendations: 10,
+    discoveryEnabled: true,
+    aiExplanations: true,
+    dailyPassEnabled: true,
+  },
+  max: {
+    maxRecommendations: 25,
+    discoveryEnabled: true,
+    aiExplanations: true,
+    dailyPassEnabled: true,
+  },
+  lifetime: {
+    maxRecommendations: 25,
+    discoveryEnabled: true,
+    aiExplanations: true,
+    dailyPassEnabled: true,
+  },
+};
+
+export function getRadarLimitsForPlan(plan: Plan): RadarPlanLimits {
+  return RADAR_PLAN_LIMITS[plan] ?? RADAR_PLAN_LIMITS.free;
 }

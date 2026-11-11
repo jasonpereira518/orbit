@@ -235,3 +235,27 @@ export async function setRadarCaptureLinkedin(on: boolean): Promise<RadarActionR
   revalidateRadar();
   return { ok: true, message: on ? "The extension can save LinkedIn posts to Radar" : "LinkedIn post saving off" };
 }
+
+/** 1-click confirmation of a suggested calendar invite from a Radar card */
+export async function confirmCalendarInvite(
+  recommendationId: string,
+  overrides?: { startTime?: string; title?: string; agenda?: string }
+): Promise<RadarActionResult & { eventId?: string }> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const { confirmCalendarInviteFromRecommendation } = await import("@/lib/radar/invites");
+  const result = await confirmCalendarInviteFromRecommendation(userId, recommendationId, overrides);
+  if (result.ok) {
+    revalidateReminderPaths();
+    revalidateRadar();
+  }
+  return result;
+}
+
+/** Toggles the 5:00 AM daily pass on or off */
+export async function setRadarDailyEnabled(enabled: boolean): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const db = await getDb();
+  await db.update(userSettings).set({ radarDailyEnabled: enabled ? 1 : 0 }).where(eq(userSettings.userId, userId));
+  revalidateRadar();
+  return { ok: true, message: enabled ? "Daily 5:00 AM Radar enabled" : "Daily 5:00 AM Radar disabled" };
+}
