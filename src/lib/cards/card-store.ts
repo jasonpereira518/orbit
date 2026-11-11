@@ -167,7 +167,18 @@ export async function loadPublicCard(slug: string): Promise<PublicCard | null> {
   if (!SLUG_RE.test(slug)) return null;
   const db = await getDb();
   const [row] = await db.select().from(shareCards).where(eq(shareCards.slug, slug)).limit(1);
-  if (!row || row.pausedAt) return null;
+  return row ? publicCardFor(row) : null;
+}
+
+/** The owner's card as the public page would show it — same gates, keyed by owner. */
+export async function loadPublicCardForOwner(ownerId: string): Promise<PublicCard | null> {
+  const db = await getDb();
+  const [row] = await db.select().from(shareCards).where(eq(shareCards.userId, ownerId)).limit(1);
+  return row ? publicCardFor(row) : null;
+}
+
+async function publicCardFor(row: typeof shareCards.$inferSelect): Promise<PublicCard | null> {
+  if (row.pausedAt) return null;
   const owner = await readOwner(row.userId);
   if (!owner || owner.suspendedAt) return null;
   if (!(await isSurfaceReleased(row.userId, "page.card")) && !isAdminUser(row.userId)) return null;

@@ -581,6 +581,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-instrumentation": "pglite",
   "smoke-instrumentation-streams": "pglite",
   "smoke-share-card": "pglite",
+  "smoke-also-here": "pglite",
   "smoke-interest-list-admin": "pglite",
   "smoke-interest-list-join": "pglite",
   "smoke-waitlist-analytics": "pglite",
