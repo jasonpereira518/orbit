@@ -22,6 +22,7 @@ import {
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
 import { addTurnSteer, markTurnStopped } from "@/lib/chat-persist";
 import { isUuid } from "@/lib/input/ids";
+import { PINNED_THREADS_MAX, pinThread, renameThread, searchThreads, type ThreadSearchHit } from "@/lib/chat-threads";
 import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -43,6 +44,8 @@ export type ChatThreadRow = {
   title: string | null;
   createdAt: Date;
   updatedAt: Date;
+  /** Set when the person pinned it; pinned chats lead the history list. */
+  pinnedAt: Date | null;
 };
 
 /**
@@ -70,6 +73,10 @@ const THREAD_CURSOR_RE =
  * so it round-trips at full (microsecond) precision — a JavaScript Date would truncate it and
  * skip threads updated in the same millisecond. One row past the page says whether there is
  * another.
+ *
+ * The first page also carries every pinned thread (there are at most `PINNED_THREADS_MAX`),
+ * so a chat pinned long ago is not stranded on a page nobody has loaded. The cursor is taken
+ * from the dated page alone, and the client drops ids it already has.
  */
 export async function listChatThreads(before?: string | null): Promise<ChatThreadPage> {
   const userId = await requireUserForSurface("page.chat");
@@ -86,6 +93,7 @@ export async function listChatThreads(before?: string | null): Promise<ChatThrea
       title: chatThreads.title,
       createdAt: chatThreads.createdAt,
       updatedAt: chatThreads.updatedAt,
+      pinnedAt: chatThreads.pinnedAt,
       cursorAt: sql<string>`${chatThreads.updatedAt}::text`,
     })
     .from(chatThreads)
@@ -101,8 +109,26 @@ export async function listChatThreads(before?: string | null): Promise<ChatThrea
     .limit(CHAT_THREAD_PAGE + 1);
   const page = rows.slice(0, CHAT_THREAD_PAGE);
   const last = page[page.length - 1];
+  const listed = new Set(page.map((t) => t.id));
+  const pinned = before
+    ? []
+    : await db
+        .select({
+          id: chatThreads.id,
+          title: chatThreads.title,
+          createdAt: chatThreads.createdAt,
+          updatedAt: chatThreads.updatedAt,
+          pinnedAt: chatThreads.pinnedAt,
+        })
+        .from(chatThreads)
+        .where(and(eq(chatThreads.userId, userId), isNotNull(chatThreads.pinnedAt), isNotNull(chatThreads.title)))
+        .orderBy(desc(chatThreads.pinnedAt))
+        .limit(PINNED_THREADS_MAX);
   return {
-    threads: page.map(({ cursorAt: _cursorAt, ...thread }) => thread),
+    threads: [
+      ...page.map(({ cursorAt: _cursorAt, ...thread }) => thread),
+      ...pinned.filter((t) => !listed.has(t.id)),
+    ],
     nextCursor: rows.length > CHAT_THREAD_PAGE && last ? `${last.cursorAt}|${last.id}` : null,
   };
 }
@@ -356,6 +382,28 @@ export async function deleteChatThread(threadId: string) {
     .delete(chatThreads)
     .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
   return { ok: true as const };
+}
+
+/** Rename a saved conversation. A title, once set, is never overwritten by a later answer. */
+export async function renameChatThread(threadId: string, title: string) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(threadId) || typeof title !== "string") return { ok: false as const };
+  const stored = await renameThread(userId, threadId, title);
+  return stored ? { ok: true as const, title: stored } : { ok: false as const };
+}
+
+/** Pin a conversation to the top of the history list, or unpin it. */
+export async function pinChatThread(threadId: string, pinned: boolean) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(threadId)) return { ok: false as const, reason: "missing" as const };
+  return pinThread(userId, threadId, pinned === true);
+}
+
+/** Saved conversations whose title or messages contain `query`. */
+export async function searchChatThreads(query: string): Promise<ThreadSearchHit[]> {
+  const userId = await requireUserForSurface("page.chat");
+  if (typeof query !== "string") return [];
+  return searchThreads(userId, query);
 }
 
 /**

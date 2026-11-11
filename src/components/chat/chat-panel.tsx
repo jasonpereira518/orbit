@@ -42,6 +42,9 @@ import {
   deleteChatThread,
   getChatThread,
   listChatThreads,
+  pinChatThread,
+  renameChatThread,
+  searchChatThreads,
   steerChatTurn,
   stopChatTurn,
   switchChatVersion,
@@ -139,6 +142,8 @@ export type ThreadSummary = {
   title: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
+  /** Set when the person pinned it. */
+  pinnedAt?: Date | string | null;
 };
 
 /**
@@ -1505,6 +1510,27 @@ export function ChatPanel({
 
   const headerTitle = threadTitle?.trim() || "New chat";
 
+  /** Rename a saved chat. The list changes once the server has it, so a refusal leaves no lie. */
+  const renameThread = useCallback((id: string, title: string) => {
+    void renameChatThread(id, title)
+      .then((res) => {
+        if (!res.ok) throw new Error("rename refused");
+        setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, title: res.title } : t)));
+        if (threadIdRef.current === id) setThreadTitle(res.title);
+      })
+      .catch(() => toast.error("Couldn’t rename that chat — try again?"));
+  }, []);
+
+  const pinThread = useCallback((id: string, pinned: boolean) => {
+    void pinChatThread(id, pinned)
+      .then((res) => {
+        if (res.ok) setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, pinnedAt: res.pinnedAt } : t)));
+        else if (res.reason === "limit") toast.message("You can pin up to 20 chats — unpin one first");
+        else throw new Error("pin refused");
+      })
+      .catch(() => toast.error("Couldn’t pin that chat — try again?"));
+  }, []);
+
   /** The conversation on screen as Markdown. Built on demand: it is only needed on a click. */
   const exportMarkdown = () =>
     chatAsMarkdown(
@@ -1607,6 +1633,9 @@ export function ChatPanel({
           onIntentNow={prefetchHandlers.now}
           onNew={startNewChat}
           onDelete={removeThread}
+          onRename={renameThread}
+          onPin={pinThread}
+          onSearch={searchChatThreads}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2.5 sm:px-4">

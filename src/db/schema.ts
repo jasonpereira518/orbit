@@ -3784,6 +3784,8 @@ export const chatThreads = pgTable(
      * first steer replaces the last turn's. See `addTurnSteer`.
      */
     pendingSteer: jsonb("pending_steer").$type<{ turnId: string; notes: { id: string; text: string }[] }>(),
+    /** When the person pinned this conversation to the top of their history; null when not pinned. */
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

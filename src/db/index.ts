@@ -844,6 +844,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   context_note text,
   stopped_turn_id text,
   pending_steer jsonb,
+  pinned_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -3037,7 +3038,8 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 210 = recruiter_contact_unlocks (credit-based recruiter contact unlocks) + user_recruiter_links.role_interviewing_for
 // 214 = chat_threads.pending_steer (messages sent to steer the answer being written; the
 // running turn reads them between lookup rounds).
-export const SCHEMA_VERSION = 214;
+// 215 = chat_threads.pinned_at (a conversation pinned to the top of the history list).
+export const SCHEMA_VERSION = 215;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3411,6 +3413,8 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
   // v214: steering a running answer. See `addTurnSteer`.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS pending_steer jsonb`,
+  // v215: pinned conversations. See `pinThread`.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS pinned_at timestamptz`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
