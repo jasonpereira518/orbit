@@ -19,6 +19,7 @@ import {
   markKeptNotificationsRead,
   useKeptNotifications,
 } from "@/lib/kept-notifications";
+import { panelDismissals, panelItemKey } from "@/lib/panel-dismissals";
 import { useCornerShift } from "@/lib/corner-clearance";
 import {
   PANEL_CORNER_SHIFT_PX,
@@ -90,7 +91,20 @@ export function NotificationsPanelButton({
     () => kept.filter((entry) => !entry.read).length,
     [kept]
   );
-  const dueCount = data?.dueCount ?? 0;
+  // A feedback reply counts as due until it is cleared from the panel (`panel-dismissals.ts`).
+  const dismissedVersion = panelDismissals.useVersion();
+  const dueCount = useMemo(
+    () =>
+      data
+        ? data.items.filter(
+            (i) =>
+              i.urgency === "due" &&
+              !(i.kind === "feedback_reply" && panelDismissals.isDismissed(panelItemKey(i)))
+          ).length
+        : 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `dismissedVersion` is the signal that the device's list changed
+    [data, dismissedVersion]
+  );
   // Unread missed notifications count toward the badge — that is the whole
   // point of keeping them; a failure nobody saw should say so on the bell.
   // They stop counting once the panel has been opened, but stay in the list.

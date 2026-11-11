@@ -43,6 +43,7 @@ import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-ev
 import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import { AccountAlerts } from "@/components/notifications/account-alerts";
 import { RowBubble } from "@/components/notifications/row-bubble";
+import { panelDismissals, panelItemKey, radarKey } from "@/lib/panel-dismissals";
 import {
   dismissBackgroundJob,
   useBackgroundJobs,
@@ -76,6 +77,8 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
   const [showAllDue, setShowAllDue] = useState(false);
   const jobs = useBackgroundJobs();
   const kept = useKeptNotifications();
+  // Re-renders when a row is cleared; `isDismissed` itself reads the device's list.
+  const dismissedVersion = panelDismissals.useVersion();
   const dueItems = useMemo(
     // A feedback reply is "due" for the badge but lives under "Waiting on you": there is
     // nothing to mark done or snooze, only a conversation to open.
@@ -83,18 +86,23 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
     [data]
   );
   // Captured notes waiting for review (or that failed) are the one "info" item worth a
-  // slot here: the user has to act on them, and nothing else will surface them.
+  // slot here: the user has to act on them, and nothing else will surface them. Until they
+  // clear it, which hides that row (`panel-dismissals.ts`) and nothing else.
   const captureItems = useMemo(
     () =>
       data?.items.filter(
-        (i) => i.kind === "feedback_reply" || i.kind === "capture_review" || i.kind === "cloud_notes"
+        (i) =>
+          (i.kind === "feedback_reply" || i.kind === "capture_review" || i.kind === "cloud_notes") &&
+          !panelDismissals.isDismissed(panelItemKey(i))
       ) ?? [],
-    [data]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `dismissedVersion` is the signal that the device's list changed
+    [data, dismissedVersion]
   );
   const alerts = data?.alerts ?? [];
   // Radar's list as one line, never an item: a suggestion is not something due, so it
   // neither counts toward the badge nor lives under "Due now".
-  const radar = data?.radar ?? null;
+  const radar =
+    data?.radar && !panelDismissals.isDismissed(radarKey(data.radar)) ? data.radar : null;
   // Account alerts deliberately do NOT count here. They live in the pinned footer, so an
   // alert-only account should still see the scroll area say there is nothing due rather
   // than render an empty region with no explanation.
@@ -107,14 +115,17 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
 
   const refresh = () => refreshPanel(true);
 
-  // Only what is already over can be cleared: missed toasts and finished jobs. Due
-  // reminders are real tasks (clearing one would mean marking it done), and running jobs
-  // are still running, so both stay.
+  // Everything that is not pressing clears: missed toasts, finished jobs, and the rows that
+  // are only waiting to be looked at (captures, found notes, replies, Radar's line). What
+  // stays is what is being asked of you now: due reminders and follow-ups (clearing one would
+  // mean marking it done), running jobs, and account alerts.
   const finishedJobs = jobs.filter((j) => j.status !== "running");
-  const clearable = kept.length + finishedJobs.length > 0;
+  const clearable = kept.length + finishedJobs.length + captureItems.length + (radar ? 1 : 0) > 0;
   function clearAll() {
     clearKeptNotifications();
     for (const j of finishedJobs) dismissBackgroundJob(j.id);
+    for (const i of captureItems) panelDismissals.dismiss(panelItemKey(i));
+    if (radar) panelDismissals.dismiss(radarKey(radar));
   }
 
   function markDone(reminderId: string) {
