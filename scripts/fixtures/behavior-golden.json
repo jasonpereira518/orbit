@@ -6817,6 +6817,7 @@
         "preferredName": null,
         "company": "OpenAI",
         "title": "Golden Title",
+        "profileImageUrl": null,
         "goalRelevance": 1,
         "reason": "goal",
         "companyName": null
@@ -6827,6 +6828,7 @@
         "preferredName": null,
         "company": "Bellwether Ventures",
         "title": "Head of Talent",
+        "profileImageUrl": null,
         "goalRelevance": 1,
         "reason": "goal",
         "companyName": null
@@ -6837,6 +6839,7 @@
         "preferredName": null,
         "company": "Linear",
         "title": "Engineering Lead",
+        "profileImageUrl": null,
         "goalRelevance": 1,
         "reason": "goal",
         "companyName": null
@@ -6847,6 +6850,7 @@
         "preferredName": null,
         "company": "Figma",
         "title": "Design Lead",
+        "profileImageUrl": null,
         "goalRelevance": 1,
         "reason": "goal",
         "companyName": null
@@ -6857,6 +6861,7 @@
         "preferredName": null,
         "company": "Stripe",
         "title": "Staff Software Engineer",
+        "profileImageUrl": null,
         "goalRelevance": 0.666667,
         "reason": "goal",
         "companyName": null
