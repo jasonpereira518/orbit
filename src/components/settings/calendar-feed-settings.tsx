@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Apple, CalendarDays, Link2, Mail, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -59,7 +60,7 @@ export function CalendarFeedSettings() {
   const [loadFailure, setLoadFailure] = useState<"timeout" | "error" | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const regenFocus = useConfirmFocus(confirmingRegen ? "regen" : null);
 
   // A failed load must be visible and recoverable. Without this the section sits on

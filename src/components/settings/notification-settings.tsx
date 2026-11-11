@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { playDing, setDingMuted, useDingMuted } from "@/lib/ding";
@@ -27,7 +28,7 @@ export function NotificationSettings({
   const [permission, setPermission] =
     useState<NotificationPermissionState>("default");
   const [enabled, setEnabled] = useState(Boolean(initialAccountEnabled));
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   useEffect(() => {
     // A never-recorded account adopts this device's old local-only choice (and writes it

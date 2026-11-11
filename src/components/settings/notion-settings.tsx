@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useSearchParams } from "next/navigation";
 import { FileText, KeyRound, Loader2, RefreshCw, Users } from "lucide-react";
 import {
@@ -208,7 +209,7 @@ function PeopleDatabaseRow({
   const [columns, setColumns] = useState<NotionColumn[] | null>(null);
   const [mapping, setMapping] = useState<NotionMapping>({});
   const [error, setError] = useState<string | null>(null);
-  const [saving, startSave] = useTransition();
+  const [saving, startSave] = useGuardedTransition();
 
   useEffect(() => {
     if (!open) return;

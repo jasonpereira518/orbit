@@ -3,6 +3,7 @@ import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
 import { SurveyPromptLazy } from "@/components/surveys/survey-prompt-lazy";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
@@ -240,7 +241,23 @@ export default async function AppLayout({
           dispatch an event AT this component, so leaving it mounted-but-hidden would turn
           them into buttons that do nothing. */}
       {!visibility.hidden.has(FEEDBACK_SURFACE_KEY) && (
-        <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+        <>
+          {/* The desktop rail button, directly under the notifications bell. Rendered here, with the
+              page, rather than by the lazy widget: that is a client-only chunk, so a button it
+              rendered appeared a beat after the bell. A press before the widget has loaded is not
+              lost: `requestFeedbackOpen` waits until the widget subscribes. The offset matches the
+              bell's in `app-shell.tsx` and moves with the page's right edge the same way
+              (`--orbit-dock-w`, including the dock's 1.25rem tuck). Inline, not its own file: the
+              layout's server graph (scripts/smoke-server-graph.ts) is budgeted per file. */}
+          <div
+            className={`fixed right-5 z-30 hidden md:right-[calc(2rem+var(--orbit-dock-w)-min(1.25rem,var(--orbit-dock-w)))] md:block md:transition-[right] md:duration-slow md:ease-house ${
+              visibility.viewingAsUser ? "top-[5.5rem]" : "top-[4.25rem] md:top-[4.75rem]"
+            }`}
+          >
+            <FeedbackTrigger tooltip />
+          </div>
+          <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+        </>
       )}
 
       {/* The micro-survey: renders nothing unless one is due, which is almost always. Not

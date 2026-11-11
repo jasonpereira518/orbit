@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { toast } from "@/lib/toast";
 import {
   createContact,
@@ -64,7 +65,7 @@ export function ContactForm({
   compact?: boolean;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [lookingUp, setLookingUp] = useState(false);
   // A save that failed on the server. The toast can time out or be missed; this stays by the
   // button until the next attempt.

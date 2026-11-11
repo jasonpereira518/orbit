@@ -116,6 +116,10 @@ export function AvatarBackfill() {
           const result = await requestBackfillBatch(Array.from(unresolved), controller.signal);
           if (controller.signal.aborted) return;
 
+          // Small photos swapped for bigger ones on an otherwise idle tick: refresh them in
+          // place, but they are not "fetched photos", so no job card and no counters.
+          notifyAvatarsUpdated(result.upgradedIds ?? []);
+
           if (!jobStarted) {
             // saved + failedIds + pending is exactly this pass's backlog, and
             // on the first pass nothing is skipped yet — so that's the total.

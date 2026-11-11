@@ -29,13 +29,6 @@ import type { DraftShot } from "@/components/feedback/feedback-widget";
 import { SendButton } from "@/components/feedback/send-button";
 import { Button } from "@/components/ui/button";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -62,8 +55,7 @@ import {
 } from "@/lib/feedback-report";
 import type { FeedbackPanelTarget } from "@/lib/feedback-events";
 import type { FeedbackThread, MyFeedbackRow } from "@/lib/feedback-thread";
-import { useCornerShift } from "@/lib/corner-clearance";
-import { PANEL_CORNER_SHIFT_PX } from "@/lib/floating-panel";
+import type { DockLayout } from "@/lib/feedback-dock";
 import { cn } from "@/lib/utils";
 import { blobToDataUrl } from "@/lib/screenshot-capture";
 import { toast } from "@/lib/toast";
@@ -127,12 +119,21 @@ export function FeedbackPanel({
   onCaretChange,
   onClosed,
   onSent,
+  layout,
+  viewingAsUser,
+  focusToken,
 }: {
   /**
    * Driven, not hardcoded. The window has to stay mounted through its own exit transition
    * or there is no exit transition — see `onClosed`.
    */
   open: boolean;
+  /** Phone sheet, floating overlay, or docked column — and how wide. See `dockLayoutFor`. */
+  layout: DockLayout;
+  /** The preview banner pushes the right-edge rail down; the overlay starts below it. */
+  viewingAsUser: boolean;
+  /** Bumped when a door is pressed while the panel is already open: take focus back in. */
+  focusToken: number;
   /**
    * The send landed and the window is being held open for the Send button's gesture.
    *
@@ -293,17 +294,31 @@ export function FeedbackPanel({
   // sequence over, which is exactly what reopening should do.
   const sheetOpen = open && entered;
 
-  // Toasts (this panel's own error toasts included) and the job stack slide to the
-  // window's left while it is open, instead of landing on the Send row. Keyed to `open`,
-  // not mount: the panel stays mounted through its exit transition.
-  useCornerShift(PANEL_CORNER_SHIFT_PX, open);
+  const asideRef = useRef<HTMLElement>(null);
+  /**
+   * Move focus into the panel when it opens and whenever a door is pressed again. It is not a
+   * modal and does not trap focus; this is only the hand-off, so a keyboard user lands in the
+   * form (or on the region, for the inbox and a conversation) instead of staying behind on
+   * the page. Skipped when focus is already inside — the autofocused subject field and the
+   * restored caret get there first and must not be undone.
+   */
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const frame = requestAnimationFrame(() => {
+      const aside = asideRef.current;
+      if (!aside || aside.contains(document.activeElement)) return;
+      const field = aside.querySelector<HTMLElement>("textarea, input:not([type=file])");
+      (field ?? aside).focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [sheetOpen, focusToken]);
 
 
   /**
    * Whether the window has ever actually been open.
    *
-   * Guards `onOpenChangeComplete`: the deliberate closed first frame above would otherwise
-   * report a completed close the instant the panel mounted, and unmount it again.
+   * Guards the transition-end handler: a close reported before the panel has ever opened
+   * (the deliberate closed first frame above) would unmount it again straight away.
    */
   const hasEntered = useRef(false);
   useEffect(() => {
@@ -394,44 +409,73 @@ export function FeedbackPanel({
     }
   }
 
+  // Overlay width: start below the bell and the feedback button instead of over them. Docked,
+  // the page has moved out of the way and the panel can take the full height.
+  const overlayTop = viewingAsUser ? "9.25rem" : "8rem";
+
   return (
-    <Sheet
-      open={sheetOpen}
-      // Escape, the backdrop and the X. None of them destroy anything any more — the draft
-      // is waiting when the window reopens — so none of them ask. The confirm that used to
-      // live here was the right question when this threw the words away, and is now just an
-      // obstacle between someone and the thing they were trying to look at.
-      onOpenChange={(next) => {
-        if (next) return;
-        // While the question is up, Escape and a press outside answer IT rather than
-        // closing the window behind it. Anything else would leave you unable to say "no"
-        // with the key you reach for first.
-        if (confirming) {
-          setConfirming(false);
-          return;
-        }
-        requestClose(false);
+    <aside
+      ref={asideRef}
+      id="feedback-dock"
+      data-slot="feedback-dock"
+      data-state={sheetOpen ? "open" : "closed"}
+      data-mode={layout.mode}
+      // A labelled complementary region, deliberately not a dialog: the page beside it stays
+      // usable, nothing is inert, and it only closes from its own control (or Esc, below).
+      aria-label="Feedback"
+      tabIndex={-1}
+      // Not tabbable or readable while it is sliding away or waiting for its first frame
+      // to open — it is off to the right, so a stray Tab would land on nothing visible.
+      inert={!open}
+      style={
+        layout.panelPx === null
+          ? undefined
+          : {
+              width: layout.panelPx,
+              ...(layout.mode === "overlay" ? { top: overlayTop } : null),
+            }
+      }
+      className={cn(
+        // z-45: over the page and the mobile nav (z-40), under every modal Sheet and Dialog
+        // (z-50) — the notifications window opens over it, the command palette stays centred
+        // over everything.
+        "fixed z-[45] flex flex-col gap-0 overflow-hidden border bg-popover bg-clip-padding text-sm text-popover-foreground shadow-lg outline-none",
+        // A phone has no room to share: the whole screen. From md it floats on the same 12px
+        // frame as the sidebar, so the page and the panel read as two cards.
+        "inset-x-0 top-0 h-dvh rounded-none border-0 md:inset-x-auto md:right-4 md:top-3 md:bottom-3 md:h-auto md:rounded-3xl md:border",
+        "transition-[transform,opacity] duration-slow ease-house",
+        "data-[state=closed]:translate-x-[calc(100%+1rem)] data-[state=closed]:opacity-0"
+      )}
+      onKeyDown={(e) => {
+        // Esc closes only from inside: it is the page's too, and someone pressing it in the
+        // page beside an open dock is not asking to lose their place here. A popup this
+        // panel opened (the area picker) is portalled out of it and answers its own Esc.
+        if (e.key !== "Escape" || e.defaultPrevented) return;
+        if (!e.currentTarget.contains(e.target as Node)) return;
+        e.preventDefault();
+        // While the question is up, Escape answers IT rather than closing the window behind
+        // it — otherwise you could not say "no" with the key you reach for first.
+        if (confirming) setConfirming(false);
+        else requestClose(false);
       }}
-      // Fires when the open/close transition has actually finished. Unmounting on the
-      // close REQUEST instead — which is what happened before — tore the window out of the
-      // tree mid-frame, so it vanished rather than collapsing: Base UI never got to apply
-      // `data-ending-style`, and the scale-back-to-0.28 never ran.
-      onOpenChangeComplete={(nowOpen) => {
-        if (!nowOpen && hasEntered.current) onClosed();
+      onTransitionEnd={(e) => {
+        // The slide-out has finished. Filtered to this element's own transform: opacity ends
+        // at the same moment, and hover transitions on the buttons inside bubble up.
+        if (e.target !== e.currentTarget || e.propertyName !== "transform") return;
+        if (!open && hasEntered.current) onClosed();
       }}
     >
-      <SheetContent
-        // Docked to the right edge and full height: a messages app — your conversations with
-        // the operator, one of them open, or a new one being written.
-        side="right"
-        // The sheet's own surface. Not `.liquid-glass`: that class pins the element to
-        // `position: relative`, which un-docks a fixed sheet. No padding here — each screen
-        // has its own header, scrolling body and pinned footer.
-        className="gap-0 p-0 data-[side=right]:sm:max-w-[36rem]"
-        // Lighter than the shared default: the page behind stays legible.
-        overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
-        showCloseButton
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        // The one way out besides Cancel. It sits over the headers, which leave `pr-12`.
+        className="absolute right-3 top-3 z-[2]"
+        aria-label="Close feedback"
+        onClick={() => requestClose(false)}
       >
+        <X />
+      </Button>
         {/* Back and forth between the inbox and the conversation you were in, from any screen.
             Only once there is a conversation to go back to. */}
         {lastThreadId && (
@@ -478,8 +522,8 @@ export function FeedbackPanel({
             <PanelHeader>
               <ThreadAvatar label={FEEDBACK_RECIPIENT} size={36} />
               <div className="min-w-0 flex-1">
-                <SheetTitle className="text-base font-medium">{FEEDBACK_RECIPIENT}</SheetTitle>
-                <SheetDescription className="text-xs">Replies within a day</SheetDescription>
+                <PanelTitle className="text-base font-medium">{FEEDBACK_RECIPIENT}</PanelTitle>
+                <PanelDescription className="text-xs">Replies within a day</PanelDescription>
               </div>
               <Button size="sm" variant="outline" onClick={() => onTargetChange({ view: "compose" })}>
                 <SquarePen className="size-3.5" aria-hidden />
@@ -507,7 +551,9 @@ export function FeedbackPanel({
           <PanelThread
             id={target.id}
             onBack={() => onTargetChange({ view: "list" })}
-            onNavigate={() => requestClose(false)}
+            // Only on a phone, where the panel IS the screen and a link would otherwise
+            // change a page nobody can see. Anywhere else, following a link leaves it open.
+            onNavigate={layout.mode === "phone" ? () => requestClose(false) : undefined}
             draft={chat}
           />
         ) : (
@@ -525,8 +571,8 @@ export function FeedbackPanel({
           )}
           <ThreadAvatar label={FEEDBACK_RECIPIENT} size={36} />
           <div className="min-w-0 flex-1">
-            <SheetTitle className="text-base font-medium">Hey, it&apos;s {FEEDBACK_RECIPIENT}</SheetTitle>
-            <SheetDescription className="text-xs">What&apos;s on your mind? I read every one.</SheetDescription>
+            <PanelTitle className="text-base font-medium">Hey, it&apos;s {FEEDBACK_RECIPIENT}</PanelTitle>
+            <PanelDescription className="text-xs">What&apos;s on your mind? I read every one.</PanelDescription>
           </div>
         </PanelHeader>
         <div
@@ -542,10 +588,10 @@ export function FeedbackPanel({
             onAddImageFiles(files);
           }}
         >
-        {/* The four kinds, on one line, all optional. Scrolls sideways on a narrow phone
-            rather than wrapping into a block that reads as a form to fill in. */}
+        {/* The four kinds, all optional. They wrap: in the 22rem dock the fourth chip used to sit
+            off the edge of a sideways scroll with nothing to say it was there. */}
         <div
-          className="-mx-1 flex shrink-0 flex-nowrap gap-1 overflow-x-auto px-1 pb-0.5"
+          className="flex shrink-0 flex-wrap gap-1"
           role="group"
           aria-label="Kind of feedback (optional)"
         >
@@ -905,8 +951,7 @@ export function FeedbackPanel({
         )}
         </>
         )}
-      </SheetContent>
-    </Sheet>
+    </aside>
   );
 }
 
@@ -949,10 +994,18 @@ function ImagePicker({
 /** A screen's top bar: room on the right for the sheet's own close button. */
 function PanelHeader({ children }: { children: React.ReactNode }) {
   return (
-    <SheetHeader className="flex shrink-0 flex-row items-center gap-3 border-b border-border/60 px-5 py-3 pr-12">
+    <header className="flex shrink-0 flex-row items-center gap-3 border-b border-border/60 px-5 py-3 pr-12">
       {children}
-    </SheetHeader>
+    </header>
   );
+}
+
+function PanelTitle({ className, children }: { className?: string; children: React.ReactNode }) {
+  return <h2 className={cn("font-heading text-base font-medium text-foreground", className)}>{children}</h2>;
+}
+
+function PanelDescription({ className, children }: { className?: string; children: React.ReactNode }) {
+  return <p className={cn("text-sm text-muted-foreground", className)}>{children}</p>;
 }
 
 /** Names what is actually about to be lost, rather than asking in the abstract. */
@@ -976,7 +1029,7 @@ function PanelThread({
 }: {
   id: string;
   onBack: () => void;
-  onNavigate: () => void;
+  onNavigate?: () => void;
   draft: ChatDraft;
 }) {
   const [thread, setThread] = useState<FeedbackThread | null | undefined>(undefined);
@@ -1002,12 +1055,12 @@ function PanelThread({
           <ArrowLeft className="size-4" aria-hidden />
         </button>
         <div className="min-w-0 flex-1">
-          <SheetTitle className="truncate text-base font-medium">
+          <PanelTitle className="truncate text-base font-medium">
             {thread?.report.subject || thread?.report.text?.split("\n")[0] || "Conversation"}
-          </SheetTitle>
-          <SheetDescription className="truncate text-xs">
+          </PanelTitle>
+          <PanelDescription className="truncate text-xs">
             {thread ? threadMeta(thread) : `With ${FEEDBACK_RECIPIENT}`}
-          </SheetDescription>
+          </PanelDescription>
         </div>
       </PanelHeader>
       {thread === undefined ? (

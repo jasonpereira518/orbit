@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { deleteContact } from "@/actions/contacts";
@@ -27,7 +28,7 @@ export function DeleteContactButton({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   function handleDelete() {
     setOpen(false);

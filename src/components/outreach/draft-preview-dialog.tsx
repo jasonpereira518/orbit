@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import {
   Dialog,
   DialogContent,
@@ -41,7 +42,7 @@ export function DraftPreviewDialog({
   prospect: ProspectRow;
   onUpdated?: () => void;
 }) {
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [isEditing, setIsEditing] = useState(false);
   const message = prospect.message;
 

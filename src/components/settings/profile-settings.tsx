@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import Link from "next/link";
@@ -182,8 +183,8 @@ export function AboutYouSettings({
 }) {
   const [bio, setBio] = useState(initialSenderBio);
   const [career, setCareer] = useState(initialCareer);
-  const [clearing, startClear] = useTransition();
-  const [bioPending, startBio] = useTransition();
+  const [clearing, startClear] = useGuardedTransition();
+  const [bioPending, startBio] = useGuardedTransition();
   // A failed save stays next to its button until the next attempt; the toast alone could
   // time out before it was read.
   const [bioError, setBioError] = useState<string | null>(null);
@@ -356,7 +357,7 @@ export function AboutYouSettings({
 /** The links on your own star in Constellation. */
 export function SocialLinksSettings({ initialSocialLinks }: { initialSocialLinks: SocialLinks }) {
   const [socials, setSocials] = useState(initialSocialLinks);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [socialsError, setSocialsError] = useState<string | null>(null);
 
   return (
