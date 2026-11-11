@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { escapeLike } from "@/lib/contact-search-rank";
 import { cleanSingleLine } from "@/lib/ai-security";
 import { linkedinSlug, nameSimilarity } from "@/lib/duplicates";
+import { sameGivenName } from "@/lib/names/nicknames";
 import {
   recruiters,
   recruiterContactUnlocks,
@@ -368,64 +369,6 @@ export async function pooledRecruiterIds(ids: string[]): Promise<Set<string>> {
   return new Set(rows.map((r) => r.recruiterId));
 }
 
-const NICKNAME_MAP: Record<string, string[]> = {
-  dan: ["daniel", "danny"],
-  daniel: ["dan", "danny"],
-  jon: ["john", "jonathan"],
-  jonathan: ["jon", "john"],
-  john: ["jon", "jonathan", "jack"],
-  bob: ["robert", "rob", "bobby"],
-  rob: ["robert", "bob", "robbie"],
-  robert: ["rob", "bob", "robbie", "bobby"],
-  bill: ["william", "will", "billy"],
-  will: ["william", "bill", "billy"],
-  william: ["will", "bill", "billy", "liam"],
-  alex: ["alexander", "alexandra", "alec"],
-  alexander: ["alex", "alec"],
-  alexandra: ["alex"],
-  chris: ["christopher", "christine"],
-  christopher: ["chris"],
-  mike: ["michael"],
-  michael: ["mike"],
-  matt: ["matthew"],
-  matthew: ["matt"],
-  dave: ["david"],
-  david: ["dave"],
-  sam: ["samuel", "samantha", "sammy"],
-  samuel: ["sam", "sammy"],
-  samantha: ["sam", "sammy"],
-  tom: ["thomas", "tommy"],
-  thomas: ["tom", "tommy"],
-  ben: ["benjamin", "benny"],
-  benjamin: ["ben", "benny"],
-  josh: ["joshua"],
-  joshua: ["josh"],
-  nick: ["nicholas", "nicolas"],
-  nicholas: ["nick"],
-  zach: ["zachary", "zack"],
-  zachary: ["zach", "zack"],
-  joe: ["joseph", "joey"],
-  joseph: ["joe", "joey"],
-  andy: ["andrew", "drew"],
-  drew: ["andrew", "andy"],
-  andrew: ["andy", "drew"],
-  tim: ["timothy"],
-  timothy: ["tim"],
-  ken: ["kenneth", "kenny"],
-  kenneth: ["ken", "kenny"],
-  jim: ["james", "jimmy"],
-  james: ["jim", "jimmy"],
-  steve: ["stephen", "steven"],
-  stephen: ["steve"],
-  steven: ["steve"],
-  greg: ["gregory"],
-  gregory: ["greg"],
-  tony: ["anthony"],
-  anthony: ["tony"],
-  ed: ["edward", "eddie"],
-  edward: ["ed", "eddie"],
-};
-
 const CORPORATE_ALIASES: Record<string, string> = {
   aws: "amazon",
   "amazon web services": "amazon",
@@ -462,12 +405,7 @@ export function canonicalFirm(firm: string | null | undefined): string {
 }
 
 export function areNicknames(a: string, b: string): boolean {
-  const normA = a.toLowerCase().trim();
-  const normB = b.toLowerCase().trim();
-  if (normA === normB) return true;
-  return Boolean(
-    NICKNAME_MAP[normA]?.includes(normB) || NICKNAME_MAP[normB]?.includes(normA)
-  );
+  return sameGivenName(a, b);
 }
 
 export function areNamesEquivalent(nameA: string, nameB: string): boolean {

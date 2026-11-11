@@ -13,6 +13,7 @@ import { getDb } from "@/db";
 import { aiResultCache } from "@/db/schema";
 import { and, eq, gt } from "drizzle-orm";
 import crypto from "node:crypto";
+import { nameFromSlug } from "@/lib/names/from-identifier";
 
 export type PeopleSearchCriteria = {
   titles?: string[];
@@ -333,15 +334,8 @@ export async function searchPeopleWithBrightData(
     if (linkedinUrls.length > 0) {
       const candidates: BrightDataCandidate[] = linkedinUrls.slice(0, criteria.limit || 6).map((url, idx) => {
         const username = url.split("/in/")[1]?.replace(/\/.*$/, "") || `candidate_${idx + 1}`;
-        const nameGuess = username
-          .replace(/[-_.]/g, " ")
-          .replace(/[0-9]/g, "")
-          .split(" ")
-          .filter(Boolean)
-          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(" ");
-
-        const candidateName = nameGuess.length > 3 ? nameGuess : `Executive Candidate ${idx + 1}`;
+        // The slug read as a name, or the slug itself: never a made-up "Executive Candidate N".
+        const candidateName = nameFromSlug(url)?.full ?? username;
         const targetCompany = criteria.company || "Leading Tech Firm";
         const targetTitle = criteria.titles?.[0] || "Director / VP";
 

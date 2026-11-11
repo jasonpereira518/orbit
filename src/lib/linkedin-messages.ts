@@ -11,6 +11,7 @@ import {
   looksLikeConnectionsExport,
 } from "@/lib/linkedin-connections";
 import { personNameFromSlug } from "@/lib/linkedin-paste";
+import { isPersonName } from "@/lib/names/classify";
 
 export type LinkedInMessageRow = {
   conversationId: string;
@@ -52,8 +53,8 @@ export function extractProfileUrls(raw: string): string[] {
 
 export function isLikelyPersonName(name: string): boolean {
   const t = name.trim();
-  if (!t || t.length < 2 || t.length > 60) return false;
-  if (/https?:\/\//i.test(t)) return false;
+  if (t.length > 60 || /https?:\/\//i.test(t)) return false;
+  // LinkedIn's own conversation titles and notices, which arrive where a name would.
   if (
     /\b(linkedin|offer|job alert|newsletter|invitation|hiring|recruiter|talent|team|group|event|message|inmail|notification|sponsored)\b/i.test(
       t
@@ -61,13 +62,9 @@ export function isLikelyPersonName(name: string): boolean {
   ) {
     return false;
   }
-  // Multi-person titles like "Jane, Alex, Sam"
+  // A comma here is a multi-person conversation title ("Jane, Alex, Sam"), never "Doe, Jane".
   if (/,/.test(t)) return false;
-  if (/\sand\s/i.test(t)) return false;
-
-  const words = t.split(/\s+/).filter(Boolean);
-  if (words.length < 1 || words.length > 4) return false;
-  return words.every((w) => /^[\p{L}'’.-]+$/u.test(w));
+  return t.split(/\s+/).length <= 4 && isPersonName(t);
 }
 
 /**
@@ -79,8 +76,10 @@ export function isLikelyPersonName(name: string): boolean {
  */
 export function nameFromLinkedInSlug(url: string): string {
   const slug = linkedinSlug(url);
-  if (!slug) return "LinkedIn contact";
-  return personNameFromSlug(slug) || "LinkedIn contact";
+  // Unreadable? The slug (or URL) itself: a handle on file is what the name sweep looks for,
+  // where a word like "LinkedIn contact" reads as a real name and is never revisited.
+  if (!slug) return url.trim();
+  return personNameFromSlug(slug) || slug;
 }
 
 export function mapLinkedInMessageRow(

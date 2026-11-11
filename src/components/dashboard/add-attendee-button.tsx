@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { displayNameFor } from "@/lib/names/from-identifier";
 
 /** "+ Add" beside a meeting guest who is not a contact yet; the refresh re-renders them with a photo. */
 export function AddAttendeeButton({ name, email }: { name: string; email: string }) {
@@ -24,7 +25,7 @@ export function AddAttendeeButton({ name, email }: { name: string; email: string
       onClick={() =>
         start(async () => {
           try {
-            await createContact({ fullName: name || email.split("@")[0], email });
+            await createContact({ fullName: displayNameFor({ name, email }), email });
             toast.success("Added to your orbit");
             router.refresh();
           } catch (err) {
