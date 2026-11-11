@@ -13,7 +13,6 @@ import {
   getGraphScopeState,
   requestGraphScope,
   subscribeGraphScope,
-  wasGraphScopeEverAvailable,
   type GraphScopeName,
 } from "@/lib/graph/scope-signal";
 import { cn } from "@/lib/utils";
@@ -31,8 +30,10 @@ import { cn } from "@/lib/utils";
  * tooltip. Inside a saved view (`lockedCount`) its members are explicit, not a filter, so both
  * segments grey out in place — same size, no shift — and the tooltip says what the view shows.
  *
- * Renders nothing until a chart says the filter is on. With it off there is only one view, and
- * a control that toggles between two identical charts would be worse than no control.
+ * `flagOn` is the operator's switch for the filter, read by the page on the server, so the
+ * control is in place (idle, no counts) from first paint instead of arriving with the chart and
+ * shoving the views menu sideways. With the flag off there is only one view, and a control that
+ * toggles between two identical charts would be worse than no control, so it renders nothing.
  */
 
 /** The look the views menu's trigger shares, so the two read as one control group. */
@@ -42,9 +43,12 @@ export const CONTROL_SHELL =
 const people = (n: number) => `${n.toLocaleString()} ${n === 1 ? "person" : "people"}`;
 
 export function ConstellationScopeToggle({
+  flagOn,
   lockedCount,
   className,
 }: {
+  /** The operator's constellation-filter switch (`getConstellationConfig().enabled`). */
+  flagOn: boolean;
   /** Set inside a saved view: the view's member count. Disables both segments. */
   lockedCount?: number;
   className?: string;
@@ -55,18 +59,24 @@ export function ConstellationScopeToggle({
     getGraphScopeState
   );
 
-  // Between views the chart releases the bus (state resets); keep the space, greyed.
-  if (!state.available && !wasGraphScopeEverAvailable()) return null;
+  if (!flagOn) return null;
 
   const locked = lockedCount !== undefined;
-  const idle = !state.available || state.loading;
+  // Idle until a chart publishes (first paint, and every hand-over between views): same size,
+  // greyed, and no counts it does not have yet.
+  const counted = state.available;
+  const idle = !counted || state.loading;
   const segments: Array<{ scope: GraphScopeName; label: string; tip: string }> = [
     {
       scope: "engaged",
       label: "Top",
-      tip: `${people(state.shown)} you’ve engaged with — meetings, notes, real conversations`,
+      tip: `${counted ? people(state.shown) : "People"} you’ve engaged with — meetings, notes, real conversations`,
     },
-    { scope: "all", label: "All", tip: `Every one of your ${state.total.toLocaleString()} connections` },
+    {
+      scope: "all",
+      label: "All",
+      tip: counted ? `Every one of your ${state.total.toLocaleString()} connections` : "Every one of your connections",
+    },
   ];
 
   return (

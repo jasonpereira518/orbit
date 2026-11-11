@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { getGenerating, subscribe } from "@/lib/graph/generating-signal";
 import { STAGE_GENERATING_LAYER, STAGE_GROUND } from "@/lib/graph/stage-layers";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -10,8 +10,12 @@ import { cn } from "@/lib/utils";
  * The scene while a new view is drawn: stars light up and join around the prompt the person
  * wrote, then the real sky fades in under it.
  *
- * Mounted beside `ConstellationIntro`, outside the Suspense boundary, so it survives the route
- * swap to the new view and the bus (`generating-signal.ts`) decides when it ends.
+ * Wraps the graph's Suspense boundary (outside it), so it survives the route swap to the new
+ * view and the bus (`generating-signal.ts`) decides when it ends. While the scene is up the
+ * chart under it is `inert`: covered controls must not take keyboard focus.
+ *
+ * The live region is always mounted and only its text changes; a region inserted together
+ * with its content is often not announced at all.
  */
 
 /** One fixed figure (viewBox 0 0 100 60), so the scene reads the same every time. */
@@ -35,16 +39,27 @@ const LINES: ReadonlyArray<readonly [number, number]> = [
   [5, 7],
 ];
 
-export function ConstellationGenerating() {
+export function ConstellationGenerating({ children }: { children: ReactNode }) {
   const generating = useSyncExternalStore(subscribe, getGenerating, () => null);
   const reduced = usePrefersReducedMotion();
-  if (!generating) return null;
-  const leaving = generating.phase === "leaving";
+  const busy = generating !== null && generating.phase !== "leaving";
 
   return (
+    <>
+      <div inert={busy}>{children}</div>
+      <p role="status" aria-live="polite" className="sr-only">
+        {busy ? `Charting your constellation: ${generating.prompt}` : ""}
+      </p>
+      {generating && <Scene prompt={generating.prompt} leaving={!busy} reduced={reduced} />}
+    </>
+  );
+}
+
+function Scene({ prompt, leaving, reduced }: { prompt: string; leaving: boolean; reduced: boolean }) {
+  return (
     <div
-      role="status"
-      aria-live="polite"
+      // The live region above speaks for it.
+      aria-hidden
       className={cn(
         "absolute inset-0 flex flex-col items-center justify-center gap-4 overflow-hidden rounded-2xl px-6",
         STAGE_GROUND,
@@ -89,7 +104,7 @@ export function ConstellationGenerating() {
       <div className="max-w-md text-center">
         {/* User input: plain text only, held to two lines. */}
         <p className="line-clamp-2 break-words font-[family-name:var(--font-display)] text-lg text-white/85">
-          “{generating.prompt}”
+          “{prompt}”
         </p>
         <p className="mt-1.5 text-sm text-white/55">Charting your constellation…</p>
       </div>

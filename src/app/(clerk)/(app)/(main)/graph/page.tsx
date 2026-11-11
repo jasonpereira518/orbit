@@ -3,6 +3,7 @@ import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { Suspense } from "react";
 import { getConstellationGraphData, getGraphData } from "@/actions/graph";
 import { getConstellationTabs } from "@/actions/custom-constellations";
+import { getConstellationConfig } from "@/lib/constellation-config";
 import { ConstellationViewsMenu } from "@/components/graph/constellation-views-menu";
 import { ConstellationGenerating } from "@/components/graph/constellation-generating";
 import { ConstellationIntro } from "@/components/graph/constellation-intro";
@@ -34,7 +35,13 @@ export default async function GraphPage({
   if (gate) return gate;
 
   const { c } = await searchParams;
-  const { tabs, canCreate } = await getConstellationTabs();
+  // The operator's filter switch, so Top | All is in place from first paint rather than arriving
+  // with the chart. No extra statement on the graph path: `loadGraphData` reads the same config
+  // through the same request cache (and a 15s per-instance memo).
+  const [{ tabs, canCreate }, constellationConfig] = await Promise.all([
+    getConstellationTabs(),
+    getConstellationConfig(),
+  ]);
   // Only a sky that is really in the caller's list counts. A stale or made-up `c` falls back to
   // Everyone, and the scope toggle (which sits above the Suspense boundary) has to follow suit.
   const active = typeof c === "string" ? (tabs.find((t) => t.id === c) ?? null) : null;
@@ -76,7 +83,10 @@ export default async function GraphPage({
         {/* Inside a saved view Top | All greys out in place: its members are explicit, not a filter. */}
         <div className="mb-0.5 flex min-w-0 items-center gap-1.5 md:shrink-0">
           <ConstellationViewsMenu tabs={tabs} activeId={activeId} canCreate={canCreate} />
-          <ConstellationScopeToggle lockedCount={active?.memberCount} />
+          <ConstellationScopeToggle
+            flagOn={constellationConfig.enabled}
+            lockedCount={active?.memberCount}
+          />
         </div>
       </div>
       {/*
@@ -99,17 +109,18 @@ export default async function GraphPage({
       */}
       <div className={`relative rounded-2xl ${STAGE_GROUND}`} {...tourAnchor("graph.stage")}>
         <ConstellationIntro />
-        {/* Also outside the boundary: it covers the swap to a just-created view, and ends when
-            that view's sky is on screen (generating-signal.ts). */}
-        <ConstellationGenerating />
-        {/* Keyed on the sky: a view switch shows the loading panel and remounts the chart, so one
-            sky's layout, camera and search never leak into the next. */}
-        <Suspense
-          key={activeId ?? "all"}
-          fallback={<ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />}
-        >
-          <GraphIsland constellationId={activeId} />
-        </Suspense>
+        {/* Also outside the boundary: it covers the swap to a just-created view, ends when that
+            view's sky is on screen (generating-signal.ts), and makes the chart under it inert. */}
+        <ConstellationGenerating>
+          {/* Keyed on the sky: a view switch shows the loading panel and remounts the chart, so one
+              sky's layout, camera and search never leak into the next. */}
+          <Suspense
+            key={activeId ?? "all"}
+            fallback={<ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />}
+          >
+            <GraphIsland constellationId={activeId} />
+          </Suspense>
+        </ConstellationGenerating>
       </div>
     </div>
   );

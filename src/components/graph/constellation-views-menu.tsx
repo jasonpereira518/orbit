@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { ChevronDown, Loader2, MoreHorizontal, Plus } from "lucide-react";
 import {
@@ -72,6 +72,7 @@ export function ConstellationViewsMenu({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<ConstellationTab | null>(null);
   const list = useRef<HTMLUListElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const active = tabs.find((t) => t.id === activeId) ?? null;
   const name = active?.name ?? "My network";
 
@@ -127,6 +128,7 @@ export function ConstellationViewsMenu({
     <>
       <Popover open={open} onOpenChange={changeOpen}>
         <PopoverTrigger
+          ref={trigger}
           title={name}
           aria-label={`View: ${name}`}
           className={cn(
@@ -223,8 +225,10 @@ export function ConstellationViewsMenu({
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     onKeyDown={(e) => {
-                      // Enter sends, Shift+Enter is a new line; never mid-composition (IME).
-                      if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      // Enter sends, Shift+Enter is a new line; never mid-composition (IME). Safari
+                      // fires compositionend BEFORE the confirming keydown, so isComposing is already
+                      // false there; keyCode 229 is how that keydown still identifies itself.
+                      if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                         e.preventDefault();
                         e.currentTarget.form?.requestSubmit();
                       }
@@ -268,6 +272,8 @@ export function ConstellationViewsMenu({
       {deleting && (
         <DeleteDialog
           tab={deleting}
+          // The menu item that opened it is gone with the popover; land back on the menu.
+          returnFocus={trigger}
           open
           onOpenChange={(next) => !next && setDeleting(null)}
           onDeleted={() => {
@@ -355,11 +361,13 @@ function RenameField({
 
 function DeleteDialog({
   tab,
+  returnFocus,
   open,
   onOpenChange,
   onDeleted,
 }: {
   tab: ConstellationTab;
+  returnFocus: RefObject<HTMLElement | null>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDeleted: () => void;
@@ -380,7 +388,7 @@ function DeleteDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (pending ? undefined : onOpenChange(next))}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent showCloseButton={false} finalFocus={returnFocus}>
         <DialogHeader>
           <DialogTitle>Delete “{tab.name}”?</DialogTitle>
           <DialogDescription>
