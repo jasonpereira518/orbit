@@ -35,3 +35,6 @@ export type GraphChartProps = {
   onShowAll: () => void;
   loadingAll: boolean;
 };
+
+/** A custom constellation shown in place of the whole network; `reasons` is why each member (by contact id) is in it. */
+export type GraphConstellation = { id: string; name: string; reasons: Record<string, string> };

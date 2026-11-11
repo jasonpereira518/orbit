@@ -1,7 +1,9 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { Suspense } from "react";
-import { getGraphData } from "@/actions/graph";
+import { getConstellationGraphData, getGraphData } from "@/actions/graph";
+import { getConstellationTabs } from "@/actions/custom-constellations";
+import { ConstellationTabs } from "@/components/graph/constellation-tabs";
 import { ConstellationIntro } from "@/components/graph/constellation-intro";
 import { ConstellationScopeToggle } from "@/components/graph/constellation-scope-toggle";
 import {
@@ -19,9 +21,19 @@ export const metadata = { title: "Constellation" };
  * a Suspense boundary. Before, the page awaited the scan at the top, so the first byte
  * waited for the whole payload — on a large network, seconds of blank.
  */
-export default async function GraphPage() {
+export default async function GraphPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const gate = await pageVisibilityGate("page.graph");
   if (gate) return gate;
+
+  const { c } = await searchParams;
+  const { tabs, canCreate } = await getConstellationTabs();
+  // Only a sky that is really in the caller's list counts. A stale or made-up `c` falls back to
+  // Everyone, and the scope toggle (which sits above the Suspense boundary) has to follow suit.
+  const activeId = typeof c === "string" ? (tabs.find((t) => t.id === c)?.id ?? null) : null;
 
   return (
     <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
@@ -36,7 +48,7 @@ export default async function GraphPage() {
         near enough to read as a third piece of app chrome, when it is a control for this one
         chart and belongs next to it.
       */}
-      <div className="flex shrink-0 items-end justify-between gap-3 px-1">
+      <div className="flex shrink-0 flex-wrap items-end justify-between gap-x-3 gap-y-3 px-1">
         <div>
           <p className="text-2xs font-medium uppercase tracking-[0.2em] text-primary">
             Star chart
@@ -52,7 +64,12 @@ export default async function GraphPage() {
             you — each figure traced by its own people.
           </p>
         </div>
-        <ConstellationScopeToggle className="mb-0.5 shrink-0" />
+        {/* Full row below the title on a phone, beside it from `md`. Inside a custom sky the
+            engaged/everyone switch is hidden: its members are explicit, not a filter. */}
+        <div className="mb-0.5 flex w-full min-w-0 items-center gap-2 md:w-auto md:max-w-[60%]">
+          <ConstellationTabs tabs={tabs} activeId={activeId} canCreate={canCreate} className="min-w-0 flex-1" />
+          {!activeId && <ConstellationScopeToggle className="shrink-0" />}
+        </div>
       </div>
       {/*
         The intro sits OUTSIDE the boundary so it outlives every phase swap beneath it — the
@@ -74,17 +91,28 @@ export default async function GraphPage() {
       */}
       <div className={`relative rounded-2xl ${STAGE_GROUND}`} {...tourAnchor("graph.stage")}>
         <ConstellationIntro />
+        {/* Keyed on the sky: a tab switch shows the loading panel and remounts the chart, so one
+            sky's layout, camera and search never leak into the next. */}
         <Suspense
+          key={activeId ?? "all"}
           fallback={<ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />}
         >
-          <GraphIsland />
+          <GraphIsland constellationId={activeId} />
         </Suspense>
       </div>
     </div>
   );
 }
 
-async function GraphIsland() {
-  const initialData = await getGraphData();
-  return <NetworkGraphLazy initialData={initialData} />;
+async function GraphIsland({ constellationId }: { constellationId: string | null }) {
+  // Null also covers a sky deleted since the tab list was read: fall back to Everyone.
+  const sky = constellationId ? await getConstellationGraphData(constellationId) : null;
+  const initialData = sky ? sky.payload : await getGraphData();
+  return (
+    <NetworkGraphLazy
+      key={sky?.constellation.id ?? "all"}
+      initialData={initialData}
+      constellation={sky?.constellation}
+    />
+  );
 }

@@ -6,6 +6,7 @@
  */
 import { requireUserForSurface } from "@/lib/plan-guards";
 import { resolvePlan } from "@/lib/entitlements";
+import { getConstellationLimitForPlan } from "@/lib/plans/plan-config";
 import { UserFacingError } from "@/lib/errors";
 import { ensureUserSettings } from "@/lib/user-settings";
 import {
@@ -40,6 +41,14 @@ export async function createConstellation(prompt: string): Promise<{ id: string 
 
 export async function listConstellations(): Promise<ConstellationTab[]> {
   return listCustomConstellations(await requireUserForSurface("page.graph"));
+}
+
+/** The strip's data in one call. Only a boolean crosses to the client: the free cap is a number, the paid one is `Infinity`. */
+export async function getConstellationTabs(): Promise<{ tabs: ConstellationTab[]; canCreate: boolean }> {
+  const userId = await requireUserForSurface("page.graph");
+  const [tabs, settings] = await Promise.all([listCustomConstellations(userId), ensureUserSettings(userId)]);
+  const { plan } = resolvePlan(settings);
+  return { tabs, canCreate: tabs.length < getConstellationLimitForPlan(plan) };
 }
 
 export async function renameConstellation(id: string, name: string): Promise<boolean> {

@@ -9,10 +9,10 @@ import { cn } from "@/lib/utils";
  * floating bottom nav is a fixed ~4rem pill below `md`, and the shorter box ran the canvas
  * and its Key / fullscreen / home buttons underneath it, where they could not be tapped.
  *
- * Below `md` it is 15.125rem, not the 18.5rem it was: the page's description is hidden on
- * phones (three lines on a 402px screen), and the height it freed went to the chart. The
- * header above the canvas is now just the kicker and title, so its height no longer depends
- * on how the description wraps, and the canvas's bottom edge sits where it always did —
+ * Below `md` it is 17.875rem: the page's description is hidden on phones (three lines on a
+ * 402px screen), so the header above the canvas is the kicker and title (15.125rem of
+ * offset) plus the 2.75rem constellation tab row, and its height no longer depends on how
+ * the description wraps, and the canvas's bottom edge sits where it always did —
  * clear of the nav. `network-graph.tsx` repeats this value on the real stage; keep the two
  * in step.
  *
@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
  * if the children disagreed about height, the animation would resize mid-run.
  */
 export const CONSTELLATION_STAGE_HEIGHT =
-  "h-[calc(100dvh-15.125rem)] md:h-[calc(100dvh-10.5rem)]";
+  "h-[calc(100dvh-17.875rem)] md:h-[calc(100dvh-10.5rem)]";
 
 /**
  * Stand-in for the star chart while its (large) chunk and data load.
