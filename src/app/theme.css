@@ -1315,6 +1315,17 @@
   }
 }
 
+/* The stars trail the camera (camera-motion.ts `setSkyDrift`); reduced motion holds them still.
+   JS already stops writing the offset, this also clears one set before the setting changed. */
+@media (prefers-reduced-motion: reduce) {
+  .constellation-starfield-drift {
+    transform: none !important;
+  }
+}
+html[data-motion="reduce"] .constellation-starfield-drift {
+  transform: none !important;
+}
+
 .constellation-comet {
   display: flex;
   align-items: center;
