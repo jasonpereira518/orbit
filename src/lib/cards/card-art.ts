@@ -47,7 +47,7 @@ export type CardArt = {
   /** A short hash of the seed: the SVG's id prefix, so two cards on one page never share a gradient. */
   id: string;
   accent: AccentKey;
-  /** In path order: each one joins the nearest star not yet on the line. */
+  /** In path order: each one joins the nearest star not yet on the line (long jumps stay undrawn). */
   stars: Star[];
   dust: Dust[];
   planet: {
@@ -241,8 +241,16 @@ function planetSvg(art: CardArt, w: number, h: number) {
 function constellation(art: CardArt, w: number, h: number) {
   const { s, box } = artLayout(w, h);
   const at = (st: Star) => [box.x0 + st.x * (box.x1 - box.x0), box.y0 + st.y * (box.y1 - box.y0)];
-  const points = art.stars.map((st) => at(st).map(n).join(",")).join(" ");
-  const line = `<polyline class="oc-line" pathLength="1" points="${points}" fill="none" stroke="${ACCENTS[art.accent].hex}" stroke-opacity="0.6" stroke-width="${n(0.0045 * s)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  // A long jump back across the chart (where nearest-neighbour runs out of near stars) is
+  // left undrawn: two small figures read as a constellation, a slash across one does not.
+  const d = art.stars
+    .map((st, i) => {
+      const prev = art.stars[i - 1];
+      const move = !prev || Math.hypot(st.x - prev.x, st.y - prev.y) > 0.55;
+      return `${move ? "M" : "L"}${at(st).map(n).join(" ")}`;
+    })
+    .join("");
+  const line = `<path class="oc-line" pathLength="1" d="${d}" fill="none" stroke="${ACCENTS[art.accent].hex}" stroke-opacity="0.6" stroke-width="${n(0.0045 * s)}" stroke-linecap="round" stroke-linejoin="round"/>`;
   const stars = art.stars
     .map((st, i) => {
       const [x, y] = at(st);
