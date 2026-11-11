@@ -158,6 +158,7 @@
 "smoke-command-palette": 0.2,
 "smoke-command-palette-coverage": 0.5,
 "smoke-nav-parity": 0.2,
+"smoke-guess-gender": 0.2,
 "smoke-compose-draft": 0.2,
 "smoke-connect-gates": 0.6,
 "smoke-connection-status": 0.2,

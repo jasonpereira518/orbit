@@ -386,31 +386,137 @@ const FEMALE_NAMES = new Set(
   ].map((n) => n.toLowerCase())
 );
 
-function normalizeFirstName(name: string | null | undefined) {
-  if (!name) return "";
-  // Prefer first token; strip punctuation.
-  return name.trim().split(/\s+/)[0]?.replace(/[^a-zA-Z'-]/g, "").toLowerCase() ?? "";
+/**
+ * Names that are used for both, or that flip across cultures, kept OUT of the confident
+ * lists on purpose: the photo-less avatar is a guess, and a wrong guess ("Taylor" or "Alex"
+ * drawn as a man or a woman, "Andrea" or "Jean" as the wrong one) is worse than a neutral
+ * silhouette. Wins over `MALE_NAMES` and `FEMALE_NAMES`, so a name in both worlds can never
+ * be listed its way back into a confident guess.
+ */
+const UNISEX_NAMES = new Set([
+  "alex",
+  "andrea",
+  "ashley",
+  "austin",
+  "cameron",
+  "chris",
+  "dana",
+  "dylan",
+  "harper",
+  "jackie",
+  "jay",
+  "jean",
+  "jesse",
+  "joan",
+  "jordan",
+  "kelly",
+  "kim",
+  "leslie",
+  "logan",
+  "lynn",
+  "robin",
+  "sam",
+  "sydney",
+  "taylor",
+  "whitney",
+]);
+
+/** Titles that say which one it is. Said by the person's own record, so they are confident. */
+const GENDERED_TITLES: Readonly<Record<string, GuessedGender>> = {
+  mr: "male",
+  mister: "male",
+  sir: "male",
+  mrs: "female",
+  ms: "female",
+  miss: "female",
+  madam: "female",
+  mme: "female",
+  mlle: "female",
+};
+
+/** Titles that say nothing about it, and are not a first name. */
+const NEUTRAL_TITLES = new Set([
+  "capt",
+  "col",
+  "dr",
+  "eng",
+  "gen",
+  "hon",
+  "ing",
+  "judge",
+  "lt",
+  "maj",
+  "mx",
+  "prof",
+  "professor",
+  "rev",
+  "sgt",
+]);
+
+/** "J." and "J.R." — an initial is not a name. */
+const INITIALS = /^\p{L}(?:\.\p{L})*\.?$/u;
+
+/** Lowercase letters only, accents folded ("José" → "jose", "Zoë" → "zoe"). */
+function fold(token: string): string {
+  return token
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z'-]/g, "")
+    .replace(/^[-']+|[-']+$/g, "");
 }
 
-/**
- * Guess gender from a first name for avatar fallbacks.
- * Known unambiguous names map to male/female; unknown or ambiguous → unknown
- * (use the default avatar).
- */
-export function guessGenderFromFirstName(
-  firstName: string | null | undefined,
-  fallbackSeed?: string | null
-): GuessedGender {
-  const key =
-    normalizeFirstName(firstName) || normalizeFirstName(fallbackSeed);
-  if (!key) return "unknown";
-
+function lookupName(key: string): GuessedGender {
+  if (!key || UNISEX_NAMES.has(key)) return "unknown";
+  if (key.includes("-")) {
+    // "Mary-Jane" is confident only when every part says the same thing: "Jean-Pierre" has a
+    // unisex part, so it is not, however male the whole name is.
+    const parts = key.split("-").filter(Boolean).map(lookupName);
+    return parts.length > 0 && parts.every((g) => g === parts[0]) ? (parts[0] ?? "unknown") : "unknown";
+  }
   const male = MALE_NAMES.has(key);
   const female = FEMALE_NAMES.has(key);
   if (male && !female) return "male";
   if (female && !male) return "female";
   // Ambiguous (in both lists) or not in either → low confidence
   return "unknown";
+}
+
+/**
+ * The first usable word of `text`: not an initial, not a neutral title. A gendered title is
+ * returned as its gender, since it says so outright. `null` when nothing is left to read.
+ * `skipSurname` refuses a word that is the last of several, which after only initials and
+ * titles is a surname ("J. Rose", "Dr. Chen") and must not be read as a first name.
+ */
+function firstReadableWord(text: string | null | undefined, skipSurname: boolean): GuessedGender | null {
+  const words = (text ?? "").trim().split(/\s+/).filter(Boolean);
+  for (const [i, word] of words.entries()) {
+    if (INITIALS.test(word)) continue;
+    const key = fold(word);
+    if (!key) continue;
+    if (key in GENDERED_TITLES) return GENDERED_TITLES[key]!;
+    if (NEUTRAL_TITLES.has(key)) continue;
+    if (skipSurname && words.length > 1 && i === words.length - 1) return "unknown";
+    return lookupName(key);
+  }
+  return null;
+}
+
+/**
+ * Guess gender from a first name for avatar fallbacks.
+ *
+ * Deliberately conservative: only a name that is listed as one gender and nothing else, or a
+ * title that says it, gets a man or a woman. Unisex, ambiguous, unlisted, non-Latin and
+ * hyphenated-and-mixed names are `unknown`, which draws the neutral silhouette.
+ *
+ * `firstName` decides when it has a readable word. `fallbackSeed` (the full name) is read only
+ * when it has none ("Dr." alone, an initial), and then never its surname.
+ */
+export function guessGenderFromFirstName(
+  firstName: string | null | undefined,
+  fallbackSeed?: string | null
+): GuessedGender {
+  return firstReadableWord(firstName, false) ?? firstReadableWord(fallbackSeed, true) ?? "unknown";
 }
 
 /** Static fallback avatar paths under /public/avatars. */
