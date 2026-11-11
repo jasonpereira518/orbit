@@ -101,6 +101,12 @@ t.check("planet, ring and moon stay inside the pane, clear of the stars", planet
 t.check("no NaN/Infinity/undefined in any SVG", finiteOk, detail.join(", "));
 t.check("safe area clear of the planet; QR tile inside the ring", layoutOk, detail.join(", "));
 
+// A horizontal back is the QR on its own: no orbit ring, no dot. An upright back keeps its circle.
+const flatBack = cardArtSvg(a, { width: 1586, height: 1000, part: "back" });
+const tallBack = cardArtSvg(a, { width: 1000, height: 1586, part: "back" });
+t.check("horizontal back has no ring around the QR", !/<ellipse|stroke="#d4b469"/i.test(flatBack));
+t.check("upright back keeps its gold ring", /<ellipse/.test(tallBack));
+
 // No user text, ever.
 const named = cardArt(cardSeed("Ada Lovelace", 0), null);
 const svgs = SIZES.flatMap((s) => [cardArtSvg(named, { ...s, part: "front" }), cardArtSvg(named, { ...s, part: "back" })]);

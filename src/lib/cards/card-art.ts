@@ -310,12 +310,15 @@ function back(art: CardArt, w: number, h: number) {
   const dx = cx + Math.cos(a) * rx;
   const dy = cy + Math.sin(a) * ry;
   const hex = ACCENTS[art.accent].hex;
+  const tileSvg = `<rect x="${n(cx - tile / 2)}" y="${n(cy - tile / 2)}" width="${n(tile)}" height="${n(tile)}" rx="${n(tile * 0.08)}" fill="${TILE}"/>`;
+  // A horizontal back is the code on its own against the stars — no orbit around it.
+  if (w >= h) return tileSvg;
   return (
     `<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(rx * 1.05)}" ry="${n(ry * 1.05)}" fill="none" stroke="${GOLD}" stroke-opacity="0.25" stroke-width="${n(0.004 * s)}"/>` +
     `<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(rx)}" ry="${n(ry)}" fill="none" stroke="${GOLD}" stroke-width="${n(0.012 * s)}"/>` +
     `<circle cx="${n(dx)}" cy="${n(dy)}" r="${n(0.05 * s)}" fill="url(#${art.id}-halo)"/>` +
     `<circle cx="${n(dx)}" cy="${n(dy)}" r="${n(0.02 * s)}" fill="${hex}"/>` +
-    `<rect x="${n(cx - tile / 2)}" y="${n(cy - tile / 2)}" width="${n(tile)}" height="${n(tile)}" rx="${n(tile * 0.08)}" fill="${TILE}"/>`
+    tileSvg
   );
 }
 
