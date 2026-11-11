@@ -358,6 +358,24 @@ async function main() {
   );
   check("an answer that does not parse has no verdict", answerMatch("not json") === null);
 
+  // --- Jev's veto of the verify search (work history only, spec 2026-11-10) -----------
+  const vetoAsked: string[] = [];
+  const veto = (answer: boolean) => async (firstJson: string) => {
+    vetoAsked.push(firstJson);
+    return answer;
+  };
+  stepCalls.length = 0;
+  const vetoed = await searchOnceThenVerify(answering(["unsure", "confident"]), "p", { vetoVerify: veto(true) });
+  check("a veto stops an unsure first answer at one search", stepCalls.join() === "1" && vetoed.vetoed === true, stepCalls.join());
+  check("…and the veto read the first answer", answerMatch(vetoAsked[0] ?? "") === "unsure");
+  stepCalls.length = 0;
+  const kept = await searchOnceThenVerify(answering(["unsure", "confident"]), "p", { vetoVerify: veto(false) });
+  check("no veto: the verify search runs as before", stepCalls.join() === "1,1" && kept.vetoed === undefined, stepCalls.join());
+  vetoAsked.length = 0;
+  stepCalls.length = 0;
+  await searchOnceThenVerify(answering(["confident"]), "p", { vetoVerify: veto(true) });
+  check("a confident first answer never asks for a veto", vetoAsked.length === 0 && stepCalls.join() === "1");
+
   // --- briefs are pruned at RESEARCH_CACHE_DAYS; other cached answers are not -------
   const old = new Date(Date.now() - (RESEARCH_CACHE_DAYS + 1) * 86_400_000);
   await db.update(aiResultCache).set({ createdAt: old }).where(eq(aiResultCache.userId, USER));

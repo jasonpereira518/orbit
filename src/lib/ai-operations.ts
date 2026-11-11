@@ -168,6 +168,18 @@ export const AI_OPERATIONS = {
   "contact.brief.gate": { label: "Contact briefs: anything new? (decision model)", tier: "decision" },
   "extension.starters.gate": { label: "Extension: enough for openers? (decision model)", tier: "decision" },
   "import.enrich.gate": { label: "LinkedIn import: worth summarizing? (decision model)", tier: "decision", background: true },
+  // The two work-history gates — the only decisions Orbit's own TypeSafe key answers
+  // (`ORBIT_PAID_DECISIONS`, ai-access.ts; spec 2026-11-10-jev-work-history-design.md).
+  "contact.work_history.recheck.gate": {
+    label: "Work history: re-check needed? (decision model)",
+    tier: "decision",
+    background: true,
+  },
+  "contact.work_history.verify.gate": {
+    label: "Work history: same person? (decision model)",
+    tier: "decision",
+    background: true,
+  },
   "import.linkedin.timeline.decide": {
     label: "LinkedIn timeline events (decision model)",
     tier: "decision",

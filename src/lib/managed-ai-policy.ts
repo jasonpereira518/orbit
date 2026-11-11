@@ -56,6 +56,15 @@ export const MANAGED_AI_POOLS: Partial<Record<AiProvider, ManagedPool>> = {
 };
 
 /**
+ * Orbit-paid spend on providers that have no pool of their own, counted inside one that does.
+ * TypeSafe (Jev) is in the Anthropic pool: Jason, Oct 19 2026 — the $190 covers everything
+ * Orbit pays for AI.
+ */
+export const POOL_ALSO_COUNTS: Partial<Record<AiProvider, readonly string[]>> = {
+  anthropic: ["typesafe"],
+};
+
+/**
  * Where a pool's current window starts: the latest `monthlyResetDay` at 00:00 UTC on or
  * before `now`, never earlier than `since`; just `since` for a pool that never resets.
  */

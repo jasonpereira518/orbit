@@ -209,6 +209,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   work_history_due_at timestamptz,
   work_history_misses integer NOT NULL DEFAULT 0,
   work_history_miss_slug text,
+  work_history_jev_skipped_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -3109,7 +3110,12 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // (each side's last keystroke, for the typing dots — a serverless deploy has no shared memory
 // to hold them in); and feedback_screenshots.message_id (a screenshot sent later in the
 // conversation belongs to that message, not the opening report).
-export const SCHEMA_VERSION = 219;
+//
+// 220 = Jev on Orbit's key for work-history searches (docs/superpowers/specs/
+// 2026-11-10-jev-work-history-design.md): contacts.work_history_jev_skipped_at — set when Jev
+// skipped a re-check or vetoed a verify search, so the next run is never gated again. Scanned
+// every remote ref and local worktree on Nov 11 2026: 219 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 220;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4428,6 +4434,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
   await ensureColumn(client, "contacts", "work_history_misses", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "contacts", "work_history_miss_slug", "text");
+  await ensureColumn(client, "contacts", "work_history_jev_skipped_at", "timestamptz");
   await ensureColumn(client, "usage_events", "web_searches", "integer");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "email_intel_enabled", "integer NOT NULL DEFAULT 0");
@@ -4993,6 +5000,8 @@ const alters = [
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS web_searches integer`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_misses integer NOT NULL DEFAULT 0`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_miss_slug text`,
+  // Schema v220: when Jev last skipped a work-history re-check or vetoed a verify search.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_jev_skipped_at timestamptz`,
   // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
   // which cycle and level were last sent (claimed in one UPDATE before each send).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,

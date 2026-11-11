@@ -32,6 +32,7 @@ import {
   runWorkHistorySweep,
   SWEEP_CLAIM_PER_USER,
 } from "../src/lib/work-history-sweep";
+import { NO_ENGINES } from "../src/lib/decisions/engine";
 
 const HEAVY = "smoke-whs-heavy";
 const LIGHT = "smoke-whs-light";
@@ -145,7 +146,17 @@ async function sweep() {
   const noAiId = await addContact(NO_AI, "No Key", 90, { closenessTier: "inner" });
 
   const first = recorder();
-  const stats = await runWorkHistorySweep({ researcher: first.researcher, canUseAi: aiFor });
+  const opened: string[] = [];
+  const stats = await runWorkHistorySweep({
+    researcher: first.researcher,
+    canUseAi: aiFor,
+    openEngines: async (userId) => {
+      opened.push(userId);
+      return NO_ENGINES;
+    },
+  });
+  check("Jev's engines open once per account, not once per contact", new Set(opened).size === opened.length, opened.join(", "));
+  check("…for every account the sweep worked on", opened.includes(HEAVY) && opened.includes(LIGHT), opened.join(", "));
   const names = first.asked.map((a) => a.name);
   check(
     `one run checks at most ${SWEEP_CLAIM_PER_USER} of a big network`,
