@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { ChatThreadProvider } from "@/components/chat/chat-thread-context";
+import { ComposerTip } from "@/components/chat/composer-tip";
 import { DraftEditor } from "@/components/chat/draft-editor";
 import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
 import { WritingInstructionsField } from "@/components/chat/writing-instructions-field";
@@ -1656,43 +1657,49 @@ export function ChatPanel({
   }, [messages]);
   const composerExtras = {
     attach: (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        className="size-9 shrink-0 rounded-full text-muted-foreground"
-        aria-label="Attach a file"
-        title="Attach a photo, PDF or text file. Reading a photo or PDF uses AI credits."
-        disabled={loadingThread || fileChips.length >= CHAT_ATTACHMENTS_MAX}
-        onClick={() => fileInputRef.current?.click()}
+      <ComposerTip
+        label="Attach a file"
+        hint="A photo, PDF or text file. Reading a photo or PDF uses AI credits."
+        trigger={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-9 shrink-0 rounded-full text-muted-foreground"
+            aria-label="Attach a file"
+            disabled={loadingThread || fileChips.length >= CHAT_ATTACHMENTS_MAX}
+            onClick={() => fileInputRef.current?.click()}
+          />
+        }
       >
         <Paperclip className="size-4" />
-      </Button>
+      </ComposerTip>
     ),
     deep: (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-pressed={deep}
-        aria-label="Deep research"
-        title={
-          deep
-            ? "Deep research is on: a thorough answer that can take a few minutes and uses more AI credits"
-            : "Deep research: a thorough answer that can take a few minutes and uses more AI credits"
+      <ComposerTip
+        label={deep ? "Deep research: on" : "Deep research"}
+        hint="A thorough answer that can take a few minutes and uses more AI credits."
+        trigger={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-pressed={deep}
+            aria-label="Deep research"
+            disabled={loadingThread}
+            onClick={() => {
+              setDeep(!deep);
+              writeChatDeep(!deep);
+            }}
+            className={cn(
+              "size-9 shrink-0 rounded-full",
+              deep ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
+            )}
+          />
         }
-        disabled={loadingThread}
-        onClick={() => {
-          setDeep(!deep);
-          writeChatDeep(!deep);
-        }}
-        className={cn(
-          "size-9 shrink-0 rounded-full",
-          deep ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
-        )}
       >
         <Telescope className="size-4" />
-      </Button>
+      </ComposerTip>
     ),
     web: (
       <WebSearchControl

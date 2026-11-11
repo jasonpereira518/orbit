@@ -2,6 +2,7 @@
 
 import { Check, Globe } from "lucide-react";
 
+import { ComposerTip } from "@/components/chat/composer-tip";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { WebChoice } from "@/lib/chat-web-decision";
@@ -50,35 +51,42 @@ export function WebSearchControl({
       : choice;
   return (
     <Popover>
-      <PopoverTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Web search: ${state}`}
-            title={`Web search: ${state}. ${OPTIONS.find((o) => o.value === choice)!.hint}`}
-            disabled={disabled}
-            className={cn(
-              "relative size-9 shrink-0 rounded-full",
-              lit ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
-            )}
-          >
-            <Globe className="size-4" />
-            {choice === "auto" && (
-              <span
-                aria-hidden
-                className="absolute -bottom-0.5 -right-0.5 rounded-full bg-background px-1 text-3xs font-semibold leading-3.5 text-muted-foreground ring-1 ring-border"
-              >
-                A
-              </span>
-            )}
-            {choice === "off" && (
-              <span aria-hidden className="absolute left-1/2 top-1/2 h-px w-5 -translate-x-1/2 -translate-y-1/2 -rotate-45 bg-current" />
-            )}
-          </Button>
+      {/* The tooltip wraps the popover's trigger, so hovering says what the globe is and its state,
+          and pressing it still opens the Auto / On / Off menu. */}
+      <ComposerTip
+        label={`Web search: ${choice === "auto" ? (autoOn ? "auto, on for the last answer" : blocked ? "auto, unavailable" : "auto") : choice}`}
+        hint={OPTIONS.find((o) => o.value === choice)!.hint}
+        trigger={
+          <PopoverTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Web search: ${state}`}
+                disabled={disabled}
+                className={cn(
+                  "relative size-9 shrink-0 rounded-full",
+                  lit ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
+                )}
+              />
+            }
+          />
         }
-      />
+      >
+        <Globe className="size-4" />
+        {choice === "auto" && (
+          <span
+            aria-hidden
+            className="absolute -bottom-0.5 -right-0.5 rounded-full bg-background px-1 text-3xs font-semibold leading-3.5 text-muted-foreground ring-1 ring-border"
+          >
+            A
+          </span>
+        )}
+        {choice === "off" && (
+          <span aria-hidden className="absolute left-1/2 top-1/2 h-px w-5 -translate-x-1/2 -translate-y-1/2 -rotate-45 bg-current" />
+        )}
+      </ComposerTip>
       <PopoverContent align="start" side="top" className="w-72 p-1.5">
         <div role="radiogroup" aria-label="Web search" className="flex flex-col gap-0.5">
           {OPTIONS.map((o) => {
