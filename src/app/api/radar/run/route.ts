@@ -1,13 +1,12 @@
 /**
  * Radar's nightly pass: rebuild every due account's list of people to reach out to.
  *
- * Driven by GitHub Actions (.github/workflows/ops.yml) once a day at 04:17 UTC, the only
- * scheduler. Self-continuation posts back to this same route when a claim came back full or
- * the budget ran out, the same shape as `/api/sync/run`.
+ * Driven by GitHub Actions (.github/workflows/ops.yml) hourly at :17; each account is due at
+ * its own local 5am. Self-continuation posts back to this same route when a claim came back
+ * full or the budget ran out, the same shape as `/api/sync/run`.
  *
- * While `page.radar` is coming-soon, only accounts that have opened Radar are eligible
- * (`claimRadarUsers`), and an operator hiding the page stands the whole pass down, so
- * nobody's AI key is spent on a page they cannot see.
+ * While `page.radar` is hidden or coming soon the whole pass stands down, so nobody's AI key
+ * is spent on a page they cannot see.
  *
  * `POST` because it mutates. Route Handlers are uncached by default and `POST` can never be
  * cached, so no cache configuration is needed here.
@@ -37,7 +36,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, standDown: true });
     }
 
-    const stats = await runRadarPass({ includeUnopened: !soon.has(SURFACE_KEY) });
+    // Coming soon: no scheduled pass at all, the digest route's rule. Nobody's AI key or Orbit's
+    // credits are spent on a page users cannot see; "Refresh now" still builds for previewers.
+    if (soon.has(SURFACE_KEY)) {
+      await finishCronRun(handle, { status: "ok", stats: { standDown: true, comingSoon: true } });
+      return NextResponse.json({ ok: true, standDown: true });
+    }
+
+    const stats = await runRadarPass({ includeUnopened: true });
 
     // More accounts are waiting. Best-effort: a lost kick is picked up by tomorrow's pass,
     // and the page rebuilds any list older than a day on its own.

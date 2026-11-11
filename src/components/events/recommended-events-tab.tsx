@@ -111,10 +111,10 @@ export function RecommendedEventsTab({
     return (
       <div className="rounded-2xl border border-dashed border-border/70 p-10 text-center">
         <Sparkles className="mx-auto size-8 text-muted-foreground" aria-hidden />
-        <h3 className="mt-3 text-base font-medium text-ink">No recommendations yet</h3>
+        <h3 className="mt-3 text-base font-medium text-ink">Event suggestions are coming soon</h3>
         <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-          Attend or paste a few past events, and Orbit&apos;s recommendation engine will suggest
-          upcoming events matching your topics and network.
+          Orbit will suggest real upcoming events near you that fit your goals, and show who you
+          know there.
         </p>
       </div>
     );
