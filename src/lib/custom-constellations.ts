@@ -225,13 +225,18 @@ export async function getConstellationMembers(
   id: string
 ): Promise<{ name: string; members: Map<string, string | null> } | null> {
   const db = await getDb();
-  const [cons] = await db.select({ name: customConstellations.name }).from(customConstellations).where(owned(userId, id)).limit(1);
-  if (!cons) return null;
+  // One statement (the sky's budget is 10): a left join yields one row for an empty
+  // constellation and none for a missing or foreign one.
   const rows = await db
-    .select({ contactId: customConstellationMembers.contactId, reason: customConstellationMembers.reason })
-    .from(customConstellationMembers)
-    .where(and(eq(customConstellationMembers.constellationId, id), eq(customConstellationMembers.userId, userId)));
+    .select({ name: customConstellations.name, contactId: customConstellationMembers.contactId, reason: customConstellationMembers.reason })
+    .from(customConstellations)
+    .leftJoin(
+      customConstellationMembers,
+      and(eq(customConstellationMembers.constellationId, customConstellations.id), eq(customConstellationMembers.userId, userId))
+    )
+    .where(owned(userId, id));
+  if (rows.length === 0) return null;
   const members = new Map<string, string | null>();
-  for (const r of rows) if (!members.get(r.contactId)) members.set(r.contactId, r.reason);
-  return { name: cons.name, members };
+  for (const r of rows) if (r.contactId && !members.get(r.contactId)) members.set(r.contactId, r.reason);
+  return { name: rows[0].name, members };
 }

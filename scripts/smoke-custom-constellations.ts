@@ -4,7 +4,10 @@
  */
 import "./smoke/_env";
 
-import { sql } from "drizzle-orm";
+process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-custom";
+process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-custom";
+
+import { eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import { contacts, customConstellationMembers, customConstellations } from "../src/db/schema";
 import { mergeContacts, unmergeContacts } from "../src/lib/contact-merge";
@@ -19,6 +22,7 @@ import {
   renameCustomConstellation,
   type ProposeDeps,
 } from "../src/lib/custom-constellations";
+import { loadGraphData } from "../src/lib/graph-data";
 import { getConstellationLimitForPlan } from "../src/lib/plans/plan-config";
 import { purgeUserData } from "../src/lib/user-data";
 import { run } from "./smoke/_env";
@@ -297,8 +301,45 @@ run(async () => {
     );
   }
 
+  async function skyChecks() {
+    const [m, x, y] = await db
+      .insert(contacts)
+      .values([
+        { userId: USER, fullName: "Skymember Alpha", company: "SkyMemberCo", school: "SkyMemberSchool" },
+        { userId: USER, fullName: "Zzoutsider Beta", company: "OutsiderCoBeta", school: "OutsiderSchoolBeta" },
+        { userId: USER, fullName: "Zzoutsider Gamma", company: "OutsiderCoGamma", school: "OutsiderSchoolGamma" },
+      ])
+      .returning();
+    const [sky] = await db.insert(customConstellations).values({ userId: USER, name: "Sky", prompt: "sky" }).returning();
+    await db.insert(customConstellationMembers).values({ userId: USER, constellationId: sky.id, contactId: m.id, source: "manual" });
+
+    const drawn = await loadGraphData(USER, { profile: Promise.resolve(null), scope: "all", onlyIds: new Set([m.id]) });
+    const json = JSON.stringify(drawn);
+    check(
+      "onlyIds payload leaks no non-member",
+      drawn.contacts.length === 1 &&
+        drawn.contacts[0].id === m.id &&
+        ![x.id, y.id, "Zzoutsider", "OutsiderCo", "OutsiderSchool"].some((s) => json.includes(s)),
+      `${drawn.contacts.length} drawn`
+    );
+    check(
+      "onlyIds skips the engaged filter and keeps the network's size",
+      drawn.summary.constellationFilter.active === false && drawn.summary.total >= 3,
+      JSON.stringify(drawn.summary.constellationFilter)
+    );
+
+    check("foreign id -> null", (await getConstellationMembers(OTHER, sky.id)) === null);
+
+    await db.delete(contacts).where(eq(contacts.id, m.id));
+    const emptied = await getConstellationMembers(USER, sky.id);
+    check("member deleted -> sky still opens empty", !!emptied && emptied.members.size === 0, JSON.stringify(emptied && [...emptied.members]));
+    const empty = await loadGraphData(USER, { profile: Promise.resolve(null), scope: "all", onlyIds: new Set(emptied?.members.keys()) });
+    check("empty member set draws no contacts or clusters", empty.contacts.length === 0 && empty.clusters.length === 0);
+  }
+
   try {
     await crudChecks();
+    await skyChecks();
   } finally {
     await purgeUserData(USER, { keepSettings: false });
     await purgeUserData(OTHER, { keepSettings: false });

@@ -5,6 +5,7 @@ import { isAiAccessError } from "@/lib/ai-access";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import { getConstellationMembers } from "@/lib/custom-constellations";
 import { loadGraphData } from "@/lib/graph-data";
 import { encodeGraphPayload } from "@/lib/graph-wire";
 import { traced } from "@/lib/perf-trace";
@@ -48,6 +49,34 @@ export async function getFullGraphData() {
     { userId }
   );
   return encodeGraphPayload(data);
+}
+
+/**
+ * One custom constellation's sky: only its members are drawn. Null when the id is not a uuid
+ * or not the caller's, so the page falls back to Everyone. A constellation whose members were
+ * all deleted still returns a valid, empty payload.
+ */
+export async function getConstellationGraphData(id: string): Promise<{
+  payload: ReturnType<typeof encodeGraphPayload>;
+  constellation: { id: string; name: string; reasons: Record<string, string> };
+} | null> {
+  const userId = await requireUserForSurface("page.graph");
+  if (typeof id !== "string" || !UUID_RE.test(id)) return null;
+  const found = await getConstellationMembers(userId, id);
+  if (!found) return null;
+  const data = await traced(
+    "graph.load.constellation",
+    () =>
+      loadGraphData(userId, {
+        profile: getDisplayProfile(),
+        scope: "all",
+        onlyIds: new Set(found.members.keys()),
+      }),
+    { userId }
+  );
+  const reasons: Record<string, string> = {};
+  for (const [contactId, reason] of found.members) if (reason) reasons[contactId] = reason;
+  return { payload: encodeGraphPayload(data), constellation: { id, name: found.name, reasons } };
 }
 
 /** What the inspect panel shows for one star beyond the chart payload (see `loadGraphData`). */

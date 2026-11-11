@@ -32,7 +32,8 @@ import "./smoke/_env";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { getEffectivePlanConfig } from "../src/lib/plans/plan-rules";
-import { contacts, interactions } from "../src/db/schema";
+import { contacts, customConstellationMembers, customConstellations, interactions } from "../src/db/schema";
+import { getConstellationMembers } from "../src/lib/custom-constellations";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
 import { encodeGraphPayload } from "../src/lib/graph-wire";
@@ -100,6 +101,7 @@ const DAY_MS = 86_400_000;
 
 async function reset() {
   const db = await getDb();
+  await db.delete(customConstellations).where(eq(customConstellations.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(radarRuns).where(eq(radarRuns.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
@@ -377,6 +379,25 @@ async function main() {
       ` (${((1 - engagedBytes / allBytes) * 100).toFixed(0)}% smaller)`
   );
   check("graph still resolves an inline avatar to the avatar route", graphJson.includes("/api/avatars/"));
+
+  console.log("\nCustom constellation sky (members read + loadGraphData onlyIds)…");
+  const [sky] = await db.insert(customConstellations).values({ userId: USER, name: "Budget sky", prompt: "budget" }).returning();
+  const skyIds = graphAll.contacts.slice(0, 25).map((c) => c.id);
+  await db.insert(customConstellationMembers).values(
+    skyIds.map((contactId) => ({ userId: USER, constellationId: sky.id, contactId, source: "manual" as const }))
+  );
+  startQueryCount();
+  const skyMembers = await getConstellationMembers(USER, sky.id);
+  const skyGraph = await loadGraphData(USER, {
+    profile: Promise.resolve(null),
+    scope: "all",
+    onlyIds: new Set(skyMembers?.members.keys()),
+  });
+  const skyCount = stopQueryCount();
+  console.log(`  statements: ${skyCount}`);
+  // The default graph's 9 plus the members read; the default path itself must not grow.
+  check("constellation graph issues ≤ 10 statements", skyCount <= 10, `got ${skyCount}`);
+  check("constellation graph ships only its members", skyGraph.contacts.length === skyIds.length, `${skyGraph.contacts.length}`);
 
   // What actually crosses the server-action boundary is the columnar wire form (lib/graph-wire).
   // Asserting only the object size above would let the encoding regress to a no-op unnoticed.
