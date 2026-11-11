@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import {
   Bell,
   MessageSquare,
@@ -66,7 +67,7 @@ export function LinkedInSettings() {
   const [panel, setPanel] = useState<LinkedInPanel | null>(null);
   const [failed, setFailed] = useState(false);
   const [history, setHistory] = useState<ImportHistoryItem[] | null>(null);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [scanning, setScanning] = useState(false);
   const [open, setOpen] = useState<"connections" | "messages" | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);

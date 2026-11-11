@@ -5,7 +5,8 @@ import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Plus, Settings } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { addGoal } from "@/actions/goals";
@@ -39,7 +40,7 @@ export function GoalsSummary({
 }) {
   const router = useRouter();
   const [text, setText] = useState("");
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   const shownGoals = goals.slice(0, 5);
 

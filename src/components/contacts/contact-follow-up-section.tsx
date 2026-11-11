@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Mail, MessageSquare, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
@@ -104,11 +105,11 @@ export function ContactFollowUpSection({
   const [pickedPurpose, setPickedPurpose] = useState("");
   // The contact the person edited the purpose for: a different contact starts un-overridden.
   const [purposeEditedFor, setPurposeEditedFor] = useState<string | null>(null);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [sending, startSend] = useTransition();
-  const [marking, startMark] = useTransition();
-  const [scheduling, startSchedule] = useTransition();
-  const [cadencePending, startCadence] = useTransition();
+  const [marking, startMark] = useGuardedTransition();
+  const [scheduling, startSchedule] = useGuardedTransition();
+  const [cadencePending, startCadence] = useGuardedTransition();
   // Optimistic, because the whole control is four buttons and a round-trip through
   // `router.refresh()` is long enough to make a click feel dropped. Reset from the prop on
   // failure so a rejected write cannot leave the UI claiming a cadence that was not saved.

@@ -1,7 +1,8 @@
 "use client";
 
-import { useTransition } from "react";
+
 import { useRouter } from "next/navigation";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { UserPlus } from "lucide-react";
 import { createContact } from "@/actions/contacts";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,7 @@ import { TOAST_COPY } from "@/lib/toast-copy";
 /** "+ Add" beside a meeting guest who is not a contact yet; the refresh re-renders them with a photo. */
 export function AddAttendeeButton({ name, email }: { name: string; email: string }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   return (
     <Button
       type="button"

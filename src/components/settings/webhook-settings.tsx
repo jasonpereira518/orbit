@@ -12,7 +12,8 @@
  * classic way this feature wastes someone's afternoon, so the panel reports the handshake
  * result rather than a hopeful "saved".
  */
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Copy, KeyRound, Plus, Trash2, Webhook } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -67,7 +68,7 @@ export function WebhookSettings() {
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [pending, startTransition] = useGuardedTransition();
   const deleteFocus = useConfirmFocus(confirmingDelete);
 
   const load = useCallback(() => {
