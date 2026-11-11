@@ -3,6 +3,7 @@ import { listChatThreads } from "@/actions/chat";
 import { getSettings } from "@/actions/settings";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { ChatPanelLazy } from "@/components/chat/chat-panel-lazy";
+import { OrbitVoiceEntry } from "@/components/chat/voice-entry";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
 export const metadata = { title: "Chat" };
@@ -64,6 +65,7 @@ export default async function ChatPage() {
           <AiKeyNotice feature="chat" reason={settings.ai.reason} compact />
         </div>
       )}
+      <OrbitVoiceEntry />
       <ChatPanelLazy initialThreads={initialThreads} />
     </div>
   );

@@ -3115,7 +3115,9 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 2026-11-10-jev-work-history-design.md): contacts.work_history_jev_skipped_at — set when Jev
 // skipped a re-check or vetoed a verify search, so the next run is never gated again. Scanned
 // every remote ref and local worktree on Nov 11 2026: 219 was the highest claimed anywhere.
-export const SCHEMA_VERSION = 220;
+// 221 = opt-in Orbit Voice settings and account-scoped, bounded voice sessions.
+// 222 = runtime voice provider configuration, health and session usage metadata.
+export const SCHEMA_VERSION = 222;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3321,6 +3323,31 @@ const TOUCH_COUNT_DDL = [
 ];
 
 export const SCALE_DDL: string[] = [
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS orbit_voice_enabled boolean DEFAULT false`,
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS orbit_voice_changed_at timestamptz`,
+  `CREATE TABLE IF NOT EXISTS orbit_voice_sessions (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id text NOT NULL,
+    thread_id uuid NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    ended_at timestamptz,
+    tool_calls integer NOT NULL DEFAULT 0,
+    scope jsonb NOT NULL DEFAULT '{}'::jsonb,
+    time_zone text NOT NULL DEFAULT 'UTC'
+  )`,
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS orbit_voice_config jsonb`,
+  `ALTER TABLE site_settings ADD COLUMN IF NOT EXISTS orbit_voice_health jsonb`,
+  // Existing enabled ElevenLabs configurations retain their provider on upgrade.
+  `UPDATE site_settings SET orbit_voice_config = '{"provider":"elevenlabs","fallback":"none","deepgram":{"listenModel":"nova-3","thinkModel":"gpt-4o-mini","voice":"aura-2-asteria-en"},"elevenlabs":{"voiceId":"","ttsModel":"eleven_flash_v2_5"}}'::jsonb
+     WHERE orbit_voice_enabled = true AND orbit_voice_config IS NULL`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'elevenlabs'`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS fallback boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS connected_at timestamptz`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS last_seen_at timestamptz`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS outcome text NOT NULL DEFAULT 'starting'`,
+  `CREATE INDEX IF NOT EXISTS orbit_voice_sessions_user_idx ON orbit_voice_sessions(user_id)`,
+  `CREATE INDEX IF NOT EXISTS orbit_voice_sessions_thread_idx ON orbit_voice_sessions(thread_id)`,
   // --- v62: meeting-notes workflow ---------------------------------------------------
   //
   // A cadence the notes actually stated ("check in monthly"). Days, because every consumer
