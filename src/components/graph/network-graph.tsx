@@ -106,8 +106,11 @@ function introInFlight() {
 
 const GRAPH_REFETCH_MIN_MS = 60_000;
 
-/** "Added Jane", handed across the remount that adding someone causes (see `addToSky`). */
-let pendingSkyNote = "";
+/**
+ * "Added Jane", handed across the remount that adding someone causes (see `addToSky`). Keyed by
+ * sky so a chart for another sky (or Everyone) never shows it.
+ */
+let pendingSkyNote: { skyId: string; note: string } | null = null;
 
 /** How long typing must pause before the camera flies to what the search matches. */
 const SEARCH_REFRAME_DELAY_MS = 260;
@@ -682,7 +685,7 @@ export function NetworkGraph({
         return false;
       }
       // The redraw below replaces this chart, so the confirmation is parked where the next one can find it.
-      pendingSkyNote = `Added ${name}`;
+      pendingSkyNote = { skyId, note: `Added ${name}` };
       router.refresh();
       return true;
     },
@@ -709,18 +712,18 @@ export function NetworkGraph({
 
   // A redraw after an add remounts this chart; say what happened once the new one is up.
   useEffect(() => {
-    const note = pendingSkyNote;
-    if (!note) return;
+    if (!skyId || pendingSkyNote?.skyId !== skyId) return;
+    const { note } = pendingSkyNote;
     // After a beat, so the region exists before its text changes (that is what gets announced).
     // Cleared only once shown: StrictMode runs this effect twice and the first run is cancelled.
     const t = setTimeout(() => {
-      pendingSkyNote = "";
+      pendingSkyNote = null;
       setAddNote(note);
       // The remount took focus with the old search box; hand it back so the next add needs no re-tabbing.
       searchInputRef.current?.focus();
     }, 120);
     return () => clearTimeout(t);
-  }, []);
+  }, [skyId]);
 
   const focusClusterById = useCallback(
     (clusterId: string) => {
