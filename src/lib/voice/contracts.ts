@@ -29,6 +29,7 @@ export type VoiceCredentials =
     };
 export type VoiceSessionStart = {
   sessionId: string;
+  threadId: string;
   expiresAt: string;
   credentials: VoiceCredentials;
 };
@@ -45,6 +46,7 @@ export type VoiceMode =
   | "speaking"
   | "disconnected";
 export type VoiceAgentControls = {
+  getLevels(): { input: number; output: number };
   disconnect(): void;
   setMuted(value: boolean): void;
   sendContext(text: string): void;
@@ -53,6 +55,7 @@ export type VoiceAgentEvents = {
   onReady(controls: VoiceAgentControls | null): void;
   onConnected(): void;
   onMode(mode: VoiceMode): void;
+  onInterrupted(): void;
   onMessage(source: "user" | "ai", text: string): void;
   onCorrection(original: string, corrected: string): void;
   onError(): void;

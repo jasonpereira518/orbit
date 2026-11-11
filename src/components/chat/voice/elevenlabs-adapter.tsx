@@ -18,6 +18,7 @@ function Bridge({ credentials, events }: Props) {
   const connected = useRef(false);
   const conversation = useConversation({
     micMuted: muted,
+    onInterruption: () => events.onInterrupted(),
     onConnect: () => {
       connected.current = true;
       events.onConnected();
@@ -39,9 +40,10 @@ function Bridge({ credentials, events }: Props) {
         events.onTool(tool, input),
     },
   });
-  const { startSession, endSession, sendContextualUpdate } = conversation;
+  const { startSession, endSession, sendContextualUpdate, getInputVolume, getOutputVolume } = conversation;
   useEffect(() => {
     events.onReady({
+      getLevels: () => ({ input: getInputVolume(), output: getOutputVolume() }),
       disconnect: endSession,
       setMuted,
       sendContext: sendContextualUpdate,
@@ -73,6 +75,6 @@ function Bridge({ credentials, events }: Props) {
       events.onReady(null);
       endSession();
     };
-  }, [credentials, events, startSession, endSession, sendContextualUpdate]);
+  }, [credentials, events, startSession, endSession, sendContextualUpdate, getInputVolume, getOutputVolume]);
   return null;
 }

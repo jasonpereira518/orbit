@@ -82,7 +82,7 @@ import {
 } from "@/components/chat/suggestion-cards";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
-import { ComposerSendButton } from "@/components/chat/composer-send-button";
+import { OrbitVoiceEntry } from "@/components/chat/voice-entry";
 import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
 import { chatAsMarkdown, chatExportFileName, downloadMarkdown } from "@/lib/chat-export";
 import { CHAT_ATTACH_ACCEPT, readAttachment } from "@/lib/chat-attach-client";
@@ -456,6 +456,7 @@ export function ChatPanel({
   const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const voiceSurfaceRef = useRef<HTMLDivElement>(null);
   /** The `+` menu is outside the field, so it reaches the splice through here. */
   const composerRef = useRef<MentionComposerHandle | null>(null);
   const stickToBottomRef = useRef(true);
@@ -1796,7 +1797,7 @@ export function ChatPanel({
           the suggestion chips. The whole ancestor chain is bounded (app-shell `h-dvh` →
           `min-h-0 flex-1` → page `flex min-h-0 flex-1`), and ChatPanelSkeleton already sized
           itself this way — so this also removes the height jump when the panel swaps in. */}
-      <div className="flex min-h-0 w-full flex-1 flex-row overflow-hidden rounded-2xl border border-border/70 bg-card">
+      <div ref={voiceSurfaceRef} className="flex min-h-0 w-full flex-1 flex-row overflow-hidden rounded-2xl border border-border/70 bg-card">
         {/* From md up the history is a rail beside the conversation. Below that the header
             keeps its dropdown (`md:hidden` on both of its controls), because on a phone the
             conversation should have the full width. */}
@@ -2308,21 +2309,24 @@ export function ChatPanel({
                     if (source === "pointer") textareaRef.current?.focus();
                   }}
                 />
-                <ComposerSendButton
-                  mode={question.trim() ? "send" : "recall"}
+                <OrbitVoiceEntry
+                  surfaceRef={voiceSurfaceRef}
+                  hasText={Boolean(question.trim())}
                   busy={busy}
                   disabled={
                     busy ||
-                    loadingThread ||
-                    (!question.trim() && !lastUserQuery)
+                    loadingThread
                   }
                   onStop={stopStreaming}
-                  onClick={() => {
-                    if (!question.trim()) {
-                      fillMostRecentUserMessage();
-                      return;
-                    }
-                    sendQuestion(question);
+                  onSend={() => sendQuestion(question)}
+                  prepare={async () => {
+                    dictation.stop();
+                    return ensureThread();
+                  }}
+                  onEnd={async (id) => {
+                    threadPrefetch.forget(id);
+                    await loadThread(id);
+                    requestAnimationFrame(() => textareaRef.current?.focus());
                   }}
                 />
               </div>

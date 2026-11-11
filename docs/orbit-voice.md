@@ -4,6 +4,24 @@ Orbit Voice is a real-time conversational CRM assistant with **Deepgram as the d
 and **ElevenLabs as an alternative**. It is off by default, including for administrators.
 Text chat retains its existing providers and behavior.
 
+## Voice in Chat
+
+When the composer is empty, its right button starts Orbit Voice. Typing changes it to
+Send; the keyboard up-arrow shortcut still recalls the last message. The separate microphone
+continues to dictate into the text box. Voice opens a centered overlay and starts connecting
+immediately, with mute, end, an optional live transcript, and confirmation cards.
+
+Gold outer rings respond to microphone audio; the teal (light theme) or ice-blue (dark theme)
+planet responds to actual reply playback. Reduced motion keeps the shape still and uses
+intensity plus status text. End conversation or Escape releases the microphone, saves pending
+turns, closes the overlay, and returns to the composer. Backdrop clicks do not end a call.
+
+Voice reuses the current thread, or creates one if Chat is new. Recent thread messages and
+the conversation context note are read on the server. Finalized transcript turns save
+incrementally; retries and interruption corrections update the same message. Interrupted
+replies are marked in history. Unsaved turns remain in the overlay with a retry control.
+Transcript cleanup writes remain available for five minutes after the session expires.
+
 ## Deployment and setup
 
 1. Run `npm ci` and deploy using Orbit's normal guarded `npm run db:migrate` flow.
@@ -38,7 +56,7 @@ Saving model settings cannot overwrite a concurrent master-disable action.
 ## Admin controls and status
 
 - **Enable Orbit Voice** is the master switch. Off prevents session issuance, tool access
-  and voice-card commits, and hides the user-facing entry. Cleanup remains allowed.
+  and voice-card commits, and disables the composer’s voice entry. Cleanup remains allowed.
 - **Voice provider** defaults to Deepgram. Server-side selection is authoritative: clients
   cannot supply arbitrary provider names or endpoints.
 - Deepgram settings include Nova-3/Nova-2 listening, gpt-4o-mini/gpt-4o managed conversation
@@ -100,8 +118,9 @@ transport errors cannot take down the text-chat panel.
   Configure provider-side project quotas/concurrency limits and billing alerts as a hard
   spend backstop. App limits are not a dollar ledger or a provider-side socket revocation.
 - Relevant CRM context is retrieved on demand; the whole account is never uploaded.
-  Orbit does not persist live audio or transcripts. Session metadata and confirmed/pending
-  proposal cards follow the existing account export and deletion lifecycle.
+  Orbit does not persist live audio. Finalized transcripts are stored as ordinary messages
+  in the current Chat thread. Transcripts, session metadata and confirmed/pending proposal
+  cards follow the existing account export and deletion lifecycle.
 - The disabled flag is checked uncached, including during provider preflight and before/
   after tool execution. A late result from an old call cannot affect a replacement call.
   Settings changes invalidate leases across serverless instances. Secrets are deployment

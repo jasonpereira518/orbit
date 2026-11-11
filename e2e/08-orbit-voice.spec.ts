@@ -17,9 +17,7 @@ test("voice defaults off and server rejects disabled and cross-site starts", asy
     provider: "deepgram",
     fallbackProvider: null,
   });
-  await expect(page.getByRole("button", { name: "Talk to Orbit" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("button", { name: "Start Orbit Voice" })).toBeDisabled();
   expect(
     (
       await page.request.post("/api/voice", {
@@ -49,6 +47,8 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     let tools = 0;
     let socket: WebSocketRoute | undefined;
     const frames: Record<string, unknown>[] = [];
+    const turns: Array<{ id: string; text: string; interrupted: boolean }> = [];
+    let rejectedTranscript = false;
     await page.addInitScript(() => {
       const originalClose = AudioContext.prototype.close;
       (window as unknown as { voiceCloses: number }).voiceCloses = 0;
@@ -58,7 +58,13 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       };
       navigator.mediaDevices.getUserMedia = async () => {
         const context = new AudioContext();
-        const stream = context.createMediaStreamDestination().stream;
+        const destination = context.createMediaStreamDestination();
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        gain.gain.value = .08;
+        oscillator.connect(gain).connect(destination);
+        oscillator.start();
+        const stream = destination.stream;
         for (const track of stream.getTracks()) {
           const stop = track.stop.bind(track);
           track.stop = () => {
@@ -80,10 +86,19 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
           },
         });
       const body = route.request().postDataJSON();
-      if (body.action === "start")
+      if (body.action === "transcript") {
+        turns.push(body.turn);
+        if (!rejectedTranscript && body.turn.source === "user") {
+          rejectedTranscript = true;
+          return route.fulfill({status: 503, json: {error: "Transcript temporarily unavailable"}});
+        }
+      }
+      if (body.action === "start") {
+        expect(body.threadId).toMatch(/^[a-f0-9-]{36}$/);
         return route.fulfill({
           json: {
             sessionId: id,
+            threadId: body.threadId,
             expiresAt: new Date(Date.now() + 600000).toISOString(),
             credentials:
               provider === "deepgram"
@@ -122,6 +137,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
                   },
           },
         });
+      }
       if (body.action === "connected") connected++;
       if (body.action === "end") ends++;
       if (body.action === "tool") {
@@ -177,12 +193,18 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       },
     );
     await page.goto("/chat", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Talk to Orbit" }).click();
-    await page.getByRole("button", { name: "Start conversation" }).click();
+    const composer = page.getByRole("combobox", { name: "Message Orbit" });
+    await composer.fill("Hello Orbit");
+    await expect(page.getByRole("button", {name: "Send", exact: true})).toBeVisible();
+    await composer.fill("   ");
+    await page.getByRole("button", { name: "Start Orbit Voice" }).click();
+    await expect(page.getByRole("dialog", {name: "Orbit Voice", exact: true})).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Mute", exact: true }),
     ).toBeVisible();
     await expect.poll(() => connected).toBe(1);
+    const inputLevel = () => page.locator(".voice-orbit").evaluate(el => Number((el as SVGElement).style.getPropertyValue("--voice-input")));
+    await expect.poll(inputLevel).toBeGreaterThan(.01);
     const send = (message: unknown) => socket!.send(JSON.stringify(message));
     if (provider === "deepgram") {
       send({
@@ -195,10 +217,13 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
         role: "assistant",
         content: "Ada researches compilers.",
       });
-      socket!.send(Buffer.alloc(96000));
+      const audio = Buffer.alloc(96000);
+      for (let index = 0; index < 48000; index++) audio.writeInt16LE(Math.round(Math.sin(index * 2 * Math.PI * 220 / 24000) * 6000), index * 2);
+      socket!.send(audio);
       await expect(
         page.getByRole("status").filter({ hasText: "Orbit is speaking" }),
       ).toBeVisible();
+      await expect.poll(() => page.locator(".voice-orbit").evaluate(el => Number((el as SVGElement).style.getPropertyValue("--voice-output")))).toBeGreaterThan(.01);
       const closes = await page.evaluate(
         () => (window as unknown as { voiceCloses: number }).voiceCloses,
       );
@@ -270,18 +295,35 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
         .toBe(true);
     }
     await expect.poll(() => tools).toBe(1);
+    await page.getByRole("button", {name: "Transcript", exact: true}).click();
     await expect(
       page.getByRole("log", { name: "Live voice transcript" }),
     ).toContainText("Prepare for Ada");
+    await expect.poll(() => turns.filter(turn => turn.text === "Prepare for Ada").length).toBe(1);
+    await page.getByRole("button", {name: "Retry saving", exact: true}).click();
+    await expect.poll(() => turns.filter(turn => turn.text === "Prepare for Ada").length).toBe(2);
+    expect(new Set(turns.filter(turn => turn.text === "Prepare for Ada").map(turn => turn.id)).size).toBe(1);
+    await expect(page.getByRole("button", {name: "Retry saving", exact: true})).toHaveCount(0);
+    await expect.poll(() => turns.some(turn => turn.interrupted)).toBe(true);
+    expect(new Set(turns.filter(turn => turn.text.startsWith("Ada researches")).map(turn => turn.id)).size).toBe(1);
+    const desktopScreenshot = test.info().outputPath(`${provider}-desktop.png`);
+    await page.screenshot({path: desktopScreenshot});
+    await test.info().attach(`${provider} desktop voice`, {path: desktopScreenshot, contentType: "image/png"});
     await page.getByRole("button", { name: "Mute", exact: true }).click();
+    await expect.poll(inputLevel).toBeLessThan(.01);
     await expect(page.getByRole("button", { name: "Unmute" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     await page.getByRole("button", { name: "Unmute" }).click();
     await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(async () => {
+      const box = await page.getByRole("dialog", {name: "Orbit Voice", exact: true}).boundingBox();
+      return box && box.x >= -1 && box.x + box.width <= 391;
+    }).toBe(true);
+    await expect(page.getByRole("button", {name: "Transcript", exact: true})).toBeInViewport({ratio: 1});
     await expect(
-      page.getByRole("combobox", { name: "Message Orbit" }),
+      page.getByRole("button", { name: "End conversation", exact: true }),
     ).toBeInViewport();
     expect(
       await page.evaluate(
@@ -294,19 +336,27 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       path: mobileScreenshot,
       contentType: "image/png",
     });
-    await page.getByRole("button", { name: "End call" }).click();
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await page.emulateMedia({reducedMotion: "reduce"});
+    await expect(page.getByRole("dialog", {name: "Orbit Voice", exact: true})).toHaveCSS("background-color", "rgb(20, 21, 23)");
+    await expect(page.getByRole("dialog", {name: "Orbit Voice", exact: true})).toHaveCSS("color", "rgb(231, 236, 241)");
+    await expect(page.locator(".voice-orbit-moon")).toHaveCSS("animation-name", "none");
+    const darkScreenshot = test.info().outputPath(`${provider}-dark-mobile.png`);
+    await page.screenshot({path: darkScreenshot});
+    await test.info().attach(`${provider} dark mobile voice`, {path: darkScreenshot, contentType: "image/png"});
+    await page.evaluate(() => document.documentElement.classList.remove("dark"));
+    await page.getByRole("button", { name: "End conversation" }).click();
     await expect(
-      page.getByRole("button", { name: "Start conversation" }),
+      page.getByRole("button", { name: "Start Orbit Voice" }),
     ).toBeVisible();
     await expect.poll(() => ends).toBe(1);
-    await page.getByRole("button", { name: "Start conversation" }).click();
+    await expect(composer).toBeFocused();
+    await page.getByRole("button", { name: "Start Orbit Voice" }).click();
     await expect(
       page.getByRole("button", { name: "Mute", exact: true }),
     ).toBeVisible();
     enabled = false;
-    await expect(
-      page.getByRole("button", { name: "Close Orbit Voice" }),
-    ).toHaveCount(0, { timeout: 25000 });
+    await expect(page.getByRole("region", {name: "Orbit Voice", exact: true}).getByRole("alert")).toContainText("Voice settings changed", {timeout: 25000});
     await expect.poll(() => ends).toBe(2);
   });
 }
@@ -345,8 +395,7 @@ test("fallback is explicit; microphone permissions fail gracefully", async ({
     };
   });
   await page.goto("/chat", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Talk to Orbit" }).click();
-  await page.getByRole("button", { name: "Start conversation" }).click();
+  await page.getByRole("button", { name: "Start Orbit Voice" }).click();
   await expect(page.getByRole("region", { name: "Orbit Voice", exact: true }).getByRole("alert")).toContainText(
     "Selected provider is unavailable",
   );
@@ -371,6 +420,9 @@ test("fallback is explicit; microphone permissions fail gracefully", async ({
     "Microphone access was denied",
   );
   expect(starts.length).toBe(2);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", {name: "Orbit Voice", exact: true})).toHaveCount(0);
+  await expect(page.getByRole("combobox", {name: "Message Orbit"})).toBeFocused();
 });
 
 test("admin persists provider and model choices without redeployment", async ({
