@@ -10,6 +10,8 @@
  *
  * Run: npx tsx scripts/smoke-decisions-gates.ts
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { gateProbability, gateSkips, gateText } from "../src/lib/decisions/gates";
 import { SKIP_GATES, SKIP_GATE_TUNING } from "../src/lib/decisions/catalog";
 import { NO_ENGINES, type Engines } from "../src/lib/decisions/engine";
@@ -113,6 +115,22 @@ async function main() {
     const measured = scripted(0.2);
     check(`${gate}: the eval still reads its probability`, (await gateProbability(measured, gate, {})) === 0.2);
     check(`${gate}: asked under its own operation`, measured.last?.operation === operation, measured.last?.operation);
+  }
+
+  console.log("\nThe eval fixture can calibrate the work-history gates");
+  const fixture = JSON.parse(
+    readFileSync(join(process.cwd(), "scripts", "eval-fixtures", "ai-skip-gates-eval.json"), "utf8"),
+  ) as { cases: Array<{ id: string; gate: string; skip: boolean; state: Record<string, unknown> }> };
+  check("every case names a real gate", fixture.cases.every((c) => c.gate in SKIP_GATES));
+  check("case ids are unique", new Set(fixture.cases.map((c) => c.id)).size === fixture.cases.length);
+  for (const [gate, min, keys] of [
+    ["workHistoryRecheck", 24, ["contact", "last_checked", "since_last_check"]],
+    ["workHistoryVerify", 20, ["contact", "first_answer"]],
+  ] as const) {
+    const cases = fixture.cases.filter((c) => c.gate === gate);
+    check(`${gate}: at least ${min} cases`, cases.length >= min, cases.length);
+    check(`${gate}: at least 10 that must NOT be skipped`, cases.filter((c) => !c.skip).length >= 10, cases.filter((c) => !c.skip).length);
+    check(`${gate}: every state has the call site's keys`, cases.every((c) => keys.every((k) => k in c.state)));
   }
 
   console.log("\nLong inputs");
