@@ -22,7 +22,7 @@ import {
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
 import { addTurnSteer, markTurnStopped } from "@/lib/chat-persist";
 import { isUuid } from "@/lib/input/ids";
-import { saveDraftEdit } from "@/lib/chat-draft-save";
+import { saveDraftBlockEdit, saveDraftEdit } from "@/lib/chat-draft-save";
 import { addMemory, deleteMemory, listMemories, type ChatMemory } from "@/lib/chat-memory";
 import { UserFacingError } from "@/lib/errors";
 import { PINNED_THREADS_MAX, pinThread, renameThread, searchThreads, type ThreadSearchHit } from "@/lib/chat-threads";
@@ -395,6 +395,17 @@ export async function saveChatDraft(messageId: string, contactId: string, text: 
   const userId = await requireUserForSurface("page.chat");
   if (!isUuid(messageId) || !isUuid(contactId) || typeof text !== "string") return { ok: false as const };
   return { ok: await saveDraftEdit(userId, messageId, contactId, text) };
+}
+
+/**
+ * Keep an edit made to a draft written in an answer (an email's subject and body, or a
+ * LinkedIn note). Rewrites that block in the saved answer — no model call. Quiet on failure:
+ * the text stays on screen and the next save tries again.
+ */
+export async function saveChatDraftBlock(messageId: string, index: number, edit: { subject?: string; body: string }) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(messageId) || !edit || typeof edit.body !== "string") return { saved: false as const };
+  return saveDraftBlockEdit(userId, messageId, index, { subject: edit.subject, body: edit.body });
 }
 
 /** What Orbit is keeping in mind for this person across chats, newest first. */

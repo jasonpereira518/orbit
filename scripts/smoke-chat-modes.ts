@@ -102,8 +102,9 @@ async function main() {
 
   console.log("\nThe route");
   check("anything but \"deep\" is a quick answer", /const mode: ChatMode = body\?\.mode === "deep" \? "deep" : "quick";/.test(route));
-  check("web is on unless the client says false", /const web = body\?\.web !== false;/.test(route));
-  check("both reach the answer", /steer,\s*mode,\s*web,/.test(route));
+  // Web search is decided per message now (smoke-chat-web-decision): auto unless the client says on or off.
+  check("web is the chat's choice, auto when absent", /const webChoice = parseWebChoice\(body\?\.web\);/.test(route));
+  check("both reach the answer", /steer,\s*mode,\s*web: webTurn\.on,/.test(route));
 
   console.log(failures === 0 ? "\nsmoke-chat-modes: all checks passed" : `\nsmoke-chat-modes: ${failures} FAILED`);
   process.exit(failures === 0 ? 0 : 1);

@@ -153,6 +153,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-split-meetings": "pure",
   "smoke-chat-route": "pure",
   "smoke-chat-directives": "pure",
+  "smoke-chat-web-decision": "pure",
   "smoke-chat-limits": "pure",
   "smoke-decisions-gates": "pure",
   "smoke-chat-search-notice": "pure",
@@ -447,6 +448,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-threads": "pglite",
   "smoke-chat-memory": "pglite",
   "smoke-chat-draft-save": "pglite",
+  "smoke-chat-draft-block": "pglite",
   "smoke-chat-photos": "pglite",
   "smoke-clear-api-key": "pglite",
   "smoke-connector-registry": "pglite", // imports entitlements + rate-limit, which reach @/db

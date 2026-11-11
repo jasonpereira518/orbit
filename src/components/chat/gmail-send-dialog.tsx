@@ -39,6 +39,7 @@ export function GmailSendDialog({
   contactId,
   name,
   body,
+  subject: suggestedSubject,
   onSent,
   onUndone,
 }: {
@@ -49,6 +50,8 @@ export function GmailSendDialog({
   name: string;
   /** The draft as it currently reads, including the person's edits. */
   body: string;
+  /** A subject worked out beforehand (an editable draft block's); otherwise the default one. */
+  subject?: string;
   /** Called with the send time; `ambiguous` when Gmail may or may not have accepted it. */
   onSent: (sentAtIso: string, ambiguous: boolean) => void;
   /** Called when the person presses Undo in time and nothing went out. */
@@ -64,6 +67,7 @@ export function GmailSendDialog({
           contactId={contactId}
           name={name}
           body={body}
+          suggestedSubject={suggestedSubject}
           busy={busy}
           setBusy={setBusy}
           onClose={() => onOpenChange(false)}
@@ -80,6 +84,7 @@ function SendPanel({
   contactId,
   name,
   body,
+  suggestedSubject,
   busy,
   setBusy,
   onClose,
@@ -90,6 +95,7 @@ function SendPanel({
   contactId: string;
   name: string;
   body: string;
+  suggestedSubject?: string;
   busy: boolean;
   setBusy: (busy: boolean) => void;
   onClose: () => void;
@@ -100,6 +106,8 @@ function SendPanel({
   const threadId = useChatThreadId();
   const [ctx, setCtx] = useState<ChatSendContext | null | "unavailable">(null);
   const [subject, setSubject] = useState("");
+  // Read once: the panel is mounted for one opening of the dialog, and a later edit must not refetch.
+  const [openingSubject] = useState(suggestedSubject);
   const [problem, setProblem] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -109,7 +117,7 @@ function SendPanel({
       .then((res) => {
         if (cancelled) return;
         setCtx(res ?? "unavailable");
-        if (res) setSubject(res.defaultSubject);
+        if (res) setSubject(openingSubject?.trim() || res.defaultSubject);
       })
       .catch(() => {
         if (!cancelled) setCtx("unavailable");
@@ -117,7 +125,7 @@ function SendPanel({
     return () => {
       cancelled = true;
     };
-  }, [messageId, contactId]);
+  }, [messageId, contactId, openingSubject]);
 
   // What will go, cleaned exactly as the server will clean it.
   const content = checkContent({ subject, body });

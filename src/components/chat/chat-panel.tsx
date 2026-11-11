@@ -21,7 +21,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  Globe,
   History,
   Loader2,
   Mail,
@@ -59,7 +58,9 @@ import {
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { readRailOpen, writeRailOpen } from "@/lib/chat-rail-pref";
-import { readChatDeep, readChatWeb, writeChatDeep, writeChatWeb } from "@/lib/chat-mode-pref";
+import { readChatDeep, readChatWebChoice, writeChatDeep, writeChatWebChoice } from "@/lib/chat-mode-pref";
+import { WebSearchControl } from "@/components/chat/web-search-control";
+import type { WebChoice } from "@/lib/chat-web-decision";
 import { ScanControls } from "@/components/scan/scan-controls";
 import {
   COMPOSER_TEXT_BOX,
@@ -90,6 +91,8 @@ import { CHAT_ATTACHMENTS_MAX, type ChatAttachment } from "@/lib/chat-attachment
 import { notifyAnswerLanded } from "@/lib/chat-answer-notify";
 import { afterTurn, enqueue, setSteering, steeredId, type QueuedMessage } from "@/lib/chat-queue";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
+import { DraftBlock, type DraftSegment } from "@/components/chat/draft-block";
+import { replaceDraftBlock } from "@/lib/chat-draft-block";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { AnswerActions } from "@/components/chat/answer-actions";
@@ -439,11 +442,23 @@ export function ChatPanel({
   // The composer's two switches, remembered per browser. Refs mirror them so the send
   // callbacks read the current value without being rebuilt on every toggle.
   const [deep, setDeep] = useState(readChatDeep);
-  const [web, setWeb] = useState(readChatWeb);
+  // Web search is a choice per chat: auto (the default — the question decides, server-side),
+  // on, or off. The chat's stored choice is read whenever the open chat changes.
+  const [web, setWeb] = useState<WebChoice>("auto");
   const modeRef = useRef({ deep, web });
   useEffect(() => {
     modeRef.current = { deep, web };
   }, [deep, web]);
+  useEffect(() => {
+    setWeb(readChatWebChoice(threadId));
+  }, [threadId]);
+  const chooseWeb = useCallback(
+    (next: WebChoice) => {
+      setWeb(next);
+      writeChatWebChoice(threadId, next);
+    },
+    [threadId]
+  );
   // Files attached to the question being written. See `@/lib/chat-attach-client`.
   const [fileChips, setFileChips] = useState<FileChip[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -796,6 +811,8 @@ export function ChatPanel({
   const ensureThread = useCallback(async () => {
     if (threadId) return threadId;
     const created = await createChatThread();
+    // A choice made before the chat had an id belongs to this chat.
+    writeChatWebChoice(created.id, modeRef.current.web);
     setThreadId(created.id);
     setThreadTitle(created.title);
     setThreads((prev) => [
@@ -1201,7 +1218,7 @@ export function ChatPanel({
             turnId,
             attachments: attachments.length ? attachments : undefined,
             mode: asDeep ? "deep" : undefined,
-            web: withWeb ? undefined : false,
+            web: withWeb === "auto" ? undefined : withWeb,
           },
           {
             onAnswer: (delta) => smoother.push(delta),
@@ -1436,7 +1453,7 @@ export function ChatPanel({
             threadId,
             versionOf: { assistantMessageId, question: newQuestion },
             mode: modeRef.current.deep ? "deep" : undefined,
-            web: modeRef.current.web ? undefined : false,
+            web: modeRef.current.web === "auto" ? undefined : modeRef.current.web,
           },
           {
             onAnswer: (delta) => smoother.push(delta),
@@ -1629,6 +1646,14 @@ export function ChatPanel({
    * field about eighty pixels wide. Tailwind picks which is shown, so it is right on the first
    * paint; the hidden copy is `display: none` and out of the accessibility tree.
    */
+  // What auto did on the latest answer (the step trail's own line), so the web button can show it.
+  const lastWebStep = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]!;
+      if (m.role === "assistant") return m.steps?.find((step) => step.kind === "web") ?? null;
+    }
+    return null;
+  }, [messages]);
   const composerExtras = {
     attach: (
       <Button
@@ -1670,25 +1695,14 @@ export function ChatPanel({
       </Button>
     ),
     web: (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-pressed={web}
-        aria-label="Web search"
-        title={web ? "Web search is on: answers may look things up on the public web" : "Web search is off: answers use only your own records"}
+      <WebSearchControl
+        choice={web}
+        onChange={chooseWeb}
+        autoOn={lastWebStep?.id === "web:auto"}
+        blocked={lastWebStep?.id === "web:blocked"}
+        note={lastWebStep?.label ?? null}
         disabled={loadingThread}
-        onClick={() => {
-          setWeb(!web);
-          writeChatWeb(!web);
-        }}
-        className={cn(
-          "size-9 shrink-0 rounded-full",
-          web ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
-        )}
-      >
-        <Globe className="size-4" />
-      </Button>
+      />
     ),
   };
 
@@ -1762,6 +1776,16 @@ export function ChatPanel({
               ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
               : m
           )
+        ),
+      // A saved edit to a draft block, folded into the message in memory so copy, export and a
+      // remount all read the edited words.
+      draftSaved: (messageId: string, index: number, edit: { subject: string; body: string }) =>
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== messageId || m.role !== "assistant") return m;
+            const answer = replaceDraftBlock(m.answer, index, edit);
+            return answer === null || answer === m.answer ? m : { ...m, answer };
+          })
         ),
       switchVersion: async (version: number) => {
         const { threadId: tid, versionSlot: slot, loadThread: load } = bubbleLive.current;
@@ -2040,6 +2064,7 @@ export function ChatPanel({
                         retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
                         onFollowUp={bubbleHandlers.followUp}
                         onActionSettled={bubbleHandlers.actionSettled}
+                        onDraftSaved={bubbleHandlers.draftSaved}
                         versions={isLastAssistant ? versions : EMPTY_VERSIONS}
                         onSwitchVersion={isLastAssistant ? bubbleHandlers.switchVersion : undefined}
                       />
@@ -2566,6 +2591,7 @@ const AssistantBubble = memo(function AssistantBubble({
   retryLabel,
   onFollowUp,
   onActionSettled,
+  onDraftSaved,
   versions = [],
   onSwitchVersion,
 }: {
@@ -2577,6 +2603,8 @@ const AssistantBubble = memo(function AssistantBubble({
   retryLabel?: string;
   onFollowUp?: (question: string) => void;
   onActionSettled?: (messageId: string, actionId: string, next: StoredProposedAction) => void;
+  /** A draft block's edit was saved (the message id is this bubble's). */
+  onDraftSaved?: (messageId: string, index: number, edit: { subject: string; body: string }) => void;
   /** Every version of this turn, when it is the last one. Otherwise empty — no switcher. */
   versions?: VersionRow[];
   onSwitchVersion?: (version: number) => void;
@@ -2661,6 +2689,15 @@ const AssistantBubble = memo(function AssistantBubble({
     });
     return recs.length ? <div className="grid gap-2 sm:grid-cols-2">{recs.map(renderCard)}</div> : null;
   };
+  const renderDraft = (draft: DraftSegment) => (
+    <DraftBlock
+      draft={draft}
+      streaming={Boolean(msg.streaming || msg.stopped || msg.failed)}
+      messageId={msg.persisted ? msg.id : undefined}
+      name={draft.contactId ? nameById.get(draft.contactId) ?? msg.blocks?.people[draft.contactId]?.name ?? null : null}
+      onSaved={(index, edit) => onDraftSaved?.(msg.id, index, edit)}
+    />
+  );
   const gridRecs = msg.recommendations.filter((r) => !r.contact_id || !inlineIds.has(r.contact_id));
   const copyText = useMemo(
     () =>
@@ -2690,6 +2727,7 @@ const AssistantBubble = memo(function AssistantBubble({
               // a half-written directive or citation at its end off the screen.
               streaming={Boolean(msg.streaming || msg.stopped || msg.failed)}
               renderPeople={renderPeople}
+              renderDraft={renderDraft}
             >
               {msg.answer}
             </ChatMarkdown>
