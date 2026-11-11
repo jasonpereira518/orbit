@@ -15,8 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Disclosure } from "@/components/settings/disclosure";
-import { cn } from "@/lib/utils";
+import { TileDetails, UsageTile } from "@/components/settings/usage-tile";
 import { formatAllowanceReset, allowancePercentUsed, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
@@ -115,36 +114,26 @@ export function CreditsUsage({ meterClassName }: { meterClassName: string }) {
   if (overview === null) return null;
   const f = overview ? facts(overview, planConfig) : null;
   return (
-    <div className="space-y-2">
-      <div className="flex items-baseline justify-between gap-3 text-sm">
-        <span className="text-muted-foreground">AI credits</span>
-        <span className="tabular-nums" title={f?.allowance ? `Monthly credits reset ${f.resets}` : undefined}>
-          {f ? `${fmt(f.spendableLeft)} left this month` : "…"}
-        </span>
-      </div>
-      {f?.allowance ? (
-        <div
-          className="h-1.5 overflow-hidden rounded-full bg-muted"
-          role="meter"
-          aria-label="Monthly AI credits used"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={f.used}
-        >
-          <div className={cn("h-full rounded-full transition-[width]", meterClassName)} style={{ width: `${f.used}%` }} />
-        </div>
-      ) : null}
+    <UsageTile
+      label="AI credits"
+      value={f ? `${fmt(f.spendableLeft)} left` : "…"}
+      segments={f?.allowance ? [{ percent: f.used, className: meterClassName }] : undefined}
+      // Not "of N": what's left can include starter and pack credits on top of the month's.
+      foot={f?.allowance ? `${fmt(f.monthlyCredits)} a month · resets ${f.resets}` : null}
+      action={
+        f && f.plan !== "free" && f.monthlyCredits > 0 && f.packsSold && !f.out ? (
+          <BuyPackButton variant="link" size="xs" label="Add credits" />
+        ) : null
+      }
+    >
       {overview ? <CreditsNotice overview={overview} /> : null}
-      {f && f.plan !== "free" && f.monthlyCredits > 0 && f.packsSold && !f.out ? (
-        <BuyPackButton variant="outline" label="Add credits" />
-      ) : null}
       {overview ? (
-        <Disclosure label="Credit details" className="border-t-0 pt-0">
+        <TileDetails>
           <CreditsDetails overview={overview} />
-        </Disclosure>
+        </TileDetails>
       ) : null}
       {nudge}
-    </div>
+    </UsageTile>
   );
 }
 
@@ -186,7 +175,7 @@ function CreditsDetails({ overview }: { overview: CreditsOverview }) {
   const f = facts(overview, planConfig);
   const line = equivalentsLine(overview.equivalents);
   return (
-    <div className="space-y-2 text-sm text-muted-foreground">
+    <div className="space-y-1.5 text-xs text-muted-foreground">
       {f.monthlyCredits > 0 && f.allowance ? (
         <p>
           {fmt(credits(f.allowance.remaining))} of {fmt(f.monthlyCredits)} monthly · resets {f.resets}
@@ -217,7 +206,7 @@ function CreditEmailToggle({ initial }: { initial: boolean }) {
   const [enabled, setEnabled] = useState(initial);
   const [pending, start] = useTransition();
   return (
-    <label className="flex items-start gap-2 pt-1 text-sm text-muted-foreground">
+    <label className="flex items-start gap-2 pt-1 text-xs text-muted-foreground">
       <input
         type="checkbox"
         className="mt-0.5 size-4 shrink-0 accent-tier-accent"
