@@ -13,6 +13,7 @@ import { getDb } from "@/db";
 import { recruiters, userRecruiterLinks, type RecruiterLinkSource, type RecruiterLinkStatus } from "@/db/schema";
 import { requireEntitlement } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
+import { isRealHumanName } from "@/lib/recruiter-detect";
 import {
   ensureUserLink,
   isViewerSharing,
@@ -32,6 +33,7 @@ export async function assertRecruitersForUser(userId: string, route = "chat.recr
 export type LogRecruiterInput = {
   fullName: string;
   firm?: string;
+  roleInterviewingFor?: string;
   specialty?: string[];
   email?: string;
   linkedinUrl?: string;
@@ -50,6 +52,13 @@ export async function logRecruiterForUser(userId: string, input: LogRecruiterInp
   const fullName = input.fullName?.trim();
   if (!fullName && !input.recruiterId) {
     throw new UserFacingError("Add the recruiter’s name first");
+  }
+
+  if (fullName && !input.recruiterId) {
+    const valid = isRealHumanName(fullName);
+    if (!valid.valid) {
+      throw new UserFacingError("Enter the recruiter’s real first and last name (organizations and bot names are not allowed)");
+    }
   }
 
   let recruiterId = input.recruiterId;
@@ -113,6 +122,7 @@ export async function logRecruiterForUser(userId: string, input: LogRecruiterInp
     userId,
     recruiterId: recruiterId!,
     status: input.status || "planned",
+    roleInterviewingFor: input.roleInterviewingFor,
     email: input.email,
     phone: input.phone,
     linkedinUrl: input.linkedinUrl,

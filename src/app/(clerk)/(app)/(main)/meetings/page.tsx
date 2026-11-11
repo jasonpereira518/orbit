@@ -36,13 +36,18 @@ function listHref(q: string, source: MeetingSourceFilter): string {
   return s ? `/meetings?${s}` : "/meetings";
 }
 
-export default async function MeetingsPage({ searchParams }: { searchParams: Promise<{ q?: string; source?: string }> }) {
+export default async function MeetingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; source?: string; candidate?: string }>;
+}) {
   const gate = await pageVisibilityGate("page.meetings");
   if (gate) return gate;
 
-  const { q: rawQ, source: rawSource } = await searchParams;
+  const { q: rawQ, source: rawSource, candidate: rawCandidate } = await searchParams;
   const q = (rawQ ?? "").trim().slice(0, 100);
   const source: MeetingSourceFilter = rawSource === "orbit" || rawSource === "granola" ? rawSource : "all";
+  const candidateKey = (rawCandidate ?? "").trim() || null;
   const userId = await requireUserId();
 
   const [page, settings, plan, { canUseMeetings }, planConfig, resumableMeeting, jobs] = await Promise.all([
@@ -71,6 +76,7 @@ export default async function MeetingsPage({ searchParams }: { searchParams: Pro
 
       <CaptureFlowLazy
         variant="meetings"
+        candidateKey={candidateKey}
         initialJob={meetingJob}
         initialJobs={meetingJob ? [meetingJob] : []}
         hasApiKey={settings.hasApiKey}

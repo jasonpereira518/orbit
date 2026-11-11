@@ -20,8 +20,12 @@ import {
   type ChatSuggestion,
 } from "@/lib/chat-suggestions";
 import { loadSuggestionSignals } from "@/lib/chat-suggestions-data";
-import { markTurnStopped } from "@/lib/chat-persist";
+import { addTurnSteer, markTurnStopped } from "@/lib/chat-persist";
 import { isUuid } from "@/lib/input/ids";
+import { saveDraftEdit } from "@/lib/chat-draft-save";
+import { addMemory, deleteMemory, listMemories, type ChatMemory } from "@/lib/chat-memory";
+import { UserFacingError } from "@/lib/errors";
+import { PINNED_THREADS_MAX, pinThread, renameThread, searchThreads, type ThreadSearchHit } from "@/lib/chat-threads";
 import { discardCountAfter, loadVersions, switchVersion } from "@/lib/chat-versions";
 import { isRefineKind, refineDraft } from "@/lib/chat-refine";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -43,6 +47,8 @@ export type ChatThreadRow = {
   title: string | null;
   createdAt: Date;
   updatedAt: Date;
+  /** Set when the person pinned it; pinned chats lead the history list. */
+  pinnedAt: Date | null;
 };
 
 /**
@@ -70,6 +76,10 @@ const THREAD_CURSOR_RE =
  * so it round-trips at full (microsecond) precision — a JavaScript Date would truncate it and
  * skip threads updated in the same millisecond. One row past the page says whether there is
  * another.
+ *
+ * The first page also carries every pinned thread (there are at most `PINNED_THREADS_MAX`),
+ * so a chat pinned long ago is not stranded on a page nobody has loaded. The cursor is taken
+ * from the dated page alone, and the client drops ids it already has.
  */
 export async function listChatThreads(before?: string | null): Promise<ChatThreadPage> {
   const userId = await requireUserForSurface("page.chat");
@@ -86,6 +96,7 @@ export async function listChatThreads(before?: string | null): Promise<ChatThrea
       title: chatThreads.title,
       createdAt: chatThreads.createdAt,
       updatedAt: chatThreads.updatedAt,
+      pinnedAt: chatThreads.pinnedAt,
       cursorAt: sql<string>`${chatThreads.updatedAt}::text`,
     })
     .from(chatThreads)
@@ -101,8 +112,26 @@ export async function listChatThreads(before?: string | null): Promise<ChatThrea
     .limit(CHAT_THREAD_PAGE + 1);
   const page = rows.slice(0, CHAT_THREAD_PAGE);
   const last = page[page.length - 1];
+  const listed = new Set(page.map((t) => t.id));
+  const pinned = before
+    ? []
+    : await db
+        .select({
+          id: chatThreads.id,
+          title: chatThreads.title,
+          createdAt: chatThreads.createdAt,
+          updatedAt: chatThreads.updatedAt,
+          pinnedAt: chatThreads.pinnedAt,
+        })
+        .from(chatThreads)
+        .where(and(eq(chatThreads.userId, userId), isNotNull(chatThreads.pinnedAt), isNotNull(chatThreads.title)))
+        .orderBy(desc(chatThreads.pinnedAt))
+        .limit(PINNED_THREADS_MAX);
   return {
-    threads: page.map(({ cursorAt: _cursorAt, ...thread }) => thread),
+    threads: [
+      ...page.map(({ cursorAt: _cursorAt, ...thread }) => thread),
+      ...pinned.filter((t) => !listed.has(t.id)),
+    ],
     nextCursor: rows.length > CHAT_THREAD_PAGE && last ? `${last.cursorAt}|${last.id}` : null,
   };
 }
@@ -359,6 +388,62 @@ export async function deleteChatThread(threadId: string) {
 }
 
 /**
+ * Keep a draft the person wrote or edited on an answer's card, so a reload does not lose it.
+ * Quiet on failure: the text is still on screen, and the next save tries again.
+ */
+export async function saveChatDraft(messageId: string, contactId: string, text: string) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(messageId) || !isUuid(contactId) || typeof text !== "string") return { ok: false as const };
+  return { ok: await saveDraftEdit(userId, messageId, contactId, text) };
+}
+
+/** What Orbit is keeping in mind for this person across chats, newest first. */
+export async function listChatMemories(): Promise<ChatMemory[]> {
+  const userId = await requireUserForSurface("page.chat");
+  return listMemories(userId);
+}
+
+/** The person adds a memory themselves, from the Context sheet. */
+export async function addChatMemory(text: string) {
+  const userId = await requireUserForSurface("page.chat");
+  if (typeof text !== "string") return { ok: false as const, error: "There’s nothing to remember there" };
+  try {
+    return { ok: true as const, memory: await addMemory(userId, text) };
+  } catch (err) {
+    if (err instanceof UserFacingError) return { ok: false as const, error: err.message };
+    throw err;
+  }
+}
+
+export async function deleteChatMemory(id: string) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(id)) return { ok: false as const };
+  return { ok: await deleteMemory(userId, id) };
+}
+
+/** Rename a saved conversation. A title, once set, is never overwritten by a later answer. */
+export async function renameChatThread(threadId: string, title: string) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(threadId) || typeof title !== "string") return { ok: false as const };
+  const stored = await renameThread(userId, threadId, title);
+  return stored ? { ok: true as const, title: stored } : { ok: false as const };
+}
+
+/** Pin a conversation to the top of the history list, or unpin it. */
+export async function pinChatThread(threadId: string, pinned: boolean) {
+  const userId = await requireUserForSurface("page.chat");
+  if (!isUuid(threadId)) return { ok: false as const, reason: "missing" as const };
+  return pinThread(userId, threadId, pinned === true);
+}
+
+/** Saved conversations whose title or messages contain `query`. */
+export async function searchChatThreads(query: string): Promise<ThreadSearchHit[]> {
+  const userId = await requireUserForSurface("page.chat");
+  if (typeof query !== "string") return [];
+  return searchThreads(userId, query);
+}
+
+/**
  * The person pressed Stop on a streaming answer (audit L-25). The stream's abort alone reads
  * the same as a dropped connection, which keeps the question; this says it was on purpose,
  * so the unanswered question is discarded. Ownership is enforced inside `markTurnStopped`.
@@ -367,6 +452,24 @@ export async function stopChatTurn(threadId: string, turnId: string) {
   const userId = await requireUserForSurface("page.chat");
   if (!isUuid(threadId) || !isUuid(turnId)) return { ok: false as const };
   await markTurnStopped(userId, threadId, turnId);
+  return { ok: true as const };
+}
+
+/** A steer is a nudge, not a new question: long ones go through the queue as their own turn. */
+const STEER_MAX_CHARS = 1000;
+
+/**
+ * The person sent a message to steer the answer being written. It waits on the thread for
+ * the running turn to read between lookup rounds; the turn confirms with a `steer:<id>` step.
+ * Ownership is enforced inside `addTurnSteer`.
+ */
+export async function steerChatTurn(threadId: string, turnId: string, id: string, text: string) {
+  const userId = await requireUserForSurface("page.chat");
+  const note = typeof text === "string" ? text.trim() : "";
+  if (!isUuid(threadId) || !isUuid(turnId) || !isUuid(id) || !note || note.length > STEER_MAX_CHARS) {
+    return { ok: false as const };
+  }
+  await addTurnSteer(userId, threadId, turnId, { id, text: note });
   return { ok: true as const };
 }
 

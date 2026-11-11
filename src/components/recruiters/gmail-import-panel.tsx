@@ -1,8 +1,9 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { type GmailConnectionStatus, type GmailScanStatus } from "@/actions/gmail";
+import { type RecruitingCycle } from "@/lib/recruiter-scan-state";
 import { Button } from "@/components/ui/button";
 import {
   SESSION_EXPIRED_LINE,
@@ -24,6 +25,7 @@ export function GmailImportPanel({
   returnTo?: string;
 }) {
   const [pending, startTransition] = useTransition();
+  const [cycle, setCycle] = useState<RecruitingCycle>("current");
   const conn = useGoogleConnection({ returnTo: returnTo ?? "", enabled: false, label: "Gmail" });
   // One handler for the header link and the button: both start the same mail consent.
   const connect = () => conn.connect(["recruiter_scan"]);
@@ -70,10 +72,10 @@ export function GmailImportPanel({
             {connection.status === "needs_reauth"
               ? `${SESSION_EXPIRED_LINE} to scan your mailbox again.`
               : connection.connected && connection.canRead
-                ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
+                ? `Connected as ${connection.emailAddress}. Orbit scans your emails since the start of your recruiting cycle to extract recruiters, roles you're interviewing for, and LinkedIn profiles.`
                 : connection.connected
                   ? `Connected as ${connection.emailAddress}, without permission to read mail. Allow mail access to scan for recruiters.`
-                  : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
+                  : "Search your emails since the beginning of your recruiting cycle (July / January) for recruiters and interview threads."}
           </p>
           {connection.status === "disarmed" ? (
             <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-warning">
@@ -98,12 +100,23 @@ export function GmailImportPanel({
                   : "Connect Gmail"}
             </Button>
           ) : (
-            <>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={cycle}
+                onChange={(e) => setCycle(e.target.value as RecruitingCycle)}
+                disabled={busy || running}
+                className="h-9 rounded-lg border border-input bg-card px-2.5 text-xs text-foreground"
+                aria-label="Recruiting cycle window"
+              >
+                <option value="current">Current cycle (Auto)</option>
+                <option value="july">Fall cycle (Since Jul 1)</option>
+                <option value="january">Spring cycle (Since Jan 1)</option>
+              </select>
               <Button
                 disabled={busy || running}
-                onClick={() => startTransition(() => runStart())}
+                onClick={() => startTransition(() => runStart({ cycle }))}
               >
-                {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
+                {running ? "Scanning…" : scan ? "Scan again" : "Scan cycle"}
               </Button>
               <DisconnectAccountDialog
                 provider="gmail"
@@ -114,7 +127,7 @@ export function GmailImportPanel({
                   });
                 }}
               />
-            </>
+            </div>
           )}
         </div>
       </div>

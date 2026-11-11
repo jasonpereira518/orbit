@@ -186,11 +186,49 @@ export const isViewingAsUser = cache(async (userId: string): Promise<boolean> =>
 });
 
 /**
+/**
+ * True when the request is originating from localhost.
+ */
+function isLocalhostHost(rawHost: string): boolean {
+  if (!rawHost) return false;
+  const host = rawHost.split(":")[0].toLowerCase().trim();
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local")
+  );
+}
+
+/**
+ * Returns true if the current request is running on localhost.
+ * Checks request headers (Host, X-Forwarded-Host) or dev server status within an active request.
+ * Safely falls back to false outside a request context (scripts, cron jobs).
+ */
+export async function isLocalhostRequest(): Promise<boolean> {
+  if (process.env.ORBIT_PREVIEW_ALL_LOCAL === "1") return true;
+  try {
+    const { headers } = await import("next/headers");
+    const h = await headers();
+    const host = h.get("host") || h.get("x-forwarded-host") || "";
+    if (isLocalhostHost(host)) return true;
+    if (isLocalhost()) return true;
+  } catch {
+    // No request context — a background job, a cron, or a script.
+  }
+  return false;
+}
+
+/**
  * True when this request is an operator deliberately reaching past a coming-soon page.
  * On a local dev server it's on unless switched off (cookie "0"), so every worktree shows
  * unreleased work by default; deployed builds keep it an explicit opt-in.
  */
 export const isPreviewingUnreleased = cache(async (userId: string): Promise<boolean> => {
+  if (await isLocalhostRequest()) return true;
   if (!isAdminUser(userId)) return false;
   try {
     const value = (await cookies()).get(PREVIEW_UNRELEASED_COOKIE)?.value;
@@ -244,7 +282,10 @@ export async function resolveSurfaceVisibility(
   // while they work on it), but an unreleased page must default CLOSED for everyone,
   // operators included, or merely being an admin ships the feature early. Reaching past it
   // takes the separate, explicit `previewingUnreleased` opt-in.
-  const previewingUnreleased = admin && (await isPreviewingUnreleased(userId));
+  //
+  // On localhost, previewing unreleased pages is enabled by default to allow smooth local development.
+  const onLocalhost = await isLocalhostRequest();
+  const previewingUnreleased = onLocalhost || (admin && (await isPreviewingUnreleased(userId)));
   const marked = await getComingSoonKeys();
   // The demo workspace records product demos, so its unreleased PAGES read as released —
   // no teaser, no "Soon" tag, companions shown. Unreleased features stay hidden.
@@ -271,7 +312,7 @@ export async function resolveSurfaceVisibility(
   // the call the app layout has already made this request.
   const tierRules = await getTierRules();
   const tierLocked =
-    tierRules.size === 0 || exempt || isDemoAccount(userId) || (await isDemoWorkspace(userId))
+    tierRules.size === 0 || exempt || onLocalhost || isDemoAccount(userId) || (await isDemoWorkspace(userId))
       ? new Map<string, Plan[]>()
       : tierLockedFor(tierRules, (await getEntitlements(userId)).plan);
   return {
@@ -323,13 +364,13 @@ async function throwIfTierLocked(userId: string, visibility: SurfaceVisibility, 
  */
 async function requireSurfaceFeature(userId: string, visibility: SurfaceVisibility, surfaceKey: string) {
   const feature = SURFACE_FEATURE[surfaceKey];
-  if (feature && !visibility.exempt) await requireEntitlement(userId, feature, { route: surfaceKey });
+  if (feature && !visibility.exempt && !(await isLocalhostRequest())) await requireEntitlement(userId, feature, { route: surfaceKey });
 }
 
 /** False when `surfaceKey` has a plan feature (`SURFACE_FEATURE`) this viewer's plan lacks. */
 async function hasSurfaceFeature(userId: string, surfaceKey: string, exempt: boolean): Promise<boolean> {
   const feature = SURFACE_FEATURE[surfaceKey];
-  return !feature || exempt || (await getEntitlements(userId)).features[feature];
+  return !feature || exempt || (await isLocalhostRequest()) || (await getEntitlements(userId)).features[feature];
 }
 
 /**

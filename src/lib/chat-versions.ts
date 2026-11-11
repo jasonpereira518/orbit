@@ -1,3 +1,4 @@
+import type { ChatAttachment } from "@/lib/chat-attachments";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -23,7 +24,12 @@ export type VersionTarget = {
   slot: string;
   nextVersion: number;
   /** The user row of the version being replaced — its text is the default for "regenerate". */
-  priorUserRow: { id: string; content: string; attachedContacts: Array<{ id: string; name: string }> };
+  priorUserRow: {
+    id: string;
+    content: string;
+    attachedContacts: Array<{ id: string; name: string }>;
+    attachments: ChatAttachment[];
+  };
   priorAssistantId: string;
 };
 
@@ -168,6 +174,7 @@ export async function resolveVersionTarget(
       id: userRow.id,
       content: userRow.content,
       attachedContacts: userRow.attachedContacts ?? [],
+      attachments: userRow.attachments ?? [],
     },
     priorAssistantId: assistantRow.id,
   };

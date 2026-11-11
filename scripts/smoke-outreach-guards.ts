@@ -34,6 +34,7 @@ delete process.env.RESEND_API_KEY;
 delete process.env.TWILIO_ACCOUNT_SID;
 delete process.env.TWILIO_AUTH_TOKEN;
 delete process.env.APOLLO_API_KEY; // forces the demo prospect search
+delete process.env.BRIGHTDATA_API_KEY; // forces the demo prospect search
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 delete process.env.CLERK_SECRET_KEY;
 process.env.ORBIT_DEMO_DATA = "off";

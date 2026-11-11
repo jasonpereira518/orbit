@@ -36,8 +36,12 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // click); and event discovery from confirmation emails is gone, so its description is removed.
 // 2026-11-08: shared public work history — a confident web-search work history found from a
 // public LinkedIn profile is reused across accounts that have the same profile, like shared photos.
-export const TERMS_VERSION = "2026-11-08";
-export const LEGAL_LAST_UPDATED = "November 8, 2026";
+// 2026-11-10: chat can keep notes you ask it to remember across chats (saved only when you add
+// one or confirm a suggestion, listed and removable in the chat's Context panel, sent with every
+// chat question), and the text of files you attach to a question is kept with that chat and sent
+// to the AI provider, a photo or PDF being read by it first.
+export const TERMS_VERSION = "2026-11-10";
+export const LEGAL_LAST_UPDATED = "November 10, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

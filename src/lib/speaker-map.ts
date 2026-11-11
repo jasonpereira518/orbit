@@ -51,6 +51,8 @@ export class LoudnessTimeline {
   private at: number[] = [];
   /** Running sum of the mic level, with the same origin rule as `micCount`. */
   private micSum: number[] = [0];
+  /** Running sum of the call level. */
+  private callSum: number[] = [0];
   /** Whether the call side was ever audible: false means a mic-only, in-person recording. */
   private heardCall = false;
   /**
@@ -59,17 +61,24 @@ export class LoudnessTimeline {
    * keeps every remaining value correct without a rescan. Length is always `at.length + 1`.
    */
   private micCount: number[] = [0];
+  /** Running count of samples where the call side was dominant. */
+  private callCount: number[] = [0];
 
   push(sample: LoudnessSample): void {
     const mic = sample.mic > SILENCE && sample.mic > sample.call ? 1 : 0;
+    const call = sample.call > SILENCE && sample.call >= sample.mic ? 1 : 0;
     if (sample.call > SILENCE) this.heardCall = true;
     this.at.push(sample.atMs);
     this.micCount.push(this.micCount[this.micCount.length - 1] + mic);
     this.micSum.push(this.micSum[this.micSum.length - 1] + Math.max(0, sample.mic));
+    this.callCount.push(this.callCount[this.callCount.length - 1] + call);
+    this.callSum.push(this.callSum[this.callSum.length - 1] + Math.max(0, sample.call));
     if (this.at.length > MAX_SAMPLES) {
       this.at.splice(0, DROP_BATCH);
       this.micCount.splice(0, DROP_BATCH);
       this.micSum.splice(0, DROP_BATCH);
+      this.callCount.splice(0, DROP_BATCH);
+      this.callSum.splice(0, DROP_BATCH);
     }
   }
 
@@ -87,15 +96,45 @@ export class LoudnessTimeline {
     return (this.micSum[hi] - this.micSum[lo]) / total;
   }
 
+  /** The mean call level over a span. Null when nothing was recorded. */
+  callLevel(startMs: number, endMs: number): number | null {
+    const lo = lowerBound(this.at, startMs);
+    const hi = upperBound(this.at, endMs);
+    const total = hi - lo;
+    if (total <= 0) return null;
+    return (this.callSum[hi] - this.callSum[lo]) / total;
+  }
+
   /** The share of samples in this span where the mic was louder. Null when nothing was recorded. */
   micDominantShare(startMs: number, endMs: number): number | null {
-    // `[lo, hi)` is exactly the old linear scan's window: skip everything before `startMs`,
-    // stop at the first sample past `endMs`. Both ends inclusive, as before.
     const lo = lowerBound(this.at, startMs);
     const hi = upperBound(this.at, endMs);
     const total = hi - lo;
     if (total <= 0) return null;
     return (this.micCount[hi] - this.micCount[lo]) / total;
+  }
+
+  /** The share of samples in this span where the call was louder. Null when nothing was recorded. */
+  callDominantShare(startMs: number, endMs: number): number | null {
+    const lo = lowerBound(this.at, startMs);
+    const hi = upperBound(this.at, endMs);
+    const total = hi - lo;
+    if (total <= 0) return null;
+    return (this.callCount[hi] - this.callCount[lo]) / total;
+  }
+
+  /** Whether speech in this span came out of the microphone or the call. */
+  audioSource(startMs: number, endMs: number): "microphone" | "call" | "unknown" {
+    if (!this.heardCall) return "microphone";
+    const mic = this.micDominantShare(startMs, endMs) ?? 0;
+    const call = this.callDominantShare(startMs, endMs) ?? 0;
+    if (mic > call && mic >= 0.5) return "microphone";
+    if (call > mic && call >= 0.5) return "call";
+    const mLevel = this.micLevel(startMs, endMs) ?? 0;
+    const cLevel = this.callLevel(startMs, endMs) ?? 0;
+    if (mLevel > cLevel * 1.2 && mLevel > SILENCE) return "microphone";
+    if (cLevel > mLevel * 1.2 && cLevel > SILENCE) return "call";
+    return "unknown";
   }
 }
 
@@ -123,7 +162,14 @@ function upperBound(values: readonly number[], value: number): number {
   return lo;
 }
 
-type SpeakerStat = { words: number; micWords: number; levelSum: number; levelWords: number };
+type SpeakerStat = {
+  words: number;
+  micWords: number;
+  callWords: number;
+  levelSum: number;
+  levelWords: number;
+  callLevelSum: number;
+};
 
 type Tally = {
   /** The timeline these counts were measured against; a different one invalidates them. */
@@ -144,7 +190,10 @@ type Tally = {
 /** What `labelSpeakers` reads from the recorder's timeline. The last two are optional for old callers. */
 export type SpeakerTimeline = {
   micDominantShare(startMs: number, endMs: number): number | null;
+  callDominantShare?(startMs: number, endMs: number): number | null;
   micLevel?(startMs: number, endMs: number): number | null;
+  callLevel?(startMs: number, endMs: number): number | null;
+  audioSource?(startMs: number, endMs: number): "microphone" | "call" | "unknown";
   callHeard?(): boolean;
 };
 
@@ -205,17 +254,23 @@ export function labelSpeakers(
     if (w.speaker === null) continue;
     let stat = tally.stats.get(w.speaker);
     if (!stat) {
-      stat = { words: 0, micWords: 0, levelSum: 0, levelWords: 0 };
+      stat = { words: 0, micWords: 0, callWords: 0, levelSum: 0, levelWords: 0, callLevelSum: 0 };
       tally.stats.set(w.speaker, stat);
       tally.order.push(w.speaker);
     }
     stat.words++;
     const share = timeline.micDominantShare(w.start, w.end);
     if (share !== null && share >= 0.5) stat.micWords++;
+    const callShare = timeline.callDominantShare?.(w.start, w.end) ?? null;
+    if (callShare !== null && callShare >= 0.5) stat.callWords++;
     const level = timeline.micLevel?.(w.start, w.end) ?? null;
     if (level !== null) {
       stat.levelSum += level;
       stat.levelWords++;
+    }
+    const cLevel = timeline.callLevel?.(w.start, w.end) ?? null;
+    if (cLevel !== null) {
+      stat.callLevelSum += cLevel;
     }
   }
   tally.processed = words.length;

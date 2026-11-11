@@ -6,7 +6,6 @@ import { Download, Trash2, UserX } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { friendlyError, UserFacingError } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
-import { AvatarSyncStatus } from "@/components/settings/avatar-sync-status";
 import { DeleteDataDialog } from "@/components/settings/delete-data-dialog";
 import { DeleteAccountDialog } from "@/components/settings/delete-account-dialog";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
@@ -68,8 +67,6 @@ export function DataSettings() {
           {exporting ? "Exporting…" : "Export JSON"}
         </Button>
       </SettingsRow>
-
-      <AvatarSyncStatus />
 
       <SettingsRow
         title="Delete data"

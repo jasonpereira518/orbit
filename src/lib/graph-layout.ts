@@ -219,6 +219,47 @@ function isOverdue(nextFollowUpAt: Date | string | null | undefined) {
   return d.getTime() < Date.now();
 }
 
+/**
+ * A contact star's own fields — everything but where it sits in the sky. Shared so the
+ * inspect card can open a neighbour with the same data the chart would hand it.
+ */
+export function contactStarData(c: GraphContactInput) {
+  const name = displayName(c);
+  // The payload's own decision when it made one (graph-data.ts caps comets per cluster);
+  // the raw day threshold only for callers that never set it.
+  const dormant = c.dormant ?? isCometContact(c.lastInteractionAt);
+  return {
+    kind: "contact" as const,
+    label: name,
+    fullName: c.fullName,
+    preferredName: c.preferredName,
+    initials: initialsFromName(name),
+    company: c.company,
+    school: c.school ?? null,
+    title: c.title,
+    score: placementScore(c),
+    relationshipScore: clampScore(c.relationshipScore),
+    closeness: c.closeness,
+    closenessTier: c.closenessTier,
+    comet: dormant,
+    overdue: isOverdue(c.nextFollowUpAt),
+    tags: c.tags,
+    aiSummary: c.aiSummary,
+    keyFacts: c.keyFacts || [],
+    lastInteractionAt: toIso(c.lastInteractionAt),
+    hasLoggedInteraction: c.hasLoggedInteraction === true,
+    nextFollowUpAt: toIso(c.nextFollowUpAt),
+    metContext: c.metContext ?? null,
+    dateMet: toIso(c.dateMet ?? null),
+    howMet: c.howMet ?? null,
+    email: c.email ?? null,
+    phone: c.phone ?? null,
+    linkedinUrl: c.linkedinUrl ?? null,
+    website: c.website ?? null,
+    profileImageUrl: c.profileImageUrl ?? null,
+  };
+}
+
 type PolarPosition = { x: number; y: number; angle: number; radius: number };
 
 /** Layout px between a cluster's highest star and the bottom of its name — clear of its glow. */
@@ -847,44 +888,14 @@ export function* buildHybridGraphLayoutSteps(
     ...clusterNodes,
     ...contacts.map((c) => {
       const pos = positions.get(c.id) || toPosition(0, 320);
-      const score = placementScore(c);
-      // The payload's own decision when it made one (graph-data.ts caps comets per cluster);
-      // the raw day threshold only for callers that never set it.
-      const dormant = c.dormant ?? isCometContact(c.lastInteractionAt);
-      const name = displayName(c);
+      const star = contactStarData(c);
+      const dormant = star.comet;
       const cluster = byContactId.get(c.id);
       return {
         id: c.id,
         type: "contact" as const,
         data: {
-          kind: "contact" as const,
-          label: name,
-          fullName: c.fullName,
-          preferredName: c.preferredName,
-          initials: initialsFromName(name),
-          company: c.company,
-          school: c.school ?? null,
-          title: c.title,
-          score,
-          relationshipScore: clampScore(c.relationshipScore),
-          closeness: c.closeness,
-          closenessTier: c.closenessTier,
-          comet: dormant,
-          overdue: isOverdue(c.nextFollowUpAt),
-          tags: c.tags,
-          aiSummary: c.aiSummary,
-          keyFacts: c.keyFacts || [],
-          lastInteractionAt: toIso(c.lastInteractionAt),
-          hasLoggedInteraction: c.hasLoggedInteraction === true,
-          nextFollowUpAt: toIso(c.nextFollowUpAt),
-          metContext: c.metContext ?? null,
-          dateMet: toIso(c.dateMet ?? null),
-          howMet: c.howMet ?? null,
-          email: c.email ?? null,
-          phone: c.phone ?? null,
-          linkedinUrl: c.linkedinUrl ?? null,
-          website: c.website ?? null,
-          profileImageUrl: c.profileImageUrl ?? null,
+          ...star,
           clusterId: cluster?.id,
           clusterName: cluster?.name,
           clusterKind: cluster?.kind,

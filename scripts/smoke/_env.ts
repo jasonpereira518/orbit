@@ -47,6 +47,7 @@ export const PROVIDER_KEY_ENV = [
   "ORBIT_MANAGED_ANTHROPIC_API_KEY",
   "TYPESAFE_API_KEY",
   "APOLLO_API_KEY",
+  "BRIGHTDATA_API_KEY",
   "RESEND_API_KEY",
   // A real DEEPGRAM_API_KEY now lives in this worktree's .env.local (task 8). Left unstripped,
   // smoke-ai-access's "transcription refused, nothing sent" assertions stop asserting anything

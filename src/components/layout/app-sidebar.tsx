@@ -4,7 +4,7 @@ import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { preloadCaptureFlow } from "@/components/capture/capture-flow-lazy";
 import { preloadChatPanel } from "@/components/chat/chat-panel-lazy";
-import { Lock, Plus, Search } from "lucide-react";
+import { Lock, Search, Sparkles } from "lucide-react";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
 import { UserButton } from "@clerk/nextjs";
 import { motion } from "motion/react";
@@ -12,6 +12,7 @@ import {
   APP_NAV_CORE,
   APP_NAV_EXTRAS,
   APP_NAV_SETTINGS,
+  APP_NAV_SPECIAL_HREFS,
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
@@ -154,6 +155,19 @@ function SidebarNavLink({
   );
 }
 
+/** A labelled rule between sidebar groups; on the icon rail the label goes and the rule stays. */
+function GroupDivider({ label }: { label: string }) {
+  return (
+    <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
+      <div className="h-px flex-1 bg-border/60" />
+      <span className="hidden text-3xs font-medium uppercase tracking-wider text-muted-foreground-subtle lg:inline">
+        {label}
+      </span>
+      <div className="hidden h-px flex-1 bg-border/60 lg:block" />
+    </div>
+  );
+}
+
 export function AppSidebar({
   pathname,
   clerkOn,
@@ -183,11 +197,15 @@ export function AppSidebar({
   // One ordered list, then split: a page marked coming soon always drops below the divider,
   // whatever group the code declared it in, and keeps its place in the operator's order
   // within that group.
+  // /capture is left out: the primary button above the list is its door.
   const ordered = orderNavItems([...APP_NAV_CORE, ...APP_NAV_EXTRAS], navOrder).filter(
-    (item) => !isHrefHidden(item.href, hidden)
+    (item) => item.href !== "/capture" && !isHrefHidden(item.href, hidden)
   );
-  const core = ordered.filter((item) => !isHrefComingSoon(item.href, comingSoon));
-  const extras = ordered.filter((item) => isHrefComingSoon(item.href, comingSoon));
+  const isSoon = (item: AppNavItem) => isHrefComingSoon(item.href, comingSoon);
+  const isSpecial = (item: AppNavItem) => APP_NAV_SPECIAL_HREFS.includes(item.href);
+  const special = ordered.filter((item) => !isSoon(item) && isSpecial(item));
+  const core = ordered.filter((item) => !isSoon(item) && !isSpecial(item));
+  const extras = ordered.filter(isSoon);
   const captureHidden = hidden.has("page.capture");
   const mod = useModKeyLabel();
   const shortcut = mod === "⌘" ? "⌘K" : "Ctrl K";
@@ -256,21 +274,21 @@ export function AppSidebar({
           live door into a hidden page. */}
       {!captureHidden && (
       <div className="px-2 pb-3 lg:px-3">
-        {/* The most-used door into /capture: hover or focus fetches the whole route and the
+        {/* The only door into /capture here (the nav list skips it): hover or focus fetches the whole route and the
             form's code, so the click lands with neither a skeleton nor a chunk wait. */}
         <IntentLink
           href="/capture"
           onPointerEnter={preloadCaptureFlow}
           onFocus={preloadCaptureFlow}
-          title="Log interaction"
+          title="Capture"
           className={cn(
             buttonVariants({ size: "icon" }),
             "mx-auto flex h-10 w-10 lg:h-auto lg:w-full lg:justify-start lg:gap-2 lg:px-3 lg:py-2",
             "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
           )}
         >
-          <Plus className="h-4 w-4" />
-          <span className="max-lg:sr-only">Log interaction</span>
+          <Sparkles className="h-4 w-4" />
+          <span className="max-lg:sr-only">Capture</span>
         </IntentLink>
       </div>
       )}
@@ -290,16 +308,24 @@ export function AppSidebar({
           />
         ))}
 
-        {/* The divider labels the group below it, so it goes when the group does. */}
-        {extras.length > 0 && (
-          <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
-            <div className="h-px flex-1 bg-border/60" />
-            <span className="hidden text-3xs font-medium uppercase tracking-wider text-muted-foreground-subtle lg:inline">
-              Coming soon
-            </span>
-            <div className="hidden h-px flex-1 bg-border/60 lg:block" />
-          </div>
+        {/* A divider labels the group below it, so it goes when the group does. */}
+        {special.length > 0 && (
+          <>
+            <GroupDivider label="Special features" />
+            {special.map((item) => (
+              <SidebarNavLink
+                soon={comingSoon}
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                hiddenFromUsers={tagged(item)}
+                tiers={tiersOf(item)}
+              />
+            ))}
+          </>
         )}
+
+        {extras.length > 0 && <GroupDivider label="Coming soon" />}
 
         {extras.map((item) => (
           <SidebarNavLink

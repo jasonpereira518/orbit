@@ -233,6 +233,14 @@ CREATE TABLE IF NOT EXISTS user_goals (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id);
+CREATE TABLE IF NOT EXISTS chat_memories (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  text text NOT NULL,
+  source_thread_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_memories_user_idx ON chat_memories(user_id, created_at);
 CREATE TABLE IF NOT EXISTS tags (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -877,6 +885,8 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   title text,
   context_note text,
   stopped_turn_id text,
+  pending_steer jsonb,
+  pinned_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -897,6 +907,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   feedback_note text,
   answer_outcome text,
   follow_ups jsonb DEFAULT '[]',
+  attachments jsonb,
   client_turn_id text,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
@@ -942,6 +953,7 @@ CREATE TABLE IF NOT EXISTS user_recruiter_links (
   ai_summary text,
   companies_mentioned jsonb DEFAULT '[]',
   roles_discussed jsonb DEFAULT '[]',
+  role_interviewing_for text,
   first_email_at timestamptz,
   last_email_at timestamptz,
   email_count integer NOT NULL DEFAULT 0,
@@ -973,6 +985,16 @@ CREATE TABLE IF NOT EXISTS recruiter_messages (
 CREATE INDEX IF NOT EXISTS recruiter_messages_user_idx ON recruiter_messages(user_id, status);
 CREATE INDEX IF NOT EXISTS recruiter_messages_recruiter_idx ON recruiter_messages(recruiter_id);
 CREATE INDEX IF NOT EXISTS recruiter_messages_sent_idx ON recruiter_messages(user_id, sent_at);
+CREATE TABLE IF NOT EXISTS recruiter_contact_unlocks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  recruiter_id uuid NOT NULL REFERENCES recruiters(id) ON DELETE CASCADE,
+  cost_credits integer NOT NULL DEFAULT 1,
+  unlocked_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_idx ON recruiter_contact_unlocks(user_id);
+CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_recruiter_idx ON recruiter_contact_unlocks(recruiter_id);
+CREATE UNIQUE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_recruiter_uidx ON recruiter_contact_unlocks(user_id, recruiter_id);
 CREATE TABLE IF NOT EXISTS recruiter_scan_state (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL UNIQUE,
@@ -3055,11 +3077,18 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // and share_token_hash / _encrypted, with unsubscribe_token made nullable (L-05). Renumbered
 // 206 → 208 on Nov 8 2026 to land above #551 (206) and #554 (207): a database stamped above the
 // old 206 would never run this DDL, and the Phase 2 half of this branch now lands as #554.
-// 209 = Reminders Engine Redesign: reminders and suggested_reminders priority, category,
-// timing_rationale, and importance_reason columns for smart contextual reminder curation.
-// 210 = Smart Opportunities: user_goals progress/category/updated_at and smart_opportunities
+// 209 = outreach_campaigns.background_job (asynchronous campaign execution & scout runner)
+// 210 = recruiter_contact_unlocks (credit-based recruiter contact unlocks) + user_recruiter_links.role_interviewing_for
+// 214 = chat_threads.pending_steer (messages sent to steer the answer being written; the
+// running turn reads them between lookup rounds).
+// 215 = chat_threads.pinned_at (a conversation pinned to the top of the history list).
+// 216 = chat_messages.attachments (the names and read text of files attached to a question).
+// 217 = chat_memories (new table: things the person asked Orbit to remember across chats).
+// 218 = reminders engine redesign: reminders and suggested_reminders priority, category,
+// timing_rationale, and importance_reason columns.
+// 219 = smart opportunities: user_goals progress/category/updated_at and smart_opportunities
 // table for cross-contact note synthesis aligned with personal goals & progress.
-export const SCHEMA_VERSION = 210;
+export const SCHEMA_VERSION = 219;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3431,6 +3460,12 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE interest_list_signups ADD COLUMN IF NOT EXISTS referral_tier_mailed integer NOT NULL DEFAULT 0`,
   // v207: Stop versus a dropped connection (audit L-25). See `markTurnStopped`.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS stopped_turn_id text`,
+  // v214: steering a running answer. See `addTurnSteer`.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS pending_steer jsonb`,
+  // v215: pinned conversations. See `pinThread`.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS pinned_at timestamptz`,
+  // v216: files attached to a chat question. See `@/lib/chat-attachments`.
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attachments jsonb`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open
@@ -4184,6 +4219,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
     "jsonb DEFAULT '[]'"
   );
   await ensureColumn(client, "outreach_campaigns", "last_search_source", "text");
+  await ensureColumn(client, "outreach_campaigns", "background_job", "jsonb");
   await ensureColumn(
     client,
     "outreach_messages",
@@ -4864,6 +4900,7 @@ const alters = [
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS reply_cta text`,
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS sequence_steps jsonb DEFAULT '[]'`,
   `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS last_search_source text`,
+  `ALTER TABLE outreach_campaigns ADD COLUMN IF NOT EXISTS background_job jsonb`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS step_index integer NOT NULL DEFAULT 0`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS parent_message_id uuid`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS scheduled_for timestamptz`,
@@ -5451,7 +5488,18 @@ const alters = [
   `ALTER TABLE interest_list_signups ALTER COLUMN unsubscribe_token DROP NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_unsub_hash_uidx ON interest_list_signups(unsubscribe_token_hash)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS interest_list_signups_share_hash_uidx ON interest_list_signups(share_token_hash)`,
-  // Schema v209: reminders engine redesign — priority, category, timing_rationale, and importance_reason
+  `ALTER TABLE user_recruiter_links ADD COLUMN IF NOT EXISTS role_interviewing_for text`,
+  `CREATE TABLE IF NOT EXISTS recruiter_contact_unlocks (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id text NOT NULL,
+    recruiter_id uuid NOT NULL REFERENCES recruiters(id) ON DELETE CASCADE,
+    cost_credits integer NOT NULL DEFAULT 1,
+    unlocked_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_idx ON recruiter_contact_unlocks(user_id)`,
+  `CREATE INDEX IF NOT EXISTS recruiter_contact_unlocks_recruiter_idx ON recruiter_contact_unlocks(recruiter_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS recruiter_contact_unlocks_user_recruiter_uidx ON recruiter_contact_unlocks(user_id, recruiter_id)`,
+  // Schema v218: reminders engine redesign — priority, category, timing_rationale, and importance_reason
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal'`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'action_item'`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS timing_rationale text`,
@@ -5462,7 +5510,7 @@ const alters = [
   `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS timing_rationale text`,
   `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS importance_reason text`,
   `CREATE INDEX IF NOT EXISTS suggested_reminders_user_priority_idx ON suggested_reminders (user_id, priority, status)`,
-  // Schema v210: smart opportunities from cross-contact note synthesis and goal progress
+  // Schema v219: smart opportunities from cross-contact note synthesis and goal progress
   `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS progress text`,
   `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS category text`,
   `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`,

@@ -20,7 +20,7 @@
  * `scripts/smoke-capture-jobs.ts` ("An upload is reviewed together").
  */
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
-import type { AnchorBasis, CaptureJobResult } from "@/lib/capture/types";
+import type { AnchorBasis, CaptureDecisions, CaptureJobResult } from "@/lib/capture/types";
 
 export type CombinePart = {
   /** The file's name, shown on each of its cards. */
@@ -98,4 +98,39 @@ export function combineCaptureResults(parts: readonly CombinePart[]): {
     .map((p) => (p.label ? `## ${p.label}\n\n${p.sourceText}` : p.sourceText))
     .join("\n\n---\n\n");
   return { result, sourceText, sourceHash: hashSourceNote(sourceText) };
+}
+
+/**
+ * The inverse of the `n{i}:` prefixing above: the decisions a combined review recorded that
+ * belong to part `n`, with that part's own keys and card positions. Saving hands these to
+ * the part's job, which then saves exactly as a lone capture of that file would.
+ */
+export function splitDecisions(
+  decisions: CaptureDecisions | null | undefined,
+  n: number,
+  partItems: readonly { key: string }[]
+): CaptureDecisions {
+  const pre = `n${n}:`;
+  const own = <T,>(rec: Record<string, T> | undefined): Record<string, T> | undefined =>
+    rec ? Object.fromEntries(Object.entries(rec).filter(([k]) => k.startsWith(pre)).map(([k, v]) => [k.slice(pre.length), v])) : undefined;
+  const ownKeys = (keys: readonly string[]) => keys.filter((k) => k.startsWith(pre)).map((k) => k.slice(pre.length));
+
+  const out: CaptureDecisions = {};
+  const people = own(decisions?.people);
+  if (people) {
+    const position = new Map(partItems.map((item, i) => [item.key, i]));
+    out.people = Object.fromEntries(
+      Object.entries(people).map(([key, d]) => [key, { ...d, index: position.get(key) ?? d.index }])
+    );
+  }
+  if (decisions?.reminders) {
+    out.reminders = { checked: ownKeys(decisions.reminders.checked), overrides: own(decisions.reminders.overrides) ?? {} };
+  }
+  if (decisions?.opportunities) {
+    out.opportunities = {
+      checked: ownKeys(decisions.opportunities.checked),
+      ...(decisions.opportunities.kinds ? { kinds: own(decisions.opportunities.kinds) } : {}),
+    };
+  }
+  return out;
 }

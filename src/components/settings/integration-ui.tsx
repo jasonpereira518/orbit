@@ -2,7 +2,6 @@
 
 import {
   BookUser,
-  CalendarDays,
   FileSpreadsheet,
   KeyRound,
   NotebookPen,
@@ -26,7 +25,6 @@ const ICONS: Record<IntegrationTabId, LucideIcon> = {
   notion: NotebookText,
   ai: Sparkles,
   assistants: Sparkles,
-  reminders: CalendarDays,
   api: KeyRound,
   webhooks: Webhook,
   outreach: Send,

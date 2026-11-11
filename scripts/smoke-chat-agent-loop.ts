@@ -52,6 +52,7 @@ function scripted(rounds: Array<ToolStep & { throws?: Error }>, onText: (d: stri
     addResults(results) {
       sentBack.push(results);
     },
+    addUserText() {},
   };
   return { driver, options, sentBack };
 }
@@ -158,6 +159,7 @@ async function main() {
         return { calls: [], text: "A long answer, written to the end." };
       },
       addResults() {},
+      addUserText() {},
     };
     const run = await runChatAgent({
       driver: slow,

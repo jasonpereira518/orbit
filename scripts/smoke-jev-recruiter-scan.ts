@@ -80,6 +80,7 @@ const message = (id: string): GmailMessageContent => {
 const VERDICT: RecruiterScanResult = {
   isRecruiter: true, confidence: 0.9, fullName: null, firm: null,
   companiesMentioned: [], rolesDiscussed: [], summary: "They reached out about a role.",
+  roleInterviewingFor: null, linkedinUrl: null,
 };
 
 function depsWith(decider: Decider | null, classified: string[], submitted: string[]): ScanDeps {

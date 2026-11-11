@@ -26,21 +26,15 @@ import { Disclosure } from "@/components/settings/disclosure";
 import { ClearKeyButton, ProviderCard, SAVE_THREW, TIER_LABELS } from "@/components/settings/provider-card";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
-import { formatAllowanceReset, noticeCopyFor } from "@/lib/ai-access-copy";
+import { noticeCopyFor } from "@/lib/ai-access-copy";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { managedModel } from "@/lib/managed-ai-policy";
 import { setAiKeyPreference } from "@/actions/credits";
 import { Briefcase, MessageSquare } from "lucide-react";
-import { CreditsDetails, CreditsNotice, CreditsTile, useCreditsOverview } from "@/components/credits/credits-card";
 import { SegmentedControl, StatTile, SwitchRow } from "@/components/settings/account-rows";
 import { AiUsageDetails, useAiUsage } from "@/components/settings/ai-usage-card";
 import { DecisionModelSettings } from "@/components/settings/decision-model-settings";
-import {
-  SpeechDetails,
-  formatMinutes,
-  speechTotals,
-  type SpeechAllowances,
-} from "@/components/settings/speech-usage-card";
+import type { SettingsSectionId } from "@/components/settings/sections";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
@@ -49,9 +43,10 @@ function modelLabel(provider: AiProvider, id: string) {
 }
 
 /**
- * The AI page: a row of stat tiles, one card per provider a person may choose, two switches,
- * and everything technical — usage detail, speech meters, Jev, saved keys — folded into
- * Advanced.
+ * The AI page: what is running and on whose key, one card per provider a person may choose,
+ * two switches, and everything technical — usage on your key, Jev, saved keys — folded into
+ * Advanced. Credits and voice minutes are Orbit's allowance, not the key's, so they live on the
+ * Plan and usage card and this page links there.
  *
  * SELECTABLE_AI_PROVIDERS, not AI_PROVIDERS: the full table also carries providers whose
  * plumbing exists but which no surface offers (OpenRouter). `providerMeta` below still looks
@@ -59,10 +54,11 @@ function modelLabel(provider: AiProvider, id: string) {
  */
 export function AiSettings({
   initialSettings,
-  speech,
+  onLeaveTo,
 }: {
   initialSettings: Settings;
-  speech: SpeechAllowances;
+  /** Closes the dialog on a card of the settings page. */
+  onLeaveTo: (anchor: SettingsSectionId) => void;
 }) {
   const { planConfig } = useViewerPlan();
   const [settings, setSettings] = useState<Settings>(initialSettings);
@@ -78,7 +74,6 @@ export function AiSettings({
     setCustomModel(initialSettings.aiModel);
   }
   const [pending, start] = useTransition();
-  const credits = useCreditsOverview();
   const usage = useAiUsage();
 
   const provider = settings.aiProvider;
@@ -157,7 +152,6 @@ export function AiSettings({
     }
   }
 
-  const totals = speechTotals(speech);
   const running = ai.reason
     ? { value: "Off", sub: "No key yet" }
     : {
@@ -180,25 +174,24 @@ export function AiSettings({
                 : "Add a key to turn on AI"
       }
     >
-      <div className="@container">
-        <div className="grid grid-cols-2 gap-3 @xl:grid-cols-4">
-          <CreditsTile overview={credits.overview} />
-          <StatTile label="Running" value={running.value} sub={running.sub} title={running.value} />
-          <StatTile
-            label="AI calls"
-            value={usage === undefined ? undefined : usage === null ? null : usage.totalCalls.toLocaleString()}
-            sub="your key · 30 days"
-          />
-          <StatTile
-            label="Speech"
-            value={formatMinutes(totals.used)}
-            sub={totals.limit > 0 ? `of ${formatMinutes(totals.limit)}` : "Not on this plan"}
-            title={`Resets ${formatAllowanceReset(speech.meeting.resetsAt)}`}
-          />
-        </div>
+      <div className="grid grid-cols-2 gap-3">
+        <StatTile label="Running" value={running.value} sub={running.sub} title={running.value} />
+        <StatTile
+          label="AI calls"
+          value={usage === undefined ? undefined : usage === null ? null : usage.totalCalls.toLocaleString()}
+          sub="your key · 30 days"
+        />
       </div>
-      <CreditsNotice overview={credits.overview} />
-      {credits.nudge}
+      <p className="text-sm text-muted-foreground">
+        Credits and voice minutes are on{" "}
+        <button
+          type="button"
+          className="underline underline-offset-2 hover:text-ink"
+          onClick={() => onLeaveTo("settings-plan")}
+        >
+          Plan and usage
+        </button>
+      </p>
 
       {onIncluded && hasAnyPersonalKey && (
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -411,18 +404,8 @@ export function AiSettings({
           </ul>
         </AdvancedBlock>
 
-        {credits.overview ? (
-          <AdvancedBlock title="Credits">
-            <CreditsDetails overview={credits.overview} />
-          </AdvancedBlock>
-        ) : null}
-
         <AdvancedBlock title="Usage on your key · 30 days">
           <AiUsageDetails summary={usage} />
-        </AdvancedBlock>
-
-        <AdvancedBlock title="Speech-to-text · Orbit’s key">
-          <SpeechDetails speech={speech} />
         </AdvancedBlock>
 
         <div className="border-t border-border/60 pt-4">

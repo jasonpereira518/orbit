@@ -38,7 +38,6 @@ export type LinkedInPanel = {
     importedAt: string | null;
   } | null;
   exportRequestedAt: Date | null;
-  workHistoryAuto: boolean;
   /** Null while the extension is unpublished: the switch would govern nothing. */
   savePosts: boolean | null;
 };
@@ -97,7 +96,6 @@ export async function getLinkedInPanel(): Promise<LinkedInPanel> {
           }
         : null,
     exportRequestedAt: settings.linkedinExportRequestedAt ?? null,
-    workHistoryAuto: (settings.workHistoryAutoEnabled ?? 1) !== 0,
     savePosts: EXTENSION_PUBLISHED
       ? settings.radarCaptureLinkedinActivity === 1
       : null,

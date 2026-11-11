@@ -32,6 +32,7 @@ export const CAPTURE_METHOD_META: Record<CaptureMethod, { label: string; source:
   granola: { label: "From Granola", source: "granola" },
   drive: { label: "From Google Drive", source: "drive" },
   onedrive: { label: "From OneDrive", source: "onedrive" },
+  notion: { label: "From Notion", source: "notion" },
   file: { label: "File", source: "orbit" },
   calendar: { label: "Calendar invite", source: "orbit" },
   email: { label: "Email", source: "orbit" },

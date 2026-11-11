@@ -27,6 +27,8 @@ export const MAX_SCHOOLS = 10;
 const SCHOOL_MAX = 120;
 const TERM_MAX = 60;
 const LINE_MAX = 200;
+/** LinkedIn's own headline limit, so an imported headline is never cut short. */
+export const HEADLINE_MAX = 220;
 const SUMMARY_MAX = 600;
 
 export type LinkedInProfileFields = NonNullable<CareerProfile["profile"]>;
@@ -76,7 +78,7 @@ export function parseLinkedInProfileCsv(text: string): LinkedInProfileFields {
   }
   const row = rows[0];
   const out: LinkedInProfileFields = {};
-  const headline = cleanSingleLine(csvGet(row, "Headline"), LINE_MAX);
+  const headline = cleanSingleLine(csvGet(row, "Headline"), HEADLINE_MAX);
   const industry = cleanSingleLine(csvGet(row, "Industry"), LINE_MAX);
   const location = cleanSingleLine(csvGet(row, "Geo Location"), LINE_MAX);
   const summary = cleanSingleLine(csvGet(row, "Summary"), SUMMARY_MAX);

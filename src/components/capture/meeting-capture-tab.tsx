@@ -35,6 +35,7 @@ function useMicMeetingSupported(): boolean {
 }
 
 export function MeetingCaptureTab({
+  candidateKey = null,
   resumable,
   hasApiKey,
   aiReason = null,
@@ -44,6 +45,7 @@ export function MeetingCaptureTab({
   panelId,
   tabId,
 }: {
+  candidateKey?: string | null;
   resumable: ResumableMeeting | null;
   hasApiKey: boolean;
   aiReason?: AiAccessDenial | null;
@@ -63,6 +65,7 @@ export function MeetingCaptureTab({
     <div id={panelId} role="tabpanel" aria-labelledby={tabId}>
       {canUseMeetings ? (
         <MeetingCapturePanel
+          candidateKey={candidateKey}
           resumable={resumable}
           hasApiKey={hasApiKey}
           aiReason={aiReason}

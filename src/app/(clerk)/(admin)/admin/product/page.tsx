@@ -79,7 +79,7 @@ export default async function AdminProductPage() {
 
       <AdminPanel title="Pages, in sidebar order">
         <PageStatusList
-          pages={surfacesOfKind("page")}
+          pages={surfacesOfKind("page").filter((p) => p.key !== "page.find")}
           order={navOrder}
           hidden={[...hidden]}
           comingSoon={[...comingSoon]}

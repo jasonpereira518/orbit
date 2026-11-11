@@ -51,6 +51,12 @@ import {
 } from "@/lib/site-invites";
 import { UserFacingError } from "@/lib/errors";
 import { blockSharedAvatar, unblockSharedAvatar } from "@/lib/admin-avatars";
+import {
+  getGlobalUpkeepMetrics,
+  triggerAdminContactUpkeepJob,
+  type GlobalUpkeepMetrics,
+  type GlobalUpkeepStats,
+} from "@/lib/admin-contact-upkeep";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -1227,4 +1233,31 @@ export async function unblockSharedAvatarAction(input: { slug: string; reason: s
   await unblockSharedAvatar(adminUserId, input);
   revalidateAvatars();
   return { ok: true };
+}
+
+/* ------------------------------------------------- Global contact upkeep & queue ------- */
+
+/** Fetch candidate counts and status for global contact upkeep. */
+export async function getGlobalContactUpkeepMetricsAction(): Promise<GlobalUpkeepMetrics> {
+  await requireAdminUserId();
+  return getGlobalUpkeepMetrics();
+}
+
+/**
+ * Trigger global network upkeep: runs multi-source name repair and avatar resolution
+ * with rate-limit pacing and automatic cooldown backoff. Audited.
+ */
+export async function triggerGlobalContactUpkeepAction(options?: {
+  batchSize?: number;
+  pacingDelayMs?: number;
+}): Promise<{ ok: boolean; stats: GlobalUpkeepStats }> {
+  const adminUserId = await requireAdminUserId();
+  await recordAdminAction({
+    adminUserId,
+    action: "contacts.global_upkeep",
+    detail: options ?? {},
+  });
+  const res = await triggerAdminContactUpkeepJob(options);
+  revalidatePath("/admin/product/photos");
+  return res;
 }

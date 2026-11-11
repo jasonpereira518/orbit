@@ -6,7 +6,7 @@
  * new Extract — "only one capture is in review at a time" — because a lone Extract has no
  * way back to the cards it displaced. Uploading twelve meeting notes is precisely the shape
  * that rule was written to prevent, so it is now suspended for, and only for, a batch: a
- * batch HAS a way back, which is the queue panel. Get this wrong in either direction and
+ * batch HAS a way back, which is its drop card in Recent captures. Get this wrong in either direction and
  * either eleven of twelve meetings vanish, or a single capture starts orphaning cards again.
  *
  * Run: npx tsx scripts/smoke-capture-queue.ts

@@ -12,14 +12,15 @@ import { ReauthRequiredError } from "@/lib/errors";
 import { getValidAccessToken, hasCalendarScope } from "@/lib/gmail";
 import { fetchCalendarWindow } from "@/lib/connectors/google-calendar";
 import { meetingCandidatesFrom, meetingCandidatesFromRows, type MeetingCandidate } from "@/lib/meeting-calendar";
-import { findEventByKey, listUpcomingEvents, matchEventForSession } from "@/lib/calendar-events";
+import { findEventByKey, listUpcomingEvents, matchEventForSession, type CalendarEventRow } from "@/lib/calendar-events";
 import { buildMeetingRecap, type MeetingRecap } from "@/lib/meeting-recap";
 import { listMeetingsFor, type MeetingSourceFilter, type MeetingsPage } from "@/lib/meetings-list";
 import {
   analyzeMeetingTranscript,
   buildMeetingCorpus,
   cleanUserNotes,
-  formatTranscriptSegment,
+  formatTranscriptParagraph,
+  groupSegmentsIntoParagraphs,
   isSelf,
   speakerDisplayNames,
 } from "@/lib/meeting-digest";
@@ -73,9 +74,27 @@ export async function createMeetingSession(input: {
   recorderId: string;
   calendarEventKey?: string | null;
   calendarSeriesId?: string | null;
+  calendarAgenda?: string | null;
 }): Promise<{ ok: true; id: string; startedAtIso: string } | Fail> {
   try {
     const userId = await requireMeetingsUser();
+    if (input.calendarEventKey && input.calendarAgenda) {
+      const existing = candidateContextCache.get(`${userId}:${input.calendarEventKey}`);
+      if (existing) {
+        existing.agenda = input.calendarAgenda;
+      } else {
+        candidateContextCache.set(`${userId}:${input.calendarEventKey}`, {
+          providerEventId: input.calendarEventKey,
+          title: input.title ?? "",
+          attendees: (input.attendees ?? []).map((a) => ({ name: a.name, email: a.email ?? "", contactId: null })),
+          agenda: input.calendarAgenda,
+          seriesId: input.calendarSeriesId ?? null,
+          location: null,
+          startAt: new Date(),
+          endAt: null,
+        });
+      }
+    }
     // The entitlement says this plan MAY record; the allowance says whether there is
     // anything left to record with. Without this, an account at 100% got the whole ceremony
     // — a share picker, a started recording — and then an instant "Recording stopped" from
@@ -180,7 +199,7 @@ export type MeetingTranscriptView = {
   status: string;
   startedAtIso: string;
   durationMs: number;
-  segments: { seq: number; startMs: number; endMs: number; text: string }[];
+  segments: { seq: number; startMs: number; endMs: number; speaker?: string | null; text: string }[];
   missingSeqs: number[];
 };
 
@@ -200,7 +219,13 @@ export async function loadMeetingTranscript(
         status: t.session.status,
         startedAtIso: t.session.startedAt.toISOString(),
         durationMs: t.session.durationMs,
-        segments: t.segments.map(({ seq, startMs, endMs, text }) => ({ seq, startMs, endMs, text })),
+        segments: t.segments.map(({ seq, startMs, endMs, speaker, text }) => ({
+          seq,
+          startMs,
+          endMs,
+          speaker: speaker ?? null,
+          text,
+        })),
         missingSeqs: t.missingSeqs,
       },
     };
@@ -266,6 +291,12 @@ export async function analyzeMeetingSession(
 
     // The calendar event this was, when known — from the nudge, or matched now by time and guests.
     let event = t.session.calendarEventKey ? await findEventByKey(userId, t.session.calendarEventKey) : null;
+    if (!event && t.session.calendarEventKey) {
+      const cached = candidateContextCache.get(`${userId}:${t.session.calendarEventKey}`);
+      if (cached) {
+        event = cached as unknown as CalendarEventRow;
+      }
+    }
     if (!t.session.calendarEventKey) {
       event = await matchEventForSession(userId, t.session.startedAt, {
         title: t.session.title,
@@ -273,6 +304,21 @@ export async function analyzeMeetingSession(
       });
       if (event) {
         await linkMeetingSessionToEvent(userId, t.session.id, { eventKey: event.providerEventId, seriesId: event.seriesId });
+      } else {
+        // Fallback: match against cached upcoming candidates by title or time
+        const sessionMs = t.session.startedAt.getTime();
+        for (const [key, cached] of candidateContextCache.entries()) {
+          if (!key.startsWith(`${userId}:`)) continue;
+          const startMs = cached.startAt.getTime();
+          const endMs = cached.endAt ? cached.endAt.getTime() : startMs + 30 * 60_000;
+          const withinTime = sessionMs >= startMs - 15 * 60_000 && sessionMs <= endMs + 15 * 60_000;
+          const titleMatch = Boolean(t.session.title && cached.title.trim().toLowerCase() === t.session.title.trim().toLowerCase());
+          if (titleMatch || withinTime) {
+            event = cached as unknown as CalendarEventRow;
+            await linkMeetingSessionToEvent(userId, t.session.id, { eventKey: cached.providerEventId, seriesId: cached.seriesId });
+            break;
+          }
+        }
       }
     }
     const seriesId = t.session.calendarSeriesId ?? event?.seriesId ?? null;
@@ -284,9 +330,10 @@ export async function analyzeMeetingSession(
 
     // A 1:1's other voice is the other person; the transcript then reads "Priya:" not "Speaker 1:".
     const voices = speakerDisplayNames(t.segments, invited.length ? invited : (t.session.attendees ?? []).map((a) => a.name));
-    const paragraphs = t.segments
-      .filter((s) => s.text.trim())
-      .map((s) => formatTranscriptSegment(s, voices));
+    const groupedParagraphs = groupSegmentsIntoParagraphs(t.segments, voices);
+    const paragraphs = groupedParagraphs
+      .filter((p) => p.text.trim())
+      .map(formatTranscriptParagraph);
     if (!paragraphs.length) {
       return {
         ok: false,
@@ -457,6 +504,40 @@ const CANDIDATES_FUTURE_MS = 4 * 3_600_000;
 const CANDIDATES_TTL_MS = 60_000;
 const candidatesCache = new Map<string, { at: number; result: MeetingCandidatesResult }>();
 
+type CachedCalendarEvent = {
+  providerEventId: string;
+  title: string;
+  attendees: Array<{ name: string; email: string; contactId?: string | null }>;
+  agenda: string | null;
+  seriesId: string | null;
+  location: string | null;
+  startAt: Date;
+  endAt: Date | null;
+  conferenceUrl?: string | null;
+  guestsHidden?: boolean;
+};
+
+const candidateContextCache = new Map<string, CachedCalendarEvent>();
+
+function cacheCandidates(userId: string, events: MeetingCandidate[]): void {
+  for (const c of events) {
+    const key = c.eventKey || c.id;
+    if (!key) continue;
+    candidateContextCache.set(`${userId}:${key}`, {
+      providerEventId: key,
+      title: c.title,
+      attendees: c.attendees.map((a) => ({ name: a.name, email: a.email, contactId: null })),
+      agenda: c.agenda ?? null,
+      seriesId: c.seriesId ?? null,
+      location: c.location ?? null,
+      startAt: new Date(c.startIso),
+      endAt: c.endIso ? new Date(c.endIso) : null,
+      conferenceUrl: c.conferenceUrl ?? null,
+      guestsHidden: false,
+    });
+  }
+}
+
 /**
  * The meetings on the user's Google calendar around now, to prefill the setup form.
  *
@@ -487,6 +568,7 @@ export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
         limit: 25,
       });
       const result: MeetingCandidatesResult = { ok: true, status: "ok", events: meetingCandidatesFromRows(rows, now) };
+      cacheCandidates(userId, result.events);
       candidatesCache.set(userId, { at: Date.now(), result });
       return result;
     }
@@ -514,6 +596,7 @@ export async function getMeetingCandidates(): Promise<MeetingCandidatesResult> {
     if (page.status >= 400) throw new Error(`Google Calendar ${page.status}`);
 
     const result: MeetingCandidatesResult = { ok: true, status: "ok", events: meetingCandidatesFrom(page.items, now) };
+    cacheCandidates(userId, result.events);
     candidatesCache.set(userId, { at: Date.now(), result });
     return result;
   } catch (err) {

@@ -122,8 +122,10 @@ export default function PrivacyPage() {
             <li>
               <strong>Network and CRM content</strong> — contacts and their details (name, company,
               title, location, school, email, phone, LinkedIn URL, website, notes, tags, closeness,
-              follow-up dates), interactions, goals, reminders, chat threads, events, outreach
-              campaigns and messages, recruiter records, and import history. When you capture notes,
+              follow-up dates), interactions, goals, reminders, chat threads (with the text read
+              from any file you attach to a question), the short notes you ask Orbit to remember
+              across chats, events, outreach campaigns and messages, recruiter records, and import
+              history. When you capture notes,
               Orbit keeps the text and any photos you attach so you can look back at the original.
               Photos are resized and stripped of their metadata (including location) before they are
               stored; photos from a capture you never save are deleted after 24 hours.
@@ -426,6 +428,14 @@ export default function PrivacyPage() {
             your content to be used to train their models. Providers may keep requests for a limited
             period for abuse monitoring under those agreements. If you add your own key and choose it,
             those calls run on your account, with the provider you chose in Settings, instead.
+          </p>
+          <p>
+            Chat also sends along two things you control. A file you attach to a question goes as
+            text: a text file is read in your browser, and a photo or PDF is read by the AI
+            provider first, the same way a scanned page is. And the notes you have asked Orbit to
+            remember are included with every chat question until you remove them in the chat&rsquo;s
+            Context panel. Orbit saves one only when you add it yourself or confirm a suggestion
+            it offers; it never saves one on its own.
           </p>
           <p>
             Voice notes, the chat microphone and meetings are transcribed by Deepgram instead, on

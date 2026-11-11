@@ -18,13 +18,13 @@ import {
   type IntegrationFocus,
   type IntegrationTabId,
   type IntegrationView,
+  type SettingsSectionId,
 } from "@/components/settings/sections";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import { IntegrationsDialog, tabForImportJob } from "@/components/settings/integrations-dialog";
 import { useImportJob } from "@/lib/import-job-runner";
 import type { IntegrationStatuses } from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
-import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 
 type Settings = Awaited<ReturnType<typeof getSettings>>;
 
@@ -36,7 +36,7 @@ type Settings = Awaited<ReturnType<typeof getSettings>>;
  * right page:
  *   - `?integration=<page>` — the link every other part of the app uses (`integrationHref`),
  *     and the `returnTo` a Google or Microsoft consent screen sends the user back to. Old ids
- *     (`gmail`, `outlook`, `calendar`) still resolve, `gmail` to the Google page's inbox;
+ *     (`gmail`, `outlook`) still resolve, `gmail` to the Google page's inbox;
  *   - `#settings-ai` and the other anchors these pages had when they were cards on the page.
  * Manage opens on the Overview, or on an importer's page while its import job is running —
  * a running job never opens the dialog by itself.
@@ -44,17 +44,18 @@ type Settings = Awaited<ReturnType<typeof getSettings>>;
 export function IntegrationsSettings({
   tabs,
   inboxVisible,
+  emailInsightsVisible,
   initialSettings,
   canUseRecruiters,
-  speechAllowances,
 }: {
   /** Visible pages, in order — hidden surfaces already filtered out by the page. */
   tabs: IntegrationTabId[];
   /** False when /recruiters is hidden — both account pages drop their inbox row. */
   inboxVisible: boolean;
+  /** Email insights rides Radar's release; the Google page shows it only once Radar is out. */
+  emailInsightsVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
-  speechAllowances: SpeechAllowances;
 }) {
   const searchParams = useSearchParams();
   const job = useImportJob();
@@ -192,6 +193,36 @@ export function IntegrationsSettings({
     handledHash.current = window.location.hash;
   }
 
+  function close() {
+    setOpen(false);
+    // Strip first, so the refresh below is queued behind the restore, not dropped by it.
+    clearDeepLink();
+    // Whatever was connected, saved or revoked in there should show on the card.
+    refreshStatuses();
+  }
+
+  /**
+   * A link inside the dialog to a card on this page — Plan and usage, Reminders in your
+   * calendar. It lands once the dialog is fully gone: before that the modal's scroll lock is
+   * still holding (and then restoring) the old scroll position, and Base UI would put focus
+   * back on the button that opened the dialog, scrolling there instead.
+   */
+  const leaveTarget = useRef<SettingsSectionId | null>(null);
+  function leaveTo(anchor: SettingsSectionId) {
+    leaveTarget.current = anchor;
+    close();
+  }
+  function landOnLeaveTarget() {
+    const id = leaveTarget.current;
+    leaveTarget.current = null;
+    const target = id ? document.getElementById(id) : null;
+    if (!target) return;
+    target.scrollIntoView({ block: "start" });
+    // Focusable without joining the tab order, so the next Tab continues from the card.
+    target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+  }
+
   if (tabs.length === 0) return null;
 
   const connected = statuses
@@ -258,13 +289,13 @@ export function IntegrationsSettings({
       <IntegrationsDialog
         open={open}
         onOpenChange={(next) => {
-          setOpen(next);
-          if (next) return;
-          // Strip first, so the refresh below is queued behind the restore, not dropped by it.
-          clearDeepLink();
-          // Whatever was connected, saved or revoked in there should show on the card.
-          refreshStatuses();
+          if (next) setOpen(true);
+          else close();
         }}
+        onLeaveTo={leaveTo}
+        // A pending leave target owns focus on the way out; otherwise Base UI's default.
+        finalFocus={() => leaveTarget.current === null}
+        onCloseComplete={landOnLeaveTarget}
         view={view}
         advancedOpen={advancedOpen}
         onAdvancedOpenChange={setAdvancedOpen}
@@ -279,9 +310,9 @@ export function IntegrationsSettings({
         tabs={tabs}
         statuses={statuses}
         inboxVisible={inboxVisible}
+        emailInsightsVisible={emailInsightsVisible}
         initialSettings={initialSettings}
         canUseRecruiters={canUseRecruiters}
-        speechAllowances={speechAllowances}
       />
     </SettingsSection>
   );

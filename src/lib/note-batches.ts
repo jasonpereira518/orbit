@@ -46,6 +46,7 @@ export type CaptureMethod =
   | "granola"
   | "drive"
   | "onedrive"
+  | "notion"
   | "file"
   | "calendar"
   | "email"
@@ -77,7 +78,7 @@ export function captureMethod(input: {
   meeting: boolean;
   granola: boolean;
   jobSource: string | null | undefined;
-  /** The job's provenance tags; "cloud:google" / "cloud:microsoft" mark a Drive / OneDrive doc. */
+  /** The job's provenance tags; "cloud:google" / "cloud:microsoft" / "cloud:notion" mark a Drive / OneDrive doc or a Notion page. */
   jobTags?: readonly string[] | null;
   kinds: readonly CaptureSourceKind[];
 }): CaptureMethod {
@@ -85,6 +86,7 @@ export function captureMethod(input: {
   if (input.granola) return "granola";
   if (input.jobTags?.includes("cloud:google")) return "drive";
   if (input.jobTags?.includes("cloud:microsoft")) return "onedrive";
+  if (input.jobTags?.includes("cloud:notion")) return "notion";
   return (input.jobSource ? METHOD_BY_JOB[input.jobSource] : undefined) ?? METHOD_BY_KIND[input.kinds[0] ?? "text"];
 }
 

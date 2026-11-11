@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
 import type { AnswerOutcome } from "@/lib/chat-abstention";
@@ -235,4 +235,43 @@ export async function supersedeDanglingQuestion(userId: string, threadId: string
   });
   if (!last || last.role !== "user" || !last.isActive || last.content !== content) return;
   await db.delete(chatMessages).where(and(eq(chatMessages.id, last.id), eq(chatMessages.userId, userId)));
+}
+
+/** How many steers one turn takes. Past it, the client's queue sends the rest as new turns. */
+export const MAX_TURN_STEERS = 3;
+
+export type TurnSteer = { id: string; text: string };
+
+/**
+ * A message the person sent to steer the answer being written.
+ *
+ * The running turn cannot be reached from another request, so the note waits on the thread
+ * row and the turn reads it between lookup rounds (`readTurnSteers`). One statement, so two
+ * steers sent together both land: it appends when the row already holds this turn's notes
+ * and starts over when it holds an older turn's.
+ */
+export async function addTurnSteer(userId: string, threadId: string, turnId: string, note: TurnSteer) {
+  const db = await getDb();
+  const col = chatThreads.pendingSteer;
+  const one = JSON.stringify([note]);
+  await db
+    .update(chatThreads)
+    .set({
+      pendingSteer: sql`CASE
+        WHEN ${col}->>'turnId' = ${turnId} AND jsonb_array_length(${col}->'notes') >= ${MAX_TURN_STEERS} THEN ${col}
+        WHEN ${col}->>'turnId' = ${turnId} THEN jsonb_set(${col}, '{notes}', (${col}->'notes') || ${one}::jsonb)
+        ELSE jsonb_build_object('turnId', ${turnId}::text, 'notes', ${one}::jsonb)
+      END`,
+    })
+    .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+}
+
+/** Every steer sent to this turn so far, oldest first. Never cleared: the turn counts what it took. */
+export async function readTurnSteers(userId: string, threadId: string, turnId: string): Promise<TurnSteer[]> {
+  const db = await getDb();
+  const thread = await db.query.chatThreads.findFirst({
+    where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
+    columns: { pendingSteer: true },
+  });
+  return thread?.pendingSteer?.turnId === turnId ? thread.pendingSteer.notes : [];
 }

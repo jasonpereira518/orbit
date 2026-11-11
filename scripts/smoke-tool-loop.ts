@@ -32,6 +32,8 @@ function scripted(rounds: Array<ToolStep | Error>) {
   let i = 0;
   const sentBack: Array<Array<{ call: ToolCall; content: string }>> = [];
   const asked: ToolCall[][] = [];
+  /** Each steer the driver was handed, with how many rounds had run by then. */
+  const said: Array<{ text: string; afterRound: number }> = [];
   const driver: ToolDriver = {
     async step() {
       const next = rounds[i++] ?? { calls: [], text: "DONE" };
@@ -42,8 +44,11 @@ function scripted(rounds: Array<ToolStep | Error>) {
     addResults(results) {
       sentBack.push(results);
     },
+    addUserText(text) {
+      said.push({ text, afterRound: i });
+    },
   };
-  return { driver, sentBack, asked, stepsTaken: () => i };
+  return { driver, sentBack, asked, said, stepsTaken: () => i };
 }
 
 const okExec = async (c: ToolCall) => ({ ok: true, result: { from: c.name, args: c.args } });
@@ -216,6 +221,42 @@ async function main() {
       "an identical call in the same round waits on the first instead of running again",
       executed === 1 && s.sentBack[0]?.length === 2 && out.calls.length === 1,
       `${executed} run, ${out.calls.length} recorded`,
+    );
+  }
+
+  // --- a steer sent mid-answer reaches the model before the next round -----------------------
+  {
+    const s = scripted([{ calls: [call("search_notes", { query: "a" })], text: "" }]);
+    let asks = 0;
+    const out = await runToolLoop(s.driver, okExec, {
+      ...base,
+      deadline: far(),
+      steer: async () => (asks++ === 0 ? ["only the Boston ones"] : []),
+    });
+    check(
+      "a steer is handed to the driver after the round's results and before the next round",
+      s.said.length === 1 &&
+        s.said[0].afterRound === 1 &&
+        s.said[0].text.includes("only the Boston ones") &&
+        s.sentBack.length === 1 &&
+        out.rounds === 2 &&
+        out.stoppedBy === "done",
+      JSON.stringify({ said: s.said, rounds: out.rounds }),
+    );
+  }
+  {
+    const s = scripted([{ calls: [call("search_notes", { query: "b" })], text: "" }]);
+    const out = await runToolLoop(s.driver, okExec, {
+      ...base,
+      deadline: far(),
+      steer: async () => {
+        throw new Error("database is down");
+      },
+    });
+    check(
+      "a steer source that throws is silence, never the answer failing",
+      s.said.length === 0 && out.stoppedBy === "done" && out.rounds === 2,
+      `${out.stoppedBy} after ${out.rounds}`,
     );
   }
 
