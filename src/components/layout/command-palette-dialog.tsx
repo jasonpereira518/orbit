@@ -9,9 +9,11 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
+import { format, parseISO } from "date-fns";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
+  BellPlus,
   CornerDownLeft,
   Loader2,
   Moon,
@@ -46,6 +48,7 @@ import {
   visibleEntries,
 } from "@/lib/command-palette";
 import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen, useFeedbackAvailable } from "@/lib/feedback-events";
+import { parseReminderPhrase } from "@/lib/reminder-phrase";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 import type { ContactPickerOption } from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
@@ -136,6 +139,8 @@ export function CommandPaletteDialog({
   // open on a route (or in a shell) that does not mount it.
   const feedbackAvailable = useFeedbackAvailable();
   const contactsVisible = !hidden.has("page.contacts");
+  // Same test as the Reminders page itself, so "New reminder: …" goes dark along with it.
+  const remindersVisible = !hidden.has("page.reminders");
   // The same test the Capture actions pass, so "Capture this" goes dark along with them.
   const captureVisible = !hidden.has("page.capture");
   // "email maya": people rows open Compose instead of the profile. Null unless Compose is
@@ -267,13 +272,38 @@ export function CommandPaletteDialog({
           }
         : null;
 
+    // "remind me to call Sam friday": the sentence says what it is, so Enter opens a New reminder
+    // already filled in — the title, and the day when it names one. Nothing is saved until the
+    // person has seen the form.
+    const reminder = remindersVisible && term ? parseReminderPhrase(term) : null;
+    const reminderRow: Row | null = reminder
+      ? {
+          id: "reminder-this",
+          group: "Reminder",
+          label: (
+            <>
+              New reminder: <span className="font-medium text-ink">&ldquo;{reminder.title}&rdquo;</span>
+            </>
+          ),
+          hint: reminder.due ? format(parseISO(reminder.due), "EEE, MMM d") : "No date",
+          hintAlways: true,
+          icon: <CommandIcon icon={BellPlus} />,
+          run: () =>
+            go(
+              `/reminders?new=1&title=${encodeURIComponent(reminder.title)}${reminder.due ? `&due=${reminder.due}` : ""}`
+            ),
+        }
+      : null;
+
     // A question goes to the front: typing "who do I know at Stripe?" and pressing Enter
     // should ask it, not open whichever page happened to contain the word "know".
     const question = askRow && looksLikeQuestion(term);
     if (question) out.push(askRow);
+    if (reminderRow) out.push(reminderRow);
     // A note goes to the front for the same reason: nothing else will match a sentence,
-    // and Enter should do the one thing it can mean.
-    const note = captureRow && looksLikeNote(term);
+    // and Enter should do the one thing it can mean. Not when it is a reminder: that sentence is
+    // also long enough to read as a note, and the reminder is the better reading of it.
+    const note = captureRow && !reminderRow && looksLikeNote(term);
     if (note) out.push(captureRow);
 
     if (emailTerm) {
@@ -391,7 +421,7 @@ export function CommandPaletteDialog({
     return out;
     // `go`/`close` only close over stable setters and the router.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, people, hidden, comingSoon, askMode, pathname, isDark, contactsVisible, captureVisible, emailTerm, feedbackAvailable]);
+  }, [query, people, hidden, comingSoon, askMode, pathname, isDark, contactsVisible, captureVisible, remindersVisible, emailTerm, feedbackAvailable]);
 
   const active = rows[Math.min(activeIndex, Math.max(rows.length - 1, 0))];
 

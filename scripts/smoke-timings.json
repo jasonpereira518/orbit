@@ -160,6 +160,7 @@
 "smoke-nav-parity": 0.2,
 "smoke-guess-gender": 0.2,
 "smoke-single-flight": 0.2,
+"smoke-reminder-phrase": 0.2,
 "smoke-compose-draft": 0.2,
 "smoke-connect-gates": 0.6,
 "smoke-connection-status": 0.2,
