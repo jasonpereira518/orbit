@@ -84,6 +84,7 @@ const SOURCE_LABEL: Record<RosterRow["source"], string> = {
   calendar: "Calendar invite",
   extension: "Guest list",
   capture: "You met",
+  card: "Shared via your card",
   luma: "Luma",
   eventbrite: "Eventbrite",
 };

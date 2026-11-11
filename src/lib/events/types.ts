@@ -99,6 +99,8 @@ export type AttendeeSource =
   | "extension"
   /** Somebody the user logged as met through "Log who you met" (a capture opened from the event). */
   | "capture"
+  /** Somebody who shared their details back through the owner's Orbit Card while the event was live. */
+  | "card"
   | EventProviderId;
 export type AttendeeRole = "attendee" | "host" | "speaker";
 

@@ -5,9 +5,11 @@
  */
 import "./smoke/_env";
 
-import { eq, like } from "drizzle-orm";
+import { and, eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { shareCards, userSettings } from "../src/db/schema";
+import { contacts, eventAttendees, events, shareCards, userSettings } from "../src/db/schema";
+import { liveEventFor } from "../src/lib/cards/live-event";
+import { recordMetAtEvent, upsertEventAttendees } from "../src/lib/events/store";
 import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
 import {
   DEFAULT_CARD_FIELDS,
@@ -33,6 +35,9 @@ async function cleanup() {
   const db = await getDb();
   await db.delete(shareCards).where(like(shareCards.userId, `${PREFIX}%`));
   await db.delete(userSettings).where(like(userSettings.userId, `${PREFIX}%`));
+  await db.delete(eventAttendees).where(like(eventAttendees.userId, `${PREFIX}%`));
+  await db.delete(events).where(like(events.userId, `${PREFIX}%`));
+  await db.delete(contacts).where(like(contacts.userId, `${PREFIX}%`));
   await setSurfaceComingSoon(OPERATOR, "page.card", true); // back to the code default
 }
 
@@ -106,9 +111,47 @@ async function cardStore() {
   }
 }
 
+/** Task 4: live event lookup and identifier-only roster linking. */
+async function liveEvent() {
+  console.log("\nlive event");
+  const db = await getDb();
+  const now = new Date();
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 3600_000);
+  const [ev] = await db.insert(events).values({ userId: OWNER, title: "Founders Mixer", startsAt: hoursAgo(1) }).returning();
+  check("started 1 h ago, no end: live", (await liveEventFor(OWNER, now))?.id === ev.id);
+  await db.update(events).set({ startsAt: hoursAgo(4) }).where(eq(events.id, ev.id));
+  check("started 4 h ago, no end: over", (await liveEventFor(OWNER, now)) === null);
+  await db.update(events).set({ endsAt: hoursAgo(-1) }).where(eq(events.id, ev.id));
+  check("an explicit end in the future keeps it live", (await liveEventFor(OWNER, now))?.id === ev.id);
+  await db.update(events).set({ dismissedAt: now }).where(eq(events.id, ev.id));
+  check("dismissed event is not live", (await liveEventFor(OWNER, now)) === null);
+  await db.update(events).set({ dismissedAt: null, startsAt: hoursAgo(1), endsAt: null }).where(eq(events.id, ev.id));
+  const [later] = await db.insert(events).values({ userId: OWNER, title: "Late Mixer", startsAt: hoursAgo(0.5) }).returning();
+  check("latest start wins", (await liveEventFor(OWNER, now))?.id === later.id);
+  check("another user's events never match", (await liveEventFor(`${PREFIX}nobody`, now)) === null);
+
+  await db.delete(events).where(eq(events.id, later.id));
+  await upsertEventAttendees(OWNER, ev.id, [{ identityKey: "name:sam lee", fullName: "Sam Lee", email: null, linkedinUrl: null, xHandle: null, company: null, title: null }], "paste");
+  const [sam] = await db.insert(contacts).values({ userId: OWNER, fullName: "Sam Lee", email: "sam@example.com" }).returning();
+  const roster = () => db.select().from(eventAttendees).where(eq(eventAttendees.eventId, ev.id));
+  await recordMetAtEvent(OWNER, ev.id, [sam.id], { source: "card", byName: false });
+  const rows = await roster();
+  const guest = rows.find((r) => r.identityKey === "name:sam lee")!;
+  const added = rows.find((r) => r.contactId === sam.id)!;
+  check("byName:false leaves the same-name guest unlinked", guest.contactId === null && rows.length === 2);
+  check("new roster row is source card, spoke_to 1", (added.source as string) === "card" && added.spokeTo === 1, JSON.stringify(added));
+
+  await db.delete(eventAttendees).where(and(eq(eventAttendees.eventId, ev.id), eq(eventAttendees.source, "card" as never)));
+  await recordMetAtEvent(OWNER, ev.id, [sam.id]);
+  const after = await roster();
+  check("default call still links the guest by name (capture)", after.length === 1 && after[0].contactId === sam.id && after[0].spokeTo === 1);
+}
+
 async function main() {
   await cleanup();
   await cardStore();
+  await cleanup();
+  await liveEvent();
   await cleanup();
   console.log("\nshare card: all checks passed");
   process.exit(0);
