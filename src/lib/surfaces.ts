@@ -122,6 +122,14 @@ const PAGES: Surface[] = [
     comingSoon: true,
   },
   {
+    key: "page.card",
+    kind: "page",
+    label: "Your card",
+    description: "Share your contact by QR, NFC or link — and get theirs back.",
+    href: "/card",
+    comingSoon: true,
+  },
+  {
     key: "page.imports",
     kind: "page",
     label: "Imports",
