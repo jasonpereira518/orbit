@@ -388,7 +388,9 @@ test("admin persists provider and model choices without redeployment", async ({
     contentType: "image/png",
   });
   await untilHydrated(
-    () => provider.selectOption("elevenlabs"),
+    async () => {
+      await provider.selectOption("elevenlabs");
+    },
     () => expect(page.getByLabel("ElevenLabs speech model")).toBeVisible({ timeout: 2000 }),
   );
   await page
@@ -407,7 +409,9 @@ test("admin persists provider and model choices without redeployment", async ({
     "eleven_turbo_v2_5",
   );
   await untilHydrated(
-    () => provider.selectOption("deepgram"),
+    async () => {
+      await provider.selectOption("deepgram");
+    },
     () => expect(page.getByLabel("Listening model")).toBeVisible({ timeout: 2000 }),
   );
   await page.getByRole("button", { name: "Save voice settings" }).click();
