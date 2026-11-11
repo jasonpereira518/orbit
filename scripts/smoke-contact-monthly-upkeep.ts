@@ -21,6 +21,13 @@ import {
 import { getSharedAvatar } from "../src/lib/shared-avatars";
 import { checker } from "./smoke/check";
 
+// Blob unconfigured, so a shared photo is adopted as its raw https URL (the CI path). With a
+// developer's Blob credentials in `.env.local`, adoption would try the live store instead:
+// offline it fails and the pool stays empty, and online it uploads to a real bucket.
+delete process.env.BLOB_READ_WRITE_TOKEN;
+delete process.env.BLOB_STORE_ID;
+delete process.env.VERCEL_OIDC_TOKEN;
+
 const t = checker();
 const USER_A = `smoke-monthly-${randomUUID()}`;
 const USER_B = `smoke-monthly-b-${randomUUID()}`;
