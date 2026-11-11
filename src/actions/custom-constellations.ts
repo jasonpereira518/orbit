@@ -23,12 +23,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function text(value: unknown, max: number, what: string): string {
   const t = typeof value === "string" ? value.trim() : "";
-  if (!t || t.length > max) throw new UserFacingError(`${what} needs 1 to ${max} characters.`);
+  if (!t || t.length > max) throw new UserFacingError(`${what} needs 1 to ${max} characters`);
   return t;
 }
 
 function uuid(value: unknown): string {
-  if (typeof value !== "string" || !UUID_RE.test(value)) throw new UserFacingError("That constellation or person couldn't be found.");
+  if (typeof value !== "string" || !UUID_RE.test(value)) throw new UserFacingError("That constellation or person couldn’t be found");
   return value;
 }
 

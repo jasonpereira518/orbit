@@ -124,8 +124,9 @@ export default function PrivacyPage() {
               title, location, school, email, phone, LinkedIn URL, website, notes, tags, closeness,
               follow-up dates), interactions, goals, reminders, chat threads (with the text read
               from any file you attach to a question), the short notes you ask Orbit to remember
-              across chats, events, outreach campaigns and messages, recruiter records, and import
-              history. When you capture notes,
+              across chats, custom constellations (the prompt you wrote, the people chosen for it
+              and a one-line reason for each), events, outreach campaigns and messages, recruiter
+              records, and import history. When you capture notes,
               Orbit keeps the text and any photos you attach so you can look back at the original.
               Photos are resized and stripped of their metadata (including location) before they are
               stored; photos from a capture you never save are deleted after 24 hours.

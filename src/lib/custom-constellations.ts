@@ -100,7 +100,7 @@ export async function proposeMembers(userId: string, prompt: string, deps: Propo
   try {
     picked = parseAiJson(raw);
   } catch {
-    throw new UserFacingError("Couldn't build that constellation just now. Try again in a moment.");
+    throw new UserFacingError("Couldn’t build that constellation just now — try again in a moment");
   }
 
   // The allow-list is the hard stop: only ids that were offered, each counted once.
