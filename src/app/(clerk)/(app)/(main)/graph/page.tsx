@@ -108,9 +108,15 @@ async function GraphIsland({ constellationId }: { constellationId: string | null
   // Null also covers a sky deleted since the tab list was read: fall back to Everyone.
   const sky = constellationId ? await getConstellationGraphData(constellationId) : null;
   const initialData = sky ? sky.payload : await getGraphData();
+  // NetworkGraph keeps the first payload it is given, so a sky whose members changed (added or
+  // removed in the chart, then router.refresh) must remount to show them. The key carries a digest
+  // of the drawn ids: membership changes remount, a rename or an unrelated refresh does not.
+  const members = sky ? sky.payload.c.id.join(",") : "";
+  let digest = 0;
+  for (let i = 0; i < members.length; i++) digest = (Math.imul(digest, 31) + members.charCodeAt(i)) | 0;
   return (
     <NetworkGraphLazy
-      key={sky?.constellation.id ?? "all"}
+      key={sky ? `${sky.constellation.id}:${digest}` : "all"}
       initialData={initialData}
       constellation={sky?.constellation}
     />

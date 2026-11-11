@@ -1,6 +1,7 @@
 "use client";
 
 import { emitTourEvent } from "@/lib/tour/tour-events";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -20,6 +21,11 @@ import type { GraphConstellation, GraphPayload } from "@/components/graph/graph-
 import { toast } from "sonner";
 import { useCornerClearance } from "@/lib/corner-clearance";
 import { searchDashboardContacts } from "@/actions/search";
+import { addToConstellation, removeFromConstellation } from "@/actions/custom-constellations";
+import type { KeywordSearchHit } from "@/lib/keyword-search";
+import { ConstellationAddList } from "@/components/graph/constellation-add-list";
+import { friendlyError } from "@/lib/errors";
+import { toast as appToast } from "@/lib/toast";
 import {
   Select,
   SelectContent,
@@ -100,6 +106,9 @@ function introInFlight() {
 
 const GRAPH_REFETCH_MIN_MS = 60_000;
 
+/** "Added Jane", handed across the remount that adding someone causes (see `addToSky`). */
+let pendingSkyNote = "";
+
 /** How long typing must pause before the camera flies to what the search matches. */
 const SEARCH_REFRAME_DELAY_MS = 260;
 
@@ -120,8 +129,7 @@ function yieldToApp(): Promise<void> {
 export function NetworkGraph({
   initialData = null,
   compact = false,
-  // Unused until the inspect panel and search read it (Task 6).
-  constellation: _constellation,
+  constellation,
 }: {
   initialData?: GraphPayload | null;
   compact?: boolean;
@@ -169,6 +177,7 @@ export function NetworkGraph({
   // `loadData` is memoised with no deps and must not resubscribe on every toggle, so it reads
   // the current scope through a ref rather than closing over the state.
   const showAllStarsRef = useRef(false);
+  const inSkyRef = useRef(Boolean(constellation));
   /**
    * The payload for each scope. `engaged` is kept — it is the default view, and the one a
    * refresh writes back into. `all` is only ever populated while it is the view on screen;
@@ -180,6 +189,13 @@ export function NetworkGraph({
     all: GraphPayload | null;
   }>({ engaged: initialData, all: null });
   const [searchHitIds, setSearchHitIds] = useState<Set<string>>(new Set());
+  const router = useRouter();
+  // Inside a custom sky only: search results that are not drawn, offered for adding.
+  const [addHits, setAddHits] = useState<KeywordSearchHit[]>([]);
+  const [addNote, setAddNote] = useState("");
+  // The data in this chart is the sky's own: the periodic whole-network refetch must not replace it.
+  const inSky = Boolean(constellation);
+  const skyId = constellation?.id;
   const [focusCluster, setFocusCluster] = useState<string | null>(null);
   const [zoomToken, setZoomToken] = useState(0);
   // Start at 1 so the map opens on the default full-map view (not RF's zoom-1 origin)
@@ -373,6 +389,8 @@ export function NetworkGraph({
 
   const loadData = useCallback((force = false) => {
     if (operationsStoppedRef.current) return;
+    // A sky is redrawn by the server (router.refresh), never by the whole-network fetch below.
+    if (inSkyRef.current) return;
     if (!force && Date.now() - lastFetchAt.current < GRAPH_REFETCH_MIN_MS) {
       return;
     }
@@ -550,6 +568,7 @@ export function NetworkGraph({
       lastSearchQuery.current = "";
       searchRequestId.current += 1;
       setSearchHitIds(new Set());
+      setAddHits([]);
       setFocusCluster(null);
       setPeekPersonId(null);
       setHoveredId(null);
@@ -618,13 +637,20 @@ export function NetworkGraph({
     // Enrich with semantic hits (debounced) without reframing the camera.
     // A name match is already the answer — enriching it would widen the hit
     // set and kill the solo spotlight mid-hover, so skip it entirely.
-    if (!localMatch.nameTier) {
+    // Inside a sky the call still runs for a name match: the person being looked for may not be
+    // drawn, and only this call can find them. It then feeds the add list alone.
+    if (!localMatch.nameTier || inSky) {
       searchTimer.current = setTimeout(() => {
         const req = ++searchRequestId.current;
         searchDashboardContacts(q, { limit: 40 })
           .then((hits) => {
             if (req !== searchRequestId.current) return;
             if (lastSearchQuery.current !== q) return;
+            if (inSky) {
+              const drawn = new Set(data.contacts.map((c) => c.id));
+              setAddHits(hits.filter((h) => !drawn.has(h.id)));
+            }
+            if (localMatch.nameTier) return;
             applySearchResults(
               hits.map((h) => h.id),
               false
@@ -639,7 +665,60 @@ export function NetworkGraph({
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
-  }, [search, data, compact, requestDefaultView, contactHaystackIndex]);
+  }, [search, data, compact, inSky, requestDefaultView, contactHaystackIndex]);
+
+  /** Put a search hit into the sky; the server redraws it (router.refresh) with them in. */
+  const addToSky = useCallback(
+    async (hit: KeywordSearchHit) => {
+      if (!skyId) return false;
+      const name = (hit.preferredName || "").trim() || hit.fullName;
+      try {
+        if (!(await addToConstellation(skyId, hit.id))) {
+          appToast.error("Couldn’t add them — try again?");
+          return false;
+        }
+      } catch (err) {
+        appToast.error(friendlyError(err, "Couldn’t add them — try again?"));
+        return false;
+      }
+      // The redraw below replaces this chart, so the confirmation is parked where the next one can find it.
+      pendingSkyNote = `Added ${name}`;
+      router.refresh();
+      return true;
+    },
+    [skyId, router]
+  );
+
+  const removeFromSky = useCallback(
+    async (contactId: string) => {
+      if (!skyId) return;
+      try {
+        if (!(await removeFromConstellation(skyId, contactId))) {
+          appToast.error("Couldn’t remove them — try again?");
+          return;
+        }
+      } catch (err) {
+        appToast.error(friendlyError(err, "Couldn’t remove them — try again?"));
+        return;
+      }
+      setSelection(null);
+      router.refresh();
+    },
+    [skyId, router]
+  );
+
+  // A redraw after an add remounts this chart; say what happened once the new one is up.
+  useEffect(() => {
+    const note = pendingSkyNote;
+    if (!note) return;
+    // After a beat, so the region exists before its text changes (that is what gets announced).
+    // Cleared only once shown: StrictMode runs this effect twice and the first run is cancelled.
+    const t = setTimeout(() => {
+      pendingSkyNote = "";
+      setAddNote(note);
+    }, 120);
+    return () => clearTimeout(t);
+  }, []);
 
   const focusClusterById = useCallback(
     (clusterId: string) => {
@@ -1038,6 +1117,14 @@ export function NetworkGraph({
                   aria-label="Search your network"
                   className="h-9 border-white/15 bg-[#080b12]/92 pl-9 text-white placeholder:text-white/35"
                 />
+                {inSky && (
+                  <ConstellationAddList
+                    hits={addHits}
+                    inputRef={searchInputRef}
+                    onAdd={addToSky}
+                    announcement={addNote}
+                  />
+                )}
               </div>
               <Popover open={filtersOpen} onOpenChange={setFiltersOpen}>
                 <PopoverTrigger
@@ -1395,6 +1482,7 @@ export function NetworkGraph({
         {renderer && <renderer.Chart
           data={data}
           constellationFilterOn={constellationFilterOn}
+          emptySky={inSky && data.contacts.length === 0}
           onShowAll={handleShowAll}
           loadingAll={loadingAll}
           company={company}
@@ -1416,6 +1504,13 @@ export function NetworkGraph({
           compact={compact}
         />}
 
+        {/* Below the sun, which the chart still draws in the middle of the stage. */}
+        {inSky && data.contacts.length === 0 && (
+          <p className="pointer-events-none absolute inset-x-6 top-[62%] z-10 text-center text-sm text-white/70">
+            No one is in this constellation yet. Search to add people.
+          </p>
+        )}
+
         {!compact && (
           <ContactInspectPanel
             selection={selection}
@@ -1424,6 +1519,11 @@ export function NetworkGraph({
             nearby={inspectNearby}
             onFocusCluster={focusClusterById}
             onSelectContact={selectNeighbour}
+            sky={
+              constellation
+                ? { name: constellation.name, reasons: constellation.reasons, onRemove: removeFromSky }
+                : undefined
+            }
             onContactPatch={(id, patch) => {
               if (patch.aiSummary !== undefined) {
                 setData((prev) => {

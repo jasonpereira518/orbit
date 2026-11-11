@@ -130,6 +130,13 @@ function XGlyph({ className }: { className?: string }) {
 export type InspectCluster = { id: string; name: string; color?: string };
 /** A neighbour in the same cluster, ready to open as its own selection. */
 export type InspectNeighbour = { id: string; data: GraphNodeData };
+/** Set inside a custom sky: why the star is in it, and how to take it out. */
+export type InspectSky = {
+  name: string;
+  /** Model output from untrusted notes: rendered as text only, never as markup. */
+  reasons: Record<string, string>;
+  onRemove: (contactId: string) => Promise<void>;
+};
 
 /**
  * A floating glass card over the sky, not a modal sheet: the sky stays pannable and
@@ -146,6 +153,7 @@ export function ContactInspectPanel({
   nearby,
   onFocusCluster,
   onSelectContact,
+  sky,
 }: {
   selection: InspectSelection;
   onClose: () => void;
@@ -154,6 +162,7 @@ export function ContactInspectPanel({
   nearby?: InspectNeighbour[];
   onFocusCluster?: (clusterId: string) => void;
   onSelectContact?: (id: string, data: GraphNodeData) => void;
+  sky?: InspectSky;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -236,6 +245,7 @@ export function ContactInspectPanel({
                 onFocusCluster={onFocusCluster}
                 onSelectContact={onSelectContact}
                 onContactPatch={onContactPatch}
+                sky={sky}
                 onRefresh={() => router.refresh()}
               />
             )}
@@ -538,6 +548,7 @@ function ContactPanelBody({
   onFocusCluster,
   onSelectContact,
   onContactPatch,
+  sky,
   onRefresh,
 }: {
   titleId: string;
@@ -550,10 +561,13 @@ function ContactPanelBody({
   onFocusCluster?: (clusterId: string) => void;
   onSelectContact?: (id: string, data: GraphNodeData) => void;
   onContactPatch?: (id: string, patch: Partial<GraphNodeData>) => void;
+  sky?: InspectSky;
   onRefresh: () => void;
 }) {
   // Keyed by contact by the caller, so this state starts fresh for every star.
   const [summaryText, setSummaryText] = useState(data.aiSummary ?? null);
+  const [removing, setRemoving] = useState(false);
+  const skyReason = sky?.reasons[id];
   const [photoFailed, setPhotoFailed] = useState(false);
   const [followUpOpen, setFollowUpOpen] = useState(false);
 
@@ -699,6 +713,31 @@ function ContactPanelBody({
             </span>
           )}
         </div>
+
+        {sky && (
+          <div className="rounded-xl border border-white/80 bg-white/60 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
+            {skyReason && (
+              <p className="mb-2 text-sm text-foreground/90 break-words">
+                <span className="text-xs text-muted-foreground">Why they&apos;re here: </span>
+                {skyReason}
+              </p>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 max-w-full rounded-full"
+              disabled={removing}
+              onClick={() => {
+                setRemoving(true);
+                // The parent keeps its own failure toast; on success the sky redraws without this star.
+                void sky.onRemove(id).finally(() => setRemoving(false));
+              }}
+            >
+              <span className="truncate">{removing ? "Removing…" : `Remove from ${sky.name}`}</span>
+            </Button>
+          </div>
+        )}
 
         {(cluster || nearby.length > 0) && (
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/80 bg-white/60 dark:border-white/10 dark:bg-white/[0.04] px-2.5 py-2">
