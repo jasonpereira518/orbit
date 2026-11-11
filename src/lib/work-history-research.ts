@@ -85,7 +85,22 @@ export type WorkHistoryOutcome =
   | "no_anchor"
   | "rate_limited"
   | "missing"
-  | "error";
+  | "error"
+  /** Jev judged a sweep re-check unneeded: no search, checked again next cycle. */
+  | "jev_skipped"
+  /** Jev judged the first search's unsure candidate someone else: no verify search, nothing written. */
+  | "jev_vetoed";
+
+/**
+ * The Jev marker (`contacts.work_history_jev_skipped_at`) after a run: set by a skip or a veto,
+ * cleared by any run that really searched, left alone (`undefined`) when nothing was searched.
+ * Set means the next run asks neither gate — Jev never skips the same contact twice in a row.
+ */
+export function jevMarkerUpdate(outcome: WorkHistoryOutcome, now: Date): Date | null | undefined {
+  if (outcome === "jev_skipped" || outcome === "jev_vetoed") return now;
+  if (outcome === "saved" || outcome === "unchanged" || outcome === "not_found" || outcome === "unsure") return null;
+  return undefined;
+}
 
 export type WorkHistorySubject = {
   fullName: string;
@@ -351,6 +366,7 @@ export async function researchContactWorkHistory(
       if (cadence) {
         const missed = outcome === "not_found" || outcome === "unsure";
         const found = outcome === "saved" || outcome === "unchanged";
+        const marker = jevMarkerUpdate(outcome, now);
         await db
           .update(contacts)
           .set({
@@ -367,6 +383,9 @@ export async function researchContactWorkHistory(
               : found
                 ? { workHistoryMisses: 0, workHistoryMissSlug: null }
                 : {}),
+            // A skip or veto is never a miss: two misses stop research for good, and Jev may
+            // only ever make a contact one cycle late.
+            ...(marker !== undefined ? { workHistoryJevSkippedAt: marker } : {}),
           })
           .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)));
       }

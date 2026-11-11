@@ -20,6 +20,7 @@ import { aiOperationThinking, aiOperationTier } from "../src/lib/ai-operations";
 import { getContactProfile, saveContactProfile, type IncomingExperience } from "../src/lib/contact-profile";
 import {
   contactsNeedingWorkHistory,
+  jevMarkerUpdate,
   linkedInCaptureContactIds,
   researchContactWorkHistory,
   researchWorkHistories,
@@ -82,6 +83,17 @@ function fake(answer: Partial<WorkHistoryAnswer>) {
 
 async function main() {
   await reset();
+
+  // --- the Jev skip marker: set by a skip or veto, cleared by a real search -----------
+  const t = new Date("2026-11-11T00:00:00Z");
+  check("a Jev skip sets the marker", jevMarkerUpdate("jev_skipped", t) === t);
+  check("a Jev veto sets the marker", jevMarkerUpdate("jev_vetoed", t) === t);
+  for (const searched of ["saved", "unchanged", "not_found", "unsure"] as const) {
+    check(`a real search (${searched}) clears it`, jevMarkerUpdate(searched, t) === null);
+  }
+  for (const untouched of ["fresh", "rate_limited", "no_ai", "outranked", "error"] as const) {
+    check(`no search ran (${untouched}): left alone`, jevMarkerUpdate(untouched, t) === undefined);
+  }
 
   // --- a confident answer is stored as a "web" profile ------------------------------
   const priya = await makeContact("Priya Rao", "https://www.linkedin.com/in/priya-rao");
