@@ -26,6 +26,11 @@ export const STAGE_GROUND = "bg-[#03050a]";
  */
 export const STAGE_INTRO_LAYER = "z-10";
 export const STAGE_CHART_LAYER = "z-20";
+/**
+ * The "drawing your constellation" scene: over the chart, because while a new view is being
+ * drawn the sky underneath is the old one and must not show through.
+ */
+export const STAGE_GENERATING_LAYER = "z-40";
 
 /**
  * The same two, as numbers, for the assertion.
