@@ -406,6 +406,7 @@ export async function RadarWidgetSection({ briefing }: { briefing: Promise<Radar
         name: r.contactName,
         avatarUrl: r.avatarUrl,
       }))}
+      changes={b.changes}
     />
   );
 }
