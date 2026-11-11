@@ -442,8 +442,8 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         }
 
         const runCaps = {
-          pending: Math.min(RADAR_CAPS.pending, radarLimits.maxRecommendations),
-          perKind: Math.min(RADAR_CAPS.perKind, Math.max(1, Math.floor(radarLimits.maxRecommendations / 2))),
+          pending: Math.min(RADAR_CAPS.pending, radarLimits.planSize),
+          perKind: Math.min(RADAR_CAPS.perKind, Math.max(1, Math.floor(radarLimits.planSize / 2))),
         };
         const next = rankPicks(ranked, runCaps);
         const counts = planRunResult(live, next, now);

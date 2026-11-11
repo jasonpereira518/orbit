@@ -8,4 +8,7 @@ export const KIND_STYLES: Record<RecommendationKind, string> = {
   opportunity: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200",
   reach_out: "bg-orange-500/15 text-orange-800 dark:text-orange-200",
   reconnect: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
+  introduce: "bg-teal-500/15 text-teal-800 dark:text-teal-200",
+  ask: "bg-indigo-500/15 text-indigo-800 dark:text-indigo-200",
+  share: "bg-rose-500/15 text-rose-800 dark:text-rose-200",
 };
