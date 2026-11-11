@@ -156,6 +156,7 @@
 "smoke-cloud-notes-scan": 1.6,
 "smoke-comet-cap": 0.2,
 "smoke-command-palette": 0.2,
+"smoke-command-palette-coverage": 0.5,
 "smoke-compose-draft": 0.2,
 "smoke-connect-gates": 0.6,
 "smoke-connection-status": 0.2,

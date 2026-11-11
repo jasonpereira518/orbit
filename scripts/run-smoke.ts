@@ -219,6 +219,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-clerk-session-hint": "pure",
   "smoke-closeness": "pure",
   "smoke-command-palette": "pure",
+  "smoke-command-palette-coverage": "pure",
   "smoke-reminder-due-bucket": "pure",
   "smoke-triage-keys": "pure",
   "smoke-event-canonical-url": "pure",
