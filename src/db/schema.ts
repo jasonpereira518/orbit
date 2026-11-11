@@ -3762,6 +3762,11 @@ export type ChatRecommendation = {
   reason: string;
   suggested_action: string;
   draft_message: string | null;
+  /**
+   * The draft as the person last left it on the card: written on demand, edited or rewritten.
+   * Shown in place of `draft_message`, which stays the model's original. See `saveDraftEdit`.
+   */
+  edited_draft?: string | null;
 };
 
 export const chatThreads = pgTable(
