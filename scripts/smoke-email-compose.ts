@@ -227,6 +227,9 @@ async function main() {
     check("retry copies the files", copy?.attachments?.[0]?.blobKey === file.pathname);
 
     console.log("reply in thread");
+    // Earlier scenarios leave queued sends. Drain them before creating this fixture so
+    // unordered dispatch cannot make an older scenario the latest reply target.
+    await flush();
     await resetBucket();
     const first = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Coffee?", body: "Hi", contactId: maya!.id, fromName: null });
     if (!first.ok) throw new Error(`first send refused: ${JSON.stringify(first)}`);
