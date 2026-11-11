@@ -418,3 +418,6 @@ export const CONSTELLATION_LIMITS: Record<Plan, number> = {
 export function getConstellationLimitForPlan(plan: Plan): number {
   return CONSTELLATION_LIMITS[plan] ?? CONSTELLATION_LIMITS.free;
 }
+
+/** What the free cap says, on the server's refusal and in the "+ New" popover alike (client-safe). */
+export const FREE_CAP_COPY = `Free plan keeps up to ${CONSTELLATION_LIMITS.free} constellations. Upgrade for unlimited, or delete one to make room.`;

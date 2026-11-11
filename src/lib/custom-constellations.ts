@@ -16,7 +16,7 @@ import { EMBED_SOFT_TIMEOUT_MS } from "@/lib/contact-ranking";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { UserFacingError } from "@/lib/errors";
 import { hybridSearchContacts, listContactsMatching, type RankedContact } from "@/lib/hybrid-search";
-import { getConstellationLimitForPlan, type Plan } from "@/lib/plans/plan-config";
+import { FREE_CAP_COPY, getConstellationLimitForPlan, type Plan } from "@/lib/plans/plan-config";
 import { shouldUseSemanticArm } from "@/lib/search-adapter";
 
 export type ProposedMember = { contactId: string; reason: string | null };
@@ -120,8 +120,6 @@ export async function proposeMembers(userId: string, prompt: string, deps: Propo
 }
 
 export type ConstellationTab = { id: string; name: string; memberCount: number };
-
-export const FREE_CAP_COPY = "Free plan keeps up to 3 constellations. Upgrade for unlimited, or delete one to make room.";
 
 /**
  * Builds a constellation from a prompt. The plan cap is checked first, so a refused user never

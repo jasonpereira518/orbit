@@ -12,6 +12,7 @@ import {
 // Type only: the module behind it reaches `@/db`, which must not enter the client bundle.
 import type { ConstellationTab } from "@/lib/custom-constellations";
 import { friendlyError } from "@/lib/errors";
+import { FREE_CAP_COPY } from "@/lib/plans/plan-config";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { cn } from "@/lib/utils";
@@ -35,9 +36,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 
 const PROMPT_MAX = 300;
 const NAME_MAX = 60;
-
-// Same copy the server throws at the cap (FREE_CAP_COPY), repeated because that module is server-only.
-const CAP_COPY = "Free plan keeps up to 3 constellations. Upgrade for unlimited, or delete one to make room.";
 
 /** Pill shared by every tab. The focus ring is inset: the strip scrolls, and an outer ring would be clipped by it. */
 const PILL =
@@ -201,7 +199,7 @@ function NewConstellation({ canCreate }: { canCreate: boolean }) {
           </form>
         ) : (
           <div className="space-y-2 text-sm">
-            <p className="text-muted-foreground">{CAP_COPY}</p>
+            <p className="text-muted-foreground">{FREE_CAP_COPY}</p>
             <Link href="/pricing" className={cn(buttonVariants({ size: "sm" }), "w-full")}>
               See plans
             </Link>
