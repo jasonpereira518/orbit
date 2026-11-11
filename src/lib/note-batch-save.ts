@@ -41,26 +41,9 @@ import { enrichmentKeyFacts, takeawaysToSummary } from "@/lib/capture/person-enr
 import { identityKeysFor } from "@/lib/duplicates";
 import { findIdentityOwners } from "@/lib/contact-identity";
 import { isHandle } from "@/lib/contact-name-guess";
+import { shouldReplaceName } from "@/lib/names/compare";
+import { splitName } from "@/lib/names/parse";
 
-/**
- * Whether a note's name for someone should replace the one on file. Only when it says more:
- * "Sarah" must never shrink "Sarah Chen", and "Mike Torres" must not replace "Michael
- * Torres". A handle or an empty name on file is always replaced.
- */
-export function nameUpgrades(current: string | null | undefined, incoming: string | null | undefined): boolean {
-  const next = incoming?.trim();
-  if (!next) return false;
-  const now = current?.trim();
-  if (!now || isHandle(now)) return true;
-  return next.split(/\s+/).length > now.split(/\s+/).length;
-}
-
-/** "Ada King Lovelace" → first "Ada", last "Lovelace". One word is a first name only. */
-function splitName(name: string): { firstName?: string; lastName?: string } {
-  const parts = name.trim().split(/\s+/);
-  if (!parts[0]) return {};
-  return parts.length > 1 ? { firstName: parts[0], lastName: parts[parts.length - 1] } : { firstName: parts[0] };
-}
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
@@ -445,7 +428,7 @@ export async function saveNoteBatch(
             // Unattended runs only fill a blank (or a bare handle) name; the rest may upgrade a partial one.
             ...((p.fillOnly
               ? !current?.fullName?.trim() || isHandle(current.fullName.trim())
-              : nameUpgrades(current?.fullName, parsed.name)) && parsed.name
+              : shouldReplaceName(current?.fullName, parsed.name)) && parsed.name
               ? { fullName: parsed.name }
               : {}),
             ...rest,
@@ -465,7 +448,8 @@ export async function saveNoteBatch(
           userId,
           {
             fullName: parsed.name,
-            ...splitName(parsed.name),
+            firstName: splitName(parsed.name).firstName ?? undefined,
+            lastName: splitName(parsed.name).lastName ?? undefined,
             ...fields,
             dateMet: p.interactionDate?.trim() || parsed.interaction_date?.trim() || input.anchorIso,
             source: "ai_capture",

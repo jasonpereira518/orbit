@@ -27,6 +27,7 @@
  * Pure: no database, no network. `email-activity-server.ts` does both.
  */
 import type { NetworkEvent } from "@/lib/ingest/events";
+import { AUTOMATED_LOCAL_PARTS } from "@/lib/names/classify";
 
 /**
  * Recipients past which a message stops being correspondence.
@@ -45,20 +46,7 @@ export const MAX_EMAIL_PARTICIPANTS = 10;
  * more aggressive starts dropping real people, and a missed filter costs one junk row while
  * an over-eager one silently loses a relationship.
  */
-export const AUTOMATED_LOCAL_PARTS = new Set([
-  "noreply",
-  "no-reply",
-  "donotreply",
-  "do-not-reply",
-  "notifications",
-  "notification",
-  "mailer-daemon",
-  "postmaster",
-  "bounce",
-  "bounces",
-  "automated",
-  "alerts",
-]);
+export { AUTOMATED_LOCAL_PARTS };
 
 export type EmailParticipant = { name: string | null; email: string };
 

@@ -238,6 +238,10 @@
 @source "../lib/microsoft-scopes.ts";
 @source "../lib/motion-preference.ts";
 @source "../lib/motion.ts";
+@source "../lib/names/classify.ts";
+@source "../lib/names/key.ts";
+@source "../lib/names/nicknames.ts";
+@source "../lib/names/parse.ts";
 @source "../lib/nav-timing.ts";
 @source "../lib/net-guard.ts";
 @source "../lib/note-batches.ts";

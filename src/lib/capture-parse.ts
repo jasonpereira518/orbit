@@ -50,7 +50,8 @@ import {
   type LinkedInProfileRef,
 } from "@/lib/linkedin-paste";
 import { isSelf } from "@/lib/meeting-digest";
-import { collapseSamePeople, looksLikeOrganization } from "@/lib/capture/person-cleanup";
+import { collapseSamePeople } from "@/lib/capture/person-cleanup";
+import { isPersonName } from "@/lib/names/classify";
 import { companyFromEmail } from "@/lib/guest-profiles";
 import { lookUpNewPeople } from "@/lib/capture/web-lookup";
 import type { PersonResearcher } from "@/lib/web-research";
@@ -316,7 +317,7 @@ export async function runCaptureParse(
       // user wrote, "Jason from Stripe" is somebody else.
       company: meeting ? null : p.company,
     })) return false;
-    if (looksLikeOrganization(p.name, p.company)) {
+    if (!isPersonName(p.name, { email: p.email, company: p.company })) {
       skippedNonPeople.push(p.name.trim());
       return false;
     }

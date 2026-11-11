@@ -37,6 +37,7 @@ import { updateContactForUser } from "@/lib/contact-writes";
 import { internalFetch } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
 import { notTourExample } from "@/lib/onboarding-examples/sql";
+import { splitName } from "@/lib/names/parse";
 
 export const MONTHLY_UPKEEP_BATCH = 100;
 const UPKEEP_BUDGET_MS = 60_000;
@@ -89,17 +90,6 @@ export function monthlyUpkeepCandidatePredicate(userId: string) {
   );
 }
 
-/**
- * Split a clean full name (e.g. from LinkedIn "Satya Nadella") into first and last.
- */
-function splitFullName(full: string): { first: string; last: string } {
-  const parts = full.trim().split(/\s+/);
-  if (parts.length <= 1) return { first: full.trim(), last: "" };
-  return {
-    first: parts[0]!,
-    last: parts.slice(1).join(" "),
-  };
-}
 
 /**
  * Run monthly upkeep pass for a user's contacts.
@@ -249,7 +239,9 @@ export async function runMonthlyContactUpkeep(
       }
 
       if (bestName && bestName !== c.fullName) {
-        const { first, last } = splitFullName(bestName);
+        const parts = splitName(bestName);
+        const first = parts.firstName ?? "";
+        const last = parts.lastName ?? "";
         const nameGuess: NameGuess = {
           from: c.fullName,
           source: guessSource,

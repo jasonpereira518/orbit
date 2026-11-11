@@ -3,9 +3,15 @@
  * whole address. Imports name a person whatever the source called them, and a calendar guest
  * or an email sender with no display name arrives as their address.
  *
- * Pure: no database, no network. The sweep (`@/lib/contact-name-sweep`) feeds it the user's
- * own address book and asks a model only when nothing here reads the handle confidently.
+ * Pure: no database, no network. The reading rules live in `@/lib/names`; this file is the
+ * guess order and the stored `name_guess` shape. The sweep (`@/lib/contact-name-sweep`) feeds
+ * it the user's own address book and asks a model only when nothing here reads the handle.
  */
+import { isHandle, PLACEHOLDER_NAMES } from "@/lib/names/classify";
+import { nameFromHandle, nameFromSlug, type GuessedName } from "@/lib/names/from-identifier";
+import { nameKey } from "@/lib/names/key";
+
+export { isHandle, type GuessedName };
 
 export type NameGuessSource = "address_book" | "linkedin" | "handle" | "ai" | "none";
 
@@ -27,30 +33,8 @@ export function openNameGuess(c: { preferredName?: string | null; nameGuess?: Na
   return !c.preferredName?.trim() && c.nameGuess?.weak ? c.nameGuess : null;
 }
 
-export type GuessedName = { first: string; last: string; full: string };
-
 /** Lower-cased email → the name the user's own Google or Outlook address book gives it. */
 export type ProviderNameIndex = Map<string, GuessedName>;
-
-/** A stored name that is really an address handle: "", "dmcraver" for dmcraver@…, "calvintwong25". */
-export function isHandle(name: string | null | undefined, email?: string | null): boolean {
-  const n = (name ?? "").trim();
-  if (!n) return true;
-  if (email && n.toLowerCase() === email.split("@")[0]?.toLowerCase()) return true;
-  return !/\s/.test(n) && /[\d._@]/.test(n);
-}
-
-const GENERIC_NAMES = new Set([
-  "linkedin member",
-  "member",
-  "unknown",
-  "user",
-  "none",
-  "n/a",
-  "unnamed",
-  "no name",
-  "contact",
-]);
 
 /**
  * Checks whether a contact's stored name is really a username, handle, email prefix,
@@ -63,81 +47,19 @@ export function isUsernameOrGenericName(
 ): boolean {
   const n = (name ?? "").trim();
   if (!n) return true;
-  const lower = n.toLowerCase();
-
-  // 1. Generic placeholder names
-  if (GENERIC_NAMES.has(lower)) return true;
-
-  // 2. Email or address handles
+  if (PLACEHOLDER_NAMES.has(nameKey(n))) return true;
   if (isHandle(n, email)) return true;
 
-  // 3. Exact match with LinkedIn slug (e.g. "satya-nadella-12345" or "satyanadella")
-  if (linkedinUrl) {
-    const slug = linkedinUrl.match(/linkedin\.com\/in\/([^/?#]+)/i)?.[1]?.toLowerCase();
-    if (slug) {
-      const cleanSlug = slug.replace(/[\s\-_.]/g, "");
-      const cleanName = lower.replace(/[\s\-_.]/g, "");
-      if (cleanSlug && (cleanName === cleanSlug || cleanName === slug)) return true;
-    }
+  // Exactly the LinkedIn slug (e.g. "satya-nadella-12345" or "satyanadella").
+  const slug = linkedinUrl?.match(/linkedin\.com\/in\/([^/?#]+)/i)?.[1]?.toLowerCase();
+  if (slug) {
+    const cleanSlug = slug.replace(/[\s\-_.]/g, "");
+    const cleanName = n.toLowerCase().replace(/[\s\-_.]/g, "");
+    if (cleanSlug && (cleanName === cleanSlug || cleanName === slug)) return true;
   }
 
-  // 4. Starts with '@' (social handle like @jason)
-  if (n.startsWith("@")) return true;
-
-  // 5. No whitespace and length > 20 (random string or ID)
-  if (!/\s/.test(n) && n.length > 20) return true;
-
-  return false;
-}
-
-/** Pieces of a handle that are never part of anyone's name: "jdoe_dev", "the.real.jane". */
-const NOT_NAME = new Set(
-  "dev eng hq official real the mr ms mrs dr info work mail admin team hello contact me its im".split(" ")
-);
-
-const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-
-function named(parts: string[]): GuessedName {
-  const words = parts.map(cap);
-  return { first: words[0]!, last: words[words.length - 1]!, full: words.join(" ") };
-}
-
-/** "john.doe42" → ["john", "doe"]; digits and non-name pieces dropped. */
-function handleParts(handle: string): string[] {
-  return handle
-    .split("@")[0]!
-    .split(/[._\-+\s]+/)
-    .map((p) => p.replace(/[^\p{L}]/gu, "").toLowerCase())
-    .filter((p) => p && !NOT_NAME.has(p));
-}
-
-/** "/in/john-smith-1a2b3c" → John Smith. Pieces with digits are LinkedIn's suffix, not a name. */
-function nameFromLinkedin(url: string | null | undefined): GuessedName | null {
-  const slug = url?.match(/linkedin\.com\/in\/([^/?#]+)/i)?.[1];
-  if (!slug) return null;
-  let decoded = slug;
-  try {
-    decoded = decodeURIComponent(slug);
-  } catch {
-    // A malformed escape; read the slug as written.
-  }
-  const parts = decoded
-    .split("-")
-    .filter((p) => /^\p{L}+$/u.test(p))
-    .map((p) => p.toLowerCase());
-  return parts.length >= 2 ? named(parts) : null;
-}
-
-/**
- * A handle read as a name. Confident only for exactly first + last of two letters or more
- * ("john.doe", "john_smith", "john.m.doe"); "j.smith" is a weak guess and "jsmith42" no guess.
- */
-function nameFromHandle(handle: string): { name: GuessedName; weak: boolean } | null {
-  const parts = handleParts(handle);
-  if (parts.length === 3 && parts[1]!.length === 1) parts.splice(1, 1);
-  if (parts.length < 2) return null;
-  const weak = parts.length !== 2 || parts[0]!.length < 2 || parts[1]!.length < 2;
-  return { name: named(parts), weak };
+  // A social handle (@jason), or one long run with no space (a random string or an id).
+  return n.startsWith("@") || (!/\s/.test(n) && n.length > 20);
 }
 
 export type NameGuessResult = GuessedName & { source: NameGuessSource; weak: boolean };
@@ -155,13 +77,13 @@ export function guessName(
   const book = email ? index?.get(email) : undefined;
   if (book && !isHandle(book.full)) return { ...book, source: "address_book", weak: false };
 
-  const linkedin = nameFromLinkedin(c.linkedinUrl);
-  if (linkedin) return { ...linkedin, source: "linkedin", weak: false };
+  const linkedin = nameFromSlug(c.linkedinUrl);
+  if (linkedin && !linkedin.weak) return { first: linkedin.first, last: linkedin.last, full: linkedin.full, source: "linkedin", weak: false };
 
   // The stored name first, then the address: "jsmith42" saved for john.doe@x.com reads as John Doe.
   const reads = [c.fullName, email ?? ""].filter(Boolean).map(nameFromHandle);
   const best = reads.find((r) => r && !r.weak) ?? reads.find(Boolean);
-  return best ? { ...best.name, source: "handle", weak: best.weak } : null;
+  return best ? { first: best.first, last: best.last, full: best.full, source: "handle", weak: best.weak } : null;
 }
 
 /** A model's `{first, last}` made safe to store as a name, or null. */
