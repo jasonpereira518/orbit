@@ -806,6 +806,11 @@ export const contacts = pgTable(
      * streak stops applying by itself — no contact writer has to remember to reset it.
      */
     workHistoryMissSlug: text("work_history_miss_slug"),
+    /**
+     * When Jev last skipped this contact's re-check or vetoed its verify search (schema 220).
+     * Set, the next run asks neither gate — never two in a row — and any real search clears it.
+     */
+    workHistoryJevSkippedAt: timestamp("work_history_jev_skipped_at", { withTimezone: true }),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     /**
      * Closeness the user actually asserted, 1–5. NULL means never rated —

@@ -9,6 +9,8 @@
  *    merges the person made by hand (`contact_merges.confidence IS NULL`) → the same person.
  *  - mentions: names the person picked with `@` (`interaction_mentions.matched_by = 'user_pick'`)
  *    → which contact the name meant, among the contacts sharing its first name.
+ *  - work-history-recheck: web-found moves → "must not skip"; web profiles with no move in the
+ *    year before their last check → "may skip" (`--task skip-gates`; see the section below).
  *
  * SAFETY — this reads a real database, so:
  *  - READ-ONLY by construction: a raw `@neondatabase/serverless` client and SELECTs only.
@@ -23,6 +25,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { neon } from "@neondatabase/serverless";
+// Pure: imports `@/db` but never calls it, so nothing here can reconcile the target schema.
+import { shapeRecheckGateState } from "../src/lib/work-history-gates";
 
 function arg(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
@@ -140,12 +144,104 @@ async function main() {
     });
   }
 
+  // ---- work-history re-check gate: past checks, rebuilt as of the day they ran ----
+  // Orbit keeps only a contact's LATEST check date, so a past check is reconstructed:
+  //  - a web-found move (contact_career_moves, source 'web') → "must not skip", as of the day it
+  //    was found, with the role they left as the current one;
+  //  - a web profile with no web move in the year before its last check → "may skip", as of
+  //    that check, with today's current roles (unchanged by definition).
+  // The previous check is taken as RECHECK_LOOKBACK_DAYS before; the relationship digest is
+  // left out because it is written today and would leak what happened after the check.
+  const RECHECK_LOOKBACK_DAYS = 90;
+  const moves = (await sql`
+    SELECT m.contact_id::text AS contact_id, m.from_org, m.from_title, m.detected_at,
+           c.title, c.company, c.closeness_tier
+      FROM contact_career_moves m
+      JOIN contacts c ON c.id = m.contact_id AND c.user_id = m.user_id
+     WHERE m.user_id = ${userId} AND m.source = 'web' AND m.from_org IS NOT NULL
+     ORDER BY m.detected_at DESC
+     LIMIT 300
+  `) as Array<{ contact_id: string; from_org: string; from_title: string | null; detected_at: string; title: string | null; company: string | null; closeness_tier: string | null }>;
+  const steady = (await sql`
+    SELECT p.contact_id::text AS contact_id, p.captured_at, c.title, c.company, c.closeness_tier
+      FROM contact_profiles p
+      JOIN contacts c ON c.id = p.contact_id AND c.user_id = p.user_id
+     WHERE p.user_id = ${userId} AND p.source = 'web'
+       AND NOT EXISTS (
+         SELECT 1 FROM contact_career_moves m
+          WHERE m.user_id = p.user_id AND m.contact_id = p.contact_id AND m.source = 'web'
+            AND m.detected_at > p.captured_at - interval '365 days')
+     ORDER BY p.captured_at DESC
+     LIMIT 300
+  `) as Array<{ contact_id: string; captured_at: string; title: string | null; company: string | null; closeness_tier: string | null }>;
+  const currentRoles = (await sql`
+    SELECT contact_id::text AS contact_id, organization, title, start_year, start_month
+      FROM contact_experiences
+     WHERE user_id = ${userId} AND kind = 'role' AND is_current
+  `) as Array<{ contact_id: string; organization: string; title: string | null; start_year: number | null; start_month: number | null }>;
+  const notes = (await sql`
+    SELECT contact_id::text AS contact_id, interaction_type, interaction_date, ai_summary
+      FROM interactions
+     WHERE user_id = ${userId} AND ai_summary IS NOT NULL
+  `) as Array<{ contact_id: string; interaction_type: string; interaction_date: string; ai_summary: string }>;
+  const notesBetween = (contactId: string, from: Date, to: Date) =>
+    notes
+      .filter((n) => n.contact_id === contactId)
+      .map((n) => ({ type: n.interaction_type, date: new Date(n.interaction_date), summary: n.ai_summary }))
+      .filter((n) => n.date > from && n.date < to);
+  const recheckCases = [
+    ...moves.map((m, i) => {
+      const checkAt = new Date(m.detected_at);
+      const lastCheckedAt = new Date(checkAt.getTime() - RECHECK_LOOKBACK_DAYS * 86_400_000);
+      return {
+        id: `own-moved-${i + 1}`,
+        gate: "workHistoryRecheck",
+        state: shapeRecheckGateState({
+          roles: [{ organization: m.from_org, title: m.from_title, startYear: null, startMonth: null, isCurrent: true }],
+          title: m.title,
+          company: m.company,
+          closenessTier: m.closeness_tier,
+          lastCheckedAt,
+          now: checkAt,
+          interactions: notesBetween(m.contact_id, lastCheckedAt, checkAt),
+          digest: null,
+        }),
+        skip: false,
+        why: "a web search found a move",
+      };
+    }),
+    ...steady.map((p, i) => {
+      const checkAt = new Date(p.captured_at);
+      const lastCheckedAt = new Date(checkAt.getTime() - RECHECK_LOOKBACK_DAYS * 86_400_000);
+      return {
+        id: `own-steady-${i + 1}`,
+        gate: "workHistoryRecheck",
+        state: shapeRecheckGateState({
+          roles: currentRoles
+            .filter((r) => r.contact_id === p.contact_id)
+            .map((r) => ({ organization: r.organization, title: r.title, startYear: r.start_year, startMonth: r.start_month, isCurrent: true })),
+          title: p.title,
+          company: p.company,
+          closenessTier: p.closeness_tier,
+          lastCheckedAt,
+          now: checkAt,
+          interactions: notesBetween(p.contact_id, lastCheckedAt, checkAt),
+          digest: null,
+        }),
+        skip: true,
+        why: "no web-found move in the year before the last check",
+      };
+    }),
+  ];
+
   mkdirSync(outDir, { recursive: true, mode: 0o700 });
   writeFileSync(join(outDir, "duplicates.json"), `${JSON.stringify({ pairs }, null, 1)}\n`, { mode: 0o600 });
   writeFileSync(join(outDir, "mentions.json"), `${JSON.stringify({ cases }, null, 1)}\n`, { mode: 0o600 });
+  writeFileSync(join(outDir, "work-history-recheck.json"), `${JSON.stringify({ cases: recheckCases }, null, 1)}\n`, { mode: 0o600 });
   console.log(
     `export-decision-labels: ${pairs.filter((p) => !p.same).length} different-people pairs, ` +
-      `${pairs.filter((p) => p.same).length} same-person pairs, ${cases.length} mention picks → ${outDir}`
+      `${pairs.filter((p) => p.same).length} same-person pairs, ${cases.length} mention picks, ` +
+      `${moves.length} work-history moves + ${steady.length} steady checks → ${outDir}`
   );
 }
 

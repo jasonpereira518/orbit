@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   work_history_due_at timestamptz,
   work_history_misses integer NOT NULL DEFAULT 0,
   work_history_miss_slug text,
+  work_history_jev_skipped_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -3144,12 +3145,20 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // (each side's last keystroke, for the typing dots — a serverless deploy has no shared memory
 // to hold them in); and feedback_screenshots.message_id (a screenshot sent later in the
 // conversation belongs to that message, not the opening report).
-// 220 is claimed by the open Jev integration branch (claude/jev-orbit-integration-532d42).
-// 221 = Radar revision foundations (Radar PR 2): radar_opportunities (the Opportunities lane:
-// events, people to meet, openings, programs, with no contact row until saved),
-// push_subscriptions (web push, one per browser), and user_settings.radar_web_next_at /
-// radar_moment_last_day (the web lane's schedule and the same-day email's claim).
-export const SCHEMA_VERSION = 221;
+//
+// 220 = Jev on Orbit's key for work-history searches (docs/superpowers/specs/
+// 2026-11-10-jev-work-history-design.md): contacts.work_history_jev_skipped_at — set when Jev
+// skipped a re-check or vetoed a verify search, so the next run is never gated again. Scanned
+// every remote ref and local worktree on Nov 11 2026: 219 was the highest claimed anywhere.
+//
+// 224 = Radar revision foundations (Radar PR 2, docs/superpowers/specs/2026-11-10-radar-analyst-design.md):
+// radar_opportunities (the Opportunities lane: events, people to meet, openings, programs, with
+// no contact row until saved), push_subscriptions (web push, one per browser), and
+// user_settings.radar_web_next_at / radar_moment_last_day (the web lane's schedule and the
+// same-day email's claim). Built as 221; moved to 224 on Nov 11 2026 because uncommitted Radar
+// activation work (worktree radar-activation-animation-3caf1e) also holds 221 and the
+// contact-sharing branch holds 223.
+export const SCHEMA_VERSION = 224;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4468,6 +4477,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "work_history_due_at", "timestamptz");
   await ensureColumn(client, "contacts", "work_history_misses", "integer NOT NULL DEFAULT 0");
   await ensureColumn(client, "contacts", "work_history_miss_slug", "text");
+  await ensureColumn(client, "contacts", "work_history_jev_skipped_at", "timestamptz");
   await ensureColumn(client, "usage_events", "web_searches", "integer");
   await ensureColumn(client, "user_settings", "work_history_auto_enabled", "integer NOT NULL DEFAULT 1");
   await ensureColumn(client, "user_settings", "email_intel_enabled", "integer NOT NULL DEFAULT 0");
@@ -5033,6 +5043,8 @@ const alters = [
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS web_searches integer`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_misses integer NOT NULL DEFAULT 0`,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_miss_slug text`,
+  // Schema v220: when Jev last skipped a work-history re-check or vetoed a verify search.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS work_history_jev_skipped_at timestamptz`,
   // Schema v139: the credit emails at 80% and 100% of the monthly allowance — the switch, and
   // which cycle and level were last sent (claimed in one UPDATE before each send).
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS credit_email_enabled integer NOT NULL DEFAULT 1`,
@@ -5592,7 +5604,7 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_discovery_enabled integer NOT NULL DEFAULT 1`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS suggested_calendar_invite jsonb`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS discovered_person jsonb`,
-  // Schema v221: Radar revision foundations (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
+  // Schema v224 (built as 221): Radar revision foundations (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
   // radar_opportunities and push_subscriptions are new tables (created from the template);
   // these are the two user_settings columns for older databases.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_web_next_at timestamptz`,
