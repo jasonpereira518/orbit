@@ -12,7 +12,7 @@ const label = (h: KeywordSearchHit) => (h.preferredName || "").trim() || h.fullN
  * People the search found who are not in the sky being viewed, under the search box.
  *
  * A listbox driven from the search input (focus never leaves it): ArrowUp/ArrowDown move the
- * active option, Enter adds it. Each row also carries an Add button for a pointer or a finger.
+ * active option, Enter adds it. A click or tap on a row adds it too (its Add pill is only a visual cue).
  * The input is wired up here, in an effect, so the box in `NetworkGraph` stays one component
  * that works the same with or without a sky.
  */
@@ -105,9 +105,13 @@ export function ConstellationAddList({
                 id={optionId(i)}
                 role="option"
                 aria-selected={i === active}
+                aria-disabled={busy !== null || undefined}
                 onMouseEnter={() => setActive(i)}
+                // The option itself is the click target; mousedown is cancelled so focus stays in the search box.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void add(h)}
                 className={cn(
-                  "flex items-center gap-2 px-3 py-1.5",
+                  "flex cursor-pointer items-center gap-2 px-3 py-1.5",
                   i === active ? "bg-white/10" : "hover:bg-white/8"
                 )}
               >
@@ -119,19 +123,17 @@ export function ConstellationAddList({
                     </span>
                   )}
                 </span>
-                {/* Reachable by pointer and touch; the keyboard path is the listbox itself. */}
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  aria-label={`Add ${label(h)}`}
-                  disabled={busy !== null}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => void add(h)}
-                  className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-white/20 px-3 text-xs hover:bg-white/10 disabled:opacity-50"
+                {/* Looks like a button, is not one: an interactive control inside role=option is invalid. */}
+                <span
+                  aria-hidden
+                  className={cn(
+                    "inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-white/20 px-3 text-xs",
+                    busy !== null && "opacity-50"
+                  )}
                 >
                   <Plus className="size-3" />
                   {busy === h.id ? "Adding…" : "Add"}
-                </button>
+                </span>
               </li>
             ))}
           </ul>
