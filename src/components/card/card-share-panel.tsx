@@ -7,14 +7,16 @@ import { Copy, Maximize2, RotateCcw, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { resetMyCardLink, setMyCardPaused } from "@/actions/cards";
 import { CardQr } from "@/components/card/card-qr";
+import { OrbitCard } from "@/components/card/orbit-card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import type { PublicCard } from "@/lib/cards/card-store";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { cn } from "@/lib/utils";
 
-/** The owner's card, ready to hand over: QR, link, share, full screen, reset and pause. */
-export function CardSharePanel({ url, svg, paused }: { url: string; svg: string; paused: boolean }) {
+/** The owner's card, ready to hand over: the card (QR side up), link, share, full screen, reset and pause. */
+export function CardSharePanel({ url, svg, paused, card }: { url: string; svg: string; paused: boolean; card: PublicCard | null }) {
   const router = useRouter();
   const [confirmReset, setConfirmReset] = useState(false);
   const [pending, start] = useTransition();
@@ -56,7 +58,19 @@ export function CardSharePanel({ url, svg, paused }: { url: string; svg: string;
 
   return (
     <div className="flex flex-col items-center gap-5 md:flex-row md:items-start md:gap-8">
-      <CardQr svg={svg} className={cn("w-56 shrink-0", paused && "opacity-40")} />
+      {card ? (
+        <OrbitCard
+          art={card.art}
+          name={card.fullName}
+          role={[card.title, card.company].filter(Boolean).join(" @ ") || null}
+          firstName={card.firstName}
+          qrSvg={svg}
+          side="back"
+          className={cn("max-w-sm shrink-0 md:w-80", paused && "opacity-40")}
+        />
+      ) : (
+        <CardQr svg={svg} className={cn("w-56 shrink-0", paused && "opacity-40")} />
+      )}
       <div className="flex w-full min-w-0 flex-col gap-4">
         <p className="break-all text-sm text-muted-foreground">{url}</p>
         {paused && (

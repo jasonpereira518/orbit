@@ -58,7 +58,7 @@ export default async function CardPage() {
           <Card>
             <CardContent>
               {qr?.ok ? (
-                <CardSharePanel url={qr.url} svg={qr.svg} paused={card.pausedAt !== null} />
+                <CardSharePanel url={qr.url} svg={qr.svg} paused={card.pausedAt !== null} card={preview.ok ? preview.card : null} />
               ) : (
                 <p className="text-sm text-muted-foreground">{qr?.message}</p>
               )}
