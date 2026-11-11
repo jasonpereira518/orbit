@@ -699,6 +699,11 @@ export const userSettings = pgTable("user_settings", {
    * spends nothing until then. On = set AND `radarPaused` = 0 (`radarIsOn` in run.ts).
    */
   radarEnabledAt: timestamp("radar_enabled_at", { withTimezone: true }),
+  /**
+   * When the person last opened the Radar page. Suggestions created after it are "new": the
+   * nav's Radar icon pulses green while there are any (`countNewRadarSuggestions`).
+   */
+  radarOpenedAt: timestamp("radar_opened_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [

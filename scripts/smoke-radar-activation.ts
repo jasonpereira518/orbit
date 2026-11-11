@@ -6,6 +6,8 @@
  *   - turning off and on again keeps the first stamp;
  *   - the scene's layout: stable per network, three rings, every node an image, a tiny network
  *     drawn with planets, and the outer ring inside a 375px phone;
+ *   - the nav's "new suggestions" count: only pending, unexpired cards created after the
+ *     last /radar open, and opening /radar clears it;
  *   - the timeline: beats in order, and long enough to feel like something happened.
  * The gates that keep an off account from running (nightly claim, first build, digest) are
  * pinned in smoke-radar-run and smoke-radar-digest. Leaves nothing behind.
@@ -15,7 +17,7 @@ import { run } from "./smoke/_env";
 
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, userSettings } from "../src/db/schema";
+import { contacts, recommendations, userSettings } from "../src/db/schema";
 import {
   BEAT,
   PLANETS,
@@ -25,6 +27,7 @@ import {
 } from "../src/lib/radar/activation-scene";
 import { loadRadarActivation } from "../src/lib/radar/page-data";
 import { loadRadarState, turnOnRadarForUser } from "../src/lib/radar/run";
+import { countNewRadarSuggestions, stampRadarOpened } from "../src/lib/radar/store";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-radar-activation-user";
@@ -37,6 +40,7 @@ function check(label: string, ok: boolean, detail = "") {
 
 async function reset() {
   const db = await getDb();
+  await db.delete(recommendations).where(eq(recommendations.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(userSettings).where(inArray(userSettings.userId, [USER]));
 }
@@ -76,6 +80,36 @@ async function main() {
   await turnOnRadarForUser(USER);
   const [second] = await db.select({ at: userSettings.radarEnabledAt }).from(userSettings).where(eq(userSettings.userId, USER));
   check("the first stamp is never overwritten", second?.at?.getTime() === first?.at?.getTime());
+
+  console.log("\nnew suggestions since /radar was last opened");
+  {
+    const DAY = 86_400_000;
+    const people = await db.select({ id: contacts.id }).from(contacts).where(eq(contacts.userId, USER));
+    const card = (contactId: string, over: Partial<typeof recommendations.$inferInsert> = {}) =>
+      db.insert(recommendations).values({
+        userId: USER,
+        contactId,
+        kind: "reconnect",
+        score: 40,
+        bucket: "today",
+        expiresAt: new Date(Date.now() + 30 * DAY),
+        inputsHash: "h",
+        reasons: [{ code: "dormant", label: "Quiet", points: 30 }],
+        ...over,
+      });
+    const opened = new Date(Date.now() - DAY);
+    await card(people[0]!.id, { createdAt: new Date(opened.getTime() - DAY) });
+    await card(people[1]!.id, { createdAt: new Date(opened.getTime() + 3_600_000) });
+    await card(people[2]!.id, { createdAt: new Date(opened.getTime() + 3_600_000), status: "dismissed" });
+    await card(people[3]!.id, { createdAt: new Date(opened.getTime() + 3_600_000), expiresAt: new Date(Date.now() - 60_000) });
+    check("never opened: every live card is new", (await countNewRadarSuggestions(USER, null)) === 2);
+    check("only the live card created after the last open is new", (await countNewRadarSuggestions(USER, opened)) === 1);
+    await stampRadarOpened(USER);
+    const [row] = await db.select({ at: userSettings.radarOpenedAt }).from(userSettings).where(eq(userSettings.userId, USER));
+    check("opening /radar stamps the account", row?.at instanceof Date);
+    check("and nothing is new after it", (await countNewRadarSuggestions(USER, row?.at ?? null)) === 0);
+    await db.delete(recommendations).where(eq(recommendations.userId, USER));
+  }
 
   console.log("\nthe scene's layout");
   const faces = Array.from({ length: 40 }, (_, i) => ({ contactId: `c${i}`, name: `P${i}`, photo: i % 3 ? `/p/${i}.jpg` : null }));

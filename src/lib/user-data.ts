@@ -891,6 +891,7 @@ const PRESERVED_SETTINGS_COLUMNS = {
   // email nor breaks the unsubscribe link in the last one.
   radarPaused: true,
   radarEnabledAt: true,
+  radarOpenedAt: true,
   radarAutopilot: true,
   radarCaptureLinkedinActivity: true,
   radarDigestEnabled: true,

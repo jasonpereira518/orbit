@@ -102,8 +102,8 @@ export type SceneView = {
   nodes: readonly SceneNode[];
   /** Beat 1: where the hero sat, so the stage grows out of it. */
   from?: { cx: number; cy: number; scale: number } | null;
-  /** Beat 6: offset from the centre to the nav's Radar icon. */
-  to?: { dx: number; dy: number } | null;
+  /** Beat 6: offset from the centre to the nav's Radar icon, and the scale that fits it. */
+  to?: { dx: number; dy: number; scale: number } | null;
 };
 
 /**
@@ -113,6 +113,11 @@ export type SceneView = {
 export function drawScene(ctx: CanvasRenderingContext2D, v: SceneView) {
   const { t, w, h, nodes } = v;
   const dormant = t < 0;
+  // Beat 6: the night sky fades out while the network flies home, so the page (and the
+  // nav's Radar icon it lands in) shows through instead of staying hidden under navy.
+  const sky = 1 - seg(t, BEAT.land, BEAT.land + (BEAT.end - BEAT.land) * 0.6);
+  ctx.clearRect(0, 0, w, h);
+  ctx.globalAlpha = sky;
   ctx.fillStyle = FIELD;
   ctx.fillRect(0, 0, w, h);
   for (const s of SKY) {
@@ -121,6 +126,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, v: SceneView) {
     ctx.arc(s.x * w, s.y * h, s.s, 0, TAU);
     ctx.fill();
   }
+  ctx.globalAlpha = 1;
 
   const layout = ringLayout(w, h);
   const outer = layout.radii[2];
@@ -135,17 +141,18 @@ export function drawScene(ctx: CanvasRenderingContext2D, v: SceneView) {
     scale = v.from.scale + (1 - v.from.scale) * k;
   }
   // Beat 6: shrink into the nav's Radar icon.
-  const land = easeOut(seg(t, BEAT.land, BEAT.end));
+  // Arrives 200ms early, so it visibly settles on the icon before the last fade.
+  const land = easeOut(seg(t, BEAT.land, BEAT.end - 200));
   if (land > 0 && v.to) {
     cx += v.to.dx * land;
     cy += v.to.dy * land;
   }
-  scale *= 1 - 0.94 * land;
+  // Shrinks until the outer ring is the icon's size (6% when there is no icon to land in).
+  scale *= 1 - (1 - (v.to?.scale ?? 0.06)) * land;
 
   ctx.save();
   ctx.translate(cx, cy);
   ctx.scale(scale, scale);
-  ctx.globalAlpha = 1 - 0.4 * land;
 
   const charge = seg(t, BEAT.charge, BEAT.ignite);
   const ignite = seg(t, BEAT.ignite, BEAT.spin);

@@ -6,8 +6,8 @@ import { drawScene, fitCanvas, FIELD, preloadImages } from "@/components/radar/a
 import { BEAT, ringLayout, type SceneNode } from "@/lib/radar/activation-scene";
 import { useModalTakeover } from "@/lib/use-modal-takeover";
 
-/** The fade that lifts the navy at the end of the landing. */
-const LIFT_MS = 300;
+/** The last fade, once the network has shrunk into the nav icon. */
+const LIFT_MS = 150;
 
 function statusFor(t: number): string {
   if (t < BEAT.ignite) return "Charging Radar…";
@@ -16,11 +16,22 @@ function statusFor(t: number): string {
   return "";
 }
 
-/** The nav's Radar icon, if one is on screen, as an offset from the viewport centre. */
-function landingTarget(w: number, h: number): { dx: number; dy: number } | null {
-  for (const el of document.querySelectorAll<HTMLElement>('a[href="/radar"]')) {
-    const r = el.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0) return { dx: r.left + r.width / 2 - w / 2, dy: r.top + r.height / 2 - h / 2 };
+/**
+ * The Radar icon in the nav (the svg left of the "Radar" label), if one is on screen: its
+ * offset from the viewport centre, and the scale that shrinks the outer ring to its size.
+ * On a phone the link lives behind "More", so there is none and the scene lands in place.
+ */
+function landingTarget(w: number, h: number): { dx: number; dy: number; scale: number } | null {
+  for (const link of document.querySelectorAll<HTMLElement>('a[href="/radar"]')) {
+    const icon = link.querySelector("svg") ?? link;
+    const r = icon.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) {
+      return {
+        dx: r.left + r.width / 2 - w / 2,
+        dy: r.top + r.height / 2 - h / 2,
+        scale: Math.max(r.width, r.height) / 2 / ringLayout(w, h).radii[2],
+      };
+    }
   }
   return null;
 }
@@ -150,7 +161,7 @@ export function ActivationStage({
       tabIndex={-1}
       onClick={skip}
       className="fixed inset-0 z-[9998] touch-none overscroll-none outline-none"
-      style={{ backgroundColor: FIELD, opacity: lifting ? 0 : 1, transition: `opacity ${LIFT_MS}ms ease-out` }}
+      style={{ backgroundColor: landed ? "transparent" : FIELD, opacity: lifting ? 0 : 1, transition: `opacity ${LIFT_MS}ms ease-out` }}
     >
       <canvas ref={canvasRef} aria-hidden className="absolute inset-0 h-full w-full" />
       <p

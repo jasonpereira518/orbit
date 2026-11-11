@@ -36,7 +36,7 @@ import {
 } from "@/lib/radar/page-data";
 import { claimRadarLease, ensureRadarRun, loadRadarState, maybeRefreshRadar, refreshRadarForNewContact, runRadarForUser, turnOnRadarForUser } from "@/lib/radar/run";
 import { rebuildContactEmbedding } from "@/lib/search";
-import { markRecommendationsSeen } from "@/lib/radar/store";
+import { markRecommendationsSeen, stampRadarOpened } from "@/lib/radar/store";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -74,6 +74,8 @@ export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats:
   ]);
   const shown = page.recommendations.map((r) => r.id);
   after(() => markRecommendationsSeen(userId, shown).catch(() => undefined));
+  // Opening the page is what clears the nav's green "new suggestions" pulse.
+  after(() => stampRadarOpened(userId).catch(() => undefined));
   // The zone Radar's Monday email is timed by: the browser's, as the cookie last reported it.
   const tz = (await cookies()).get(TZ_COOKIE)?.value;
   after(() => captureRadarTimeZone(userId, tz).catch(() => undefined));

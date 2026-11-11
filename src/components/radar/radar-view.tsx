@@ -21,6 +21,7 @@ import { RADAR_CAPS } from "@/lib/radar/score";
 import { KIND_SECTION_TITLES, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
 import { toast } from "@/lib/toast";
 import { syncTimeZoneCookie } from "@/lib/tz-cookie";
+import { clearRadarNew } from "@/lib/app-pulse-store";
 import { cn } from "@/lib/utils";
 import { prefersReducedMotion } from "@/lib/motion-preference";
 
@@ -86,6 +87,8 @@ export function RadarView(props: RadarViewProps) {
 
   // So the Monday email arrives on this person's Monday morning (`captureRadarTimeZone`).
   useEffect(() => syncTimeZoneCookie(), []);
+  // Looking at Radar is what clears the nav's green "new suggestions" pulse.
+  useEffect(() => clearRadarNew(), []);
 
   const chooseMode = (next: Mode) => {
     setChosen(next);

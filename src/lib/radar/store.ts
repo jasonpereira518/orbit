@@ -510,6 +510,29 @@ export async function markRecommendationsSeen(userId: string, ids: readonly stri
     );
 }
 
+/**
+ * Suggestions created since the person last opened /radar: while there are any, the nav's
+ * Radar icon pulses green. A rebuild that rewrites a card keeps its `created_at`, so only a
+ * genuinely new person counts. Never opened = everything pending counts.
+ */
+export async function countNewRadarSuggestions(userId: string, openedAt: Date | null, now: Date = new Date()): Promise<number> {
+  const db = await getDb();
+  const [row] = rowsOf<{ n: number }>(
+    await db.execute(sql`
+      SELECT count(*)::int AS n FROM recommendations
+       WHERE user_id = ${userId} AND status = 'pending' AND expires_at > ${now.toISOString()}::timestamptz
+         AND created_at > ${openedAt ? openedAt.toISOString() : "-infinity"}::timestamptz
+    `)
+  );
+  return Number(row?.n ?? 0);
+}
+
+/** The person just opened /radar: everything until now is no longer new. */
+export async function stampRadarOpened(userId: string, now: Date = new Date()): Promise<void> {
+  const db = await getDb();
+  await db.execute(sql`UPDATE user_settings SET radar_opened_at = ${now.toISOString()}::timestamptz WHERE user_id = ${userId}`);
+}
+
 /** A conversation this soon after an accept is what the accept was for. */
 export const RADAR_OUTCOME_WINDOW_DAYS = 14;
 
