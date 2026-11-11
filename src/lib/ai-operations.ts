@@ -91,6 +91,7 @@ export const AI_OPERATIONS = {
   "chat.answer": { label: "Chat answers", tier: "user" },
   "chat.understand": { label: "Chat: understanding the question", tier: "fast", thinking: "minimal" },
   "chat.rerank": { label: "Chat: ranking results", tier: "fast", thinking: "minimal" },
+  "constellation.pick": { label: "Constellation: choosing who belongs", tier: "fast", thinking: "minimal" },
   "chat.title": { label: "Chat: naming the conversation", tier: "fast", thinking: "minimal" },
   // The research rounds before a multi-step answer: which lookups to make, not the answer
   // itself. On the user's model, because a weak tool choice wastes the rounds it costs. No
