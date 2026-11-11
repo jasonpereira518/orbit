@@ -83,5 +83,10 @@ export async function skipAboutStep(page: Page) {
 export async function skipConnectIfShown(page: Page, next: Locator) {
   const connect = page.getByRole("heading", { name: "Bring in the people you email" });
   await expect(connect.or(next)).toBeVisible({ timeout: 30_000 });
-  if (await connect.isVisible()) await page.getByRole("button", { name: /Skip for now/ }).click();
+  if (!(await connect.isVisible())) return;
+  // The About step has its own "Skip for now" and stays mounted while it animates out, so an
+  // immediate click can match both and fail strict mode. Wait for the outgoing step to go.
+  const skip = page.getByRole("button", { name: /Skip for now/ });
+  await expect(skip).toHaveCount(1, { timeout: 10_000 });
+  await skip.click();
 }
