@@ -716,6 +716,8 @@ export function NetworkGraph({
     const t = setTimeout(() => {
       pendingSkyNote = "";
       setAddNote(note);
+      // The remount took focus with the old search box; hand it back so the next add needs no re-tabbing.
+      searchInputRef.current?.focus();
     }, 120);
     return () => clearTimeout(t);
   }, []);

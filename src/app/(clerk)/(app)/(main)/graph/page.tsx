@@ -11,6 +11,7 @@ import {
   CONSTELLATION_STAGE_HEIGHT,
 } from "@/components/graph/constellation-loading";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
+import { skyMembersDigest } from "@/lib/graph/sky-key";
 import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
@@ -110,13 +111,10 @@ async function GraphIsland({ constellationId }: { constellationId: string | null
   const initialData = sky ? sky.payload : await getGraphData();
   // NetworkGraph keeps the first payload it is given, so a sky whose members changed (added or
   // removed in the chart, then router.refresh) must remount to show them. The key carries a digest
-  // of the drawn ids: membership changes remount, a rename or an unrelated refresh does not.
-  const members = sky ? sky.payload.c.id.join(",") : "";
-  let digest = 0;
-  for (let i = 0; i < members.length; i++) digest = (Math.imul(digest, 31) + members.charCodeAt(i)) | 0;
+  // of the drawn ids (order-independent): membership changes remount, a rename or an unrelated refresh does not.
   return (
     <NetworkGraphLazy
-      key={sky ? `${sky.constellation.id}:${digest}` : "all"}
+      key={sky ? `${sky.constellation.id}:${skyMembersDigest(sky.payload.c.id)}` : "all"}
       initialData={initialData}
       constellation={sky?.constellation}
     />
