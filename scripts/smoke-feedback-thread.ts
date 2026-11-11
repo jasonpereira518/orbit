@@ -136,11 +136,10 @@ async function main() {
   console.log("\nCredits");
   {
     check("the first thank-you grants", (await grantFeedbackThanks({ feedbackId: id, userId: A, credits: 50 })) === true);
-    check("a second is a no-op", (await grantFeedbackThanks({ feedbackId: id, userId: A, credits: 100 })) === false);
     const grants = await db.select().from(creditGrants).where(and(eq(creditGrants.userId, A), eq(creditGrants.kind, "adjustment")));
-    check("exactly one adjustment grant", grants.length === 1 && grants[0].grantKey === `adj:feedback:${id}`);
+    check("one adjustment grant for this report", grants.length === 1 && grants[0].grantKey.startsWith(`adj:feedback:${id}:`));
     check("...worth 50 credits, and not cash", grants[0].microsGranted === 500_000 && grants[0].amountCents === null && grants[0].stripeRef === null);
-    check("the report remembers the first amount", (await loadThread(id, { userId: A }))?.thanksCredits === 50);
+    check("the report remembers the amount", (await loadThread(id, { userId: A }))?.thanksCredits === 50);
   }
 
   console.log("\nThe gift");
@@ -159,6 +158,22 @@ async function main() {
     check("the reporter unwraps it and learns the amount", (await unwrapThanks(id, A)) === 50);
     check("...it's now opened", (await loadThread(id, { userId: A }))?.thanksSeen === true && (await listMyFeedback(A))[0]?.giftWaiting === false);
     check("unwrapping again is harmless", (await unwrapThanks(id, A)) === 50);
+
+    // Another thank-you later: its own grant, a running total, and a new gift to open.
+    await new Promise((r) => setTimeout(r, 20));
+    check("a second thank-you grants too", (await grantFeedbackThanks({ feedbackId: id, userId: A, credits: 25 })) === true);
+    await postThreadMessage({ feedbackId: id, author: "operator", body: "And again!", credits: 25 });
+    const grants = await db.select().from(creditGrants).where(and(eq(creditGrants.userId, A), eq(creditGrants.kind, "adjustment")));
+    check("...as a separate grant", grants.length === 2 && new Set(grants.map((g) => g.grantKey)).size === 2);
+    const again = await loadThread(id, { userId: A });
+    check("the report adds them up", again?.thanksCredits === 75);
+    check("the new gift waits, the first stays opened", again?.thanksSeen === false
+      && (await listMyFeedback(A))[0]?.giftWaiting === true
+      && again.thanksSeenAt != null
+      && again.messages.filter((m) => m.credits != null).map((m) => again.thanksSeenAt! >= m.createdAt).join() === "true,false");
+    check("the bell names the new gift's amount", (await unreadRepliesFor(A))[0]?.thanksCredits === 25);
+    await unwrapThanks(id, A);
+    check("opening it clears the wait", (await loadThread(id, { userId: A }))?.thanksSeen === true && (await listMyFeedback(A))[0]?.giftWaiting === false);
   }
 
   console.log("\nEmail");

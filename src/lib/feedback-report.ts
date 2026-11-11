@@ -7,6 +7,8 @@
  * lives here and the server module owns storage.
  */
 
+import type { FeedbackThread } from "@/lib/feedback-thread";
+
 /**
  * Which part of Orbit a report is about. Offered by the form (prefilled from the route)
  * and validated by `feedbackSubmissionSchema` in `src/lib/feedback-submission.ts`.
@@ -257,4 +259,32 @@ export function clampPanelOffset(input: {
     x: startOffset.x + (left - start.left),
     y: startOffset.y + (top - start.top),
   };
+}
+
+const STATUS_LABEL: Record<FeedbackThread["status"], string> = {
+  new: "Sent",
+  triaged: `${FEEDBACK_RECIPIENT}'s looking at it`,
+  resolved: "Done",
+};
+
+const KIND_LABEL: Record<string, string> = {
+  bug: "Broken",
+  idea: "Idea",
+  confusing: "Confusing",
+  praise: "Worked well",
+};
+
+/**
+ * The conversation's one-line context: kind · area · status ("Idea · Contacts · Done").
+ * Here, not beside the chat, because the server-rendered chat page calls it too.
+ */
+export function threadMeta(thread: FeedbackThread): string {
+  const area = thread.report.area;
+  return [
+    thread.category ? KIND_LABEL[thread.category] : null,
+    area && (FEEDBACK_AREAS as readonly string[]).includes(area) ? AREA_LABELS[area as FeedbackArea] : null,
+    STATUS_LABEL[thread.status],
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }

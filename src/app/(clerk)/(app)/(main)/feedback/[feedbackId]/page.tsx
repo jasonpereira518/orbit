@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { FeedbackChat, threadMeta } from "@/components/feedback/feedback-chat";
+import { FeedbackChat } from "@/components/feedback/feedback-chat";
+import { threadMeta } from "@/lib/feedback-report";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { requireUserId } from "@/lib/auth";
 import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";

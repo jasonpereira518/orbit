@@ -34,7 +34,7 @@ function signature(thread: FeedbackThread, side: "user" | "operator"): string {
     thread.messages.map((m) => m.id),
     thread.status,
     thread.thanksCredits,
-    thread.thanksSeen,
+    thread.thanksSeenAt,
     thread.readAt[other],
     thread.typing[other],
   ]);

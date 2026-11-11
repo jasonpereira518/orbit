@@ -176,7 +176,8 @@ export function FeedbackConversation({
             <ArrowUp className="size-4" aria-hidden />
           </button>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
+        {/* The yes/no options as one row of small toggles; the thank-you gets the room. */}
+        <div className="flex flex-wrap gap-1.5">
           {thread.status !== "resolved" && (
             <OptionCard
               icon={CircleCheck}
@@ -204,81 +205,80 @@ export function FeedbackConversation({
               tooltip={related.map((r) => r.label).join("\n")}
             />
           )}
-          {thread.thanksCredits == null ? (
-            <div
-              role="group"
-              aria-label="Thank with credits"
-              className={cn(
-                "grid gap-2 rounded-xl border p-3 transition-colors sm:col-span-2",
-                credits ? "border-gold/60 bg-gold/10" : "border-border/60 bg-background"
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <span className="flex size-7 items-center justify-center rounded-full bg-gold/15">
-                  <Gift className="size-3.5 text-gold-ink" aria-hidden />
-                </span>
-                <span className="grid">
-                  <span className="text-sm font-medium">Thank with credits</span>
-                  <span className="text-xs text-muted-foreground">
-                    {credits ? `They unwrap ${credits} AI credits with this reply` : "A gift they unwrap in the chat"}
-                  </span>
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {THANKS_CREDIT_OPTIONS.map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    aria-pressed={credits === n && !custom}
-                    onClick={() => {
-                      setCustom("");
-                      setCredits(credits === n && !custom ? null : n);
-                    }}
-                    className={cn(
-                      "rounded-full border px-3 py-1 text-xs font-medium tabular-nums transition-colors",
-                      credits === n && !custom
-                        ? "border-gold bg-gold/20 text-gold-ink"
-                        : "border-border/70 bg-background text-muted-foreground hover:border-gold/60 hover:text-foreground"
-                    )}
-                  >
-                    {n}
-                  </button>
-                ))}
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={MAX_THANKS_CREDITS}
-                  step={1}
-                  value={custom}
-                  placeholder="Custom"
-                  aria-label={`Custom amount, 1 to ${MAX_THANKS_CREDITS} credits`}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    setCustom(raw);
-                    const n = Number(raw);
-                    setCredits(raw && Number.isInteger(n) && n >= 1 && n <= MAX_THANKS_CREDITS ? n : null);
-                  }}
-                  className={cn(
-                    "h-7 w-24 rounded-full border bg-background px-3 text-xs tabular-nums outline-none focus-visible:border-gold focus-visible:ring-3 focus-visible:ring-gold/30",
-                    custom ? "border-gold text-gold-ink" : "border-border/70"
-                  )}
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 rounded-xl border border-gold/40 bg-gold/10 p-3 text-sm sm:col-span-2">
-              <Gift className="size-4 text-gold-ink" aria-hidden />
-              Thanked with {thread.thanksCredits} credits
-            </div>
+        </div>
+        <div
+          role="group"
+          aria-label="Thank with credits"
+          className={cn(
+            "grid gap-2 rounded-xl border p-3 transition-colors",
+            credits ? "border-gold/60 bg-gold/10" : "border-border/60 bg-background"
           )}
+        >
+          <div className="flex items-center gap-2">
+            <span className="flex size-7 items-center justify-center rounded-full bg-gold/15">
+              <Gift className="size-3.5 text-gold-ink" aria-hidden />
+            </span>
+            <span className="grid">
+              <span className="text-sm font-medium">Thank with credits</span>
+              <span className="text-xs text-muted-foreground">
+                {credits
+                  ? `They unwrap ${credits} AI credits with this reply`
+                  : "A gift they unwrap in the chat"}
+                {thread.thanksCredits ? ` · ${thread.thanksCredits} sent so far` : ""}
+              </span>
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {THANKS_CREDIT_OPTIONS.map((n) => (
+              <button
+                key={n}
+                type="button"
+                aria-pressed={credits === n && !custom}
+                onClick={() => {
+                  setCustom("");
+                  setCredits(credits === n && !custom ? null : n);
+                }}
+                className={cn(
+                  "rounded-full border px-3 py-1 text-xs font-medium tabular-nums transition-colors",
+                  credits === n && !custom
+                    ? "border-gold bg-gold/20 text-gold-ink"
+                    : "border-border/70 bg-background text-muted-foreground hover:border-gold/60 hover:text-foreground"
+                )}
+              >
+                {n}
+              </button>
+            ))}
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={MAX_THANKS_CREDITS}
+              step={1}
+              value={custom}
+              placeholder="Custom"
+              aria-label={`Custom amount, 1 to ${MAX_THANKS_CREDITS} credits`}
+              onChange={(e) => {
+                const raw = e.target.value;
+                setCustom(raw);
+                const n = Number(raw);
+                setCredits(raw && Number.isInteger(n) && n >= 1 && n <= MAX_THANKS_CREDITS ? n : null);
+              }}
+              className={cn(
+                "h-7 w-24 rounded-full border bg-background px-3 text-xs tabular-nums outline-none focus-visible:border-gold focus-visible:ring-3 focus-visible:ring-gold/30",
+                custom ? "border-gold text-gold-ink" : "border-border/70"
+              )}
+            />
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-/** One reply option as a card: icon, title, a line on what it does, and Orbit's checkbox. */
+/**
+ * One yes/no reply option as a compact pill: Orbit's checkbox, an icon and a short title. What
+ * it does is in the tooltip, so the row stays one line high.
+ */
 function OptionCard({
   icon: Icon,
   title,
@@ -298,26 +298,18 @@ function OptionCard({
 }) {
   return (
     <label
-      title={tooltip}
+      title={tooltip ? `${hint}\n${tooltip}` : hint}
       className={cn(
-        "flex cursor-pointer items-center gap-2.5 rounded-xl border p-3 transition-colors",
-        checked ? "border-primary/50 bg-primary/5" : "border-border/60 bg-background hover:border-primary/30",
+        "inline-flex cursor-pointer items-center gap-1.5 rounded-full border py-1 pl-2 pr-2.5 text-xs transition-colors",
+        checked
+          ? "border-primary/50 bg-primary/5 text-foreground"
+          : "border-border/60 bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground",
         disabled && "cursor-not-allowed opacity-50"
       )}
     >
-      <span
-        className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-full",
-          checked ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
-        )}
-      >
-        <Icon className="size-3.5" aria-hidden />
-      </span>
-      <span className="grid min-w-0 flex-1">
-        <span className="text-sm font-medium">{title}</span>
-        <span className="truncate text-xs text-muted-foreground">{hint}</span>
-      </span>
       <Checkbox checked={checked} disabled={disabled} onCheckedChange={(v) => onChange(v === true)} />
+      <Icon className={cn("size-3.5", checked && "text-primary")} aria-hidden />
+      {title}
     </label>
   );
 }

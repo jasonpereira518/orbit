@@ -94,9 +94,9 @@ export function ThanksGift({
         animate={{ opacity: 1, y: 0 }}
         whileHover={reduced ? undefined : { y: -1 }}
         whileTap={reduced ? undefined : { scale: 0.97 }}
-        className="relative max-w-[85%] overflow-hidden rounded-2xl bg-gradient-to-br from-gold via-gold/50 to-primary p-[1.5px] text-left shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        className="relative max-w-[85%] overflow-hidden rounded-2xl border border-[#f2c14e]/30 text-left shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
-        <span className="relative flex items-center gap-3 overflow-hidden rounded-[calc(1rem-1.5px)] bg-[#03050c] px-4 py-3 text-[#e8f3f1]">
+        <span className="relative flex items-center gap-3 overflow-hidden rounded-[inherit] bg-[#03050c] px-4 py-3 text-[#e8f3f1]">
           <CardStarfield />
           <span className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-[#f2c14e]/15">
             <Gift className="size-[1.1rem] text-[#f2c14e]" aria-hidden />
@@ -150,9 +150,9 @@ export function ThanksGift({
         </span>
       )}
 
-      <div className="rounded-2xl bg-gradient-to-br from-gold via-gold/50 to-primary p-[1.5px] shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-[#f2c14e]/30 shadow-sm">
         {/* Deep space with drifting stars — the same night sky as the dashboard's network card. */}
-        <div className="relative overflow-hidden rounded-[calc(1rem-1.5px)] bg-[#03050c] px-4 py-3 text-[#e8f3f1]">
+        <div className="relative overflow-hidden bg-[#03050c] px-4 py-3 text-[#e8f3f1]">
           <CardStarfield />
           {/* The ribbon lifts off as it opens. */}
           {ceremony && (

@@ -5,44 +5,12 @@ import { useEffect, useState, useTransition } from "react";
 import { markFeedbackTyping, sendFeedbackMessage } from "@/actions/feedback";
 import { ThreadMessages, useLiveThread, useTypingPing } from "@/components/feedback/feedback-thread-view";
 import { refreshPulse } from "@/lib/app-pulse-store";
-import {
-  AREA_LABELS,
-  FEEDBACK_AREAS,
-  FEEDBACK_RECIPIENT,
-  MAX_SCREENSHOTS,
-  MAX_THREAD_MESSAGE,
-  type FeedbackArea,
-} from "@/lib/feedback-report";
+import { FEEDBACK_RECIPIENT, MAX_SCREENSHOTS, MAX_THREAD_MESSAGE } from "@/lib/feedback-report";
 import type { FeedbackThread } from "@/lib/feedback-thread";
 import { blobToDataUrl } from "@/lib/screenshot-capture";
 import type { DraftShot } from "@/components/feedback/feedback-widget";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-
-const STATUS_LABEL: Record<FeedbackThread["status"], string> = {
-  new: "Sent",
-  triaged: `${FEEDBACK_RECIPIENT}'s looking at it`,
-  resolved: "Done",
-};
-
-const KIND_LABEL: Record<string, string> = {
-  bug: "Broken",
-  idea: "Idea",
-  confusing: "Confusing",
-  praise: "Worked well",
-};
-
-/** The conversation's one-line context: kind · area · status ("Idea · Contacts · Done"). */
-export function threadMeta(thread: FeedbackThread): string {
-  const area = thread.report.area;
-  return [
-    thread.category ? KIND_LABEL[thread.category] : null,
-    area && (FEEDBACK_AREAS as readonly string[]).includes(area) ? AREA_LABELS[area as FeedbackArea] : null,
-    STATUS_LABEL[thread.status],
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
 
 /**
  * The reply being written, owned by the feedback widget when the chat is in the side panel —

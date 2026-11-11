@@ -4,22 +4,25 @@ import {
   ArrowLeft,
   Bug,
   Camera,
+  Compass,
+  FileUp,
   Heart,
   HelpCircle,
   ImagePlus,
   Lightbulb,
-  MapPin,
   MessageCircle,
+  MoreHorizontal,
   Pencil,
   Sparkles,
   SquarePen,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getMyFeedbackThread, listMyFeedbackAction, submitFeedback } from "@/actions/feedback";
-import { FeedbackChat, threadMeta, type ChatDraft } from "@/components/feedback/feedback-chat";
+import { FeedbackChat, type ChatDraft } from "@/components/feedback/feedback-chat";
 import { FeedbackList } from "@/components/feedback/feedback-list";
 import { ThreadAvatar } from "@/components/feedback/feedback-thread-view";
 import type { DraftShot } from "@/components/feedback/feedback-widget";
@@ -40,10 +43,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { APP_NAV, APP_NAV_SETTINGS } from "@/components/layout/app-nav";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AREA_LABELS,
   AREA_OPTIONS,
+  FEEDBACK_AREAS,
+  threadMeta,
   FEEDBACK_CATEGORIES,
   FEEDBACK_RECIPIENT,
   MAX_FEEDBACK_SUBJECT,
@@ -62,17 +68,31 @@ import { cn } from "@/lib/utils";
 import { blobToDataUrl } from "@/lib/screenshot-capture";
 import { toast } from "@/lib/toast";
 
-/** The four kinds, worded the way someone would say them. One line, all optional. */
 /**
- * Each kind's icon and soft colour — a broken thing reads red, an idea gold, confusion violet,
- * praise green. Opacity on semantic colours, never fixed hex, so dark mode holds up.
+ * Each kind's icon and colour. Quiet until picked: a neutral outline with only the icon in
+ * colour, so the row reads as an optional hint rather than four buttons to press. The picked
+ * one fills with its soft tint — a broken thing red, an idea gold, confusion violet, praise
+ * green. Opacity on semantic colours, never fixed hex, so dark mode holds up.
  */
-const KIND_STYLE: Record<FeedbackCategory, { icon: typeof Bug; tint: string; on: string }> = {
-  bug: { icon: Bug, tint: "bg-destructive/10 text-destructive", on: "border-destructive/50 ring-2 ring-destructive/20" },
-  idea: { icon: Lightbulb, tint: "bg-gold/15 text-gold-ink", on: "border-gold/60 ring-2 ring-gold/25" },
-  confusing: { icon: HelpCircle, tint: "bg-violet-500/10 text-violet-700 dark:text-violet-300", on: "border-violet-500/50 ring-2 ring-violet-500/20" },
-  praise: { icon: Heart, tint: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300", on: "border-emerald-500/50 ring-2 ring-emerald-500/20" },
+const KIND_STYLE: Record<FeedbackCategory, { icon: typeof Bug; ink: string; on: string }> = {
+  bug: { icon: Bug, ink: "text-destructive", on: "border-destructive/40 bg-destructive/10 text-destructive" },
+  idea: { icon: Lightbulb, ink: "text-gold-ink", on: "border-gold/50 bg-gold/15 text-gold-ink" },
+  confusing: { icon: HelpCircle, ink: "text-violet-600 dark:text-violet-300", on: "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300" },
+  praise: { icon: Heart, ink: "text-emerald-600 dark:text-emerald-300", on: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
 };
+
+/**
+ * Each area's icon: the one the sidebar shows for that page, so "About: Contacts" looks like
+ * the place it names. Areas with no sidebar entry get their own.
+ */
+const AREA_ICON: Record<FeedbackArea, LucideIcon> = Object.fromEntries(
+  FEEDBACK_AREAS.map((area) => [
+    area,
+    [...APP_NAV, APP_NAV_SETTINGS].find((item) => item.href === `/${area}`)?.icon ??
+      { import: FileUp, onboarding: Compass }[area as string] ??
+      MoreHorizontal,
+  ])
+) as Record<FeedbackArea, LucideIcon>;
 
 const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
   bug: "Something's broken",
@@ -537,13 +557,14 @@ export function FeedbackPanel({
               onClick={() => onCategoryChange(category === value ? null : value)}
               className={cn(
                 "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2 py-1 text-xs transition-colors",
-                KIND_STYLE[value].tint,
-                category === value ? KIND_STYLE[value].on : "border-transparent opacity-80 hover:opacity-100"
+                category === value
+                  ? KIND_STYLE[value].on
+                  : "border-border/60 text-muted-foreground hover:border-border hover:text-foreground"
               )}
             >
               {(() => {
                 const Icon = KIND_STYLE[value].icon;
-                return <Icon className="size-3.5" aria-hidden />;
+                return <Icon className={cn("size-3.5", category !== value && KIND_STYLE[value].ink)} aria-hidden />;
               })()}
               {CATEGORY_LABELS[value]}
             </button>
@@ -652,7 +673,10 @@ export function FeedbackPanel({
                 aria-label={`Which part of Orbit: ${AREA_LABELS[effectiveArea]}`}
                 className="h-7 w-auto gap-1 rounded-full px-2.5 text-xs text-muted-foreground"
               >
-                <MapPin className="size-3.5" aria-hidden />
+                {(() => {
+                  const Icon = AREA_ICON[effectiveArea];
+                  return <Icon className="size-3.5" aria-hidden />;
+                })()}
                 <SelectValue />
               </SelectTrigger>
               {/* `alignItemWithTrigger={false}` drops the list below the trigger instead of
@@ -661,6 +685,10 @@ export function FeedbackPanel({
               <SelectContent alignItemWithTrigger={false} className="p-1">
                 {AREA_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value} className="py-1.5 pl-2">
+                    {(() => {
+                      const Icon = AREA_ICON[option.value];
+                      return <Icon className="size-3.5 text-muted-foreground" aria-hidden />;
+                    })()}
                     {option.label}
                   </SelectItem>
                 ))}

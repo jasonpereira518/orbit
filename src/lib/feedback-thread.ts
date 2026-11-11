@@ -35,9 +35,15 @@ export type FeedbackThread = {
   /** The report itself — the conversation's first message — and the subject it was given. */
   report: { subject: string | null; text: string | null; createdAt: string; area: string | null; shots: string[] };
   status: "new" | "triaged" | "resolved";
+  /** Every thank-you on this report, added up. Null when there has been none. */
   thanksCredits: number | null;
-  /** The thank-you has been unwrapped. False while there is a gift still waiting. */
+  /** No gift is waiting to be unwrapped (every one so far has been opened, or there are none). */
   thanksSeen: boolean;
+  /**
+   * When they last unwrapped a gift, ISO. A gift sent before it is opened; one sent after is
+   * still wrapped — each reply can carry its own thank-you.
+   */
+  thanksSeenAt: string | null;
   messages: ThreadMessage[];
   /** The operator has replied, so the reporter can write back. */
   open: boolean;
@@ -120,7 +126,8 @@ export async function loadThread(
     },
     status: entry.status,
     thanksCredits: entry.thanksCredits,
-    thanksSeen: entry.thanksSeenAt !== null,
+    thanksSeen: !rows.some((r) => r.credits != null && (!entry.thanksSeenAt || r.createdAt > entry.thanksSeenAt)),
+    thanksSeenAt: entry.thanksSeenAt?.toISOString() ?? null,
     messages: rows.map((r) => ({ ...r, shots: shotsFor(r.id), createdAt: r.createdAt.toISOString() })),
     open: rows.some((r) => r.author === "operator"),
     category: entry.category,
@@ -227,9 +234,9 @@ export async function postThreadMessage(input: {
 }
 
 /**
- * Unwrap the thank-you: stamp it seen, once, on the reporter's own report. Returns the
- * credits it carried, or null when there was nothing of theirs to unwrap (idempotent — a
- * second call still returns the credits, so a double tap can't lose the reveal).
+ * Unwrap the thank-you: stamp it seen on the reporter's own report, which opens every gift
+ * sent before now. Returns the credits thanked so far, or null when there was nothing of
+ * theirs to unwrap (a second call still returns them, so a double tap can't lose the reveal).
  */
 export async function unwrapThanks(feedbackId: string, userId: string): Promise<number | null> {
   if (!isUuid(feedbackId)) return null;
@@ -240,22 +247,23 @@ export async function unwrapThanks(feedbackId: string, userId: string): Promise<
     .where(and(eq(feedback.id, feedbackId), eq(feedback.userId, userId)))
     .limit(1);
   if (!row || row.credits == null) return null;
-  if (!row.seenAt) {
-    await db
-      .update(feedback)
-      .set({ thanksSeenAt: new Date() })
-      .where(and(eq(feedback.id, feedbackId), eq(feedback.userId, userId)));
-  }
+  // The database's clock, the same one that stamped the gift messages, so "sent before it"
+  // can't be skewed by the app server's.
+  await db
+    .update(feedback)
+    .set({ thanksSeenAt: sql`now()` })
+    .where(and(eq(feedback.id, feedbackId), eq(feedback.userId, userId)));
   return row.credits;
 }
 
 /**
- * Thank the reporter with bonus AI credits, at most once per report.
+ * Thank the reporter with bonus AI credits. Any number of times per report — each is its own
+ * gift on the reply that carries it, and `thanks_credits` keeps the running total.
  *
- * An `adjustment` grant keyed `adj:feedback:<id>`: usable on every plan, spent after the
- * allowance and starter, and NOT cash — so no `amountCents`/`stripeRef` and no
+ * An `adjustment` grant keyed `adj:feedback:<id>:<uuid>`: usable on every plan, spent after
+ * the allowance and starter, and NOT cash — so no `amountCents`/`stripeRef` and no
  * `billing_events` row (see the billing ledger rule in `billing-stripe.ts`). Returns whether
- * this call made the grant; `thanks_credits` is set only then.
+ * the grant was made.
  */
 export async function grantFeedbackThanks(input: {
   feedbackId: string;
@@ -269,7 +277,7 @@ export async function grantFeedbackThanks(input: {
     .values({
       userId: input.userId,
       kind: "adjustment",
-      grantKey: `adj:feedback:${input.feedbackId}`,
+      grantKey: `adj:feedback:${input.feedbackId}:${crypto.randomUUID()}`,
       microsGranted: micros,
       microsRemaining: micros,
     })
@@ -278,7 +286,7 @@ export async function grantFeedbackThanks(input: {
   if (created.length === 0) return false;
   await db
     .update(feedback)
-    .set({ thanksCredits: input.credits })
+    .set({ thanksCredits: sql`coalesce(${feedback.thanksCredits}, 0) + ${input.credits}` })
     .where(eq(feedback.id, input.feedbackId));
   return true;
 }
@@ -318,21 +326,27 @@ export async function unreadRepliesFor(userId: string): Promise<UnreadReply[]> {
     .orderBy(desc(feedbackMessages.createdAt))
     .limit(50);
 
+  const wrapped = (r: (typeof rows)[number]) =>
+    r.giftCredits != null && (r.thanksSeenAt === null || r.at > r.thanksSeenAt);
   // Newest message per report: the query is already newest-first.
   const latest = new Map<string, UnreadReply>();
   for (const r of rows) {
     const known = latest.get(r.feedbackId);
     if (known) {
       // An older unread reply may be the one carrying the gift.
-      if (r.giftCredits != null && r.thanksSeenAt === null) known.giftWaiting = true;
+      if (!known.giftWaiting && wrapped(r)) {
+        known.giftWaiting = true;
+        known.thanksCredits = r.giftCredits;
+      }
       continue;
     }
     latest.set(r.feedbackId, {
       feedbackId: r.feedbackId,
       latest: r.body,
       at: r.at,
-      thanksCredits: r.thanksCredits,
-      giftWaiting: r.giftCredits != null && r.thanksSeenAt === null,
+      // While a gift waits, the amount is that gift's — the bell says "+25 AI credits".
+      thanksCredits: wrapped(r) ? r.giftCredits : r.thanksCredits,
+      giftWaiting: wrapped(r),
     });
   }
   return [...latest.values()];
@@ -372,7 +386,7 @@ export async function listMyFeedback(userId: string, limit = 20): Promise<MyFeed
       // table to itself (the unqualified-column trap).
       replies: sql<number>`(select count(*)::int from feedback_messages m where m.feedback_id = feedback.id and m.author = 'operator')`,
       // Only a gift with a card to open: a reply has to carry it (spelled out — see above).
-      giftWaiting: sql<boolean>`(feedback.thanks_seen_at is null and exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.credits is not null))`,
+      giftWaiting: sql<boolean>`exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.credits is not null and m.created_at > coalesce(feedback.thanks_seen_at, 'epoch'::timestamptz))`,
       unread: sql<boolean>`exists (select 1 from feedback_messages m where m.feedback_id = feedback.id and m.author = 'operator' and m.created_at > coalesce(feedback.user_read_at, 'epoch'::timestamptz))`,
       lastAuthor: sql<"user" | "operator" | null>`(select m.author from feedback_messages m where m.feedback_id = feedback.id order by m.created_at desc limit 1)`,
       lastBody: sql<string | null>`(select left(m.body, 140) from feedback_messages m where m.feedback_id = feedback.id order by m.created_at desc limit 1)`,

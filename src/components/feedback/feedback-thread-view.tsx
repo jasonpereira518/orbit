@@ -271,16 +271,21 @@ export function ThreadMessages({
             {/* The thank-you this reply carried. The reporter unwraps it; the operator just
                 sees that it went. */}
             {m.credits != null &&
-              (viewer === "user" ? (
+              (() => {
+                // Each gift is opened or not by when it came: unwrapping stamps a time, and a
+                // thank-you sent after it is a new one, still wrapped.
+                const opened = thread.thanksSeenAt != null && thread.thanksSeenAt >= m.createdAt;
+                return viewer === "user" ? (
                 <div className="mt-1.5 pl-7">
-                  <ThanksGift feedbackId={thread.id} credits={m.credits} seen={thread.thanksSeen} onNavigate={onNavigate} />
+                  <ThanksGift feedbackId={thread.id} credits={m.credits} seen={opened} onNavigate={onNavigate} />
                 </div>
               ) : (
                 <span className="mt-1 inline-flex w-fit items-center gap-1 self-end rounded-full bg-gold/15 px-2 py-0.5 text-[0.7rem] text-gold-ink">
                   <Gift className="size-3" aria-hidden />+{m.credits} credits sent
-                  {thread.thanksSeen ? " · opened" : ""}
+                  {opened ? " · opened" : ""}
                 </span>
-              ))}
+              );
+              })()}
           </li>
         );
       })}

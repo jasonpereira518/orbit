@@ -4797,15 +4797,15 @@ export const feedback = pgTable(
      */
     triage: jsonb("triage").$type<FeedbackTriage>(),
     /**
-     * Bonus AI credits the operator thanked them with, once per report. Set only by the call
-     * that created the grant (`adj:feedback:<id>`), so a second thank-you is a no-op.
+     * Bonus AI credits the operator has thanked them with on this report, added up across
+     * every thank-you (each its own `adj:feedback:<id>:<uuid>` grant).
      */
     thanksCredits: integer("thanks_credits"),
     /** When the reporter last opened the conversation. Operator messages after it are unread. */
     userReadAt: timestamp("user_read_at", { withTimezone: true }),
     /** When the operator last opened it. The reporter's messages after it are unread. */
     operatorReadAt: timestamp("operator_read_at", { withTimezone: true }),
-    /** When the reporter unwrapped the credit thank-you. Null while it is still wrapped. */
+    /** When the reporter last unwrapped a thank-you. Gifts sent after it are still wrapped. */
     thanksSeenAt: timestamp("thanks_seen_at", { withTimezone: true }),
     /**
      * Each side's last keystroke in the conversation, for the typing dots. A row column rather

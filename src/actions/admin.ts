@@ -1144,8 +1144,7 @@ export async function replyToFeedbackAction(input: {
   const thread = await loadThread(input.id, "operator");
   if (!thread) throw new UserFacingError("Only feedback sent from the app can be replied to");
 
-  // Grant FIRST, so the message carries the gift only when this call made it — a second
-  // thank-you on the same report is a no-op and must not show a second card.
+  // Grant FIRST, so the message carries the gift only when the credits really landed.
   const reporterId = await reporterOf(input.id);
   const credited =
     credits && reporterId
