@@ -86,7 +86,7 @@ async function main() {
   await db.delete(ignoredPeople).where(inArray(ignoredPeople.userId, ALL));
   await db.delete(contacts).where(inArray(contacts.userId, ALL));
   for (const u of ALL) await ensureUserSettings(u);
-  await db.update(userSettings).set({ emailIntelEnabled: 1 }).where(inArray(userSettings.userId, ALL));
+  await db.update(userSettings).set({ emailIntelEnabled: 1, radarEnabledAt: new Date() }).where(inArray(userSettings.userId, ALL));
 
   // A first Radar run, so the account has a list and refreshing it later means something.
   const [eliRow] = await db.insert(contacts).values({ userId: U, fullName: "Eli Park", company: "Northwind", title: "Payments Engineer", closenessTier: "inner" }).returning();

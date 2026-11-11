@@ -109,12 +109,12 @@ export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }
                 Nightly check
               </h3>
               <Toggle
-                id="radar-paused"
-                label="Pause Radar"
-                hint="No overnight updates and no AI use until you resume"
-                checked={state.paused}
+                id="radar-on"
+                label="Radar on"
+                hint="Turn off to stop overnight updates and AI use. You can turn it back on from the Radar page."
+                checked={!state.paused}
                 disabled={pending}
-                onChange={(on) => save((s) => ({ ...s, paused: on }), () => setRadarPaused(on))}
+                onChange={(on) => save((s) => ({ ...s, paused: !on }), () => setRadarPaused(!on))}
               />
             </section>
 

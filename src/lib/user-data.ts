@@ -890,6 +890,7 @@ const PRESERVED_SETTINGS_COLUMNS = {
   // week claim and unsubscribe hash survive too, so a delete neither re-sends this week's
   // email nor breaks the unsubscribe link in the last one.
   radarPaused: true,
+  radarEnabledAt: true,
   radarAutopilot: true,
   radarCaptureLinkedinActivity: true,
   radarDigestEnabled: true,

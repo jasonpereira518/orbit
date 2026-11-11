@@ -154,7 +154,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   radar_auto_projects integer NOT NULL DEFAULT 1,
   radar_discovery_enabled integer NOT NULL DEFAULT 1,
   radar_web_next_at timestamptz,
-  radar_moment_last_day text
+  radar_moment_last_day text,
+  radar_enabled_at timestamptz
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
@@ -3158,7 +3159,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // same-day email's claim). Built as 221; moved to 224 on Nov 11 2026 because uncommitted Radar
 // activation work (worktree radar-activation-animation-3caf1e) also holds 221 and the
 // contact-sharing branch holds 223.
-export const SCHEMA_VERSION = 224;
+// 225 = Radar off by default: user_settings.radar_enabled_at — null until the person presses
+// "Turn on Radar". Radar runs only when it is set and radar_paused = 0 (src/lib/radar/run.ts).
+// Built as 221; moved to 225 on Nov 11 2026 to stack on the Radar revision (224); contact
+// sharing holds 223. Scanned every remote ref and local worktree: 224 was the highest claimed.
+export const SCHEMA_VERSION = 225;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -5609,6 +5614,8 @@ const alters = [
   // these are the two user_settings columns for older databases.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_web_next_at timestamptz`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_moment_last_day text`,
+  // Schema v225: Radar is off until the person turns it on (null = never turned on).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_enabled_at timestamptz`,
 ];
 
 /**

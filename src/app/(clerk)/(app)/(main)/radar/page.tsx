@@ -3,15 +3,20 @@ import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { NetworkStatsCard } from "@/components/dashboard/network-stats-card";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { RadarPageSkeleton } from "@/components/loading/page-skeletons";
+import { RadarActivation } from "@/components/radar/activation/radar-activation";
 import { RadarHeader } from "@/components/radar/radar-header";
 import { RadarView } from "@/components/radar/radar-view";
-import { fetchRadar } from "@/actions/radar";
+import { fetchRadar, fetchRadarActivation } from "@/actions/radar";
 
 export const metadata = { title: "Radar" };
 
 type Params = { focus?: string | string[] };
 
 async function RadarBody({ searchParams }: { searchParams: Promise<Params> }) {
+  // Radar is off by default: until it is turned on, the page is the Turn on screen and loads
+  // nothing else (`fetchRadar` would build a list).
+  const activation = await fetchRadarActivation();
+  if (!activation.on) return <RadarActivation faces={activation.faces} everOn={activation.everOn} />;
   const [{ page, networkStats }, params] = await Promise.all([fetchRadar(), searchParams]);
   const focus = typeof params.focus === "string" ? params.focus.slice(0, 64) : null;
   return (
@@ -34,7 +39,6 @@ async function RadarBody({ searchParams }: { searchParams: Promise<Params> }) {
         }))}
         lastRunAt={page.lastRunAt ? page.lastRunAt.toISOString() : null}
         nextRunAt={page.nextRunAt ? page.nextRunAt.toISOString() : null}
-        paused={page.paused}
         aiAvailable={page.aiAvailable}
         hasContacts={page.hasContacts}
         settings={page.settings}

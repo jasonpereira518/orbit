@@ -26,8 +26,15 @@ import {
   type SnoozeLength,
 } from "@/lib/radar/actions-core";
 import { explainRecommendation } from "@/lib/radar/explain";
-import { loadRadarBriefing, loadRadarPage, type RadarBriefing, type RadarPageData } from "@/lib/radar/page-data";
-import { claimRadarLease, ensureRadarRun, maybeRefreshRadar, refreshRadarForNewContact, runRadarForUser } from "@/lib/radar/run";
+import {
+  loadRadarActivation,
+  loadRadarBriefing,
+  loadRadarPage,
+  type RadarActivation,
+  type RadarBriefing,
+  type RadarPageData,
+} from "@/lib/radar/page-data";
+import { claimRadarLease, ensureRadarRun, loadRadarState, maybeRefreshRadar, refreshRadarForNewContact, runRadarForUser, turnOnRadarForUser } from "@/lib/radar/run";
 import { rebuildContactEmbedding } from "@/lib/search";
 import { markRecommendationsSeen } from "@/lib/radar/store";
 import { getDb } from "@/db";
@@ -44,6 +51,12 @@ const SURFACE = "page.radar";
 function revalidateRadar() {
   revalidatePathIfRequestScoped("/radar");
   revalidatePathIfRequestScoped("/dashboard");
+}
+
+/** Is Radar on for this account, and if not, the people the turn-on scene draws. Builds nothing. */
+export async function fetchRadarActivation(): Promise<RadarActivation> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  return loadRadarActivation(userId);
 }
 
 /**
@@ -163,6 +176,8 @@ export async function refreshRadarNow(): Promise<RadarActionResult> {
     if (isRateLimitedError(err)) return { ok: false, message: err.message };
     throw err;
   }
+  const state = await loadRadarState(userId);
+  if (!state || state.paused) return { ok: false, message: "Turn on Radar first" };
   if (!(await claimRadarLease(userId))) {
     return { ok: false, message: "Radar is already updating — give it a moment" };
   }
@@ -209,12 +224,30 @@ export async function setRadarAutopilot(kind: RecommendationKind, on: boolean): 
   return { ok: true, message: on ? `Autopilot on for ${KIND_LABELS[kind]}` : `Autopilot off for ${KIND_LABELS[kind]}` };
 }
 
+/**
+ * "Turn on Radar". Radar is off by default (schema v225): this stamps the first time it was
+ * turned on (kept forever, so a later turn-on plays the short animation), clears a pause, and
+ * builds the first plan with AI after the response, while the animation plays.
+ */
+export async function turnOnRadar(): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  await turnOnRadarForUser(userId);
+  after(async () => {
+    if (await claimRadarLease(userId).catch(() => false)) {
+      await runRadarForUser(userId, { trigger: "manual", ai: true, budgetMs: 60_000 }).catch(() => undefined);
+    }
+  });
+  // No revalidation here on purpose: it would re-render /radar as "on" in this action's own
+  // response and unmount the turn-on animation mid-play. The client refreshes when it lands.
+  return { ok: true, message: "Radar is on" };
+}
+
 export async function setRadarPaused(paused: boolean): Promise<RadarActionResult> {
   const userId = await requireUserForReleasedSurface(SURFACE);
   const db = await getDb();
   await db.update(userSettings).set({ radarPaused: paused ? 1 : 0 }).where(eq(userSettings.userId, userId));
   revalidateRadar();
-  return { ok: true, message: paused ? "Radar paused" : "Radar resumed" };
+  return { ok: true, message: paused ? "Radar is off" : "Radar is on" };
 }
 
 /** Radar's Monday email on or off. Also reachable from Settings and the email's own link. */

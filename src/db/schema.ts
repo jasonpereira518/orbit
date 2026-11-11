@@ -694,6 +694,11 @@ export const userSettings = pgTable("user_settings", {
   radarWebNextAt: timestamp("radar_web_next_at", { withTimezone: true }),
   /** Local day ("2026-11-11") of the last same-day Radar email, claimed before sending. */
   radarMomentLastDay: text("radar_moment_last_day"),
+  /**
+   * When the person first pressed "Turn on Radar". Null = never: Radar is off by default and
+   * spends nothing until then. On = set AND `radarPaused` = 0 (`radarIsOn` in run.ts).
+   */
+  radarEnabledAt: timestamp("radar_enabled_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [

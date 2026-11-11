@@ -55,6 +55,8 @@ const U = {
   later: `${PREFIX}later`,
   paused: `${PREFIX}paused`,
   flaky: `${PREFIX}flaky`,
+  /** Never turned Radar on (schema v225): no email, even with a card. */
+  neverOn: `${PREFIX}never-on`,
 };
 const USERS = Object.values(U);
 /** Monday 3 March 2031, ISO week 10. */
@@ -77,7 +79,7 @@ async function reset() {
 
 async function account(
   userId: string,
-  opts: { tz?: string | null; enabled?: boolean; paused?: boolean; activeDaysAgo?: number; email?: string } = {}
+  opts: { tz?: string | null; enabled?: boolean; paused?: boolean; off?: boolean; activeDaysAgo?: number; email?: string } = {}
 ) {
   const db = await getDb();
   await ensureUserSettings(userId);
@@ -88,6 +90,7 @@ async function account(
       radarDigestTz: opts.tz ?? null,
       radarDigestEnabled: opts.enabled === false ? 0 : 1,
       radarPaused: opts.paused ? 1 : 0,
+      radarEnabledAt: opts.off ? null : MONDAY_7_UTC,
       radarDigestLastWeek: null,
       radarDigestUnsubTokenHash: null,
       lastActiveAt: new Date(MONDAY_7_UTC.getTime() - (opts.activeDaysAgo ?? 1) * DAY),
@@ -190,6 +193,7 @@ async function main() {
   await account(U.later, { tz: "UTC" });
   await account(U.paused, { tz: "UTC", paused: true });
   await account(U.flaky, { tz: "UTC", enabled: false });
+  await account(U.neverOn, { tz: "UTC", off: true });
   const utcCard = await card(U.utc, "Ada Lovelace", {
     aiNote: { why: "She asked about your launch", opener: "o", inputsHash: "h1", generatedAt: "2031-03-01T00:00:00Z" },
     draft: { body: "Hi Ada", channel: "email", inputsHash: "h1", generatedAt: "2031-03-01T00:00:00Z" },
@@ -201,6 +205,7 @@ async function main() {
   await card(U.idle, "Idle Ida");
   await card(U.later, "Later Lee", { bucket: "later" });
   await card(U.paused, "Paused Pat");
+  await card(U.neverOn, "Never Nia");
 
   const sent: DigestMessage[] = [];
   const deliver = async (m: DigestMessage) => {
