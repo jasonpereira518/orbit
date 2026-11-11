@@ -263,6 +263,8 @@ async function main() {
   // ---- Radar -------------------------------------------------------------------------
   console.log("\nRadar (runRadarForUser, loadRadarPage)…");
   await ensureUserSettings(USER);
+  // Radar is off by default and the dashboard briefing hides for an account that never turned it on.
+  await (await getDb()).update(userSettings).set({ radarEnabledAt: new Date() }).where(eq(userSettings.userId, USER));
   await claimRadarLease(USER);
   startQueryCount();
   const radarRun = await runRadarForUser(USER, { trigger: "manual", ai: false });
