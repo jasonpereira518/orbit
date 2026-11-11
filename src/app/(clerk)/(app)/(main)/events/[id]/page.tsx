@@ -26,6 +26,7 @@ import { liveEventFor } from "@/lib/cards/live-event";
 import { isSurfaceLive } from "@/lib/surface-visibility";
 import { AlsoHereCard } from "@/components/nearby/also-here-card";
 import { alsoHereViewFor } from "@/lib/nearby/also-here-view";
+import { isLiveAttendedEvent } from "@/lib/nearby/also-here";
 import { buttonVariants } from "@/components/ui/button";
 import { userTimeZone } from "@/lib/meeting-context";
 import { ymdInZone } from "@/lib/reminder-due-bucket";
@@ -140,7 +141,9 @@ export default async function EventDetailPage({
   ]);
   // Only while the owner is at this event: that is when someone is standing in front of them.
   const showCardLink = cardLive && liveEvent?.id === event.id;
-  const showAlsoHere = alsoHereLive && liveEvent?.id === event.id;
+  // Every live event this user attends — not only liveEventFor's single pick — so the hide
+  // control is reachable wherever they are findable (overlapping events).
+  const showAlsoHere = alsoHereLive && (await isLiveAttendedEvent(userId, event.id));
   const eventDay = event.startsAt
     ? new Date(event.startsAt.getTime() + (offsetMinutes(event.timezone, event.startsAt) ?? 0) * 60_000)
         .toISOString()

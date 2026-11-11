@@ -4,6 +4,7 @@ import { actionFailure } from "@/lib/action-failure";
 import { loadPublicCardForOwner } from "@/lib/cards/card-store";
 import { alsoHereViewFor, type AlsoHereView } from "@/lib/nearby/also-here-view";
 import { setDiscoverable, setHiddenAtEvent } from "@/lib/nearby/discoverability";
+import { requireUserId } from "@/lib/auth";
 import { requireUserForReleasedSurface } from "@/lib/plan-guards";
 
 /**
@@ -17,7 +18,9 @@ type Fail = { ok: false; message: string };
 
 export async function setMyDiscoverable(on: boolean): Promise<{ ok: true } | Fail> {
   try {
-    const userId = await requireUserForReleasedSurface(SURFACE);
+    // Turning it OFF must always work — even if the feature is pulled — so nobody stays
+    // findable with no switch to stop it. Turning it ON needs the feature released.
+    const userId = on === true ? await requireUserForReleasedSurface(SURFACE) : await requireUserId();
     if (on && !(await loadPublicCardForOwner(userId))) {
       return { ok: false, message: "Create your card first — that’s what people here will see." };
     }

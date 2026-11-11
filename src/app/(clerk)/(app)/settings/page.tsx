@@ -162,9 +162,9 @@ export default async function SettingsPage({
   const radarLive = !hidden.has("page.radar") && !visibility.comingSoon.has("page.radar");
   // "Let people at the same event find me" — offered once the feature is out for this viewer.
   const alsoHereLive = !hidden.has("feature.also-here") && !visibility.comingSoon.has("feature.also-here");
-  const [discoverable, ownCard] = alsoHereLive
-    ? await Promise.all([isDiscoverable(userId), loadPublicCardForOwner(userId)])
-    : [false, null];
+  // Always read: someone already findable keeps an off switch even if the feature is pulled.
+  const discoverable = await isDiscoverable(userId);
+  const ownCard = alsoHereLive ? await loadPublicCardForOwner(userId) : null;
   if (radarLive) {
     const tz = (await cookies()).get(TZ_COOKIE)?.value;
     after(() => captureRadarTimeZone(userId, tz).catch(() => undefined));
@@ -284,7 +284,7 @@ export default async function SettingsPage({
       <Group group="data" visible={groupVisible("data")}>
         <Section id="settings-data" hidden={hidden}>
           <DataSettings />
-          {alsoHereLive ? <DiscoverableSwitch initialOn={discoverable} hasCard={!!ownCard} /> : null}
+          {alsoHereLive || discoverable ? <DiscoverableSwitch initialOn={discoverable} hasCard={!!ownCard} /> : null}
         </Section>
         {/* Rendered whenever the group is: Credits is a licence requirement, and hiding Help
             must not take it off the page. */}

@@ -10,7 +10,8 @@ import { getDb } from "../src/db";
 import { appSurfaceFlags, eventAliases, events, shareCards, userSettings } from "../src/db/schema";
 import { DEFAULT_CARD_FIELDS, loadPublicCardForOwner, saveCard, setCardPaused } from "../src/lib/cards/card-store";
 import { isDiscoverable, setDiscoverable, setHiddenAtEvent } from "../src/lib/nearby/discoverability";
-import { alsoHereFor } from "../src/lib/nearby/also-here";
+import { alsoHereFor, isLiveAttendedEvent } from "../src/lib/nearby/also-here";
+import { liveEventFor } from "../src/lib/cards/live-event";
 import { invalidateHiddenSurfaceKeys, setSurfaceComingSoon } from "../src/lib/surface-visibility";
 
 const PREFIX = "smoke-here-";
@@ -205,6 +206,44 @@ async function task3() {
   check("25 matching people → 20 returned", (await alsoHereFor(A, a)).people.length === 20);
 }
 
+async function finalReviewFixes() {
+  console.log("Final-review fixes");
+  const db = await getDb();
+  await setDiscoverable(A, true);
+
+  // Fix 1: overlapping live events — the hide control must be reachable on both.
+  await resetEvents();
+  const conference = await seedEvent(A, { startedMinsAgo: 300, endsInMins: 600, title: "Two-day conference" });
+  const session = await seedEvent(A, { startedMinsAgo: 60, title: "Side session" });
+  check("liveEventFor picks only the latest-started one", (await liveEventFor(A))?.id === session);
+  check("isLiveAttendedEvent: the side session is live", await isLiveAttendedEvent(A, session));
+  check("isLiveAttendedEvent: the overlapping conference is live too", await isLiveAttendedEvent(A, conference));
+  await db.update(events).set({ dismissedAt: new Date() }).where(eq(events.id, conference));
+  check("isLiveAttendedEvent: dismissed → false", !(await isLiveAttendedEvent(A, conference)));
+  const bEvent = await seedEvent(B);
+  check("isLiveAttendedEvent: someone else's event → false", !(await isLiveAttendedEvent(A, bEvent)));
+  const ended = await seedEvent(A, { startedMinsAgo: 400 });
+  check("isLiveAttendedEvent: ended (no end, started 6 h 40 min ago) → false", !(await isLiveAttendedEvent(A, ended)));
+
+  // Fix 2: paused cards must not crowd a findable person out of the result.
+  await resetEvents();
+  const a = await seedEvent(A, { keys: [["provider", "luma:paused-crowd"]] });
+  for (let i = 0; i < 60; i++) {
+    const u = `${PREFIX}paused-${String(i).padStart(2, "0")}`;
+    await seedUser(u, "Paused", `Guest ${String(i).padStart(2, "0")}`);
+    await setDiscoverable(u, true);
+    await setCardPaused(u, true);
+    await seedEvent(u, { keys: [["provider", "luma:paused-crowd"]] });
+  }
+  const live = `${PREFIX}zz-live`;
+  await seedUser(live, "Zed", "Live");
+  await setDiscoverable(live, true);
+  await seedEvent(live, { keys: [["provider", "luma:paused-crowd"]] });
+  const crowd = await alsoHereFor(A, a);
+  check("60 discoverable people with paused cards don't hide the one live card", crowd.people.some((p) => p.fullName === "Zed Live"));
+  check("…and no paused card is shown", crowd.people.every((p) => p.fullName === "Zed Live"));
+}
+
 async function main() {
   await cleanup();
   await setSurfaceComingSoon(OPERATOR, "page.card", false);
@@ -214,6 +253,7 @@ async function main() {
   try {
     await task2();
     await task3();
+    await finalReviewFixes();
   } finally {
     await setSurfaceComingSoon(OPERATOR, "page.card", true);
     await (await getDb()).delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, LIVE_ALSO_HERE));

@@ -182,6 +182,15 @@ async function publicCardFor(row: typeof shareCards.$inferSelect): Promise<Publi
   const owner = await readOwner(row.userId);
   if (!owner || owner.suspendedAt) return null;
   if (!(await isSurfaceReleased(row.userId, "page.card")) && !isAdminUser(row.userId)) return null;
+  return publicCardFromRows(row, owner);
+}
+
+/**
+ * The public card for a card row and its owner row already in hand — pure, for callers that
+ * batch-load many owners (people at the same event). The CALLER applies the gates
+ * `publicCardFor` applies: unpaused, owner not suspended, `page.card` released or admin.
+ */
+export function publicCardFromRows(row: typeof shareCards.$inferSelect, owner: Owner): PublicCard | null {
   return build(row.id, row.slug, owner, { fields: { ...DEFAULT_CARD_FIELDS, ...row.fields }, phone: row.phone, tagline: row.tagline });
 }
 
