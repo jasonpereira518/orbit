@@ -55,7 +55,11 @@ export function ConstellationAddList({
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const step = e.key === "ArrowDown" ? 1 : -1;
-      setActive((i) => (i + step + hits.length) % hits.length);
+      const next = (active + step + hits.length) % hits.length;
+      setActive(next);
+      // The list scrolls (max-h-56, up to 40 people); keep the row the keyboard moved to in view.
+      // Keyboard only: a hover also sets the active row and must not scroll the list under the pointer.
+      document.getElementById(optionId(next))?.scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter" && active >= 0 && hits[active]) {
       e.preventDefault();
       void add(hits[active]);
