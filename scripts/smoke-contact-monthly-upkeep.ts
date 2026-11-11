@@ -21,6 +21,12 @@ import {
 import { getSharedAvatar } from "../src/lib/shared-avatars";
 import { checker } from "./smoke/check";
 
+delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+delete process.env.CLERK_SECRET_KEY;
+delete process.env.BLOB_READ_WRITE_TOKEN;
+(process.env as Record<string, string>).NODE_ENV = "development";
+process.env.ORBIT_DEMO_DATA = "off";
+
 const t = checker();
 const USER_A = `smoke-monthly-${randomUUID()}`;
 const USER_B = `smoke-monthly-b-${randomUUID()}`;
