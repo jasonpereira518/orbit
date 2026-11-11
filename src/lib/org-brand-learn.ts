@@ -261,23 +261,12 @@ type OrgRow = {
   has_row: boolean;
 };
 
-/**
- * The viewer's companies and schools, each with what Orbit has learned about its color —
- * one statement. `learned` is what the page registers; `missing` is what is worth learning.
- */
-export async function loadOrgBrandColors(userId: string): Promise<OrgBrandColors> {
-  const hit = brandMemo.get(userId);
-  if (hit && Date.now() - hit.at < BRAND_MEMO_TTL_MS) return hit.value;
-  const value = await readOrgBrandColors(userId);
-  if (brandMemo.size >= BRAND_MEMO_MAX) brandMemo.delete(brandMemo.keys().next().value!);
-  brandMemo.set(userId, { at: Date.now(), value });
-  return value;
-}
-
 type OrgBrandColors = {
   learned: LearnedBrand[];
   missing: Array<{ name: string; kind: BrandKind; nameKey: string }>;
 };
+
+export const EMPTY_ORG_BRAND_COLORS: OrgBrandColors = { learned: [], missing: [] };
 
 /**
  * Per-instance copy per viewer. The (app) layout reads this on every full load and every
@@ -288,6 +277,30 @@ type OrgBrandColors = {
 const BRAND_MEMO_TTL_MS = 5 * 60_000;
 const BRAND_MEMO_MAX = 500;
 const brandMemo = new Map<string, { at: number; value: OrgBrandColors }>();
+
+/**
+ * Sync peek of the brand memo. Caller: `(app)/layout.tsx` — memo hit stays on the critical
+ * path; a miss returns null so first bytes are not blocked on the whole-network scan.
+ * User: "Implement the plan as specified..."
+ */
+export function peekOrgBrandColors(userId: string): OrgBrandColors | null {
+  const hit = brandMemo.get(userId);
+  if (hit && Date.now() - hit.at < BRAND_MEMO_TTL_MS) return hit.value;
+  return null;
+}
+
+/**
+ * The viewer's companies and schools, each with what Orbit has learned about its color —
+ * one statement. `learned` is what the page registers; `missing` is what is worth learning.
+ */
+export async function loadOrgBrandColors(userId: string): Promise<OrgBrandColors> {
+  const hit = peekOrgBrandColors(userId);
+  if (hit) return hit;
+  const value = await readOrgBrandColors(userId);
+  if (brandMemo.size >= BRAND_MEMO_MAX) brandMemo.delete(brandMemo.keys().next().value!);
+  brandMemo.set(userId, { at: Date.now(), value });
+  return value;
+}
 
 /** Drop the cached copy — one viewer's, or everyone's. For writers and tests. */
 export function forgetOrgBrandColors(userId?: string): void {
