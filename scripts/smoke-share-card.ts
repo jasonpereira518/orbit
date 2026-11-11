@@ -107,6 +107,25 @@ async function cardStore() {
     const prev = await previewCard(OWNER, { fields: DEFAULT_CARD_FIELDS, phone: "1", tagline: null });
     check("preview shows the draft without saving", prev.email === "ada@example.com" && (await getCardForOwner(OWNER))!.phone === "555 0100");
 
+    // The artwork: accent and Shuffle's salt.
+    const kept = { fields: { ...DEFAULT_CARD_FIELDS, email: false, phone: true }, phone: "555 0100", tagline: "Met at the demo" };
+    const refused = async (draft: Parameters<typeof saveCard>[1]) => saveCard(OWNER, draft).then(() => false, () => true);
+    check("an accent outside ACCENTS is refused", (await refused({ ...kept, accent: "magenta" as never })) && (await getCardForOwner(OWNER))!.accent === null);
+    check("a negative or fractional salt is refused", (await refused({ ...kept, artSalt: -1 })) && (await refused({ ...kept, artSalt: 1.5 })));
+    const plain = (await loadPublicCard(slug))!.art;
+    check("a new card's art is seeded from its row id, salt 0", (await getCardForOwner(OWNER))!.artSalt === 0 && plain.stars.length >= 6);
+    await saveCard(OWNER, { ...kept, accent: "rose", artSalt: 3 });
+    const mine = (await getCardForOwner(OWNER))!;
+    check("accent and salt are saved", mine.accent === "rose" && mine.artSalt === 3);
+    const shuffled = (await loadPublicCard(slug))!.art;
+    check("the public card wears the accent and the shuffled stars", shuffled.accent === "rose" && JSON.stringify(shuffled.stars) !== JSON.stringify(plain.stars));
+    await saveCard(OWNER, kept);
+    check("a save without art fields keeps them", (await getCardForOwner(OWNER))!.artSalt === 3 && (await getCardForOwner(OWNER))!.accent === "rose");
+    const artPreview = await previewCard(OWNER, { ...kept, accent: "rose", artSalt: 3 });
+    check("preview art matches the public card", JSON.stringify(artPreview.art) === JSON.stringify(shuffled));
+    await saveCard(OWNER, { ...kept, accent: null });
+    check("accent null goes back to Auto", (await getCardForOwner(OWNER))!.accent === null);
+
     const { slug: next } = await resetCardSlug(OWNER);
     check("reset retires the old slug", next !== slug && (await loadPublicCard(slug)) === null && (await loadPublicCard(next)) !== null);
 

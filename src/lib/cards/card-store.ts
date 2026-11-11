@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { shareCards, userSettings, type CardFields } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
+import { cardArt, cardSeed, isAccentKey, type AccentKey, type CardArt } from "@/lib/cards/card-art";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { cleanSingleLine } from "@/lib/ai-security";
 import { UserFacingError } from "@/lib/errors";
@@ -20,7 +21,15 @@ export const DEFAULT_CARD_FIELDS: CardFields = {
   location: false,
 };
 
-export type CardDraft = { fields: CardFields; phone: string | null; tagline: string | null };
+export type CardDraft = {
+  fields: CardFields;
+  phone: string | null;
+  tagline: string | null;
+  /** "Shuffle my stars" bumps it. Left out = keep the saved one. */
+  artSalt?: number;
+  /** One of `ACCENTS`; null = picked from the seed. Left out = keep the saved one. */
+  accent?: AccentKey | null;
+};
 
 export type PublicCard = {
   /** share_cards.id, for rate limiting and share-back inserts. */
@@ -39,6 +48,8 @@ export type PublicCard = {
   websiteUrl: string | null;
   location: string | null;
   tagline: string | null;
+  /** The card's artwork, already resolved: numbers only, no ids, no user text. */
+  art: CardArt;
 };
 
 const SLUG_RE = /^[A-Za-z0-9_-]{11}$/;
@@ -64,16 +75,28 @@ async function withFreshSlug<T>(write: (slug: string) => Promise<T>): Promise<T>
 const httpUrl = (v: string | null | undefined) => (v && /^https?:\/\//i.test(v) ? v : null);
 
 function cleanDraft(draft: CardDraft) {
+  // Both arrive from the client; a stranger value is refused, not stored.
+  if (draft.accent != null && !isAccentKey(draft.accent)) throw new UserFacingError("Pick one of the card colours");
+  if (draft.artSalt !== undefined && !(Number.isSafeInteger(draft.artSalt) && draft.artSalt >= 0 && draft.artSalt < 2 ** 31)) {
+    throw new UserFacingError("Couldn’t shuffle your stars — try again?");
+  }
   return {
     fields: { ...DEFAULT_CARD_FIELDS, ...draft.fields },
     phone: cleanSingleLine(draft.phone, 40),
     tagline: cleanSingleLine(draft.tagline, 120),
+    // Only what the draft carries, so a save that leaves them out keeps the saved ones.
+    ...(draft.artSalt !== undefined && { artSalt: draft.artSalt }),
+    ...(draft.accent !== undefined && { accent: draft.accent }),
   };
 }
 
+/** The art for a card row; before the card exists, a seed that is the owner's alone. */
+const artFor = (cardId: string, d: Pick<CardDraft, "artSalt" | "accent">) =>
+  cardArt(cardSeed(cardId, d.artSalt ?? 0), d.accent ?? null);
+
 export async function getCardForOwner(
   userId: string
-): Promise<(CardDraft & { slug: string; pausedAt: Date | null }) | null> {
+): Promise<(Required<CardDraft> & { slug: string; pausedAt: Date | null }) | null> {
   const db = await getDb();
   const [row] = await db.select().from(shareCards).where(eq(shareCards.userId, userId)).limit(1);
   if (!row) return null;
@@ -82,6 +105,8 @@ export async function getCardForOwner(
     fields: { ...DEFAULT_CARD_FIELDS, ...row.fields },
     phone: row.phone,
     tagline: row.tagline,
+    artSalt: row.artSalt,
+    accent: isAccentKey(row.accent) ? row.accent : null,
     pausedAt: row.pausedAt,
   };
 }
@@ -123,7 +148,7 @@ export async function setCardPaused(userId: string, paused: boolean): Promise<vo
 
 type Owner = typeof userSettings.$inferSelect;
 
-function build(cardId: string, slug: string, o: Owner, d: CardDraft): PublicCard | null {
+function build(cardId: string, slug: string, o: Owner, d: CardDraft, art: CardArt): PublicCard | null {
   const f = d.fields;
   const first = o.firstName?.trim() ?? "";
   const full = [first, o.lastName?.trim()].filter(Boolean).join(" ") || o.email?.split("@")[0] || "";
@@ -146,6 +171,7 @@ function build(cardId: string, slug: string, o: Owner, d: CardDraft): PublicCard
     websiteUrl: f.website ? httpUrl(o.socialLinks?.website) : null,
     location: f.location ? career?.profile?.location || null : null,
     tagline: d.tagline,
+    art,
   };
 }
 
@@ -157,8 +183,18 @@ async function readOwner(userId: string): Promise<Owner | null> {
 
 /** What the public page would show for this draft, for the editor's live preview. */
 export async function previewCard(userId: string, draft: CardDraft): Promise<PublicCard> {
-  const owner = await readOwner(userId);
-  const card = owner && build("preview", "preview", owner, cleanDraft(draft));
+  const db = await getDb();
+  const [owner, [row]] = await Promise.all([
+    readOwner(userId),
+    db.select({ id: shareCards.id, artSalt: shareCards.artSalt, accent: shareCards.accent }).from(shareCards).where(eq(shareCards.userId, userId)).limit(1),
+  ]);
+  const clean = cleanDraft(draft);
+  // The same art the saved card will wear: its row id, or (before the first save) the owner's id.
+  const art = artFor(row?.id ?? `new:${userId}`, {
+    artSalt: clean.artSalt ?? row?.artSalt,
+    accent: clean.accent !== undefined ? clean.accent : isAccentKey(row?.accent) ? row.accent : null,
+  });
+  const card = owner && build("preview", "preview", owner, clean, art);
   if (!card) throw new UserFacingError("Add your name in Settings → Profile to preview your card");
   return card;
 }
@@ -171,7 +207,14 @@ export async function loadPublicCard(slug: string): Promise<PublicCard | null> {
   const owner = await readOwner(row.userId);
   if (!owner || owner.suspendedAt) return null;
   if (!(await isSurfaceReleased(row.userId, "page.card")) && !isAdminUser(row.userId)) return null;
-  return build(row.id, row.slug, owner, { fields: { ...DEFAULT_CARD_FIELDS, ...row.fields }, phone: row.phone, tagline: row.tagline });
+  const accent = isAccentKey(row.accent) ? row.accent : null;
+  return build(
+    row.id,
+    row.slug,
+    owner,
+    { fields: { ...DEFAULT_CARD_FIELDS, ...row.fields }, phone: row.phone, tagline: row.tagline },
+    artFor(row.id, { artSalt: row.artSalt, accent })
+  );
 }
 
 export const cardUrl = (slug: string) => `${getAppBaseUrl()}/c/${slug}`;
