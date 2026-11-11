@@ -189,7 +189,8 @@ function NewConstellation({ canCreate }: { canCreate: boolean }) {
               maxLength={PROMPT_MAX}
               placeholder="Who belongs here?"
               aria-label="Who belongs here?"
-              disabled={pending}
+              // readOnly, not disabled: a disabled field drops focus, which a failed create would then lose.
+              readOnly={pending}
               autoFocus
             />
             <Button type="submit" size="sm" disabled={pending || !prompt.trim()} aria-busy={pending} className="w-full">
