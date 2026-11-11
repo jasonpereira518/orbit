@@ -230,7 +230,11 @@ function RenameField({
     if (!next || next === tab.name) return onDone(true);
     setPending(true);
     try {
-      await renameConstellation(tab.id, next);
+      if (!(await renameConstellation(tab.id, next))) {
+        // Nothing renamed: the sky is gone (deleted in another tab) or not this person's.
+        toast.error("Couldn’t rename that — try again?");
+        return onDone(true);
+      }
       onSaved();
     } catch (err) {
       setPending(false);
