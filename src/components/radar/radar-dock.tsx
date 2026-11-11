@@ -167,11 +167,11 @@ export function RadarWidget({ today, total, drafts, paused, people, changes }: R
     // padding and negative margin give the button's focus ring room inside `overflow-hidden`.
     <div
       className={cn(
-        "hidden transition-[grid-template-rows] duration-slow ease-house motion-reduce:transition-none lg:grid",
+        "hidden min-w-0 shrink transition-[grid-template-rows] duration-slow ease-house motion-reduce:transition-none lg:grid",
         expanded ? "grid-rows-[0fr]" : "grid-rows-[1fr]"
       )}
     >
-      <div className="-m-1 min-h-0 overflow-hidden p-1">
+      <div className="-m-1 min-h-0 min-w-0 overflow-hidden p-1">
         <button
           ref={widgetRef}
           type="button"
@@ -179,7 +179,7 @@ export function RadarWidget({ today, total, drafts, paused, people, changes }: R
           aria-expanded={expanded}
           aria-controls={PANEL_ID}
           className={cn(
-            "flex w-[24rem] flex-col gap-1 rounded-2xl border border-border/70 bg-card p-3 text-left transition-[opacity,visibility,border-color] duration-base motion-reduce:transition-none",
+            "flex w-[24rem] max-w-full flex-col gap-1 rounded-2xl border border-border/70 bg-card p-3 text-left transition-[opacity,visibility,border-color] duration-base motion-reduce:transition-none",
             // While the big card is up this one is gone, not dimmed: invisible also takes it
             // out of the tab order.
             expanded ? "pointer-events-none invisible opacity-0" : "hover:border-primary/40"

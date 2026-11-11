@@ -429,6 +429,12 @@
   --orbit-corner-shift: 0px;
   --orbit-toast-right: var(--orbit-corner-right);
 
+  /* Width the feedback dock takes from the page (`useDockWidth`). Unlike the shift above,
+     this NARROWS the page's content (not its background): `[data-dock-squeeze]` below gives up the room, and the controls
+     fixed to the right edge add it to their offset. 0px unless the dock is open at `md`+ and
+     wide enough to have room beside it (`dockLayoutFor`). */
+  --orbit-dock-w: 0px;
+
   /* Toasts stack ABOVE the job widget, never on it. */
   --orbit-toast-bottom: calc(
     var(--orbit-corner-bottom) + var(--orbit-job-stack-height)
@@ -466,6 +472,22 @@
     --orbit-toast-right: calc(var(--orbit-corner-right) + var(--orbit-corner-shift));
     /* The nav is `md:hidden`, so there is no band to avoid. */
     --orbit-bottom-nav: 0px;
+  }
+}
+
+/* The page gives up room for the feedback dock instead of the dock covering it.
+ *
+ * PADDING on the scroll column (`#app-main-scroll`), not a margin on the shell: the column's
+ * own scrollbar then stays at the screen's right edge, to the right of the panel rather than
+ * wedged between the page and it, and the screen's background is never narrowed (a margin
+ * left the backdrop showing as a hard edge). Only what is inside the column re-flows. It
+ * transitions with the same duration and ease as the panel's slide, so the page and the panel
+ * arrive together; the global reduced-motion clamp (below) makes both instant. The bare
+ * onboarding root carries the attribute too; it has no inner scroller. */
+@media (min-width: 48rem) {
+  [data-dock-squeeze] {
+    padding-right: var(--orbit-dock-w);
+    transition: padding-right var(--transition-duration-slow) var(--ease-house);
   }
 }
 

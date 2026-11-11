@@ -1,9 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
-import { cn } from "@/lib/utils";
 import {
   setFeedbackPanelState,
   setFeedbackWidgetMounted,
@@ -11,7 +10,14 @@ import {
   takeFeedbackOpenRequest,
 } from "@/lib/feedback-events";
 import type { FeedbackPanelTarget } from "@/lib/feedback-events";
-import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
+import { useCornerShift, useDockWidth } from "@/lib/corner-clearance";
+import {
+  DOCK_SESSION_KEY,
+  dockLayoutFor,
+  parseDockSession,
+  serializeDockSession,
+  type DockLayout,
+} from "@/lib/feedback-dock";
 import {
   MAX_SCREENSHOTS,
   MAX_SCREENSHOT_BYTES,
@@ -96,6 +102,29 @@ type Phase =
  */
 const SENT_HOLD_MS = 640;
 
+/** Which of the three shapes the viewport allows, kept current through resizes and rotation. */
+function useDockLayout(): DockLayout {
+  // The width is the snapshot, so the object is only rebuilt when it changes.
+  const width = useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener("resize", onChange);
+      return () => window.removeEventListener("resize", onChange);
+    },
+    () => window.innerWidth,
+    () => 1440
+  );
+  return dockLayoutFor(width);
+}
+
+/** sessionStorage can throw (privacy modes, disabled storage); the dock then just forgets. */
+function readDockSession() {
+  try {
+    return parseDockSession(window.sessionStorage.getItem(DOCK_SESSION_KEY));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The feedback button, and every piece of state behind it.
  *
@@ -105,7 +134,15 @@ const SENT_HOLD_MS = 640;
  * what makes "cancel the picker" cost nothing.
  */
 export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: boolean }) {
-  const [phase, setPhase] = useState<Phase>("closed");
+  // Was it open when this tab last looked? A reload (or a client navigation that remounts the
+  // layout) puts the panel back on the view it was on. Only the view, never the draft.
+  const [restored] = useState(readDockSession);
+  const [phase, setPhase] = useState<Phase>(restored ? "composing" : "closed");
+  const layout = useDockLayout();
+  /** Pressing a door while the panel is already open takes focus back into it. */
+  const [focusToken, setFocusToken] = useState(0);
+  /** The control that opened the panel, so closing it hands focus back there. */
+  const openerRef = useRef<HTMLElement | null>(null);
   const [message, setMessage] = useState("");
   /** The subject line a new message starts with — required, and part of the draft. */
   const [subject, setSubject] = useState("");
@@ -129,14 +166,15 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    * Which view the side panel shows: the message form, your past feedback, or one
    * conversation. Up here so it survives the panel unmounting for a screenshot.
    */
-  const [target, setTarget] = useState<FeedbackPanelTarget>({ view: "compose" });
+  const [target, setTarget] = useState<FeedbackPanelTarget>(restored ?? { view: "compose" });
   /**
    * The conversation last opened, for the toggle at the top of the panel that flips between
    * the inbox and it. A ref as well, so a view change can tell whether this is a DIFFERENT
    * conversation — whose reply draft must not follow you into it.
    */
-  const [lastThreadId, setLastThreadId] = useState<string | null>(null);
-  const lastThreadRef = useRef<string | null>(null);
+  const restoredThread = restored?.view === "thread" ? restored.id : null;
+  const [lastThreadId, setLastThreadId] = useState<string | null>(restoredThread);
+  const lastThreadRef = useRef<string | null>(restoredThread);
   /** The open-request listener subscribes once; it reads the latest `changeTarget` here. */
   const changeTargetRef = useRef<(next: FeedbackPanelTarget) => void>(() => {});
   /** Whether the new-message draft has anything in it — a prefill never overwrites words. */
@@ -283,6 +321,17 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
       // A docked panel has no anchor to sit under; only the view matters. A plain press of
       // the button opens the form; the bell and "Your feedback" open a conversation.
       const next = requested.target ?? { view: "compose" };
+      // Remember where focus was so closing can return it — unless it is already inside the
+      // panel (a door pressed from within), which would hand back a control about to vanish.
+      const active = document.activeElement;
+      if (
+        phaseRef.current === "closed" &&
+        active instanceof HTMLElement &&
+        active !== document.body
+      ) {
+        openerRef.current = active;
+      }
+      setFocusToken((n) => n + 1);
       changeTargetRef.current(next);
       // "Tell Jason" from an error: start the message with what went wrong — but only into
       // an empty draft, never over words someone already wrote.
@@ -327,6 +376,38 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
 
   useEffect(() => () => setFeedbackPanelState("closed"), []);
 
+  /**
+   * The room this panel takes, claimed for as long as it is a thing the person is working
+   * in — INCLUDING while the screen is being captured, when the panel itself is unmounted.
+   * Letting the page grow back for the length of a screenshot would mean the picture shows
+   * a layout the person was not looking at, and the page would jump twice. `closing` lets go
+   * at the close request, so the page widens as the panel slides away.
+   */
+  const holding = phase !== "closed" && phase !== "closing";
+  useDockWidth(layout.squeezePx, holding && layout.squeezePx > 0);
+  // The toast column and job stack, by the same measure `PANEL_CORNER_SHIFT_PX` gives the
+  // notifications window. The larger of the two wins if both are open.
+  useCornerShift(layout.shiftPx, holding && layout.shiftPx > 0);
+
+  // Remember the view across a reload in this tab. The key is gone as soon as the close is
+  // requested, so a panel someone closed does not come back.
+  useEffect(() => {
+    try {
+      if (holding) {
+        window.sessionStorage.setItem(
+          DOCK_SESSION_KEY,
+          serializeDockSession(
+            target.view === "thread" ? { view: "thread", id: target.id } : { view: target.view }
+          )
+        );
+      } else {
+        window.sessionStorage.removeItem(DOCK_SESSION_KEY);
+      }
+    } catch {
+      // Storage unavailable: the dock simply forgets across a reload.
+    }
+  }, [holding, target]);
+
   // Tell "Tell Jason" buttons elsewhere on the page that there is a widget to open.
   useEffect(() => {
     setFeedbackWidgetMounted(true);
@@ -364,7 +445,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
    */
   useEffect(() => {
     if (phase !== "closing") return;
-    const timer = setTimeout(endSession, 900);
+    // Comfortably past the 320ms slide; a reduced-motion person has no slide to wait for.
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timer = setTimeout(endSession, reduced ? 80 : 900);
     return () => clearTimeout(timer);
   }, [phase, endSession]);
 
@@ -622,21 +705,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
 
   return (
     <>
-      {/* The desktop rail copy. `FeedbackTrigger` handles being absent during a capture
-          and fading while the panel is open; this wrapper only owns where it sits.
-
-          Directly under the notifications bell, matching its conditional offset in
-          `app-shell.tsx`. The mobile copy cannot live here — this widget is a sibling of
-          `AppShell` and cannot render into its header — so it is mounted there instead and
-          talks to this one through `src/lib/feedback-events.ts`. */}
-      <div
-        className={cn(
-          "fixed right-5 z-30 hidden md:right-8 md:block",
-          viewingAsUser ? "top-[5.5rem]" : "top-[4.25rem] md:top-[4.75rem]"
-        )}
-      >
-        <FeedbackTrigger tooltip />
-      </div>
+      {/* The desktop rail button is `FeedbackRail`, mounted by the layout so it renders with the
+          page; the mobile copy lives in `AppShell`'s header. Both reach this widget through
+          `src/lib/feedback-events.ts`. */}
 
       {(phase === "composing" || phase === "sent" || phase === "closing") && (
         <FeedbackPanel
@@ -644,6 +715,9 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           // `data-ending-style` and start the collapse, so the hold has to happen on this
           // side of it.
           open={phase === "composing" || phase === "sent"}
+          layout={layout}
+          viewingAsUser={viewingAsUser}
+          focusToken={focusToken}
           sent={sentBeat}
           target={target}
           onTargetChange={changeTarget}
@@ -681,6 +755,26 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           onCaretChange={setCaret}
           onClose={(discard) => {
             discardRef.current = discard;
+            // Hand focus back at the request, while the control still exists: the panel goes
+            // inert for the slide-out, and focus on an inert node falls to the body.
+            // After a reload there is no remembered opener: fall back to the visible button.
+            const opener =
+              openerRef.current ??
+              Array.from(document.querySelectorAll<HTMLElement>('[aria-controls="feedback-dock"]')).find(
+                (el) => el.offsetParent !== null
+              );
+            openerRef.current = null;
+            // Next frame: the trigger is hidden while the panel is open and only becomes
+            // focusable once this close has re-rendered it visible.
+            // It takes a render or two, so try until focus lands (it cannot take it while
+            // `visibility: hidden`), for at most half a second.
+            let tries = 0;
+            const refocus = () => {
+              if (!opener?.isConnected) return;
+              opener.focus({ preventScroll: true });
+              if (document.activeElement !== opener && ++tries < 10) setTimeout(refocus, 50);
+            };
+            requestAnimationFrame(refocus);
             setPhase("closing");
           }}
           onClosed={endSession}

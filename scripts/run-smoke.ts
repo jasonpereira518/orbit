@@ -274,6 +274,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-ai-request-options": "pure",
   "smoke-eval-ai-score": "pure",
   "smoke-feedback-image": "pure",
+  "smoke-feedback-dock": "pure",
   "smoke-feedback-triage": "pure",
   "smoke-follow-up-cadence": "pure",
   "smoke-gmail-batch": "pure",

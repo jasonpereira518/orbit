@@ -315,6 +315,7 @@
 "smoke-fact-lists": 2.1,
 "smoke-fast-model": 0.5,
 "smoke-feedback-admin": 1.7,
+"smoke-feedback-dock": 0.3,
 "smoke-feedback-image": 0.3,
 "smoke-feedback-submit": 1.6,
 "smoke-finish-scene-geometry": 0.2,

@@ -3,6 +3,7 @@ import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+import { FeedbackRail } from "@/components/feedback/feedback-rail";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
 import { SurveyPromptLazy } from "@/components/surveys/survey-prompt-lazy";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
@@ -240,7 +241,10 @@ export default async function AppLayout({
           dispatch an event AT this component, so leaving it mounted-but-hidden would turn
           them into buttons that do nothing. */}
       {!visibility.hidden.has(FEEDBACK_SURFACE_KEY) && (
-        <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+        <>
+          <FeedbackRail viewingAsUser={visibility.viewingAsUser} />
+          <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+        </>
       )}
 
       {/* The micro-survey: renders nothing unless one is due, which is almost always. Not
