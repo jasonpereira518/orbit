@@ -985,7 +985,7 @@ export function NetworkGraph({
           "flex items-center justify-center rounded-2xl border border-white/10 bg-[#05070c] text-white/50",
           compact
             ? "h-[300px]"
-            : "h-[calc(100dvh-17.875rem)] md:h-[calc(100dvh-10.5rem)]"
+            : "h-[calc(100dvh-15.125rem)] md:h-[calc(100dvh-10.5rem)]"
         )}
       >
         Loading constellation…
@@ -1017,11 +1017,11 @@ export function NetworkGraph({
             ? "h-[300px] rounded-2xl"
             : // Below md the app's floating bottom nav is a fixed pill ~4rem tall; a taller
             // box ran the canvas (and its Key / full-screen / home buttons) underneath it,
-            // where they could not be tapped at all. 17.875rem: the 15.125rem the kicker + title need
-            // (the description is hidden on phones), plus the 2.75rem constellation tab row.
+            // where they could not be tapped at all. 15.125rem, down from 18.5rem, because
+            // the page's description is hidden on phones and the chart takes its height.
             // Keep in step with CONSTELLATION_STAGE_HEIGHT and the nav's height
             // (layout/mobile-nav.tsx).
-            "h-[calc(100dvh-17.875rem)] max-h-[calc(100dvh-17.875rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
+            "h-[calc(100dvh-15.125rem)] max-h-[calc(100dvh-15.125rem)] rounded-2xl md:h-[calc(100dvh-10.5rem)] md:max-h-[calc(100dvh-10.5rem)]",
           // Under 500px tall (a landscape phone, 200% zoom) the page scrolls instead of
           // fitting the viewport (app-shell.tsx), and a viewport-relative stage was a sliver.
           !compact && "[@media(max-height:500px)]:h-[26rem] [@media(max-height:500px)]:max-h-none",
