@@ -3,7 +3,8 @@ import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { Suspense } from "react";
 import { getConstellationGraphData, getGraphData } from "@/actions/graph";
 import { getConstellationTabs } from "@/actions/custom-constellations";
-import { ConstellationTabs } from "@/components/graph/constellation-tabs";
+import { ConstellationViewsMenu } from "@/components/graph/constellation-views-menu";
+import { ConstellationGenerating } from "@/components/graph/constellation-generating";
 import { ConstellationIntro } from "@/components/graph/constellation-intro";
 import { ConstellationScopeToggle } from "@/components/graph/constellation-scope-toggle";
 import {
@@ -18,8 +19,9 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 export const metadata = { title: "Constellation" };
 
 /**
- * The heading and tab strip wait only for the short tab list (`getConstellationTabs`: a few
- * rows and counts); the full-network scan streams in behind a Suspense boundary. Before, the
+ * The heading and its controls (the views menu and Top | All) wait only for the short list of
+ * saved views (`getConstellationTabs`: a few rows and counts); the full-network scan streams in
+ * behind a Suspense boundary. Before, the
  * page awaited the scan at the top, so the first byte waited for the whole payload — on a
  * large network, seconds of blank.
  */
@@ -35,23 +37,28 @@ export default async function GraphPage({
   const { tabs, canCreate } = await getConstellationTabs();
   // Only a sky that is really in the caller's list counts. A stale or made-up `c` falls back to
   // Everyone, and the scope toggle (which sits above the Suspense boundary) has to follow suit.
-  const activeId = typeof c === "string" ? (tabs.find((t) => t.id === c)?.id ?? null) : null;
+  const active = typeof c === "string" ? (tabs.find((t) => t.id === c) ?? null) : null;
+  const activeId = active?.id ?? null;
 
   return (
     <div className="-mx-1 space-y-3 overflow-hidden md:-mx-2">
       <RenderStamp />
       {/*
-        The scope toggle is here, in the header, rather than over the canvas: the canvas is
+        The controls are here, on the title's row, rather than over the canvas: the canvas is
         where the stars are, so anything sitting on it is either covering the network or
-        getting out of the way of it.
+        getting out of the way of it. One row at every width — no row of their own on a phone,
+        so the chart keeps its full height (CONSTELLATION_STAGE_HEIGHT).
 
-        `items-end` sits it at the FOOT of the header, immediately above the chart's top-right
+        `items-end` sits them at the FOOT of the header, immediately above the chart's top-right
         corner. Aligned to the top instead it landed level with the app's notification bell —
         near enough to read as a third piece of app chrome, when it is a control for this one
         chart and belongs next to it.
       */}
-      <div className="flex shrink-0 flex-wrap items-end justify-between gap-x-3 gap-y-3 px-1">
-        <div>
+      <div className="flex shrink-0 items-end justify-between gap-2 px-1 sm:gap-3">
+        {/* Below `md` the title holds its width (a second line would push the stage under the
+            phone nav) and the views menu's label truncates instead. From `md` it is the
+            description that gives way, so the controls keep their size. */}
+        <div className="shrink-0 md:shrink">
           <p className="text-2xs font-medium uppercase tracking-[0.2em] text-primary">
             Star chart
           </p>
@@ -66,11 +73,10 @@ export default async function GraphPage({
             you — each figure traced by its own people.
           </p>
         </div>
-        {/* Full row below the title on a phone, beside it from `md`. Inside a custom sky the
-            engaged/everyone switch is hidden: its members are explicit, not a filter. */}
-        <div className="mb-0.5 flex w-full min-w-0 items-center gap-2 md:w-auto md:max-w-[60%]">
-          <ConstellationTabs tabs={tabs} activeId={activeId} canCreate={canCreate} className="min-w-0 flex-1" />
-          {!activeId && <ConstellationScopeToggle className="shrink-0" />}
+        {/* Inside a saved view Top | All greys out in place: its members are explicit, not a filter. */}
+        <div className="mb-0.5 flex min-w-0 items-center gap-1.5 md:shrink-0">
+          <ConstellationViewsMenu tabs={tabs} activeId={activeId} canCreate={canCreate} />
+          <ConstellationScopeToggle lockedCount={active?.memberCount} />
         </div>
       </div>
       {/*
@@ -93,7 +99,10 @@ export default async function GraphPage({
       */}
       <div className={`relative rounded-2xl ${STAGE_GROUND}`} {...tourAnchor("graph.stage")}>
         <ConstellationIntro />
-        {/* Keyed on the sky: a tab switch shows the loading panel and remounts the chart, so one
+        {/* Also outside the boundary: it covers the swap to a just-created view, and ends when
+            that view's sky is on screen (generating-signal.ts). */}
+        <ConstellationGenerating />
+        {/* Keyed on the sky: a view switch shows the loading panel and remounts the chart, so one
             sky's layout, camera and search never leak into the next. */}
         <Suspense
           key={activeId ?? "all"}
