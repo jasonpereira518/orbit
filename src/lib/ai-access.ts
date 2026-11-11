@@ -606,8 +606,13 @@ export async function runOnGrant<T>(grant: AiGrant<AiProvider>, call: Promise<T>
 export async function noteDecisionFailure(grant: DecisionGrant, err: unknown): Promise<void> {
   try {
     if (grant.keyOwner !== "orbit" || !process.env.VERCEL) return;
-    const kind = classifyAiError(err);
-    if (kind !== "quota" && kind !== "auth") return;
+    // By HTTP status, never by message text: a 400 whose body says "invalid … key" is a bad
+    // request, not a refused key, and must not take Orbit's key out or page anyone.
+    // By name, like `isAiAccessError`: a second module instance would defeat `instanceof`.
+    const status =
+      err instanceof Error && err.name === "TypeSafeApiError" ? ((err as Error & { status?: number }).status ?? null) : null;
+    const kind = status === 402 ? "quota" : status === 401 || status === 403 ? "auth" : null;
+    if (!kind) return;
     if (pauseCache) pauseCache = { ...pauseCache, typesafeOut: true };
     if (shouldRecordThrottled(`ai.managed:typesafe:${kind}`)) {
       await recordErrorEvent({

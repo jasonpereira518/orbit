@@ -20,8 +20,21 @@ export const WORK_HISTORY_GATE_LIMITS = {
 
 const DAY_MS = 86_400_000;
 
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+/** A run of digits and phone separators; redacted only with 9+ digits, so dates and year ranges stay. */
+const PHONE_LIKE = /\+?\(?\d[\d\s().-]{6,}\d/g;
+
+/**
+ * Collapsed, redacted, capped. The privacy page promises TypeSafe never sees an email address
+ * or a phone number, and these summaries are model-written from notes and messages that can
+ * quote either.
+ */
 function trim(text: string | null | undefined, max: number): string | null {
-  const t = text?.replace(/\s+/g, " ").trim();
+  const t = text
+    ?.replace(/\s+/g, " ")
+    .replace(EMAIL, "[email]")
+    .replace(PHONE_LIKE, (run) => ((run.match(/\d/g)?.length ?? 0) >= 9 ? "[phone]" : run))
+    .trim();
   return t ? t.slice(0, max) : null;
 }
 

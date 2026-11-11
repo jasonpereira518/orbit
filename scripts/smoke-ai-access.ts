@@ -87,7 +87,7 @@ import {
   aiDenialFromMessage,
   refusalCopyFor,
 } from "../src/lib/ai-access-copy";
-import { getCreditBalance } from "../src/lib/credits/ledger";
+import { getCreditBalance, settleManagedUsage } from "../src/lib/credits/ledger";
 import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
 import {
   MANAGED_AI_ENABLED,
@@ -117,7 +117,7 @@ import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/que
 import { friendlyError, isMissingAiApiKeyError } from "../src/lib/errors";
 import { loadManagedAiOpsFacts } from "../src/lib/managed-ai-ops";
 import { TypeSafeApiError } from "../src/lib/typesafe-api";
-import { run } from "./smoke/_env";
+import { PROVIDER_KEY_ENV, run } from "./smoke/_env";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -1333,6 +1333,30 @@ async function orbitPaidJev() {
   const poolRows: string[] = [];
   try {
     forgetManagedAiPause();
+    // A real Orbit-paid key left in a developer's env must never reach a smoke run.
+    const gateSource = readFileSync(join(process.cwd(), "src", "lib", "ai-access.ts"), "utf8");
+    const managedNames = [...gateSource.matchAll(/"(ORBIT_MANAGED_[A-Z_]+_API_KEY)"/g)]
+      .map((m) => m[1]!)
+      // Present only to satisfy a Record; never read (ai-access.ts says so).
+      .filter((n) => n !== "ORBIT_MANAGED_OPENROUTER_API_KEY");
+    const unstripped = managedNames.filter((n) => !(PROVIDER_KEY_ENV as readonly string[]).includes(n));
+    check("every Orbit-paid key the gate reads is stripped from smoke runs",
+      managedNames.includes("ORBIT_MANAGED_TYPESAFE_API_KEY") && unstripped.length === 0, unstripped);
+
+    console.log("\nOrbit's TypeSafe calls cost the account no credits");
+    const settleRow = { userId: U.jevOrbit, operation: RECHECK, kind: "completion", keyOwner: "orbit" as const, success: 1 };
+    await json(U.jevOrbit, "chat.answer"); // one real (stubbed) managed call opens this month's allowance
+    await settle();
+    const opened = await remaining(U.jevOrbit);
+    check("the account has an allowance to charge", opened.grants.some((g) => g.kind === "allowance"), opened);
+    await settleManagedUsage({ ...settleRow, provider: "typesafe", estimatedCostMicros: 1_000_000 });
+    const afterTypesafe = await remaining(U.jevOrbit);
+    check("an Orbit-paid TypeSafe call charges nothing",
+      afterTypesafe.allowance === opened.allowance && afterTypesafe.pack === opened.pack, { opened, afterTypesafe });
+    await settleManagedUsage({ ...settleRow, provider: "anthropic", estimatedCostMicros: 1_000_000 });
+    check("control: the same charge on Orbit's Anthropic key does come off the allowance",
+      (await remaining(U.jevOrbit)).allowance < afterTypesafe.allowance);
+
     check("ORBIT_PAID_DECISIONS is exactly the two work-history gates",
       ORBIT_PAID_DECISIONS.size === 2 && ORBIT_PAID_DECISIONS.has(RECHECK) && ORBIT_PAID_DECISIONS.has("contact.work_history.verify.gate"));
     let access = await resolveAiAccess(U.jevOrbit);
@@ -1389,6 +1413,8 @@ async function orbitPaidJev() {
     check("off Vercel (a dev key) a dry key records nothing in the shared DB", (await rowsOfTypesafe()) === 0);
     await noteDecisionFailure(live, new TypeSafeApiError(500, "TypeSafe 500: overloaded"));
     check("a plain server error does not take it out", (await rowsOfTypesafe()) === 0);
+    await noteDecisionFailure(live, new TypeSafeApiError(400, "TypeSafe 400: invalid question key `yes` for this model"));
+    check("a 400 whose text mentions an invalid key is not a refused key", (await rowsOfTypesafe()) === 0);
     await noteDecisionFailure(live, new TypeSafeApiError(402, "TypeSafe 402: payment required"));
     check("on Vercel a dry Orbit key records one error event naming typesafe", (await rowsOfTypesafe()) === 1);
     check("…this instance stops asking at once", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
@@ -1404,6 +1430,13 @@ async function orbitPaidJev() {
     await noteDecisionFailure(live, new TypeSafeApiError(401, "TypeSafe 401: invalid api key"));
     forgetManagedAiPause();
     check("a refused (401) Orbit key takes it out too", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    await db.update(errorEvents).set({ createdAt: new Date(Date.now() - 3 * 3_600_000) }).where(typesafeEvents);
+    forgetManagedAiPause();
+    check("(back after the window)", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) !== null);
+    // The event is throttled per instance per hour (the 401 above used it), so this checks the
+    // instance's own cache: a 403 is a refused key too.
+    await noteDecisionFailure(live, new TypeSafeApiError(403, "TypeSafe 403: forbidden"));
+    check("…and so does a 403", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
   } finally {
     if (poolRows.length) await db.delete(usageEvents).where(inArray(usageEvents.id, poolRows));
     await db.delete(errorEvents).where(typesafeEvents);

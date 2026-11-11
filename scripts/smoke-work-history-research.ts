@@ -22,7 +22,7 @@ import {
 import { SKIP_GATE_TUNING } from "../src/lib/decisions/catalog";
 import type { Engines } from "../src/lib/decisions/engine";
 import { parseAnswers, type Decider, type DecisionRequest, type QuestionMap } from "../src/lib/decisions/jev";
-import { recheckGateState, WORK_HISTORY_GATE_LIMITS } from "../src/lib/work-history-gates";
+import { recheckGateState, shapeRecheckGateState, WORK_HISTORY_GATE_LIMITS } from "../src/lib/work-history-gates";
 import { anthropicWebSearchToolType } from "../src/lib/ai";
 import { RateLimitedError } from "../src/lib/rate-limit";
 import { aiOperationThinking, aiOperationTier } from "../src/lib/ai-operations";
@@ -441,6 +441,21 @@ async function main() {
   check("…newest first", since[0]?.summary === "Catch-up 11", since[0]?.summary ?? "");
   check("…each summary trimmed", since.every((i) => (i.summary ?? "").length <= WORK_HISTORY_GATE_LIMITS.summaryChars));
   check("…and never the raw note", !JSON.stringify(state).includes("RAW-SECRET"));
+  const shaped = JSON.stringify(
+    shapeRecheckGateState({
+      roles: [],
+      title: null,
+      company: null,
+      closenessTier: null,
+      lastCheckedAt,
+      now: new Date("2026-11-11T00:00:00Z"),
+      interactions: [{ type: "email", date: new Date("2026-08-01T00:00:00Z"), summary: "Reach me at priya.rao@gmail.com or +1 (415) 555-0134; back 2019-2024 at Stripe, next call 2026-11-20." }],
+      digest: { whatTheyDo: "PM — call 415.555.0199", workingOn: "write to me: p@ramp.com" },
+    }),
+  );
+  check("summaries never carry an email address", !/@/.test(shaped) && shaped.includes("[email]"), shaped);
+  check("…or a phone number", !shaped.includes("555-0134") && !shaped.includes("555.0199") && shaped.includes("[phone]"), shaped);
+  check("…while dates and year ranges survive", shaped.includes("2019-2024") && shaped.includes("2026-11-20"), shaped);
 
   // --- Jev's veto of the verify search: any non-forced full search, never twice in a row ----
   await reset();
