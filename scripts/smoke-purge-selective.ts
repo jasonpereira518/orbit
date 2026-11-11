@@ -123,6 +123,11 @@ async function seed() {
     .values({ userId: USER, title: "Deep Learning Summit", venue: "Moscone" })
     .returning();
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
+  await db.insert(schema.shareCards).values({
+    userId: USER,
+    slug: "purge-selective-card",
+    fields: { photo: true, role: true, headline: true, linkedin: true, email: false, phone: false, website: false, location: false },
+  });
   await db.insert(schema.chatThreads).values({ userId: USER, title: "thread" });
   await db.insert(schema.apiKeys).values({
     userId: USER,
@@ -217,6 +222,7 @@ const WITNESS: Record<DataCategory, string | null> = {
   connections: "gmail_connections",
   events: "events",
   goals: "user_goals",
+  card: "share_cards",
   chat: "chat_threads",
   recruiters: "user_recruiter_links",
   api: "api_keys",

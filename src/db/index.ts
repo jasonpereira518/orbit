@@ -2098,6 +2098,40 @@ CREATE TABLE IF NOT EXISTS capture_handoffs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS capture_handoffs_token_uidx ON capture_handoffs(token_hash);
 CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expires_at);
+CREATE TABLE IF NOT EXISTS share_cards (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  slug text NOT NULL,
+  fields jsonb NOT NULL,
+  phone text,
+  tagline text,
+  paused_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS share_cards_user_uidx ON share_cards(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS share_cards_slug_uidx ON share_cards(slug);
+CREATE TABLE IF NOT EXISTS card_shares (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  card_id uuid NOT NULL REFERENCES share_cards(id) ON DELETE CASCADE,
+  nonce text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  event_id uuid REFERENCES events(id) ON DELETE SET NULL,
+  name text NOT NULL,
+  email text,
+  phone text,
+  company text,
+  title text,
+  linkedin_url text,
+  message text,
+  owner_note text,
+  status text NOT NULL,
+  visitor_user_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS card_shares_card_nonce_uidx ON card_shares(card_id, nonce);
+CREATE INDEX IF NOT EXISTS card_shares_user_created_idx ON card_shares(user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS capture_jobs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3109,7 +3143,9 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // (each side's last keystroke, for the typing dots — a serverless deploy has no shared memory
 // to hold them in); and feedback_screenshots.message_id (a screenshot sent later in the
 // conversation belongs to that message, not the opening report).
-export const SCHEMA_VERSION = 219;
+// 223 = share_cards + card_shares — Orbit Card (a personal contact card shared by QR/link, and
+// what visitors send back). Built as 220; renumbered to 223 to land above main.
+export const SCHEMA_VERSION = 223;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3315,6 +3351,9 @@ const TOUCH_COUNT_DDL = [
 ];
 
 export const SCALE_DDL: string[] = [
+  // --- v223: Orbit Card — FK lookups so deleting a contact/event does not scan card_shares ---
+  `CREATE INDEX IF NOT EXISTS card_shares_contact_idx ON card_shares(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS card_shares_event_idx ON card_shares(event_id) WHERE event_id IS NOT NULL`,
   // --- v62: meeting-notes workflow ---------------------------------------------------
   //
   // A cadence the notes actually stated ("check in monthly"). Days, because every consumer
