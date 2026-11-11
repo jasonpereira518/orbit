@@ -4385,6 +4385,10 @@ export const shareCards = pgTable(
     fields: jsonb("fields").$type<CardFields>().notNull(),
     phone: text("phone"),
     tagline: text("tagline"),
+    /** Bumped by "Shuffle my stars": part of the card art's seed (see lib/cards/card-art.ts). */
+    artSalt: integer("art_salt").notNull().default(0),
+    /** One of `ACCENTS` (lib/cards/card-art.ts); null = picked from the seed. */
+    accent: text("accent"),
     /** Set while the card is switched off; the link then shows nothing. */
     pausedAt: timestamp("paused_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

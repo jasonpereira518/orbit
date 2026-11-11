@@ -3154,7 +3154,10 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 226 = share_cards + card_shares — Orbit Card (a personal contact card shared by QR/link, and
 // what visitors send back). Renumbered to 226 on the main merge: 223–225 are claimed by open
 // branches (custom constellations, Radar PR 2, Radar off by default).
-export const SCHEMA_VERSION = 226;
+// 228 = share_cards.art_salt + share_cards.accent — the Orbit Card's artwork (Shuffle my stars,
+// and the accent colour; docs/superpowers/specs/2026-11-11-orbit-card-design-ui.md). 227 is
+// claimed by another open branch.
+export const SCHEMA_VERSION = 228;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4654,6 +4657,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v182: which model made a stored vector.
   await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
   await ensureColumn(client, "memory_chunks", "embedding_model", "text");
+  // v228: the Orbit Card's artwork.
+  await ensureColumn(client, "share_cards", "art_salt", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "share_cards", "accent", "text");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -5628,6 +5634,9 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_discovery_enabled integer NOT NULL DEFAULT 1`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS suggested_calendar_invite jsonb`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS discovered_person jsonb`,
+  // Schema v228: the Orbit Card's artwork — the salt Shuffle bumps, and the chosen accent.
+  `ALTER TABLE share_cards ADD COLUMN IF NOT EXISTS art_salt integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE share_cards ADD COLUMN IF NOT EXISTS accent text`,
 ];
 
 /**
