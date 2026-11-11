@@ -8,12 +8,23 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "../src/db";
 import { contacts, customConstellationMembers, customConstellations } from "../src/db/schema";
 import { mergeContacts, unmergeContacts } from "../src/lib/contact-merge";
-import { proposeMembers, type ProposeDeps } from "../src/lib/custom-constellations";
+import {
+  addConstellationMember,
+  createCustomConstellation,
+  deleteCustomConstellation,
+  getConstellationMembers,
+  listCustomConstellations,
+  proposeMembers,
+  removeConstellationMember,
+  renameCustomConstellation,
+  type ProposeDeps,
+} from "../src/lib/custom-constellations";
 import { getConstellationLimitForPlan } from "../src/lib/plans/plan-config";
 import { purgeUserData } from "../src/lib/user-data";
 import { run } from "./smoke/_env";
 
 const USER = "smoke-custom-constellations-user";
+const OTHER = "smoke-custom-constellations-other";
 
 const NO_MATCH_COPY = "No one in your network matched that. Try naming a company, school, place or tag.";
 
@@ -191,6 +202,106 @@ run(async () => {
     String(nothingError)
   );
 
-  await purgeUserData(USER, { keepSettings: false }).catch(() => {});
+  async function crudChecks() {
+    const mine = await db
+      .insert(contacts)
+      .values([1, 2, 3, 4, 5].map((n) => ({ userId: USER, fullName: `Crud Mine ${n}` })))
+      .returning();
+    const [theirs] = await db.insert(contacts).values({ userId: OTHER, fullName: "Crud Theirs" }).returning();
+    const rowCount = async (t: string, userId: string) =>
+      rowsOf<{ n: number }>(await db.execute(sql.raw(`SELECT count(*)::int AS n FROM ${t} WHERE user_id = '${userId}'`)))[0].n;
+
+    const deps = (ids: string[]): ProposeDeps =>
+      stubs({
+        understand: parse({ shape: "list" }),
+        list: async () => ({
+          total: ids.length,
+          truncated: false,
+          people: ids.map((id) => ({ id, name: id, title: null, company: "Stripe", lastInteraction: null })),
+        }),
+        complete: mustNotCall("complete"),
+      });
+
+    const first = await createCustomConstellation(USER, "people at Stripe", "free", deps([mine[0].id, mine[1].id]));
+    const got = await getConstellationMembers(USER, first.id);
+    check(
+      "create saves row + ai members",
+      got?.name === "People at Stripe" && got.members.size === 2 && got.members.has(mine[0].id),
+      JSON.stringify(got && [got.name, [...got.members]])
+    );
+    const tabs = await listCustomConstellations(USER);
+    check("list returns tab with member count", tabs.length === 1 && tabs[0].id === first.id && tabs[0].memberCount === 2, JSON.stringify(tabs));
+
+    await createCustomConstellation(USER, "second", "free", deps([mine[2].id]));
+    await createCustomConstellation(USER, "third", "free", deps([mine[3].id]));
+    const ordered = await listCustomConstellations(USER);
+    check("list is in creation order", ordered.length === 3 && ordered[0].id === first.id, JSON.stringify(ordered));
+
+    let aiCalled = false;
+    const refused: unknown = await createCustomConstellation(USER, "fourth", "free", {
+      understand: async () => {
+        aiCalled = true;
+        throw new Error("understand must not be called");
+      },
+    } as unknown as ProposeDeps).catch((e) => e);
+    check(
+      "4th create on free refused before AI",
+      refused instanceof Error &&
+        refused.name === "UserFacingError" &&
+        refused.message === "Free plan keeps up to 3 constellations. Upgrade for unlimited, or delete one to make room." &&
+        !aiCalled &&
+        (await listCustomConstellations(USER)).length === 3,
+      String(refused)
+    );
+
+    const fourth = await createCustomConstellation(USER, "fourth", "orbit", deps([mine[4].id]));
+    check("orbit plan allows a 4th", (await listCustomConstellations(USER)).length === 4 && !!fourth.id);
+
+    // Another user can do nothing to my constellation.
+    const before = JSON.stringify(await getConstellationMembers(USER, first.id).then((g) => g && [g.name, [...g.members]]));
+    check("rename by another user is refused", (await renameCustomConstellation(OTHER, first.id, "Hijack")) === false);
+    check("delete by another user is refused", (await deleteCustomConstellation(OTHER, first.id)) === false);
+    check("add by another user is refused", (await addConstellationMember(OTHER, first.id, theirs.id)) === false);
+    check("remove by another user is refused", (await removeConstellationMember(OTHER, first.id, mine[0].id)) === false);
+    check("another user reads nothing", (await getConstellationMembers(OTHER, first.id)) === null);
+    const after = JSON.stringify(await getConstellationMembers(USER, first.id).then((g) => g && [g.name, [...g.members]]));
+    check("rows unchanged after foreign attempts", before === after && (await rowCount("custom_constellations", USER)) === 4, `${before} / ${after}`);
+
+    check("add of another user's contact is refused", (await addConstellationMember(USER, first.id, theirs.id)) === false);
+    check("no row written for a foreign contact", (await rowCount("custom_constellation_members", OTHER)) === 0);
+
+    check("rename works", (await renameCustomConstellation(USER, first.id, "Renamed")) === true && (await getConstellationMembers(USER, first.id))?.name === "Renamed");
+
+    check("add manual member", (await addConstellationMember(USER, first.id, mine[2].id)) === true);
+    check("add twice stays one member", (await addConstellationMember(USER, first.id, mine[2].id)) === true && (await getConstellationMembers(USER, first.id))?.members.size === 3);
+    const dupRows = async () =>
+      rowsOf<{ n: number }>(await db.execute(sql`SELECT count(*)::int AS n FROM custom_constellation_members WHERE constellation_id = ${first.id}::uuid AND contact_id = ${mine[2].id}::uuid`))[0].n;
+    check("add twice wrote one row", (await dupRows()) === 1);
+
+    // A merge can leave two rows for one contact: reads stay distinct and prefer the reasoned one.
+    await db.insert(customConstellationMembers).values([
+      { userId: USER, constellationId: first.id, contactId: mine[0].id, source: "manual" },
+      { userId: USER, constellationId: first.id, contactId: mine[0].id, source: "ai", reason: "kept reason" },
+    ]);
+    const dup = await getConstellationMembers(USER, first.id);
+    check("duplicate rows read once, reason preferred", dup?.members.size === 3 && !!dup.members.get(mine[0].id), JSON.stringify(dup && [...dup.members]));
+
+    check("remove returns true", (await removeConstellationMember(USER, first.id, mine[0].id)) === true);
+    const removed = await getConstellationMembers(USER, first.id);
+    check("remove deletes duplicate rows too", !removed?.members.has(mine[0].id) && removed?.members.size === 2, JSON.stringify(removed && [...removed.members]));
+
+    check("delete works and cascades members", (await deleteCustomConstellation(USER, first.id)) === true && (await getConstellationMembers(USER, first.id)) === null);
+    check(
+      "delete removed its members",
+      rowsOf<{ n: number }>(await db.execute(sql`SELECT count(*)::int AS n FROM custom_constellation_members WHERE constellation_id = ${first.id}::uuid`))[0].n === 0
+    );
+  }
+
+  try {
+    await crudChecks();
+  } finally {
+    await purgeUserData(USER, { keepSettings: false });
+    await purgeUserData(OTHER, { keepSettings: false });
+  }
   console.log("\nAll custom-constellation checks passed.");
 });

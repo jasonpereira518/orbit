@@ -6,6 +6,9 @@
  * hybrid search for candidates and one `constellation.pick` call to choose among them. The
  * model can only pick from the candidates it was shown: ids outside that set are dropped.
  */
+import { and, asc, count, countDistinct, eq, max } from "drizzle-orm";
+import { getDb, runAtomicWrite } from "@/db";
+import { contacts, customConstellationMembers, customConstellations } from "@/db/schema";
 import { completeJson, parseAiJson } from "@/lib/ai";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { understandQuery } from "@/lib/chat-retrieval";
@@ -13,6 +16,7 @@ import { EMBED_SOFT_TIMEOUT_MS } from "@/lib/contact-ranking";
 import { getQueryEmbedding } from "@/lib/embedding-cache";
 import { UserFacingError } from "@/lib/errors";
 import { hybridSearchContacts, listContactsMatching, type RankedContact } from "@/lib/hybrid-search";
+import { getConstellationLimitForPlan, type Plan } from "@/lib/plans/plan-config";
 import { shouldUseSemanticArm } from "@/lib/search-adapter";
 
 export type ProposedMember = { contactId: string; reason: string | null };
@@ -113,4 +117,121 @@ export async function proposeMembers(userId: string, prompt: string, deps: Propo
 
   const name = typeof picked.name === "string" ? picked.name.trim().slice(0, NAME_MAX).trim() : "";
   return { name: name || label, members };
+}
+
+export type ConstellationTab = { id: string; name: string; memberCount: number };
+
+export const FREE_CAP_COPY = "Free plan keeps up to 3 constellations. Upgrade for unlimited, or delete one to make room.";
+
+/**
+ * Builds a constellation from a prompt. The plan cap is checked first, so a refused user never
+ * pays for an AI call. The row and its members land together or not at all.
+ */
+export async function createCustomConstellation(
+  userId: string,
+  prompt: string,
+  plan: Plan,
+  deps?: ProposeDeps
+): Promise<{ id: string }> {
+  const db = await getDb();
+  const [{ n, last }] = await db
+    .select({ n: count(), last: max(customConstellations.position) })
+    .from(customConstellations)
+    .where(eq(customConstellations.userId, userId));
+  if (n >= getConstellationLimitForPlan(plan)) throw new UserFacingError(FREE_CAP_COPY);
+
+  const proposal = await proposeMembers(userId, prompt, deps);
+  const id = crypto.randomUUID();
+  await runAtomicWrite(db, (w) => [
+    w.insert(customConstellations).values({ id, userId, name: proposal.name, prompt: prompt.trim(), position: (last ?? -1) + 1 }),
+    w.insert(customConstellationMembers).values(
+      proposal.members.map((m) => ({ userId, constellationId: id, contactId: m.contactId, source: "ai" as const, reason: m.reason }))
+    ),
+  ]);
+  return { id };
+}
+
+/** Tabs in the order they were made. `memberCount` counts people once, whatever a merge left behind. */
+export async function listCustomConstellations(userId: string): Promise<ConstellationTab[]> {
+  const db = await getDb();
+  const [rows, counts] = await Promise.all([
+    db
+      .select({ id: customConstellations.id, name: customConstellations.name })
+      .from(customConstellations)
+      .where(eq(customConstellations.userId, userId))
+      .orderBy(asc(customConstellations.position), asc(customConstellations.createdAt)),
+    db
+      .select({ id: customConstellationMembers.constellationId, n: countDistinct(customConstellationMembers.contactId) })
+      .from(customConstellationMembers)
+      .where(eq(customConstellationMembers.userId, userId))
+      .groupBy(customConstellationMembers.constellationId),
+  ]);
+  const byId = new Map(counts.map((c) => [c.id, Number(c.n)]));
+  return rows.map((r) => ({ ...r, memberCount: byId.get(r.id) ?? 0 }));
+}
+
+const owned = (userId: string, id: string) =>
+  and(eq(customConstellations.id, id), eq(customConstellations.userId, userId));
+
+export async function renameCustomConstellation(userId: string, id: string, name: string): Promise<boolean> {
+  const db = await getDb();
+  const hit = await db
+    .update(customConstellations)
+    .set({ name, updatedAt: new Date() })
+    .where(owned(userId, id))
+    .returning();
+  return hit.length > 0;
+}
+
+/** Members go with it (ON DELETE CASCADE). */
+export async function deleteCustomConstellation(userId: string, id: string): Promise<boolean> {
+  const db = await getDb();
+  const hit = await db.delete(customConstellations).where(owned(userId, id)).returning();
+  return hit.length > 0;
+}
+
+/** True when the person is in the constellation afterwards. False when either id isn't the user's. */
+export async function addConstellationMember(userId: string, id: string, contactId: string): Promise<boolean> {
+  const db = await getDb();
+  const [[cons], [contact]] = await Promise.all([
+    db.select({ id: customConstellations.id }).from(customConstellations).where(owned(userId, id)).limit(1),
+    db.select({ id: contacts.id }).from(contacts).where(and(eq(contacts.id, contactId), eq(contacts.userId, userId))).limit(1),
+  ]);
+  if (!cons || !contact) return false;
+  // No unique key on the pair (a merge may leave two rows), so presence is checked by hand.
+  const [present] = await db
+    .select({ id: customConstellationMembers.id })
+    .from(customConstellationMembers)
+    .where(and(eq(customConstellationMembers.constellationId, id), eq(customConstellationMembers.contactId, contactId)))
+    .limit(1);
+  if (!present) await db.insert(customConstellationMembers).values({ userId, constellationId: id, contactId, source: "manual" });
+  return true;
+}
+
+/** Deletes every row for the pair, so a merge-made duplicate can't keep the person in. */
+export async function removeConstellationMember(userId: string, id: string, contactId: string): Promise<boolean> {
+  const db = await getDb();
+  const [cons] = await db.select({ id: customConstellations.id }).from(customConstellations).where(owned(userId, id)).limit(1);
+  if (!cons) return false;
+  await db
+    .delete(customConstellationMembers)
+    .where(and(eq(customConstellationMembers.constellationId, id), eq(customConstellationMembers.contactId, contactId)));
+  return true;
+}
+
+/** contactId → reason, once per person. Where a merge left two rows, the one with a reason wins. */
+export async function getConstellationMembers(
+  userId: string,
+  id: string
+): Promise<{ name: string; members: Map<string, string | null> } | null> {
+  const db = await getDb();
+  const [cons] = await db.select({ name: customConstellations.name }).from(customConstellations).where(owned(userId, id)).limit(1);
+  if (!cons) return null;
+  const rows = await db
+    .select({ contactId: customConstellationMembers.contactId, reason: customConstellationMembers.reason })
+    .from(customConstellationMembers)
+    .where(and(eq(customConstellationMembers.constellationId, id), eq(customConstellationMembers.userId, userId)));
+  const members = new Map<string, string | null>();
+  for (const r of rows) if (!members.get(r.contactId)) members.set(r.contactId, r.reason);
+  return { name: cons.name, members };
 }
