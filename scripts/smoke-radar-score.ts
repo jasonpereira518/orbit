@@ -93,7 +93,7 @@ function main() {
   console.log("\nwhat outranks what");
   {
     const inbound: RadarSignal = { kind: "inbound_unanswered", contactId: "c1", at: ago(9) };
-    const list = kinds(contact({ lastInteractionAt: ago(45) }), [inbound]);
+    const list = kinds(contact({ tier: "inner", lastInteractionAt: ago(45) }), [inbound]);
     const reach = scoreOf(list, "reach_out");
     const reconnect = scoreOf(list, "reconnect");
     check("an unanswered message outranks plain dormancy", reach !== null && reconnect !== null && reach > reconnect, `${reach} vs ${reconnect}`);
@@ -107,17 +107,17 @@ function main() {
     const outer = kinds(contact({ tier: "outer", priorityLevel: 2, lastInteractionAt: ago(45) }));
     check("closer ties score higher for the same silence", (scoreOf(inner, "reconnect") ?? 0) > (scoreOf(outer, "reconnect") ?? 0));
 
-    const target = kinds(contact({ targetPriority: 1, lastInteractionAt: ago(45) }));
-    const plain = kinds(contact({ lastInteractionAt: ago(45) }));
+    const target = kinds(contact({ tier: "inner", targetPriority: 1, lastInteractionAt: ago(45) }));
+    const plain = kinds(contact({ tier: "inner", lastInteractionAt: ago(45) }));
     check("a target company adds weight", (scoreOf(target, "reconnect") ?? 0) > (scoreOf(plain, "reconnect") ?? 0));
 
-    const longer = kinds(contact({ lastInteractionAt: ago(90) }));
+    const longer = kinds(contact({ tier: "inner", lastInteractionAt: ago(90) }));
     check("longer silence scores higher", (scoreOf(longer, "reconnect") ?? 0) > (scoreOf(plain, "reconnect") ?? 0));
   }
 
   console.log("\nwhat the person already said wins");
   {
-    const dormant = contact({ lastInteractionAt: ago(60) });
+    const dormant = contact({ tier: "inner", lastInteractionAt: ago(60) });
     check("pinned off the constellation produces nothing", kinds({ ...dormant, constellationPin: "out" }).length === 0);
     check("'not for this person' produces nothing", kinds(dormant, [], suppression({ never: "all" })).length === 0);
     check("'never' for one kind drops only that kind",
@@ -152,7 +152,12 @@ function main() {
   console.log("\ndormancy");
   {
     check("a stated quarterly rhythm is not dormant at 40 days", scoreOf(kinds(contact({ cadenceDays: 90, lastInteractionAt: ago(40) })), "reconnect") === null);
-    check("the default window is", scoreOf(kinds(contact({ lastInteractionAt: ago(40) })), "reconnect") !== null);
+    check("the default window is, for the inner circle", scoreOf(kinds(contact({ tier: "inner", lastInteractionAt: ago(40) })), "reconnect") !== null);
+    check("a solid connection going quiet is not a card on its own", scoreOf(kinds(contact({ tier: "mid", lastInteractionAt: ago(90) })), "reconnect") === null);
+    check("a stated rhythm is, at any tier and evidence or not",
+      scoreOf(kinds(contact({ tier: "outer", hasEvidence: false, cadenceDays: 30, lastInteractionAt: ago(45) })), "reconnect") !== null);
+    check("an inner-circle guess without evidence is not",
+      scoreOf(kinds(contact({ tier: "inner", hasEvidence: false, lastInteractionAt: ago(90) })), "reconnect") === null);
     const phrased = kinds(contact({ cadenceDays: 30, cadencePhrase: "check in monthly", lastInteractionAt: ago(45) }));
     check("the person's own words appear in the reason", phrased[0]?.reasons.some((r) => r.label.includes("check in monthly")) === true);
     check("a future meeting on record is not dormancy", scoreOf(kinds(contact({ lastInteractionAt: ahead(10) })), "reconnect") === null);
@@ -161,8 +166,8 @@ function main() {
       scoreOf(kinds(contact({ tier: "outer", priorityLevel: 0, relationshipScore: 2, lastInteractionAt: ago(200) })), "reconnect") === null);
     check("a guessed tier without evidence is not dormant",
       scoreOf(kinds(contact({ tier: "mid", hasEvidence: false, lastInteractionAt: ago(60) })), "reconnect") === null);
-    check("but a stated priority is, evidence or not",
-      scoreOf(kinds(contact({ tier: "outer", hasEvidence: false, priorityLevel: 2, lastInteractionAt: ago(60) })), "reconnect") !== null);
+    check("nor is a stated priority without a rhythm",
+      scoreOf(kinds(contact({ tier: "outer", hasEvidence: false, priorityLevel: 2, lastInteractionAt: ago(60) })), "reconnect") === null);
     check("context alone never creates a recommendation",
       kinds(contact({ tier: "inner", priorityLevel: 3, targetPriority: 1, goalFit: 1, lastInteractionAt: ago(3) })).length === 0);
     check("a fit with your skills and watched roles is context too — it never creates one",
@@ -229,7 +234,7 @@ function main() {
     const meetingAt = ahead(3);
     const prep = pickWinner("c1", kinds(contact({ tier: "inner" }), [{ kind: "upcoming_meeting", contactId: "c1", at: meetingAt, title: "Lunch" }]), NOW);
     check("prep expires a day after the meeting", prep?.expiresAt.getTime() === meetingAt.getTime() + DAY);
-    const other = pickWinner("c1", kinds(contact({ lastInteractionAt: ago(90) })), NOW);
+    const other = pickWinner("c1", kinds(contact({ tier: "inner", lastInteractionAt: ago(90) })), NOW);
     check("everything else expires a week out unless refreshed", other?.expiresAt.getTime() === NOW.getTime() + 7 * DAY);
   }
 
@@ -528,6 +533,54 @@ function briefingAndKeys() {
   check("an unmapped key does nothing", key("q") === null && key("Enter") === null);
 }
 
+function proofAndFollowUp() {
+  console.log("\nproof, and the Follow up hooks");
+  const owed: RadarSignal = {
+    kind: "action_item_open",
+    contactId: "c1",
+    at: ago(9),
+    text: "Send Priya the deck",
+    count: 1,
+    source: { table: "action_items", id: "a1", text: "Send Priya the deck", quote: "Send Priya the deck" },
+  };
+  const meeting: RadarSignal = { kind: "upcoming_meeting", contactId: "c1", at: ahead(2), title: "Lunch", source: { table: "interactions", id: "m1" } };
+  const followUp = kinds(contact(), [owed]).find((k) => k.kind === "follow_up");
+  const ev = followUp?.evidence[0];
+  check("evidence names the reason it backs", ev?.code === "action_item_open");
+  check("and quotes its source row", ev?.proof?.type === "quote" && ev.proof.id === "a1" && ev.proof.quote === "Send Priya the deck");
+  const prep = kinds(contact(), [meeting]).find((k) => k.kind === "prep");
+  check("a meeting's proof is the record itself", prep?.evidence[0]?.proof?.type === "record" && prep.evidence[0].proof.table === "interactions");
+  const dormantEv = kinds(contact({ tier: "inner", lastInteractionAt: ago(90) })).find((k) => k.kind === "reconnect")?.evidence[0];
+  check("dormancy is proven by the contact record", dormantEv?.code === "dormant" && dormantEv.proof?.type === "record" && dormantEv.proof.table === "contacts");
+
+  const thread: RadarSignal = {
+    kind: "open_thread",
+    contactId: "c1",
+    at: ago(6),
+    text: "Asked if you could intro her to someone at Stripe",
+    source: { table: "relationship_digests", id: "d1", text: "Asked if you could intro her to someone at Stripe", quote: "Asked if you could intro her to someone at Stripe" },
+  };
+  const threadCard = kinds(contact(), [thread]).find((k) => k.kind === "follow_up");
+  check("an open thread you owe is a follow-up", threadCard?.reasons[0]?.code === "open_thread" && threadCard.reasons[0].label.includes("intro her"));
+  check("an open thread older than 45 days is history", !kinds(contact(), [{ ...thread, at: ago(60) }]).some((k) => k.kind === "follow_up"));
+
+  const met = (daysAgo: number, lastTouch: Date | null = ago(daysAgo)): RecommendationKind[] =>
+    kinds(contact({ lastInteractionAt: lastTouch }), [{ kind: "met_recently", contactId: "c1", at: ago(daysAgo), source: { table: "interactions", id: "e1" } }]).map((k) => k.kind);
+  check("met ten days ago and nothing since: reach out", met(10).includes("reach_out"));
+  check("met three days ago: too soon", !met(3).includes("reach_out"));
+  check("met a month ago: past the window", !met(30).includes("reach_out"));
+  check("met ten days ago but you wrote since: closed", !met(10, ago(4)).includes("reach_out"));
+
+  const brief: RadarSignal = { kind: "brief_next_step", contactId: "c1", at: ago(2), text: "Ask about the Series A" };
+  check("a brief's next step alone makes no card", kinds(contact(), [brief]).length === 0);
+  const withBrief = kinds(contact(), [owed, brief]).find((k) => k.kind === "follow_up");
+  check("it rides along as a zero-point also line", withBrief?.reasons.some((r) => r.code === "also:brief_next_step" && r.points === 0) === true);
+
+  const both = pickWinner("c1", kinds(contact({ tier: "inner" }), [meeting, { ...owed, kind: "action_item_open" }]), NOW);
+  const lead = both?.reasons.find((r) => r.points > 0 && !CONTEXT_CODES.has(r.code) && !r.code.startsWith("also:"));
+  check("the lead reason's evidence comes first on the card", both?.evidence[0]?.code === lead?.code, `${both?.evidence[0]?.code} vs ${lead?.code}`);
+}
+
 function registration() {
   console.log("\nthe page is registered everywhere a route must be");
   check("the surface registry maps /radar to page.radar", surfaceForPathname("/radar")?.key === "page.radar");
@@ -544,6 +597,7 @@ function registration() {
 
 main();
 briefingAndKeys();
+proofAndFollowUp();
 registration();
 if (failures) {
   console.error(`\n${failures} check(s) failed.`);

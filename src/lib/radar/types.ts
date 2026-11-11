@@ -177,6 +177,43 @@ export function draftIntent(target: { kind: RecommendationKind; reasons: readonl
 }
 
 /**
+ * The tables a proof may point at: rows Radar's run read. A quote proof must appear in the
+ * text the run read from that row; a record proof says the row exists for this account.
+ */
+export type RadarProofTable =
+  | "contacts"
+  | "interactions"
+  | "events"
+  | "action_items"
+  | "contact_opportunities"
+  | "relationship_digests"
+  | "contact_career_moves"
+  | "email_events"
+  | "contact_signals"
+  | "ai_suggestions";
+
+/**
+ * Why a piece of evidence can be trusted (`src/lib/radar/verify.ts`). Built by code from rows
+ * the run read, never by a model: a model may only cite a source, and the check confirms it.
+ */
+export type RadarProof =
+  | { type: "record"; table: RadarProofTable; id: string }
+  | { type: "quote"; table: RadarProofTable; id: string; quote: string }
+  | { type: "url"; url: string };
+
+/** Where a signal came from: the row, and the text the run read from it, if any. */
+export type RadarSignalSource = {
+  table: RadarProofTable;
+  id: string;
+  /** The row's text as read. A quote proof is checked against it. */
+  text?: string | null;
+  /** The part of `text` the card quotes. Absent: the proof is the record itself. */
+  quote?: string | null;
+  /** Links this row handed over (a saved post's URL). */
+  urls?: readonly string[];
+};
+
+/**
  * The most specific fact behind a card, shown under the reasons ("Meeting · Thu 3 Oct").
  * `url` only for a public source (a headline), already through `safeHttpUrl`, and rendered
  * through it again.
@@ -185,6 +222,9 @@ export type RadarEvidence = {
   label: string;
   at: string | null;
   url?: string | null;
+  /** The reason code this evidence backs. The lead reason must have one whose proof holds. */
+  code?: string;
+  proof?: RadarProof;
   /**
    * Set on evidence that comes from the user's mail: which `email_events` row, and whether
    * this person is on the email. Accepting the card reads it to create the email's own task.
@@ -304,11 +344,14 @@ export type RadarRunTrigger = "schedule" | "page" | "manual" | "first_visit";
 export type RadarRunStatus = "running" | "ok" | "partial" | "failed";
 
 /**
- * A dated fact about one contact that the scorer turns into points. Internal facts only in
- * phase one: every one of these is read from a table Orbit already keeps. Dormancy and a
- * fresh intro are not signals; the scorer derives them from the contact's own dates.
+ * A dated fact about one contact that the scorer turns into points, read from a table Orbit
+ * already keeps. Dormancy is not a signal; the scorer derives it from the contact's own dates.
+ * `source` is the row it came from and the text read from it: the scorer turns it into the
+ * evidence's proof, and `verify.ts` checks that proof before a card is written.
  */
-export type RadarSignal =
+export type RadarSignal = RadarSignalFact & { source?: RadarSignalSource };
+
+type RadarSignalFact =
   | { kind: "upcoming_meeting"; contactId: string; at: Date; title: string | null }
   | { kind: "event_upcoming"; contactId: string; at: Date; title: string }
   | { kind: "post_event"; contactId: string; at: Date; title: string }
@@ -318,6 +361,10 @@ export type RadarSignal =
   | { kind: "inbound_unanswered"; contactId: string; at: Date }
   | { kind: "linkedin_thread_quiet"; contactId: string; at: Date; count: number }
   | { kind: "job_posting"; contactId: string; at: Date; text: string }
+  /** An unresolved loop in their messages that the person owes (`relationship_digests.open_threads`). */
+  | { kind: "open_thread"; contactId: string; at: Date; text: string }
+  /** The person's latest real encounter with them (a meeting, call, coffee, event). */
+  | { kind: "met_recently"; contactId: string; at: Date }
   /** A LinkedIn post of theirs the person saved with the extension. */
   | {
       kind: "social_post";
@@ -352,17 +399,6 @@ export type RadarSignal =
       hasAsk: boolean;
       /** 0..1: how relevant the ranker found this person. */
       fit: number;
-    }
-  /** A prospective connection discovered outside the network (papers, GitHub, web, Twitter). */
-  | {
-      kind: "discovery";
-      contactId: string;
-      at: Date;
-      platform: "research" | "github" | "twitter" | "linkedin" | "web";
-      title: string;
-      summary: string;
-      url?: string | null;
-      matchingProjectTitle?: string;
     };
 
 export type RadarSignalKind = RadarSignal["kind"];

@@ -107,6 +107,7 @@ export async function produceEmailSignals(
         contactId: r.contactId,
         at: occurredAt,
         eventId: row.id,
+        source: { table: "email_events", id: row.id },
         eventKind: row.kind,
         stage: row.stage,
         text,
