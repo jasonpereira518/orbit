@@ -18,9 +18,10 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 export const metadata = { title: "Constellation" };
 
 /**
- * The heading paints from the layout immediately; the full-network scan streams in behind
- * a Suspense boundary. Before, the page awaited the scan at the top, so the first byte
- * waited for the whole payload — on a large network, seconds of blank.
+ * The heading and tab strip wait only for the short tab list (`getConstellationTabs`: a few
+ * rows and counts); the full-network scan streams in behind a Suspense boundary. Before, the
+ * page awaited the scan at the top, so the first byte waited for the whole payload — on a
+ * large network, seconds of blank.
  */
 export default async function GraphPage({
   searchParams,
