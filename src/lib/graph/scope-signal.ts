@@ -39,6 +39,12 @@ const IDLE: GraphScopeState = {
 };
 
 let state: GraphScopeState = IDLE;
+/**
+ * Whether any chart in this document has said the filter is on. Survives the reset on release,
+ * so the header can keep the toggle's space (greyed) while one view hands over to the next,
+ * instead of dropping it and shifting the controls beside it.
+ */
+let everAvailable = false;
 let controller: ((next: GraphScopeName) => void) | null = null;
 
 const listeners = new Set<(next: GraphScopeState) => void>();
@@ -67,7 +73,12 @@ export function publishGraphScope(patch: Partial<GraphScopeState>) {
     return;
   }
   state = next;
+  if (state.available) everAvailable = true;
   for (const fn of listeners) fn(state);
+}
+
+export function wasGraphScopeEverAvailable() {
+  return everAvailable;
 }
 
 /**
@@ -96,5 +107,6 @@ export function requestGraphScope(next: GraphScopeName) {
 export function __resetGraphScopeForTests() {
   controller = null;
   state = IDLE;
+  everAvailable = false;
   listeners.clear();
 }

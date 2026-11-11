@@ -2,7 +2,7 @@
 
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useSyncExternalStore } from "react";
-import { Loader2, Stars, Users } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -13,145 +13,118 @@ import {
   getGraphScopeState,
   requestGraphScope,
   subscribeGraphScope,
+  wasGraphScopeEverAvailable,
+  type GraphScopeName,
 } from "@/lib/graph/scope-signal";
 import { cn } from "@/lib/utils";
 
 /**
- * Switch the star chart between the people you have engaged with and everyone.
+ * Top | All: the star chart's people you have engaged with (meetings, notes, real two-way
+ * exchanges, priorities you set) or every person in the network.
  *
  * It lives in the page header rather than over the canvas because the canvas is where the
  * stars are: anything parked on top of it is either covering someone's network or dodging out
- * of the way of it, and the version this replaces did both. Up here it never overlaps the
- * chart, never has to hide, and is in the one place a page-level control belongs.
+ * of the way of it.
  *
- * A switch rather than a button, because the two views are a setting rather than an action —
- * both sides are visible at once and the knob slides to whichever one is live, so the choice
- * and the current state are the same piece of UI. `role="switch"` says the same thing to a
- * screen reader; the counts, which a control this size cannot show, lead the accessible name
- * and the tooltip.
+ * Two labelled segments rather than an icon switch, so the choice reads without a tooltip. The
+ * counts, which a control this size cannot show, are in each segment's accessible name and
+ * tooltip. Inside a saved view (`lockedCount`) its members are explicit, not a filter, so both
+ * segments grey out in place — same size, no shift — and the tooltip says what the view shows.
  *
  * Renders nothing until a chart says the filter is on. With it off there is only one view, and
  * a control that toggles between two identical charts would be worse than no control.
  */
 
-/**
- * Track and knob geometry, together because the travel is derived from the rest of it.
- *
- * The icon slots are exactly the knob's width and sit at each END of the track, so the knob
- * lands centred on one or the other — that is what makes this read as a knob sliding TO an
- * icon rather than past it. Both are laid out in the track's content box, so the travel is
- * that box's width minus the knob:
- *
- *     travel = track - 2*border - 2*padding - knob
- *            = 64    - 2*1      - 2*2       - 28    = 30
- *
- * The border is the term that is easy to forget, and forgetting it is not a rounding error you
- * can shrug at: `box-sizing: border-box` means the border comes out of the declared width, so
- * a travel measured off the full 64 overshoots by exactly 2px and the knob stops off-centre on
- * the icon it is sliding to. That is the bug this comment exists to stop happening again —
- * change any number here and re-run the sum.
- */
-const TRACK = "h-8 w-16";
-const KNOB = "h-7 w-7";
-const SLIDE_ON = "translate-x-[30px]";
-/** Smaller than the knob they sit in, so the knob reads as a disc under an icon, not a badge. */
-const ICON = "size-3.5";
+/** The look the views menu's trigger shares, so the two read as one control group. */
+export const CONTROL_SHELL =
+  "inline-flex h-8 shrink-0 items-center rounded-full border border-border bg-muted dark:bg-input/30";
 
-export function ConstellationScopeToggle({ className }: { className?: string }) {
+const people = (n: number) => `${n.toLocaleString()} ${n === 1 ? "person" : "people"}`;
+
+export function ConstellationScopeToggle({
+  lockedCount,
+  className,
+}: {
+  /** Set inside a saved view: the view's member count. Disables both segments. */
+  lockedCount?: number;
+  className?: string;
+}) {
   const state = useSyncExternalStore(
     subscribeGraphScope,
     getGraphScopeState,
     getGraphScopeState
   );
 
-  if (!state.available) return null;
+  // Between views the chart releases the bus (state resets); keep the space, greyed.
+  if (!state.available && !wasGraphScopeEverAvailable()) return null;
 
-  const showingAll = state.scope === "all";
-  const total = state.total.toLocaleString();
-  const label = state.loading
-    ? `Loading all ${total} connections…`
-    : showingAll
-      ? `Showing all ${total} connections. Show only the people you have engaged with.`
-      : `Showing ${state.shown.toLocaleString()} of ${total} — the people you have engaged with. Show all ${total} connections.`;
+  const locked = lockedCount !== undefined;
+  const idle = !state.available || state.loading;
+  const segments: Array<{ scope: GraphScopeName; label: string; tip: string }> = [
+    {
+      scope: "engaged",
+      label: "Top",
+      tip: `${people(state.shown)} you’ve engaged with — meetings, notes, real conversations`,
+    },
+    { scope: "all", label: "All", tip: `Every one of your ${state.total.toLocaleString()} connections` },
+  ];
 
   return (
     <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              // The whole point of the request: everyone is never fetched until this is
-              // switched on, and switching back is free because the chart keeps both payloads.
-              onClick={() => requestGraphScope(showingAll ? "engaged" : "all")}
-              disabled={state.loading}
-              aria-busy={state.loading}
-              role="switch"
-              aria-checked={showingAll}
-              {...tourAnchor("graph.show-all")}
-              aria-label={label}
-              className={cn(
-                "relative inline-flex shrink-0 items-center justify-between rounded-full border p-0.5",
-                TRACK,
-                // The focus ring is INSET. A ring drawn outside the pill is an outline around
-                // the control, which is what this is asked not to have; drawn inside it, the
-                // keyboard affordance is still there and the pill's own outer edge — border
-                // included — is exactly the same shape whether it is focused or not.
-                "transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40",
-                "disabled:pointer-events-none disabled:opacity-60",
-                showingAll
-                  ? "border-primary/40 bg-primary/15"
-                  : "border-border bg-muted dark:bg-input/30",
-                className
-              )}
-            />
-          }
-        >
-          {/*
-            The knob, under the icons rather than over them: it slides beneath whichever side
-            is live and lights that icon through, which is what makes the switch read as
-            "here, not there" instead of as two buttons one of which happens to be shaded.
-          */}
-          <span
-            aria-hidden
-            className={cn(
-              "absolute left-0.5 rounded-full bg-background shadow-sm",
-              "transition-transform duration-200 ease-out motion-reduce:transition-none",
-              KNOB,
-              showingAll ? SLIDE_ON : "translate-x-0"
-            )}
-          />
-          <span
-            aria-hidden
-            className={cn(
-              "relative z-10 grid place-items-center transition-colors",
-              KNOB,
-              showingAll ? "text-muted-foreground/60" : "text-foreground"
-            )}
-          >
-            <Stars className={ICON} />
-          </span>
-          <span
-            aria-hidden
-            className={cn(
-              "relative z-10 grid place-items-center transition-colors",
-              KNOB,
-              showingAll ? "text-primary" : "text-muted-foreground/60"
-            )}
-          >
-            {/* The spinner replaces the side being travelled TO, so the wait is attached to
-                the thing being waited for rather than floating over the whole control. */}
-            {state.loading ? (
-              <Loader2 className={cn(ICON, "animate-spin")} />
-            ) : (
-              <Users className={ICON} />
-            )}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="end">
-          {label}
-        </TooltipContent>
-      </Tooltip>
+      <div
+        role="group"
+        aria-label="Who the chart shows"
+        {...tourAnchor("graph.show-all")}
+        className={cn(CONTROL_SHELL, "p-0.5", className)}
+      >
+        {segments.map(({ scope, label, tip }) => {
+          const on = !locked && state.scope === scope;
+          const tipText = locked ? `This constellation shows its ${people(lockedCount)}` : tip;
+          // aria-disabled, not disabled: a disabled button gets no hover, and the locked
+          // tooltip is the one place that says why the control is grey.
+          const inert = locked || idle;
+          return (
+            <Tooltip key={scope}>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-pressed={on}
+                    aria-disabled={inert || undefined}
+                    aria-busy={scope === "all" && state.loading ? true : undefined}
+                    aria-label={`${label}: ${tipText}`}
+                    // The whole point of the request: everyone is never fetched until All is
+                    // picked, and going back is free because the chart keeps both payloads.
+                    onClick={() => {
+                      if (!inert && !on) requestGraphScope(scope);
+                    }}
+                    className={cn(
+                      "inline-flex h-7 min-w-8 items-center justify-center rounded-full px-1.5 text-xs font-medium transition-colors sm:min-w-10 sm:px-2.5",
+                      // Inset ring: the shell's outer edge stays the same shape focused or not.
+                      "outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40",
+                      on
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                      inert && "cursor-default opacity-50 hover:text-muted-foreground"
+                    )}
+                  />
+                }
+              >
+                {/* The spinner replaces the label being travelled to, so the wait is attached
+                    to the thing being waited for. min-w keeps the width. */}
+                {scope === "all" && state.loading ? (
+                  <Loader2 aria-hidden className="size-3.5 animate-spin" />
+                ) : (
+                  label
+                )}
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end">
+                {tipText}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
     </TooltipProvider>
   );
 }
