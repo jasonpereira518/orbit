@@ -72,6 +72,11 @@ const KNOWN_GAPS: Record<string, string> = {
   // No foreign key and no reader that surfaces it: the job copies it onto the note batch it
   // saves, after the merge, so that batch names the merged-away id. Low; not a bug script.
   "capture_jobs.seed_contact_id": "stale id on a capture job queued before the merge (low, not surfaced)",
+  // Radar's Opportunities lane (schema 224) has no writer yet: the table only exists for the
+  // purge and export registries. Radar revision PR 8 fills it, and must teach mergeContacts to
+  // repoint this jsonb array (like email_sends.contact_ids) before it ships.
+  "radar_opportunities.related_contact_ids":
+    "no writer yet (Radar Opportunities lands in revision PR 8, which must handle merges)",
 };
 
 /** Every table the merge's own source moves, rewrites or archives. */

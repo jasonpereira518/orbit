@@ -227,6 +227,10 @@ async function main() {
     check("retry copies the files", copy?.attachments?.[0]?.blobKey === file.pathname);
 
     console.log("reply in thread");
+    // Send what the earlier steps left queued (the retried "Deck") first. One flush sends every
+    // queued row in whatever order the database returns them, so a leftover sent alongside
+    // "Coffee?" could come out later and become the "latest send" this section replies to.
+    await flush();
     await resetBucket();
     const first = await sendComposed(USER, { to: ["maya@work.io"], cc: [], bcc: [], subject: "Coffee?", body: "Hi", contactId: maya!.id, fromName: null });
     if (!first.ok) throw new Error(`first send refused: ${JSON.stringify(first)}`);
