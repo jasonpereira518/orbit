@@ -21,6 +21,7 @@ import {
 } from "../src/db/schema";
 import { setBotCheckForTests } from "../src/lib/bot-check";
 import { shareBackCore, type ShareBackInput } from "../src/lib/cards/share-back";
+import { backfillContactIdentities } from "../src/lib/contact-identity";
 import { createContactForUser } from "../src/lib/contact-writes";
 import { getEntitlements } from "../src/lib/entitlements";
 import { liveEventFor } from "../src/lib/cards/live-event";
@@ -325,6 +326,34 @@ async function shareBack() {
   const rayShares = await sharesFor("ray@x.test");
   const [ray] = await contactsWith("ray@x.test");
   check("replay: one share row, one interaction", rayShares.length === 1 && (await timeline(ray.id)).length === 1);
+
+  // Two shares of one new email at once: one contact, and nothing left for the identity
+  // backfill to hand the pasted LinkedIn slug to.
+  const raceBefore = (await db.select({ n: count() }).from(contacts).where(and(eq(contacts.userId, OWNER), eq(contacts.source, "card"))))[0].n;
+  const race = { name: "Rae Su", email: "race@x.test", linkedinUrl: "https://www.linkedin.com/in/real-person", elapsedMs: 5000, slug };
+  const raced = await Promise.all([
+    shareBackCore({ ...race, nonce: "smoke-race-nonce-0001" }, { ip: "198.51.100.240" }),
+    shareBackCore({ ...race, nonce: "smoke-race-nonce-0002" }, { ip: "198.51.100.241" }),
+  ]);
+  check("race: both ok", raced.every((r) => r.ok));
+  const raceAfter = (await db.select({ n: count() }).from(contacts).where(and(eq(contacts.userId, OWNER), eq(contacts.source, "card"))))[0].n;
+  check("race: one contact holds the email", (await contactsWith("race@x.test")).length === 1, String((await contactsWith("race@x.test")).length));
+  check("race: one new card contact", raceAfter === raceBefore + 1, `${raceBefore} -> ${raceAfter}`);
+  const raceShares = await sharesFor("race@x.test");
+  const [raceContact] = await contactsWith("race@x.test");
+  check("race: both shares point at it", raceShares.length === 2 && raceShares.every((r) => r.contactId === raceContact.id));
+  await backfillContactIdentities({ userId: OWNER });
+  const realSlug = await db
+    .select()
+    .from(contactIdentities)
+    .where(and(eq(contactIdentities.userId, OWNER), eq(contactIdentities.kind, "linkedin_slug"), eq(contactIdentities.value, "real-person")));
+  check("race: backfill claims no linkedin slug", realSlug.length === 0);
+
+  // The form's own fields never surface as field errors.
+  const tampered = await submit({ email: "t@x.test", nonce: "short" });
+  check("tampered nonce: generic refusal", !tampered.ok && tampered.message === "That submission didn't look right. Please try again." && !tampered.fieldErrors);
+  const longName = await submit({ email: "t@x.test", name: "x".repeat(121) });
+  check("long name: our copy", !longName.ok && longName.fieldErrors?.name === "Add your name (up to 120 characters).");
 
   // A paused card takes nothing.
   await setCardPaused(OWNER, true);

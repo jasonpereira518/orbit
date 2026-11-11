@@ -17,7 +17,7 @@ import { isBotRequest, recordBotBlocked } from "@/lib/bot-check";
 import { loadPublicCard } from "@/lib/cards/card-store";
 import { liveEventFor } from "@/lib/cards/live-event";
 import { shareBackSchema } from "@/lib/cards/share-back-schema";
-import { findIdentityOwners } from "@/lib/contact-identity";
+import { findIdentityOwners, type IdentityOwner } from "@/lib/contact-identity";
 import { recordDuplicateSuggestions } from "@/lib/contact-merge";
 import { MIN_FILL_MS } from "@/lib/contact-message";
 import { nameMatchesFor } from "@/lib/contact-resolve";
@@ -55,16 +55,26 @@ const DAILY_CARD_CONTACTS = 300;
 
 const SHARED_TEXT = "Shared their details via your card";
 
+/** Our own copy for the visitor's fields, whatever zod said. */
+const FIELD_COPY: Record<string, string> = {
+  name: "Add your name (up to 120 characters).",
+  email: "That address doesn't look right.",
+  phone: "That number doesn't look right.",
+  company: "Keep it under 200 characters.",
+  title: "Keep it under 200 characters.",
+  linkedinUrl: "That doesn't look like a LinkedIn profile link.",
+  message: "Please keep it under 500 characters.",
+};
+
 export async function shareBackCore(input: ShareBackInput, ctx: { ip: string }): Promise<ShareBackResult> {
   const parsed = shareBackSchema.safeParse(input);
   if (!parsed.success) {
     // A filled honeypot is a bot: plausible success, nothing written.
     if (parsed.error.issues.some((i) => i.path[0] === "website")) return { ok: true };
-    const fieldErrors: Record<string, string> = {};
-    for (const issue of parsed.error.issues) {
-      const field = String(issue.path[0] ?? "");
-      if (field && !fieldErrors[field]) fieldErrors[field] = issue.message;
-    }
+    const fields = parsed.error.issues.map((i) => String(i.path[0] ?? ""));
+    // Slug, nonce and timing are the form's own; a bad one is a tampered post, not a typo.
+    if (fields.some((f) => !Object.hasOwn(FIELD_COPY, f))) return { ok: false, message: "That submission didn't look right. Please try again." };
+    const fieldErrors = Object.fromEntries(fields.map((f) => [f, FIELD_COPY[f]]));
     return { ok: false, message: "Please fix the highlighted fields.", fieldErrors };
   }
   const data = parsed.data;
@@ -183,16 +193,9 @@ export async function resolveUntrusted(
   input: ContactInput
 ): Promise<{ contactId: string | null; status: CardShareStatus }> {
   const db = await getDb();
-  const owners = await findIdentityOwners(userId, identityKeysFor({ email: input.email, phone: input.phone }));
-  if (owners.length) {
-    const [oldest] = await db
-      .select({ id: contacts.id })
-      .from(contacts)
-      .where(and(eq(contacts.userId, userId), inArray(contacts.id, [...new Set(owners.map((o) => o.contactId))])))
-      .orderBy(asc(contacts.createdAt), asc(contacts.id))
-      .limit(1);
-    if (oldest) return { contactId: oldest.id, status: "matched" };
-  }
+  const keys = identityKeysFor({ email: input.email, phone: input.phone });
+  const oldest = await oldestOwner(userId, await findIdentityOwners(userId, keys));
+  if (oldest) return { contactId: oldest, status: "matched" };
 
   const [{ added }] = await db
     .select({ added: count() })
@@ -225,6 +228,16 @@ export async function resolveUntrusted(
     if (isPaywallError(err)) return { contactId: null, status: "held" };
     throw err;
   }
+
+  // The lookup above is read-then-create: a concurrent share of the same email can claim it
+  // first, leaving this contact with no identity rows — which the deploy-time identity
+  // backfill would later fill in, LinkedIn slug included. Seconds old, nothing points at it
+  // yet (no interaction, no suggestion), so it goes and the arrival is the winner's.
+  const winner = await oldestOwner(userId, (await findIdentityOwners(userId, keys)).filter((o) => o.contactId !== contactId));
+  if (winner) {
+    await db.delete(contacts).where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+    return { contactId: winner, status: "matched" };
+  }
   if (linkedinUrl) {
     await db
       .update(contacts)
@@ -238,4 +251,17 @@ export async function resolveUntrusted(
     lookalikes.map((m) => ({ contactIdA: contactId, contactIdB: m.contact.id, reason: m.reason, confidence: m.confidence }))
   );
   return { contactId, status: "added" };
+}
+
+/** The oldest of the contacts holding these identities, by (created_at, id). */
+async function oldestOwner(userId: string, owners: IdentityOwner[]): Promise<string | null> {
+  if (!owners.length) return null;
+  const db = await getDb();
+  const [row] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, [...new Set(owners.map((o) => o.contactId))])))
+    .orderBy(asc(contacts.createdAt), asc(contacts.id))
+    .limit(1);
+  return row?.id ?? null;
 }
