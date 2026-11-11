@@ -2,7 +2,7 @@
 
 import QRCode from "qrcode";
 import { actionFailure } from "@/lib/action-failure";
-import { addArrivalNoteCore, listArrivals, type Arrival } from "@/lib/cards/arrivals";
+import { addArrivalNoteCore, addHeldArrivalCore, listArrivals, type Arrival } from "@/lib/cards/arrivals";
 import {
   cardUrl,
   getCardForOwner,
@@ -100,5 +100,14 @@ export async function addArrivalNote(shareId: string, text: string): Promise<{ o
     return await addArrivalNoteCore(userId, shareId, text);
   } catch (err) {
     return { ok: false, message: await actionFailure(err, "Couldn’t save your note — try again?", "cards.note") };
+  }
+}
+
+export async function addHeldArrival(shareId: string): Promise<{ ok: true } | Fail> {
+  try {
+    const userId = await requireUserForReleasedSurface(SURFACE);
+    return await addHeldArrivalCore(userId, shareId);
+  } catch (err) {
+    return { ok: false, message: await actionFailure(err, "Couldn’t add them — try again?", "cards.addHeld") };
   }
 }

@@ -277,9 +277,10 @@ export const RATE_LIMITS = {
   contactForm: { limit: 3, windowSec: 600 },
   /**
    * A visitor sending their details back through someone's card (`shareBackCore`). Public and
-   * account-free, and each one can create a contact on the owner's account: ten an hour per IP.
+   * account-free, and each one can create a contact on the owner's account. Sixty an hour per
+   * IP: a venue's Wi-Fi puts a whole room behind one address.
    */
-  cardShare: { limit: 10, windowSec: 3600 },
+  cardShare: { limit: 60, windowSec: 3600 },
   /** The same, per card: loose, because a speaker's card is scanned by a room at once. */
   cardShareCard: { limit: 200, windowSec: 3600 },
   /**

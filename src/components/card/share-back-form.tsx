@@ -62,7 +62,9 @@ export function ShareBackForm({ slug, firstName }: { slug: string; firstName: st
   }
 
   return (
+    // POST, so a submit before hydration never puts the visitor's details in the URL.
     <form
+      method="post"
       noValidate
       aria-labelledby="share-back-heading"
       className="landing-glass rounded-3xl p-5"
@@ -83,7 +85,7 @@ export function ShareBackForm({ slug, firstName }: { slug: string; firstName: st
             title: text("title"),
             linkedinUrl: text("linkedinUrl"),
             message: text("message"),
-            website: text("website"),
+            honeypot: text("hp_x"),
             elapsedMs: readyAt.current ? Date.now() - readyAt.current : 0,
           });
           if (result.ok) {
@@ -145,10 +147,11 @@ export function ShareBackForm({ slug, firstName }: { slug: string; firstName: st
         </div>
       </div>
 
-      {/* Honeypot. Off-screen rather than display:none — some bots skip hidden fields. */}
-      <div aria-hidden="true" className="absolute left-[-9999px] top-auto h-px w-px overflow-hidden">
-        <label htmlFor="share-website">Website</label>
-        <input id="share-website" name="website" tabIndex={-1} autoComplete="off" />
+      {/* Honeypot. Off-screen rather than display:none — some bots skip hidden fields — and
+          named for nothing, so identity autofill has no reason to fill it. */}
+      <div inert className="absolute left-[-9999px] top-auto h-px w-px overflow-hidden">
+        <label htmlFor="share-hp">Leave this empty</label>
+        <input id="share-hp" name="hp_x" tabIndex={-1} autoComplete="off" />
       </div>
 
       <button
@@ -165,6 +168,13 @@ export function ShareBackForm({ slug, firstName }: { slug: string; firstName: st
           {formError}
         </p>
       )}
+
+      <p className="mt-4 text-center text-[13px] text-[#9aada8]">
+        Sent only to {firstName}’s Orbit ·{" "}
+        <a href="/privacy" className="underline underline-offset-4 hover:text-[#e8f3f1]">
+          Privacy
+        </a>
+      </p>
     </form>
   );
 }

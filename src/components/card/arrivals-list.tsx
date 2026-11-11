@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { addArrivalNote, listMyArrivals } from "@/actions/cards";
+import { addArrivalNote, addHeldArrival, listMyArrivals } from "@/actions/cards";
 import { Button } from "@/components/ui/button";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Textarea } from "@/components/ui/textarea";
@@ -50,13 +50,13 @@ export function ArrivalsList({ initial, limit }: { initial: Arrival[]; limit?: n
   return (
     <ul className="flex flex-col divide-y divide-border/60" aria-live="polite">
       {shown.map((a) => (
-        <ArrivalRow key={a.id} arrival={a} />
+        <ArrivalRow key={a.id} arrival={a} onChange={() => listMyArrivals().then(setRows).catch(() => null)} />
       ))}
     </ul>
   );
 }
 
-function ArrivalRow({ arrival: a }: { arrival: Arrival }) {
+function ArrivalRow({ arrival: a, onChange }: { arrival: Arrival; onChange: () => void }) {
   const role = [a.title, a.company].filter(Boolean).join(" @ ");
   const typed = [a.email, a.phone].filter(Boolean).join(" · ");
   return (
@@ -69,7 +69,7 @@ function ArrivalRow({ arrival: a }: { arrival: Arrival }) {
         </p>
       </div>
       {role && <p className="-mt-1.5 text-sm text-muted-foreground">{role}</p>}
-      <Status arrival={a} />
+      <Status arrival={a} onChange={onChange} />
       {(typed || a.message) && (
         <blockquote className="border-l-2 border-border pl-3 text-sm text-muted-foreground">
           <span className="text-xs uppercase tracking-wide">They wrote</span>
@@ -82,8 +82,8 @@ function ArrivalRow({ arrival: a }: { arrival: Arrival }) {
   );
 }
 
-function Status({ arrival: a }: { arrival: Arrival }) {
-  if (a.status === "held") return <p className="text-sm text-warning">Waiting — make room in your contacts</p>;
+function Status({ arrival: a, onChange }: { arrival: Arrival; onChange: () => void }) {
+  if (a.status === "held") return <HeldStatus arrival={a} onChange={onChange} />;
   if (!a.contactId) return null;
   const link = (
     <Link href={`/contacts/${a.contactId}`} className="text-primary underline-offset-4 hover:underline">
@@ -100,6 +100,32 @@ function Status({ arrival: a }: { arrival: Arrival }) {
     );
   }
   return <p className="text-sm text-muted-foreground">Added to your contacts as {link}</p>;
+}
+
+function HeldStatus({ arrival: a, onChange }: { arrival: Arrival; onChange: () => void }) {
+  const [pending, start] = useTransition();
+  const add = () =>
+    start(async () => {
+      try {
+        const res = await addHeldArrival(a.id);
+        if (!res.ok) {
+          toast.error(res.message);
+          return;
+        }
+        toast.success(`${a.name} added to your contacts`);
+        onChange();
+      } catch (err) {
+        toast.error(friendlyError(err, TOAST_COPY.saveFailed));
+      }
+    });
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+      <p className="text-sm text-warning">Not added yet — over a limit. Their details are kept here.</p>
+      <Button variant="link" size="sm" className="h-auto px-0" onClick={add} disabled={pending}>
+        Add to contacts
+      </Button>
+    </div>
+  );
 }
 
 function QuickNote({ arrival: a }: { arrival: Arrival }) {

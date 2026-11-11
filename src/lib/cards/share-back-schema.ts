@@ -35,7 +35,7 @@ export const shareBackSchema = z.object({
   ),
   message: optional(500, "Please keep it under 500 characters."),
   /** Honeypot. Hidden from people; a bot that fills it gets a plausible success. */
-  website: z.string().max(0).optional(),
+  honeypot: z.string().max(0).optional(),
   /** Milliseconds between the form rendering and this submission. */
   elapsedMs: z.number().int().nonnegative(),
 });

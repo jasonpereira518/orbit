@@ -190,7 +190,7 @@ export function AppShell({
           <ImportJobWatcher />
           <CaptureJobWatcher />
           <GlobalJobProgressBar />
-          <CommandPalette hidden={hiddenSet} askMode={paletteAskMode} />
+          <CommandPalette hidden={hiddenSet} comingSoon={comingSoonSet} askMode={paletteAskMode} />
           <ComposeHost userId={userId} hidden={hiddenSet} />
           <div
             data-app-sidebar

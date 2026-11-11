@@ -30,7 +30,9 @@ import {
 import { identityKeysFor } from "@/lib/duplicates";
 import { isPaywallError } from "@/lib/entitlements";
 import { recordMetAtEvent } from "@/lib/events/store";
+import { ipLogTag } from "@/lib/log-redaction";
 import { sanitizeAgentText } from "@/lib/mcp/sanitize";
+import { track } from "@/lib/product-events";
 import { RATE_LIMITS, consumeBucket, consumeIpBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
 
@@ -44,7 +46,8 @@ export type ShareBackInput = {
   title?: string;
   linkedinUrl?: string;
   message?: string;
-  website?: string;
+  /** Honeypot (the form's `hp_x` field). */
+  honeypot?: string;
   elapsedMs: number;
 };
 
@@ -66,11 +69,17 @@ const FIELD_COPY: Record<string, string> = {
   message: "Please keep it under 500 characters.",
 };
 
+/** Smoke seam: stands in for `resolveUntrusted` inside `shareBackCore`. */
+let resolveForTests: typeof resolveUntrusted | null = null;
+export function setShareBackResolveForTests(fn: typeof resolveUntrusted | null) {
+  resolveForTests = fn;
+}
+
 export async function shareBackCore(input: ShareBackInput, ctx: { ip: string }): Promise<ShareBackResult> {
   const parsed = shareBackSchema.safeParse(input);
   if (!parsed.success) {
     // A filled honeypot is a bot: plausible success, nothing written.
-    if (parsed.error.issues.some((i) => i.path[0] === "website")) return { ok: true };
+    if (parsed.error.issues.some((i) => i.path[0] === "honeypot")) return { ok: true };
     const fields = parsed.error.issues.map((i) => String(i.path[0] ?? ""));
     // Slug, nonce and timing are the form's own; a bad one is a tampered post, not a typo.
     if (fields.some((f) => !Object.hasOwn(FIELD_COPY, f))) return { ok: false, message: "That submission didn't look right. Please try again." };
@@ -79,7 +88,8 @@ export async function shareBackCore(input: ShareBackInput, ctx: { ip: string }):
   }
   const data = parsed.data;
 
-  if (data.elapsedMs < MIN_FILL_MS) return { ok: true };
+  // A person can be this quick (autofill, a second try), so say so rather than drop them.
+  if (data.elapsedMs < MIN_FILL_MS) return { ok: false, message: "That was quick — please press send again." };
   if (await isBotRequest()) {
     await recordBotBlocked();
     return { ok: true };
@@ -98,12 +108,26 @@ export async function shareBackCore(input: ShareBackInput, ctx: { ip: string }):
     };
   }
 
+  // A venue's Wi-Fi puts a room behind one IP, so a per-IP trip is said out loud; a limiter
+  // that cannot count rethrows, and the action answers with generic copy.
   try {
     await consumeIpBucket("cardShare", ctx.ip, RATE_LIMITS.cardShare);
+  } catch (err) {
+    if (!isRateLimitedError(err)) throw err;
+    console.warn("[card-share] ip rate-limited", { ipTag: ipLogTag(ctx.ip) });
+    track("card_share_limited", { reason: "ip" }, { actor: "system" });
+    return { ok: false, message: "Lots of people on this network just shared — try again in a minute." };
+  }
+  // Past the per-card limit the details are still kept, held: the owner sees the person,
+  // nothing reaches their contacts.
+  let cardLimited = false;
+  try {
     await consumeBucket("cardShareCard", card.cardId, RATE_LIMITS.cardShareCard);
   } catch (err) {
-    if (isRateLimitedError(err)) return { ok: true };
-    throw err;
+    if (!isRateLimitedError(err)) throw err;
+    console.warn("[card-share] card rate-limited", { cardId: card.cardId });
+    track("card_share_limited", { reason: "card" }, { actor: "system" });
+    cardLimited = true;
   }
 
   const { fields } = cleanAgentContactFields({
@@ -118,7 +142,9 @@ export async function shareBackCore(input: ShareBackInput, ctx: { ip: string }):
   const linkedinUrl = safeHttpUrl(fields.linkedinUrl) ?? undefined;
 
   const db = await getDb();
-  // The share row first, keyed by the form's nonce: a replayed submit stops here.
+  const event = await liveEventFor(card.ownerId);
+  // The share row first, keyed by the form's nonce: a replayed submit stops here. Held until
+  // resolved below, so a crash in between leaves an honest row.
   const [share] = await db
     .insert(cardShares)
     .values({
@@ -132,7 +158,8 @@ export async function shareBackCore(input: ShareBackInput, ctx: { ip: string }):
       title: fields.title ?? null,
       linkedinUrl: linkedinUrl ?? null,
       message,
-      status: "added" satisfies CardShareStatus, // provisional until resolved below
+      eventId: event?.id ?? null,
+      status: "held" satisfies CardShareStatus,
     })
     .onConflictDoNothing({ target: [cardShares.cardId, cardShares.nonce] })
     .returning();
@@ -141,46 +168,56 @@ export async function shareBackCore(input: ShareBackInput, ctx: { ip: string }):
   auditUntrustedWrite(card.ownerId, "card.share", "message", message);
   auditUntrustedWrite(card.ownerId, "card.share", "fields", [fullName, fields.company, fields.title].filter(Boolean).join("\n"));
 
-  const event = await liveEventFor(card.ownerId);
+  if (cardLimited) return { ok: true };
+
+  await resolveArrival(card.ownerId, share.id, { fullName, email, phone, company: fields.company, title: fields.title, linkedinUrl }, event);
+  return { ok: true };
+}
+
+/**
+ * Resolves a saved share to the owner's contact and, when there is one, writes the fixed
+ * timeline line and the event link. Shared by the share-back and the owner's "Add to
+ * contacts" on a held arrival. A resolve that throws leaves the row held.
+ */
+export async function resolveArrival(
+  ownerId: string,
+  shareId: string,
+  input: ContactInput,
+  event: { id: string; title: string } | null
+): Promise<CardShareStatus> {
+  const db = await getDb();
   let resolved: { contactId: string | null; status: CardShareStatus } = { contactId: null, status: "held" };
   try {
-    resolved = await resolveUntrusted(card.ownerId, {
-      fullName,
-      email,
-      phone,
-      company: fields.company,
-      title: fields.title,
-      linkedinUrl,
-    });
+    resolved = await (resolveForTests ?? resolveUntrusted)(ownerId, input);
   } catch (err) {
     // The details are already saved on the share row; held keeps them in front of the owner.
     reportError(err, { where: "card.shareBack.resolve" });
   }
   await db
     .update(cardShares)
-    .set({ status: resolved.status, contactId: resolved.contactId, eventId: event?.id ?? null })
-    .where(eq(cardShares.id, share.id));
+    .set({ status: resolved.status, contactId: resolved.contactId })
+    .where(and(eq(cardShares.id, shareId), eq(cardShares.userId, ownerId)));
 
   if (resolved.contactId) {
     try {
       await logNoteInteractionForUser(
-        card.ownerId,
+        ownerId,
         {
           contactId: resolved.contactId,
           rawNotes: event ? `${SHARED_TEXT} at ${event.title}` : SHARED_TEXT,
           interactionType: event ? "event" : "note",
           source: "card",
-          externalId: `card:${share.id}`,
+          externalId: `card:${shareId}`,
         },
         // Fixed text, so nothing worth a brief refresh or an embedding on the owner's budget.
         { skipSummary: true, skipEmbedding: true, skipRevalidate: true }
       );
-      if (event) await recordMetAtEvent(card.ownerId, event.id, [resolved.contactId], { source: "card", byName: false });
+      if (event) await recordMetAtEvent(ownerId, event.id, [resolved.contactId], { source: "card", byName: false });
     } catch (err) {
       reportError(err, { where: "card.shareBack.log" });
     }
   }
-  return { ok: true };
+  return resolved.status;
 }
 
 /**

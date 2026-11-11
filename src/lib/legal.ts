@@ -43,6 +43,8 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // one or confirm a suggestion, listed and removable in the chat's Context panel, sent with every
 // chat question), and the text of files you attach to a question is kept with that chat and sent
 // to the AI provider, a photo or PDF being read by it first.
+// 2026-11-11: Orbit card — fields you switch on are public via your card link; details shared
+// back are stored in your Orbit only.
 export const TERMS_VERSION = "2026-11-11";
 export const LEGAL_LAST_UPDATED = "November 11, 2026";
 

@@ -6,8 +6,9 @@
  */
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { cardShares, contacts, events, type CardShareStatus } from "@/db/schema";
-import { logNoteInteractionForUser, type ContactWriteOptions } from "@/lib/contact-writes";
+import { cardShares, contacts, events, interactions, type CardShareStatus } from "@/db/schema";
+import { resolveArrival } from "@/lib/cards/share-back";
+import { logNoteInteractionForUser, scheduleEmbeddingRebuild, type ContactWriteOptions } from "@/lib/contact-writes";
 
 export type Arrival = {
   id: string;
@@ -74,13 +75,59 @@ export async function addArrivalNoteCore(
   if (share.status === "held") return { ok: false, message: "Make room in your contacts first." };
   if (!share.contactId) return { ok: false, message: "That person isn’t in your contacts anymore" };
 
-  // Keyed by the share, so only the first save lands on the timeline; later saves edit the
-  // note shown on the arrival.
-  await logNoteInteractionForUser(
+  // Keyed by the share, so the timeline holds one note per arrival; a later save edits it.
+  const externalId = `card-note:${shareId}`;
+  const { created } = await logNoteInteractionForUser(
     userId,
-    { contactId: share.contactId, rawNotes: note, interactionType: "note", source: "card", externalId: `card-note:${shareId}` },
+    { contactId: share.contactId, rawNotes: note, interactionType: "note", source: "card", externalId },
     options
   );
+  if (!created) {
+    await db
+      .update(interactions)
+      .set({ rawNotes: note })
+      .where(and(eq(interactions.userId, userId), eq(interactions.externalId, externalId)));
+    if (!options.skipEmbedding) await scheduleEmbeddingRebuild(userId, share.contactId);
+  }
   await db.update(cardShares).set({ ownerNote: note }).where(and(eq(cardShares.id, shareId), eq(cardShares.userId, userId)));
+  return { ok: true };
+}
+
+/**
+ * The owner's "Add to contacts" on a held arrival: the same untrusted resolve and fixed
+ * timeline line the share-back runs, now that there may be room.
+ */
+export async function addHeldArrivalCore(userId: string, shareId: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!UUID_RE.test(shareId)) return { ok: false, message: "That arrival isn’t there anymore" };
+  const db = await getDb();
+  const [share] = await db
+    .select()
+    .from(cardShares)
+    .where(and(eq(cardShares.id, shareId), eq(cardShares.userId, userId)))
+    .limit(1);
+  if (!share) return { ok: false, message: "That arrival isn’t there anymore" };
+  if (share.status !== "held") return { ok: true };
+
+  const [event] = share.eventId
+    ? await db
+        .select({ id: events.id, title: events.title })
+        .from(events)
+        .where(and(eq(events.id, share.eventId), eq(events.userId, userId)))
+        .limit(1)
+    : [];
+  const status = await resolveArrival(
+    userId,
+    share.id,
+    {
+      fullName: share.name,
+      email: share.email ?? undefined,
+      phone: share.phone ?? undefined,
+      company: share.company ?? undefined,
+      title: share.title ?? undefined,
+      linkedinUrl: share.linkedinUrl ?? undefined,
+    },
+    event ?? null
+  );
+  if (status === "held") return { ok: false, message: "You're at your contact limit." };
   return { ok: true };
 }

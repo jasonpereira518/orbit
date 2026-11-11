@@ -63,6 +63,8 @@ export const eventSchemas = {
   waitlist_shared: z.object({ signup_id: uuid, channel: z.enum(SHARE_CHANNELS) }),
   // A real person's join the limiter dropped. Their address is NOT stored anywhere; this is only a count.
   waitlist_join_limited: z.object({ reason: z.enum(["rate_limited", "limiter_error"]) }),
+  // A card share-back the limiter stopped: `ip` was refused, `card` was kept held. Nothing about the visitor.
+  card_share_limited: z.object({ reason: z.enum(["ip", "card"]) }),
   // A waitlist email Resend accepted: makes "how many welcomes went out this wave" answerable.
   waitlist_email_sent: z.object({ kind: z.enum(["welcome", "tier"]) }),
   // `wave_id` is optional: the operator labels a wave when they choose to, and an invite without

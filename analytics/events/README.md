@@ -15,6 +15,12 @@ Format per event: **fires when** / **must not fire when** / **read by**. Propert
 - Read by: How many humans did the limiter drop (a campus NAT during an event).
 - Added: v181.
 
+## card_share_limited
+- Fires when: a visitor's share-back through an Orbit card trips a limiter. `ip` (`cardShare`): refused with "try again in a minute", nothing written. `card` (`cardShareCard`): the share is kept as a held arrival, no contact made. Actor `system`; no user, no visitor details, no IP.
+- Must not fire when: a honeypot, too-fast or BotID refusal (those never reach the limiter), or the limiter cannot count (that is an error, reported).
+- Read by: Are real people at events being turned away or held (venue NAT, a speaker's card scanned by a room).
+- Added: Orbit card PR 1.
+
 ## waitlist_email_sent
 - Fires when: Resend accepted a waitlist welcome or referral-tier email. Actor `system`; carries `kind` only, never the address.
 - Must not fire when: the send was skipped (welcome cap, no Resend key) or Resend rejected it (that is an `error_events` row).

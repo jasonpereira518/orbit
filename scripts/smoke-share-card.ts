@@ -16,13 +16,14 @@ import {
   eventAttendees,
   events,
   interactions,
+  rateLimitBuckets,
   shareCards,
   userSettings,
 } from "../src/db/schema";
 import { GET as vcardGET } from "../src/app/(site)/c/[slug]/vcard/route";
 import { setBotCheckForTests } from "../src/lib/bot-check";
-import { addArrivalNoteCore, listArrivals } from "../src/lib/cards/arrivals";
-import { shareBackCore, type ShareBackInput } from "../src/lib/cards/share-back";
+import { addArrivalNoteCore, addHeldArrivalCore, listArrivals } from "../src/lib/cards/arrivals";
+import { setShareBackResolveForTests, shareBackCore, type ShareBackInput } from "../src/lib/cards/share-back";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
 import { createContactForUser } from "../src/lib/contact-writes";
 import { getEntitlements } from "../src/lib/entitlements";
@@ -302,10 +303,11 @@ async function shareBack() {
   check("live event: share carries the event", (await sharesFor("e@x.test"))[0].eventId === ev.id);
   await db.update(events).set({ dismissedAt: new Date() }).where(eq(events.id, ev.id));
 
-  // Bots get a plausible success and write nothing.
+  // Bots get a plausible success and write nothing; a too-fast person is asked to send again.
   const quietBefore = await shareCount();
-  check("honeypot: ok", (await submit({ email: "bot1@x.test", website: "x" })).ok);
-  check("too fast: ok", (await submit({ email: "bot2@x.test", elapsedMs: 100 })).ok);
+  check("honeypot: ok", (await submit({ email: "bot1@x.test", honeypot: "x" })).ok);
+  const tooFast = await submit({ email: "bot2@x.test", elapsedMs: 100 });
+  check("too fast: visible refusal", !tooFast.ok && tooFast.message === "That was quick — please press send again.", JSON.stringify(tooFast));
   setBotCheckForTests(() => Promise.resolve(true));
   try {
     check("botid: ok", (await submit({ email: "bot3@x.test" })).ok);
@@ -314,12 +316,48 @@ async function shareBack() {
   }
   check("bots: no share rows", (await shareCount()) === quietBefore);
 
-  // The eleventh submit from one IP in the hour is swallowed.
-  for (let i = 1; i <= 11; i++) {
-    check(`rate limit: submit ${i} ok`, (await submit({ name: `Rate ${i}`, email: `rl${i}@x.test` }, "203.0.113.7")).ok);
+  // Sixty an hour from one IP (a venue's Wi-Fi); the sixty-first is told to wait, not dropped
+  // silently. One email throughout, so only the first creates a contact.
+  let allOk = true;
+  for (let i = 1; i <= 60; i++) allOk &&= (await submit({ name: `Rate ${i}`, email: "rl@x.test" }, "203.0.113.7")).ok;
+  check("ip limit: sixty ok", allOk);
+  const sixtyFirst = await submit({ name: "Rate 61", email: "rl@x.test" }, "203.0.113.7");
+  check(
+    "ip limit: sixty-first refused out loud",
+    !sixtyFirst.ok && sixtyFirst.message === "Lots of people on this network just shared — try again in a minute.",
+    JSON.stringify(sixtyFirst)
+  );
+  check("ip limit: sixty rows", (await sharesFor("rl@x.test")).length === 60, String((await sharesFor("rl@x.test")).length));
+
+  // Past the per-card limit the share is kept, held: no contact, no interaction.
+  const cardRow = (await db.select().from(shareCards).where(eq(shareCards.userId, OWNER)))[0];
+  const cardBucket = `cardShareCard:${cardRow.id}`;
+  await db.insert(rateLimitBuckets).values({ bucket: cardBucket, count: 200 }).onConflictDoUpdate({ target: rateLimitBuckets.bucket, set: { count: 200, windowStartedAt: new Date() } });
+  check("card limit: ok", (await submit({ name: "Busy Room", email: "busy@x.test" })).ok);
+  await db.delete(rateLimitBuckets).where(eq(rateLimitBuckets.bucket, cardBucket));
+  const [busy] = await sharesFor("busy@x.test");
+  check("card limit: share kept, held", busy?.status === "held" && busy.contactId === null, JSON.stringify(busy?.status));
+  check(
+    "card limit: no contact, no interaction",
+    (await contactsWith("busy@x.test")).length === 0 &&
+      (await db.select().from(interactions).where(eq(interactions.externalId, `card:${busy.id}`))).length === 0
+  );
+
+  // The row is written held and only then resolved: a crash mid-resolve leaves it held.
+  let seenDuringResolve: string | undefined;
+  setShareBackResolveForTests(async () => {
+    seenDuringResolve = (await sharesFor("crash@x.test"))[0]?.status;
+    throw new Error("smoke: resolve crashed");
+  });
+  try {
+    check("resolve throws: ok", (await submit({ name: "Cras H", email: "crash@x.test" })).ok);
+  } finally {
+    setShareBackResolveForTests(null);
   }
-  const limited = await db.select().from(cardShares).where(and(eq(cardShares.userId, OWNER), like(cardShares.email, "rl%@x.test")));
-  check("rate limit: ten rows", limited.length === 10, String(limited.length));
+  const [crash] = await sharesFor("crash@x.test");
+  check("resolve throws: row was held while resolving", seenDuringResolve === "held", String(seenDuringResolve));
+  check("resolve throws: row stays held, unlinked", crash.status === "held" && crash.contactId === null);
+  check("resolve throws: no contact", (await contactsWith("crash@x.test")).length === 0);
 
   // A replayed nonce lands once.
   const replay = { slug, nonce: "smoke-replay-nonce-0001", name: "Ray Play", email: "ray@x.test", elapsedMs: 5000 };
@@ -375,6 +413,22 @@ async function shareBack() {
   const capNotes = await db.select().from(interactions).where(eq(interactions.externalId, `card:${capShare.id}`));
   check("cap: share held, unlinked", capShare.status === "held" && capShare.contactId === null);
   check("cap: no contact, no interaction", (await contactsWith("cap@x.test")).length === 0 && capNotes.length === 0);
+
+  // The owner's "Add to contacts" on a held arrival: refused at the cap, the share-back's own
+  // resolve once there is room.
+  const stillCapped = await addHeldArrivalCore(OWNER, capShare.id);
+  check("add held: refused at the cap", !stillCapped.ok && stillCapped.message === "You're at your contact limit.", JSON.stringify(stillCapped));
+  check("add held: still held", (await sharesFor("cap@x.test"))[0].status === "held");
+  check("add held: another user's share refused", !(await addHeldArrivalCore(`${PREFIX}intruder`, capShare.id)).ok);
+  const [filler] = await db.select().from(contacts).where(and(eq(contacts.userId, OWNER), like(contacts.fullName, "Filler %"))).limit(1);
+  await db.delete(contacts).where(eq(contacts.id, filler.id));
+  check("add held: ok with room", (await addHeldArrivalCore(OWNER, capShare.id)).ok);
+  const [capContact] = await contactsWith("cap@x.test");
+  const [capAfter] = await sharesFor("cap@x.test");
+  const capLogged = await db.select().from(interactions).where(eq(interactions.externalId, `card:${capShare.id}`));
+  check("add held: one contact, share added and linked", !!capContact && capContact.source === "card" && capAfter.status === "added" && capAfter.contactId === capContact.id);
+  check("add held: one fixed interaction", capLogged.length === 1 && capLogged[0].rawNotes === "Shared their details via your card" && capLogged[0].contactId === capContact.id);
+  check("add held: again is a no-op", (await addHeldArrivalCore(OWNER, capShare.id)).ok && (await db.select().from(interactions).where(eq(interactions.externalId, `card:${capShare.id}`))).length === 1);
   setBotCheckForTests(null);
 }
 
@@ -435,7 +489,7 @@ async function arrivals() {
   check("note: first save ok", (await addArrivalNoteCore(OWNER, matched.id, "Wants an intro to Bo", quiet)).ok);
   check("note: second save ok", (await addArrivalNoteCore(OWNER, matched.id, "Wants an intro to Bo, ping Friday", quiet)).ok);
   const logged = await notes();
-  check("note: one interaction, the owner's text", logged.length === 1 && logged[0].rawNotes === "Wants an intro to Bo" && logged[0].contactId === sam.id && logged[0].interactionType === "note", JSON.stringify(logged.map((l) => l.rawNotes)));
+  check("note: one interaction, the latest text", logged.length === 1 && logged[0].rawNotes === "Wants an intro to Bo, ping Friday" && logged[0].contactId === sam.id && logged[0].interactionType === "note", JSON.stringify(logged.map((l) => l.rawNotes)));
   const [after] = await db.select().from(cardShares).where(eq(cardShares.id, matched.id));
   check("note: ownerNote is the latest text", after.ownerNote === "Wants an intro to Bo, ping Friday");
 

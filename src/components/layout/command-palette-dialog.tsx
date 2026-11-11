@@ -218,11 +218,13 @@ export function CommandPaletteDialog({
   open,
   onOpenChange,
   hidden,
+  comingSoon,
   askMode,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   hidden: ReadonlySet<string>;
+  comingSoon: ReadonlySet<string>;
   askMode: PaletteAskMode;
 }) {
   const router = useRouter();
@@ -420,7 +422,10 @@ export function CommandPaletteDialog({
     // Empty, the palette is mostly a way back to someone, so they lead.
     if (!term) out.push(...personRows);
 
-    const visibleActions = visibleEntries(ACTIONS, hidden);
+    // "Share my card" is off until the card is released, like the header icon.
+    const visibleActions = visibleEntries(ACTIONS, hidden).filter(
+      (c) => c.id !== "action:share-card" || !comingSoon.has("page.card")
+    );
     const actions = term ? rankEntries(visibleActions, term) : visibleActions.filter((c) => c.featured);
     const theme = term ? rankEntries([themeCommand], term) : [];
     out.push(...actions.map((c) => commandRow("Actions", c)));
@@ -457,7 +462,7 @@ export function CommandPaletteDialog({
     return out;
     // `go`/`close` only close over stable setters and the router.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, people, hidden, askMode, pathname, isDark, contactsVisible, captureVisible, emailTerm]);
+  }, [query, people, hidden, comingSoon, askMode, pathname, isDark, contactsVisible, captureVisible, emailTerm]);
 
   const active = rows[Math.min(activeIndex, Math.max(rows.length - 1, 0))];
 
