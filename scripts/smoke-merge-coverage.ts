@@ -65,6 +65,7 @@ const REQUIRED: Record<string, string> = {
   "job_posting_matches.contact_id": "smoke-merge-children (was cascade-deleted)",
   "agent_send_requests.contact_id": "smoke-merge-children (was set null)",
   "email_sends.contact_ids": "smoke-merge-email-sends (was a stale jsonb id)",
+  "radar_opportunities.related_contact_ids": "smoke-merge-radar-opportunities (uuid[] with no foreign key)",
 };
 
 /** Not handled, and known. */

@@ -192,6 +192,7 @@ const MANIFEST: Record<string, Tier> = {
   // Fixed contact bugs, promoted from the bug tier.
   "smoke-merge-children": "pglite",
   "smoke-merge-email-sends": "pglite",
+  "smoke-merge-radar-opportunities": "pglite",
   "smoke-contact-delete-ghost-suggestion": "pglite",
   "smoke-linkedin-slug": "pglite",
   // Contacts, exports, billing and AI validation.

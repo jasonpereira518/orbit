@@ -436,6 +436,35 @@ export async function mergeContacts(
       )
     );
 
+    // 4c-2b. radar_opportunities.related_contact_ids: the people an opportunity connects to
+    //     (who is going, who can introduce, who works there), a uuid[] with no foreign key.
+    //     Same two cases as memory_chunks above, in the same order, for the same reason.
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "radar_opportunities.related_contact_ids.collapsed",
+        sql`UPDATE radar_opportunities SET related_contact_ids = array_remove(related_contact_ids, ${loserId}::uuid)
+             WHERE user_id = ${userId}
+               AND ${loserId}::uuid = ANY(related_contact_ids)
+               AND ${winnerId}::uuid = ANY(related_contact_ids)
+         RETURNING id`
+      )
+    );
+    statements.push(
+      recordMoved(
+        tx,
+        mergeId,
+        "radar_opportunities.related_contact_ids.replaced",
+        sql`UPDATE radar_opportunities
+               SET related_contact_ids = array_replace(related_contact_ids, ${loserId}::uuid, ${winnerId}::uuid)
+             WHERE user_id = ${userId}
+               AND ${loserId}::uuid = ANY(related_contact_ids)
+         RETURNING id`
+      )
+    );
+
+
     // 4c-3. email_sends.contact_ids: everyone a send is addressed to, as a jsonb array of id
     //     strings with no foreign key. Every reader is keyed by the contact (the contact
     //     page's pending/failed sends, reply targets, the outbox's "Emailed: …" log), so a
@@ -930,6 +959,37 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
         `)
       );
     }
+
+    // 2b-2. radar_opportunities.related_contact_ids, the same mirror as memory_chunks.
+    const collapsedOpportunities = repointed["radar_opportunities.related_contact_ids.collapsed"] ?? [];
+    if (collapsedOpportunities.length) {
+      statements.push(
+        tx.execute(sql`
+          UPDATE radar_opportunities SET related_contact_ids = related_contact_ids || ${loserId}::uuid
+           WHERE user_id = ${userId}
+             AND id = ANY(${sql`ARRAY[${sql.join(
+               collapsedOpportunities.map((id) => sql`${id}::uuid`),
+               sql`, `
+             )}]`})
+             AND NOT (${loserId}::uuid = ANY(related_contact_ids))
+        `)
+      );
+    }
+    const replacedOpportunities = repointed["radar_opportunities.related_contact_ids.replaced"] ?? [];
+    if (replacedOpportunities.length) {
+      statements.push(
+        tx.execute(sql`
+          UPDATE radar_opportunities
+             SET related_contact_ids = array_replace(related_contact_ids, ${winnerId}::uuid, ${loserId}::uuid)
+           WHERE user_id = ${userId}
+             AND id = ANY(${sql`ARRAY[${sql.join(
+               replacedOpportunities.map((id) => sql`${id}::uuid`),
+               sql`, `
+             )}]`})
+        `)
+      );
+    }
+
 
     // 2c. email_sends.contact_ids, the same mirror. The collapsed sends get the loser back at
     //     the end; the replaced ones swap the winner back for the loser.
