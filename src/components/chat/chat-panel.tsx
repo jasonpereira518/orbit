@@ -402,6 +402,16 @@ export function ChatPanel({
     });
   }, []);
   const [loadingThread, setLoadingThread] = useState(false);
+  // Focus asked for while the composer is disabled (a thread still loading) is a no-op, so
+  // it waits here and lands on the commit that re-enables the field. A one-frame rAF raced
+  // that commit and dropped focus after Orbit Voice ended.
+  const focusComposerWhenReady = useRef(false);
+  const [focusComposerTick, setFocusComposerTick] = useState(0);
+  useEffect(() => {
+    if (!focusComposerWhenReady.current || loadingThread) return;
+    focusComposerWhenReady.current = false;
+    textareaRef.current?.focus();
+  }, [focusComposerTick, loadingThread]);
   const [lastUserQuery, setLastUserQuery] = useState("");
   /**
    * People attached with `+` or `@` — a registry of what has been picked, never the live
@@ -2358,7 +2368,8 @@ export function ChatPanel({
                   onEnd={async (id) => {
                     threadPrefetch.forget(id);
                     await loadThread(id);
-                    requestAnimationFrame(() => textareaRef.current?.focus());
+                    focusComposerWhenReady.current = true;
+                    setFocusComposerTick((n) => n + 1);
                   }}
                 />
               </div>
