@@ -3,7 +3,7 @@ export default function CardNotFound() {
   return (
     <main
       id="main-content"
-      className="landing-root flex min-h-dvh items-center justify-center bg-[#03050c] px-5 text-center text-[#e8f3f1]"
+      className="landing-root flex min-h-dvh items-center justify-center oc-dust px-5 text-center text-[#e8f3f1]"
     >
       <div className="max-w-sm space-y-2">
         <h1 className="font-[family-name:var(--font-display)] text-2xl tracking-tight">This card isn&apos;t available</h1>

@@ -11,6 +11,7 @@
 @source "(site)/(docs)/privacy/page.tsx";
 @source "(site)/(docs)/terms/loading.tsx";
 @source "(site)/(docs)/terms/page.tsx";
+@source "(site)/c/[slug]/image/route.tsx";
 @source "(site)/c/[slug]/not-found.tsx";
 @source "(site)/c/[slug]/page.tsx";
 @source "(site)/connect/page.tsx";
@@ -24,6 +25,7 @@
 @source "layout.tsx";
 @source "../components/analytics/pageview-beacon.tsx";
 @source "../components/analytics/vercel-telemetry.tsx";
+@source "../components/card/orbit-card.tsx";
 @source "../components/card/public-card.tsx";
 @source "../components/card/share-back-form.tsx";
 @source "../components/chat/chat-rail-placeholder.tsx";
@@ -150,6 +152,7 @@
 @source "../lib/calendar-feed.ts";
 @source "../lib/capture/closeness.ts";
 @source "../lib/capture/person-enrichment.ts";
+@source "../lib/cards/card-art.ts";
 @source "../lib/cards/card-store.ts";
 @source "../lib/cards/live-event.ts";
 @source "../lib/cards/share-back-schema.ts";

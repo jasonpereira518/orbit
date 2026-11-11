@@ -1,5 +1,6 @@
 import { Download, Globe, Mail, Phone } from "lucide-react";
 import type { PublicCard as PublicCardData } from "@/lib/cards/card-store";
+import { OrbitCard } from "@/components/card/orbit-card";
 import { ShareBackForm } from "@/components/card/share-back-form";
 import { LinkedInMark } from "@/components/settings/provider-marks";
 
@@ -21,46 +22,49 @@ export function PublicCard({ card }: { card: PublicCardData }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <section className="text-center" aria-labelledby="card-name">
-        {card.photoUrl && (
-          // eslint-disable-next-line @next/next/no-img-element -- a user's photo on any host; next/image would need every host allow-listed.
-          <img
-            src={card.photoUrl}
-            alt=""
-            width={112}
-            height={112}
-            className="mx-auto h-28 w-28 rounded-full border border-[#e8f3f1]/[0.14] object-cover"
-          />
+      <section aria-label={`${card.fullName}’s card`}>
+        <OrbitCard art={card.art} name={card.fullName} role={role || null} firstName={card.firstName} nameAs="h1" entrance />
+        {(card.photoUrl || card.headline || card.location || card.tagline) && (
+          <div className="mt-6 flex items-center gap-4">
+            {card.photoUrl && (
+              // eslint-disable-next-line @next/next/no-img-element -- a user's photo on any host; next/image would need every host allow-listed.
+              <img
+                src={card.photoUrl}
+                alt=""
+                width={56}
+                height={56}
+                className="size-14 shrink-0 rounded-full border border-[#e8f3f1]/[0.14] object-cover"
+              />
+            )}
+            <div className="min-w-0">
+              {card.headline && <p className="text-[15px] text-[#e8f3f1]/90">{card.headline}</p>}
+              {card.location && <p className="mt-0.5 text-sm text-[#9aada8]">{card.location}</p>}
+              {card.tagline && <p className="mt-1 text-sm italic text-[#d4b469]">{card.tagline}</p>}
+            </div>
+          </div>
         )}
-        <h1 id="card-name" className="mt-4 font-[family-name:var(--font-display)] text-3xl tracking-tight text-[#e8f3f1]">
-          {card.fullName}
-        </h1>
-        {role && <p className="mt-1.5 text-[15px] text-[#e8f3f1]/85">{role}</p>}
-        {card.headline && <p className="mt-1 text-sm text-[#9aada8]">{card.headline}</p>}
-        {card.location && <p className="mt-1 text-sm text-[#9aada8]">{card.location}</p>}
-        {card.tagline && <p className="mt-3 text-sm italic text-landing-accent">{card.tagline}</p>}
       </section>
+
+      <a
+        href={`/c/${card.slug}/vcard`}
+        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[linear-gradient(100deg,#f6e7b8,#d4b469_55%,#e9cf8a)] px-5 text-[15px] font-medium text-[#1a1408] shadow-[0_8px_24px_-12px_rgba(212,180,105,0.6)] transition-[filter] hover:brightness-105"
+      >
+        <Download className="h-4 w-4" aria-hidden="true" />
+        Save contact
+      </a>
 
       {links.length > 0 && (
         <ul className="grid gap-2.5">
           {links.map(({ href, label, icon: Icon, external }) => (
             <li key={href}>
               <a href={href} className={linkClass} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
-                <Icon className="h-4 w-4 shrink-0 text-landing-accent" aria-hidden="true" />
+                <Icon className="h-4 w-4 shrink-0 text-[#d4b469]" aria-hidden="true" />
                 <span className="truncate">{label}</span>
               </a>
             </li>
           ))}
         </ul>
       )}
-
-      <a
-        href={`/c/${card.slug}/vcard`}
-        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[#f2c14e] px-5 text-[15px] font-medium text-[#03050c] transition-colors hover:bg-[#f5cd6b]"
-      >
-        <Download className="h-4 w-4" aria-hidden="true" />
-        Save contact
-      </a>
 
       <ShareBackForm slug={card.slug} firstName={card.firstName} />
     </div>
