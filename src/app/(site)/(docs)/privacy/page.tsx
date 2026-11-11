@@ -214,6 +214,12 @@ export default function PrivacyPage() {
               makes the old link stop working.
             </li>
             <li>
+              <strong>People at the same event.</strong> If you turn on &ldquo;Let people at the
+              same event find me&rdquo;, other Orbit users who have also turned it on and are at the
+              same event while it is happening can see your Orbit card — only the fields you made
+              public. You can hide yourself at any event or turn it off at any time.
+            </li>
+            <li>
               <strong>Secrets you provide</strong> — API keys for AI, enrichment, email, SMS and
               transcription providers, and the tokens for accounts you connect. Encrypted at rest.
             </li>

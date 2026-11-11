@@ -24,6 +24,8 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 import { requireUserId } from "@/lib/auth";
 import { liveEventFor } from "@/lib/cards/live-event";
 import { isSurfaceLive } from "@/lib/surface-visibility";
+import { AlsoHereCard } from "@/components/nearby/also-here-card";
+import { alsoHereViewFor } from "@/lib/nearby/also-here-view";
 import { buttonVariants } from "@/components/ui/button";
 import { userTimeZone } from "@/lib/meeting-context";
 import { ymdInZone } from "@/lib/reminder-due-bucket";
@@ -130,13 +132,15 @@ export default async function EventDetailPage({
   if (!event) notFound();
 
   const userId = await requireUserId();
-  const [zone, liveEvent, cardLive] = await Promise.all([
+  const [zone, liveEvent, cardLive, alsoHereLive] = await Promise.all([
     userTimeZone(userId),
     liveEventFor(userId),
     isSurfaceLive(userId, "page.card"),
+    isSurfaceLive(userId, "feature.also-here"),
   ]);
   // Only while the owner is at this event: that is when someone is standing in front of them.
   const showCardLink = cardLive && liveEvent?.id === event.id;
+  const showAlsoHere = alsoHereLive && liveEvent?.id === event.id;
   const eventDay = event.startsAt
     ? new Date(event.startsAt.getTime() + (offsetMinutes(event.timezone, event.startsAt) ?? 0) * 60_000)
         .toISOString()
@@ -174,6 +178,12 @@ export default async function EventDetailPage({
         <Link href="/card/show" className={buttonVariants({ variant: "outline" })}>
           <QrCode aria-hidden /> Share your card
         </Link>
+      ) : null}
+
+      {showAlsoHere ? (
+        <Suspense fallback={<Skeleton className="h-28 w-full rounded-2xl" />}>
+          <AlsoHere userId={userId} eventId={event.id} />
+        </Suspense>
       ) : null}
 
       {event.enrichError ? (
@@ -230,4 +240,10 @@ export default async function EventDetailPage({
       </div>
     </div>
   );
+}
+
+/** Other opted-in Orbit users at this live event; streamed so the page never waits on it. */
+async function AlsoHere({ userId, eventId }: { userId: string; eventId: string }) {
+  const view = await alsoHereViewFor(userId, eventId).catch(() => null);
+  return view ? <AlsoHereCard eventId={eventId} view={view} /> : null;
 }
