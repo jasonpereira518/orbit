@@ -227,7 +227,6 @@ export type RadarAutopilot = Partial<Record<RecommendationKind, boolean>>;
  * `contact_signals`, deduplicated per account, and read by the scorer like any other signal.
  */
 export const CONTACT_SIGNAL_KINDS = [
-  "company_news",
   "social_post",
   "linkedin_activity",
 ] as const;
@@ -239,10 +238,7 @@ export type ContactSignalKind = (typeof CONTACT_SIGNAL_KINDS)[number];
  * to a model. `url` has already been through `safeHttpUrl`.
  */
 export type ContactSignalPayload = {
-  /** company_news: the headline and the company it matched. */
-  title?: string;
-  company?: string;
-  /** social_post and linkedin_activity: a short excerpt. */
+  /** social_post and linkedin_activity: a short excerpt. Bluesky and Mastodon rows are history: nothing polls them now. */
   excerpt?: string;
   network?: "bluesky" | "mastodon" | "linkedin";
   url?: string | null;
@@ -250,7 +246,7 @@ export type ContactSignalPayload = {
   sourceLabel?: string;
 };
 
-/** The global news tables' source kinds (`external_sources.kind`). */
+/** The retired global news tables' source kinds (`external_sources.kind`); the tables drop in Radar PR 12. */
 export type ExternalSourceKind = "rss" | "atom" | "hn" | "edgar";
 
 /** What a person did with a recommendation, recorded so the next run respects it. */
@@ -274,24 +270,13 @@ export type RadarSignal =
   | { kind: "inbound_unanswered"; contactId: string; at: Date }
   | { kind: "linkedin_thread_quiet"; contactId: string; at: Date; count: number }
   | { kind: "job_posting"; contactId: string; at: Date; text: string }
-  /** A headline about the company they work at (`src/lib/radar/signals/news.ts`). */
-  | {
-      kind: "company_news";
-      contactId: string;
-      at: Date;
-      title: string;
-      source: string;
-      url: string | null;
-      itemId: string;
-      company: string;
-    }
-  /** A post of theirs: public Bluesky or Mastodon, or LinkedIn saved via the extension. */
+  /** A LinkedIn post of theirs the person saved with the extension. */
   | {
       kind: "social_post";
       contactId: string;
       at: Date;
       excerpt: string;
-      network: "bluesky" | "mastodon" | "linkedin";
+      network: "linkedin";
       url: string | null;
     }
   /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */

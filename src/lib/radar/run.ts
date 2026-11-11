@@ -45,10 +45,8 @@ import { buildRadarModel } from "@/lib/radar/model";
 import { RADAR_RERANK_TIMEOUT_MS, rerankPicks, rerankUnchanged } from "@/lib/radar/rerank";
 import { applyAutopilot, loadRadarAutopilot } from "@/lib/radar/autopilot";
 import { draftTodayForRun } from "@/lib/radar/drafts";
-import { probeCompanyNews } from "@/lib/radar/signals/news";
 import { loadPostSignals } from "@/lib/radar/signals/activity";
 import { produceEmailSignals } from "@/lib/radar/signals/email";
-import { pollSocialPosts } from "@/lib/radar/signals/social";
 import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
@@ -116,9 +114,7 @@ export type RadarRunStats = {
   /** Drafts written for Today's cards, and follow-ups autopilot scheduled. */
   drafts: number;
   autopilot: number;
-  /** Headlines about someone's company that became signals this run. */
-  news: number;
-  /** New public posts found by tonight's check. */
+  /** Saved LinkedIn posts the run read for its candidates. */
   posts: number;
   /** Signals read from the user's mail this run (accounts that opted in to email insights). */
   emailSignals: number;
@@ -314,7 +310,6 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     rerankCached: false,
     drafts: 0,
     autopilot: 0,
-    news: 0,
     posts: 0,
     emailSignals: 0,
     durationMs: 0,
@@ -409,30 +404,18 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           loadSuppressions(userId, live, now),
         ]);
 
-        // Headlines about the companies these people work at, from the global news tables.
-        // One indexed read; a failure costs the run its news, never its list.
-        const news = await probeCompanyNews(userId, candidates, now).catch((err) => {
-          reportUnlessQuiet(err, { where: "job.radar.news", userId, level: "warning" });
-          return [];
-        });
-        stats.news = news.length;
-        // Public posts, checked on the nightly pass only (it talks to other servers), then
-        // read back with the LinkedIn activity the extension saved: one read either way.
-        if (opts.trigger === "schedule") {
-          stats.posts = await pollSocialPosts(userId, candidates, now).catch((err) => {
-            reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
-            return 0;
-          });
-        }
+        // Posts the person saved from LinkedIn with the extension. The news sweep and the
+        // Bluesky/Mastodon polling are gone (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
         const posts = await loadPostSignals(userId, new Set(candidates.map((c) => c.id)), now).catch((err) => {
           reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
           return [];
         });
+        stats.posts = posts.length;
         // Email signals first: a card keeps at most two pieces of evidence, and the one from
         // mail is the one an accept needs to find its email again.
         const picks = scorePicks(
           candidates,
-          [...emailSignals, ...signals, ...news, ...posts],
+          [...emailSignals, ...signals, ...posts],
           targetKeys,
           goals,
           suppressions,

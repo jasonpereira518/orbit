@@ -504,10 +504,10 @@ async function seed() {
   await db.insert(schema.contactSignals).values({
     userId: USER,
     contactId: contact.id,
-    kind: "company_news",
+    kind: "linkedin_activity",
     occurredAt: new Date(),
-    source: "manual",
-    payload: { title: "Globex raises a Series B", company: "Globex" },
+    source: "linkedin",
+    payload: { excerpt: "Shipped our new API today", network: "linkedin", url: null },
     dedupeHash: "smoke-purge-signal",
   });
 

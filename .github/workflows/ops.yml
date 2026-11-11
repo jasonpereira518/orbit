@@ -47,9 +47,6 @@ on:
     # The contact name sweep: its own minute, so it never shares a run (and the 8-minute
     # job ceiling) with the work-history sweep.
     - cron: "43 * * * *"
-    # Radar's news sweep: public feeds into the global news tables. :53, clear of every
-    # other hourly job above.
-    - cron: "53 * * * *"
     # Radar's Monday email: every hour of Sunday AND Monday UTC, because Auckland's Monday
     # morning is Sunday evening in UTC. The route sends only to people whose own Monday
     # 06:00–09:00 it is. :13, clear of every hourly job above.
@@ -350,19 +347,6 @@ jobs:
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/cloud-notes/run"
-        env:
-          APP_URL: ${{ secrets.APP_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-
-      # Radar's news sweep (hourly). Reads whole public feeds into the global news tables;
-      # no account is read here. Its own line for the job feed's reason. 300s matches the
-      # route; the sweep stops starting sources at 120s.
-      - name: Run the Radar news sweep (hourly)
-        if: github.event.schedule == '53 * * * *' && steps.health.outcome == 'success'
-        run: |
-          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            "$APP_URL/api/radar/feeds/sweep"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
