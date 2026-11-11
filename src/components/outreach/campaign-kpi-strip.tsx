@@ -22,7 +22,7 @@ export function CampaignKpiStrip({ metrics }: { metrics: CampaignMetrics }) {
       {items.map((item) => (
         <div
           key={item.label}
-          className={`rounded-xl border border-border/70 px-4 py-3 ${
+          className={`rounded-2xl border border-border/70 px-4 py-3 ${
             item.primary ? "bg-primary/5" : "bg-card"
           }`}
         >

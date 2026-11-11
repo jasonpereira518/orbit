@@ -6,7 +6,7 @@
  */
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, recommendations, userSettings } from "@/db/schema";
+import { contacts, recommendations } from "@/db/schema";
 import { addCalendarMeeting, calendarWriteState, type CalendarMeeting } from "@/lib/calendar-write";
 import { recordFeedback } from "@/lib/radar/store";
 import type { RadarCalendarInvite } from "@/lib/radar/types";

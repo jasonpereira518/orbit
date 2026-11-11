@@ -78,7 +78,7 @@ function newBatchId() {
 
 /**
  * Extract docs from one or both drives as one batch: one call per drive, same batch id, so the
- * queue panel shows them together. Returns how many were queued.
+ * Recent captures shows them as one drop. Returns how many were queued.
  */
 async function extractPicked(picked: Pickable[]): Promise<number> {
   const batchGroupId = newBatchId();

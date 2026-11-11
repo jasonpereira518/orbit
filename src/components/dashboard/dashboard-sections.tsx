@@ -1,4 +1,5 @@
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -339,8 +340,17 @@ export async function ChartsSection({ bundle }: { bundle: DashboardBundle }) {
  * Radar's morning briefing, the dashboard's hero for viewers who can open Radar. Renders
  * nothing until their first run: that account keeps the legacy suggestions card below.
  */
-export async function MorningBriefingSection({ briefing }: { briefing: Promise<RadarBriefing> }) {
-  const b = await briefing.catch(() => null);
+export async function MorningBriefingSection({
+  briefing,
+  bundle,
+}: {
+  briefing: Promise<RadarBriefing>;
+  bundle?: DashboardBundle;
+}) {
+  const [b, bundleResult] = await Promise.all([
+    briefing.catch(() => null),
+    bundle ? bundle.catch(() => null) : Promise.resolve(null),
+  ]);
   if (!b?.hasRun) return null;
   return (
     <div className="reveal-mount min-w-0 w-full" style={revealDelay(0)}>
@@ -350,7 +360,7 @@ export async function MorningBriefingSection({ briefing }: { briefing: Promise<R
         drafts={b.drafts}
         changes={b.changes}
         paused={b.paused}
-        networkStats={b.networkStats}
+        networkStats={b.networkStats ?? bundleResult?.networkStats}
         activeProjectsCount={b.activeProjectsCount}
         items={b.top.map((r) => ({
           id: r.id,
@@ -461,7 +471,7 @@ export async function RemindersAndFollowUpsSection({
 }: {
   bundle: DashboardBundle;
 }) {
-  const { data } = await bundle;
+  const [{ data }, timeZone] = await Promise.all([bundle, viewerTimeZone()]);
   return (
     <>
       <div className="reveal-mount min-w-0 [&>*]:h-full" style={revealDelay(0)}>
@@ -519,6 +529,7 @@ export async function RemindersAndFollowUpsSection({
                   tier={tierForContact(data, c.id)}
                   nextFollowUpAt={c.nextFollowUpAt}
                   lastInteractionAt={c.lastInteractionAt}
+                  timeZone={timeZone}
                 />
               ))
             )}

@@ -12,6 +12,7 @@
  * `runRadarForUser` never throws. A failure is reported, recorded on the `radar_runs` row,
  * and retried sooner than a success would be.
  */
+import { resolveTimeZone } from "@/lib/reminder-due-bucket";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite } from "@/db";
 import { radarRuns, userSettings } from "@/db/schema";
@@ -54,7 +55,9 @@ import { reportError, reportUnlessQuiet } from "@/lib/report-error";
 import { runSettledPool } from "@/lib/sync-scheduler";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
-import { loadUserFocus } from "@/lib/career-profile-server";
+import { focusFromCareerProfile } from "@/lib/career-profile-server";
+import { resolvePlan } from "@/lib/entitlements";
+import { getRadarLimitsForPlan } from "@/lib/plans/plan-config";
 import { focusFitComponent, type UserFocus } from "@/lib/focus-fit";
 import { localClock } from "@/lib/radar/digest";
 import { listActiveProjectsForUser, scoreProjectMatch, type UserProject } from "@/lib/projects/store";
@@ -131,7 +134,7 @@ export function nextLocal5am(now: Date, tz: string = "UTC"): Date {
   const [y, m, d] = ymd.split("-").map(Number);
   const targetDay = new Date(Date.UTC(y!, m! - 1, d! + (hour < 4 ? 0 : 1)));
   const ymdTarget = targetDay.toISOString().slice(0, 10);
-  let guess = new Date(`${ymdTarget}T05:00:00Z`);
+  const guess = new Date(`${ymdTarget}T05:00:00Z`);
   const check = localClock(guess, tz);
   let hourDiff = 5 - check.hour;
   if (hourDiff > 12) hourDiff -= 24;
@@ -231,9 +234,10 @@ export function scoreCandidates(
   now: Date,
   model: RadarModel | null = null,
   focus: UserFocus | null = null,
+  timeZone = "UTC",
   projects: readonly UserProject[] = []
 ): NewRecommendation[] {
-  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model, focus, projects), RADAR_CAPS);
+  return rankPicks(scorePicks(candidates, signals, targetKeys, goals, suppressions, now, model, focus, timeZone, projects), RADAR_CAPS);
 }
 
 /** Every person's winning card, before the caps: what the rerank chooses its shortlist from. */
@@ -246,8 +250,8 @@ export function scorePicks(
   now: Date,
   model: RadarModel | null = null,
   focus: UserFocus | null = null,
-  projects: readonly UserProject[] = [],
-  tz: string = "UTC"
+  timeZone = "UTC",
+  projects: readonly UserProject[] = []
 ): NewRecommendation[] {
   const byContact = new Map<string, RadarSignal[]>();
   for (const s of signals) {
@@ -260,7 +264,7 @@ export function scorePicks(
   for (const row of candidates) {
     rowById.set(row.id, row);
     const contact = toRadarContact(row, targetKeys, goals, focus, projects);
-    const kinds = scoreContactKinds(contact, byContact.get(row.id) ?? [], suppressions.get(row.id) ?? NO_SUPPRESSION, now, model);
+    const kinds = scoreContactKinds(contact, byContact.get(row.id) ?? [], suppressions.get(row.id) ?? NO_SUPPRESSION, now, model, timeZone);
     const pick = pickWinner(row.id, kinds, now);
     if (pick) {
       if (row.email && (pick.bucket === "today" || pick.score >= 45)) {
@@ -269,7 +273,7 @@ export function scorePicks(
           { fullName: (row.preferredName ?? "").trim() || row.fullName, email: row.email },
           lead?.label ?? pick.kind,
           now,
-          tz
+          timeZone
         );
       }
       picks.push(pick);
@@ -329,7 +333,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
         runId = run!.id;
 
-        const [signals, emailSignals, goals, targetKeys, focus, live, outcomes, tallies, settingsRow] = await Promise.all([
+        const [signals, emailSignals, goals, targetKeys, live, outcomes, tallies, settingsRow, initialProjects] = await Promise.all([
           produceInternalSignals(userId, now),
           // Events read from the user's mail, for accounts that opted in. A failure costs the
           // run these signals, never its list.
@@ -339,12 +343,6 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           }),
           listActiveGoalTextsForUser(userId, { limit: 8 }),
           loadTargetKeys(userId),
-          // Skills and watched job titles from the LinkedIn export. A failure costs the nudge,
-          // never the run.
-          loadUserFocus(userId).catch((err) => {
-            reportUnlessQuiet(err, { where: "job.radar.focus", userId, level: "warning" });
-            return null;
-          }),
           loadLiveRecommendations(userId),
           // Measurement, not ranking: which accepts turned into conversations. It never
           // blocks the list, so a failure here costs the stat, not the run.
@@ -364,15 +362,23 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
               dailyEnabled: userSettings.radarDailyEnabled,
               autoProjects: userSettings.radarAutoProjects,
               discoveryEnabled: userSettings.radarDiscoveryEnabled,
+              careerProfile: userSettings.careerProfile,
+              compedPlan: userSettings.compedPlan,
+              lifetimePurchasedAt: userSettings.lifetimePurchasedAt,
+              subscriptionPlan: userSettings.subscriptionPlan,
+              subscriptionStatus: userSettings.subscriptionStatus,
+              subscriptionPeriodEnd: userSettings.subscriptionPeriodEnd,
             })
             .from(userSettings)
             .where(eq(userSettings.userId, userId))
             .limit(1)
             .then(([r]) => r ?? null)
             .catch(() => null),
+          listActiveProjectsForUser(userId).catch(() => [] as UserProject[]),
         ]);
         stats.outcomes = outcomes;
-        userTz = settingsRow?.tz ?? "UTC";
+        userTz = resolveTimeZone(settingsRow?.tz);
+        const focus = focusFromCareerProfile(settingsRow?.careerProfile);
         const model = tallies ? buildRadarModel(tallies, now) : null;
         learned = model;
 
@@ -380,17 +386,21 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const access = opts.ai ? await openRadarAi(userId) : null;
         if (opts.ai && !access) stats.skippedNoKey = true;
 
-        // Plan tiering and capabilities
-        const { getEntitlements } = await import("@/lib/entitlements");
-        const { getRadarLimitsForPlan } = await import("@/lib/plans/plan-config");
-        const userPlan = (await getEntitlements(userId).catch(() => null))?.plan ?? "free";
+        // Plan tiering and capabilities (derived from settingsRow without extra queries)
+        const { plan: userPlan } = resolvePlan(settingsRow, now);
         const radarLimits = getRadarLimitsForPlan(userPlan);
 
-        // Active projects: extract/refresh or load known projects
-        let activeProjects: UserProject[] = await listActiveProjectsForUser(userId).catch(() => []);
-        if (settingsRow?.autoProjects !== 0 && (opts.trigger === "schedule" || opts.trigger === "manual")) {
+        // Active projects: extract/refresh only when AI is available (or seed from goals once)
+        let activeProjects: UserProject[] = initialProjects;
+        if (
+          settingsRow?.autoProjects !== 0 &&
+          (opts.trigger === "schedule" || opts.trigger === "manual") &&
+          (access || (activeProjects.length === 0 && goals.length > 0))
+        ) {
           activeProjects = await extractActiveProjectsForUser(userId, access ?? undefined, {
             since: settingsRow?.lastRunAt ?? undefined,
+            goals,
+            existingProjects: activeProjects,
           }).catch(() => activeProjects);
         }
 
@@ -443,8 +453,8 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           now,
           model,
           focus,
-          activeProjects,
-          userTz
+          userTz,
+          activeProjects
         );
 
         let ranked: NewRecommendation[] = picks;

@@ -79,9 +79,11 @@ export const PLAN_SHORT_LABELS: Record<Plan, string> = {
  * - `extraConnections`: a second Google or Microsoft account. Free keeps its first one.
  * - `hostedAi`: AI on Orbit's provider keys, metered in credits (every plan).
  * - `creditPacks`: buying a $5 top-up pack (every plan but Lifetime).
- * - `radar`, `events`, `findPeople`, `compose`, `cloudNotes`: features that ship coming soon.
- *   Each is enforced by its surface's own guards (`SURFACE_FEATURE` in `surfaces.ts`), and
- *   defaults to the paid plans — `COMING_SOON_UNLOCK_PLAN` promises them on Pro.
+ * - `radar`, `events`: on every plan (`radar` caps Free via `RADAR_PLAN_LIMITS`; `events` is the
+ *   "who did I meet" loop).
+ * - `findPeople`, `compose`, `cloudNotes`: features that ship coming soon. Each is enforced by its
+ *   surface's own guards (`SURFACE_FEATURE` in `surfaces.ts`), and defaults to the paid plans —
+ *   `COMING_SOON_UNLOCK_PLAN` promises them on Pro.
  *
  * Every flag here is a CODE DEFAULT: an operator can widen or narrow any of them per plan from
  * /admin/product/plans (`plan-overrides.ts`), so server gates read `getEffectivePlanConfig()`.

@@ -7,6 +7,8 @@
  */
 process.env.HUBSPOT_CLIENT_ID = "test-client";
 process.env.HUBSPOT_CLIENT_SECRET = "test-secret";
+process.env.NOTION_CLIENT_ID = "notion-client";
+process.env.NOTION_CLIENT_SECRET = "notion-secret";
 // Deterministic: force the module's dev-secret fallback so the "hand-signed with the real
 // secret" checks below can reproduce it without reaching into the module's internals, and so
 // this suite behaves the same regardless of what happens to be in the shell environment.
@@ -282,7 +284,48 @@ async function exchange() {
   );
 }
 
-exchange().then(() => {
+/** Notion: Basic client auth, a JSON body, no scope parameter, and the workspace extras kept. */
+async function notion() {
+  const authorize = new URL(
+    buildAuthorizeUrl("notion", { userId: "u1", redirectUri: "https://x.test/cb", scopes: [], returnTo: "/settings" })
+  );
+  check("notion authorize asks for a user-owned grant", authorize.searchParams.get("owner") === "user");
+  check("notion authorize sends no scope parameter", !authorize.searchParams.has("scope"));
+
+  let seen: { headers: Record<string, string>; body: string } | null = null;
+  const tokens = await exchangeCode("notion", "code-1", "https://x.test/cb", {
+    fetchImpl: (async (_url: string, init: RequestInit) => {
+      seen = { headers: init.headers as Record<string, string>, body: String(init.body) };
+      return new Response(
+        JSON.stringify({ access_token: "ntn_a", refresh_token: null, workspace_name: "Acme HQ", workspace_id: "w1" }),
+        { status: 200 }
+      );
+    }) as unknown as typeof fetch,
+  });
+  const sent = seen as { headers: Record<string, string>; body: string } | null;
+  const expectedBasic = `Basic ${Buffer.from("notion-client:notion-secret").toString("base64")}`;
+  check("notion token call uses HTTP Basic client auth", sent?.headers.authorization === expectedBasic);
+  check("notion token call sends JSON", sent?.headers["content-type"] === "application/json");
+  const body = JSON.parse(sent?.body ?? "{}") as Record<string, string>;
+  check(
+    "notion body carries the grant, not the secret",
+    body.grant_type === "authorization_code" && body.code === "code-1" && !("client_secret" in body)
+  );
+  check("a null refresh token and no expiry read as non-expiring", tokens.refreshToken === null && tokens.expiresAt === null);
+  check("the workspace extras survive in raw", tokens.raw.workspace_name === "Acme HQ");
+
+  // Notion rotates the refresh token: the new one must come back for the caller to store.
+  const refreshed = await refreshAccessToken("notion", "old-refresh", {
+    fetchImpl: (async () =>
+      new Response(JSON.stringify({ access_token: "ntn_b", refresh_token: "new-refresh", expires_in: 3600 }), {
+        status: 200,
+      })) as unknown as typeof fetch,
+  });
+  check("a notion refresh returns the rotated refresh token", refreshed.refreshToken === "new-refresh");
+  check("a notion refresh with expires_in sets an expiry", refreshed.expiresAt !== null);
+}
+
+exchange().then(notion).then(() => {
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

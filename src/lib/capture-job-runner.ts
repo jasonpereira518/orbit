@@ -13,12 +13,14 @@
  * runner (a) adopts a batch that already exists for this corpus and (b) re-runs duplicate
  * detection so a person created by the previous attempt is now an update, not a second row.
  */
+import { splitMeetings } from "@/lib/capture/split-meetings";
+import { combineCaptureResults, splitDecisions } from "@/lib/capture/combine-results";
 import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
 import { openEngines } from "@/lib/decisions/engine";
 import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, noteBatches, type CaptureSourceKind } from "@/db/schema";
+import { captureJobs, contacts, noteBatches, type CaptureSourceKind } from "@/db/schema";
 import { runCaptureParse } from "@/lib/capture-parse";
 import {
   claimCaptureJob,
@@ -38,7 +40,7 @@ import {
   saveTimeMergeTarget,
   setAsidePeople,
 } from "@/lib/capture/review-reducer";
-import type { CaptureJobResult, CaptureParseResult, CaptureDecisions, CaptureSavedSummary } from "@/lib/capture/types";
+import type { CaptureJobResult, CaptureJobStatus, CaptureParseResult, CaptureDecisions, CaptureSavedSummary } from "@/lib/capture/types";
 
 import { resolveAvatarNow } from "@/lib/avatar-backfill";
 import { downloadAndPersistAvatar } from "@/lib/contact-avatar";
@@ -179,8 +181,8 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
   try {
     const corpus = assembleCaptureCorpus(row);
     if (!corpus) throw new Error("Nothing to read yet");
-    const parsed = await Promise.race([
-      parse(row.userId, corpus, row.inputHints, {
+    const parseOne = (text: string, hints: typeof row.inputHints) =>
+      parse(row.userId, text, hints, {
         meetingSessionId: row.meetingSessionId,
         // The review flow: someone will look at these cards, so new people are worth a search.
         lookUpNewPeople: true,
@@ -192,7 +194,26 @@ async function runExtraction(id: string, deps: CaptureRunnerDeps): Promise<Captu
         // to outlast CAPTURE_CLAIM_STALE_MS in silence and get re-claimed — and re-billed —
         // while still running. And stop between them once the claim is gone: `claimWatch`.
         onProgress: watch.heartbeat,
-      }),
+      });
+    // A paste of several dated meetings is read one meeting at a time, each with its own
+    // date, then folded into one review like a multi-file upload (`split-meetings.ts`).
+    // Recordings, Granola notes and file bins are one note by construction.
+    const meetings =
+      !row.meetingSessionId && !row.ingestedBlocks?.length && !(row.inputHints as GranolaJobHints | null)?.granola
+        ? splitMeetings(corpus, deps.now)
+        : [];
+    const parsed = await Promise.race([
+      meetings.length
+        ? Promise.all(
+            meetings.map(async (m) => {
+              const { sourceText, sourceHash, ...result } = await parseOne(m.text, { ...(row.inputHints ?? {}), eventDate: m.dateIso });
+              return { label: m.label, sourceText, sourceHash, result };
+            })
+          ).then((parts) => {
+            const combined = combineCaptureResults(parts);
+            return { ...combined.result, sourceText: combined.sourceText, sourceHash: combined.sourceHash };
+          })
+        : parseOne(corpus, row.inputHints),
       watch.lost,
     ]);
     if (!(await heartbeatCaptureJob(id, token))) throw new ClaimLostError();
@@ -259,6 +280,12 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
   try {
     if (!row.result || !row.sourceText || !row.sourceHash) throw new Error("Extract people before saving");
     const userId = row.userId;
+
+    // An upload's combined review: every file is saved as its own capture, never as one.
+    if (row.result.parts?.length) {
+      await saveCombinedParts(row, token, deps);
+      return getCaptureJobById(id);
+    }
 
     // (a) A batch this corpus already produced — the previous attempt got that far. The
     //     window is the job's whole life, not the current claim: the batch predates the
@@ -368,6 +395,67 @@ async function runSave(id: string, deps: CaptureRunnerDeps): Promise<CaptureJobR
     }
   }
   return getCaptureJobById(id);
+}
+
+/** Statuses a part can be (re)saved from: untouched since the merge, or a save that stopped. */
+const PART_SAVABLE = new Set<CaptureJobStatus>(["merged", "failed", "saving"]);
+
+/**
+ * Save an upload's combined review as one capture per file.
+ *
+ * The review is one deck, but the files are separate notes: each part job gets back the
+ * decisions recorded against its cards (`splitDecisions`) and runs its own ordinary save, so
+ * it becomes its own note batch with its own text, photos, history row and source label —
+ * and inherits every guarantee `runSave` already has (resume after a crash, follow-ons).
+ *
+ * Re-runnable: a part already `saved` is only read back for the totals. A part whose cards
+ * were all set aside, with no reminder ticked, writes nothing and stays `merged` (its file
+ * hashes still say "already captured").
+ */
+async function saveCombinedParts(row: CaptureJobRow, token: string, deps: CaptureRunnerDeps): Promise<void> {
+  const result = row.result!;
+  const partIds = result.parts!;
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(captureJobs)
+    .where(and(eq(captureJobs.userId, row.userId), inArray(captureJobs.id, partIds)));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  const summaries: CaptureSavedSummary[] = [];
+  const contactIdByKey: Record<string, string> = {};
+  for (const [n, partId] of partIds.entries()) {
+    let part = byId.get(partId);
+    if (!part?.result) continue;
+    if (PART_SAVABLE.has(part.status)) {
+      const decisions = splitDecisions(row.decisions, n, part.result.items);
+      const keptReminders = decisions.reminders ? decisions.reminders.checked.length : part.result.suggestedReminders.length;
+      if (!acceptedPeople(part.result.items, decisions).length && !keptReminders) continue;
+      await db
+        .update(captureJobs)
+        .set({ decisions, status: "saving", error: null, claimToken: null, updatedAt: new Date() })
+        .where(and(eq(captureJobs.id, partId), inArray(captureJobs.status, [...PART_SAVABLE])));
+      part = (await runSave(partId, deps)) ?? part;
+    }
+    if (part.status !== "saved") throw new Error(part.error ?? "One of the notes couldn’t be saved");
+    const saved = part.result?.saved;
+    if (!saved) continue;
+    summaries.push(saved);
+    for (const [key, contactId] of Object.entries(saved.contactIdByKey)) contactIdByKey[`n${n}:${key}`] = contactId;
+  }
+
+  const sum = (pick: (s: CaptureSavedSummary) => number) => summaries.reduce((t, s) => t + pick(s), 0);
+  const saved: CaptureSavedSummary = {
+    // The first file's capture: what the saved state's "open" link lands on.
+    batchId: summaries[0]?.batchId ?? "",
+    created: sum((s) => s.created),
+    updated: sum((s) => s.updated),
+    remindersCreated: sum((s) => s.remindersCreated),
+    contactIds: [...new Set(summaries.flatMap((s) => s.contactIds))],
+    contactIdByKey,
+  };
+  // No note batch of its own: each part points at the one it wrote.
+  await settleCaptureJob(row.id, token, { status: "saved", noteBatchId: null, result: { ...result, saved }, error: null });
 }
 
 /**

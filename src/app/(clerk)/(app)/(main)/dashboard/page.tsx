@@ -78,7 +78,7 @@ export default async function DashboardPage() {
           {/* Radar flagship morning briefing: centerpiece hero at the top of the dashboard */}
           {radarBriefing && (
             <div className="w-full">
-              <MorningBriefingSection briefing={radarBriefing} />
+              <MorningBriefingSection briefing={radarBriefing} bundle={bundle} />
             </div>
           )}
 

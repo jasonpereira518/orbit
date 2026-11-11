@@ -86,7 +86,7 @@ async function main() {
     },
   };
   const lifted = withDemoIntegrationStatuses(real);
-  const everyPage = ["google", "microsoft", "linkedin", "outreach", "webhooks", "reminders", "api"] as const;
+  const everyPage = ["google", "microsoft", "linkedin", "outreach", "webhooks", "api"] as const;
   const everyConnector = ["google", "outlook", "linkedin", "calendar_ics", "luma", "eventbrite", "apollo", "zapier"] as const;
   const off = [
     ...everyPage.filter((k) => {

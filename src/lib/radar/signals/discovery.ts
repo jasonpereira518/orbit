@@ -7,11 +7,11 @@
  * Dedupes against existing contacts, persists newly discovered prospects to `contacts`, and produces
  * high-priority `discovery` signals with pre-drafted context.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { contacts, contactIdentities } from "@/db/schema";
+import { contacts } from "@/db/schema";
 import type { UserProject } from "@/lib/projects/store";
-import type { RadarDiscoveredPerson, RadarSignal } from "@/lib/radar/types";
+import type { RadarSignal } from "@/lib/radar/types";
 import { reportUnlessQuiet } from "@/lib/report-error";
 import { safeHttpUrl } from "@/lib/safe-links";
 

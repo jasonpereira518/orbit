@@ -5,7 +5,7 @@
  * since the last Radar run, and uses LLM intelligence to synthesize the user's current
  * high-leverage endeavors and active projects.
  */
-import { and, desc, gte, inArray, isNull, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { completeJson } from "@/lib/ai";
 import type { AiAccess } from "@/lib/ai-access";
@@ -186,14 +186,16 @@ Extract the user's currently active projects as JSON:`;
 export async function extractActiveProjectsForUser(
   userId: string,
   access?: AiAccess,
-  options: { since?: Date; force?: boolean } = {}
+  options: { since?: Date; force?: boolean; goals?: string[]; existingProjects?: UserProject[] } = {}
 ): Promise<UserProject[]> {
   try {
     const since = options.since ?? new Date(Date.now() - LOOKBACK_DEFAULT_DAYS * DAY_MS);
+
+    // Without AI access we never scan activity snippets (heuristic fallback only inspects goals/existing rows).
     const [snippets, goals, existingProjects] = await Promise.all([
-      loadRecentActivity(userId, since),
-      listActiveGoalTextsForUser(userId),
-      listActiveProjectsForUser(userId),
+      access ? loadRecentActivity(userId, since) : Promise.resolve([] as ActivitySnippet[]),
+      options.goals ? Promise.resolve(options.goals) : listActiveGoalTextsForUser(userId),
+      options.existingProjects ? Promise.resolve(options.existingProjects) : listActiveProjectsForUser(userId),
     ]);
 
     // If there is very little recent activity and we already have projects, keep existing

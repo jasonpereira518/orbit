@@ -230,8 +230,6 @@ run(async () => {
   check("a claimed one cannot be claimed twice", !(await claimRadarLease(USER, NOW)));
 
   console.log("\nthe first run");
-  const { getEffectivePlanConfig } = await import("../src/lib/plans/plan-rules");
-  await getEffectivePlanConfig();
   startQueryCount();
   const first = await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
   const statements = stopQueryCount();
@@ -391,7 +389,8 @@ run(async () => {
   // posts read (26); plus the one constant read of the user's imported skills/job titles
   // (`loadUserFocus`) and the email-insights opt-in check (`produceEmailSignals`, one statement
   // that returns nothing for an account that has not opted in); see smoke-page-budgets.
-  check("and a bounded number of them", statements <= 40, String(statements));
+  // 29: plus active-projects read folded alongside user_settings (which now provides focus, tz, plan, and toggles).
+  check("and a bounded number of them", statements <= 29, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);

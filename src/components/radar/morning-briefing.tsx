@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, CalendarPlus, FolderKanban, PenLine, Radar, Sparkles, X } from "lucide-react";
+import { ArrowRight, CalendarPlus, PenLine, Radar, X } from "lucide-react";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { preloadFollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import { RecommendationDraftSheet, type RecommendationCardData } from "@/components/radar/recommendation-card";

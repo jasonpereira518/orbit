@@ -17,7 +17,7 @@ import { scaleContactRows } from "../scripts/lib/scale-fixture";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { loadGraphData } from "../src/lib/graph-data";
 import { getDashboardData } from "../src/lib/reminders";
-import { loadKnowledgeBase } from "../src/lib/knowledge-base";
+import { searchKnowledgeContent } from "../src/lib/knowledge-search";
 import { listContactsPage } from "../src/lib/contacts-page-query";
 import { collectUserExport } from "../src/lib/data-export";
 import { recalibrateCloseness } from "../src/lib/closeness-cohort";
@@ -62,8 +62,8 @@ run(async () => {
   finding("SCALE-DASH", "dashboard stays under 5 s at 20k contacts", dash.ms < 5000, `${dash.ms} ms`);
   void dash.value;
 
-  const kb = await timed("loadKnowledgeBase (q='a')", () => loadKnowledgeBase(USER, { q: "a" } as never));
-  finding("SCALE-KB", "knowledge base search stays under 5 s", kb.ms < 5000, `${kb.ms} ms`);
+  const kb = await timed("searchKnowledgeContent (q='the')", () => searchKnowledgeContent(USER, "the"));
+  finding("SCALE-KB", "knowledge search stays under 5 s", kb.ms < 5000, `${kb.ms} ms`);
 
   const panel = await timed("loadNotificationPanel", () => loadNotificationPanel(USER, new Date(), { withAlerts: false }));
   check(`notification panel ${panel.ms} ms`, true);
@@ -100,10 +100,8 @@ run(async () => {
     const none = await listContactsPage(USER, { q: "zzqxjv-no-such-person", limit: 50 } as never);
     check(`q='%' → ${pct.items.length} rows; q='____' → ${und.items.length}; nonsense → ${none.items.length}`, true);
     finding("SCALE-LIKE", "a bare '%' search term does not match every contact (LIKE escaping)", pct.items.length === 0 || pct.items.length < 50, `${pct.items.length} rows`);
-    const kbPct = await loadKnowledgeBase(USER, { q: "%" } as never);
-    const kbCount = (kbPct as { entries?: unknown[]; items?: unknown[]; results?: unknown[] });
-    const n = (kbCount.entries ?? kbCount.items ?? kbCount.results ?? []).length;
-    finding("SCALE-LIKE-KB", "knowledge base: a '%' query does not match everything (`like = \\`%${q}%\\`` is unescaped in knowledge-base.ts)", n === 0, `${n} results for q='%' (keys: ${Object.keys(kbPct as object).join(",")})`);
+    const kbPct = await searchKnowledgeContent(USER, "%%%");
+    finding("SCALE-LIKE-KB", "knowledge search: a '%%%' query does not match everything (literal strpos match, no LIKE pattern)", kbPct.length === 0, `${kbPct.length} results for q='%%%'`);
   }
 
   console.log("\nExport...");

@@ -131,17 +131,15 @@ export type RadarBriefing = {
   activeProjectsCount?: number;
 };
 
-/** The dashboard's morning briefing, in two statements. Never builds anything itself. */
+/** The dashboard's morning briefing, in three statements. Never builds anything itself. */
 export async function loadRadarBriefing(userId: string): Promise<RadarBriefing> {
   const state = await loadRadarState(userId);
   if (!state?.lastRunAt) {
     return { hasRun: false, paused: state?.paused ?? false, top: [], total: 0, today: 0, drafts: 0, changes: [] };
   }
-  const { getNetworkStats } = await import("@/lib/network-stats");
   const { listActiveProjectsForUser } = await import("@/lib/projects/store");
-  const [pending, networkStats, projects] = await Promise.all([
+  const [pending, projects] = await Promise.all([
     listPendingRecommendations(userId, RADAR_CAPS.pending),
-    getNetworkStats(userId).catch(() => null),
     listActiveProjectsForUser(userId, { limit: 10 }).catch(() => []),
   ]);
   const today = pending.slice(0, RADAR_CAPS.today);
@@ -153,7 +151,6 @@ export async function loadRadarBriefing(userId: string): Promise<RadarBriefing> 
     today: today.length,
     drafts: draftsReady(pending),
     changes: whatChanged(pending, new Date()),
-    networkStats,
     activeProjectsCount: projects.length,
   };
 }

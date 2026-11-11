@@ -30,6 +30,7 @@ import {
 } from "../src/db/schema";
 import { setConstellationConfig } from "../src/lib/constellation-config";
 import { loadGraphData } from "../src/lib/graph-data";
+import { encodeGraphPayload } from "../src/lib/graph-wire";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { run } from "./smoke/_env";
 
@@ -91,7 +92,9 @@ run(async () => {
     }
 
     const engaged = await loadGraphData(USER, { profile: Promise.resolve(null) });
-    const json = JSON.stringify(engaged);
+    // Serialize the wire form, not the object form: the wire is what the action hands the
+    // client, so it is the thing a leak would actually travel in (dictionaries included).
+    const json = JSON.stringify(encodeGraphPayload(engaged));
 
     console.log(
       `\n${engaged.summary.total} contacts · ${engaged.contacts.length} drawn · ` +
@@ -135,7 +138,7 @@ run(async () => {
       profile: Promise.resolve(null),
       scope: "all",
     });
-    const allJson = JSON.stringify(all);
+    const allJson = JSON.stringify(encodeGraphPayload(all));
     const saved = 1 - json.length / allJson.length;
     console.log(
       `  engaged ${(json.length / 1024).toFixed(1)} KB · all ` +

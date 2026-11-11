@@ -10,7 +10,7 @@ import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 
 /**
  * Cloud docs into capture jobs. Each doc becomes its own reviewable job under one batch id, so
- * the queue panel shows the set like any multi-file drop — extracting never saves anything to
+ * Recent captures shows the set like any multi-file drop — extracting never saves anything to
  * contacts on its own; the person reviews the cards.
  */
 
@@ -38,7 +38,8 @@ export async function priorCaptureOf(userId: string, sourceHash: string): Promis
  */
 export async function createCaptureFromText(
   userId: string,
-  input: { text: string; label: string; batchGroupId: string; provider: CloudProvider; force?: boolean },
+  // "notion": a page picked from Notion, tagged `cloud:notion` (no Drive/OneDrive badge).
+  input: { text: string; label: string; batchGroupId: string; provider: CloudProvider | "notion"; force?: boolean },
 ): Promise<CaptureFromTextOutcome> {
   // `source_hash` is written by the parse over the corpus it read, which for a plain doc is this text.
   if (!input.force) {

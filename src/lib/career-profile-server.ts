@@ -20,17 +20,21 @@ export async function loadYouCurrent(userId: string): Promise<YouCurrent> {
   return { career: row?.career ?? null, senderBio: row?.senderBio ?? null, schools };
 }
 
+export function focusFromCareerProfile(career: CareerProfile | null | undefined): UserFocus | null {
+  if (!career) return null;
+  const skills = (career.skills ?? []).filter((s) => typeof s === "string" && s.trim());
+  const roleKeywords = (career.roleKeywords ?? []).filter((s) => typeof s === "string" && s.trim());
+  if (!skills.length && !roleKeywords.length) return null;
+  return { skills, roleKeywords, role: career.role ?? null };
+}
+
 /**
  * What the user's LinkedIn export says they do and are looking for, or null when nothing was
  * imported. The one reader the recommenders share, next to `listActiveGoalTextsForUser`.
  */
 export async function loadUserFocus(userId: string): Promise<UserFocus | null> {
   const { career } = await loadYouCurrent(userId);
-  if (!career) return null;
-  const skills = (career.skills ?? []).filter((s) => typeof s === "string" && s.trim());
-  const roleKeywords = (career.roleKeywords ?? []).filter((s) => typeof s === "string" && s.trim());
-  if (!skills.length && !roleKeywords.length) return null;
-  return { skills, roleKeywords, role: career.role ?? null };
+  return focusFromCareerProfile(career);
 }
 
 /** The aim the person set in About you, or null. */

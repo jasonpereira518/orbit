@@ -244,12 +244,6 @@ export function aiPageStatus(ai: { ready: boolean; providerLabel: string | null 
   return { state: "on", detail: ai.providerLabel ? `On · ${ai.providerLabel}` : "On" };
 }
 
-export function remindersPageStatus(feed: { enabled: boolean; lastFetchedAt: Date | null }, now: Date): PageStatus {
-  if (!feed.enabled) return { state: "off", detail: "Off" };
-  if (!feed.lastFetchedAt) return { state: "on", detail: "On · not checked yet" };
-  return { state: "on", detail: `On · checked ${formatDistance(feed.lastFetchedAt, now, { addSuffix: true })}` };
-}
-
 /** Relative, not a date: the server formats this, and a calendar date would be in its timezone. */
 export function linkedinPageStatus(lastImportedAt: Date | null, now: Date): PageStatus {
   if (!lastImportedAt) return { state: "off", detail: "Not imported yet" };
@@ -350,8 +344,6 @@ export function overviewAction(
       return on ? { label: "Manage", primary: false } : { label: "Turn on AI", primary: true };
     case "assistants":
       return { label: "Set up", primary: false };
-    case "reminders":
-      return { label: on ? "Manage" : "Set up", primary: false };
     default:
       return { label: "Open", primary: false };
   }

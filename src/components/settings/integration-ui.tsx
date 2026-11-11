@@ -2,7 +2,6 @@
 
 import {
   BookUser,
-  CalendarDays,
   FileSpreadsheet,
   KeyRound,
   NotebookPen,
@@ -11,9 +10,10 @@ import {
   Users,
   Webhook,
   type LucideIcon,
+  NotebookText,
 } from "lucide-react";
 import type { IntegrationTabId } from "@/components/settings/sections";
-import { AssistantsMark, GoogleMark, GranolaMark, LinkedInMark, MicrosoftMark } from "@/components/settings/provider-marks";
+import { AssistantsMark, GoogleMark, GranolaMark, LinkedInMark, MicrosoftMark, NotionMark } from "@/components/settings/provider-marks";
 import type { PageStatus } from "@/lib/integration-status";
 import { cn } from "@/lib/utils";
 
@@ -22,9 +22,9 @@ const ICONS: Record<IntegrationTabId, LucideIcon> = {
   microsoft: BookUser,
   linkedin: FileSpreadsheet,
   granola: NotebookPen,
+  notion: NotebookText,
   ai: Sparkles,
   assistants: Sparkles,
-  reminders: CalendarDays,
   api: KeyRound,
   webhooks: Webhook,
   outreach: Send,
@@ -35,6 +35,7 @@ const MARKS: Partial<Record<IntegrationTabId, (props: { className?: string }) =>
   microsoft: MicrosoftMark,
   linkedin: LinkedInMark,
   granola: GranolaMark,
+  notion: NotionMark,
   assistants: AssistantsMark,
 };
 

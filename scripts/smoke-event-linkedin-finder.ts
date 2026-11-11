@@ -10,6 +10,9 @@ const validCases: Array<[string, string]> = [
   ["linkedin.com/in/sam-altman", "https://www.linkedin.com/in/sam-altman"],
   ["www.linkedin.com/in/demishassabis", "https://www.linkedin.com/in/demishassabis"],
   ["https://ca.linkedin.com/in/geoffreyhinton", "https://www.linkedin.com/in/geoffreyhinton"],
+  ["[Profile](https://www.linkedin.com/in/satyanadella)", "https://www.linkedin.com/in/satyanadella"],
+  ["<https://www.linkedin.com/in/satyanadella>", "https://www.linkedin.com/in/satyanadella"],
+  ["https://www.linkedin.com/in/satyanadella?utm_source=share", "https://www.linkedin.com/in/satyanadella"],
 ];
 
 for (const [input, expected] of validCases) {
@@ -36,5 +39,11 @@ for (const input of invalidCases) {
   assert.equal(result, null, `Should have rejected: ${input}`);
   console.log(`  ok    rejected invalid URL: "${input}"`);
 }
+
+console.log("\nverifying finder exports and signatures");
+import { findAttendeeLinkedIn, batchFindRosterLinkedIns } from "../src/lib/events/linkedin-finder";
+assert.equal(typeof findAttendeeLinkedIn, "function");
+assert.equal(typeof batchFindRosterLinkedIns, "function");
+console.log("  ok    findAttendeeLinkedIn and batchFindRosterLinkedIns exported");
 
 console.log("\nAll LinkedIn finder checks passed.");

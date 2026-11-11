@@ -20,6 +20,12 @@ export type OAuthProviderConfig = {
   clientSecretEnv: string;
   /** Extra authorize-time parameters a provider demands. */
   extraAuthParams?: Record<string, string>;
+  /** Client credentials as an HTTP Basic header instead of body fields (Notion). */
+  tokenAuth?: "basic";
+  /** Token request body as JSON instead of form-encoded (Notion). */
+  tokenBody?: "json";
+  /** False for providers with no scope parameter (Notion picks pages on its own consent screen). */
+  scoped?: false;
 };
 
 /**
@@ -33,12 +39,19 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     clientIdEnv: "HUBSPOT_CLIENT_ID",
     clientSecretEnv: "HUBSPOT_CLIENT_SECRET",
   },
-  // Notion is deliberately NOT wired up here. Its token endpoint requires HTTP Basic
-  // client-credential auth plus a JSON request body, and returns neither `refresh_token`
-  // nor `expires_in` — none of which `postToken`'s form-encoded-body-with-secret-in-the-body
-  // shape can produce. Whoever ships the Notion connector adds `tokenAuth`/`tokenBody` knobs
-  // to `OAuthProviderConfig` and a second `postToken` code path then; building that ahead of
-  // a real caller is just unused surface area today.
+  // Notion wants HTTP Basic client auth and a JSON body. It may return a refresh token and
+  // expiry or neither (older grants never expire); when it does, every refresh rotates the
+  // refresh token, so the caller must store the new one each time.
+  notion: {
+    authorizeUrl: "https://api.notion.com/v1/oauth/authorize",
+    tokenUrl: "https://api.notion.com/v1/oauth/token",
+    clientIdEnv: "NOTION_CLIENT_ID",
+    clientSecretEnv: "NOTION_CLIENT_SECRET",
+    extraAuthParams: { owner: "user" },
+    tokenAuth: "basic",
+    tokenBody: "json",
+    scoped: false,
+  },
 };
 
 /** A token-level rejection. `needsReauth` means retrying will never help. */
@@ -247,7 +260,7 @@ export function buildAuthorizeUrl(
   url.searchParams.set("client_id", id);
   url.searchParams.set("redirect_uri", opts.redirectUri);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", opts.scopes.join(" "));
+  if (provider.scoped !== false) url.searchParams.set("scope", opts.scopes.join(" "));
   url.searchParams.set(
     "state",
     signOAuthState({ userId: opts.userId, connectorId, returnTo: opts.returnTo })
@@ -260,6 +273,8 @@ export type OAuthTokens = {
   refreshToken: string | null;
   expiresAt: Date | null;
   scopes: string | null;
+  /** The whole success body, for provider extras (Notion's workspace name, id and icon). */
+  raw: Record<string, unknown>;
 };
 
 type TokenResponse = {
@@ -278,14 +293,25 @@ function truncateProviderMessage(message: string): string {
 
 async function postToken(
   provider: OAuthProviderConfig,
-  body: URLSearchParams,
+  params: Record<string, string>,
   fetchImpl: typeof fetch
 ): Promise<OAuthTokens> {
+  const { id, secret } = clientCredentials(provider);
+  const headers: Record<string, string> = {};
+  const fields = { ...params };
+  if (provider.tokenAuth === "basic") {
+    headers.authorization = `Basic ${Buffer.from(`${id}:${secret}`).toString("base64")}`;
+  } else {
+    fields.client_id = id;
+    fields.client_secret = secret;
+  }
+  headers["content-type"] = provider.tokenBody === "json" ? "application/json" : "application/x-www-form-urlencoded";
+  const body = provider.tokenBody === "json" ? JSON.stringify(fields) : new URLSearchParams(fields);
   let res: Response;
   try {
     res = await fetchImpl(provider.tokenUrl, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers,
       body,
       signal: AbortSignal.timeout(15_000),
     });
@@ -314,6 +340,7 @@ async function postToken(
     refreshToken: json.refresh_token ?? null,
     expiresAt: json.expires_in ? new Date(Date.now() + json.expires_in * 1000) : null,
     scopes: json.scope ?? null,
+    raw: json as Record<string, unknown>,
   };
 }
 
@@ -323,17 +350,9 @@ export async function exchangeCode(
   redirectUri: string,
   opts: { fetchImpl?: typeof fetch } = {}
 ): Promise<OAuthTokens> {
-  const provider = providerOrThrow(connectorId);
-  const { id, secret } = clientCredentials(provider);
   return postToken(
-    provider,
-    new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri,
-      client_id: id,
-      client_secret: secret,
-    }),
+    providerOrThrow(connectorId),
+    { grant_type: "authorization_code", code, redirect_uri: redirectUri },
     opts.fetchImpl ?? fetch
   );
 }
@@ -343,16 +362,9 @@ export async function refreshAccessToken(
   refreshToken: string,
   opts: { fetchImpl?: typeof fetch } = {}
 ): Promise<OAuthTokens> {
-  const provider = providerOrThrow(connectorId);
-  const { id, secret } = clientCredentials(provider);
   return postToken(
-    provider,
-    new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      client_id: id,
-      client_secret: secret,
-    }),
+    providerOrThrow(connectorId),
+    { grant_type: "refresh_token", refresh_token: refreshToken },
     opts.fetchImpl ?? fetch
   );
 }

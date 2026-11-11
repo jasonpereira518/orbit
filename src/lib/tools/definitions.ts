@@ -15,6 +15,7 @@
  * applied by the caller (`@/lib/tools/registry`), because they differ by surface and a tool
  * that decided its own presentation would have to know who was asking.
  */
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -339,9 +340,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
     ) {
       const db = await getDb();
       const inboxId = await getInboxListId(userId);
-      // UTC, not the user's zone: an assistant request carries no `orbit-tz` cookie, and
-      // guessing a zone would put a reminder in the wrong day rather than admit it. Every
-      // row carries its own `dueDate`, so a model can say "tomorrow" correctly anyway.
+      // The user's day: the cookie in chat, the zone the app last saved for an assistant
+      // (UTC only for an account that has never opened the app).
       const page = await queryRemindersPage(
         db,
         userId,
@@ -351,7 +351,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
           contactId: args.contactId,
           q: args.query,
           limit: args.limit,
-          tz: "UTC",
+          tz: await viewerTimeZone(userId),
         },
         { inboxId }
       );
@@ -1036,11 +1036,12 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       // "today" is overdue AND today; "anytime" is the undated pile. Both are things the
       // user is already late on or has never scheduled — which is what "owe" means. What is
       // merely coming up is `list_reminders`, and it is a different question.
+      const tz = await viewerTimeZone(userId);
       const page = (view: "today" | "anytime") =>
         queryRemindersPage(
           db,
           userId,
-          { view, listId: null, contactId: args.contactId, limit: args.limit, tz: "UTC" },
+          { view, listId: null, contactId: args.contactId, limit: args.limit, tz },
           { inboxId }
         );
 

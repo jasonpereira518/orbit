@@ -53,11 +53,11 @@ async function HiddenList() {
 
   return (
     <details className="rounded-xl border border-border/70 bg-card px-4 py-3">
-      <summary className="cursor-pointer text-sm text-muted-foreground">
-        Hidden events ({hidden.length})
+      <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-ink">
+        Hidden &amp; Filtered Events ({hidden.length})
       </summary>
       <p className="mt-2 text-xs text-muted-foreground">
-        Orbit found these and you said they weren’t yours, so no sync will add them back.
+        Non-professional parties and events you’ve hidden are kept here. Click &ldquo;Add back&rdquo; on any card to restore it to your schedule.
       </p>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         {hidden.map((event) => (

@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import { internalFetch } from "@/lib/internal-auth";
 import { failImport, truncateStoredError } from "@/lib/import-job-processor";
+import { isRealHumanName } from "@/lib/recruiter-detect";
 import {
   buildRecruiterQuery,
   fetchGmailHeaders,
@@ -376,13 +377,19 @@ export async function applyRecruiterVerdict(
     return "rejected";
   }
 
+  const name = result.fullName || (isRealHumanName(payload.name).valid ? payload.name : null);
+  if (!name || !isRealHumanName(name).valid) {
+    return "rejected";
+  }
+
   // The sender's address came from THIS user's inbox; it lands on a shared row only when
   // the row is new (this user is its creator) or this user shares.
   const recruiter = await upsertCanonicalRecruiter(
     {
-      fullName: result.fullName || payload.name,
+      fullName: name,
       firm: result.firm || payload.firm,
       email: payload.email,
+      linkedinUrl: result.linkedinUrl,
       specialty: result.rolesDiscussed,
     },
     { contributePii: await isViewerSharing(userId), createdByUserId: userId }
@@ -395,6 +402,7 @@ export async function applyRecruiterVerdict(
     source: "gmail",
     // From THIS user's mailbox: it belongs on their own link whether or not they share.
     email: payload.email,
+    linkedinUrl: result.linkedinUrl,
   });
 
   const db = await getDb();
@@ -404,6 +412,7 @@ export async function applyRecruiterVerdict(
       aiSummary: result.summary,
       companiesMentioned: result.companiesMentioned,
       rolesDiscussed: result.rolesDiscussed,
+      roleInterviewingFor: result.roleInterviewingFor,
       emailCount: meta.messageCount,
       firstEmailAt: meta.dates.length ? new Date(Math.min(...meta.dates)) : null,
       lastEmailAt: meta.dates.length ? new Date(Math.max(...meta.dates)) : null,
@@ -555,6 +564,7 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
   } else {
     const window = await resolveScanWindow(userId, {
       full: importRow.stats?.scanIsFull === true,
+      cycle: (importRow.stats as { cycle?: import("@/lib/recruiter-scan-state").RecruitingCycle } | undefined)?.cycle,
     });
     scanAfter = window.after;
     scanIsFull = window.isFull;

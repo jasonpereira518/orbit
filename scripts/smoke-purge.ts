@@ -81,6 +81,7 @@ async function seed() {
   await db.insert(schema.contactTags).values({ contactId: contact.id, tagId: tag.id });
 
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
+  await db.insert(schema.chatMemories).values({ userId: USER, text: "raising a seed round" });
 
   const [feedbackRow] = await db
     .insert(schema.feedback)
@@ -574,6 +575,11 @@ async function seed() {
   // The recruiter scan's watermark, kept separate from `gmail_connections` on purpose but
   // no less user data than anything else here.
   await db.insert(schema.recruiterScanState).values({ userId: USER });
+  await db.insert(schema.recruiterContactUnlocks).values({
+    userId: USER,
+    recruiterId: recruiter.id,
+    costCredits: 1,
+  });
   await db.insert(schema.cloudNoteSources).values({ userId: USER, provider: "google", cursor: "c1" });
   await db.insert(schema.cloudNoteFiles).values({ userId: USER, provider: "google", fileId: "doc-1", name: "1:1 notes" });
 
