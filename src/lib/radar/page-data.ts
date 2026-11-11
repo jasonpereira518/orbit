@@ -111,6 +111,8 @@ export async function loadRadarPage(userId: string): Promise<RadarPageData> {
   };
 }
 
+import type { NetworkStats } from "@/lib/network-stats";
+
 export type RadarBriefing = {
   /** False until the account's first run: the dashboard keeps its legacy card until then. */
   hasRun: boolean;
@@ -123,6 +125,10 @@ export type RadarBriefing = {
   today: number;
   drafts: number;
   changes: ChangeLine[];
+  /** Overview stats about the user's network. */
+  networkStats?: NetworkStats | null;
+  /** Count of active projects being tracked for context matching. */
+  activeProjectsCount?: number;
 };
 
 /** The dashboard's morning briefing, in two statements. Never builds anything itself. */
@@ -131,7 +137,13 @@ export async function loadRadarBriefing(userId: string): Promise<RadarBriefing> 
   if (!state?.lastRunAt) {
     return { hasRun: false, paused: state?.paused ?? false, top: [], total: 0, today: 0, drafts: 0, changes: [] };
   }
-  const pending = await listPendingRecommendations(userId, RADAR_CAPS.pending);
+  const { getNetworkStats } = await import("@/lib/network-stats");
+  const { listActiveProjectsForUser } = await import("@/lib/projects/store");
+  const [pending, networkStats, projects] = await Promise.all([
+    listPendingRecommendations(userId, RADAR_CAPS.pending),
+    getNetworkStats(userId).catch(() => null),
+    listActiveProjectsForUser(userId, { limit: 10 }).catch(() => []),
+  ]);
   const today = pending.slice(0, RADAR_CAPS.today);
   return {
     hasRun: true,
@@ -141,5 +153,7 @@ export async function loadRadarBriefing(userId: string): Promise<RadarBriefing> 
     today: today.length,
     drafts: draftsReady(pending),
     changes: whatChanged(pending, new Date()),
+    networkStats,
+    activeProjectsCount: projects.length,
   };
 }

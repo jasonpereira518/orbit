@@ -33,6 +33,8 @@ import {
   draftIntent,
   leadReason,
   type RadarAiNote,
+  type RadarCalendarInvite,
+  type RadarDiscoveredPerson,
   type RadarDraft,
   type RadarEvidence,
   type RadarReason,
@@ -60,6 +62,10 @@ export type RecommendationCardData = {
   aiAngle?: string | null;
   /** A message Radar wrote overnight. The sheet opens with it, no model call. */
   draft?: RadarDraft | null;
+  /** Suggested calendar invite for 1-click execution */
+  suggestedCalendarInvite?: RadarCalendarInvite | null;
+  /** Discovered prospective connection metadata */
+  discoveredPerson?: RadarDiscoveredPerson | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -154,6 +160,11 @@ export function RecommendationCard({
                 {rec.draft && (
                   <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-primary">
                     Draft ready
+                  </span>
+                )}
+                {rec.discoveredPerson && (
+                  <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                    Discovered ({rec.discoveredPerson.sourcePlatform})
                   </span>
                 )}
               </div>
@@ -265,6 +276,20 @@ export function RecommendationCard({
               ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-1.5 pointer-coarse:gap-3">
+                {rec.suggestedCalendarInvite && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="default"
+                    className="h-8 gap-1.5"
+                    disabled={pending}
+                    onClick={() => actions.confirmInvite()}
+                    title={`Send calendar invite for ${new Date(rec.suggestedCalendarInvite.proposedStartTime).toLocaleDateString()}`}
+                  >
+                    <CalendarPlus className="size-3.5" aria-hidden />
+                    1-Click Invite
+                  </Button>
+                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger className={triggerClass} disabled={pending} aria-label={`Schedule a follow-up with ${rec.contactName}`}>
                     <CalendarPlus className="size-3.5" aria-hidden />

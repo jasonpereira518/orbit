@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  confirmCalendarInvite,
   dismissRecommendation,
   neverForContact,
   restoreRecommendation,
@@ -96,6 +97,14 @@ export function useRecommendationActions(rec: { id: string; contactName: string 
     draftOpen,
     setDraftOpen,
     schedule,
+    confirmInvite: (overrides?: { startTime?: string; title?: string; agenda?: string }) =>
+      resolve(
+        async () => {
+          const res = await confirmCalendarInvite(rec.id, overrides);
+          return res;
+        },
+        "Calendar invite confirmed and added"
+      ),
     /** Fold the card away for an email sent from its sheet; the send resolves it server-side. */
     hide: () => setExiting(true),
     /** Undo took the email back: the card is still live. */

@@ -89,6 +89,7 @@ export const CONTEXT_CODES: ReadonlySet<string> = new Set([
   "target_company",
   "goal_match",
   "focus_match",
+  "project_match",
   "touched_recently",
   "dismissed_recently",
   "already_scheduled",
@@ -166,6 +167,38 @@ export type RadarDraft = {
   channel: "email" | "linkedin" | "sms";
   inputsHash: string;
   generatedAt: string;
+};
+
+/** A suggested calendar invite, prepared ahead of time so the user can send/confirm in 1 click. */
+export type RadarCalendarInvite = {
+  title: string;
+  proposedStartTime: string;
+  durationMinutes: number;
+  agenda: string;
+  attendeeEmail?: string;
+  attendeeName?: string;
+  location?: string;
+  status?: "suggested" | "confirmed" | "declined";
+  calendarEventKey?: string;
+};
+
+/** A new prospective connection discovered outside the user's current network. */
+export type RadarDiscoveredPerson = {
+  fullName: string;
+  title?: string | null;
+  company?: string | null;
+  location?: string | null;
+  bio?: string | null;
+  avatarUrl?: string | null;
+  linkedinUrl?: string | null;
+  twitterHandle?: string | null;
+  githubHandle?: string | null;
+  website?: string | null;
+  sourceUrl?: string | null;
+  sourcePlatform: "linkedin" | "twitter" | "github" | "research" | "event" | "web";
+  matchReason: string;
+  matchingProjectId?: string;
+  matchingProjectTitle?: string;
 };
 
 /**
@@ -286,6 +319,17 @@ export type RadarSignal =
       hasAsk: boolean;
       /** 0..1: how relevant the ranker found this person. */
       fit: number;
+    }
+  /** A prospective connection discovered outside the network (papers, GitHub, web, Twitter). */
+  | {
+      kind: "discovery";
+      contactId: string;
+      at: Date;
+      platform: "research" | "github" | "twitter" | "linkedin" | "web";
+      title: string;
+      summary: string;
+      url?: string | null;
+      matchingProjectTitle?: string;
     };
 
 export type RadarSignalKind = RadarSignal["kind"];

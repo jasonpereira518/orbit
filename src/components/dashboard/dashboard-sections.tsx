@@ -343,13 +343,15 @@ export async function MorningBriefingSection({ briefing }: { briefing: Promise<R
   const b = await briefing.catch(() => null);
   if (!b?.hasRun) return null;
   return (
-    <div className="reveal-mount min-w-0 lg:flex-1 lg:basis-0" style={revealDelay(0)}>
+    <div className="reveal-mount min-w-0 w-full" style={revealDelay(0)}>
       <MorningBriefing
         total={b.total}
         today={b.today}
         drafts={b.drafts}
         changes={b.changes}
         paused={b.paused}
+        networkStats={b.networkStats}
+        activeProjectsCount={b.activeProjectsCount}
         items={b.top.map((r) => ({
           id: r.id,
           contactId: r.contactId,
@@ -364,6 +366,8 @@ export async function MorningBriefingSection({ briefing }: { briefing: Promise<R
           company: r.company,
           tier: r.tier,
           avatarUrl: r.avatarUrl,
+          suggestedCalendarInvite: r.suggestedCalendarInvite,
+          discoveredPerson: r.discoveredPerson,
         }))}
       />
     </div>

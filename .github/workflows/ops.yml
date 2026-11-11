@@ -57,9 +57,9 @@ on:
     # Once a day: the Deepgram usage reconciliation. An arbitrary quiet hour, offset from
     # the hourly jobs above so it never runs alongside them.
     - cron: "41 5 * * *"
-    # Once a day: Radar's nightly pass. Accounts aim at 04:00 UTC (radar_next_at), and :17
-    # sits clear of the hourly :07 and :23 jobs and of the Deepgram reconciliation above.
-    - cron: "17 4 * * *"
+    # Radar's daily pass (hourly check for accounts due at local 5:00 AM). :17
+    # sits clear of the hourly :07 and :23 jobs and of the Deepgram reconciliation.
+    - cron: "17 * * * *"
     # Cloud notes: every 30 minutes at :29 and :59, clear of every */10, */15 and hourly line above.
     - cron: "29,59 * * * *"
     # Once a day: Stripe's live subscriptions against user_settings (the independent check the
@@ -331,8 +331,8 @@ jobs:
       # the job feed: model calls on people's own keys must never make the alerting path's
       # cadence hostage to a provider being slow. 300s to match the route's own ceiling; the
       # route self-continues when more accounts are waiting.
-      - name: Run the Radar nightly pass (daily)
-        if: github.event.schedule == '17 4 * * *' && steps.health.outcome == 'success'
+      - name: Run the Radar daily pass (hourly check for local 5am)
+        if: github.event.schedule == '17 * * * *' && steps.health.outcome == 'success'
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \

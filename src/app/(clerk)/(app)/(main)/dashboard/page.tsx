@@ -75,12 +75,16 @@ export default async function DashboardPage() {
           immediately, so first paint is unchanged. */}
       <Suspense fallback={<DashboardBodySkeleton />}>
         <div className="space-y-8">
-          {/* Today's meetings (when the calendar has any) beside the morning briefing. Each child
-              carries its own `lg:flex-1`, so one alone fills the row, and `empty:hidden` drops the
-              row — and its share of the page gap — when neither renders. */}
-          <div className="flex flex-col gap-6 empty:hidden lg:flex-row">
+          {/* Radar flagship morning briefing: centerpiece hero at the top of the dashboard */}
+          {radarBriefing && (
+            <div className="w-full">
+              <MorningBriefingSection briefing={radarBriefing} />
+            </div>
+          )}
+
+          {/* Today's meetings (when the calendar has any). Drops row when neither renders. */}
+          <div className="empty:hidden">
             <TodayMeetingsSection now={new Date()} />
-            {radarBriefing && <MorningBriefingSection briefing={radarBriefing} />}
           </div>
 
           {/* Renders the LinkedIn export card or the arrival nudge, or nothing once a LinkedIn import exists. */}

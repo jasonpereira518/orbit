@@ -13,6 +13,8 @@ import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { RADAR_WINDOWS, type RadarPick, type RadarSuppression } from "@/lib/radar/score";
 import type {
   RadarAutopilotAction,
+  RadarCalendarInvite,
+  RadarDiscoveredPerson,
   RadarDraft,
   RadarAiNote,
   RadarEvidence,
@@ -224,6 +226,8 @@ export async function writeRunResult(
               expiresAt: r.expiresAt,
               runId,
               inputsHash: r.inputsHash,
+              suggestedCalendarInvite: r.suggestedCalendarInvite ?? null,
+              discoveredPerson: r.discoveredPerson ?? null,
               createdAt: now,
               updatedAt: now,
             }))
@@ -243,6 +247,8 @@ export async function writeRunResult(
               evidence: sql`excluded.evidence`,
               expiresAt: sql`excluded.expires_at`,
               runId: sql`excluded.run_id`,
+              suggestedCalendarInvite: sql`coalesce(excluded.suggested_calendar_invite, ${recommendations.suggestedCalendarInvite})`,
+              discoveredPerson: sql`coalesce(excluded.discovered_person, ${recommendations.discoveredPerson})`,
               // Every SET expression reads the OLD row, so this compares the stored hash
               // with the new one before the new one is written.
               aiNote: sql`case when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
@@ -297,6 +303,10 @@ export type RecommendationRow = {
   aiAngle: string | null;
   /** A draft written overnight, only while it still matches the card's facts. */
   draft: RadarDraft | null;
+  /** Suggested calendar invite for 1-click execution */
+  suggestedCalendarInvite?: RadarCalendarInvite | null;
+  /** Discovered prospective connection metadata */
+  discoveredPerson?: RadarDiscoveredPerson | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -326,6 +336,8 @@ export async function listPendingRecommendations(userId: string, limit: number):
     ai_note: RadarAiNote | null;
     ai_angle: string | null;
     draft: RadarDraft | null;
+    suggested_calendar_invite: RadarCalendarInvite | null;
+    discovered_person: RadarDiscoveredPerson | null;
     full_name: string;
     preferred_name: string | null;
     title: string | null;
@@ -339,7 +351,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
   }>(
     await db.execute(sql`
       SELECT r.id, r.contact_id, r.kind, r.score, r.bucket, r.reasons, r.evidence, r.ai_note, r.ai_angle, r.updated_at,
-             r.created_at, r.first_seen_at,
+             r.created_at, r.first_seen_at, r.suggested_calendar_invite, r.discovered_person,
              CASE WHEN r.draft ->> 'inputsHash' = r.inputs_hash THEN r.draft END AS draft,
              contacts.full_name, contacts.preferred_name, contacts.title, contacts.company,
              contacts.closeness_tier, contacts.last_interaction_at,
@@ -363,6 +375,8 @@ export async function listPendingRecommendations(userId: string, limit: number):
     aiNote: r.ai_note,
     aiAngle: r.ai_angle,
     draft: r.draft,
+    suggestedCalendarInvite: r.suggested_calendar_invite,
+    discoveredPerson: r.discovered_person,
     contactName: (r.preferred_name ?? "").trim() || r.full_name,
     title: r.title,
     company: r.company,
