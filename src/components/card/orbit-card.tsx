@@ -33,6 +33,7 @@ export function OrbitCard({
   orientation = "landscape",
   entrance = false,
   nameAs: Name = "span",
+  still = false,
   className,
 }: {
   art: CardArt;
@@ -48,9 +49,12 @@ export function OrbitCard({
   entrance?: boolean;
   /** The page's heading, where the card is the page. Never inside a flippable card. */
   nameAs?: "h1" | "span";
+  /** No tilt and no motion-permission prompt: for a card someone is scanning. Flip still works. */
+  still?: boolean;
   className?: string;
 }) {
-  const reduced = usePrefersReducedMotion();
+  // A still card behaves as reduced motion does: no listeners, no prompt.
+  const reduced = usePrefersReducedMotion() || still;
   const sceneRef = useRef<HTMLDivElement>(null);
   const [flipped, setFlipped] = useState(side === "back");
   const flippable = Boolean(qrSvg);
@@ -64,6 +68,8 @@ export function OrbitCard({
 
   const front = artLayout(W, H);
   const back = backLayout(W, H);
+  // The code sits 4% in from the tile's edge, measured on the tile (a % padding would be the card's).
+  const qr = back.tile * 0.92;
 
   // --- Tilt: CSS variables on the scene, so a pointer move never re-renders. ---------------
   const tilt = (x: number, y: number) => {
@@ -137,7 +143,10 @@ export function OrbitCard({
       }}
     />
   );
-  const face = "absolute inset-0 block overflow-hidden rounded-[calc(var(--s)*0.06)] backface-hidden";
+  // clip-path, not just overflow-hidden: under 3D transforms a blended child (the sheen) can
+  // escape a rounded overflow clip and streak past the card's edge.
+  const face =
+    "absolute inset-0 block overflow-hidden rounded-[calc(var(--s)*0.06)] [clip-path:inset(0_round_calc(var(--s)*0.06))] backface-hidden";
   const artLayer = "absolute inset-0 block [&>svg]:block [&>svg]:size-full";
 
   const card = (
@@ -173,15 +182,17 @@ export function OrbitCard({
       {flippable && backSvg && (
         <span className={cn(face, "[transform:rotateY(180deg)]")} aria-hidden={!flipped || undefined}>
           <span className={artLayer} dangerouslySetInnerHTML={backSvg} />
+          {/* Under the QR, so nothing ever washes over the code. */}
+          {sheen}
           <span
             role="img"
             aria-label={`QR code for ${firstName}’s card`}
-            className="absolute block p-[2.5%] [&>svg]:block [&>svg]:size-full"
+            className="absolute block [&>svg]:block [&>svg]:size-full"
             style={{
-              left: pct(back.cx - back.tile / 2, W),
-              top: pct(back.cy - back.tile / 2, H),
-              width: pct(back.tile, W),
-              height: pct(back.tile, H),
+              left: pct(back.cx - qr / 2, W),
+              top: pct(back.cy - qr / 2, H),
+              width: pct(qr, W),
+              height: pct(qr, H),
               color: ink,
             }}
             // The QR SVG is the server's own `qrcode` output for the card's URL.
@@ -193,7 +204,6 @@ export function OrbitCard({
           >
             Scan to save {firstName}’s contact
           </span>
-          {sheen}
         </span>
       )}
     </span>
@@ -202,7 +212,7 @@ export function OrbitCard({
   return (
     <div
       ref={sceneRef}
-      className={cn("relative w-full touch-pan-y select-none perspective-[1200px] [container-type:inline-size]", className)}
+      className={cn("relative w-full select-none perspective-[1200px] [container-type:inline-size]", !reduced && "touch-pan-y", className)}
       style={{ "--s": shortSide } as CSSProperties}
       onPointerMove={follow}
       onPointerDown={(e) => {
@@ -230,12 +240,12 @@ export function OrbitCard({
             type="button"
             onClick={() => setFlipped((f) => !f)}
             aria-label={flipped ? `Show ${firstName}’s name side` : "Show the QR code"}
-            className="absolute inset-0 block cursor-pointer rounded-[calc(var(--s)*0.06)] outline-none focus-visible:ring-3 focus-visible:ring-[#d4b469]/70"
+            className="absolute inset-0 block cursor-pointer rounded-[calc(var(--s)*0.06)] outline-none transform-3d focus-visible:ring-3 focus-visible:ring-[#d4b469]/70"
           >
             {card}
           </button>
         ) : (
-          <div className="absolute inset-0">{card}</div>
+          <div className="absolute inset-0 transform-3d">{card}</div>
         )}
       </div>
     </div>

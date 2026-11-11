@@ -146,10 +146,13 @@ export function CardEditor({
               </label>
             ))}
           </div>
-          <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setArtSalt((s) => s + 1)}>
-            <Shuffle aria-hidden />
-            Shuffle my stars
-          </Button>
+          {/* Only once the card exists: before the first save its stars are seeded apart from the card's own id. */}
+          {mode === "edit" && (
+            <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => setArtSalt((s) => s + 1)}>
+              <Shuffle aria-hidden />
+              Shuffle my stars
+            </Button>
+          )}
         </fieldset>
         <Button type="submit" disabled={saving} className="self-start">
           {mode === "create" ? "Create my card" : "Save changes"}

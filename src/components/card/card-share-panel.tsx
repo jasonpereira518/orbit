@@ -66,7 +66,10 @@ export function CardSharePanel({ url, svg, paused, card }: { url: string; svg: s
           firstName={card.firstName}
           qrSvg={svg}
           side="back"
-          className={cn("max-w-sm shrink-0 md:w-80", paused && "opacity-40")}
+          orientation="portrait"
+          still
+          // Upright and 26rem wide on desktop: the code is ~230 px, as large as it was before the card.
+          className={cn("max-w-[26rem] shrink-0 md:w-[26rem]", paused && "opacity-40")}
         />
       ) : (
         <CardQr svg={svg} className={cn("w-56 shrink-0", paused && "opacity-40")} />

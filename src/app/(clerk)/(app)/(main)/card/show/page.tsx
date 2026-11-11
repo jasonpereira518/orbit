@@ -60,6 +60,7 @@ export default async function ShowCardPage() {
               qrSvg={qr.svg}
               side="back"
               orientation="portrait"
+              still
               // As wide as the screen, and short enough that the whole card fits on it.
               className="w-[min(100%,calc((100dvh_-_9rem)/1.586))]"
             />
