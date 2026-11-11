@@ -719,6 +719,7 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
           preferredName: c.preferredName,
           company: c.company,
           title: c.title,
+          profileImageUrl: c.profileImageUrl,
           goalRelevance: c.goalRelevance,
           reason: c.reason,
           companyName: c.companyName,
