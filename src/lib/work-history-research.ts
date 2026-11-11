@@ -46,7 +46,11 @@ import {
   isStoredCurrentRole,
   loadJobBaseline,
   recordJobChanges,
+  type SnapshotRole,
 } from "@/lib/job-changes";
+import { gateSkips } from "@/lib/decisions/gates";
+import type { Engines } from "@/lib/decisions/engine";
+import { recheckGateState } from "@/lib/work-history-gates";
 import { updateContactForUser } from "@/lib/contact-writes";
 import { reportError } from "@/lib/report-error";
 
@@ -335,6 +339,12 @@ export async function researchContactWorkHistory(
      * really run, so a fresh or extension-owned contact costs nothing from it.
      */
     spend?: () => Promise<boolean>;
+    /**
+     * The sweep's decision engines, opened once per account. Present means Jev may skip a
+     * periodic re-check (the re-check gate); only the sweep passes them, so a refresh someone
+     * asked for is never gated.
+     */
+    gates?: Engines;
   } = {},
 ): Promise<WorkHistoryOutcome> {
   const now = options.now ?? new Date();
@@ -405,6 +415,7 @@ async function researchOnce(
     checker?: CurrentRoleChecker;
     now: Date;
     spend?: () => Promise<boolean>;
+    gates?: Engines;
   },
 ): Promise<{ outcome: WorkHistoryOutcome; cadence: WorkHistoryCadenceSubject | null; freshFrom?: Date }> {
   const research = options.researcher ?? researchWithWebSearch;
@@ -424,9 +435,12 @@ async function researchOnce(
       lastInteractionAt: true,
       statedCloseness: true,
       priorityLevel: true,
+      workHistoryJevSkippedAt: true,
     },
   });
   if (!contact) return { outcome: "missing", cadence: null };
+  // Jev skipped or vetoed last time: this run asks neither gate (never two in a row).
+  const jevMayGate = !options.force && !contact.workHistoryJevSkippedAt;
   const cadence: WorkHistoryCadenceSubject = contact;
   // A LinkedIn URL is what makes this a lookup rather than a guess about a name.
   if (!contact.linkedinUrl?.trim()) return { outcome: "no_anchor", cadence };
@@ -455,6 +469,26 @@ async function researchOnce(
     answer = { confident: true, ...shared };
   } else {
     if (!options.researcher && !(await userCanUseAi(userId))) return { outcome: "no_ai", cadence };
+
+    // The re-check gate (sweep only): before any allowance is spent, Jev may judge that
+    // nothing suggests a move since the last check. A confident "no" skips this cycle's
+    // search; every other answer, and no answer, searches exactly as before.
+    let storedRoles: SnapshotRole[] | null = null;
+    if (options.gates && jevMayGate && stored?.source === "web") {
+      storedRoles = (await loadJobBaseline(userId, contactId, now)).roles;
+      if (storedRoles.some((r) => r.isCurrent)) {
+        const state = await recheckGateState(userId, contactId, {
+          roles: storedRoles,
+          title: contact.title,
+          company: contact.company,
+          closenessTier: contact.closenessTier,
+          lastCheckedAt: stored.capturedAt,
+          now,
+        });
+        if (await gateSkips(options.gates, "workHistoryRecheck", state)) return { outcome: "jev_skipped", cadence };
+      }
+    }
+
     if (options.spend && !(await options.spend())) return { outcome: "rate_limited", cadence };
 
     try {
@@ -478,7 +512,7 @@ async function researchOnce(
     // dozen tokens — the full history (two searches and a list) runs only when the answer
     // differs. A forced search (the profile's button) always does the full history.
     if (!options.force && stored?.source === "web") {
-      const storedRoles = (await loadJobBaseline(userId, contactId, now)).roles;
+      storedRoles ??= (await loadJobBaseline(userId, contactId, now)).roles;
       if (storedRoles.some((r) => r.isCurrent)) {
         const check = await (options.checker ?? checkCurrentRoleWithWebSearch)(userId, subject);
         // Nothing clear enough to act on. Not worth the full search to find out: the next
