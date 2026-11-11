@@ -152,7 +152,11 @@ CREATE TABLE IF NOT EXISTS user_settings (
   radar_digest_unsub_token_hash text,
   radar_daily_enabled integer NOT NULL DEFAULT 1,
   radar_auto_projects integer NOT NULL DEFAULT 1,
-  radar_discovery_enabled integer NOT NULL DEFAULT 1
+  radar_discovery_enabled integer NOT NULL DEFAULT 1,
+  radar_web_next_at timestamptz,
+  radar_moment_last_day text,
+  radar_enabled_at timestamptz,
+  radar_opened_at timestamptz
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
@@ -250,6 +254,39 @@ CREATE TABLE IF NOT EXISTS user_projects (
 );
 CREATE INDEX IF NOT EXISTS user_projects_user_status_idx ON user_projects(user_id, status);
 CREATE INDEX IF NOT EXISTS user_projects_user_activity_idx ON user_projects(user_id, last_activity_at);
+CREATE TABLE IF NOT EXISTS radar_opportunities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  kind text NOT NULL,
+  title text NOT NULL,
+  url text,
+  why text,
+  starts_at timestamptz,
+  expires_at timestamptz,
+  evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+  related_contact_ids uuid[] NOT NULL DEFAULT '{}',
+  score integer NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'found',
+  dismiss_reason text,
+  dedupe_key text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS radar_opportunities_user_dedupe_uidx ON radar_opportunities(user_id, dedupe_key);
+CREATE INDEX IF NOT EXISTS radar_opportunities_user_status_idx ON radar_opportunities(user_id, status);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  endpoint text NOT NULL,
+  p256dh text NOT NULL,
+  auth text NOT NULL,
+  user_agent text,
+  failure_count integer NOT NULL DEFAULT 0,
+  last_success_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS push_subscriptions_endpoint_uidx ON push_subscriptions(endpoint);
+CREATE INDEX IF NOT EXISTS push_subscriptions_user_idx ON push_subscriptions(user_id);
 CREATE TABLE IF NOT EXISTS chat_memories (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3117,7 +3154,22 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // every remote ref and local worktree on Nov 11 2026: 219 was the highest claimed anywhere.
 // 221 = opt-in Orbit Voice settings and account-scoped, bounded voice sessions.
 // 222 = runtime voice provider configuration, health and session usage metadata.
-export const SCHEMA_VERSION = 222;
+//
+// 224 = Radar revision foundations (Radar PR 2, docs/superpowers/specs/2026-11-10-radar-analyst-design.md):
+// radar_opportunities (the Opportunities lane: events, people to meet, openings, programs, with
+// no contact row until saved), push_subscriptions (web push, one per browser), and
+// user_settings.radar_web_next_at / radar_moment_last_day (the web lane's schedule and the
+// same-day email's claim). Built as 221; moved to 224 on Nov 11 2026 because uncommitted Radar
+// activation work (worktree radar-activation-animation-3caf1e) also holds 221 and the
+// contact-sharing branch holds 223.
+// 225 = Radar off by default: user_settings.radar_enabled_at — null until the person presses
+// "Turn on Radar". Radar runs only when it is set and radar_paused = 0 (src/lib/radar/run.ts).
+// Built as 221; moved to 225 on Nov 11 2026 to stack on the Radar revision (224); contact
+// sharing holds 223. Scanned every remote ref and local worktree: 224 was the highest claimed.
+// 228 = Radar's "new suggestions" pulse: user_settings.radar_opened_at — when the person last
+// opened /radar; pending cards created after it make the nav icon pulse. Scanned every remote
+// ref and local worktree on Nov 11 2026: contact sharing holds 226 and 227.
+export const SCHEMA_VERSION = 228;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -5588,6 +5640,15 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_discovery_enabled integer NOT NULL DEFAULT 1`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS suggested_calendar_invite jsonb`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS discovered_person jsonb`,
+  // Schema v224 (built as 221): Radar revision foundations (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
+  // radar_opportunities and push_subscriptions are new tables (created from the template);
+  // these are the two user_settings columns for older databases.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_web_next_at timestamptz`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_moment_last_day text`,
+  // Schema v225: Radar is off until the person turns it on (null = never turned on).
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_enabled_at timestamptz`,
+  // Schema v228: when the person last opened /radar (the nav pulse's "new since").
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_opened_at timestamptz`,
 ];
 
 /**

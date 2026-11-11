@@ -6,8 +6,10 @@
  * signals came in this week"; whether AI can run for it; and what autopilot did lately. The
  * briefing is two: the run state, then the list.
  */
-import { sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
+import { contacts } from "@/db/schema";
+import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { loadInboxPeople, type InboxPerson } from "@/lib/email-intel/inbox-people";
 import { BRIEFING_TOP, draftsReady, whatChanged, type ChangeLine } from "@/lib/radar/briefing";
 import { openRadarAi } from "@/lib/radar/explain";
@@ -153,4 +155,34 @@ export async function loadRadarBriefing(userId: string): Promise<RadarBriefing> 
     changes: whatChanged(pending, new Date()),
     activeProjectsCount: projects.length,
   };
+}
+
+/** One person in the turn-on scene. `photo` is a browser-safe URL, or null (drawn as a planet). */
+export type ActivationFace = { contactId: string; name: string; photo: string | null };
+
+export type RadarActivation = {
+  on: boolean;
+  /** Closest people first; empty when Radar is on (the scene is not drawn). */
+  faces: ActivationFace[];
+};
+
+/** The turn-on scene's rings hold 6 + 9 + 12 people. */
+export const ACTIVATION_FACES = 27;
+
+/**
+ * Is Radar on, and if not, who the turn-on scene draws. Two statements at most, and the
+ * photo is decided in Postgres (`clientAvatarUrlSql`), so no photo bytes or paid lookups.
+ */
+export async function loadRadarActivation(userId: string): Promise<RadarActivation> {
+  const state = await loadRadarState(userId);
+  const on = state ? !state.paused : false;
+  if (on) return { on, faces: [] };
+  const db = await getDb();
+  const rows = await db
+    .select({ contactId: contacts.id, name: contacts.fullName, photo: clientAvatarUrlSql.as("photo") })
+    .from(contacts)
+    .where(eq(contacts.userId, userId))
+    .orderBy(sql`${contacts.closeness} DESC NULLS LAST`, sql`${contacts.lastInteractionAt} DESC NULLS LAST`, desc(contacts.id))
+    .limit(ACTIVATION_FACES);
+  return { on, faces: rows.map((r) => ({ contactId: r.contactId, name: r.name, photo: r.photo ?? null })) };
 }

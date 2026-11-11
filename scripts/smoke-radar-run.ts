@@ -120,7 +120,8 @@ async function haveMet(...contactIds: (string | undefined)[]) {
 async function seed() {
   const db = await getDb();
   await ensureUserSettings(USER);
-  await db.update(userSettings).set({ compedPlan: "orbit" }).where(eq(userSettings.userId, USER));
+  // Radar is off by default (schema v225): this account has turned it on.
+  await db.update(userSettings).set({ compedPlan: "orbit", radarEnabledAt: NOW }).where(eq(userSettings.userId, USER));
   const person = async (key: string, over: Partial<typeof contacts.$inferInsert> = {}) => {
     const [row] = await db
       .insert(contacts)
@@ -536,7 +537,9 @@ run(async () => {
   const fresh = "smoke-radar-run-fresh";
   await db.delete(userSettings).where(eq(userSettings.userId, fresh));
   await ensureUserSettings(fresh);
-  check("a brand-new account gets its first build inline", await ensureRadarRun(fresh, NOW));
+  check("a brand-new account that never turned Radar on is not built", !(await ensureRadarRun(fresh, NOW)));
+  await db.update(userSettings).set({ radarEnabledAt: NOW }).where(eq(userSettings.userId, fresh));
+  check("once turned on, its first build runs inline", await ensureRadarRun(fresh, NOW));
   await db.delete(radarRuns).where(inArray(radarRuns.userId, [fresh]));
   await db.delete(userSettings).where(eq(userSettings.userId, fresh));
 
@@ -775,7 +778,7 @@ run(async () => {
     const passNow = new Date(later.getTime() + 90 * 3_600_000);
     await db
       .update(userSettings)
-      .set({ radarPaused: 0, radarLeaseUntil: null, radarNextAt: later, lastActiveAt: passNow })
+      .set({ radarPaused: 0, radarEnabledAt: passNow, radarLeaseUntil: null, radarNextAt: later, lastActiveAt: passNow })
       .where(inArray(userSettings.userId, [opened, unopened]));
     // The runner shares one PGlite across scripts: hand back any other account a claim
     // touches, and never run anyone but this script's own users.
@@ -795,6 +798,10 @@ run(async () => {
     const idle = await claimRadarUsers(100, passNow, { includeUnopened: true });
     await handBack(idle);
     check("an account idle for months is left alone", !idle.includes(unopened));
+    await db.update(userSettings).set({ lastActiveAt: passNow, radarEnabledAt: null }).where(eq(userSettings.userId, unopened));
+    const off = await claimRadarUsers(100, passNow, { includeUnopened: true });
+    await handBack(off);
+    check("an account that never turned Radar on is left alone", !off.includes(unopened));
     await db.delete(userSettings).where(eq(userSettings.userId, unopened));
   }
 

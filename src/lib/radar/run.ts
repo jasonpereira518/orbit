@@ -168,8 +168,19 @@ export async function claimRadarLease(userId: string, now: Date = new Date()): P
 export type RadarState = {
   lastRunAt: Date | null;
   nextAt: Date | null;
+  /**
+   * True when Radar must not run: the person paused it, or never turned it on. Radar is off
+   * by default (schema v225), so every on-demand build reads "never turned on" as paused.
+   */
   paused: boolean;
+  /** When the person first pressed "Turn on Radar"; null = never. */
+  enabledAt: Date | null;
 };
+
+/** Radar runs only for an account that turned it on and has not paused it since. */
+export function radarIsOn(enabledAt: Date | string | null | undefined, paused: number | null | undefined): boolean {
+  return enabledAt != null && paused !== 1;
+}
 
 export async function loadRadarState(userId: string): Promise<RadarState | null> {
   const db = await getDb();
@@ -178,11 +189,14 @@ export async function loadRadarState(userId: string): Promise<RadarState | null>
       lastRunAt: userSettings.radarLastRunAt,
       nextAt: userSettings.radarNextAt,
       paused: userSettings.radarPaused,
+      enabledAt: userSettings.radarEnabledAt,
     })
     .from(userSettings)
     .where(eq(userSettings.userId, userId))
     .limit(1);
-  return row ? { lastRunAt: row.lastRunAt, nextAt: row.nextAt, paused: row.paused === 1 } : null;
+  return row
+    ? { lastRunAt: row.lastRunAt, nextAt: row.nextAt, paused: !radarIsOn(row.enabledAt, row.paused), enabledAt: row.enabledAt }
+    : null;
 }
 
 function toRadarContact(
@@ -442,8 +456,8 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         }
 
         const runCaps = {
-          pending: Math.min(RADAR_CAPS.pending, radarLimits.maxRecommendations),
-          perKind: Math.min(RADAR_CAPS.perKind, Math.max(1, Math.floor(radarLimits.maxRecommendations / 2))),
+          pending: Math.min(RADAR_CAPS.pending, radarLimits.planSize),
+          perKind: Math.min(RADAR_CAPS.perKind, Math.max(1, Math.floor(radarLimits.planSize / 2))),
         };
         const next = rankPicks(ranked, runCaps);
         const counts = planRunResult(live, next, now);
@@ -579,6 +593,15 @@ export async function refreshRadarForNewContact(userId: string, now: Date = new 
   return stats.ok;
 }
 
+/** Turn Radar on: stamp the first time (never overwritten) and clear any pause. */
+export async function turnOnRadarForUser(userId: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(userSettings)
+    .set({ radarPaused: 0, radarEnabledAt: sql`coalesce(${userSettings.radarEnabledAt}, now())` })
+    .where(eq(userSettings.userId, userId));
+}
+
 /** Rows of `radar_runs` for one account, newest first. For the page stamp and the smoke. */
 export async function countRadarRuns(userId: string): Promise<number> {
   const db = await getDb();
@@ -602,7 +625,8 @@ export const RADAR_PER_USER_BUDGET_MS = 45_000;
 export const RADAR_ACTIVE_WITHIN_DAYS = 60;
 
 /**
- * Claim accounts that are due, in one statement. While Radar is coming-soon, only accounts
+ * Claim accounts that are due, in one statement. Only accounts that turned Radar on
+ * (`radar_enabled_at`) and have not paused it are eligible. While Radar is coming-soon, only accounts
  * that have opened it (`radar_last_run_at IS NOT NULL`) are eligible, so nobody's AI key is
  * spent on a page they cannot see. `last_active_at` is null for accounts that predate the
  * column; they are treated as inactive until their next visit, which builds inline.
@@ -617,6 +641,7 @@ export async function claimRadarUsers(limit: number, now: Date, opts: { includeU
        WHERE id IN (
          SELECT id FROM user_settings
           WHERE radar_paused = 0
+            AND radar_enabled_at IS NOT NULL
             AND radar_daily_enabled = 1
             AND (radar_next_at IS NULL OR radar_next_at <= ${now})
             AND (radar_lease_until IS NULL OR radar_lease_until < ${now})

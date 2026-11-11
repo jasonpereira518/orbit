@@ -4,14 +4,14 @@ import { useEffect, useState, useSyncExternalStore, useTransition } from "react"
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { format, formatDistanceToNow } from "date-fns";
-import { ChevronLeft, ChevronRight, Focus, LayoutList, Play, RefreshCw, Wand2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Focus, LayoutList, RefreshCw, Wand2 } from "lucide-react";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { Button } from "@/components/ui/button";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { RecommendationCard, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { RadarSettingsSheet } from "@/components/radar/radar-settings-sheet";
 import { useRadarKeys } from "@/components/radar/use-radar-keys";
-import { addInboxPerson, dismissInboxPerson, refreshRadarNow, setRadarPaused, undoAutopilot } from "@/actions/radar";
+import { addInboxPerson, dismissInboxPerson, refreshRadarNow, undoAutopilot } from "@/actions/radar";
 import { InboxPeople, type InboxPersonView } from "@/components/radar/inbox-people";
 import { friendlyError } from "@/lib/errors";
 import type { ChangeLine } from "@/lib/radar/briefing";
@@ -21,6 +21,7 @@ import { RADAR_CAPS } from "@/lib/radar/score";
 import { KIND_SECTION_TITLES, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
 import { toast } from "@/lib/toast";
 import { syncTimeZoneCookie } from "@/lib/tz-cookie";
+import { clearRadarNew } from "@/lib/app-pulse-store";
 import { cn } from "@/lib/utils";
 import { prefersReducedMotion } from "@/lib/motion-preference";
 
@@ -35,7 +36,6 @@ export type RadarViewProps = {
   recommendations: RecommendationCardData[];
   lastRunAt: string | null;
   nextRunAt: string | null;
-  paused: boolean;
   aiAvailable: boolean;
   hasContacts: boolean;
   settings: RadarSettingsView;
@@ -70,7 +70,7 @@ function arrivalMode(linked: boolean): Mode {
 }
 
 export function RadarView(props: RadarViewProps) {
-  const { recommendations, lastRunAt, nextRunAt, paused, aiAvailable, hasContacts, settings, autopilot, changes, signalsThisWeek, inboxPeople, focusId } =
+  const { recommendations, lastRunAt, nextRunAt, aiAvailable, hasContacts, settings, autopilot, changes, signalsThisWeek, inboxPeople, focusId } =
     props;
   const { aiReason } = useViewerPlan();
   const router = useRouter();
@@ -87,6 +87,8 @@ export function RadarView(props: RadarViewProps) {
 
   // So the Monday email arrives on this person's Monday morning (`captureRadarTimeZone`).
   useEffect(() => syncTimeZoneCookie(), []);
+  // Looking at Radar is what clears the nav's green "new suggestions" pulse.
+  useEffect(() => clearRadarNew(), []);
 
   const chooseMode = (next: Mode) => {
     setChosen(next);
@@ -119,27 +121,12 @@ export function RadarView(props: RadarViewProps) {
       }
     });
 
-  const resume = () =>
-    start(async () => {
-      try {
-        const result = await setRadarPaused(false);
-        if (result.ok) toast.success(result.message ?? "Radar resumed");
-        router.refresh();
-      } catch (err) {
-        toast.error(friendlyError(err, "Couldn’t change that — try again?"));
-      }
-    });
-
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
         <p suppressHydrationWarning>
-          {paused
-            ? "Paused. Nothing updates overnight until you resume."
-            : lastRunAt
-              ? `Updated ${formatDistanceToNow(new Date(lastRunAt), { addSuffix: true })}`
-              : "Your first list is being put together."}
-          {!paused && signalsThisWeek > 0 && (
+          {lastRunAt ? `Updated ${formatDistanceToNow(new Date(lastRunAt), { addSuffix: true })}` : "Building your first plan…"}
+          {signalsThisWeek > 0 && (
             <span>
               {" · "}
               {signalsThisWeek} new {signalsThisWeek === 1 ? "signal" : "signals"} this week
@@ -153,17 +140,10 @@ export function RadarView(props: RadarViewProps) {
               <ModeButton active={mode === "list"} onClick={() => chooseMode("list")} icon={LayoutList} label="List" />
             </div>
           )}
-          {paused ? (
-            <Button type="button" size="sm" variant="outline" className="h-8" disabled={pending} onClick={resume}>
-              <Play className="size-3.5" aria-hidden />
-              Resume
-            </Button>
-          ) : (
-            <Button type="button" size="sm" variant="outline" className="h-8" disabled={pending} onClick={refresh}>
-              <RefreshCw className={pending ? "size-3.5 animate-spin" : "size-3.5"} aria-hidden />
-              Refresh now
-            </Button>
-          )}
+          <Button type="button" size="sm" variant="outline" className="h-8" disabled={pending} onClick={refresh}>
+            <RefreshCw className={pending ? "size-3.5 animate-spin" : "size-3.5"} aria-hidden />
+            Refresh now
+          </Button>
           <RadarSettingsSheet settings={settings} />
         </div>
       </div>
@@ -174,8 +154,10 @@ export function RadarView(props: RadarViewProps) {
 
       {!aiAvailable && recommendations.length > 0 && <AiKeyNotice feature="draft" reason={aiReason ?? "key_required"} compact />}
 
-      {recommendations.length === 0 ? (
-        <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} paused={paused} />
+      {recommendations.length === 0 && lastRunAt === null && hasContacts ? (
+        <BuildingFirstPlan />
+      ) : recommendations.length === 0 ? (
+        <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} />
       ) : mode === "focus" ? (
         <FocusDeck recommendations={recommendations} index={index} setIndex={setIndex} aiAvailable={aiAvailable} />
       ) : (
@@ -396,12 +378,10 @@ function EmptyState({
   hasContacts,
   ranOnce,
   nextRunAt,
-  paused,
 }: {
   hasContacts: boolean;
   ranOnce: boolean;
   nextRunAt: string | null;
-  paused: boolean;
 }) {
   if (!hasContacts) {
     return (
@@ -421,12 +401,40 @@ function EmptyState({
     <div className="rounded-2xl border border-dashed border-border p-8 text-center">
       <p className="font-medium text-ink">{ranOnce ? "All clear" : "Nothing yet"}</p>
       <p className="mt-1 text-sm text-muted-foreground" suppressHydrationWarning>
-        {paused
-          ? "Radar is paused. Resume it to hear about new people."
-          : ranOnce
+        {ranOnce
             ? `Nobody needs you right now. Radar checks again ${next ? formatDistanceToNow(next, { addSuffix: true }) : "tonight"}, and anything new will show up here.`
             : "Radar hasn’t found anyone to suggest yet. It checks your network every night."}
       </p>
+    </div>
+  );
+}
+
+const BUILD_STEPS = ["Reading your notes", "Checking who’s moved", "Finding openings", "Picking who matters this week"];
+/** Rechecks this often while the first plan builds, and stops after BUILD_POLL_MAX tries (~60s). */
+const BUILD_POLL_MS = 5_000;
+const BUILD_POLL_MAX = 12;
+
+/**
+ * Right after "Turn on Radar": the first plan is building in the background
+ * (`turnOnRadar`'s `after()`). Rotates honest step copy and re-reads the page until the run lands.
+ */
+function BuildingFirstPlan() {
+  const router = useRouter();
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    let n = 0;
+    const id = window.setInterval(() => {
+      n += 1;
+      setStep((s) => (s + 1) % BUILD_STEPS.length);
+      router.refresh();
+      if (n >= BUILD_POLL_MAX) window.clearInterval(id);
+    }, BUILD_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [router]);
+  return (
+    <div className="rounded-2xl border border-dashed border-border p-8 text-center" role="status">
+      <p className="font-medium text-ink">Building your first plan</p>
+      <p className="mt-1 text-sm text-muted-foreground">{BUILD_STEPS[step]}…</p>
     </div>
   );
 }

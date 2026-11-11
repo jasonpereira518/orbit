@@ -3293,6 +3293,24 @@ html[data-celebration-handoff] [data-app-logo] {
   }
 }
 
+/* ── Radar "new suggestions" shimmer ──
+ * Colours for the gradient `components/layout/radar-shimmer-icon.tsx` puts on the Radar icon's
+ * stroke while Radar holds suggestions created since /radar was last opened: a green icon
+ * with a pale glint sweeping across it. The sweep itself is SVG (animateTransform), and
+ * reduced motion drops it in the component, leaving the icon green and still. */
+.radar-shimmer-base {
+  stop-color: #059669;
+}
+.radar-shimmer-glint {
+  stop-color: #6ee7b7;
+}
+.dark .radar-shimmer-base {
+  stop-color: #34d399;
+}
+.dark .radar-shimmer-glint {
+  stop-color: #ecfdf5;
+}
+
 /* --- Per-event theming ------------------------------------------------------------------
    Each event carries a colour derived from its own page (see src/lib/events/theme.ts). The
    detail page sets the six *-light / *-dark variables inline; these two rules pick between

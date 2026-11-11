@@ -279,7 +279,7 @@ async function openZones(now: Date): Promise<Map<string, string[]>> {
     await db.execute(sql`
       SELECT DISTINCT coalesce(radar_digest_tz, 'UTC') AS tz
         FROM user_settings
-       WHERE radar_digest_enabled = 1 AND radar_paused = 0
+       WHERE radar_digest_enabled = 1 AND radar_paused = 0 AND radar_enabled_at IS NOT NULL
     `)
   );
   return openDigestZones(now, rows.map((r) => r.tz));
@@ -299,6 +299,7 @@ async function eligibleBatch(
         FROM user_settings s
        WHERE s.radar_digest_enabled = 1
          AND s.radar_paused = 0
+         AND s.radar_enabled_at IS NOT NULL
          AND s.suspended_at IS NULL
          AND s.email IS NOT NULL AND btrim(s.email) <> ''
          AND coalesce(s.radar_digest_tz, 'UTC') IN (${sql.join(zones.map((z) => sql`${z}`), sql`, `)})

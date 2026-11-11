@@ -501,6 +501,8 @@ async function seed() {
   });
   await db.insert(schema.radarRuns).values({ userId: USER, trigger: "manual" });
   await db.insert(schema.userProjects).values({ userId: USER, title: "Smoke project", detectedFrom: "manual" });
+  await db.insert(schema.radarOpportunities).values({ userId: USER, kind: "event", title: "Smoke meetup", dedupeKey: "smoke-purge-opportunity" });
+  await db.insert(schema.pushSubscriptions).values({ userId: USER, endpoint: "https://push.example.com/smoke-purge", p256dh: "smoke-key", auth: "smoke-auth" });
   await db.insert(schema.contactSignals).values({
     userId: USER,
     contactId: contact.id,

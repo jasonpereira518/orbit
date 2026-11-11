@@ -66,7 +66,7 @@ import {
   updateMeetingDetails,
 } from "@/lib/meeting-sessions";
 import { loadRadarAutopilot, setRadarAutopilotForUser } from "@/lib/radar/autopilot";
-import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS, type RecommendationKind } from "@/lib/radar/types";
 import { requireReleasedSurface } from "@/lib/surface-visibility";
 import { addGoalForUser, deleteGoalForUser, MAX_GOAL_CHARS, restoreGoalForUser, type GoalSnapshot } from "@/lib/user-goals";
 import { isoDay, name, s, text, uuid, type ChatWrite, type UndoFn } from "@/lib/tools/chat-write-kit";
@@ -583,7 +583,7 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
     description:
       "Propose turning radar's autopilot on or off for one kind of card (prep, heads_up, follow_up, opportunity, reach_out, " +
       "reconnect). With it on, radar schedules a follow-up for that kind of card by itself. It never sends.",
-    inputSchema: { kind: z.enum(RECOMMENDATION_KINDS), on: z.boolean() },
+    inputSchema: { kind: z.enum(AUTOPILOT_KINDS), on: z.boolean() },
     tier: "confirm",
     refs: () => ({}),
     preview: (i) =>
