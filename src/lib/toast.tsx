@@ -1,5 +1,6 @@
 "use client";
 
+import { isFeedbackAvailable, reportProblem } from "@/lib/feedback-events";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   toast as sonnerToast,
@@ -260,9 +261,27 @@ function withKeep(
 }
 
 /** Drop-in toast helpers with See more for long messages (especially errors). */
+/**
+ * Error toasts carry a "Tell Jason" action when they have no action of their own and the
+ * feedback widget is on the page: a failure is exactly when someone has something to report,
+ * and the message opens already saying what went wrong. Pass `action` (or `report: false`)
+ * to opt out.
+ */
+function withReport(
+  message: string | ReactNode,
+  data?: OrbitToastData & { report?: boolean }
+): OrbitToastData | undefined {
+  const { report, ...rest } = data ?? {};
+  if (report === false || rest.action || typeof message !== "string" || !isFeedbackAvailable()) {
+    return data ? rest : data;
+  }
+  return { ...rest, action: { label: "Tell Jason", onClick: () => reportProblem(message) } };
+}
+
 export const toast = {
   ...sonnerToast,
-  error(message: string | ReactNode, data?: OrbitToastData) {
+  error(message: string | ReactNode, rawData?: OrbitToastData & { report?: boolean }) {
+    const data = withReport(message, rawData);
     if (data?.keep === false) {
       return send((t, d) => sonnerToast.error(t, d), message, "error", {
         ...stripKeep(data),

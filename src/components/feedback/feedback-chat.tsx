@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Camera, X } from "lucide-react";
+import { ArrowUp, Camera, ImagePlus, X } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import { markFeedbackTyping, sendFeedbackMessage } from "@/actions/feedback";
 import { ThreadMessages, useLiveThread, useTypingPing } from "@/components/feedback/feedback-thread-view";
@@ -55,6 +55,8 @@ export type ChatDraft = {
   shots: DraftShot[];
   canCapture: boolean;
   onAddScreenshot: () => void;
+  /** Pasted, dropped or picked images (phones and Safari have no screen capture). */
+  onAddImageFiles: (files: File[]) => void;
   onRemoveShot: (id: string) => void;
   /** The reply went out: clear the draft. */
   onSent: () => void;
@@ -133,6 +135,15 @@ export function FeedbackChat({
       {thread.open ? (
         <form
           className="flex shrink-0 flex-wrap items-end gap-2 border-t border-border/60 px-3 py-2.5"
+          onDragOver={(e) => {
+            if (draft && e.dataTransfer.types.includes("Files")) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+            if (!draft || files.length === 0) return;
+            e.preventDefault();
+            draft.onAddImageFiles(files);
+          }}
           onSubmit={(e) => {
             e.preventDefault();
             send();
@@ -161,6 +172,26 @@ export function FeedbackChat({
               ))}
             </div>
           )}
+          {draft && shots.length < MAX_SCREENSHOTS && (
+            <label
+              aria-label="Attach an image"
+              title="Attach an image"
+              className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <ImagePlus className="size-4" aria-hidden />
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                className="sr-only"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  e.target.value = "";
+                  if (files.length) draft.onAddImageFiles(files);
+                }}
+              />
+            </label>
+          )}
           {draft?.canCapture && (
             <button
               type="button"
@@ -183,6 +214,14 @@ export function FeedbackChat({
             onChange={(e) => {
               setBody(e.target.value);
               if (e.target.value.trim()) typed();
+            }}
+            // ⌘V a screenshot straight into the reply.
+            onPaste={(e) => {
+              if (!draft) return;
+              const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+              if (files.length === 0) return;
+              e.preventDefault();
+              draft.onAddImageFiles(files);
             }}
             // Enter sends like a message, on a fine pointer only — the same rule as the
             // new-message form (`feedback-panel.tsx`).

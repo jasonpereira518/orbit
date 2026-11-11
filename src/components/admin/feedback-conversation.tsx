@@ -27,10 +27,13 @@ export function FeedbackConversation({
   initial,
   reporterLabel,
   hasEmail,
+  related = [],
 }: {
   initial: FeedbackThread;
   reporterLabel: string;
   hasEmail: boolean;
+  /** Other open reports about the same thing (triage's duplicates), to answer all at once. */
+  related?: { id: string; label: string }[];
 }) {
   const { thread, setThread, showPending } = useLiveThread(initial, "operator");
   // The reporter sees your typing dots while you write.
@@ -41,6 +44,8 @@ export function FeedbackConversation({
   // Emailing the FIRST reply is what tells them the conversation exists; after that the bell
   // does, and an email per message would be noise.
   const [email, setEmail] = useState(hasEmail && !initial.open);
+  // On by default: telling everyone who hit it is the point of a "fixed" reply.
+  const [toRelated, setToRelated] = useState(related.length > 0);
   const [pending, start] = useTransition();
   const field = useRef<HTMLTextAreaElement>(null);
 
@@ -58,13 +63,19 @@ export function FeedbackConversation({
           resolve,
           thankCredits: credits,
           email,
+          includeRelated: toRelated && related.length > 0,
         });
         drop();
         setThread(result.thread);
         setCredits(null);
         setEmail(false);
         setResolve(false);
-        const extras = [result.credited && "credits added", result.emailed && "emailed"].filter(Boolean);
+        setToRelated(false);
+        const extras = [
+          result.credited && "credits added",
+          result.emailed && "emailed",
+          result.alsoSent > 0 && `also sent to ${result.alsoSent} other${result.alsoSent === 1 ? "" : "s"}`,
+        ].filter(Boolean);
         toast.success(extras.length ? `Sent — ${extras.join(", ")}` : "Sent");
         if (email && !result.emailed) toast.error("The email copy didn’t send — they’ll still see it in Orbit");
       } catch (err) {
@@ -150,6 +161,12 @@ export function FeedbackConversation({
             <input type="checkbox" checked={email} disabled={!hasEmail} onChange={(e) => setEmail(e.target.checked)} />
             Also email{hasEmail ? "" : " (no address on file)"}
           </label>
+          {related.length > 0 && (
+            <label className="inline-flex items-center gap-1.5" title={related.map((r) => r.label).join("\n")}>
+              <input type="checkbox" checked={toRelated} onChange={(e) => setToRelated(e.target.checked)} />
+              Also send to {related.length} other{related.length === 1 ? "" : "s"} who reported this
+            </label>
+          )}
           <Button size="sm" className="ml-auto" disabled={!body.trim() || pending} onClick={send}>
             {pending ? "Sending…" : "Send"}
           </Button>

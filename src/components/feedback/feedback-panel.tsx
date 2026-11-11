@@ -1,6 +1,20 @@
 "use client";
 
-import { ArrowLeft, Camera, SquarePen, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Bug,
+  Camera,
+  Heart,
+  HelpCircle,
+  ImagePlus,
+  Lightbulb,
+  MapPin,
+  MessageCircle,
+  Pencil,
+  Sparkles,
+  SquarePen,
+  X,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -49,6 +63,17 @@ import { blobToDataUrl } from "@/lib/screenshot-capture";
 import { toast } from "@/lib/toast";
 
 /** The four kinds, worded the way someone would say them. One line, all optional. */
+/**
+ * Each kind's icon and soft colour — a broken thing reads red, an idea gold, confusion violet,
+ * praise green. Opacity on semantic colours, never fixed hex, so dark mode holds up.
+ */
+const KIND_STYLE: Record<FeedbackCategory, { icon: typeof Bug; tint: string; on: string }> = {
+  bug: { icon: Bug, tint: "bg-destructive/10 text-destructive", on: "border-destructive/50 ring-2 ring-destructive/20" },
+  idea: { icon: Lightbulb, tint: "bg-gold/15 text-gold-ink", on: "border-gold/60 ring-2 ring-gold/25" },
+  confusing: { icon: HelpCircle, tint: "bg-violet-500/10 text-violet-700 dark:text-violet-300", on: "border-violet-500/50 ring-2 ring-violet-500/20" },
+  praise: { icon: Heart, tint: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300", on: "border-emerald-500/50 ring-2 ring-emerald-500/20" },
+};
+
 const CATEGORY_LABELS: Record<FeedbackCategory, string> = {
   bug: "Something's broken",
   idea: "I have an idea",
@@ -74,6 +99,7 @@ export function FeedbackPanel({
   shots,
   canCapture,
   onAddScreenshot,
+  onAddImageFiles,
   onRemoveShot,
   onEditShot,
   onClose,
@@ -116,6 +142,8 @@ export function FeedbackPanel({
   shots: DraftShot[];
   canCapture: boolean;
   onAddScreenshot: () => void;
+  /** Pasted, dropped or picked images — the way in where screen capture doesn't exist. */
+  onAddImageFiles: (files: File[]) => void;
   onRemoveShot: (id: string) => void;
   onEditShot: (id: string) => void;
   /**
@@ -379,7 +407,7 @@ export function FeedbackPanel({
         // The sheet's own surface. Not `.liquid-glass`: that class pins the element to
         // `position: relative`, which un-docks a fixed sheet. No padding here — each screen
         // has its own header, scrolling body and pinned footer.
-        className="gap-0 p-0 data-[side=right]:sm:max-w-[34rem]"
+        className="gap-0 p-0 data-[side=right]:sm:max-w-[36rem]"
         // Lighter than the shared default: the page behind stays legible.
         overlayClassName="bg-black/5 supports-backdrop-filter:backdrop-blur-[1.5px]"
         showCloseButton
@@ -475,34 +503,29 @@ export function FeedbackPanel({
               <ArrowLeft className="size-4" aria-hidden />
             </button>
           )}
+          <ThreadAvatar label={FEEDBACK_RECIPIENT} size={36} />
           <div className="min-w-0 flex-1">
-            <SheetTitle className="text-base font-medium">New message</SheetTitle>
-            <SheetDescription className="text-xs">To {FEEDBACK_RECIPIENT} · I read every one</SheetDescription>
+            <SheetTitle className="text-base font-medium">Hey, it&apos;s {FEEDBACK_RECIPIENT}</SheetTitle>
+            <SheetDescription className="text-xs">What&apos;s on your mind? I read every one.</SheetDescription>
           </div>
         </PanelHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-        {/* The subject line, required — like an email, so both sides can find the
-            conversation again by what it was about. Enter moves on to the message. */}
-        <Input
-          value={subject}
-          maxLength={MAX_FEEDBACK_SUBJECT}
-          required
-          autoFocus={subject.trim().length === 0}
-          aria-label="Subject"
-          placeholder="Subject — what's this about?"
-          className="h-10 shrink-0"
-          onChange={(e) => onSubjectChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
-            e.preventDefault();
-            textareaRef.current?.focus();
+        <div
+          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4"
+          // Drop an image anywhere on the form to attach it.
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes("Files")) e.preventDefault();
           }}
-        />
-
+          onDrop={(e) => {
+            const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+            if (files.length === 0) return;
+            e.preventDefault();
+            onAddImageFiles(files);
+          }}
+        >
         {/* The four kinds, on one line, all optional. Scrolls sideways on a narrow phone
             rather than wrapping into a block that reads as a form to fill in. */}
         <div
-          className="-mx-1 flex shrink-0 flex-nowrap gap-1.5 overflow-x-auto px-1 pb-0.5"
+          className="-mx-1 flex shrink-0 flex-nowrap gap-1 overflow-x-auto px-1 pb-0.5"
           role="group"
           aria-label="Kind of feedback (optional)"
         >
@@ -513,15 +536,39 @@ export function FeedbackPanel({
               aria-pressed={category === value}
               onClick={() => onCategoryChange(category === value ? null : value)}
               className={cn(
-                "shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs transition-colors",
-                category === value
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border/70 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2 py-1 text-xs transition-colors",
+                KIND_STYLE[value].tint,
+                category === value ? KIND_STYLE[value].on : "border-transparent opacity-80 hover:opacity-100"
               )}
             >
+              {(() => {
+                const Icon = KIND_STYLE[value].icon;
+                return <Icon className="size-3.5" aria-hidden />;
+              })()}
               {CATEGORY_LABELS[value]}
             </button>
           ))}
+        </div>
+
+        {/* The subject line, required — like an email, so both sides can find the
+            conversation again by what it was about. Enter moves on to the message. */}
+        <div className="relative shrink-0">
+        <Pencil className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+        <Input
+          value={subject}
+          maxLength={MAX_FEEDBACK_SUBJECT}
+          required
+          autoFocus={subject.trim().length === 0}
+          aria-label="Subject"
+          placeholder="Give it a title"
+          className="h-10 pl-9"
+          onChange={(e) => onSubjectChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+            e.preventDefault();
+            textareaRef.current?.focus();
+          }}
+        />
         </div>
 
         {/* The one block that gives, so that everything else always fits on screen.
@@ -551,7 +598,8 @@ export function FeedbackPanel({
  *
  * `grid-rows-[1fr_auto]`: the field takes the slack and the tag row stays its own height.
  * Two auto rows would stretch equally and float the tag halfway down an empty box. */}
-        <div className="grid min-h-20 flex-1 grid-rows-[1fr_auto] gap-1.5">
+        <div className="relative grid min-h-20 flex-1 grid-rows-[1fr_auto] gap-1.5">
+          <MessageCircle className="pointer-events-none absolute left-3 top-2.5 z-[1] size-4 text-muted-foreground" aria-hidden />
           <Textarea
             ref={attachTextarea}
             // The subject comes first; the message box takes focus once it has one.
@@ -562,11 +610,18 @@ export function FeedbackPanel({
             //
             // `min-h-0` is load-bearing — a grid item's automatic minimum size would
             // otherwise stop it shrinking with its parent, which is the whole bug above.
-            className="h-full min-h-0 resize-none"
+            className="h-full min-h-0 resize-none pl-9"
             value={message}
             maxLength={MAX_FEEDBACK_TEXT}
-            placeholder="What’s on your mind? A bug, an idea, something confusing…"
+            placeholder="Tell me what happened…"
             onChange={(e) => onMessageChange(e.target.value)}
+            // ⌘V a screenshot straight into the message.
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+              if (files.length === 0) return;
+              e.preventDefault();
+              onAddImageFiles(files);
+            }}
             // Enter sends, the way a message does — that is the habit this window is
             // competing with. Shift+Enter is the new line.
             //
@@ -597,7 +652,7 @@ export function FeedbackPanel({
                 aria-label={`Which part of Orbit: ${AREA_LABELS[effectiveArea]}`}
                 className="h-7 w-auto gap-1 rounded-full px-2.5 text-xs text-muted-foreground"
               >
-                <span aria-hidden>About:</span>
+                <MapPin className="size-3.5" aria-hidden />
                 <SelectValue />
               </SelectTrigger>
               {/* `alignItemWithTrigger={false}` drops the list below the trigger instead of
@@ -633,26 +688,26 @@ export function FeedbackPanel({
    * box's height until it hit its floor — and then out of the footer, which is how the
    * Send button ended up below the bottom of the window. Collapsing the button to a single
    * row gives back more than the thumbnails cost, so the total goes DOWN. */}
-          {canCapture && usedShots === 0 && (
-            <Button
-              type="button"
-              variant="outline"
-              // `whitespace-normal` undoes `buttonVariants`' nowrap, which would otherwise
-              // clip the second line against the sheet's 24rem max width.
-              className="h-auto w-full justify-start gap-3 whitespace-normal border-dashed px-4 py-3 text-left"
-              onClick={() => {
-                rememberCaret();
-                onAddScreenshot();
-              }}
-            >
-              <Camera className="size-5 shrink-0" />
-              <span className="grid gap-0.5">
-                <span className="text-sm font-medium">Add a screenshot</span>
-                <span className="text-xs font-normal leading-snug text-muted-foreground">
-                  Drag a box around the problem. It attaches when you let go.
-                </span>
-              </span>
-            </Button>
+          {/* Attach: screenshot (where screen capture works) and upload, as small chips —
+              the picture is the most useful part of a report, but it's an extra, not a field. */}
+          {usedShots === 0 && (
+            <div className="flex flex-wrap gap-2">
+              {canCapture && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    rememberCaret();
+                    onAddScreenshot();
+                  }}
+                  title="Drag a box around the problem. It attaches when you let go."
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs transition-colors hover:bg-muted"
+                >
+                  <Camera className="size-3.5" aria-hidden />
+                  Screenshot
+                </button>
+              )}
+              <ImagePicker label="Upload" prominent={false} onFiles={onAddImageFiles} />
+            </div>
           )}
 
           {/* The add control joins this row rather than sitting above it, which is what
@@ -721,25 +776,27 @@ export function FeedbackPanel({
             )}
           </div>
 
-          {!canCapture ? (
-            // Never render a button that can only fail: getDisplayMedia does not exist on
-            // iOS in any browser, and is absent or inert on Android.
+          {/* An image from the device: the only way in on phones and Safari (no screen
+              capture there), and handy everywhere for a screenshot already taken. Paste and
+              drag-and-drop land in the same place. */}
+          {usedShots > 0 && usedShots < MAX_SCREENSHOTS && (
+            <ImagePicker
+              label={canCapture ? "or upload an image" : "Add a photo or screenshot"}
+              prominent={!canCapture && usedShots === 0}
+              onFiles={onAddImageFiles}
+            />
+          )}
+          {usedShots > 0 && (
             <p className="text-xs text-muted-foreground">
-              Screenshots aren&apos;t available in this browser — describe what you saw and
-              we&apos;ll find it.
+              {usedShots} of {MAX_SCREENSHOTS} attached
+              {usedShots < MAX_SCREENSHOTS ? " — tap one to add a note." : "."}
             </p>
-          ) : (
-            usedShots > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {usedShots} of {MAX_SCREENSHOTS} attached
-                {usedShots < MAX_SCREENSHOTS ? " — tap one to add a note." : "."}
-              </p>
-            )
           )}
         </div>
 
-        <p className="shrink-0 text-xs text-muted-foreground">
-          Useful reports can earn bonus AI credits.
+        <p className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full bg-gold/15 px-3 py-1 text-xs text-gold-ink">
+          <Sparkles className="size-3.5" aria-hidden />
+          Useful reports can earn bonus AI credits
         </p>
         </div>
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 px-5 py-3">
@@ -764,6 +821,7 @@ export function FeedbackPanel({
               in flight the button stays lit and runs its sweep; `SendButton` blocks the
               clicks, and `send()` re-checks `canSend` regardless. */}
           <SendButton
+            label={`Send to ${FEEDBACK_RECIPIENT}`}
             sending={sending}
             sent={sent}
             disabled={!hasMessage}
@@ -821,6 +879,42 @@ export function FeedbackPanel({
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** A file button for images; `prominent` makes it the main way in (no screen capture). */
+function ImagePicker({
+  label,
+  prominent,
+  onFiles,
+}: {
+  label: string;
+  prominent: boolean;
+  onFiles: (files: File[]) => void;
+}) {
+  return (
+    <label
+      className={cn(
+        "cursor-pointer",
+        prominent
+          ? "flex items-center gap-3 rounded-lg border border-dashed border-border px-4 py-3 text-sm font-medium hover:bg-muted"
+          : "inline-flex w-fit items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs transition-colors hover:bg-muted"
+      )}
+    >
+      <ImagePlus className={prominent ? "size-5 shrink-0" : "size-3.5"} aria-hidden />
+      {label}
+      <input
+        type="file"
+        accept="image/*"
+        multiple
+        className="sr-only"
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = "";
+          if (files.length) onFiles(files);
+        }}
+      />
+    </label>
   );
 }
 

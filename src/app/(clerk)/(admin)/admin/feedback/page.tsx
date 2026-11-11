@@ -31,6 +31,7 @@ export const metadata = { title: "Admin · Feedback" };
 
 const FILTERS: Array<{ value: FeedbackFilter; label: string }> = [
   { value: "all", label: "All" },
+  { value: "needs", label: "Needs reply" },
   { value: "new", label: "New" },
   { value: "triaged", label: "Triaged" },
   { value: "resolved", label: "Resolved" },
@@ -86,6 +87,7 @@ export default async function AdminFeedbackPage({
     new: summary.new,
     triaged: summary.triaged,
     resolved: summary.resolved,
+    needs: summary.needs,
   };
 
   const query = (over: Record<string, string | number>) => {
@@ -308,6 +310,11 @@ export default async function AdminFeedbackPage({
                     </Link>
                     {row.subject && row.triage?.summary && (
                       <span className="block text-xs text-muted-foreground">{row.triage.summary}</span>
+                    )}
+                    {row.needsYou && !row.unreadReply && (
+                      <span className="ml-2 rounded-full bg-accent/20 px-1.5 py-0.5 align-middle text-[0.625rem] font-medium text-accent-foreground">
+                        needs reply
+                      </span>
                     )}
                     {isFeedbackSource(row.source) && (
                       <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 align-middle text-[0.625rem] text-muted-foreground">

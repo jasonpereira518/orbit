@@ -29,6 +29,7 @@ import {
   unreadRepliesFor,
   unwrapThanks,
 } from "../src/lib/feedback-thread";
+import { loadFeedbackList, relatedReports } from "../src/lib/admin-feedback";
 
 const A = "smoke-thread-a";
 const B = "smoke-thread-b";
@@ -171,6 +172,36 @@ async function main() {
     check("the reply is escaped in HTML", mail.html.includes("Fixed &lt;b&gt;now&lt;/b&gt; &amp; live") && !mail.html.includes("<script>"));
     check("credits are mentioned", mail.text.includes("50 bonus AI credits"));
     check("the way back into Orbit is there", mail.text.includes("https://orbit.test/feedback/x"));
+  }
+
+  console.log("\nSame report, several people; and what needs a reply");
+  {
+    const make = (userId: string, text: string) =>
+      createFeedbackSubmission({ userId, text, subject: text, area: "import", category: null, context: {}, screenshots: [] });
+    const first = await make(A, "Export is slow");
+    const second = await make(B, "Exports take forever");
+    await db
+      .update(feedback)
+      .set({ triage: { summary: "Slow exports", severity: "medium", duplicateOf: first.id } })
+      .where(eq(feedback.id, second.id));
+    const fromFirst = (await relatedReports(first.id)).map((r) => r.id);
+    const fromSecond = (await relatedReports(second.id)).map((r) => r.id);
+    check("the original finds the report that repeats it", fromFirst.includes(second.id));
+    check("...and the repeat finds the original", fromSecond.includes(first.id));
+    check("a report is never related to itself", !fromFirst.includes(first.id));
+
+    const needs = async () => (await loadFeedbackList({ page: 1, filter: "needs" })).rows.map((r) => r.id);
+    check("an unanswered report needs a reply", (await needs()).includes(first.id));
+    await postThreadMessage({ feedbackId: first.id, author: "operator", body: "On it" });
+    check("...not once the operator has answered", !(await needs()).includes(first.id));
+    await postThreadMessage({ feedbackId: first.id, author: "user", body: "Thanks — still slow", userId: A });
+    check("...and again when the person writes back", (await needs()).includes(first.id));
+    await db.update(feedback).set({ status: "resolved", statusChangedAt: new Date() }).where(eq(feedback.id, first.id));
+    check("a resolved report with nothing after it doesn't need a reply", !(await needs()).includes(first.id));
+    await new Promise((r) => setTimeout(r, 5));
+    await postThreadMessage({ feedbackId: first.id, author: "user", body: "Still broken", userId: A });
+    check("...but it does when they write back after it was resolved", (await needs()).includes(first.id));
+    check("resolved reports drop out of the group", !(await relatedReports(second.id)).some((r) => r.id === first.id));
   }
 
   console.log("\nLogging feedback given outside the app");

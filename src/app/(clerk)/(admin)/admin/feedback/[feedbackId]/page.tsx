@@ -14,7 +14,7 @@ import {
   FeedbackStatusActions,
 } from "@/components/admin/feedback-status-actions";
 import { FeedbackConversation } from "@/components/admin/feedback-conversation";
-import { loadFeedbackDetail } from "@/lib/admin-feedback";
+import { loadFeedbackDetail, relatedReports } from "@/lib/admin-feedback";
 import { SOURCE_LABELS, isFeedbackSource } from "@/lib/feedback-report";
 import { loadThread, markThreadRead } from "@/lib/feedback-thread";
 
@@ -45,6 +45,8 @@ export default async function AdminFeedbackDetailPage({
   // Only in-app reports (and ones logged from a text) have a conversation; PMF and churn
   // answers don't. Opening the page counts as reading the person's replies.
   const thread = entry.kind === "freeform" ? await loadThread(feedbackId, "operator") : null;
+  // Other open reports about the same thing, so one reply can reach them all.
+  const related = thread ? await relatedReports(feedbackId) : [];
   if (thread) await markThreadRead(feedbackId, "operator");
   const contextEntries = Object.entries(entry.context ?? {});
 
@@ -85,6 +87,7 @@ export default async function AdminFeedbackDetailPage({
               initial={thread}
               reporterLabel={submitter?.email ?? "Them"}
               hasEmail={Boolean(submitter?.email)}
+              related={related.map((r) => ({ id: r.id, label: r.subject || r.excerpt || "Report" }))}
             />
           </AdminPanel>
         )}

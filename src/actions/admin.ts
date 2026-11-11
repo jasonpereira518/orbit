@@ -1117,7 +1117,13 @@ export async function replyToFeedbackAction(input: {
   resolve: boolean;
   thankCredits: number | null;
   email: boolean;
-}): Promise<{ ok: true; thread: FeedbackThread; emailed: boolean; credited: boolean }> {
+  /**
+   * Also send this reply to the other open reports about the same thing (see
+   * `relatedReports`) — "fixed for everyone who reported it". They get the reply, the same
+   * resolve and the same email choice; credits stay with this report.
+   */
+  includeRelated?: boolean;
+}): Promise<{ ok: true; thread: FeedbackThread; emailed: boolean; credited: boolean; alsoSent: number }> {
   const adminUserId = await requireAdminUserId();
   const body = input.body.trim();
   if (!body) throw new UserFacingError("Write a reply first");
@@ -1177,19 +1183,47 @@ export async function replyToFeedbackAction(input: {
     }
   }
 
+  // The same answer to everyone else who reported it. Found BEFORE this report's own status
+  // matters (it is excluded by id), and each one is checked open at the time of asking.
+  let alsoSent = 0;
+  if (input.includeRelated) {
+    const related = await adminFeedback.relatedReports(input.id);
+    for (const other of related) {
+      const sent = await postThreadMessage({ feedbackId: other.id, author: "operator", body });
+      if (!sent) continue;
+      alsoSent += 1;
+      if (input.resolve) {
+        await adminFeedback.setFeedbackStatus({ id: other.id, status: "resolved", adminUserId });
+      }
+      if (input.email && other.email) {
+        await sendSiteInviteEmail(
+          buildFeedbackReplyEmail({
+            reply: body,
+            report: sent.report,
+            subject: other.subject,
+            credits: null,
+            threadUrl: `${getAppBaseUrl()}/feedback/${other.id}`,
+          }),
+          other.email,
+          "feedback.reply"
+        );
+      }
+    }
+  }
+
   await recordAdminAction({
     adminUserId,
     action: "feedback.reply",
     resourceType: "feedback",
     resourceId: input.id,
-    detail: { resolved: input.resolve, credits: credited ? credits : null, emailed },
+    detail: { resolved: input.resolve, credits: credited ? credits : null, emailed, alsoSent },
     reason: "Replied to feedback",
   });
 
   revalidateFeedback();
   const latest = await loadThread(input.id, "operator");
   if (!latest) throw new UserFacingError("That feedback entry no longer exists");
-  return { ok: true, thread: latest, emailed, credited };
+  return { ok: true, thread: latest, emailed, credited, alsoSent };
 }
 
 /**

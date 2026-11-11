@@ -6,6 +6,7 @@ import { flushSync } from "react-dom";
 import { cn } from "@/lib/utils";
 import {
   setFeedbackPanelState,
+  setFeedbackWidgetMounted,
   subscribeFeedbackOpen,
   takeFeedbackOpenRequest,
 } from "@/lib/feedback-events";
@@ -138,6 +139,8 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   const lastThreadRef = useRef<string | null>(null);
   /** The open-request listener subscribes once; it reads the latest `changeTarget` here. */
   const changeTargetRef = useRef<(next: FeedbackPanelTarget) => void>(() => {});
+  /** Whether the new-message draft has anything in it — a prefill never overwrites words. */
+  const draftHasWords = useRef(false);
   /**
    * The kind, if they picked one. Optional: left blank, the triage pass reads it from the
    * words (`src/lib/feedback-triage.ts` only fills a kind that is still empty).
@@ -279,7 +282,15 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
       if (requested === null) return;
       // A docked panel has no anchor to sit under; only the view matters. A plain press of
       // the button opens the form; the bell and "Your feedback" open a conversation.
-      changeTargetRef.current(requested.target ?? { view: "compose" });
+      const next = requested.target ?? { view: "compose" };
+      changeTargetRef.current(next);
+      // "Tell Jason" from an error: start the message with what went wrong — but only into
+      // an empty draft, never over words someone already wrote.
+      if (next.view === "compose" && next.prefill && !draftHasWords.current) {
+        if (next.prefill.subject) setSubject(next.prefill.subject);
+        if (next.prefill.text) setMessage(next.prefill.text);
+        if (next.prefill.category) setCategory(next.prefill.category);
+      }
       // From `sent`, hand back a BLANK form. The message and screenshots are still in
       // state — `endSession` only runs at the end of the collapse — so reopening without
       // this would return a draft the person has already sent. Both setStates batch into
@@ -315,6 +326,16 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
   }, [phase]);
 
   useEffect(() => () => setFeedbackPanelState("closed"), []);
+
+  // Tell "Tell Jason" buttons elsewhere on the page that there is a widget to open.
+  useEffect(() => {
+    setFeedbackWidgetMounted(true);
+    return () => setFeedbackWidgetMounted(false);
+  }, []);
+
+  useEffect(() => {
+    draftHasWords.current = message.trim().length > 0 || subject.trim().length > 0;
+  }, [message, subject]);
 
   /**
    * The send landed. Hold the window open for the button's gesture, then collapse.
@@ -504,6 +525,59 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
     }
   }, [shots, editingShotId]);
 
+  /**
+   * Attach images that didn't come from screen capture — pasted (⌘V), dropped, or picked from
+   * the file chooser. The only way in on phones and Safari, which have no screen capture.
+   * Same encode as a capture (`cropDownscaleEncode`), so size and format rules don't fork.
+   */
+  const latestLists = useRef({ compose: [] as DraftShot[], chat: [] as DraftShot[] });
+  useEffect(() => {
+    latestLists.current = { compose: shots, chat: chatShots };
+  }, [shots, chatShots]);
+  const addImageFiles = useCallback(async (files: File[], target: "compose" | "chat") => {
+    const setList = target === "chat" ? setChatShots : setShots;
+    for (const file of files.filter((f) => f.type.startsWith("image/"))) {
+      const list = latestLists.current[target];
+      if (list.length >= MAX_SCREENSHOTS) {
+        toast.error(`Up to ${MAX_SCREENSHOTS} screenshots per message`, { report: false });
+        return;
+      }
+      try {
+        const bitmap = await createImageBitmap(file);
+        let encoded: Awaited<ReturnType<typeof cropDownscaleEncode>>;
+        try {
+          encoded = await cropDownscaleEncode(
+            { source: bitmap, width: bitmap.width, height: bitmap.height, previewUrl: "" },
+            { x: 0, y: 0, w: bitmap.width, h: bitmap.height },
+            [],
+            MAX_SCREENSHOT_BYTES
+          );
+        } finally {
+          bitmap.close();
+        }
+        const used = list.reduce((sum, s) => sum + s.bytes, 0);
+        if (used + encoded.bytes > MAX_SUBMISSION_BYTES) {
+          toast.error("That image would go over the attachment limit — remove one first", { report: false });
+          return;
+        }
+        const shot: DraftShot = {
+          id: crypto.randomUUID(),
+          blob: encoded.blob,
+          previewUrl: URL.createObjectURL(encoded.blob),
+          width: encoded.width,
+          height: encoded.height,
+          bytes: encoded.bytes,
+          note: "",
+          redactions: [],
+        };
+        latestLists.current = { ...latestLists.current, [target]: [...list, shot] };
+        setList((prev) => [...prev, shot]);
+      } catch {
+        toast.error("Couldn’t read that image — try a PNG or JPEG", { report: false });
+      }
+    }
+  }, []);
+
   const removeChatShot = useCallback((id: string) => {
     setChatShots((prev) => {
       const target = prev.find((s) => s.id === id);
@@ -583,12 +657,14 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
           shots={shots}
           canCapture={captureSupported}
           onAddScreenshot={() => addScreenshot("compose")}
+          onAddImageFiles={(files) => void addImageFiles(files, "compose")}
           chat={{
             body: chatBody,
             onBodyChange: setChatBody,
             shots: chatShots,
             canCapture: captureSupported,
             onAddScreenshot: () => addScreenshot("chat"),
+            onAddImageFiles: (files) => void addImageFiles(files, "chat"),
             onRemoveShot: removeChatShot,
             onSent: clearChatDraft,
           }}

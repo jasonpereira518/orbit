@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 
+import type { FeedbackCategory } from "@/lib/feedback-report";
 import { PANEL_INSET_PX, PANEL_ORIGIN_FALLBACK, type PanelAnchor } from "@/lib/floating-panel";
 
 /**
@@ -37,7 +38,17 @@ let panelState: FeedbackPanelState = "closed";
  * Which part of the panel a request opens on. `thread` opens one conversation straight away —
  * the bell's "Jason replied" item and the "Your feedback" rows use it.
  */
-export type FeedbackPanelTarget = { view: "compose" } | { view: "list" } | { view: "thread"; id: string };
+export type FeedbackPanelTarget =
+  | {
+      view: "compose";
+      /**
+       * Words to start the new message with — "Tell Jason" on an error fills in what went
+       * wrong. Only applied to an empty draft: it never overwrites what someone has typed.
+       */
+      prefill?: { subject?: string; text?: string; category?: FeedbackCategory };
+    }
+  | { view: "list" }
+  | { view: "thread"; id: string };
 
 let pendingAnchor: PanelAnchor | null = null;
 let pendingTarget: FeedbackPanelTarget | null = null;
@@ -106,4 +117,45 @@ export function useFeedbackPanelState(): FeedbackPanelState {
 /** Widget only. Notified when a door asks to open; read the request with `take…`. */
 export function subscribeFeedbackOpen(callback: () => void) {
   return subscribe(callback);
+}
+
+/**
+ * Whether a feedback widget is on the page to answer an open request. Only the app's layout
+ * mounts one — the admin console, the marketing site and the sign-in pages don't — and a
+ * "Tell Jason" button that opens nothing is worse than none.
+ */
+let widgetMounted = false;
+
+/** Widget only: it is (or is no longer) on the page. */
+export function setFeedbackWidgetMounted(mounted: boolean) {
+  if (widgetMounted === mounted) return;
+  widgetMounted = mounted;
+  emit();
+}
+
+/** For callers outside React (the toast helper). */
+export function isFeedbackAvailable(): boolean {
+  return widgetMounted;
+}
+
+/** For components: re-renders when the widget mounts, so the button appears once it can work. */
+export function useFeedbackAvailable(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => widgetMounted,
+    () => false
+  );
+}
+
+/**
+ * Open a new message about something that just went wrong — the "Tell Jason" on error
+ * toasts and error screens. The page is captured with every report anyway; this fills in the
+ * subject and marks it broken so all that's left is a sentence of what they were doing.
+ */
+export function reportProblem(what: string) {
+  const subject = what.replace(/\s+/g, " ").trim().slice(0, 100) || "Something went wrong";
+  requestFeedbackOpen(FEEDBACK_ANCHOR_FALLBACK, {
+    view: "compose",
+    prefill: { subject, category: "bug" },
+  });
 }
