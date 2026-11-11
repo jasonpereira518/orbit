@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { ImageResponse } from "next/og";
 import type { NextRequest } from "next/server";
-import { cardArt, cardArtSvg, type CardArt } from "@/lib/cards/card-art";
+import { cardArt, cardArtSvg, planetNameLayout, type CardArt } from "@/lib/cards/card-art";
 import { loadPublicCard } from "@/lib/cards/card-store";
 
 /**
@@ -31,6 +31,7 @@ const W = 1200;
 const H = 630;
 const S = Math.min(W, H);
 const INSET = 0.04 * S;
+const PLANET_NAME = planetNameLayout(W, H);
 
 function toArrayBuffer(buf: Buffer): ArrayBuffer {
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
@@ -94,6 +95,22 @@ function Front({ art, name, role }: { art: CardArt; name: string; role: string |
       >
         ORBIT
       </div>
+      {/* The planet's name, centred under it as on the live card. */}
+      <div
+        style={{
+          position: "absolute",
+          left: PLANET_NAME.cx - 0.4 * S,
+          top: PLANET_NAME.top,
+          width: 0.8 * S,
+          display: "flex",
+          justifyContent: "center",
+          fontSize: 0.032 * S,
+          letterSpacing: 7,
+          color: "rgba(255,255,255,0.55)",
+        }}
+      >
+        {art.planet.name.toUpperCase()}
+      </div>
     </div>
   );
 }
@@ -127,7 +144,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const front = card
     ? { art: card.art, name: card.fullName, role: [card.title, card.company].filter(Boolean).join(" @ ") || null }
-    : { art: cardArt("orbit", "gold"), name: "Orbit", role: "Personal Networking Intelligence" };
+    : { art: cardArt("orbit", "gold", "orbit"), name: "Orbit", role: "Personal Networking Intelligence" };
 
   try {
     const regular = await readFile(path.join(FONT_DIR, "Fraunces-Regular.ttf"));

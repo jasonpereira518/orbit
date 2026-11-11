@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
-import { ACCENTS, artLayout, backLayout, cardArtSvg, type CardArt } from "@/lib/cards/card-art";
+import { ACCENTS, artLayout, backLayout, cardArtSvg, planetNameLayout, type CardArt } from "@/lib/cards/card-art";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +67,7 @@ export function OrbitCard({
   const backSvg = useMemo(() => (flippable ? { __html: cardArtSvg(art, { ...units, part: "back" }) } : null), [art, units, flippable]);
 
   const front = artLayout(W, H);
+  const planetName = planetNameLayout(W, H);
   const back = backLayout(W, H);
   // The code sits 4% in from the tile's edge, measured on the tile (a % padding would be the card's).
   const qr = back.tile * 0.92;
@@ -175,6 +176,14 @@ export function OrbitCard({
           style={{ right: pct(front.inset + 0.06 * front.s, W), bottom: pct(front.inset + 0.07 * front.s, H) }}
         >
           ORBIT
+        </span>
+        {/* The owner's planet's name, under it. Decorative: generated, not something they wrote. */}
+        <span
+          aria-hidden
+          className="absolute -translate-x-1/2 whitespace-nowrap font-medium text-[length:calc(var(--s)*0.032)] uppercase tracking-[0.32em] text-white/55"
+          style={{ left: pct(planetName.cx, W), top: pct(planetName.top, H) }}
+        >
+          {art.planet.name}
         </span>
         {sheen}
       </span>

@@ -1,6 +1,7 @@
 /**
- * The Orbit Card's artwork: a star chart with a constellation and a planet generated from the
- * card's seed, under a frosted glass pane. One generator for every place the card appears —
+ * The Orbit Card's artwork: a star chart with a constellation generated from the card's seed,
+ * the owner's own planet (`lib/planets/generate.ts`, keyed on the owner, so shuffling the stars
+ * never changes it), under a frosted glass pane. One generator for every place the card appears —
  * the scan page, show mode, the /card editor and the link-preview image.
  *
  * Pure: no DOM, no database. And NO USER TEXT: the seed is hashed before anything reads it and
@@ -12,7 +13,9 @@
  * aspect: the credit-card landscape (1.586:1), show mode's portrait, and 1200×630.
  */
 
-/** The five colours a card can wear. The accent tints the planet and the constellation lines. */
+import { generatePlanet, planetKey, type PlanetKey } from "@/lib/planets/generate";
+
+/** The five colours a card can wear. The accent tints the constellation and the back's dot. */
 export const ACCENTS = {
   teal: { hex: "#5ec8c0", ink: "#0d3b38", label: "Teal" },
   gold: { hex: "#d4b469", ink: "#3b2f0e", label: "Gold" },
@@ -40,8 +43,6 @@ const TILE = "#fbfbf9";
 export type Star = { x: number; y: number; size: number };
 /** A dust star; x and y are fractions of the whole card. */
 export type Dust = { x: number; y: number; size: number; alpha: number };
-/** A band across the planet; y and height in planet radii, y from -1 (top) to 1. */
-export type Band = { y: number; h: number; alpha: number; light: boolean };
 
 export type CardArt = {
   /** A short hash of the seed: the SVG's id prefix, so two cards on one page never share a gradient. */
@@ -50,12 +51,8 @@ export type CardArt = {
   /** In path order: each one joins the nearest star not yet on the line (long jumps stay undrawn). */
   stars: Star[];
   dust: Dust[];
-  planet: {
-    tilt: number;
-    bands: Band[];
-    ring: boolean;
-    moon: { angle: number; dist: number; r: number } | null;
-  };
+  /** The owner's planet: the same one wherever they appear, whatever the card's seed. */
+  planet: { key: PlanetKey; name: string; ringed: boolean };
   /** Where the accent dot sits on the back's gold ring, in degrees. */
   dotAngle: number;
 };
@@ -83,7 +80,8 @@ function xorshift(seed: number) {
 
 const between = (rand: () => number, lo: number, hi: number) => lo + rand() * (hi - lo);
 
-export function cardArt(seed: string, accent: AccentKey | null): CardArt {
+/** `owner` is the card owner's user id: their planet's seed, apart from the card's. */
+export function cardArt(seed: string, accent: AccentKey | null, owner: string): CardArt {
   const hash = fnv1a(seed);
   const rand = xorshift(hash);
   // Always drawn, so choosing an accent never moves the stars.
@@ -120,32 +118,25 @@ export function cardArt(seed: string, accent: AccentKey | null): CardArt {
     alpha: between(rand, 0.12, 0.55),
   }));
 
-  const tilt = between(rand, -26, 26);
-  const bands: Band[] = Array.from({ length: 2 + Math.floor(rand() * 3) }, () => ({
-    y: between(rand, -0.75, 0.75),
-    h: between(rand, 0.08, 0.24),
-    alpha: between(rand, 0.1, 0.3),
-    light: rand() < 0.5,
-  }));
-  const ring = rand() < 0.55;
-  const hasMoon = rand() < 0.45;
-  // Off to the planet's left, where the card has room for it, and never above or below the disc.
-  const moon = { angle: between(rand, 160, 200), dist: ring ? between(rand, 2, 2.2) : between(rand, 1.5, 1.8), r: between(rand, 0.14, 0.22) };
+  const key = planetKey(owner);
+  const planet = generatePlanet(key);
 
   return {
     id: `oc${hash.toString(36)}`,
     accent: accent ?? seeded,
     stars,
     dust,
-    planet: { tilt, bands, ring, moon: hasMoon ? moon : null },
+    planet: { key, name: planet.name, ringed: planet.ringed },
     dotAngle: rand() * 360,
   };
 }
 
-/** The ring's half-axes and the moon's furthest reach, in planet radii. */
+/**
+ * Room kept for a ring or moons, in planet radii. From generate.ts's ranges: a ring reaches at
+ * most ~1.55 sideways and ~0.92 up or down at its steepest tilt; the moons ~1.39 and ~1.08.
+ */
 const RING_RX = 1.75;
-const RING_RY = 0.36;
-const MOON_REACH = 2.2 + 0.22;
+const RING_REACH = { x: 1.56, y: 1.1 };
 
 /** Where things sit on the front, in the SVG's own units. */
 export function artLayout(width: number, height: number) {
@@ -161,37 +152,23 @@ export function artLayout(width: number, height: number) {
   const landscape = width >= height;
   // Left of the planet on a landscape card; below it on a portrait one. Clear of the name either way.
   const box = landscape
-    ? { x0: inset + 0.08 * s, x1: cx - MOON_REACH * r - 0.04 * s, y0: inset + 0.1 * s, y1: height * 0.58 }
+    ? { x0: inset + 0.08 * s, x1: cx - RING_RX * r - 0.04 * s, y0: inset + 0.1 * s, y1: height * 0.58 }
     : { x0: inset + 0.08 * s, x1: width - inset - 0.08 * s, y0: cy + r + 0.12 * s, y1: height * 0.64 };
   return { s, inset, planet: { cx, cy, r, ringRx }, box };
 }
 
-function moonCircle(moon: NonNullable<CardArt["planet"]["moon"]>, cx: number, cy: number, r: number) {
-  const a = (moon.angle * Math.PI) / 180;
-  return { x: cx + Math.cos(a) * moon.dist * r, y: cy + Math.sin(a) * moon.dist * r, r: moon.r * r };
-}
-
-/** The planet's whole footprint — disc, tilted ring, moon — for keeping it inside the pane. */
+/** The planet's whole footprint — disc and any ring or moons — for keeping it inside the pane. */
 export function planetBox(art: CardArt, width: number, height: number) {
   const { cx, cy, r } = artLayout(width, height).planet;
-  const t = (art.planet.tilt * Math.PI) / 180;
-  let hx = r;
-  let hy = r;
-  if (art.planet.ring) {
-    const rx = RING_RX * r;
-    const ry = RING_RY * r;
-    hx = Math.max(hx, Math.hypot(rx * Math.cos(t), ry * Math.sin(t)));
-    hy = Math.max(hy, Math.hypot(rx * Math.sin(t), ry * Math.cos(t)));
-  }
-  const box = { x0: cx - hx, x1: cx + hx, y0: cy - hy, y1: cy + hy };
-  if (art.planet.moon) {
-    const m = moonCircle(art.planet.moon, cx, cy, r);
-    box.x0 = Math.min(box.x0, m.x - m.r);
-    box.x1 = Math.max(box.x1, m.x + m.r);
-    box.y0 = Math.min(box.y0, m.y - m.r);
-    box.y1 = Math.max(box.y1, m.y + m.r);
-  }
-  return box;
+  const hx = art.planet.ringed ? RING_REACH.x * r : r;
+  const hy = art.planet.ringed ? RING_REACH.y * r : r;
+  return { x0: cx - hx, x1: cx + hx, y0: cy - hy, y1: cy + hy };
+}
+
+/** Where the planet's name sits: centred under it, clear of any ring. */
+export function planetNameLayout(width: number, height: number) {
+  const { cx, cy, r } = artLayout(width, height).planet;
+  return { cx, top: cy + RING_REACH.y * r + 0.02 * Math.min(width, height) };
 }
 
 /** Where the gold ring and the QR tile sit on the back, in the SVG's own units. */
@@ -203,13 +180,6 @@ export function backLayout(width: number, height: number) {
 }
 
 const n = (v: number) => (Math.round(v * 100) / 100).toString();
-
-function mix(a: string, b: string, t: number): string {
-  const ch = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
-  return `#${[0, 1, 2]
-    .map((i) => Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * t).toString(16).padStart(2, "0"))
-    .join("")}`;
-}
 
 /** Navy, the faint glow, and the dust: both sides start here. */
 function sky(art: CardArt, w: number, h: number, s: number) {
@@ -236,38 +206,15 @@ function planetSvg(art: CardArt, w: number, h: number) {
   const { s, planet } = artLayout(w, h);
   const { cx, cy, r } = planet;
   const p = art.id;
-  const hex = ACCENTS[art.accent].hex;
-  const { tilt, bands, ring, moon } = art.planet;
-  const ringEl = (half: "back" | "front") =>
-    `<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(r * RING_RX)}" ry="${n(r * RING_RY)}" fill="none" stroke="${mix(hex, "#ffffff", 0.45)}" stroke-opacity="${half === "back" ? 0.4 : 0.7}" stroke-width="${n(r * 0.07)}" clip-path="url(#${p}-${half})"/>`;
-  const bandEls = bands
-    .map((b) => `<rect x="${n(cx - r)}" y="${n(cy + b.y * r)}" width="${n(2 * r)}" height="${n(b.h * r)}" fill="${b.light ? "#ffffff" : CARD_NAVY}" fill-opacity="${n(b.alpha)}"/>`)
-    .join("");
-  const moonEl = moon
-    ? (() => {
-        const m = moonCircle(moon, cx, cy, r);
-        return `<circle cx="${n(m.x)}" cy="${n(m.y)}" r="${n(m.r)}" fill="url(#${p}-moon)"/>`;
-      })()
-    : "";
+  // The generated planet is drawn in a 100-unit box with its sphere `radius` across; scale that
+  // sphere onto the card's disc and nest it, its ids prefixed with this card's.
+  const g = generatePlanet(art.planet.key, `${p}-pl`);
+  const k = r / g.radius;
   return {
-    defs:
-      `<radialGradient id="${p}-body" cx="35%" cy="30%" r="80%"><stop offset="0" stop-color="${mix(hex, "#ffffff", 0.35)}"/><stop offset="0.55" stop-color="${hex}"/><stop offset="1" stop-color="${mix(hex, CARD_NAVY, 0.55)}"/></radialGradient>` +
-      `<radialGradient id="${p}-shade" cx="30%" cy="25%" r="95%"><stop offset="0.5" stop-color="${CARD_NAVY}" stop-opacity="0"/><stop offset="1" stop-color="${CARD_NAVY}" stop-opacity="0.85"/></radialGradient>` +
-      `<radialGradient id="${p}-aura"><stop offset="0.55" stop-color="${hex}" stop-opacity="0.22"/><stop offset="1" stop-color="${hex}" stop-opacity="0"/></radialGradient>` +
-      `<radialGradient id="${p}-moon" cx="35%" cy="30%" r="80%"><stop offset="0" stop-color="#e6ecef"/><stop offset="1" stop-color="#7d8a93"/></radialGradient>` +
-      `<clipPath id="${p}-disc"><circle cx="${n(cx)}" cy="${n(cy)}" r="${n(r)}"/></clipPath>` +
-      `<clipPath id="${p}-back"><rect x="${n(cx - 2 * r)}" y="${n(cy - 2 * r)}" width="${n(4 * r)}" height="${n(2 * r)}"/></clipPath>` +
-      `<clipPath id="${p}-front"><rect x="${n(cx - 2 * r)}" y="${n(cy)}" width="${n(4 * r)}" height="${n(2 * r)}"/></clipPath>`,
+    defs: `<radialGradient id="${p}-aura"><stop offset="0.5" stop-color="${g.tone}" stop-opacity="0.22"/><stop offset="1" stop-color="${g.tone}" stop-opacity="0"/></radialGradient>`,
     body:
-      `<circle cx="${n(cx)}" cy="${n(cy)}" r="${n(r * 1.9)}" fill="url(#${p}-aura)"/>` +
-      `<g transform="rotate(${n(tilt)} ${n(cx)} ${n(cy)})">` +
-      (ring ? ringEl("back") : "") +
-      `<circle cx="${n(cx)}" cy="${n(cy)}" r="${n(r)}" fill="url(#${p}-body)"/>` +
-      `<g clip-path="url(#${p}-disc)">${bandEls}</g>` +
-      `<circle cx="${n(cx)}" cy="${n(cy)}" r="${n(r)}" fill="url(#${p}-shade)"/>` +
-      (ring ? ringEl("front") : "") +
-      `</g>` +
-      moonEl,
+      `<circle cx="${n(cx)}" cy="${n(cy)}" r="${n(r * 1.7)}" fill="url(#${p}-aura)"/>` +
+      `<svg x="${n(cx - 50 * k)}" y="${n(cy - 50 * k)}" width="${n(100 * k)}" height="${n(100 * k)}" viewBox="0 0 100 100" overflow="visible">${g.body}</svg>`,
     s,
   };
 }

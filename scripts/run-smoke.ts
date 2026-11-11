@@ -100,6 +100,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-action-user-scope": "pure",
   "smoke-consume-bucket-args": "pure",
   "smoke-toast-copy": "pure",
+  "smoke-planet-generate": "pure",
   "smoke-toast-dedupe": "pure",
   "smoke-drive-picker-token": "pure",
   "smoke-settle-once": "pure",

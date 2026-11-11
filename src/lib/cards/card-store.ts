@@ -90,9 +90,13 @@ function cleanDraft(draft: CardDraft) {
   };
 }
 
-/** The art for a card row; before the card exists, a seed that is the owner's alone. */
-const artFor = (cardId: string, d: Pick<CardDraft, "artSalt" | "accent">) =>
-  cardArt(cardSeed(cardId, d.artSalt ?? 0), d.accent ?? null);
+/**
+ * The art for a card row; before the card exists, a seed that is the owner's alone. The planet
+ * is the owner's (`ownerId`), so it is the same before and after the first save and survives a
+ * shuffle.
+ */
+const artFor = (cardId: string, ownerId: string, d: Pick<CardDraft, "artSalt" | "accent">) =>
+  cardArt(cardSeed(cardId, d.artSalt ?? 0), d.accent ?? null, ownerId);
 
 export async function getCardForOwner(
   userId: string
@@ -190,7 +194,7 @@ export async function previewCard(userId: string, draft: CardDraft): Promise<Pub
   ]);
   const clean = cleanDraft(draft);
   // The same art the saved card will wear: its row id, or (before the first save) the owner's id.
-  const art = artFor(row?.id ?? `new:${userId}`, {
+  const art = artFor(row?.id ?? `new:${userId}`, userId, {
     artSalt: clean.artSalt ?? row?.artSalt,
     accent: clean.accent !== undefined ? clean.accent : isAccentKey(row?.accent) ? row.accent : null,
   });
@@ -213,7 +217,7 @@ export async function loadPublicCard(slug: string): Promise<PublicCard | null> {
     row.slug,
     owner,
     { fields: { ...DEFAULT_CARD_FIELDS, ...row.fields }, phone: row.phone, tagline: row.tagline },
-    artFor(row.id, { artSalt: row.artSalt, accent })
+    artFor(row.id, row.userId, { artSalt: row.artSalt, accent })
   );
 }
 
