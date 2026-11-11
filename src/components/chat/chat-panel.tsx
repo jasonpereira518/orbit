@@ -20,6 +20,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   History,
   Loader2,
   Mail,
@@ -74,6 +75,7 @@ import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { ComposerSendButton } from "@/components/chat/composer-send-button";
 import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
+import { chatAsMarkdown, chatExportFileName, downloadMarkdown } from "@/lib/chat-export";
 import { notifyAnswerLanded } from "@/lib/chat-answer-notify";
 import { afterTurn, enqueue, setSteering, steeredId, type QueuedMessage } from "@/lib/chat-queue";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
@@ -1503,6 +1505,24 @@ export function ChatPanel({
 
   const headerTitle = threadTitle?.trim() || "New chat";
 
+  /** The conversation on screen as Markdown. Built on demand: it is only needed on a click. */
+  const exportMarkdown = () =>
+    chatAsMarkdown(
+      headerTitle,
+      messages.map((m) =>
+        m.role === "user"
+          ? { role: "user" as const, text: m.content }
+          : {
+              role: "assistant" as const,
+              text: directivesAsText(
+                m.answer,
+                (id) => m.recommendations.find((r) => r.contact_id === id)?.name ?? m.blocks?.people[id]?.name,
+                m.blocks?.lists
+              ),
+            }
+      )
+    );
+
   // Bubble handlers that never change identity, so the `memo` on UserBubble/AssistantBubble
   // holds while streaming (a setMessages per frame) and composer keystrokes re-render the
   // panel. Each takes the message id and reads the latest committed render's state and
@@ -1695,6 +1715,40 @@ export function ChatPanel({
             <Plus className="size-4" />
             <span className="max-sm:sr-only">New chat</span>
           </Button>
+
+          {messages.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 text-muted-foreground"
+                    aria-label="Export chat"
+                  />
+                }
+              >
+                <Download className="size-4" />
+                <span className="max-sm:sr-only">Export</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => {
+                    void navigator.clipboard
+                      .writeText(exportMarkdown())
+                      .then(() => toast.success(TOAST_COPY.copied))
+                      .catch(() => toast.error(TOAST_COPY.copyFailed));
+                  }}
+                >
+                  Copy chat
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => downloadMarkdown(chatExportFileName(headerTitle), exportMarkdown())}>
+                  Download as Markdown
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
           <Button
             type="button"
