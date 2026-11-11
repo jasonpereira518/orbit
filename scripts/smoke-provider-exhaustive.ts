@@ -170,11 +170,11 @@ const OPENROUTER_ROUTED_AWAY =
   "that earlier branch honest (every .create( it reaches goes through withOpenRouterRouting).";
 
 const ALLOWLIST: Record<string, string> = {
-  "src/lib/ai-access.ts:801": "the branch is keyed on the completion provider being " +
+  "src/lib/ai-access.ts:826": "the branch is keyed on the completion provider being " +
     "\"anthropic\" (the one provider with no embeddings API at all), to pick the copy that " +
     "names OpenAI/Gemini as the fix; every other provider — openrouter included — falls " +
     "through to the same generic embedding-refusal copy.",
-  "src/lib/ai-access.ts:444": "isOpenAiShaped's own body: `provider === \"openai\" || " +
+  "src/lib/ai-access.ts:446": "isOpenAiShaped's own body: `provider === \"openai\" || " +
     "provider === \"openrouter\"` — the second half is the literal \"openrouter\" itself, " +
     "which this checker does not flag; together the two are exhaustive for what this " +
     "predicate means to answer.",
@@ -210,10 +210,10 @@ const ALLOWLIST: Record<string, string> = {
     "the line above (it is deliberately left on prompt-only JSON), so this \"anthropic\" arm is " +
     "reached only by gemini, openai and anthropic; gemini and openai take the default `true`, " +
     "and anthropic alone needs a per-model allowlist. Exhaustive over AiProvider.",
-  "src/lib/ai.ts:657": OPENROUTER_ROUTED_AWAY + " (completeJson's gemini arm; openai and " +
+  "src/lib/ai.ts:661": OPENROUTER_ROUTED_AWAY + " (completeJson's gemini arm; openai and " +
     "openrouter both now take the isOpenAiShaped branch above the implicit Anthropic " +
     "fallback, which is what's unreachable for openrouter.)",
-  "src/lib/ai.ts:884": OPENROUTER_ROUTED_AWAY + " (completeMultimodalJsonInner's gemini arm; " +
+  "src/lib/ai.ts:888": OPENROUTER_ROUTED_AWAY + " (completeMultimodalJsonInner's gemini arm; " +
     "see ai.ts:657.)",
   // Fix round 1 reverted transcribeAudioWithAI's isOpenAiShaped widening: the SDK encodes
   // this call's params as multipart form data, where withOpenRouterRouting's nested
@@ -221,16 +221,16 @@ const ALLOWLIST: Record<string, string> = {
   // "whisper-1" is not a valid OpenRouter model slug regardless — so this is back to a
   // bare openai literal, and openrouter is never granted here (access.transcription()
   // only ever returns openai/gemini), same reasoning as the original Task 2 allowlisting.
-  "src/lib/ai.ts:1171": "transcription() (ai-access.ts) only ever grants \"openai\" or " +
+  "src/lib/ai.ts:1175": "transcription() (ai-access.ts) only ever grants \"openai\" or " +
     "\"gemini\" — Anthropic has no speech-to-text and OpenRouter transcription is " +
     "deliberately not wired up (multipart body, no valid model slug); the two are " +
     "exhaustive for every grant transcribeAudioWithAI can receive today.",
   // webSearchJson: four explicit arms in order — gemini, openrouter, openai, then anthropic
   // as the fallthrough. OpenRouter has its own arm (its search is a request plugin, not the
   // Responses API tool the openai arm uses), so neither literal below can receive it.
-  "src/lib/ai.ts:2771": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
+  "src/lib/ai.ts:2793": "webSearchJson's gemini arm; the explicit `provider === \"openrouter\"` " +
     "arm follows it, so the four arms are exhaustive over AiProvider.",
-  "src/lib/ai.ts:2834": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
+  "src/lib/ai.ts:2856": "webSearchJson's openai arm — OpenRouter took its own explicit arm just " +
     "above (plugin-based search, not the Responses API), so it never reaches this one.",
   "src/lib/errors.ts:37": "aiProviderLabel has a fourth `provider === \"openrouter\" ? " +
     "\"OpenRouter\"` arm right after this one; the four checks together are exhaustive.",
@@ -269,7 +269,7 @@ const ALLOWLIST: Record<string, string> = {
   "src/lib/ai-settings-write.ts:135": "same independent-ternary shape as line 127 — see that entry.",
   // Surfaced by this fix round widening the walk to src/app and src/components — which is
   // where finding 1's shipped-OpenRouter-picker bug was hiding.
-  "src/components/settings/ai-settings.tsx:330": "the standalone \"Anthropic has no " +
+  "src/components/settings/ai-settings.tsx:323": "the standalone \"Anthropic has no " +
     "embeddings API\" notice, keyed on the one provider that genuinely has none. It is not a " +
     "cascade and has no fallthrough default: every other provider, openrouter included, " +
     "simply renders no notice — correctly, since EMBEDDING_MODELS.openrouter is a real " +

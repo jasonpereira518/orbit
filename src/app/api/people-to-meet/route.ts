@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUserId } from "@/lib/auth";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { friendlyError } from "@/lib/errors";
 import { loadPeopleToMeet } from "@/lib/people-to-meet";
 import { isSurfaceLive } from "@/lib/surface-visibility";
@@ -27,6 +28,8 @@ export async function POST(request: Request) {
   } catch (err) {
     return NextResponse.json({ error: friendlyError(err, "Sign in to continue") }, { status: 401 });
   }
+  const refused = sameOriginGuard(request);
+  if (refused) return refused;
   if (request.headers.get("x-orbit-research") !== "1") {
     return NextResponse.json({ error: "Missing research header" }, { status: 400 });
   }

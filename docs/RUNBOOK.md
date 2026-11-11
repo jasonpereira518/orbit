@@ -25,7 +25,8 @@ variable or a failing DDL statement fails the build and the previous deployment 
 against Functions Storage. Vercel's Ignored Build Step (`vercel.json` →
 `scripts/vercel-ignore-build.sh`) skips a preview for: any non-`main` branch with no pull
 request, any `dependabot/*` branch (CI already builds it), and a PR push that only touches
-`docs/**`, `*.md` or `.github/**` since the branch's last build. A branch builds once it has a
+files the app never reads (`docs/`, `.github/`, `e2e/`, `extension/`, `*.md`, smoke scripts)
+since the branch's last build. A branch builds once it has a
 PR and gets a push. To get a preview sooner, put `[deploy]` in the commit message, or redeploy
 from the dashboard. `main` and production always build.
 
@@ -291,7 +292,7 @@ the delivery detail when it happened.
 |---|---|
 | `CRON_SECRET` | Update Vercel AND the GitHub `ops` workflow secret. |
 | `CLERK_WEBHOOK_SIGNING_SECRET`, `STRIPE_WEBHOOK_SECRET` | Roll in the dashboard, paste into Vercel, redeploy. |
-| `ENCRYPTION_SECRET` | Do not rotate casually: it decrypts every user's BYOK key and OAuth token. Rotation means re-encrypting them all. |
+| `ENCRYPTION_SECRET` | In Vercel (Production and Preview): set `ENCRYPTION_SECRET_PREVIOUS` to the current value and `ENCRYPTION_SECRET` to a new 32+ character one, then redeploy. Both are accepted from then on: stored keys and tokens are re-encrypted under the new secret as they are read, and unsubscribe links, OAuth states and rate-limit keys made with the old one keep verifying. Leave `ENCRYPTION_SECRET_PREVIOUS` set until rows that are rarely read have been touched (weeks, not days); removing it makes anything still under the old secret unreadable and old unsubscribe links stop working. |
 
 ## Restore the database
 
@@ -301,7 +302,7 @@ be downloaded by anyone signed in to GitHub. Take a fresh one first with **Run w
 the database is still readable.
 
 You need `age` and a `pg_restore` at least as new as the `pg_dump` that wrote the file
-(`PG_MAJOR` in `backup.yml`, 18 today — an older one stops with "unsupported version in file
+(`PG_MAJOR` in the ops repository's `backup.yml`, 18 today — an older one stops with "unsupported version in file
 header"). On a Mac: `brew install age postgresql@18`, then use
 `$(brew --prefix postgresql@18)/bin/pg_restore`.
 
@@ -314,13 +315,13 @@ pg_restore --clean --if-exists --no-owner --no-privileges -d "$BRANCH_URL" orbit
 Check `select count(*) from contacts;`, point a preview at the branch, then promote the
 branch in Neon (or set `DATABASE_URL` to it) once it looks right.
 
-When Neon upgrades the project's Postgres major, raise `PG_MAJOR` in `backup.yml` the same
+When Neon upgrades the project's Postgres major, raise `PG_MAJOR` in the ops repository's `backup.yml` the same
 day: pg_dump refuses a server newer than itself, and the backup fails (and pages) until then.
 
 ### Restore drill log
 
 A backup you have never restored is a hope. Run the restore above into a throwaway Neon
-branch after any change to `backup.yml` and at least once a quarter, then delete the branch.
+branch after any change to the ops repository's `backup.yml` and at least once a quarter, then delete the branch.
 Check the same three counts against production each time:
 
 ```sql

@@ -324,6 +324,8 @@ export type MeetingMeta = {
   userName: string | null;
   /** Everyone known to have been on the call, from the user's list and the digest. */
   presentNames: string[];
+  /** The user's zone: an evening call in the US is still that day, not UTC's next one. */
+  timeZone?: string;
 };
 
 /**
@@ -337,6 +339,7 @@ export function buildMeetingCorpus(digest: MeetingDigest, meta: MeetingMeta): st
   const dateLabel = Number.isNaN(date.getTime())
     ? meta.startedAtIso
     : date.toLocaleDateString("en-US", {
+        timeZone: meta.timeZone,
         weekday: "long",
         year: "numeric",
         month: "long",
@@ -434,6 +437,13 @@ export function formatTranscriptSegment(
 // The display helpers live in a client-safe module (this one reaches `node:crypto` through
 // `ai-security`), re-exported so server callers keep importing them from here.
 export { speakerDisplayNames, speakerNames } from "@/lib/speaker-display";
+export {
+  groupSegmentsIntoParagraphs,
+  formatTranscriptParagraph,
+  deduplicateSegments,
+  type TranscriptParagraph,
+  type RawSegment,
+} from "@/lib/transcript-paragraphs";
 
 const SHAPE = `{
   "title": string,                 // short meeting title; reuse the given one if there is one
@@ -453,7 +463,7 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
   const who = input.userName ? `${input.userName} (called "the user" below)` : "the user";
   return [
     `You are reading the transcript of a video call (Zoom or Google Meet) that ${who} recorded for their personal networking CRM.`,
-    `How the transcript was made — this matters: it is machine speech-to-text of the meeting's audio. Lines may be prefixed with a speaker: "You:" is the user; "Speaker 1:", "Speaker 2:" and so on are other people, identified by voice, and the same person may be renumbered after a line saying the recording reconnected. Unprefixed lines come from a stretch where speakers were not identified. Names may be misspelled.`,
+    `How the transcript was made — this matters: it is machine speech-to-text of the meeting's audio, organized by speaker turns and conversational paragraphs. Lines may be prefixed with a speaker: "You:" is the user sitting at the microphone; "Speaker 1:", "Speaker 2:" and named participants are other people on the call, identified by voice, and the same person may be renumbered after a line saying the recording reconnected. Unprefixed lines come from a stretch where speakers were not identified. Names may be misspelled.`,
     part
       ? `This is part ${part.index} of ${part.total} of the transcript. Extract only what is in this part.`
       : "",
@@ -472,11 +482,14 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
     "Return JSON of exactly this shape:",
     SHAPE,
     "Rules:",
-    `- action_items: concrete next steps someone committed to or was asked to do. "owner" is "me" when it is clear the user took it on — either it is spoken on a "You:" line, or (e.g. on an unprefixed line) they are addressed by name and agree; a person's name when it was said out loud; otherwise null. On a line with no speaker prefix, never guess an owner from who probably spoke.`,
+    `- summary: a clear, structured executive summary (3-6 sentences) synthesizing the core purpose, what happened, and outcomes. CRITICAL: Take the speakers and their roles into full context — explicitly capture who presented or proposed key ideas, who raised concerns or questions, what the user's ("You") stance was, and what mutual consensus or resolution was reached.`,
+    `- key_points: the most important substantive updates, insights, and facts shared during the meeting. Attribute each key point to the specific speaker who stated or contributed it (e.g. "Jason (You): ..." or "Sarah: ...").`,
+    `- decisions: concrete conclusions and choices mutually agreed upon during the call, not merely discussed or suggested. State who proposed the decision and that the participants concurred.`,
+    `- action_items: concrete next steps someone committed to or was asked to do. Always determine owner from the speaker context: "owner" is "me" when it is clear the user took it on — either spoken on a "You:" line ("I will...", "I can do that"), or they are addressed and agree; a participant's name when spoken on their line or agreed to by them; otherwise null. On a line with no speaker prefix, never guess an owner from who probably spoke.`,
     `- due_phrase: the exact words from the transcript that say when ("by Friday", "next week", "September 30"), or null.`,
-    `- blockers: things stopping progress or waiting on someone/something — an approval, a dependency, missing information.`,
-    `- open_questions: questions raised that were NOT answered by the end of the call.`,
-    `- participants: people who were on the call ("present": true — they spoke or were spoken to) and people only mentioned ("present": false). Include what you learned about each in "context" (role, company, what they talked about). Do not include the user.`,
+    `- blockers: things stopping progress or waiting on someone/something — an approval, a dependency, missing information. Identify the speaker who is blocked and what they need.`,
+    `- open_questions: unresolved questions raised that were NOT answered by the end of the call, identifying who asked them (asked_by) and their relevance.`,
+    `- participants: people who were on the call ("present": true — they spoke or were spoken to) and people only mentioned ("present": false). Include what you learned about each in "context" (role, company, what they talked about or proposed). Do not include the user.`,
     `- The attendee list below is who was INVITED, not who came. Mark someone "present": true only when the transcript shows them taking part; an invitee who never comes up, or who is said to be away, is "present": false.`,
     `- dated_quotes: sentences copied EXACTLY from the transcript that mention a date, day or deadline. At most ${LIST_CAPS.datedQuotes}.`,
     `- source_excerpt: a short quote (under 25 words) copied EXACTLY from the transcript, or null.`,
@@ -485,6 +498,16 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * The reduce step's user turn. Each partial is the model's own reading of a transcript piece
+ * — a transcript other people spoke — so it is fed back as fenced data, not as prompt text
+ * (audit M-16): a line the map step copied from the transcript cannot become an instruction
+ * to the merge.
+ */
+export function reduceUserPrompt(partials: unknown[]): string {
+  return partials.map((p, i) => `PART ${i + 1}:\n${fenceUntrusted("PART", JSON.stringify(p))}`).join("\n\n");
 }
 
 export function meetingUserPrompt(input: AnalyzeInput, transcript: string): string {
@@ -513,11 +536,12 @@ function reducePrompt(input: AnalyzeInput) {
     SHAPE,
     "Rules:",
     "- Merge duplicates (the same task, question or person named in several parts) into one entry, keeping the most specific wording.",
+    "- Preserve speaker attribution in key points, action items, blockers, and open questions across merged parts.",
     "- An open question answered in a later part is no longer open — drop it. A blocker resolved later is no longer a blocker.",
     "- Keep every source_excerpt, due_phrase and dated_quote exactly as given; do not rewrite quotes.",
     "- A participant who is present in any part is present.",
     "- agenda: keep the items in their original order; an item covered in any part is covered.",
-    "- Rewrite summary and notes to cover the whole call in order; notes stay in the user's first person, 200-700 words.",
+    "- Rewrite summary and notes to cover the whole call in order, taking the speaker who contributed each item into context; notes stay in the user's first person, 200-700 words.",
     "- Never add anything that is not in the partial analyses.",
   ]
     .filter(Boolean)
@@ -598,7 +622,7 @@ export async function analyzeMeetingTranscript(
       deps.parseJson,
       userId,
       reducePrompt(input),
-      partials.map((p, i) => `PART ${i + 1}:\n${JSON.stringify(p)}`).join("\n\n"),
+      reduceUserPrompt(partials),
       "meeting.digest.reduce"
     );
   }

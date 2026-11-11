@@ -8,14 +8,16 @@
 #
 #   1. A branch other than main with no pull request (claude/*, refine_*, anything else).
 #   2. A dependabot/* branch. CI already typechecks, lints and builds it.
-#   3. A push that only touches docs/**, *.md or .github/**, the rule the `changes` job in
-#      ci.yml uses. Diffed against the branch's last build (VERCEL_GIT_PREVIOUS_SHA), so
-#      skipped docs pushes followed by a code push still build all of it.
+#   3. A push that only touched files the app never reads (CI config, docs, e2e specs, smoke
+#      scripts, the extension). Diffed against the branch's last build
+#      (VERCEL_GIT_PREVIOUS_SHA), so skipped docs pushes followed by a code push still build
+#      all of it; without that variable, against the push's parent commit.
 #
 # `[deploy]` in the commit message always builds. Production ALWAYS builds (the post-deploy
 # workflow and /api/health's sha expect every main push to land). Everything unrecognised
-# builds: CLI deploys (no git ref), a previous SHA missing from the clone, and any environment
-# where these variables are absent. Skipping is the exception.
+# builds: CLI deploys (no git ref), an unknown file, a failed `git diff` (previous SHA missing
+# from the clone), an empty diff (a merge), and any environment where these variables are
+# absent. Skipping is the exception.
 #
 # Vercel sets VERCEL_GIT_PULL_REQUEST_ID to "" for a deployment created before its PR
 # existed, so opening the PR does not build the branch by itself. Push again, put [deploy]
@@ -58,14 +60,14 @@ if [ -z "${VERCEL_GIT_PULL_REQUEST_ID:-}" ]; then
   exit 0
 fi
 
-# A failed `git diff` (previous SHA not in the clone) leaves $files empty, which builds.
-prev="${VERCEL_GIT_PREVIOUS_SHA:-}"
-if [ -n "$prev" ]; then
-  files=$(git diff --name-only "$prev" HEAD 2>/dev/null || true)
-  if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^docs/|^\.github/|\.md$'; then
-    echo "ignore-build: skipping $ref, only docs/workflows changed since $prev"
-    exit 0
-  fi
+# Skip only when ALL changed files match. An unknown file, a failed `git diff` or an empty
+# diff leaves $changed empty or unmatched, which builds.
+NON_APP='^(\.github/|docs/|e2e/|extension/|playwright\.config\.ts$|\.gitleaks\.toml$|[^/]*\.md$|scripts/smoke-[^/]*$)'
+base="${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}"
+if changed=$(git diff --name-only "$base" HEAD 2>/dev/null) && [ -n "$changed" ] \
+  && ! printf '%s\n' "$changed" | grep -Evq "$NON_APP"; then
+  echo "ignore-build: skipping $ref, only non-app files changed since $base"
+  exit 0
 fi
 
 echo "ignore-build: $ref has pull request #${VERCEL_GIT_PULL_REQUEST_ID}, building"

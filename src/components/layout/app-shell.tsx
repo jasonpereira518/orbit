@@ -12,7 +12,6 @@ const AppStarfield = dynamic(
   { ssr: false }
 );
 import { MobileNav } from "@/components/layout/mobile-nav";
-import { useSmallSky } from "@/components/graph/use-small-sky";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
 import { ConnectivityBanner } from "@/components/layout/connectivity-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
@@ -121,7 +120,6 @@ export function AppShell({
   // that holds still, so it is locked to the viewport as well.
   const isKnowledge = pathname === "/knowledge";
   const isViewportLocked = isChat || isConstellation || isReminders || isKnowledge;
-  const smallSky = useSmallSky();
   // The ask bar is not a link to /chat — it streams answers from `/api/chat` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
   // from every screen, which is the whole thing hiding is supposed to prevent.
@@ -176,17 +174,8 @@ export function AppShell({
           className="flex min-h-0 flex-1 overflow-hidden bg-background dark:bg-transparent"
         >
           <ThemeSync theme={theme} />
-          {/*
-            Not on the phone-sized constellation. That route already paints a full sky
-            into its own canvas, and a second full-viewport canvas running its own rAF
-            loop — 700 arcs a frame, some with `shadowBlur`, one of the most expensive
-            Canvas2D operations on iOS — is exactly the pressure that was taking the tab
-            down. It costs a flatter background around the stage card on those devices.
-            On a larger constellation it stays, but still: one painted frame, no loop.
-          */}
-          {!(isConstellation && smallSky) && (
-            <AppStarfield still={isConstellation} />
-          )}
+          {/* On the constellation route, AppStarfield is still (one painted frame, no rAF loop) to serve as a deep dark sky backdrop. */}
+          <AppStarfield still={isConstellation} />
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <CloudNotesWatcher />
@@ -235,7 +224,7 @@ export function AppShell({
               // Focus and scrollIntoView stop clear of the sticky section headers at the top
               // and the bottom nav and ask bar floating over the bottom (WCAG 2.4.11). The
               // bottom value is the content's own reserved padding, below.
-              "scroll-pt-12 scroll-pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:scroll-pb-24",
+              "scroll-pt-12 scroll-pb-[calc(var(--orbit-bottom-nav)+5rem)] md:scroll-pb-24",
             )}
           >
             <header
@@ -319,10 +308,10 @@ export function AppShell({
                 // rail's gutter if that is larger.
                 "md:pr-[max(5rem,calc(2.5rem+var(--content-rail-gutter,0px)))]",
                 isViewportLocked
-                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8 [@media(max-height:500px)]:flex-none [@media(max-height:500px)]:overflow-visible"
+                ? "min-h-0 flex-1 overflow-hidden pb-[var(--orbit-bottom-nav)] md:pb-8 [@media(max-height:500px)]:flex-none [@media(max-height:500px)]:overflow-visible"
                   : isSettings
-                    ? "flex-1 pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
-                    : "flex-1 pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:pb-24",
+                    ? "flex-1 pb-[var(--orbit-bottom-nav)] md:pb-8"
+                    : "flex-1 pb-[calc(var(--orbit-bottom-nav)+5rem)] md:pb-24",
                 isConstellation && "py-4 md:py-5",
               )}
             >

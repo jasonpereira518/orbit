@@ -1,7 +1,6 @@
 "use server";
 
 import { getSettings } from "@/actions/settings";
-import { getCalendarFeedStatus } from "@/actions/calendar-feed";
 import { listApiKeys } from "@/actions/api-keys";
 import { listWebhookEndpoints } from "@/actions/webhook-endpoints";
 import { getGmailConnectionStatus } from "@/actions/gmail";
@@ -24,13 +23,13 @@ import {
   googleAccountStatus,
   linkedinPageStatus,
   microsoftAccountStatus,
-  remindersPageStatus,
   type IntegrationStatuses,
 } from "@/lib/integration-status";
 
 /**
- * Per-lookup budget. The calendar feed status has hung in production rather than failed
- * (see `calendar-feed-settings.tsx`), and one hung lookup must not hold up the others.
+ * Per-lookup budget. A status lookup has hung in production rather than failed (the calendar
+ * feed's, before it moved onto the settings page — see `calendar-feed-settings.tsx`), and one
+ * hung lookup must not hold up the others.
  */
 const LOOKUP_TIMEOUT_MS = 8_000;
 
@@ -58,10 +57,9 @@ function plural(n: number, word: string) {
  * two of them to third-party config — never sit in front of the settings page.
  */
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const [settings, feed, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola] =
+  const [settings, keys, webhooks, google, outlook, linkedin, icsSubs, eventConns, granola, notion] =
     await Promise.all([
       settle(getSettings()),
-      settle(getCalendarFeedStatus()),
       settle(listApiKeys()),
       settle(listWebhookEndpoints()),
       settle(getGmailConnectionStatus()),
@@ -70,6 +68,7 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
       settle(listCalendarSubscriptions()),
       settle(requireUserId().then((id) => listEventConnections(id))),
       settle(requireUserId().then((id) => getConnectorConnection(id, "granola"))),
+      settle(requireUserId().then((id) => getConnectorConnection(id, "notion"))),
     ]);
   const now = new Date();
   const pages: IntegrationStatuses["pages"] = {};
@@ -93,8 +92,6 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
             detail: `${configured} of ${outreach.length} set up`,
           };
   }
-
-  pages.reminders = feed === "unknown" ? "unknown" : remindersPageStatus(feed, now);
 
   pages.api =
     keys === "unknown"
@@ -200,6 +197,16 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
           ? { state: "partial", detail: "Reconnect needed" }
           : { state: "on", detail: "Connected" };
   pages.granola = connectors.granola;
+
+  connectors.notion =
+    notion === "unknown"
+      ? "unknown"
+      : !notion
+        ? { state: "off", detail: "Not connected" }
+        : notion.status === "needs_reauth"
+          ? { state: "partial", detail: "Reconnect needed" }
+          : { state: "on", detail: notion.accountRef ?? "Connected" };
+  pages.notion = connectors.notion;
 
   // The registry and this action must answer for the same connectors. The smoke test checks
   // the list against the registry; this checks the implementation against the list.

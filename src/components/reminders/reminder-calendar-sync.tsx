@@ -11,7 +11,6 @@ import {
 } from "@/actions/calendar-feed";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { integrationHref } from "@/components/settings/sections";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -189,7 +188,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
         )}
 
         <Link
-          href={integrationHref("reminders")}
+          href="/settings#settings-calendar"
           className="block text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           Manage or turn off in Settings →

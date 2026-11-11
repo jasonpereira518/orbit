@@ -87,14 +87,15 @@ check(
   syncable.length === CONNECTORS.filter(isSyncable).length && syncable.every((c) => CONNECTORS.includes(c)),
   `${syncable.length} of ${CONNECTORS.length}`
 );
-// The syncable set, pinned. Granola was the first connector with a `sync`; when this check
+// The syncable set, pinned. Granola was the first connector with a `sync`, Notion the second
+// (its people-database sync records its own outcome and no-ops until a database is chosen); when this check
 // starts failing, another one has landed — and `ConnectorManifest.sync`'s contract (who
 // records the outcome, and the `nextSyncAt: null` rule for its connect route) is what its
 // author has to have read. `scripts/smoke-connector-sync-pass.ts` covers the dispatch itself
 // with a stub manifest.
 check(
-  "the syncable connectors are exactly granola (see ConnectorManifest.sync before adding another)",
-  syncable.map((c) => c.id).join(",") === "granola",
+  "the syncable connectors are exactly granola and notion (see ConnectorManifest.sync before adding another)",
+  syncable.map((c) => c.id).join(",") === "granola,notion",
   syncable.map((c) => c.id).join(",")
 );
 

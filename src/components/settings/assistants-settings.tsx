@@ -7,15 +7,16 @@ import { AccountHeader, BrandStrip, FeatureRow } from "@/components/settings/acc
 import { PROVIDER_THEMES } from "@/components/settings/provider-themes";
 import { cn } from "@/lib/utils";
 import { SegmentedControl } from "@/components/settings/account-rows";
-import { AssistantsMark, ChatGptMark, ClaudeMark } from "@/components/settings/provider-marks";
+import { AssistantsMark, ChatGptMark, ClaudeMark, NotionMark } from "@/components/settings/provider-marks";
 import { toast } from "@/lib/toast";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-type Assistant = "claude" | "chatgpt";
+type Assistant = "claude" | "chatgpt" | "notion";
 
 const MARKS: Record<Assistant, (props: { className?: string }) => React.ReactElement> = {
   claude: ClaudeMark,
   chatgpt: ChatGptMark,
+  notion: NotionMark,
 };
 
 const ASSISTANTS: Record<
@@ -42,9 +43,14 @@ const ASSISTANTS: Record<
     addPath: "Settings → Apps → Advanced settings → Developer mode, then Create",
     note: "Developer mode needs a paid ChatGPT plan",
   },
+  notion: {
+    label: "Notion AI",
+    settingsHref: "https://www.notion.so/",
+    settingsLabel: "Open Notion",
+    addPath: "Settings → Connections → Discover → Add Custom MCP",
+    note: "Needs a Notion Business or Enterprise plan, and your workspace admin must allow custom MCP",
+  },
 };
-
-const ASSISTANT_IDS = Object.keys(ASSISTANTS) as Assistant[];
 
 /** Derived from wherever Orbit is served, so a preview deployment hands out its own link. */
 const subscribeNever = () => () => {};
@@ -59,7 +65,9 @@ const getConnectorUrl = () => `${window.location.origin}/api/mcp`;
  * class re-points `--primary`, so the picker, the Copy button and the focus rings all swap
  * between Claude's terracotta and ChatGPT's black as the person picks one.
  */
-export function AssistantsSettings() {
+export function AssistantsSettings({ withNotion = false }: { withNotion?: boolean }) {
+  // Notion AI ships with the Notion integration (the `feature.notion` surface).
+  const assistantIds = (Object.keys(ASSISTANTS) as Assistant[]).filter((id) => id !== "notion" || withNotion);
   const [assistant, setAssistant] = useState<Assistant>("claude");
   const [copied, setCopied] = useState(false);
   // No subscription — the origin never changes — and null on the server, which has no window.
@@ -83,7 +91,7 @@ export function AssistantsSettings() {
   return (
     <div className={cn("space-y-4", theme.className)}>
       <AccountHeader
-        name="Claude and ChatGPT"
+        name={withNotion ? "AI assistants" : "Claude and ChatGPT"}
         mark={<AssistantsMark />}
         accountLine={null}
         status={{ state: "on", detail: "Works on every plan · no key needed" }}
@@ -95,7 +103,7 @@ export function AssistantsSettings() {
 
       <SegmentedControl
         label="Which assistant do you use?"
-        options={ASSISTANT_IDS.map((id) => {
+        options={assistantIds.map((id) => {
           const Mark = MARKS[id];
           return {
             value: id,

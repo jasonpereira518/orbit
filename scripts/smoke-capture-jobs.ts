@@ -34,9 +34,11 @@ import {
   mergeCaptureBatchRows,
 } from "../src/lib/capture-jobs";
 import { randomUUID } from "node:crypto";
-import { assembleCaptureCorpus, runCaptureJobById } from "../src/lib/capture-job-runner";
+import { saveNoteBatch, type SaveNoteBatchInput, type SaveNoteBatchOptions } from "../src/lib/note-batch-save";
+import { assembleCaptureCorpus, runCaptureJobById, type CaptureRunnerDeps } from "../src/lib/capture-job-runner";
 import type { CaptureParseResult } from "../src/lib/capture/types";
 import { emptyNoteBatchResult } from "../src/lib/note-batches";
+import { splitDecisions } from "../src/lib/capture/combine-results";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -198,6 +200,43 @@ async function main() {
   check("a resumed save adopts the existing batch", again?.status === "saved" && again.noteBatchId === batchesBefore[0]!.id, `${again?.status} ${again?.noteBatchId}`);
   check("and writes no second batch", batchesAfter.length === batchesBefore.length && batchesAfter.length === 1);
   check("and no second contact", (await db.query.contacts.findMany({ where: eq(contacts.userId, USER) })).length === 2);
+
+  console.log("\nA save that throws part-way (audit H-05)…");
+  {
+    // A second capture of the same people. Its save throws on the second participant (the
+    // merge target vanished between parse and save); the job must say so — never "saved" with
+    // one person — and the retry must finish the SAME batch without a duplicate.
+    const broken = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Met Ada, Grace and Alan again." });
+    await runCaptureJobById(broken.id, deps);
+    for (const [key, index, decision] of [["0-Ada Lovelace", 0, "accept"], ["1-Grace Hopper", 1, "reject"], ["2-Alan Turing", 2, "accept"]] as const) {
+      await recordCaptureDecisionRow(USER, broken.id, key, { decision, index, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: new Date().toISOString() });
+    }
+    const batchesBeforeBroken = (await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).length;
+    let sabotaged = false;
+    const sabotage: CaptureRunnerDeps = {
+      ...deps,
+      save: async (userId: string, input: SaveNoteBatchInput, opts?: SaveNoteBatchOptions) => {
+        if (!sabotaged) {
+          sabotaged = true;
+          input.participants[1] = { ...input.participants[1]!, mergeContactId: "00000000-0000-4000-8000-000000000000" };
+        }
+        return saveNoteBatch(userId, input, opts);
+      },
+    };
+    await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, broken.id));
+    const afterThrow = await runCaptureJobById(broken.id, sabotage);
+    check("the job reports the failure, not a partial success", afterThrow?.status === "failed", `${afterThrow?.status} ${afterThrow?.error}`);
+    const failedBatch = (await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).find((b) => b.sourceText === "Met Ada, Grace and Alan again.");
+    check("  the batch is marked failed with what landed", failedBatch?.status === "failed" && failedBatch.result.participants.length === 1, `${failedBatch?.status} ${failedBatch?.result.participants.length}`);
+
+    await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, broken.id));
+    const retried = await runCaptureJobById(broken.id, deps);
+    check("the retry finishes the save", retried?.status === "saved" && retried.noteBatchId === failedBatch?.id, `${retried?.status} ${retried?.noteBatchId}`);
+    const batchesAfterRetry = await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) });
+    check("  on the same batch row", batchesAfterRetry.length === batchesBeforeBroken + 1);
+    check("  which is now saved with both people", batchesAfterRetry.find((b) => b.id === failedBatch?.id)?.status === "saved" && retried?.result?.saved?.contactIds?.length === 2, JSON.stringify(retried?.result?.saved));
+    check("  and nobody was created twice", (await db.query.contacts.findMany({ where: eq(contacts.userId, USER) })).length === 2);
+  }
   check("a saved job is no longer active", (await findActiveCaptureJob(USER)) === null);
 
   console.log("\nMedia jobs…");
@@ -436,6 +475,78 @@ async function main() {
     const mayaNotes = await db.query.interactions.findMany({ where: eq(interactions.contactId, maya.id) });
     check("  with both conversations on their timeline", mayaNotes.length === 2, String(mayaNotes.length));
 
+    // Reviewed together, saved apart: each file is its own capture with its own notes.
+    const batches = await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) });
+    check("each file is saved as its own capture", batches.length === 2, String(batches.length));
+    check(
+      "  each holding only its own file's text",
+      batches.map((b) => b.sourceText).sort().join("|") === "Coffee with Maya and Leo.|Met Maya at the summit.",
+      batches.map((b) => b.sourceText).join("|")
+    );
+    const coffeeBatch = batches.find((b) => b.sourceText.includes("Leo"))!;
+    check("  and only its own people", coffeeBatch.result.participants.map((p) => p.name).sort().join() === "Leo Park,Maya Chen");
+    const partsAfter = await db.query.captureJobs.findMany({ where: inArray(captureJobs.id, [one.id, two.id]) });
+    check(
+      "  each file's job is saved and points at its capture",
+      partsAfter.every((r) => r.status === "saved" && batches.some((b) => b.id === r.noteBatchId)),
+      partsAfter.map((r) => `${r.status}:${r.noteBatchId}`).join()
+    );
+    check("  its source label stays its own", partsAfter.find((r) => r.id === one.id)?.sourceLabel === "summit.txt");
+    check(
+      "the combined job is saved with the totals and no capture of its own",
+      saved?.noteBatchId === null && saved.result?.saved?.created === 2 && saved.result.saved.contactIdByKey[combined!.result!.items[2]!.key] !== undefined,
+      JSON.stringify(saved?.result?.saved)
+    );
+    await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, combined!.id));
+    await runCaptureJobById(combined!.id, batchDeps);
+    check("saving it again writes nothing new", (await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).length === 2);
+
+    // A file whose every card was set aside writes no capture at all.
+    const drop2 = randomUUID();
+    const keep = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Lunch with Maya.", batchGroupId: drop2, sourceLabel: "lunch.txt" });
+    const toss = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Drinks with Leo.", batchGroupId: drop2, sourceLabel: "drinks.txt" });
+    await runCaptureJobById(keep.id, batchDeps);
+    await runCaptureJobById(toss.id, batchDeps);
+    const folded = await mergeCaptureBatchRows(USER, drop2);
+    for (const [index, item] of folded!.result!.items.entries()) {
+      await recordCaptureDecisionRow(USER, folded!.id, item.key, {
+        decision: item.noteLabel === "lunch.txt" ? "accept" : "reject", index, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: new Date().toISOString(),
+      });
+    }
+    await db.update(captureJobs).set({ status: "saving", claimToken: null }).where(eq(captureJobs.id, folded!.id));
+    const foldedSaved = await runCaptureJobById(folded!.id, batchDeps);
+    const tossRow = await db.query.captureJobs.findFirst({ where: eq(captureJobs.id, toss.id) });
+    const after2 = await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) });
+    check(
+      "a file with every card set aside writes no capture",
+      foldedSaved?.status === "saved" && after2.length === 3 && tossRow?.status === "merged" && !tossRow.noteBatchId,
+      `${foldedSaved?.status} ${after2.length} ${tossRow?.status}`
+    );
+
+    const split = splitDecisions(
+      {
+        people: {
+          "n0:0-A": { decision: "accept", index: 0, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: "x" },
+          "n1:0-B": { decision: "reject", index: 1, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: "x" },
+          "n1:1-C": { decision: "accept", index: 2, mergeContactId: null, relationshipScore: 3, tagNames: [], decidedAt: "x" },
+        },
+        reminders: { checked: ["n0:r0", "n1:r0"], overrides: { "n1:r0": { title: "Call C" } } },
+        opportunities: { checked: ["n1:1-C:0"], kinds: { "n1:1-C:0": "referral" } },
+      },
+      1,
+      [{ key: "0-B" }, { key: "1-C" }]
+    );
+    check(
+      "splitDecisions hands a part back its own keys and positions",
+      JSON.stringify(Object.keys(split.people!)) === '["0-B","1-C"]' &&
+        split.people!["1-C"]!.index === 1 &&
+        split.reminders?.checked.join() === "r0" &&
+        split.reminders.overrides.r0?.title === "Call C" &&
+        split.opportunities?.checked.join() === "1-C:0" &&
+        split.opportunities.kinds?.["1-C:0"] === "referral",
+      JSON.stringify(split)
+    );
+
     const lone = randomUUID();
     const solo = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: "Met Maya at the summit again.", batchGroupId: lone });
     await runCaptureJobById(solo.id, batchDeps);
@@ -445,6 +556,28 @@ async function main() {
 
   await db.delete(captureJobs).where(and(eq(captureJobs.userId, USER), eq(captureJobs.status, "discarded")));
   await reset();
+  console.log("\nOne paste, several meetings…");
+  {
+    await reset();
+    const seen: Array<{ corpus: string; eventDate: string | null | undefined }> = [];
+    const week = "Nov 3 — Coffee with Ada\nAda is moving to the infra team next month.\n\nNov 5 — Call with Grace\nGrace is hiring two engineers this quarter.";
+    const multi = await createCaptureJob(USER, { sourceKind: "messy", status: "queued", inputText: week });
+    const done = await runCaptureJobById(multi.id, {
+      enrich: false,
+      now: new Date("2026-11-09T15:00:00Z"),
+      parse: async (_u, corpus, hints) => {
+        seen.push({ corpus, eventDate: hints?.eventDate });
+        return fakeParse(corpus);
+      },
+    });
+    check("each meeting is read on its own", seen.length === 2, String(seen.length));
+    check("with its own date", seen.map((s) => s.eventDate).join() === "2026-11-03,2026-11-05", seen.map((s) => s.eventDate).join());
+    check("and only its own notes", seen[0]!.corpus.includes("Ada") && !seen[0]!.corpus.includes("Grace") && seen[1]!.corpus.includes("Grace"));
+    const labels = [...new Set((done?.result?.items ?? []).map((i) => i.noteLabel))];
+    check("one review, cards labelled by meeting", done?.status === "ready" && labels.join("|") === "Nov 3 — Coffee with Ada|Nov 5 — Call with Grace", labels.join("|"));
+    check("and keyed apart", new Set((done?.result?.items ?? []).map((i) => i.key)).size === (done?.result?.items.length ?? -1));
+  }
+
   console.log("\nsmoke-capture-jobs: all checks passed");
 }
 

@@ -6,12 +6,10 @@
  * and `GraphCanvasMobile` (one canvas) take exactly this, so the branch between them is
  * a single ternary and neither can quietly grow a prop the other lacks.
  */
-import type { getGraphData } from "@/actions/graph";
+import type { GraphPayload } from "@/lib/graph-wire";
 import type { InspectSelection } from "@/components/graph/contact-inspect-panel";
 
-export type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
-export type GraphContact = GraphPayload["contacts"][number];
-export type GraphCluster = GraphPayload["clusters"][number];
+export type { GraphContact, GraphCluster, GraphPayload } from "@/lib/graph-wire";
 
 export type GraphChartProps = {
   data: GraphPayload;

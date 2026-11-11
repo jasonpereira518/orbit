@@ -8,6 +8,9 @@
  * cites nothing is dropped. Without one, the same facts become points by rule — still useful,
  * never invented.
  */
+import { promptNow } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactBriefs, relationshipDigests } from "@/db/schema";
@@ -221,11 +224,14 @@ export async function generateTalkingPoints(
   const fallback: TalkingPointsResult = { points: heuristicTalkingPoints(facts), source: "facts" };
   if (!facts.length || !(await (deps.canUseAi ?? userCanUseAi)(userId))) return fallback;
   try {
+    // The `prep` bucket (audit M-07). Past it the rule-based points below are the answer.
+    await consumeBucket("prep", userId, RATE_LIMITS.prep);
     const raw = await (deps.complete ?? cachedCompleteJson)(
       userId,
       {
         operation: "meeting.talking_points",
-        system: systemPrompt(),
+        // Date only: the cache below keys on the prompt for a day.
+        system: `${promptNow(await viewerTimeZone(userId), new Date(), { time: false })}\n${systemPrompt()}`,
         user: talkingPointsPrompt(ctx.event.title, ctx.people.map((p) => p.name), facts),
         temperature: 0.3,
         maxOutputTokens: 2048,

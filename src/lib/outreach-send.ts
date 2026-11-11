@@ -1,5 +1,8 @@
+import { startOfUserDay } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { outreachFromAddress } from "@/lib/outreach-sender";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
+import { type Plan } from "@/lib/plans/plan-config";
 import { SMS_OPTED_OUT_MESSAGE, isTwilioOptOut } from "@/lib/twilio-errors";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -10,13 +13,79 @@ import {
   userSettings,
 } from "@/db/schema";
 import { countAgentSendsToday } from "@/lib/agent-sends";
-import { decryptOrNull } from "@/lib/crypto";
-import { DAILY_SEND_LIMIT, type OutreachChannel } from "@/lib/outreach-types";
-import { entitlementsFromSettings } from "@/lib/entitlements";
+import type { PgColumn } from "drizzle-orm/pg-core";
+import { decryptAndRewrap } from "@/lib/crypto-rewrap";
+import { DAILY_SEND_LIMIT, type OutreachChannel, type OutreachSendProvider, type FiveHourQuota, interpolateMailMerge } from "@/lib/outreach-types";
+import { entitlementsFromSettings, resolvePlan } from "@/lib/entitlements";
 import { UserFacingError } from "@/lib/errors";
 import { isPlaceholderAddress, PLACEHOLDER_ADDRESS_SEND_MESSAGE } from "@/lib/outreach-quality";
 import { outreachEmailPayload } from "@/lib/outreach-email";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
+import { gmailProvider } from "@/lib/email/providers/gmail";
+import { outlookProvider } from "@/lib/email/providers/outlook";
+
+export type { OutreachSendProvider, FiveHourQuota };
+export { interpolateMailMerge };
+
+export const FIVE_HOUR_SEND_LIMITS: Record<Plan, number> = {
+  free: 5,
+  orbit: 50,
+  max: 250,
+  lifetime: 250,
+};
+
+/**
+ * Calculates current sends in a 5-hour rolling window and checks user's plan quota
+ */
+export async function get5HourSendQuota(userId: string): Promise<FiveHourQuota> {
+  const db = await getDb();
+  const settings = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+  });
+
+  const { plan } = resolvePlan(settings);
+  const limit = FIVE_HOUR_SEND_LIMITS[plan] ?? FIVE_HOUR_SEND_LIMITS.free;
+
+  const fiveHoursAgo = new Date(Date.now() - 5 * 3600 * 1000);
+
+  const rows = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+      oldestSentAt: sql<Date | null>`min(${outreachMessages.sentAt})`,
+    })
+    .from(outreachMessages)
+    .innerJoin(
+      outreachProspects,
+      eq(outreachMessages.prospectId, outreachProspects.id)
+    )
+    .innerJoin(
+      outreachCampaigns,
+      eq(outreachProspects.campaignId, outreachCampaigns.id)
+    )
+    .where(
+      and(
+        eq(outreachCampaigns.userId, userId),
+        eq(outreachMessages.status, "sent"),
+        gte(outreachMessages.sentAt, fiveHoursAgo)
+      )
+    );
+
+  const used = rows[0]?.count ?? 0;
+  const remaining = Math.max(0, limit - used);
+  const oldestSent = rows[0]?.oldestSentAt ? new Date(rows[0].oldestSentAt) : null;
+  const resetsAt = oldestSent
+    ? new Date(oldestSent.getTime() + 5 * 3600 * 1000)
+    : new Date(Date.now() + 5 * 3600 * 1000);
+
+  return {
+    plan,
+    limit,
+    used,
+    remaining,
+    resetsAt,
+    canSend: remaining > 0,
+  };
+}
 
 export async function getOutreachSendConfig(
   userId: string,
@@ -42,7 +111,14 @@ export async function getOutreachSendConfig(
   const { canUseHostedSending: hosted } = entitlementsFromSettings(userId, settings ?? {}, await getEffectivePlanConfig());
   const envKey = (value: string | undefined) => (hosted ? value || null : null);
 
-  const ownResendKey = decryptOrNull(settings?.resendApiKeyEncrypted);
+  // Re-encrypts a legacy or previous-secret ciphertext on the way past (audit L-06).
+  const own = (stored: string | null | undefined, column: PgColumn) =>
+    decryptAndRewrap(stored, { table: userSettings, column, idColumn: userSettings.userId, id: userId });
+  const [ownResendKey, ownTwilioSid, ownTwilioToken] = await Promise.all([
+    own(settings?.resendApiKeyEncrypted, userSettings.resendApiKeyEncrypted),
+    own(settings?.twilioAccountSidEncrypted, userSettings.twilioAccountSidEncrypted),
+    own(settings?.twilioAuthTokenEncrypted, userSettings.twilioAuthTokenEncrypted),
+  ]);
   const hostedResendKey = envKey(process.env.RESEND_API_KEY);
 
   return {
@@ -50,10 +126,10 @@ export async function getOutreachSendConfig(
     /** Whose Resend account a send goes through — only Orbit's refusals are Orbit's alarm. */
     resendKeyOwner: ownResendKey ? ("user" as const) : hostedResendKey ? ("orbit" as const) : null,
     twilioAccountSid:
-      decryptOrNull(settings?.twilioAccountSidEncrypted) ||
+      ownTwilioSid ||
       envKey(process.env.TWILIO_ACCOUNT_SID),
     twilioAuthToken:
-      decryptOrNull(settings?.twilioAuthTokenEncrypted) ||
+      ownTwilioToken ||
       envKey(process.env.TWILIO_AUTH_TOKEN),
     twilioFromNumber:
       settings?.twilioFromNumber?.trim() ||
@@ -77,8 +153,8 @@ export async function getOutreachSendConfig(
  */
 export async function countSendsToday(userId: string) {
   const db = await getDb();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
+  // The user's midnight, not the server's (UTC): the cap resets when their day does.
+  const start = startOfUserDay(await viewerTimeZone(userId));
 
   const rows = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -119,15 +195,26 @@ export async function sendOutreachMessage(input: {
   toPhone?: string | null;
   subject?: string | null;
   body: string;
+  provider?: OutreachSendProvider;
 }) {
   if (input.channel === "linkedin") {
-    throw new Error("LinkedIn automated send is not supported.");
+    throw new Error("Direct LinkedIn send requires Browser Use automation. Use the 'Connect via LinkedIn (Browser Use)' option.");
   }
 
   // Every caller (campaign sends, contact follow-ups) passes through here, so a sample's
   // example.com address is refused even after it was copied onto a contact.
   if (input.channel === "email" && isPlaceholderAddress(input.toEmail)) {
     throw new UserFacingError(PLACEHOLDER_ADDRESS_SEND_MESSAGE);
+  }
+
+  // 1. Enforce 5-Hour Rolling Window Quota based on plan
+  if (input.channel === "email") {
+    const quota = await get5HourSendQuota(input.userId);
+    if (!quota.canSend) {
+      throw new UserFacingError(
+        `5-hour send quota reached (${quota.used}/${quota.limit} on ${quota.plan} plan) — resets at ${quota.resetsAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+      );
+    }
   }
 
   const sentToday = await countSendsToday(input.userId);
@@ -140,8 +227,95 @@ export async function sendOutreachMessage(input: {
 
   if (input.channel === "email") {
     if (!input.toEmail) throw new Error("Email address is required.");
+
+    // Handle sending via connected Gmail
+    if (input.provider === "gmail") {
+      const gmailIdentity = await gmailProvider.identity(input.userId);
+      if (!gmailIdentity) {
+        throw new UserFacingError("Gmail account is not connected or lacks send permission — connect Gmail in Settings");
+      }
+      const sent = await gmailProvider.send(
+        input.userId,
+        {
+          from: { name: config.firstName, email: gmailIdentity.email },
+          to: [input.toEmail],
+          cc: [],
+          bcc: [],
+          subject: input.subject || "",
+          bodyText: body,
+          bodyHtml: null,
+          messageId: `<orbit-${crypto.randomUUID()}@orbit.local>`,
+        },
+        { sendId: `send-${crypto.randomUUID()}` }
+      );
+      return { deliveryId: sent.providerMessageId || `gmail-${Date.now()}` };
+    }
+
+    // Handle sending via connected Outlook
+    if (input.provider === "outlook") {
+      const outlookIdentity = await outlookProvider.identity(input.userId);
+      if (!outlookIdentity) {
+        throw new UserFacingError("Outlook account is not connected or lacks send permission — connect Outlook in Settings");
+      }
+      const sent = await outlookProvider.send(
+        input.userId,
+        {
+          from: { name: config.firstName, email: outlookIdentity.email },
+          messageId: `orbit-${crypto.randomUUID()}`,
+          to: [input.toEmail],
+          cc: [],
+          bcc: [],
+          subject: input.subject || "",
+          bodyText: body,
+          bodyHtml: null,
+        },
+        { sendId: `send-${crypto.randomUUID()}` }
+      );
+      return { deliveryId: sent.providerMessageId || `outlook-${Date.now()}` };
+    }
+
+    // Default to Resend
     if (!config.resendApiKey) {
-      throw new Error("Resend API key not configured. Add one in Settings.");
+      // If user has connected Gmail or Outlook, hint at that!
+      const [gmailIdent, outlookIdent] = await Promise.all([
+        gmailProvider.identity(input.userId).catch(() => null),
+        outlookProvider.identity(input.userId).catch(() => null),
+      ]);
+      if (gmailIdent) {
+        const sent = await gmailProvider.send(
+          input.userId,
+          {
+            from: { name: config.firstName, email: gmailIdent.email },
+            to: [input.toEmail],
+            cc: [],
+            bcc: [],
+            subject: input.subject || "",
+            bodyText: body,
+            bodyHtml: null,
+            messageId: `<orbit-${crypto.randomUUID()}@orbit.local>`,
+          },
+          { sendId: `send-${crypto.randomUUID()}` }
+        );
+        return { deliveryId: sent.providerMessageId || `gmail-${Date.now()}` };
+      }
+      if (outlookIdent) {
+        const sent = await outlookProvider.send(
+          input.userId,
+          {
+            from: { name: config.firstName, email: outlookIdent.email },
+            messageId: `orbit-${crypto.randomUUID()}`,
+            to: [input.toEmail],
+            cc: [],
+            bcc: [],
+            subject: input.subject || "",
+            bodyText: body,
+            bodyHtml: null,
+          },
+          { sendId: `send-${crypto.randomUUID()}` }
+        );
+        return { deliveryId: sent.providerMessageId || `outlook-${Date.now()}` };
+      }
+      throw new Error("No sending account configured. Connect Gmail, Outlook, or add a Resend key in Settings.");
     }
 
     // Orbit's domain is only sendable on Orbit's key; a personal key sends from a domain

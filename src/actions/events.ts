@@ -1,5 +1,6 @@
 "use server";
 
+import { recordAccountAudit } from "@/lib/account-audit";
 /**
  * Server actions for the events surface.
  *
@@ -75,6 +76,16 @@ import {
   type EventConnectionSummary,
 } from "@/lib/events/connections";
 import { buildEventbriteAuthUrl, eventbriteOAuthConfig } from "@/lib/events/connectors/eventbrite-oauth";
+import {
+  EventbriteAuthError,
+  listEventAttendees,
+  listOrganizationEvents,
+  listOrganizations,
+} from "@/lib/events/connectors/eventbrite";
+import {
+  upsertProviderAttendees,
+  upsertProviderEvent,
+} from "@/lib/events/provider-writes";
 import { LumaAuthError, listCalendarEvents } from "@/lib/events/connectors/luma";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { listCalendarSources } from "@/lib/calendar-sources";
@@ -83,6 +94,7 @@ import type {
   EventConnectionProvider,
   RosterRow,
 } from "@/lib/events/types";
+import { filterProfessionalEvents } from "@/lib/events/professional-filter";
 import {
   getRecommendedUpcomingEvents,
   type RecommendedEvent,
@@ -100,6 +112,7 @@ import type { EventRecord } from "@/db/schema";
 import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { GOOGLE_SCOPES, hasScope } from "@/lib/google-scopes";
 import { actionFailure } from "@/lib/action-failure";
+import { optionalClientDate } from "@/lib/input/dates";
 
 const OAUTH_STATE_COOKIE = "orbit_eventbrite_oauth_state";
 const SURFACE = "page.events";
@@ -116,10 +129,25 @@ export async function listEventsByTab(): Promise<{
 }> {
   const userId = await requireUserForReleasedSurface(SURFACE);
   const now = new Date();
-  const [upcoming, past] = await Promise.all([
+  const [upcomingRaw, pastRaw] = await Promise.all([
     listEventsForUser(userId, 100, { when: "upcoming", now }),
     listEventsForUser(userId, 100, { when: "past", now }),
   ]);
+
+  const { professional: upcoming, unprofessional: upcomingParties } =
+    filterProfessionalEvents(upcomingRaw);
+  const { professional: past, unprofessional: pastParties } =
+    filterProfessionalEvents(pastRaw);
+
+  const partiesToDismiss = [...upcomingParties, ...pastParties];
+  if (partiesToDismiss.length > 0) {
+    // Automatically move casual parties to the hidden pool so active tabs stay strictly professional.
+    // They are available at the bottom of the page to add back if desired.
+    for (const ev of partiesToDismiss) {
+      await dismissEventForUser(userId, ev.id).catch(() => {});
+    }
+  }
+
   return { upcoming, past };
 }
 
@@ -208,7 +236,7 @@ export async function createEvent(input: {
       userId,
       {
         title,
-        startsAt: input.startsAt ? new Date(input.startsAt) : null,
+        startsAt: optionalClientDate(input.startsAt, "start time"),
         venue: input.venue ?? null,
         city: input.city ?? null,
         url,
@@ -335,7 +363,7 @@ export async function updateEvent(
   }
 
   const asDate = (value: string | null | undefined) =>
-    value === undefined ? undefined : value ? new Date(value) : null;
+    value === undefined ? undefined : optionalClientDate(value, "event time");
 
   await updateEventForUser(userId, eventId, {
     ...pickEventEdits(patch as Record<string, unknown>),
@@ -774,6 +802,69 @@ export async function connectLuma(apiKey: string): Promise<{ ok: boolean; error?
 }
 
 /**
+ * Store an Eventbrite Private Token (API Key).
+ *
+ * Validated by checking organization access before saving: an invalid token fails
+ * immediately with clear guidance rather than silently failing later.
+ */
+export async function connectEventbriteKey(
+  apiKey: string
+): Promise<{ ok: boolean; error?: string }> {
+  const userId = await requireSyncUser();
+  await requireReleasedSurface(userId, SURFACE);
+  const token = apiKey.trim();
+  if (!token) return { ok: false, error: "Paste your Eventbrite token first" };
+
+  try {
+    const orgs = await listOrganizations(token);
+    const org = orgs[0];
+    if (!org) {
+      return {
+        ok: false,
+        error: "That Eventbrite account has no organization to sync — create one on Eventbrite first",
+      };
+    }
+
+    await upsertEventConnection(userId, {
+      provider: "eventbrite",
+      authKind: "api_key",
+      secret: token,
+      label: org.name || "Eventbrite",
+      accountRef: org.id,
+    });
+
+    try {
+      const events = await listOrganizationEvents(token, org.id, null);
+      for (const ev of events.items) {
+        const eventId = await upsertProviderEvent(userId, "eventbrite", ev);
+        const attendees = await listEventAttendees(token, ev.providerEventId, null);
+        await upsertProviderAttendees(userId, eventId, attendees.items, "eventbrite");
+      }
+    } catch {
+      // Background sync will catch up if network is constrained
+    }
+
+    revalidateEvents();
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof EventbriteAuthError) {
+      return {
+        ok: false,
+        error: "Eventbrite didn’t accept that token — check your private token and try again",
+      };
+    }
+    return {
+      ok: false,
+      error: await actionFailure(
+        error,
+        "Couldn’t reach Eventbrite just now — try again",
+        "events.connect-eventbrite"
+      ),
+    };
+  }
+}
+
+/**
  * Connect a personal Luma or Partiful calendar feed.
  *
  * The most valuable connection in the feature and the cheapest to make: no OAuth app, no paid
@@ -865,6 +956,7 @@ export async function disconnectEventProvider(
 ): Promise<void> {
   const userId = await requireSyncUser();
   await deleteEventConnection(userId, provider);
+  await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: provider });
   revalidateEvents();
 }
 
@@ -936,7 +1028,7 @@ export async function findAttendeeLinkedInAction(
     const userId = await requireUserForReleasedSurface(SURFACE);
     const result = await findAttendeeLinkedIn(userId, eventId, attendeeId);
     if (!result.ok) {
-      throw new UserFacingError(result.error ?? "Could not find a verified LinkedIn profile");
+      throw new UserFacingError(result.error ?? "Couldn’t find a verified LinkedIn profile");
     }
     revalidateEvents(eventId);
     return { linkedinUrl: result.linkedinUrl, source: result.source };
@@ -948,7 +1040,7 @@ export async function findAttendeeLinkedInAction(
  */
 export async function batchFindRosterLinkedInsAction(
   eventId: string
-): Promise<ActionResult<{ found: number; total: number }>> {
+): Promise<ActionResult<{ found: number; total: number; urls: Record<string, string> }>> {
   return asActionResult(async () => {
     const userId = await requireUserForReleasedSurface(SURFACE);
     const result = await batchFindRosterLinkedIns(userId, eventId);
@@ -969,6 +1061,7 @@ export async function triggerProviderSync(
     const [row] = await db
       .select({
         provider: eventProviderConnections.provider,
+        accountRef: eventProviderConnections.accountRef,
         apiKeyEncrypted: eventProviderConnections.apiKeyEncrypted,
         accessTokenEncrypted: eventProviderConnections.accessTokenEncrypted,
       })
@@ -997,6 +1090,18 @@ export async function triggerProviderSync(
     } else if (provider === "luma") {
       const result = await listCalendarEvents(secret, null);
       found = result.items.length;
+    } else if (provider === "eventbrite") {
+      const orgs = await listOrganizations(secret);
+      const orgId = row.accountRef ?? orgs[0]?.id;
+      if (orgId) {
+        const events = await listOrganizationEvents(secret, orgId, null);
+        for (const ev of events.items) {
+          const eventId = await upsertProviderEvent(userId, "eventbrite", ev);
+          found++;
+          const attendees = await listEventAttendees(secret, ev.providerEventId, null);
+          await upsertProviderAttendees(userId, eventId, attendees.items, "eventbrite");
+        }
+      }
     }
 
     revalidateEvents();

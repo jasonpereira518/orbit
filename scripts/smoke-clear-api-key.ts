@@ -13,6 +13,8 @@ delete process.env.CLERK_SECRET_KEY;
 (process.env as Record<string, string>).NODE_ENV = "development";
 process.env.ORBIT_DEMO_DATA = "off"; // no demo workspace seeding
 process.env.VERCEL = "1"; // env provider keys must not count as "usable"
+// On Vercel a missing ENCRYPTION_SECRET is refused rather than defaulted (audit L-06).
+process.env.ENCRYPTION_SECRET ||= "smoke-clear-api-key-test-secret-not-a-real-one-0";
 
 import { count, eq } from "drizzle-orm";
 import { getDb } from "../src/db";

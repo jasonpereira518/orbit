@@ -10,6 +10,7 @@
  * `upsertConnectorConnection`.
  */
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { KEY_PURPOSES, subKey, verificationKeys } from "@/lib/secrets";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
 export type OAuthProviderConfig = {
@@ -19,6 +20,12 @@ export type OAuthProviderConfig = {
   clientSecretEnv: string;
   /** Extra authorize-time parameters a provider demands. */
   extraAuthParams?: Record<string, string>;
+  /** Client credentials as an HTTP Basic header instead of body fields (Notion). */
+  tokenAuth?: "basic";
+  /** Token request body as JSON instead of form-encoded (Notion). */
+  tokenBody?: "json";
+  /** False for providers with no scope parameter (Notion picks pages on its own consent screen). */
+  scoped?: false;
 };
 
 /**
@@ -32,12 +39,19 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     clientIdEnv: "HUBSPOT_CLIENT_ID",
     clientSecretEnv: "HUBSPOT_CLIENT_SECRET",
   },
-  // Notion is deliberately NOT wired up here. Its token endpoint requires HTTP Basic
-  // client-credential auth plus a JSON request body, and returns neither `refresh_token`
-  // nor `expires_in` — none of which `postToken`'s form-encoded-body-with-secret-in-the-body
-  // shape can produce. Whoever ships the Notion connector adds `tokenAuth`/`tokenBody` knobs
-  // to `OAuthProviderConfig` and a second `postToken` code path then; building that ahead of
-  // a real caller is just unused surface area today.
+  // Notion wants HTTP Basic client auth and a JSON body. It may return a refresh token and
+  // expiry or neither (older grants never expire); when it does, every refresh rotates the
+  // refresh token, so the caller must store the new one each time.
+  notion: {
+    authorizeUrl: "https://api.notion.com/v1/oauth/authorize",
+    tokenUrl: "https://api.notion.com/v1/oauth/token",
+    clientIdEnv: "NOTION_CLIENT_ID",
+    clientSecretEnv: "NOTION_CLIENT_SECRET",
+    extraAuthParams: { owner: "user" },
+    tokenAuth: "basic",
+    tokenBody: "json",
+    scoped: false,
+  },
 };
 
 /** A token-level rejection. `needsReauth` means retrying will never help. */
@@ -104,19 +118,6 @@ type SignedStatePayload = OAuthState & {
  */
 const OAUTH_STATE_TTL_MS = 30 * 60 * 1000;
 
-function stateSecret(): string {
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error(
-        "ENCRYPTION_SECRET must be set in production — refusing to sign OAuth state with a default key."
-      );
-    }
-    return "orbit-dev-secret-change-me-in-prod";
-  }
-  return secret;
-}
-
 /**
  * Domain separation for the state signature.
  *
@@ -131,8 +132,21 @@ function stateSecret(): string {
  */
 const STATE_HMAC_LABEL = "orbit:connector-oauth-state:v1";
 
+const STATE_DEV_FALLBACK = "orbit-dev-secret-change-me-in-prod";
+
+/**
+ * Signing uses the "oauth-state" HKDF sub-key (audit L-06). Verifying also accepts the raw
+ * secret's key and the previous secret's, so a consent screen left open across a deploy or a
+ * secret rotation still completes; states live 30 minutes, so those fallbacks matter briefly.
+ */
 function stateKey(): Buffer {
-  return createHmac("sha256", stateSecret()).update(STATE_HMAC_LABEL).digest();
+  return createHmac("sha256", subKey(KEY_PURPOSES.oauthState, STATE_DEV_FALLBACK)).update(STATE_HMAC_LABEL).digest();
+}
+
+function stateVerificationKeys(): Buffer[] {
+  return verificationKeys(KEY_PURPOSES.oauthState, STATE_DEV_FALLBACK).map(({ key }) =>
+    createHmac("sha256", key).update(STATE_HMAC_LABEL).digest()
+  );
 }
 
 /**
@@ -183,13 +197,15 @@ export function parseOAuthState(raw: string | null | undefined): OAuthState | nu
   if (!raw) return null;
   const [payload, mac] = raw.split(".");
   if (!payload || !mac) return null;
-  const expected = createHmac("sha256", stateKey()).update(payload).digest("base64url");
   const a = Buffer.from(mac);
-  const b = Buffer.from(expected);
   // timingSafeEqual throws on a buffer-length mismatch rather than returning false, so an
   // attacker-controlled mac of the "wrong" length must be caught before it ever reaches
   // that call, not after.
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  const signedByUs = stateVerificationKeys().some((key) => {
+    const b = Buffer.from(createHmac("sha256", key).update(payload).digest("base64url"));
+    return a.length === b.length && timingSafeEqual(a, b);
+  });
+  if (!signedByUs) return null;
   try {
     const parsed = JSON.parse(
       Buffer.from(payload, "base64url").toString("utf8")
@@ -244,7 +260,7 @@ export function buildAuthorizeUrl(
   url.searchParams.set("client_id", id);
   url.searchParams.set("redirect_uri", opts.redirectUri);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", opts.scopes.join(" "));
+  if (provider.scoped !== false) url.searchParams.set("scope", opts.scopes.join(" "));
   url.searchParams.set(
     "state",
     signOAuthState({ userId: opts.userId, connectorId, returnTo: opts.returnTo })
@@ -257,6 +273,8 @@ export type OAuthTokens = {
   refreshToken: string | null;
   expiresAt: Date | null;
   scopes: string | null;
+  /** The whole success body, for provider extras (Notion's workspace name, id and icon). */
+  raw: Record<string, unknown>;
 };
 
 type TokenResponse = {
@@ -275,14 +293,25 @@ function truncateProviderMessage(message: string): string {
 
 async function postToken(
   provider: OAuthProviderConfig,
-  body: URLSearchParams,
+  params: Record<string, string>,
   fetchImpl: typeof fetch
 ): Promise<OAuthTokens> {
+  const { id, secret } = clientCredentials(provider);
+  const headers: Record<string, string> = {};
+  const fields = { ...params };
+  if (provider.tokenAuth === "basic") {
+    headers.authorization = `Basic ${Buffer.from(`${id}:${secret}`).toString("base64")}`;
+  } else {
+    fields.client_id = id;
+    fields.client_secret = secret;
+  }
+  headers["content-type"] = provider.tokenBody === "json" ? "application/json" : "application/x-www-form-urlencoded";
+  const body = provider.tokenBody === "json" ? JSON.stringify(fields) : new URLSearchParams(fields);
   let res: Response;
   try {
     res = await fetchImpl(provider.tokenUrl, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers,
       body,
       signal: AbortSignal.timeout(15_000),
     });
@@ -311,6 +340,7 @@ async function postToken(
     refreshToken: json.refresh_token ?? null,
     expiresAt: json.expires_in ? new Date(Date.now() + json.expires_in * 1000) : null,
     scopes: json.scope ?? null,
+    raw: json as Record<string, unknown>,
   };
 }
 
@@ -320,17 +350,9 @@ export async function exchangeCode(
   redirectUri: string,
   opts: { fetchImpl?: typeof fetch } = {}
 ): Promise<OAuthTokens> {
-  const provider = providerOrThrow(connectorId);
-  const { id, secret } = clientCredentials(provider);
   return postToken(
-    provider,
-    new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri,
-      client_id: id,
-      client_secret: secret,
-    }),
+    providerOrThrow(connectorId),
+    { grant_type: "authorization_code", code, redirect_uri: redirectUri },
     opts.fetchImpl ?? fetch
   );
 }
@@ -340,16 +362,9 @@ export async function refreshAccessToken(
   refreshToken: string,
   opts: { fetchImpl?: typeof fetch } = {}
 ): Promise<OAuthTokens> {
-  const provider = providerOrThrow(connectorId);
-  const { id, secret } = clientCredentials(provider);
   return postToken(
-    provider,
-    new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      client_id: id,
-      client_secret: secret,
-    }),
+    providerOrThrow(connectorId),
+    { grant_type: "refresh_token", refresh_token: refreshToken },
     opts.fetchImpl ?? fetch
   );
 }

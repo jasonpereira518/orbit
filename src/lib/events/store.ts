@@ -19,6 +19,7 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, eventAttendees, events, type EventRecord } from "@/db/schema";
+import { del } from "@/lib/blob-lazy";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { personKeyOf } from "@/lib/events/people";
 import { UserFacingError } from "@/lib/errors";
@@ -225,10 +226,29 @@ export async function listRosterForUser(
   eventId: string
 ): Promise<RosterRow[]> {
   const db = await getDb();
-  const rows = await db.query.eventAttendees.findMany({
-    where: and(eq(eventAttendees.eventId, eventId), eq(eventAttendees.userId, userId)),
-    orderBy: [desc(eventAttendees.spokeTo), eventAttendees.fullName],
-  });
+  const rows = await db
+    .select({
+      id: eventAttendees.id,
+      fullName: eventAttendees.fullName,
+      email: eventAttendees.email,
+      company: eventAttendees.company,
+      title: eventAttendees.title,
+      linkedinUrl: eventAttendees.linkedinUrl,
+      xHandle: eventAttendees.xHandle,
+      attendeeRole: eventAttendees.attendeeRole,
+      source: eventAttendees.source,
+      spokeTo: eventAttendees.spokeTo,
+      contactId: eventAttendees.contactId,
+      profileImageUrl: contacts.profileImageUrl,
+    })
+    .from(eventAttendees)
+    .leftJoin(
+      contacts,
+      and(eq(contacts.id, eventAttendees.contactId), eq(contacts.userId, userId))
+    )
+    .where(and(eq(eventAttendees.eventId, eventId), eq(eventAttendees.userId, userId)))
+    .orderBy(desc(eventAttendees.spokeTo), eventAttendees.fullName);
+
   return rows.map((r) => ({
     id: r.id,
     fullName: r.fullName,
@@ -241,6 +261,7 @@ export async function listRosterForUser(
     source: r.source,
     spokeTo: r.spokeTo === 1,
     contactId: r.contactId,
+    profileImageUrl: r.profileImageUrl ?? null,
   }));
 }
 
@@ -269,6 +290,16 @@ export type CreateEventInput = {
   rsvpStatus?: EventRecord["rsvpStatus"];
 };
 
+/**
+ * The last line before the driver: an Invalid Date reaching `.values()` throws `RangeError`
+ * from inside drizzle as a 500 (audit M-04). Callers validate at the boundary
+ * (`optionalClientDate`); this keeps a caller that forgot — a sync adapter, a script — from
+ * failing a whole write over one unreadable time. Unreadable means "no time stated".
+ */
+function validDateOrNull(value: Date | null | undefined): Date | null {
+  return value instanceof Date && !Number.isNaN(value.getTime()) ? value : null;
+}
+
 export async function createEventForUser(
   userId: string,
   input: CreateEventInput
@@ -279,8 +310,8 @@ export async function createEventForUser(
     .values({
       userId,
       title: input.title.trim(),
-      startsAt: input.startsAt ?? null,
-      endsAt: input.endsAt ?? null,
+      startsAt: validDateOrNull(input.startsAt),
+      endsAt: validDateOrNull(input.endsAt),
       timezone: input.timezone ?? null,
       venue: input.venue ?? null,
       city: input.city ?? null,
@@ -323,14 +354,42 @@ export async function updateEventForUser(
   };
   await db
     .update(events)
-    .set({ ...safe, updatedAt: new Date() })
+    .set({
+      ...safe,
+      ...("startsAt" in safe ? { startsAt: validDateOrNull(safe.startsAt as Date | null | undefined) } : {}),
+      ...("endsAt" in safe ? { endsAt: validDateOrNull(safe.endsAt as Date | null | undefined) } : {}),
+      updatedAt: new Date(),
+    })
     .where(and(eq(events.id, eventId), eq(events.userId, userId)));
 }
 
-export async function deleteEventForUser(userId: string, eventId: string): Promise<void> {
+/** A cover Orbit stored itself (`src/lib/events/cover.ts`), as opposed to a remote image URL. */
+export function isStoredEventCover(url: string | null | undefined): url is string {
+  return Boolean(url && /^https:\/\/[^/]+\.blob\.vercel-storage\.com\/event-covers\//.test(url));
+}
+
+export async function deleteEventForUser(
+  userId: string,
+  eventId: string,
+  deleteBlob: (url: string) => Promise<unknown> = (url) => del(url)
+): Promise<void> {
   const db = await getDb();
   // Attendees cascade; the contacts they were connected to are deliberately left alone.
-  await db.delete(events).where(and(eq(events.id, eventId), eq(events.userId, userId)));
+  const [gone] = await db
+    .delete(events)
+    .where(and(eq(events.id, eventId), eq(events.userId, userId)))
+    .returning();
+  // The cover sits at a public, guessable path (`event-covers/<eventId>`) with nothing else
+  // pointing at it, so it goes with its event (audit L-08). Best-effort: the event is gone
+  // either way, and an orphaned object is a cost problem, not a reason to fail the delete.
+  const cover = gone?.coverImageUrl;
+  if (isStoredEventCover(cover)) {
+    try {
+      await deleteBlob(cover);
+    } catch {
+      // See above.
+    }
+  }
 }
 
 /**

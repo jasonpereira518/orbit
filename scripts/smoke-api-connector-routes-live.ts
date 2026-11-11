@@ -497,7 +497,8 @@ run(async () => {
   // An EARLIER version of this fix exempted anything carrying a `batchGroupId`, reasoning
   // that a grouped job always has a way back through `CaptureQueuePanel`. That was wrong on
   // two counts the reviewer caught: the panel only renders for a GROUP of more than one job
-  // (`capture-queue-panel.tsx`'s `if (jobs.length <= 1) return null`), so a single-item
+  // (the old `capture-queue-panel.tsx` returned null for one job; it is gone now, replaced by
+  // Recent captures' drop cards), so a single-item
   // "batch" the API route minted could never be reached there either; and it also meant a
   // genuine in-app multi-file leftover (a real batch, several jobs) became exempt from this
   // rule too — behaviour this task has no business changing. The three cases below prove

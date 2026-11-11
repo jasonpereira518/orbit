@@ -2,22 +2,24 @@
 
 import { and, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import {
   interactions,
   outreachCampaigns,
   outreachMessages,
   outreachProspects,
+  userSettings,
   type AudienceFilters,
   type OutreachSequenceStep,
 } from "@/db/schema";
-import { createContact, logInteraction } from "@/actions/contacts";
+import { logInteraction } from "@/actions/contacts";
+import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { listActiveGoalTexts } from "@/actions/goals";
 import {
   companyMatchesOrganizations,
   enrichPerson,
   parseAudienceToFilters,
-  searchPeople,
   userHasApolloKey,
 } from "@/lib/apollo";
 import { requireUserId } from "@/lib/auth";
@@ -40,14 +42,27 @@ import {
   isDemoProspect,
   prospectSearchStatus,
 } from "@/lib/outreach-quality";
-import { sendOutreachMessage } from "@/lib/outreach-send";
+import { sendOutreachMessage, get5HourSendQuota, type OutreachSendProvider } from "@/lib/outreach-send";
+import { interpolateMailMerge } from "@/lib/outreach-types";
+import { searchPeopleWithBrightData, getBrightDataConfig, type PeopleSearchCriteria, type BrightDataCandidate } from "@/lib/brightdata";
+import { getOutreachFlowSuggestions } from "@/lib/outreach-suggestions";
+import { runCampaignDeepSearch } from "@/lib/campaign-deep-search";
+import { generateLinkedInBrowserUsePrompt, type LinkedInBrowserTarget } from "@/lib/browser-use";
+import { gmailProvider } from "@/lib/email/providers/gmail";
+import { outlookProvider } from "@/lib/email/providers/outlook";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
+import { calculateProspectEffectiveness } from "@/lib/outreach-scoring";
+import { findWarmPaths } from "@/lib/warm-paths-server";
+import { normalizeCompanyKey } from "@/lib/company-name";
+import type { WarmPath } from "@/lib/warm-paths";
 import {
   BULK_SEND_LIMIT,
   OUTREACH_CHANNELS,
+  type NormalizedProspect,
   type OutreachChannel,
   type OutreachMessageOutcome,
   type OutreachMessageStatus,
+  type OutreachSearchSource,
   type SequenceStep,
 } from "@/lib/outreach-types";
 import { asActionResult, classifyAiError, UserFacingError } from "@/lib/errors";
@@ -82,6 +97,10 @@ function enrichmentSummary(enrichment: unknown): string | null {
     "seniority",
     "departments",
     "keywords",
+    "newsContext",
+    "recentNews",
+    "signals",
+    "matchReason",
   ]) {
     const value = record[key];
     if (typeof value === "string" && value.trim()) {
@@ -90,7 +109,7 @@ function enrichmentSummary(enrichment: unknown): string | null {
       parts.push(`${key}: ${value.slice(0, 5).join(", ")}`);
     }
   }
-  return parts.length ? parts.join("; ").slice(0, 500) : null;
+  return parts.length ? parts.join("; ").slice(0, 800) : null;
 }
 
 /**
@@ -213,12 +232,88 @@ export async function getCampaign(campaignId: string) {
   });
   if (!campaign) throw new Error("Campaign not found");
 
-  const metrics = computeCampaignMetrics(campaign.prospects);
+  // Load warm paths for all organizations in this campaign
+  const orgKeys = [
+    ...new Set(
+      campaign.prospects
+        .map((p) => (p.company ? normalizeCompanyKey(p.company) : null))
+        .filter((k): k is string => Boolean(k))
+    ),
+  ];
+  const warmPathsMap = await findWarmPaths(userId, orgKeys);
+  const warmPathsRecord: Record<string, WarmPath[]> = {};
+  for (const [key, paths] of warmPathsMap.entries()) {
+    warmPathsRecord[key] = paths;
+  }
+
+  // Load user's schools for alumni matching signal
+  const userSettingsRow = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { schools: true },
+  });
+  const userSchools: string[] = (userSettingsRow?.schools || []).filter(Boolean);
+
+  // Ensure each prospect has calculated effectiveness score
+  const targetFilters = (campaign.audienceFilters || {}) as AudienceFilters;
+  const enrichedProspects = campaign.prospects.map((p) => {
+    const enrichment = (p.enrichment || {}) as Record<string, unknown>;
+    const orgKey = p.company ? normalizeCompanyKey(p.company) : "";
+    const paths = orgKey ? warmPathsRecord[orgKey] || [] : [];
+    const hasWarmPath = paths.length > 0;
+
+    const prospectAlma = (enrichment.almaMater as string) || "";
+    const prospectEdu = (enrichment.education as string) || "";
+    const matchedSchool = userSchools.find(
+      (s) =>
+        s &&
+        (prospectAlma.toLowerCase().includes(s.toLowerCase()) ||
+          prospectEdu.toLowerCase().includes(s.toLowerCase()))
+    );
+
+    let score = enrichment.effectivenessScore as number | undefined;
+    let tier = enrichment.priorityTier as "high" | "strong" | "standard" | undefined;
+    let reasons = enrichment.scoreReasons as string[] | undefined;
+
+    if (score === undefined || !tier) {
+      const breakdown = calculateProspectEffectiveness({
+        title: p.title,
+        company: p.company,
+        email: p.email,
+        linkedinUrl: p.linkedinUrl,
+        hasWarmPath,
+        warmPathCount: paths.length,
+        newsContext: (enrichment.newsContext as string) || (enrichment.recentNews as string) || null,
+        signals: (enrichment.signals as string[]) || [],
+        targetTitles: targetFilters.titles,
+        targetCompanies: targetFilters.organizationNames,
+      });
+      score = breakdown.score;
+      tier = breakdown.tier;
+      reasons = breakdown.reasons;
+    }
+
+    return {
+      ...p,
+      enrichment: {
+        ...enrichment,
+        effectivenessScore: score,
+        priorityTier: tier,
+        scoreReasons: reasons,
+        isAlumniMatch: Boolean(matchedSchool),
+        matchedSchool: matchedSchool || null,
+      },
+    };
+  });
+
+  const metrics = computeCampaignMetrics(enrichedProspects);
   return {
     ...campaign,
+    userSchools,
+    prospects: enrichedProspects,
+    warmPaths: warmPathsRecord,
     metrics,
-    channelBreakdown: computeChannelBreakdown(campaign.prospects),
-    stepBreakdown: computeStepBreakdown(campaign.prospects),
+    channelBreakdown: computeChannelBreakdown(enrichedProspects),
+    stepBreakdown: computeStepBreakdown(enrichedProspects),
   };
 }
 
@@ -423,13 +518,61 @@ export async function searchProspects(campaignId: string, page = 1) {
   return asActionResult(() => searchProspectsCore(campaignId, page));
 }
 
-async function searchProspectsCore(campaignId: string, page = 1) {
+async function searchProspectsCore(campaignId: string, _page = 1) {
   const userId = await requireOutreachUser();
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
 
   const filters = (campaign.audienceFilters ?? {}) as AudienceFilters;
-  const { prospects, total, source } = await searchPeople(userId, filters, page);
+  const targetCompany = filters.organizationNames?.[0] || undefined;
+  const targetTitles = filters.titles?.length ? filters.titles : undefined;
+
+  // Primary campaign discovery powered by BrightData Web Scraper
+  const bdResult = await searchPeopleWithBrightData(userId, {
+    titles: targetTitles,
+    company: targetCompany,
+    locations: filters.locations,
+    industries: filters.industries,
+    skills: filters.keywords ? [filters.keywords] : undefined,
+    query: campaign.audienceQuery || undefined,
+    limit: 8,
+  });
+
+  const isDemo = !bdResult.isLive || bdResult.candidates.some((c) => c.source === "preview_simulation");
+  const source: OutreachSearchSource = isDemo ? "demo" : "brightdata";
+  const total = bdResult.candidates.length;
+
+  const prospects: NormalizedProspect[] = bdResult.candidates.map((c, i) => {
+    const cleanCompany = (c.company || "company").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const cleanName = c.fullName.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const email = isDemo
+      ? `${cleanName}@${cleanCompany}.example.com`
+      : (((c as { email?: string }).email as string | undefined) ?? null);
+
+    return {
+      externalId: `bd-${c.id}-${i}`,
+      fullName: c.fullName,
+      title: c.title,
+      company: c.company,
+      email,
+      phone: null,
+      linkedinUrl: c.linkedinUrl,
+      location: c.location,
+      enrichment: {
+        avatarUrl: c.avatarUrl,
+        headline: c.summary,
+        summary: c.summary,
+        matchReason: c.matchReason,
+        recentNews: c.recentNews,
+        newsContext: c.recentNews || null,
+        signals: c.signals || [],
+        education: c.education || null,
+        almaMater: c.almaMater || null,
+        source: c.source,
+        demo: isDemo,
+      },
+    };
+  });
 
   let matched = 0;
   let mismatched = 0;
@@ -454,6 +597,17 @@ async function searchProspectsCore(campaignId: string, page = 1) {
     if (matchesOrg) matched += 1;
     else mismatched += 1;
 
+    const effectiveness = calculateProspectEffectiveness({
+      title: prospect.title,
+      company: prospect.company,
+      email: prospect.email,
+      linkedinUrl: prospect.linkedinUrl,
+      newsContext: (prospect.enrichment?.newsContext as string) || (prospect.enrichment?.recentNews as string) || null,
+      signals: (prospect.enrichment?.signals as string[]) || [],
+      targetTitles: filters.titles,
+      targetCompanies: filters.organizationNames,
+    });
+
     const slot = rowsByExternalId.get(prospect.externalId)?.slot ?? index;
     rowsByExternalId.set(prospect.externalId, {
       slot,
@@ -471,6 +625,9 @@ async function searchProspectsCore(campaignId: string, page = 1) {
           ...prospect.enrichment,
           demo: isDemo,
           companyMismatch: !matchesOrg,
+          effectivenessScore: effectiveness.score,
+          priorityTier: effectiveness.tier,
+          scoreReasons: effectiveness.reasons,
         },
         status,
       },
@@ -522,6 +679,14 @@ async function searchProspectsCore(campaignId: string, page = 1) {
     mismatched,
     total,
     source,
+  };
+}
+
+export async function getOutreachBrightDataStatus() {
+  const config = getBrightDataConfig();
+  return {
+    isConfigured: config.isConfigured,
+    zone: config.zone,
   };
 }
 
@@ -1464,7 +1629,11 @@ export async function saveProspectAsContact(input: {
     }
   }
 
-  const contact = await createContact(
+  // The lib resolver, not the `createContact` action: actions no longer take write options
+  // from their caller (audit H-01), and this server-side path legitimately skips the
+  // per-write revalidation because it revalidates the campaign itself below.
+  const { contactId } = await resolveOrCreateContact(
+    userId,
     {
       fullName: prospect.fullName,
       title: prospect.title ?? undefined,
@@ -1478,6 +1647,7 @@ export async function saveProspectAsContact(input: {
     },
     { skipRevalidate: true }
   );
+  const contact = { id: contactId };
 
   await db
     .update(outreachProspects)
@@ -1535,4 +1705,386 @@ export async function enrichProspect(input: {
 
   revalidatePath(`/outreach/${input.campaignId}`);
   return updated;
+}
+
+/**
+ * Executes a semantic search for people via BrightData with criteria or freeform query
+ */
+export async function searchPeopleWithBrightDataAction(criteria: PeopleSearchCriteria) {
+  const userId = await requireOutreachUser();
+  return searchPeopleWithBrightData(userId, criteria);
+}
+
+/**
+ * Returns dynamic, context-aware suggestions based on the user's flow and network
+ */
+export async function getOutreachFlowSuggestionsAction() {
+  const userId = await requireOutreachUser();
+  return getOutreachFlowSuggestions(userId);
+}
+
+/**
+ * Triggers in-depth background campaign search across web news and catalytic signals
+ */
+export async function runCampaignDeepSearchAction(campaignId: string) {
+  const userId = await requireOutreachUser();
+  await requireCampaign(userId, campaignId);
+  const result = await runCampaignDeepSearch(userId, campaignId);
+  revalidatePath(`/outreach/${campaignId}`);
+  revalidatePath("/outreach");
+  return result;
+}
+
+/**
+ * Initiates an asynchronous background deep search so the user doesn't wait on a blocking page
+ */
+export async function triggerCampaignBackgroundSearchAction(
+  campaignId: string,
+  options?: { maxProspects?: number }
+) {
+  const userId = await requireOutreachUser();
+  await requireCampaign(userId, campaignId);
+  const db = await getDb();
+
+  // Mark job as running immediately in DB
+  await db
+    .update(outreachCampaigns)
+    .set({
+      backgroundJob: {
+        status: "running",
+        phase: "news_scan",
+        startedAt: new Date().toISOString(),
+        message: "Scanning news & scouting prospects in background...",
+      },
+      updatedAt: new Date(),
+    })
+    .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId)));
+
+  // Defer execution to background after response
+  const runTask = async () => {
+    try {
+      await runCampaignDeepSearch(userId, campaignId, options);
+    } catch {
+      // Errors are persisted to campaign.backgroundJob
+    }
+  };
+
+  try {
+    after(runTask);
+  } catch {
+    // Outside request context (e.g. CLI or test)
+    runTask();
+  }
+
+  revalidatePath(`/outreach/${campaignId}`);
+  revalidatePath("/outreach");
+
+  return {
+    ok: true,
+    started: true,
+    message: "Background deep search started. Orbit will continue scouting news and candidates.",
+  };
+}
+
+/**
+ * Checks the current background job status for a campaign
+ */
+export async function getCampaignBackgroundStatusAction(campaignId: string) {
+  const userId = await requireOutreachUser();
+  const db = await getDb();
+
+  const campaign = await db.query.outreachCampaigns.findFirst({
+    where: and(
+      eq(outreachCampaigns.id, campaignId),
+      eq(outreachCampaigns.userId, userId)
+    ),
+    columns: {
+      id: true,
+      backgroundJob: true,
+      updatedAt: true,
+    },
+  });
+
+  if (!campaign) {
+    return { status: "idle" as const };
+  }
+
+  return (
+    campaign.backgroundJob || {
+      status: "idle" as const,
+    }
+  );
+}
+
+/**
+ * Clears or cancels a background job state
+ */
+export async function clearCampaignBackgroundJobAction(campaignId: string) {
+  const userId = await requireOutreachUser();
+  const db = await getDb();
+
+  await db
+    .update(outreachCampaigns)
+    .set({
+      backgroundJob: {
+        status: "idle",
+        completedAt: new Date().toISOString(),
+      },
+      updatedAt: new Date(),
+    })
+    .where(and(eq(outreachCampaigns.id, campaignId), eq(outreachCampaigns.userId, userId)));
+
+  revalidatePath(`/outreach/${campaignId}`);
+  revalidatePath("/outreach");
+
+  return { ok: true };
+}
+
+/**
+ * Returns current 5-hour rolling send quota and status of connected email accounts
+ */
+export async function getOutreachSendQuotaAction() {
+  const userId = await requireOutreachUser();
+  const [quota, gmailIdent, outlookIdent] = await Promise.all([
+    get5HourSendQuota(userId),
+    gmailProvider.identity(userId).catch(() => null),
+    outlookProvider.identity(userId).catch(() => null),
+  ]);
+
+  return {
+    quota,
+    providers: {
+      gmail: {
+        connected: Boolean(gmailIdent),
+        email: gmailIdent?.email || null,
+      },
+      outlook: {
+        connected: Boolean(outlookIdent),
+        email: outlookIdent?.email || null,
+      },
+    },
+  };
+}
+
+/**
+ * Adds candidates discovered via BrightData search to a campaign
+ */
+export async function addBrightDataCandidatesToCampaignAction(input: {
+  campaignId: string;
+  candidates: BrightDataCandidate[];
+}) {
+  const userId = await requireOutreachUser();
+  await requireCampaign(userId, input.campaignId);
+  const db = await getDb();
+
+  const prospectIds: string[] = [];
+
+  for (let idx = 0; idx < input.candidates.length; idx++) {
+    const candidate = input.candidates[idx];
+    const externalId = `brightdata-${candidate.id}-${idx}`;
+
+    const [inserted] = await db
+      .insert(outreachProspects)
+      .values({
+        campaignId: input.campaignId,
+        externalId,
+        fullName: candidate.fullName,
+        title: candidate.title,
+        company: candidate.company,
+        email: `${candidate.fullName.toLowerCase().replace(/[^a-z]/g, "")}@${candidate.company.toLowerCase().replace(/[^a-z]/g, "")}.com`,
+        linkedinUrl: candidate.linkedinUrl,
+        location: candidate.location,
+        status: "selected",
+        enrichment: {
+          avatarUrl: candidate.avatarUrl,
+          headline: candidate.summary,
+          summary: candidate.summary,
+          matchReason: candidate.matchReason,
+          recentNews: candidate.recentNews || null,
+          signals: candidate.signals || [],
+          source: candidate.source,
+        },
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (inserted?.id) {
+      prospectIds.push(inserted.id);
+    }
+  }
+
+  // Pre-generate drafts for the newly added prospects
+  if (prospectIds.length > 0) {
+    try {
+      await generateOutreachDrafts({
+        campaignId: input.campaignId,
+        prospectIds,
+      });
+    } catch {
+      // non-blocking
+    }
+  }
+
+  revalidatePath(`/outreach/${input.campaignId}`);
+  revalidatePath("/outreach");
+  return { added: prospectIds.length, prospectIds };
+}
+
+/**
+ * Sends a mass mail merge to selected prospects using Gmail, Outlook, or Resend,
+ * respecting the 5-hour rolling send quota according to the user's plan.
+ */
+export async function bulkSendMailMergeAction(input: {
+  campaignId: string;
+  messageIds: string[];
+  provider?: OutreachSendProvider;
+  templateSubject?: string;
+  templateBody?: string;
+}) {
+  const userId = await requireOutreachUser();
+  await requireCampaign(userId, input.campaignId);
+
+  // 1. Check 5-hour quota
+  const quota = await get5HourSendQuota(userId);
+  if (!quota.canSend) {
+    throw new UserFacingError(
+      `5-hour send quota of ${quota.limit} emails reached on ${quota.plan} plan — resets at ${quota.resetsAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+    );
+  }
+
+  const allowableSends = Math.min(input.messageIds.length, quota.remaining, BULK_SEND_LIMIT);
+  const messageIdsToSend = input.messageIds.slice(0, allowableSends);
+
+  const messages = await campaignMessages(input.campaignId, messageIdsToSend);
+  const results: Array<{ messageId: string; ok: boolean; error?: string }> = [];
+
+  for (const message of messages) {
+    try {
+      let finalSubject = message.subject;
+      let finalBody = message.body;
+
+      // Apply mail merge template interpolation if template provided
+      if (input.templateSubject || input.templateBody) {
+        const prospect = message.prospect;
+        const enrichment = (prospect.enrichment ?? {}) as Record<string, unknown>;
+        const recentSignal =
+          (typeof enrichment.newsContext === "string" ? enrichment.newsContext : null) ||
+          (typeof enrichment.recentNews === "string" ? enrichment.recentNews : null) ||
+          "";
+        const variables = {
+          first_name: prospect.fullName.split(" ")[0] || prospect.fullName,
+          full_name: prospect.fullName,
+          company: prospect.company || "your team",
+          title: prospect.title || "your role",
+          recent_signal: recentSignal,
+        };
+
+        if (input.templateSubject) {
+          finalSubject = interpolateMailMerge(input.templateSubject, variables);
+        }
+        if (input.templateBody) {
+          finalBody = interpolateMailMerge(input.templateBody, variables);
+        }
+      }
+
+      const res = await sendOutreachMessage({
+        userId,
+        channel: message.channel as OutreachChannel,
+        toEmail: message.prospect.email,
+        toPhone: message.prospect.phone,
+        subject: finalSubject,
+        body: finalBody,
+        provider: input.provider,
+      });
+
+      const now = new Date();
+      const db = await getDb();
+      await db
+        .update(outreachMessages)
+        .set({
+          status: "sent",
+          sentAt: now,
+          lastActionAt: now,
+          deliveryId: res.deliveryId,
+          errorMessage: null,
+          updatedAt: now,
+        })
+        .where(eq(outreachMessages.id, message.id));
+
+      await db
+        .update(outreachProspects)
+        .set({ status: "contacted", updatedAt: now })
+        .where(eq(outreachProspects.id, message.prospectId));
+
+      results.push({ messageId: message.id, ok: true });
+    } catch (err) {
+      results.push({
+        messageId: message.id,
+        ok: false,
+        error: err instanceof Error ? err.message : "Send failed",
+      });
+    }
+  }
+
+  const updatedQuota = await get5HourSendQuota(userId);
+
+  revalidatePath(`/outreach/${input.campaignId}`);
+  revalidatePath("/outreach");
+
+  return {
+    sent: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+    results,
+    quota: updatedQuota,
+  };
+}
+
+/**
+ * Generates an OpenAI Browser Use prompt for connecting on LinkedIn with personalized notes
+ */
+export async function generateLinkedInBrowserUsePromptAction(input: {
+  campaignId: string;
+  prospectIds: string[];
+}) {
+  const userId = await requireOutreachUser();
+  const campaign = await requireCampaign(userId, input.campaignId);
+  const db = await getDb();
+
+  const prospects = await db.query.outreachProspects.findMany({
+    where: and(
+      eq(outreachProspects.campaignId, input.campaignId),
+      inArray(outreachProspects.id, input.prospectIds)
+    ),
+    with: {
+      messages: {
+        where: eq(outreachMessages.channel, "linkedin"),
+      },
+    },
+  });
+
+  const targets: LinkedInBrowserTarget[] = prospects
+    .filter((p) => Boolean(p.linkedinUrl))
+    .map((p) => {
+      const customMessage = p.messages?.[0]?.body;
+      const firstName = p.fullName.split(" ")[0];
+      const defaultNote = `Hi ${firstName}, came across your work at ${p.company || "your team"} and would love to connect!`;
+
+      return {
+        prospectId: p.id,
+        fullName: p.fullName,
+        title: p.title,
+        company: p.company,
+        linkedinUrl: p.linkedinUrl!,
+        personalizedNote: customMessage || defaultNote,
+      };
+    });
+
+  return generateLinkedInBrowserUsePrompt(targets, {
+    campaignName: campaign.name,
+  });
+}
+
+export async function getOutreachQuota() {
+  const userId = await requireUserId();
+  return get5HourSendQuota(userId);
 }

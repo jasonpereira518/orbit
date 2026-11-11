@@ -15,7 +15,6 @@ import {
   linkedinPageStatus,
   microsoftAccountStatus,
   overviewAction,
-  remindersPageStatus,
   type GoogleConnectionInput,
   type MicrosoftConnectionInput,
 } from "../src/lib/integration-status";
@@ -162,10 +161,6 @@ const now = new Date("2026-09-22T12:00:00Z");
 const aiOff = aiPageStatus({ ready: false, providerLabel: "Google Gemini" });
 check("AI off", aiOff.state === "off" && aiOff.detail === "Not on yet");
 check("AI on names the provider", aiPageStatus({ ready: true, providerLabel: "Google Gemini" }).detail === "On · Google Gemini");
-check("reminders off", remindersPageStatus({ enabled: false, lastFetchedAt: null }, now).detail === "Off");
-check("reminders never checked", remindersPageStatus({ enabled: true, lastFetchedAt: null }, now).detail === "On · not checked yet");
-const checkedAgo = remindersPageStatus({ enabled: true, lastFetchedAt: new Date("2026-09-22T10:00:00Z") }, now).detail;
-check("reminders checked", checkedAgo === "On · checked about 2 hours ago", checkedAgo);
 const never = linkedinPageStatus(null, now);
 check("LinkedIn never imported", never.state === "off" && never.detail === "Not imported yet");
 const imported = linkedinPageStatus(new Date("2026-09-13T12:00:00Z"), now);
@@ -230,8 +225,6 @@ check("LinkedIn imported before", label("linkedin", linkedinPageStatus(new Date(
 check("AI off", label("ai", aiOff) === "Turn on AI" && overviewAction("ai", aiOff).primary);
 check("AI on", label("ai", aiPageStatus({ ready: true, providerLabel: null })) === "Manage");
 check("assistants", label("assistants", { state: "none", detail: "" }) === "Set up");
-check("reminders off", label("reminders", remindersPageStatus({ enabled: false, lastFetchedAt: null }, now)) === "Set up");
-check("reminders on", label("reminders", remindersPageStatus({ enabled: true, lastFetchedAt: null }, now)) === "Manage");
 
 if (failures > 0) {
   console.error(`\nsmoke-integration-status: ${failures} failure(s)`);
