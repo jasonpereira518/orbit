@@ -167,10 +167,30 @@ export async function loadPublicCard(slug: string): Promise<PublicCard | null> {
   if (!SLUG_RE.test(slug)) return null;
   const db = await getDb();
   const [row] = await db.select().from(shareCards).where(eq(shareCards.slug, slug)).limit(1);
-  if (!row || row.pausedAt) return null;
+  return row ? publicCardFor(row) : null;
+}
+
+/** The owner's card as the public page would show it — same gates, keyed by owner. */
+export async function loadPublicCardForOwner(ownerId: string): Promise<PublicCard | null> {
+  const db = await getDb();
+  const [row] = await db.select().from(shareCards).where(eq(shareCards.userId, ownerId)).limit(1);
+  return row ? publicCardFor(row) : null;
+}
+
+async function publicCardFor(row: typeof shareCards.$inferSelect): Promise<PublicCard | null> {
+  if (row.pausedAt) return null;
   const owner = await readOwner(row.userId);
   if (!owner || owner.suspendedAt) return null;
   if (!(await isSurfaceReleased(row.userId, "page.card")) && !isAdminUser(row.userId)) return null;
+  return publicCardFromRows(row, owner);
+}
+
+/**
+ * The public card for a card row and its owner row already in hand — pure, for callers that
+ * batch-load many owners (people at the same event). The CALLER applies the gates
+ * `publicCardFor` applies: unpaused, owner not suspended, `page.card` released or admin.
+ */
+export function publicCardFromRows(row: typeof shareCards.$inferSelect, owner: Owner): PublicCard | null {
   return build(row.id, row.slug, owner, { fields: { ...DEFAULT_CARD_FIELDS, ...row.fields }, phone: row.phone, tagline: row.tagline });
 }
 

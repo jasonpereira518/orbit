@@ -16,6 +16,9 @@ import { IntegrationsSettings } from "@/components/settings/integrations-setting
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { RadarDigestSetting } from "@/components/settings/radar-digest-setting";
 import { MeetingNudgeSetting } from "@/components/settings/meeting-nudge-setting";
+import { DiscoverableSwitch } from "@/components/nearby/discoverable-switch";
+import { isDiscoverable } from "@/lib/nearby/discoverability";
+import { loadPublicCardForOwner } from "@/lib/cards/card-store";
 import { PlanSettings } from "@/components/settings/plan-settings";
 import {
   AboutYouSettings,
@@ -157,6 +160,11 @@ export default async function SettingsPage({
   // captured the same way the page does it. Email insights on the Google page rides the
   // same release.
   const radarLive = !hidden.has("page.radar") && !visibility.comingSoon.has("page.radar");
+  // "Let people at the same event find me" — offered once the feature is out for this viewer.
+  const alsoHereLive = !hidden.has("feature.also-here") && !visibility.comingSoon.has("feature.also-here");
+  // Always read: someone already findable keeps an off switch even if the feature is pulled.
+  const discoverable = await isDiscoverable(userId);
+  const ownCard = alsoHereLive ? await loadPublicCardForOwner(userId) : null;
   if (radarLive) {
     const tz = (await cookies()).get(TZ_COOKIE)?.value;
     after(() => captureRadarTimeZone(userId, tz).catch(() => undefined));
@@ -276,6 +284,7 @@ export default async function SettingsPage({
       <Group group="data" visible={groupVisible("data")}>
         <Section id="settings-data" hidden={hidden}>
           <DataSettings />
+          {alsoHereLive || discoverable ? <DiscoverableSwitch initialOn={discoverable} hasCard={!!ownCard} /> : null}
         </Section>
         {/* Rendered whenever the group is: Credits is a licence requirement, and hiding Help
             must not take it off the page. */}

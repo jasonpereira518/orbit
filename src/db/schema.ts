@@ -650,6 +650,8 @@ export const userSettings = pgTable("user_settings", {
    * question asked about a suspension, and `admin_audit_log` is the only other record.
    */
   suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+  /** "Let people at the same event find me" — null = not findable (the default). */
+  discoverableAt: timestamp("discoverable_at", { withTimezone: true }),
   suspendedReason: text("suspended_reason"),
   suspendedBy: text("suspended_by"),
   /**
@@ -6136,6 +6138,8 @@ export const events = pgTable(
      * back. That part is `event_aliases`: the keys stay, pointing at this dismissed row.
      */
     dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    /** "Hide me at this event": this user is not findable by others here. */
+    discoveryHiddenAt: timestamp("discovery_hidden_at", { withTimezone: true }),
     /**
      * What kind of event this is, where we can tell.
      *
@@ -6221,6 +6225,12 @@ export const eventAliases = pgTable(
     uniqueIndex("event_aliases_user_kind_value_uidx").on(t.userId, t.kind, t.value),
     /** An index on the FK, for the same reason `event_attendees_contact_idx` exists. */
     index("event_aliases_event_idx").on(t.eventId).where(sql`event_id is not null`),
+    /** Cross-user match on a shared key (people at the same event). */
+    index("event_aliases_kind_value_idx").on(t.kind, t.value).where(sql`event_id is not null`),
+    /** The same calendar invite seen as `gcal:<uid>` by one user and `ics:<uid>` by another. */
+    index("event_aliases_uid_idx")
+      .on(sql`(substring(value from position(':' in value) + 1))`)
+      .where(sql`kind = 'source_ref' and event_id is not null and (value like 'gcal:%' or value like 'ics:%')`),
   ]
 );
 

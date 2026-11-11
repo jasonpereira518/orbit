@@ -49,7 +49,9 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // address or a phone number), and may judge an unsure search's public answer to be someone else.
 // 2026-11-11.2: Orbit card — fields you switch on are public via your card link; details shared
 // back are stored in your Orbit only.
-export const TERMS_VERSION = "2026-11-11.2";
+// 2026-11-11.3: people at the same event — opted-in Orbit users at the same live event can see
+// each other's Orbit card (public fields only); hide per event or turn it off any time.
+export const TERMS_VERSION = "2026-11-11.3";
 export const LEGAL_LAST_UPDATED = "November 11, 2026";
 
 /**
