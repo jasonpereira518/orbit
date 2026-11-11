@@ -52,7 +52,7 @@ import {
 import { UserFacingError } from "@/lib/errors";
 import { blockSharedAvatar, unblockSharedAvatar } from "@/lib/admin-avatars";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { MAX_THREAD_MESSAGE, THANKS_CREDIT_OPTIONS, isFeedbackSource } from "@/lib/feedback-report";
+import { MAX_THANKS_CREDITS, MAX_THREAD_MESSAGE, isFeedbackSource } from "@/lib/feedback-report";
 import { logDirectFeedback } from "@/lib/feedback-submission";
 import { triageFeedback } from "@/lib/feedback-triage";
 import {
@@ -1133,10 +1133,10 @@ export async function replyToFeedbackAction(input: {
   const credits =
     input.thankCredits == null
       ? null
-      : (THANKS_CREDIT_OPTIONS as readonly number[]).includes(input.thankCredits)
+      : Number.isInteger(input.thankCredits) && input.thankCredits >= 1 && input.thankCredits <= MAX_THANKS_CREDITS
         ? input.thankCredits
         : (() => {
-            throw new UserFacingError("Pick 25, 50 or 100 credits");
+            throw new UserFacingError(`Thank with 1 to ${MAX_THANKS_CREDITS} credits`);
           })();
 
   // Check it can be replied to before granting anything: credits on a report nobody can see

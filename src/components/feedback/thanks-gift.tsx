@@ -5,6 +5,7 @@ import { animate, motion, useMotionValue, useTransform } from "motion/react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { unwrapFeedbackThanks } from "@/actions/feedback";
+import { CardStarfield } from "@/components/dashboard/card-starfield";
 import { playDing } from "@/lib/ding";
 import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
 import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
@@ -95,21 +96,20 @@ export function ThanksGift({
         whileTap={reduced ? undefined : { scale: 0.97 }}
         className="relative max-w-[85%] overflow-hidden rounded-2xl bg-gradient-to-br from-gold via-gold/50 to-primary p-[1.5px] text-left shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
-        <span className="relative flex items-center gap-3 overflow-hidden rounded-[calc(1rem-1.5px)] bg-card px-4 py-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gold/15">
-            <Gift className="size-[1.1rem] text-gold-ink" aria-hidden />
+        <span className="relative flex items-center gap-3 overflow-hidden rounded-[calc(1rem-1.5px)] bg-[#03050c] px-4 py-3 text-[#e8f3f1]">
+          <CardStarfield />
+          <span className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-[#f2c14e]/15">
+            <Gift className="size-[1.1rem] text-[#f2c14e]" aria-hidden />
           </span>
-          <span className="grid gap-0.5">
-            <span className="text-sm font-medium text-foreground">
-              {FEEDBACK_RECIPIENT} sent you a thank-you
-            </span>
-            <span className="text-xs text-muted-foreground">Tap to open</span>
+          <span className="relative grid gap-0.5">
+            <span className="text-sm font-medium">{FEEDBACK_RECIPIENT} sent you a thank-you</span>
+            <span className="text-xs text-[#e8f3f1]/65">Tap to open</span>
           </span>
           {/* A slow sheen across the card, so it reads as something waiting to be opened. */}
           {!reduced && (
             <motion.span
               aria-hidden
-              className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-gold/25 to-transparent"
+              className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-[#f2c14e]/25 to-transparent"
               animate={{ x: ["0%", "450%"] }}
               transition={{ duration: 1.4, ease: "easeInOut", repeat: Infinity, repeatDelay: 2.2 }}
             />
@@ -151,7 +151,9 @@ export function ThanksGift({
       )}
 
       <div className="rounded-2xl bg-gradient-to-br from-gold via-gold/50 to-primary p-[1.5px] shadow-sm">
-        <div className="relative overflow-hidden rounded-[calc(1rem-1.5px)] bg-card px-4 py-3">
+        {/* Deep space with drifting stars — the same night sky as the dashboard's network card. */}
+        <div className="relative overflow-hidden rounded-[calc(1rem-1.5px)] bg-[#03050c] px-4 py-3 text-[#e8f3f1]">
+          <CardStarfield />
           {/* The ribbon lifts off as it opens. */}
           {ceremony && (
             <motion.span
@@ -163,26 +165,26 @@ export function ThanksGift({
             />
           )}
 
-          <div className="flex items-baseline gap-2">
-            <span className="font-[family-name:var(--font-display)] text-3xl leading-none text-gold-ink tabular-nums">
+          <div className="relative flex items-baseline gap-2">
+            <span className="font-[family-name:var(--font-display)] text-3xl leading-none text-[#f2c14e] tabular-nums">
               +<motion.span>{shown}</motion.span>
             </span>
-            <span className="text-sm font-medium text-foreground">AI credits</span>
+            <span className="text-sm font-medium">AI credits</span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="relative mt-1 text-xs text-[#e8f3f1]/65">
             A thank-you from {FEEDBACK_RECIPIENT} for your feedback
           </p>
 
           {/* What it means, then what to do with it — in sequence after the count lands. */}
           {!wasSeen && (
             <motion.p
-              className="mt-3 text-sm text-foreground"
+              className="relative mt-3 text-sm"
               initial={{ opacity: 0, y: 4 }}
               animate={phase === "open" ? { opacity: 1, y: 0 } : { opacity: 0, y: 4 }}
               transition={{ duration: 0.25 }}
             >
               {balance === undefined ? (
-                <span className="inline-block h-3.5 w-36 animate-pulse rounded bg-muted align-middle" />
+                <span className="inline-block h-3.5 w-36 animate-pulse rounded bg-white/10 align-middle" />
               ) : balance === null ? null : (
                 <>
                   Your balance: <span className="font-medium tabular-nums">{balance.toLocaleString()}</span> credits
@@ -191,6 +193,7 @@ export function ThanksGift({
             </motion.p>
           )}
           <motion.div
+            className="relative"
             initial={wasSeen ? false : { opacity: 0, y: 4 }}
             animate={phase === "open" ? { opacity: 1, y: 0 } : { opacity: 0, y: 4 }}
             transition={{ duration: 0.25, delay: wasSeen ? 0 : 0.12 }}
@@ -198,7 +201,7 @@ export function ThanksGift({
             <Link
               href="/chat"
               onClick={onNavigate}
-              className="mt-2 inline-block text-sm font-medium text-primary underline-offset-2 hover:underline"
+              className="mt-2 inline-block text-sm font-medium text-[#f2c14e] underline-offset-2 hover:underline"
             >
               Try them in Chat →
             </Link>

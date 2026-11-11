@@ -99,8 +99,10 @@ export function isFeedbackSource(value: unknown): value is FeedbackSource {
 }
 
 /** Bonus AI credits the operator can thank someone with, per report. */
-export const THANKS_CREDIT_OPTIONS = [25, 50, 100] as const;
-export type ThanksCredits = (typeof THANKS_CREDIT_OPTIONS)[number];
+export const THANKS_CREDIT_OPTIONS = [5, 25, 50] as const;
+/** A custom thank-you: any whole number of credits up to this. */
+export const MAX_THANKS_CREDITS = 500;
+export type ThanksCredits = number;
 
 /** One chat message, either side. Long enough for a real answer, short of an essay. */
 export const MAX_THREAD_MESSAGE = 2000;
