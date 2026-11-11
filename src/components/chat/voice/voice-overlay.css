@@ -1,0 +1,54 @@
+.voice-stage {
+  --voice-planet: #0f3d3e;
+  --voice-highlight: #80b8b5;
+  --voice-shadow: #092829;
+}
+.dark .voice-stage {
+  --voice-planet: #7cc3e2;
+  --voice-highlight: #b8e5f5;
+  --voice-shadow: #326b83;
+}
+.voice-orbit { --voice-input: 0; --voice-output: 0; }
+.voice-orbit-user, .voice-orbit-planet, .voice-orbit-moon {
+  transform-origin: 200px 160px;
+}
+.voice-orbit-user {
+  transform: scale(var(--voice-user-scale, 1));
+  opacity: calc(.5 + var(--voice-input) * .5);
+}
+.voice-orbit-echo { opacity: calc(.12 + var(--voice-input) * .65); }
+.voice-orbit-planet { transform: scale(var(--voice-planet-scale, 1), calc(1 + var(--voice-output) * .045)); }
+.voice-orbit-inner { opacity: calc(.22 + var(--voice-output) * .65); }
+.voice-orbit-moon { animation: voice-orbit-travel 24s linear infinite; }
+.voice-orbit[data-mode="thinking"] .voice-orbit-moon { animation-duration: 3s; }
+.voice-orbit[data-mode="connecting"] { animation: voice-orbit-arrive 1.8s ease-in-out infinite alternate; }
+.voice-orbit[data-muted] .voice-orbit-user { opacity: .18; }
+@media (min-width: 640px) {
+  .voice-stage {
+    left: var(--voice-left, 50%);
+    top: var(--voice-top, 50%);
+    width: min(44rem, var(--voice-width, calc(100vw - 4rem)));
+    max-height: min(calc(100dvh - 2rem), var(--voice-height, calc(100dvh - 2rem)));
+  }
+  .voice-orbit { max-height: min(40dvh, 280px); }
+  .voice-stage[data-transcript] .voice-orbit { max-height: min(22dvh, 200px); }
+}
+@media (max-width: 639.98px) {
+  .voice-stage {
+    top: 0;
+    left: 0;
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    translate: 0 0;
+    border-radius: 0;
+  }
+  .voice-orbit { max-height: min(40dvh, 320px); }
+}
+@keyframes voice-orbit-travel { to { transform: rotate(360deg); } }
+@keyframes voice-orbit-arrive { from { opacity: .45; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .voice-orbit, .voice-orbit-moon { animation: none !important; }
+  .voice-orbit-user, .voice-orbit-planet { transform: none; }
+}

@@ -1,7 +1,10 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Mic, MicOff, PhoneOff } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { Mic, MicOff, PhoneOff, Captions } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { VoiceOrbit } from "./voice/voice-orbit";
+import "./voice/voice-overlay.css";
 import { Button } from "@/components/ui/button";
 import { VoiceTransportBoundary } from "./voice/transport-boundary";
 import { ProposedActionsCard } from "./proposed-actions";
@@ -9,7 +12,6 @@ import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { VOICE_DURATION_SECONDS } from "@/lib/voice/policy";
 import {
   PROVIDER_LABELS,
-  type VoiceHistory,
   type VoiceProvider,
 } from "@/lib/voice/config";
 import type {
@@ -41,6 +43,7 @@ async function command(body: Record<string, unknown>) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
+    keepalive: body.action === "transcript" || body.action === "end",
     signal: AbortSignal.timeout(body.action === "start" ? 45000 : 12000),
   });
   const data = await response.json();
@@ -51,8 +54,36 @@ async function command(body: Record<string, unknown>) {
     );
   return data;
 }
-export function VoicePanel({ state }: { state: VoicePublicState }) {
+type TranscriptTurn = { id: string; source: "user" | "ai"; text: string; interrupted: boolean; revision: number };
+export function VoicePanel({ state, threadId, onClose, surfaceRef }: {
+  surfaceRef: RefObject<HTMLDivElement | null>;
+  state: VoicePublicState; threadId: string; onClose(): Promise<void>;
+}) {
   const [active, setActive] = useState<VoiceSessionStart | null>(null);
+  const [placement, setPlacement] = useState<CSSProperties>({});
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const measure = () => {
+      const box = surface.getBoundingClientRect();
+      setPlacement({
+        "--voice-left": `${box.x + box.width / 2}px`,
+        "--voice-top": `${box.y + box.height / 2}px`,
+        "--voice-width": `${Math.max(280, box.width - 24)}px`,
+        "--voice-height": `${Math.max(280, box.height - 24)}px`,
+      } as CSSProperties);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(surface);
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [surfaceRef]);
   const [mode, setMode] = useState<VoiceMode>("disconnected");
   const [busy, setBusy] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -61,24 +92,54 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
   const [lastProvider, setLastProvider] = useState<VoiceProvider>(
     state.provider,
   );
-  const [lines, setLines] = useState<VoiceHistory>([]);
+  const [lines, setLines] = useState<TranscriptTurn[]>([]);
+  const transcript = useRef<TranscriptTurn[]>([]);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const alive = useRef(true);
+  const pending = useRef(new Map<string, {sessionId: string; turn: TranscriptTurn}>());
+  const writes = useRef(Promise.resolve());
+  const modeRef = useRef<VoiceMode>("disconnected");
+  const persist = useCallback((id: string, turn: TranscriptTurn) => {
+    const item = {sessionId: id, turn};
+    pending.current.set(turn.id, item);
+    writes.current = writes.current.then(async () => {
+      try {
+        await command({action: "transcript", ...item});
+        if (pending.current.get(turn.id) === item) pending.current.delete(turn.id);
+        if (alive.current && pending.current.size === 0) setSaveError(false);
+      } catch { if (alive.current) setSaveError(true); }
+    });
+  }, []);
   const [cards, setCards] = useState<
     Array<{ messageId: string; action: StoredProposedAction }>
   >([]);
   const session = useRef<string | null>(null);
   const controls = useRef<VoiceAgentControls | null>(null);
-  const alive = useRef(true);
   const generation = useRef(0);
   const starting = useRef(false);
-  const panel = useRef<HTMLElement | null>(null);
+  const panel = useRef<HTMLDivElement | null>(null);
   const follow = useRef(true);
   const stop = useCallback(async (outcome: "ended" | "failed" = "ended") => {
     generation.current++;
     const id = session.current;
+    if (id && modeRef.current === "speaking") {
+      const last = transcript.current.findLast(line => line.source === "ai");
+      if (last && !last.interrupted) {
+        const next = {...last, interrupted: true, revision: last.revision + 1};
+        transcript.current = transcript.current.map(line => line.id === last.id ? next : line);
+        if (alive.current) setLines(transcript.current);
+        persist(id, next);
+      }
+    }
+    modeRef.current = "disconnected";
     session.current = null;
     const driver = controls.current;
     controls.current = null;
     driver?.disconnect();
+    await writes.current;
     if (alive.current) {
       setActive(null);
       setBusy(false);
@@ -87,15 +148,34 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
     }
     if (id)
       await command({ action: "end", sessionId: id, outcome }).catch(() => {});
-  }, []);
+  }, [persist]);
+  const close = useCallback(async () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    await stop();
+    for (const item of pending.current.values()) persist(item.sessionId, item.turn);
+    await writes.current;
+    if (pending.current.size) {
+      setClosing(false);
+      closingRef.current = false;
+      setSaveError(true);
+      return;
+    }
+    await onClose();
+  }, [onClose, persist, stop]);
   useEffect(() => {
     alive.current = true;
+    const unsaved = pending.current;
     return () => {
       alive.current = false;
       const id = session.current;
       session.current = null;
       controls.current?.disconnect();
       controls.current = null;
+      for (const item of unsaved.values()) {
+        void command({action: "transcript", ...item}).catch(() => {});
+      }
       if (id)
         void fetch("/api/voice", {
           method: "POST",
@@ -154,23 +234,39 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
       },
       onMode: (next) => {
         if (current()) {
+          modeRef.current = next;
           setMode(next);
           if (next !== "connecting") setBusy(false);
         }
       },
       onMessage: (source, text) => {
-        if (current()) setLines((old) => [...old.slice(-49), { source, text }]);
+        if (!current() || !text.trim()) return;
+        // Providers emit finalized turns here; recognition drafts never enter Chat history.
+        const turn = {id: crypto.randomUUID(), source, text: text.slice(0, 4000), interrupted: false, revision: 1};
+        transcript.current = [...transcript.current, turn];
+        setLines(transcript.current);
+        persist(id!, turn);
+      },
+      onInterrupted: () => {
+        if (!current() || modeRef.current !== "speaking") return;
+        const last = transcript.current.findLast(line => line.source === "ai");
+        if (last) {
+          const next = {...last, interrupted: true, revision: last.revision + 1};
+          transcript.current = transcript.current.map(line => line.id === last.id ? next : line);
+          setLines(transcript.current);
+          persist(id!, next);
+        }
+        modeRef.current = "listening";
+        setMode("listening");
       },
       onCorrection: (original, corrected) => {
-        if (current())
-          setLines((old) => {
-            const index = old.findLastIndex(
-              (line) => line.source === "ai" && line.text === original,
-            );
-            return old.map((line, i) =>
-              i === index ? { ...line, text: corrected } : line,
-            );
-          });
+        if (!current()) return;
+        const last = transcript.current.findLast(line => line.source === "ai" && line.text === original.slice(0, 4000));
+        if (!last) return;
+        const next = {...last, text: corrected.slice(0, 4000) || "[Interrupted]", interrupted: true, revision: last.revision + 1};
+        transcript.current = transcript.current.map(line => line.id === last.id ? next : line);
+        setLines(transcript.current);
+        persist(id!, next);
       },
       onError: () => {
         if (current()) {
@@ -212,7 +308,7 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
         }
       },
     };
-  }, [active, stop]);
+  }, [active, stop, persist]);
   async function start(fallback = false) {
     if (starting.current || session.current) return;
     starting.current = true;
@@ -239,9 +335,7 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
         action: "start",
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         fallback,
-        history: lines
-          .slice(-12)
-          .map((line) => ({ ...line, text: line.text.slice(0, 500) })),
+        threadId,
       });
       if (!alive.current || attempt !== generation.current) {
         await command({ action: "end", sessionId: response.sessionId }).catch(
@@ -272,16 +366,22 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
     }
   }
   const provider = active?.credentials.provider ?? lastProvider;
+  const startRef = useRef(start);
+  useEffect(() => { startRef.current = start; });
+  useEffect(() => {
+    const timer = setTimeout(() => void startRef.current(), 0);
+    return () => clearTimeout(timer);
+  }, []);
   const connected = active && mode !== "connecting" && mode !== "disconnected";
   return (
+    <Dialog open disablePointerDismissal onOpenChange={(open) => { if (!open) void close(); }}>
+    <DialogContent showCloseButton={false} finalFocus={false}
+      style={placement}
+      data-transcript={showTranscript || undefined}
+      className="voice-stage flex max-h-[calc(100dvh-2rem)] flex-col gap-0 bg-background p-0 text-foreground sm:w-[min(44rem,calc(100vw-4rem))] sm:max-w-none max-sm:top-0 max-sm:left-0 max-sm:h-dvh max-sm:max-h-dvh max-sm:max-w-none max-sm:translate-x-0 max-sm:rounded-none">
     <section
       aria-label="Orbit Voice"
-      ref={panel}
-      onScroll={(event) => {
-        const el = event.currentTarget;
-        follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      }}
-      className="mt-3 max-h-[min(30dvh,15rem)] overflow-y-auto rounded-xl border border-border bg-card p-4 sm:max-h-[min(40dvh,24rem)]"
+      className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-y-auto px-6 pt-7 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-10 sm:pt-9"
     >
       {active && (
         <VoiceTransportBoundary
@@ -304,12 +404,15 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
           )}
         </VoiceTransportBoundary>
       )}
-      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 bg-card pb-2">
+      <div className="flex flex-1 flex-col items-center text-center">
         <div>
-          <h2 className="text-sm font-medium">
-            Orbit Voice · {PROVIDER_LABELS[provider]}
-          </h2>
-          <p role="status" className="mt-1 text-xs text-muted-foreground">
+          <DialogTitle className="text-lg">Orbit Voice</DialogTitle>
+          <DialogDescription className="mt-2">In this conversation · {PROVIDER_LABELS[provider]}</DialogDescription>
+        </div>
+        <div className="flex min-h-0 w-full flex-1 items-center justify-center py-5 sm:py-7">
+          <VoiceOrbit controls={controls} mode={mode} muted={muted} />
+        </div>
+          <p role="status" className="min-h-6 text-sm text-muted-foreground">
             {busy
               ? "Connecting…"
               : mode === "speaking"
@@ -320,14 +423,14 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
                     ? muted
                       ? "Microphone muted"
                       : "Listening…"
-                    : "Search, prepare, or log an interaction. Changes wait for your confirmation."}
+                    : "Ready when you are"}
           </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="mt-5 flex flex-wrap justify-center gap-3">
           {connected && (
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
+              className="h-11 rounded-full px-5"
               aria-pressed={muted}
               onClick={() => {
                 controls.current?.setMuted(!muted);
@@ -342,12 +445,11 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
               {muted ? "Unmute" : "Mute"}
             </Button>
           )}
-          {busy || active ? (
-            <Button size="sm" variant="outline" onClick={() => void stop()}>
+            <Button size="sm" className="h-11 rounded-full bg-destructive px-5 text-white hover:bg-destructive/90" disabled={closing} onClick={() => void close()}>
               <PhoneOff className="size-4" aria-hidden />
-              End call
+              {closing ? "Saving…" : "End conversation"}
             </Button>
-          ) : (
+          {!busy && !active && (
             <Button size="sm" onClick={() => void start()}>
               <Mic className="size-4" aria-hidden />
               {error
@@ -355,8 +457,19 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
                 : "Start conversation"}
             </Button>
           )}
+          <Button variant="secondary" className="h-11 rounded-full px-5" aria-expanded={showTranscript} aria-controls="voice-transcript" onClick={() => setShowTranscript(value => !value)}>
+            <Captions className="size-4" aria-hidden /> Transcript
+          </Button>
         </div>
       </div>
+      {saveError && <div role="status" className="mt-4 text-center text-sm">
+        Some transcript turns haven’t saved yet. Keep this window open.
+        <Button variant="link" onClick={async () => {
+          for (const item of pending.current.values()) persist(item.sessionId, item.turn);
+          await writes.current;
+          setSaveError(pending.current.size > 0);
+        }}>Retry saving</Button>
+      </div>}
       {!active && (
         <p className="mt-2 text-xs text-muted-foreground">
           Your audio and relevant CRM context are processed by{" "}
@@ -383,19 +496,27 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
             )}
         </div>
       )}
-      {lines.length > 0 && (
+      {showTranscript && (
         <div
+          id="voice-transcript"
+          ref={panel}
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
           role="log"
           aria-label="Live voice transcript"
-          className="mt-4 space-y-3 text-sm"
+          className="mt-6 max-h-44 shrink-0 space-y-3 overflow-y-auto rounded-xl bg-muted p-4 text-sm"
         >
+          {lines.length === 0 && <p className="text-muted-foreground">Your conversation will appear here.</p>}
           {lines.map((line, i) => (
-            <p key={i}>
+            <p key={line.id || i}>
               <span className="mr-2 font-medium">
                 {line.source === "user" ? "You" : "Orbit"}
               </span>
               <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">
                 {line.text}
+                {line.interrupted && <span className="ml-2 text-muted-foreground">(interrupted)</span>}
               </span>
             </p>
           ))}
@@ -422,5 +543,7 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
         />
       ))}
     </section>
+    </DialogContent>
+    </Dialog>
   );
 }
