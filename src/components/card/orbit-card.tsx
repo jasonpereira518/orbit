@@ -200,7 +200,8 @@ export function OrbitCard({
           />
           <span
             className="absolute inset-x-0 block px-[8%] text-center text-[length:calc(var(--s)*0.055)] text-[#cfd8dc]"
-            style={{ bottom: pct(0.04 * back.s + 0.06 * back.s, H) }}
+            // Below the orbit's lowest point: lower on a horizontal card, whose ellipse runs deeper.
+            style={{ bottom: pct(0.04 * back.s + (orientation === "landscape" ? 0.025 : 0.06) * back.s, H) }}
           >
             Scan to save {firstName}’s contact
           </span>

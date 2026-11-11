@@ -79,7 +79,16 @@ for (const { width, height } of SIZES) {
   const inside = box.x0 >= inset && box.y0 >= inset && box.x1 <= width - inset && box.y1 <= height - inset;
   const clear = box.x1 <= planet.cx - planet.ringRx || box.y0 >= planet.cy + planet.r;
   const back = backLayout(width, height);
-  const tileInRing = (back.tile / 2) * Math.SQRT2 < back.R;
+  // The tile's corners sit inside the (elliptical) orbit, and the orbit inside the pane.
+  const half = back.tile / 2;
+  const tileInRing = (half / back.rx) ** 2 + (half / back.ry) ** 2 < 1;
+  const ringInPane = back.cx - back.rx > inset && back.cx + back.rx < width - inset && back.cy - back.ry > inset;
+  // A horizontal card's code has to scan from a phone held at arm's length: ≥ 60% of the height.
+  const bigEnough = width < height || back.tile >= 0.6 * height;
+  if (!ringInPane || !bigEnough) {
+    layoutOk = false;
+    detail.push(`back ${width}x${height}${ringInPane ? "" : " ring outside pane"}${bigEnough ? "" : " tile too small"}`);
+  }
   if (!inside || !clear || box.x1 <= box.x0 || box.y1 <= box.y0 || !tileInRing) {
     layoutOk = false;
     detail.push(`layout ${width}x${height}`);

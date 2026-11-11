@@ -59,10 +59,10 @@ export default async function ShowCardPage() {
               firstName={preview.card.firstName}
               qrSvg={qr.svg}
               side="back"
-              orientation="portrait"
+              orientation="landscape"
               still
-              // As wide as the screen, and short enough that the whole card fits on it.
-              className="w-[min(100%,calc((100dvh_-_9rem)/1.586))]"
+              // Horizontal like a real card: as wide as the screen, short enough to fit on it.
+              className="w-[min(100%,calc((100dvh_-_9rem)*1.586))]"
             />
             <p className="text-sm text-muted-foreground">Tap the card to flip it</p>
           </>
