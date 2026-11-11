@@ -57,6 +57,7 @@ export async function GET() {
     paths: {
       "/me": {
         get: {
+          operationId: "getMe",
           summary: "Who this key belongs to",
           description:
             "Use as the connection test when building an integration. Returns the account's " +
@@ -66,6 +67,7 @@ export async function GET() {
       },
       "/events": {
         post: {
+          operationId: "logEvents",
           summary: "Log interactions",
           description:
             "Record things that happened with people. `externalId` is the idempotency key: " +
@@ -77,6 +79,7 @@ export async function GET() {
       },
       "/contacts": {
         get: {
+          operationId: "listContacts",
           summary: "Search or list contacts",
           description:
             "With `q`, runs Orbit's hybrid search. Without it, returns the most recently " +
@@ -91,6 +94,7 @@ export async function GET() {
           responses: { "200": OK },
         },
         post: {
+          operationId: "createContact",
           summary: "Create a contact",
           description:
             "Checks for an existing match first and returns it instead of creating a " +
@@ -101,6 +105,7 @@ export async function GET() {
       },
       "/followups": {
         get: {
+          operationId: "listFollowups",
           summary: "Who to follow up with",
           parameters: [
             { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100 } },
@@ -110,6 +115,7 @@ export async function GET() {
       },
       "/followups/{id}": {
         patch: {
+          operationId: "updateFollowup",
           summary: "Complete or snooze a follow-up",
           parameters: [
             { name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } },
@@ -120,6 +126,7 @@ export async function GET() {
       },
       "/notes": {
         post: {
+          operationId: "createNote",
           summary: "Send a note into Orbit",
           description:
             "Queues the note for the same extraction the app's capture uses. There is no " +
@@ -132,6 +139,7 @@ export async function GET() {
       },
       "/interactions": {
         get: {
+          operationId: "listInteractions",
           summary: "List interactions",
           parameters: [
             { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 200 } },
@@ -151,8 +159,9 @@ export async function GET() {
         },
       },
       "/webhook-endpoints": {
-        get: { summary: "List webhook endpoints", responses: { "200": OK } },
+        get: { operationId: "listWebhookEndpoints", summary: "List webhook endpoints", responses: { "200": OK } },
         post: {
+          operationId: "createWebhookEndpoint",
           summary: "Register a webhook endpoint",
           description:
             "Orbit immediately POSTs a signed `endpoint.verified` event to the URL and only " +
@@ -163,6 +172,7 @@ export async function GET() {
       },
       "/webhook-endpoints/{id}": {
         delete: {
+          operationId: "deleteWebhookEndpoint",
           summary: "Remove a webhook endpoint",
           parameters: [
             { name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } },

@@ -88,6 +88,10 @@ const INTENTIONALLY_OPEN: Record<string, { reason: string; mustContain?: RegExp 
   "extension/uninstalled#GET": { reason: "the browser opens it as the extension is removed, when its session is already gone; it accepts a bare version number, records no user, IP or user agent, is rate limited, and always answers 204" },
   "waitlist-poll/results#GET": { reason: "aggregate poll tallies, nothing about any one voter" },
   "v1/openapi.json#GET": { reason: "the static OpenAPI document" },
+  "mcp#OPTIONS": {
+    reason: "CORS preflight for browser MCP clients (Claude, ChatGPT); answers 204 with headers and touches nothing",
+    mustContain: /new Response\(null, \{ status: 204, headers: CORS \}\)/,
+  },
   "credits/email/unsubscribe#GET": {
     reason: "renders a confirmation button only; the POST does the work, behind the token",
     mustContain: /unsubscribeCreditEmail\(token\)/,
