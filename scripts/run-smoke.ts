@@ -42,6 +42,7 @@ type Tier = "pure" | "pglite" | "manual" | "bug";
 
 /** Every smoke script, by tier. `--check` fails when a script on disk is missing here. */
 const MANIFEST: Record<string, Tier> = {
+  "smoke-orbit-voice": "pglite",
   // pure ------------------------------------------------------------------------------
   "smoke-test-harness": "pure", // the fixtures, fetch mock and known-bug exit codes themselves
   "smoke-friendly-error": "pure",

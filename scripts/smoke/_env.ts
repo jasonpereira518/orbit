@@ -55,6 +55,8 @@ export const PROVIDER_KEY_ENV = [
   // smoke-ai-access's "transcription refused, nothing sent" assertions stop asserting anything
   // and the suite reaches the live Deepgram API instead. ORBIT_DEEPGRAM rides along so a smoke
   // cannot re-enable the feature out from under the key being gone.
+  "ELEVENLABS_API_KEY",
+  "ELEVENLABS_AGENT_ID",
   "DEEPGRAM_API_KEY",
   "ORBIT_DEEPGRAM",
 ] as const;
