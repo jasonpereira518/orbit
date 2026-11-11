@@ -865,6 +865,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   feedback_note text,
   answer_outcome text,
   follow_ups jsonb DEFAULT '[]',
+  attachments jsonb,
   client_turn_id text,
   slot uuid,
   version integer NOT NULL DEFAULT 1,
@@ -3039,7 +3040,8 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 214 = chat_threads.pending_steer (messages sent to steer the answer being written; the
 // running turn reads them between lookup rounds).
 // 215 = chat_threads.pinned_at (a conversation pinned to the top of the history list).
-export const SCHEMA_VERSION = 215;
+// 216 = chat_messages.attachments (the names and read text of files attached to a question).
+export const SCHEMA_VERSION = 216;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3415,6 +3417,8 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS pending_steer jsonb`,
   // v215: pinned conversations. See `pinThread`.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS pinned_at timestamptz`,
+  // v216: files attached to a chat question. See `@/lib/chat-attachments`.
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS attachments jsonb`,
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_turn_id text`,
   `CREATE INDEX IF NOT EXISTS contacts_user_recent_idx ON contacts(user_id, updated_at DESC, id DESC)`,
   // Backs BOTH the "Last spoken" sort on /contacts and the composer's pickers, which open

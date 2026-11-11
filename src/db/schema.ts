@@ -36,6 +36,7 @@ import type { AimKind, Field, Timeline } from "@/lib/about-you";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
+import type { ChatAttachment } from "@/lib/chat-attachments";
 import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
 import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
 import type {
@@ -3867,7 +3868,12 @@ export const chatMessages = pgTable(
      * the server after the question was saved can find and discard it. Null on assistant rows,
      * versioned turns and every row from before SCHEMA_VERSION 174.
      */
-    clientTurnId: text("client_turn_id"),
+/**
+     * Files attached to this question: their names and the text read from them (never the
+     * bytes). Only on user rows. See `@/lib/chat-attachments`.
+     */
+    attachments: jsonb("attachments").$type<ChatAttachment[]>(),
+        clientTurnId: text("client_turn_id"),
     /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before

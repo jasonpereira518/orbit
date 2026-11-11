@@ -11,6 +11,7 @@ import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
 import { rollBackApplied } from "@/lib/chat-auto-apply";
 import { answerDeadlineMs, answerWithLookups } from "@/lib/chat-agent-loop";
+import { sanitizeAttachments } from "@/lib/chat-attachments";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
 import {
@@ -87,6 +88,7 @@ export async function POST(request: Request) {
         versionOf?: unknown;
         timeZone?: unknown;
         turnId?: unknown;
+        attachments?: unknown;
       }
     | null;
   const threadId = typeof body?.threadId === "string" ? body.threadId : null;
@@ -98,6 +100,10 @@ export async function POST(request: Request) {
   const contextContactIds = Array.isArray(body?.contextContactIds)
     ? body.contextContactIds.filter((id): id is string => typeof id === "string").slice(0, 10)
     : [];
+
+  // Files attached to the question: names and the text already read from them. Counted,
+  // cut to length and stripped of anything that is not one here, whatever the client sent.
+  const sentAttachments = sanitizeAttachments(body?.attachments);
 
   // Editing or regenerating the last turn. `versionOf` names the answer being replaced; a
   // question means "edit the text", its absence means "regenerate" (same question again).
@@ -215,6 +221,9 @@ export async function POST(request: Request) {
         // retrieval failure now arrives as an `error` event rather than a 400, since the
         // status line is already gone — auth, rate limiting and validation stay above,
         // where they can still set a real status code.
+        // A regenerate or an edit keeps the files of the question it replaces.
+        const attachments =
+          sentAttachments.length || !versionTarget ? sentAttachments : versionTarget.priorUserRow.attachments;
         const ctx = await prepareChatContext(userId, question, {
           threadId,
           focusContactId: contactId,
@@ -226,6 +235,7 @@ export async function POST(request: Request) {
               : versionTarget.priorUserRow.attachedContacts.map((p) => p.id),
           steps,
           excludeSlot: versionTarget?.slot ?? null,
+          attachments,
           access,
           // Checked in `prepareChatContext`; anything unrecognized falls back to the stored zone.
           timeZone: typeof body?.timeZone === "string" ? body.timeZone : null,
@@ -245,6 +255,7 @@ export async function POST(request: Request) {
               // `loadAttachedPeople` actually found and put in front of the model, so the mark
               // on a reloaded thread describes what the answer was really given.
               attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+              attachments: attachments.length ? attachments : null,
               clientTurnId: versionTarget ? null : turnId,
               ...(versionTarget
                 ? { slot: versionTarget.slot, version: versionTarget.nextVersion, isActive: false }

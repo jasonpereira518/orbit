@@ -1,3 +1,5 @@
+import type { ChatAttachment } from "@/lib/chat-attachments";
+
 /**
  * Messages typed while an answer is still being written.
  *
@@ -15,6 +17,8 @@ export type QueuedMessage = {
   text: string;
   /** The people `@`-mentioned when it was typed, resolved then so a later edit cannot drop them. */
   contextContactIds: string[];
+  /** Files that were in the composer when it was queued. A message with files is never a steer. */
+  attachments?: ChatAttachment[];
   /** Sent to steer the running answer and not yet confirmed. */
   steering?: boolean;
 };
