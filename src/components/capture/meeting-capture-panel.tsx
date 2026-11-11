@@ -13,10 +13,11 @@
  */
 
 import { speakerDisplayNames } from "@/lib/speaker-display";
+import { groupSegmentsIntoParagraphs } from "@/lib/transcript-paragraphs";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, useTransform, type MotionValue } from "motion/react";
-import { AudioLines, Headphones, Loader2, Mic, MicOff, MonitorUp, Pause, Play, TriangleAlert, type LucideIcon } from "lucide-react";
+import { AudioLines, CalendarClock, Headphones, Loader2, Mic, MicOff, MonitorUp, Pause, Play, TriangleAlert, type LucideIcon } from "lucide-react";
 import type { ResumableMeeting } from "@/lib/meeting-sessions";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { Button } from "@/components/ui/button";
@@ -74,6 +75,7 @@ const SURFACE_LABEL: Record<Exclude<MeetingSurface, null>, string> = {
 };
 
 type PanelProps = {
+  candidateKey?: string | null;
   resumable: ResumableMeeting | null;
   /** AI will run for the analysis — the user's own key, or Orbit's on Lifetime. */
   hasApiKey: boolean;
@@ -104,6 +106,7 @@ export function MeetingCapturePanel(props: PanelProps) {
 function PanelBody({
   session: s,
   flow,
+  candidateKey,
   resumable: resumableProp,
   hasApiKey,
   aiReason = null,
@@ -373,6 +376,18 @@ function PanelBody({
           </p>
         )}
 
+        {s.calendarAgenda && (
+          <div className="rounded-xl border border-primary/25 bg-primary/[0.03] p-3 text-xs">
+            <p className="flex items-center gap-1.5 font-semibold text-foreground">
+              <CalendarClock className="size-3.5 text-primary" />
+              Calendar Agenda
+            </p>
+            <p className="mt-1 whitespace-pre-line text-muted-foreground leading-relaxed">
+              {s.calendarAgenda}
+            </p>
+          </div>
+        )}
+
         <SideNotes value={s.sideNotes} onChange={s.setSideNotes} />
 
         {s.fatal && <FatalNotice message={s.fatal} />}
@@ -456,6 +471,18 @@ function PanelBody({
         )}
         {errorNotice}
         {s.fatal && <FatalNotice message={s.fatal} />}
+        {s.calendarAgenda && (
+          <div className="rounded-xl border border-primary/25 bg-primary/[0.03] p-3 text-xs">
+            <p className="flex items-center gap-1.5 font-semibold text-foreground">
+              <CalendarClock className="size-3.5 text-primary" />
+              Calendar Agenda
+            </p>
+            <p className="mt-1 whitespace-pre-line text-muted-foreground leading-relaxed">
+              {s.calendarAgenda}
+            </p>
+          </div>
+        )}
+
         <SideNotes value={s.sideNotes} onChange={s.setSideNotes} />
         {s.segments.length > 0 && (
           <TranscriptDisclosure count={s.segments.length} failed={s.failedCount}>
@@ -567,7 +594,16 @@ function PanelBody({
             </div>
           ))}
 
-        {canRecord && <MeetingCalendarSuggestions onUse={s.applyCalendarMeeting} />}
+        {canRecord && (
+          <MeetingCalendarSuggestions
+            initialEventKey={candidateKey}
+            onUse={s.applyCalendarMeeting}
+            onStart={(meeting) => {
+              s.applyCalendarMeeting(meeting);
+              s.startRecording(null, "display");
+            }}
+          />
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
@@ -830,36 +866,43 @@ const SegmentLines = memo(function SegmentLines({
   // "You", then Speaker 1, 2, ... in order of first appearance — the stored labels' own
   // numbers skip (`speakerDisplayNames`).
   const names = useMemo(() => speakerDisplayNames(segments), [segments]);
+  const paragraphs = useMemo(() => groupSegmentsIntoParagraphs(segments, names), [segments, names]);
+  const specialSegments = useMemo(
+    () => segments.filter((s) => s.status === "failed" || (s.silent && s.status !== "done")),
+    [segments]
+  );
+
   return (
     <>
-      {segments.map((s) => (
-        <div key={s.seq}>
-          {boundarySet.has(s.seq) && (
-            <p className="my-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-              Reconnected — voices after this point may get new numbers.
+      {paragraphs.map((p, i) => {
+        const hasBoundary = p.seqs.some((seq) => boundarySet.has(seq));
+        return (
+          <div key={`para-${p.startMs}-${i}`} className="space-y-1">
+            {hasBoundary && (
+              <p className="my-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+                Reconnected — voices after this point may get new numbers.
+              </p>
+            )}
+            <p className="leading-relaxed">
+              <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
+                {formatElapsed(p.startMs)}
+              </span>
+              <span className="mr-1.5 font-medium text-foreground">{p.speakerName}:</span>
+              {p.text}
             </p>
-          )}
+          </div>
+        );
+      })}
+      {specialSegments.map((s) => (
+        <div key={`special-${s.seq}`}>
           <p className="leading-relaxed">
             <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
               {formatElapsed(s.startMs)}
             </span>
-            {s.speaker && (
-              <span className="mr-1.5 font-medium text-foreground">{names.get(s.speaker) ?? s.speaker}:</span>
-            )}
-            {s.status === "done" ? (
-              s.text ? (
-                s.text
-              ) : (
-                <span className="text-muted-foreground italic">(silence)</span>
-              )
-            ) : s.silent && s.status !== "failed" ? (
-              <span className="text-muted-foreground italic">(silence)</span>
-            ) : (
-              <span className={cn("italic", s.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
-                {STATUS_COPY[s.status]}
-                {s.detail && s.status !== "uploading" ? ` — ${s.detail}` : ""}
-              </span>
-            )}
+            <span className={cn("italic", s.status === "failed" ? "text-destructive" : "text-muted-foreground")}>
+              {STATUS_COPY[s.status]}
+              {s.detail && s.status !== "uploading" ? ` — ${s.detail}` : ""}
+            </span>
           </p>
         </div>
       ))}

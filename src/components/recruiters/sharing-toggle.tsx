@@ -23,12 +23,26 @@ import { friendlyError } from "@/lib/errors";
  * vouches for them — and only callers that share may add them to a shared row
  * (`logRecruiter`, the Gmail scan).
  */
-export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
+export function RecruiterSharingToggle({
+  enabled,
+  recruiterCount = 0,
+  minRequired = 5,
+}: {
+  enabled: boolean;
+  recruiterCount?: number;
+  minRequired?: number;
+}) {
   const router = useRouter();
   const [on, setOn] = useState(enabled);
   const [pending, start] = useTransition();
 
+  const canShare = on || recruiterCount >= minRequired;
+
   function toggle(next: boolean) {
+    if (next && recruiterCount < minRequired) {
+      toast.error(`You need at least ${minRequired} recruiters in your list to join the shared pool`);
+      return;
+    }
     start(async () => {
       const previous = on;
       setOn(next);
@@ -67,25 +81,40 @@ export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
             )}
           </div>
           <div className="min-w-0">
-            <h2 className="font-medium text-ink">
-              {on ? "Sharing with the pool" : "Your list is private"}
-            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-medium text-ink">
+                {on ? "Sharing with the pool" : "Your list is private"}
+              </h2>
+              {!on && (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  {recruiterCount}/{minRequired} logged to unlock
+                </span>
+              )}
+            </div>
             <p className="mt-1 max-w-prose text-sm text-muted-foreground">
               {on
                 ? "Your recruiters are in the shared pool, so you can see everyone else’s too."
-                : "Share your recruiters to see the ones other people have logged. Private means you only ever see the recruiters you added yourself."}
+                : recruiterCount < minRequired
+                  ? `Contribute at least ${minRequired} recruiters from your recruiting cycle to unlock the community pool of recruiters.`
+                  : "Share your recruiters to see the ones other people have logged. Private means you only ever see the recruiters you added yourself."}
             </p>
           </div>
         </div>
 
         <Button
           type="button"
-          disabled={pending}
+          disabled={pending || !canShare}
           variant={on ? "outline" : "default"}
           className={on ? undefined : "bg-primary text-primary-foreground"}
           onClick={() => toggle(!on)}
         >
-          {pending ? "Saving…" : on ? "Make private" : "Share my list"}
+          {pending
+            ? "Saving…"
+            : on
+              ? "Make private"
+              : canShare
+                ? "Share my list"
+                : `Need ${minRequired} recruiters (${recruiterCount}/${minRequired})`}
         </Button>
       </div>
 
@@ -93,18 +122,16 @@ export function RecruiterSharingToggle({ enabled }: { enabled: boolean }) {
         <div>
           <dt className="font-medium text-foreground">Shared while you share</dt>
           <dd className="mt-1 text-muted-foreground">
-            Each recruiter’s name, firm and specialty, and your star rating as
-            part of the community average. Their work email, phone and LinkedIn
-            are shown only to other people who share their lists too — including
-            an address Orbit found in your inbox.
+            Each recruiter’s name, firm, role and specialty, and your star rating as
+            part of the community average. Their contact details are stored in the
+            central database without linking back to your personal name.
           </dd>
         </div>
         <div>
           <dt className="font-medium text-foreground">Never shared</dt>
           <dd className="mt-1 text-muted-foreground">
-            Your notes, your AI interaction summaries, your status and the text
-            of your emails. While your list is private, the contact details and
-            ratings you log stay out of the pool too.
+            Your name or identity is never attached to shared recruiters. Your personal
+            notes, your AI conversation summaries, and raw emails are strictly private.
           </dd>
         </div>
       </dl>

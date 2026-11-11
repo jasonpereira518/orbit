@@ -27,6 +27,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SENDER_BIO_MAX_LENGTH } from "@/lib/sender-profile";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
@@ -51,12 +52,18 @@ const profileAvatarAppearance = {
 const LINKEDIN_BLUE = "#0A66C2";
 const SKILL_CHIPS = 6;
 
-type CareerRow = { icon: LucideIcon; label: string } & ({ value: string } | { chips: string[] });
+type CareerRow = { icon: LucideIcon; label: string } & (
+  | { value: string; /** Shown on hover/focus: LinkedIn's About summary under the headline. */ hint?: string }
+  | { chips: string[] }
+);
 
 /** The rows worth showing, skipping anything that was never imported. */
 function careerRows(c: CareerProfile): CareerRow[] {
   const rows: (CareerRow | null)[] = [
-    c.profile?.headline ? { icon: Quote, label: "Headline", value: c.profile.headline } : null,
+    // Word for word as LinkedIn has it; the About summary rides along on hover.
+    c.profile?.headline
+      ? { icon: Quote, label: "Headline", value: c.profile.headline, hint: c.profile.summary || undefined }
+      : null,
     c.role ? { icon: Briefcase, label: "Current role", value: `${c.role.title} at ${c.role.company}` } : null,
     c.profile?.industry ? { icon: Building2, label: "Industry", value: c.profile.industry } : null,
     c.profile?.location ? { icon: MapPin, label: "Location", value: c.profile.location } : null,
@@ -265,6 +272,22 @@ export function AboutYouSettings({
                           </span>
                         ))}
                       </span>
+                    ) : row.hint ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <span
+                              tabIndex={0}
+                              className="cursor-help rounded-sm underline decoration-border decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+                            />
+                          }
+                        >
+                          {row.value}
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" align="start" className="max-w-sm leading-relaxed">
+                          {row.hint}
+                        </TooltipContent>
+                      </Tooltip>
                     ) : (
                       row.value
                     )}
