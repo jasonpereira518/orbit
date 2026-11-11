@@ -36,9 +36,11 @@ import {
   loadModelTallies,
   loadLiveRecommendations,
   loadSuppressions,
+  planDayResult,
   planRunResult,
   writeRunResult,
   type NewRecommendation,
+  type WriteCounts,
 } from "@/lib/radar/store";
 import type { RadarModel, RadarRunTrigger, RadarSignal } from "@/lib/radar/types";
 import { buildRadarModel } from "@/lib/radar/model";
@@ -57,12 +59,12 @@ import { focusFromCareerProfile } from "@/lib/career-profile-server";
 import { resolvePlan } from "@/lib/entitlements";
 import { getRadarLimitsForPlan } from "@/lib/plans/plan-config";
 import { focusFitComponent, type UserFocus } from "@/lib/focus-fit";
-import { localClock } from "@/lib/radar/digest";
 import { listActiveProjectsForUser, scoreProjectMatch, type UserProject } from "@/lib/projects/store";
 import { extractActiveProjectsForUser } from "@/lib/projects/extract";
 import { prepareSuggestedCalendarInvite } from "@/lib/radar/invites";
 import { leadReason } from "@/lib/radar/types";
 import { buildProofIndex, verifyPicks } from "@/lib/radar/verify";
+import { composeDay, composeWeek, nextLocal5am, nextRadarRunAt, radarRunMode, type RadarRunMode } from "@/lib/radar/week";
 
 const HOUR_MS = 3_600_000;
 
@@ -70,8 +72,6 @@ const HOUR_MS = 3_600_000;
 export const RADAR_LEASE_MS = 10 * 60 * 1000;
 /** The UTC hour the nightly pass aims every account at. `ops.yml` runs it at 04:17. */
 export const RADAR_NIGHTLY_HOUR_UTC = 4;
-/** A run never schedules the next one sooner than this, so a 02:00 page view skips 04:00. */
-const MIN_GAP_MS = 6 * HOUR_MS;
 /** A failed run retries after this, rather than waiting for the next night. */
 const RETRY_AFTER_MS = 6 * HOUR_MS;
 /** A page view older than this since the last run refreshes in the background. */
@@ -94,6 +94,8 @@ export type RadarRunOptions = {
   ai?: boolean;
   /** Wall-clock budget for the parts that can be skipped (the AI lines). */
   budgetMs?: number;
+  /** Force weekly or daily. Unset: weekly when no weekly build ran this local week (`week.ts`). */
+  mode?: RadarRunMode;
 };
 
 export type RadarRunStats = {
@@ -121,28 +123,13 @@ export type RadarRunStats = {
   emailSignals: number;
   /** Cards dropped because their lead reason had no proof that held (`verify.ts`). */
   unproven: number;
+  /** Weekly: the plan was built. Daily: the plan kept, only Today and retirements changed. */
+  mode?: RadarRunMode;
   durationMs: number;
 };
 
-/**
- * Computes the next 5:00 AM local time for a given timezone, at least MIN_GAP_MS away.
- */
-export function nextLocal5am(now: Date, tz: string = "UTC"): Date {
-  const { hour, ymd } = localClock(now, tz);
-  const [y, m, d] = ymd.split("-").map(Number);
-  const targetDay = new Date(Date.UTC(y!, m! - 1, d! + (hour < 4 ? 0 : 1)));
-  const ymdTarget = targetDay.toISOString().slice(0, 10);
-  const guess = new Date(`${ymdTarget}T05:00:00Z`);
-  const check = localClock(guess, tz);
-  let hourDiff = 5 - check.hour;
-  if (hourDiff > 12) hourDiff -= 24;
-  if (hourDiff < -12) hourDiff += 24;
-  let target = new Date(guess.getTime() + hourDiff * HOUR_MS);
-  while (target.getTime() - now.getTime() < MIN_GAP_MS) {
-    target = new Date(target.getTime() + 24 * HOUR_MS);
-  }
-  return target;
-}
+/** Moved to `week.ts` with the rest of Radar's rhythm; re-exported for older callers. */
+export { nextLocal5am };
 
 /** The next daily 5:00 AM local run slot at least `MIN_GAP_MS` away. */
 export function nextNightlyRunAt(now: Date, tz: string = "UTC"): Date {
@@ -337,6 +324,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
   let error: unknown = null;
   let learned: RadarModel | null = null;
   let userTz = "UTC";
+  let dailyEnabled = true;
 
   try {
     await traced(
@@ -372,6 +360,8 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
               tz: userSettings.radarDigestTz,
               lastRunAt: userSettings.radarLastRunAt,
               dailyEnabled: userSettings.radarDailyEnabled,
+              // The last weekly build, on the same statement: the run's mode depends on it.
+              lastWeeklyAt: sql<string | Date | null>`(SELECT max(started_at) FROM radar_runs WHERE user_id = ${userId} AND status = 'ok' AND stats ->> 'mode' = 'weekly')`,
               autoProjects: userSettings.radarAutoProjects,
               careerProfile: userSettings.careerProfile,
               compedPlan: userSettings.compedPlan,
@@ -389,6 +379,10 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         ]);
         stats.outcomes = outcomes;
         userTz = resolveTimeZone(settingsRow?.tz);
+        dailyEnabled = settingsRow?.dailyEnabled !== 0;
+        const lastWeeklyAt = settingsRow?.lastWeeklyAt ? new Date(settingsRow.lastWeeklyAt) : null;
+        const mode: RadarRunMode = opts.mode ?? radarRunMode(lastWeeklyAt, now, userTz);
+        stats.mode = mode;
         const focus = focusFromCareerProfile(settingsRow?.careerProfile);
         const model = tallies ? buildRadarModel(tallies, now) : null;
         learned = model;
@@ -472,13 +466,21 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           stats.rerankCached = result.status === "cached";
         }
 
-        const runCaps = {
-          pending: Math.min(RADAR_CAPS.pending, radarLimits.planSize),
-          perKind: Math.min(RADAR_CAPS.perKind, Math.max(1, Math.floor(radarLimits.planSize / 2))),
-        };
-        const next = rankPicks(ranked, runCaps);
-        const counts = planRunResult(live, next, now);
-        await writeRunResult(userId, runId, next, now);
+        // Weekly: build the plan (and Today's moments) from scratch. Daily: keep the plan's rows
+        // as they are, add new moments to Today, retire cards whose person has no reason left.
+        const limits = { planSize: Math.min(RADAR_CAPS.pending, radarLimits.planSize), todayMax: radarLimits.todayMax };
+        let next: NewRecommendation[];
+        let counts: WriteCounts;
+        if (mode === "weekly") {
+          next = composeWeek(ranked, limits, now);
+          counts = planRunResult(live, next, now);
+          await writeRunResult(userId, runId, next, now);
+        } else {
+          const day = composeDay(ranked, live, limits, now);
+          next = day.insert;
+          counts = planDayResult(live, day, now);
+          await writeRunResult(userId, runId, next, now, { mode: "daily", keepContacts: day.keepContacts, promote: day.promote });
+        }
 
         // Autopilot, for the kinds this person opted into: schedules, never sends. Only on
         // the nightly pass and an explicit refresh, never while someone is opening the page.
@@ -520,7 +522,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
   }
 
   stats.durationMs = Date.now() - startedMs;
-  await finishRun(userId, runId, stats, error, now, learned, userTz).catch((err) =>
+  await finishRun(userId, runId, stats, error, now, learned, userTz, dailyEnabled).catch((err) =>
     reportError(err, { where: "job.radar.finish", userId, level: "warning" })
   );
   return stats;
@@ -533,7 +535,8 @@ async function finishRun(
   error: unknown,
   now: Date,
   model: RadarModel | null,
-  tz: string = "UTC"
+  tz: string = "UTC",
+  dailyEnabled = true
 ) {
   const db = await getDb();
   const { ok, ...counts } = stats;
@@ -560,7 +563,7 @@ async function finishRun(
           ok
             ? {
                 radarLastRunAt: now,
-                radarNextAt: nextNightlyRunAt(now, tz),
+                radarNextAt: nextRadarRunAt(now, tz, dailyEnabled),
                 radarLeaseUntil: null,
                 // Saved for the admin view and the next reader; the run itself always
                 // rebuilds from rows, so a stale copy here can never steer a ranking.
@@ -659,7 +662,8 @@ export async function claimRadarUsers(limit: number, now: Date, opts: { includeU
          SELECT id FROM user_settings
           WHERE radar_paused = 0
             AND radar_enabled_at IS NOT NULL
-            AND radar_daily_enabled = 1
+            -- No daily-pass filter: an account with it off still gets its weekly plan, and
+            -- its next_at already points at Monday (nextRadarRunAt).
             AND (radar_next_at IS NULL OR radar_next_at <= ${now})
             AND (radar_lease_until IS NULL OR radar_lease_until < ${now})
             AND last_active_at > ${activeSince}

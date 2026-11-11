@@ -232,7 +232,7 @@ run(async () => {
 
   console.log("\nthe first run");
   startQueryCount();
-  const first = await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
+  const first = await runRadarForUser(USER, { mode: "weekly", trigger: "manual", now: NOW, ai: false });
   const statements = stopQueryCount();
   const queries = capturedQueries();
   check("the run succeeds", first.ok, JSON.stringify(first));
@@ -276,7 +276,7 @@ run(async () => {
 
   console.log("\nno AI key");
   await claimRadarLease(USER, NOW);
-  const noKey = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+  const noKey = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
   check("a run asked for AI without a key still succeeds", noKey.ok);
   check("and says it skipped the notes", noKey.skippedNoKey && noKey.aiNotes === 0);
   check("every card still has its reasons", (await db.select({ reasons: recommendations.reasons }).from(recommendations).where(eq(recommendations.userId, USER))).every((r) => r.reasons.length > 0));
@@ -285,6 +285,8 @@ run(async () => {
   {
     const sent: string[] = [];
     const reranks: string[] = [];
+    // A Today moment (a reply owed) can also get a draft on the same run; those are not notes.
+    const otherCalls: string[] = [];
     let rerankReply: "good" | "garbage" | "neutral" = "good";
     const realFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -296,7 +298,7 @@ run(async () => {
       const body = typeof init?.body === "string" ? init.body : "";
       // The rerank is the one call that carries a CANDIDATES fence.
       const isRerank = body.includes("<<<CANDIDATES_");
-      (isRerank ? reranks : sent).push(body);
+      (isRerank ? reranks : body.includes("<<<FACTS_") ? sent : otherCalls).push(body);
       const reply = isRerank
         ? rerankReply === "garbage"
           ? "not json at all"
@@ -324,7 +326,7 @@ run(async () => {
       .set({ aiProvider: "gemini", aiModel: "gemini-3.5-flash", geminiApiKeyEncrypted: encrypt("fake-gemini") })
       .where(eq(userSettings.userId, USER));
     await claimRadarLease(USER, NOW);
-    const withAi = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    const withAi = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
     check("the run writes notes for the top cards", withAi.aiNotes > 0 && withAi.aiNotes <= 5, JSON.stringify(withAi));
     // When it fails, say what the unexpected calls were: a count alone sent the last
     // investigation through a whole CI shard to find out.
@@ -350,14 +352,14 @@ run(async () => {
 
     reranks.length = 0;
     await claimRadarLease(USER, NOW);
-    const cachedRun = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    const cachedRun = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
     check("an unchanged shortlist reuses the answer without a call", reranks.length === 0 && cachedRun.rerankCached, JSON.stringify(cachedRun));
 
     // A malformed reply leaves the rules' order: nothing moved, the run still fine.
     await db.execute(sql`DELETE FROM ai_result_cache WHERE user_id = ${USER} AND operation = 'radar.rerank'`);
     rerankReply = "garbage";
     await claimRadarLease(USER, NOW);
-    const garbled = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    const garbled = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
     const afterGarbage = await db
       .select({ delta: recommendations.aiDelta, score: recommendations.score, base: recommendations.baseScore })
       .from(recommendations)
@@ -373,11 +375,11 @@ run(async () => {
     check("a secret in the reply never reaches the row", noted.every((n) => !n.opener.includes("sk-ant-api03")));
     sent.length = 0;
     await claimRadarLease(USER, NOW);
-    const again = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    const again = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
     check("unchanged facts cost no second call", again.aiNotes === 0 && sent.length === 0, `${sent.length} calls`);
     const nextDay = new Date(NOW.getTime() + DAY);
     await claimRadarLease(USER, nextDay);
-    await runRadarForUser(USER, { trigger: "schedule", now: nextDay, ai: true });
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: nextDay, ai: true });
     check("nor does a day passing", sent.length === 0, `${sent.length} calls`);
     globalThis.fetch = realFetch;
     await db.update(userSettings).set({ geminiApiKeyEncrypted: null }).where(eq(userSettings.userId, USER));
@@ -388,7 +390,7 @@ run(async () => {
   await db.insert(contacts).values(scaleContactRows(USER, 300, {}));
   await claimRadarLease(USER, NOW);
   startQueryCount();
-  const bigger = await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
+  const bigger = await runRadarForUser(USER, { mode: "weekly", trigger: "manual", now: NOW, ai: false });
   const biggerStatements = stopQueryCount();
   check("the run still succeeds", bigger.ok);
   check("the same statements at 312 contacts as at 12", biggerStatements === statements, `${biggerStatements} vs ${statements}`);
@@ -407,13 +409,13 @@ run(async () => {
   const named = Object.values(ids);
   await db.delete(contacts).where(and(eq(contacts.userId, USER), notInArray(contacts.id, named)));
   await claimRadarLease(USER, NOW);
-  await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "manual", now: NOW, ai: false });
 
   console.log("\na second run changes nothing");
   const before = await pending();
   await db.update(recommendations).set({ aiNote: { why: "w", opener: "o", inputsHash: "h", generatedAt: NOW.toISOString() } }).where(eq(recommendations.id, before[0]!.id));
   await claimRadarLease(USER, NOW);
-  const second = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: false });
+  const second = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: false });
   const after = await pending();
   check("nothing inserted, nothing expired", second.inserted === 0 && second.expired === 0, JSON.stringify(second));
   check("the same rows", JSON.stringify(after.map((r) => r.id).sort()) === JSON.stringify(before.map((r) => r.id).sort()));
@@ -423,13 +425,13 @@ run(async () => {
   const dormantRec = after.find((r) => r.contactId === ids.dormant)!;
   await db.update(recommendations).set({ status: "snoozed", snoozedUntil: ahead(5) }).where(eq(recommendations.id, dormantRec.id));
   await claimRadarLease(USER, NOW);
-  await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: false });
   const [snoozed] = await db.select().from(recommendations).where(eq(recommendations.id, dormantRec.id));
   check("a live snooze survives a run", snoozed?.status === "snoozed");
   check("and is not replaced by a new card", !(await pending()).some((r) => r.contactId === ids.dormant));
   const later = new Date(NOW.getTime() + 6 * DAY);
   await claimRadarLease(USER, later);
-  await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
   const [woken] = await db.select().from(recommendations).where(eq(recommendations.id, dormantRec.id));
   check("an ended snooze wakes the same row", woken?.status === "pending");
 
@@ -437,14 +439,14 @@ run(async () => {
   await db.update(recommendations).set({ status: "dismissed", resolvedAt: later }).where(eq(recommendations.id, dismissedRec.id));
   await db.insert(recommendationFeedback).values({ userId: USER, contactId: ids.dormant, recommendationId: dismissedRec.id, kind: dismissedRec.kind, action: "dismissed", createdAt: later });
   await claimRadarLease(USER, later);
-  await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
   check("a dismissal is not re-raised the next night", !(await pending()).some((r) => r.contactId === ids.dormant));
 
   const itemRec = (await pending()).find((r) => r.contactId === ids.item)!;
   await db.update(contacts).set({ title: "Head of Platform" }).where(eq(contacts.id, ids.item));
   await db.update(recommendations).set({ aiNote: { why: "w", opener: "o", inputsHash: "h", generatedAt: NOW.toISOString() } }).where(eq(recommendations.id, itemRec.id));
   await claimRadarLease(USER, later);
-  await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
   const [itemAfter] = await db.select().from(recommendations).where(eq(recommendations.id, itemRec.id));
   check("an AI note is dropped when what it was written from changes", itemAfter?.aiNote === null);
 
@@ -520,7 +522,7 @@ run(async () => {
     const opportunity = pick(ids.opportunity);
     await neverForContactForUser(USER, opportunity.id);
     await claimRadarLease(USER, later);
-    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
     check("'Not for this person' survives the next run", !(await pending()).some((r) => r.contactId === ids.opportunity));
     check("nor does the scheduled contact come back as a new card", !(await pending()).some((r) => r.contactId === ids.job));
     check("Undo on 'not for this person' restores the card", (await restoreRecommendationForUser(USER, opportunity.id)).restored);
@@ -584,7 +586,7 @@ run(async () => {
     );
     await db.update(userSettings).set({ radarPaused: 0 }).where(eq(userSettings.userId, USER));
     await claimRadarLease(USER, learnAt);
-    const taught = await runRadarForUser(USER, { trigger: "schedule", now: learnAt, ai: false });
+    const taught = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: learnAt, ai: false });
     check("the run succeeds with a model", taught.ok, JSON.stringify(taught));
     const [lee] = await db
       .select({ score: recommendations.score, base: recommendations.baseScore, kind: recommendations.kind })
@@ -618,7 +620,7 @@ run(async () => {
       detectedAt: new Date(later.getTime() - 2 * DAY),
     });
     await claimRadarLease(USER, later);
-    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
     const [card] = await db
       .select({ kind: recommendations.kind, reasons: recommendations.reasons })
       .from(recommendations)
@@ -647,7 +649,7 @@ run(async () => {
       detectedAt: new Date(later.getTime() - 2 * DAY),
     });
     await claimRadarLease(USER, later);
-    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
     const lateCards = await db
       .select({ kind: recommendations.kind })
       .from(recommendations)
@@ -738,7 +740,9 @@ run(async () => {
     const applied = await applyAutopilot(USER, { reach_out: true }, NOW);
     const [piloted] = await db.select().from(recommendations).where(eq(recommendations.id, pilotCard.id));
     const [pilotContact] = await db.select({ next: contacts.nextFollowUpAt }).from(contacts).where(eq(contacts.id, pilot!.id));
-    check("autopilot schedules an opted-in kind", applied === 1 && piloted?.status === "auto_applied", `${applied} ${piloted?.status}`);
+    // Every pending Today reach-out with nothing scheduled qualifies; an unanswered message is a
+    // Today moment now (week.ts), so Inbound Ines is opted in alongside the seeded card.
+    check("autopilot schedules an opted-in kind", applied >= 1 && piloted?.status === "auto_applied", `${applied} ${piloted?.status}`);
     check("and remembers exactly what it set", Boolean(piloted?.autopilot?.reminderId) && pilotContact?.next?.toISOString() === piloted?.autopilot?.dueDate);
     const [otherKind] = await db.select({ status: recommendations.status }).from(recommendations).where(eq(recommendations.id, draftCard.id));
     check("but not a kind left off", otherKind?.status === "pending");
@@ -769,7 +773,7 @@ run(async () => {
     await applyAutopilot(USER, { reach_out: true }, NOW);
     await db.update(recommendations).set({ expiresAt: ago(1) }).where(eq(recommendations.id, pilotCard.id));
     await claimRadarLease(USER, NOW);
-    await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
+    await runRadarForUser(USER, { mode: "weekly", trigger: "manual", now: NOW, ai: false });
     const [settled] = await db.select({ status: recommendations.status }).from(recommendations).where(eq(recommendations.id, pilotCard.id));
     check("an autopilot card settles as accepted when it expires", settled?.status === "accepted", settled?.status);
     const tallies = await loadModelTallies(USER, NOW);

@@ -2879,7 +2879,7 @@ export const radarRuns = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     durationMs: integer("duration_ms"),
-    stats: jsonb("stats").$type<Record<string, number | boolean>>().default({}).notNull(),
+    stats: jsonb("stats").$type<Record<string, number | boolean | string>>().default({}).notNull(),
     error: text("error"),
   },
   (t) => [index("radar_runs_user_started_idx").on(t.userId, t.startedAt.desc())]
