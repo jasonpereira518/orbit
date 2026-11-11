@@ -533,6 +533,8 @@ run(async () => {
   await maybeRefreshRadar(USER, new Date(later.getTime() + 60 * 3_600_000));
   const runsPaused = await db.select({ id: radarRuns.id }).from(radarRuns).where(eq(radarRuns.userId, USER));
   check("a paused account is never run", runsPaused.length === runsStale.length);
+  const hiddenBriefing = await loadRadarBriefing(USER);
+  check("a switched-off account has no dashboard briefing, whatever it ran before", !hiddenBriefing.hasRun && hiddenBriefing.top.length === 0);
 
   const fresh = "smoke-radar-run-fresh";
   await db.delete(userSettings).where(eq(userSettings.userId, fresh));

@@ -136,7 +136,9 @@ export type RadarBriefing = {
 /** The dashboard's morning briefing, in three statements. Never builds anything itself. */
 export async function loadRadarBriefing(userId: string): Promise<RadarBriefing> {
   const state = await loadRadarState(userId);
-  if (!state?.lastRunAt) {
+  // `state.paused` means "not on" (never turned on, or switched off): the dashboard hides
+  // Radar then, however much it ran before, and shows its legacy suggestions card instead.
+  if (!state?.lastRunAt || state.paused) {
     return { hasRun: false, paused: state?.paused ?? false, top: [], total: 0, today: 0, drafts: 0, changes: [] };
   }
   const { listActiveProjectsForUser } = await import("@/lib/projects/store");
