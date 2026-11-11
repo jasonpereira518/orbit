@@ -43,6 +43,7 @@ async function seed() {
   await db.insert(schema.feedback).values({ userId: USER, kind: "churn_reason", text: "words" });
   await db.insert(schema.outreachCampaigns).values({ userId: USER, name: "Campaign" });
   await db.insert(schema.tags).values({ userId: USER, name: "friend" });
+  await db.insert(schema.shareCards).values({ userId: USER, slug: "smoke-export-card", fields: { name: true } as never });
   return { contactId: contact.id, recruiterId: recruiter.id };
 }
 

@@ -45,7 +45,7 @@ export default async function ShowCardPage() {
       </Link>
       <div className="flex w-full flex-1 flex-col items-center justify-center gap-4 py-4 text-center">
         {qr.ok ? (
-          <CardQr svg={qr.svg} className="w-[min(80vw,80vh)] max-w-none" />
+          <CardQr svg={qr.svg} className="w-[min(80vw,80dvh)] max-w-none" />
         ) : (
           <p className="text-sm text-muted-foreground">{qr.message}</p>
         )}

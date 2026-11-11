@@ -3143,9 +3143,9 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // (each side's last keystroke, for the typing dots — a serverless deploy has no shared memory
 // to hold them in); and feedback_screenshots.message_id (a screenshot sent later in the
 // conversation belongs to that message, not the opening report).
-// 223 = share_cards + card_shares — Orbit Card (a personal contact card shared by QR/link, and
-// what visitors send back). Built as 220; renumbered to 223 to land above main.
-export const SCHEMA_VERSION = 223;
+// 225 = share_cards + card_shares — Orbit Card (a personal contact card shared by QR/link, and
+// what visitors send back). Built as 220; renumbered to 225 to land above main.
+export const SCHEMA_VERSION = 225;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3351,7 +3351,7 @@ const TOUCH_COUNT_DDL = [
 ];
 
 export const SCALE_DDL: string[] = [
-  // --- v223: Orbit Card — FK lookups so deleting a contact/event does not scan card_shares ---
+  // --- v225: Orbit Card — FK lookups so deleting a contact/event does not scan card_shares ---
   `CREATE INDEX IF NOT EXISTS card_shares_contact_idx ON card_shares(contact_id) WHERE contact_id IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS card_shares_event_idx ON card_shares(event_id) WHERE event_id IS NOT NULL`,
   // --- v62: meeting-notes workflow ---------------------------------------------------

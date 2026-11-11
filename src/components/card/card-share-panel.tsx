@@ -81,6 +81,7 @@ export function CardSharePanel({ url, svg, paused }: { url: string; svg: string;
             <button
               type="button"
               role="switch"
+              aria-label="Pause my card"
               aria-checked={paused}
               disabled={pending}
               onClick={() => run(() => setMyCardPaused(!paused), paused ? "Card is back on" : "Card paused")}
