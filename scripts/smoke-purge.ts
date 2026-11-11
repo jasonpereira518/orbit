@@ -83,6 +83,17 @@ async function seed() {
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
   await db.insert(schema.chatMemories).values({ userId: USER, text: "raising a seed round" });
 
+  const [constellation] = await db
+    .insert(schema.customConstellations)
+    .values({ userId: USER, name: "Founders", prompt: "people who founded companies" })
+    .returning();
+  await db.insert(schema.customConstellationMembers).values({
+    userId: USER,
+    constellationId: constellation.id,
+    contactId: contact.id,
+    source: "manual",
+  });
+
   const [feedbackRow] = await db
     .insert(schema.feedback)
     .values({

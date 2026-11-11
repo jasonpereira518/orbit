@@ -406,3 +406,15 @@ export const RADAR_PLAN_LIMITS: Record<Plan, RadarPlanLimits> = {
 export function getRadarLimitsForPlan(plan: Plan): RadarPlanLimits {
   return RADAR_PLAN_LIMITS[plan] ?? RADAR_PLAN_LIMITS.free;
 }
+
+/** How many custom constellations a plan may keep. Free is capped; paid plans are not. */
+export const CONSTELLATION_LIMITS: Record<Plan, number> = {
+  free: 3,
+  orbit: Infinity,
+  max: Infinity,
+  lifetime: Infinity,
+};
+
+export function getConstellationLimitForPlan(plan: Plan): number {
+  return CONSTELLATION_LIMITS[plan] ?? CONSTELLATION_LIMITS.free;
+}

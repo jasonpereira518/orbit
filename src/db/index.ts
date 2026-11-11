@@ -325,6 +325,26 @@ CREATE TABLE IF NOT EXISTS interactions (
   direction text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS custom_constellations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  name text NOT NULL,
+  prompt text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS custom_constellations_user_idx ON custom_constellations(user_id);
+CREATE TABLE IF NOT EXISTS custom_constellation_members (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  constellation_id uuid NOT NULL REFERENCES custom_constellations(id) ON DELETE CASCADE,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  source text NOT NULL,
+  reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS custom_constellation_members_constellation_idx ON custom_constellation_members(constellation_id);
 CREATE TABLE IF NOT EXISTS reminder_lists (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3169,7 +3189,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 228 = Radar's "new suggestions" pulse: user_settings.radar_opened_at — when the person last
 // opened /radar; pending cards created after it make the nav icon pulse. Scanned every remote
 // ref and local worktree on Nov 11 2026: contact sharing holds 226 and 227.
-export const SCHEMA_VERSION = 228;
+// 229 = custom constellations (new tables custom_constellations + custom_constellation_members:
+// a person's own prompt-built groupings of their contacts). New tables only, so DDL + this bump
+// and no alters entry. Built as 220; renumbered to 223, then to 229 on Nov 11 2026 when main
+// reached 228 (contact sharing holds 226, also-here 227; 228 was the highest claimed).
+export const SCHEMA_VERSION = 229;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
