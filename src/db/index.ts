@@ -345,6 +345,8 @@ CREATE TABLE IF NOT EXISTS custom_constellation_members (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS custom_constellation_members_constellation_idx ON custom_constellation_members(constellation_id);
+CREATE INDEX IF NOT EXISTS custom_constellation_members_contact_idx ON custom_constellation_members(contact_id);
+CREATE INDEX IF NOT EXISTS custom_constellation_members_user_idx ON custom_constellation_members(user_id);
 CREATE TABLE IF NOT EXISTS reminder_lists (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,

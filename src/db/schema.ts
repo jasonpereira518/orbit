@@ -1432,7 +1432,11 @@ export const customConstellationMembers = pgTable(
     reason: text("reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index("custom_constellation_members_constellation_idx").on(t.constellationId)]
+  (t) => [
+    index("custom_constellation_members_constellation_idx").on(t.constellationId),
+    index("custom_constellation_members_contact_idx").on(t.contactId),
+    index("custom_constellation_members_user_idx").on(t.userId),
+  ]
 );
 
 export const reminders = pgTable(
