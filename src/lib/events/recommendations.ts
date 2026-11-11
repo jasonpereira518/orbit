@@ -109,111 +109,12 @@ const TOPIC_KEYWORDS: Record<string, string[]> = {
 };
 
 /**
- * Curated discovery catalog of upcoming industry events in major tech hubs.
- * Updated with upcoming dates relative to current wall-clock.
+ * Real upcoming events to score. Empty until Radar's event search fills it
+ * (docs/superpowers/specs/2026-11-10-radar-analyst-design.md, PR 8). It used to return six
+ * invented events with made-up links, which the live Events tab showed as real.
  */
 function getDiscoveryCatalog(): Array<Omit<RecommendedEvent, "matchScore" | "matchReasons" | "alreadyAdded">> {
-  const now = Date.now();
-  const day = 86_400_000;
-
-  return [
-    {
-      id: "rec-sf-ai-agents-summit",
-      title: "Autonomous Agents & Frontier AI Summit",
-      description: "Join 350+ AI engineers and founders building autonomous coding agents, LLM tool harnesses, and reasoning architectures. Keynotes by frontier lab researchers.",
-      startsAt: new Date(now + 4 * day).toISOString(),
-      endsAt: new Date(now + 4 * day + 6 * 3600_000).toISOString(),
-      venue: "The Hibernia, 1 Jones St",
-      city: "San Francisco",
-      attendanceMode: "offline",
-      url: "https://lu.ma/sf-ai-agents-summit",
-      coverImageUrl: "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=1200&auto=format&fit=crop&q=80",
-      themeColor: "#6366f1",
-      organizerName: "Cerebral Valley & AI Collective",
-      platform: "luma",
-      topics: ["AI & Machine Learning", "Engineering & Architecture"],
-    },
-    {
-      id: "rec-sf-founders-pitch-mixer",
-      title: "SF Founders & Angel Investors Mixer",
-      description: "Casual evening mixer for early-stage technical founders raising Pre-Seed and Seed rounds. Direct networking with active angel syndicates and venture scouts.",
-      startsAt: new Date(now + 7 * day).toISOString(),
-      endsAt: new Date(now + 7 * day + 3 * 3600_000).toISOString(),
-      venue: "South Park Commons",
-      city: "San Francisco",
-      attendanceMode: "offline",
-      url: "https://partiful.com/e/sf-founders-mixer",
-      coverImageUrl: "https://images.unsplash.com/photo-1511578314322-379afb476865?w=1200&auto=format&fit=crop&q=80",
-      themeColor: "#ec4899",
-      organizerName: "South Park Founders",
-      platform: "partiful",
-      topics: ["Founders & Startups", "Networking & Mixers"],
-    },
-    {
-      id: "rec-nyc-tech-week-kickoff",
-      title: "NYC Tech Week: AI in Production & Enterprise Scale",
-      description: "Panel and rooftop networking exploring production deployment of generative systems, latency optimization, and enterprise governance.",
-      startsAt: new Date(now + 11 * day).toISOString(),
-      endsAt: new Date(now + 11 * day + 4 * 3600_000).toISOString(),
-      venue: "Spring Studios, Tribeca",
-      city: "New York",
-      attendanceMode: "offline",
-      url: "https://www.eventbrite.com/e/nyc-tech-week-ai-production-tickets",
-      coverImageUrl: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200&auto=format&fit=crop&q=80",
-      themeColor: "#0284c7",
-      organizerName: "NYC Tech Collective",
-      platform: "eventbrite",
-      topics: ["AI & Machine Learning", "Engineering & Architecture"],
-    },
-    {
-      id: "rec-global-remote-evals-hackathon",
-      title: "Agentic Evaluations & Benchmarks Virtual Hackathon",
-      description: "48-hour global virtual hackathon focused on building robust eval harnesses, self-correcting agents, and synthetic dataset pipelines.",
-      startsAt: new Date(now + 14 * day).toISOString(),
-      endsAt: new Date(now + 16 * day).toISOString(),
-      venue: "Online / Discord",
-      city: null,
-      attendanceMode: "online",
-      url: "https://lu.ma/evals-virtual-hackathon",
-      coverImageUrl: "https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?w=1200&auto=format&fit=crop&q=80",
-      themeColor: "#10b981",
-      organizerName: "OpenEval Community",
-      platform: "luma",
-      topics: ["AI & Machine Learning", "Engineering & Architecture"],
-    },
-    {
-      id: "rec-sf-design-eng-salon",
-      title: "Craft & Motion: Design Engineering Salon",
-      description: "An intimate gathering of design engineers and product builders obsessing over fluid micro-interactions, spatial UI, physics springs, and typography.",
-      startsAt: new Date(now + 18 * day).toISOString(),
-      endsAt: new Date(now + 18 * day + 3 * 3600_000).toISOString(),
-      venue: "Mission District Loft",
-      city: "San Francisco",
-      attendanceMode: "offline",
-      url: "https://partiful.com/e/design-eng-salon",
-      coverImageUrl: "https://images.unsplash.com/photo-1505373877841-8d25f7d46678?w=1200&auto=format&fit=crop&q=80",
-      themeColor: "#f59e0b",
-      organizerName: "Interface Craft Club",
-      platform: "partiful",
-      topics: ["Design & Product", "Engineering & Architecture"],
-    },
-    {
-      id: "rec-austin-hardware-ai-meetup",
-      title: "Austin AI Hardware & Robotics Showcase",
-      description: "Live demonstrations of edge AI processors, humanoid robots, and drone perception stacks. Featuring founders and lab heads from across Texas.",
-      startsAt: new Date(now + 21 * day).toISOString(),
-      endsAt: new Date(now + 21 * day + 4 * 3600_000).toISOString(),
-      venue: "Capital Factory, 701 Brazos St",
-      city: "Austin",
-      attendanceMode: "offline",
-      url: "https://www.eventbrite.com/e/austin-ai-hardware-showcase-tickets",
-      coverImageUrl: "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=1200&auto=format&fit=crop&q=80",
-      themeColor: "#8b5cf6",
-      organizerName: "Austin Hardware Guild",
-      platform: "eventbrite",
-      topics: ["AI & Machine Learning", "Engineering & Architecture"],
-    },
-  ];
+  return [];
 }
 
 /**
