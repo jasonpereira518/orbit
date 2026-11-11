@@ -7,7 +7,7 @@ import { JOB_LEFT_CODE, JOB_MOVE_CODE, leadReason, type RadarDraft, type RadarRe
 import { EMAIL_REASON_CODES } from "@/lib/radar/email-text";
 
 /** Reasons that come from outside Orbit: a job move, a headline, a post, a mail. */
-export const SIGNAL_CODES: ReadonlySet<string> = new Set([JOB_MOVE_CODE, JOB_LEFT_CODE, "company_news", "social_post", ...EMAIL_REASON_CODES]);
+export const SIGNAL_CODES: ReadonlySet<string> = new Set([JOB_MOVE_CODE, JOB_LEFT_CODE, "social_post", ...EMAIL_REASON_CODES]);
 /** People the dashboard's briefing shows; the rest are a count and a link. */
 export const BRIEFING_TOP = 3;
 export const WHAT_CHANGED_MAX = 4;
