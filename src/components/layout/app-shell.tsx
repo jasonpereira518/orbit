@@ -30,7 +30,7 @@ import { ComposeHost } from "@/components/email/compose-host";
 import { HiddenSurfacesProvider } from "@/components/layout/hidden-surfaces";
 import { Button } from "@/components/ui/button";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
-import { Search } from "lucide-react";
+import { QrCode, Search } from "lucide-react";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { ThemeSync } from "@/components/theme-sync";
@@ -264,6 +264,17 @@ export function AppShell({
                 >
                   <Search className="h-4 w-4" />
                 </Button>
+                {/* Show my card, for the person in front of you. Off until the page is
+                    released: a header icon is too loud an announcement for a teaser. */}
+                {!hiddenSet.has("page.card") && !comingSoonSet.has("page.card") && (
+                  <Link
+                    href="/card/show"
+                    aria-label="Show my card"
+                    className="inline-flex size-10 items-center justify-center rounded-full border border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background"
+                  >
+                    <QrCode className="h-4 w-4" aria-hidden />
+                  </Link>
+                )}
                 {!hiddenSet.has(FEEDBACK_SURFACE_KEY) && <FeedbackTrigger />}
                 <NotificationsPanelButton />
               </div>

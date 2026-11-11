@@ -21,6 +21,7 @@ import {
 } from "../src/db/schema";
 import { GET as vcardGET } from "../src/app/(site)/c/[slug]/vcard/route";
 import { setBotCheckForTests } from "../src/lib/bot-check";
+import { addArrivalNoteCore, listArrivals } from "../src/lib/cards/arrivals";
 import { shareBackCore, type ShareBackInput } from "../src/lib/cards/share-back";
 import { backfillContactIdentities } from "../src/lib/contact-identity";
 import { createContactForUser } from "../src/lib/contact-writes";
@@ -405,6 +406,51 @@ async function vcardRoute() {
   check("junk slug: 404", (await get("../../etc")).status === 404);
 }
 
+/** Task 7: the arrivals list and the owner's quick note. */
+async function arrivals() {
+  console.log("\narrivals");
+  const db = await getDb();
+  await db.insert(userSettings).values({ userId: OWNER, firstName: "Ada", lastName: "Lovelace", email: "ada@example.com" });
+  await saveCard(OWNER, { fields: DEFAULT_CARD_FIELDS, phone: null, tagline: null });
+  const card = (await db.select().from(shareCards).where(eq(shareCards.userId, OWNER)))[0];
+  const [sam] = await db.insert(contacts).values({ userId: OWNER, fullName: "Sam Lee", email: "sam@x.test" }).returning();
+  const [ev] = await db.insert(events).values({ userId: OWNER, title: "Demo Night", startsAt: new Date() }).returning();
+  const share = (over: Partial<typeof cardShares.$inferInsert>) =>
+    db
+      .insert(cardShares)
+      .values({ userId: OWNER, cardId: card.id, nonce: `smoke-arrival-${Math.random()}`, name: "Visitor", status: "added", ...over })
+      .returning()
+      .then((r) => r[0]);
+  const matched = await share({ name: "Sam L", email: "sam@x.test", status: "matched", contactId: sam.id, eventId: ev.id, message: "Loved the talk", createdAt: new Date(Date.now() - 60_000) });
+  const held = await share({ name: "Hal Held", email: "hal@x.test", status: "held" });
+  const quiet = { skipSummary: true, skipEmbedding: true, skipRevalidate: true };
+  const notes = () => db.select().from(interactions).where(eq(interactions.externalId, `card-note:${matched.id}`));
+
+  const list = await listArrivals(OWNER);
+  check("list: newest first, both rows", list.length === 2 && list[0].id === held.id, list.map((a) => a.name).join());
+  const m = list.find((a) => a.id === matched.id)!;
+  check("list: event title, contact and message", m.eventTitle === "Demo Night" && m.contactName === "Sam Lee" && m.message === "Loved the talk" && m.status === "matched");
+  check("list: another user's arrivals never show", (await listArrivals(`${PREFIX}nobody`)).length === 0);
+
+  check("note: first save ok", (await addArrivalNoteCore(OWNER, matched.id, "Wants an intro to Bo", quiet)).ok);
+  check("note: second save ok", (await addArrivalNoteCore(OWNER, matched.id, "Wants an intro to Bo, ping Friday", quiet)).ok);
+  const logged = await notes();
+  check("note: one interaction, the owner's text", logged.length === 1 && logged[0].rawNotes === "Wants an intro to Bo" && logged[0].contactId === sam.id && logged[0].interactionType === "note", JSON.stringify(logged.map((l) => l.rawNotes)));
+  const [after] = await db.select().from(cardShares).where(eq(cardShares.id, matched.id));
+  check("note: ownerNote is the latest text", after.ownerNote === "Wants an intro to Bo, ping Friday");
+
+  const heldRes = await addArrivalNoteCore(OWNER, held.id, "hello", quiet);
+  check("held: refused", !heldRes.ok && heldRes.message === "Make room in your contacts first.");
+  const [heldAfter] = await db.select().from(cardShares).where(eq(cardShares.id, held.id));
+  const heldNotes = await db.select().from(interactions).where(eq(interactions.externalId, `card-note:${held.id}`));
+  check("held: nothing written", heldAfter.ownerNote === null && heldNotes.length === 0);
+
+  const stranger = await addArrivalNoteCore(`${PREFIX}intruder`, matched.id, "pwned", quiet);
+  const [still] = await db.select().from(cardShares).where(eq(cardShares.id, matched.id));
+  check("another user's share: refused, nothing written", !stranger.ok && still.ownerNote === "Wants an intro to Bo, ping Friday" && (await notes()).length === 1);
+  check("junk share id: refused", !(await addArrivalNoteCore(OWNER, "not-a-uuid", "x", quiet)).ok);
+}
+
 async function main() {
   await cleanup();
   await cardStore();
@@ -414,6 +460,8 @@ async function main() {
   await shareBack();
   await cleanup();
   await vcardRoute();
+  await cleanup();
+  await arrivals();
   await cleanup();
   console.log("\nshare card: all checks passed");
   process.exit(0);

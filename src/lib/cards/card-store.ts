@@ -5,6 +5,7 @@ import { shareCards, userSettings, type CardFields } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { cleanSingleLine } from "@/lib/ai-security";
+import { UserFacingError } from "@/lib/errors";
 import { isSurfaceReleased } from "@/lib/surface-visibility";
 
 /** A new card starts with the safe set: no phone until the owner opts in. */
@@ -158,7 +159,7 @@ async function readOwner(userId: string): Promise<Owner | null> {
 export async function previewCard(userId: string, draft: CardDraft): Promise<PublicCard> {
   const owner = await readOwner(userId);
   const card = owner && build("preview", "preview", owner, cleanDraft(draft));
-  if (!card) throw new Error("Add your name to preview your card");
+  if (!card) throw new UserFacingError("Add your name in Settings → Profile to preview your card");
   return card;
 }
 

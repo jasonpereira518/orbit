@@ -59,6 +59,8 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/dashboard",
   "/capture",
   "/capture/[batchId]",
+  "/card",
+  "/card/show",
   "/chat",
   "/contacts",
   "/contacts/new",

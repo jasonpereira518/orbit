@@ -21,6 +21,7 @@ import {
   Moon,
   PenLine,
   NotebookPen,
+  QrCode,
   Search,
   Settings,
   Sparkles,
@@ -143,6 +144,14 @@ const ACTIONS: Command[] = [
     href: "/reminders?view=upcoming",
     icon: CalendarClock,
     keywords: "due soon week schedule next",
+  },
+  {
+    id: "action:share-card",
+    label: "Share my card",
+    hint: "Show your QR code full screen",
+    href: "/card/show",
+    icon: QrCode,
+    keywords: "qr code nfc contact card business card swap exchange show",
   },
   {
     id: "action:duplicates",
