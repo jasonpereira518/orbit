@@ -23,7 +23,7 @@ import {
 import { mergedSchools } from "@/lib/career-profile";
 import { loadYouCurrent } from "@/lib/career-profile-server";
 import { addTargetCompany, setSchools } from "@/lib/events/target-companies";
-import { MAX_ROLE_KEYWORDS, MAX_SCHOOLS } from "@/lib/linkedin-you";
+import { HEADLINE_MAX, MAX_ROLE_KEYWORDS, MAX_SCHOOLS } from "@/lib/linkedin-you";
 import { normalizeSenderBio } from "@/lib/sender-profile";
 import { addGoalForUser, listActiveGoalTextsForUser, MAX_GOAL_CHARS } from "@/lib/user-goals";
 import { researchPerson, type PersonResearcher } from "@/lib/web-research";
@@ -49,7 +49,6 @@ export type AboutConfirm = AboutAnswers & {
 
 const MAX_COMPANIES = 5;
 const NAME_MAX = 100;
-const LINE_MAX = 200;
 const SUMMARY_MAX = 600;
 const SCHOOL_MAX = 120;
 const MAX_MAJORS = 3;
@@ -78,7 +77,7 @@ function parsePrefill(raw: unknown): AboutPrefill | null {
   const title = line(role?.title, NAME_MAX);
   const company = line(role?.company, NAME_MAX);
   return {
-    headline: line(p.headline, LINE_MAX),
+    headline: line(p.headline, HEADLINE_MAX),
     role: title && company ? { title, company } : null,
     location: line(p.location, NAME_MAX),
     summary: line(p.summary, SUMMARY_MAX),
@@ -103,7 +102,7 @@ export function parseAboutConfirm(raw: unknown): AboutConfirm | null {
     companies: lines(r.companies, NAME_MAX, MAX_COMPANIES),
     schools: lines(r.schools, SCHOOL_MAX, MAX_SCHOOLS),
     majors: lines(r.majors, SCHOOL_MAX, MAX_MAJORS),
-    headline: line(r.headline, LINE_MAX),
+    headline: line(r.headline, HEADLINE_MAX),
     goalSentence: line(r.goalSentence, MAX_GOAL_CHARS),
     selfIntro: normalizeSenderBio(r.selfIntro),
     edited: {
@@ -159,7 +158,7 @@ export async function lookUpSelfForUser(
     return {
       status: "confident",
       prefill: {
-        headline: line(d.headline, LINE_MAX),
+        headline: line(d.headline, HEADLINE_MAX),
         role: title && company ? { title, company } : null,
         location: line(d.location, NAME_MAX),
         summary: line(d.summary, SUMMARY_MAX),

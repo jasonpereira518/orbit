@@ -16,8 +16,8 @@ export function BuyPackButton({
   variant = "default",
   label = `Buy a pack (${CREDIT_PACK_PRICE_LABEL})`,
 }: {
-  size?: "sm" | "default";
-  variant?: "default" | "outline";
+  size?: "xs" | "sm" | "default";
+  variant?: "default" | "outline" | "link";
   label?: string;
 }) {
   const [pending, start] = useTransition();
