@@ -334,9 +334,16 @@ async function warmRoutes(browser, contactPath) {
 
 const browser = await chromium.launch({ headless: true, executablePath: chromiumExecutable(chromium), args: ["--ignore-certificate-errors"] });
 try {
-  const probe = await newContext(browser, "desktop");
-  const contactPath = await firstContactPath(probe);
-  await probe.close();
+  // Contact profile probing is only needed when that page (or a nav tour that opens it) is
+  // in scope. Skipping it keeps `--only=/,/dashboard` from hanging on a slow first compile.
+  const needsContact =
+    (!ONLY.length || ONLY.includes("/contacts/[id]")) && !SKIP.includes("/contacts/[id]");
+  let contactPath = null;
+  if (needsContact) {
+    const probe = await newContext(browser, "desktop");
+    contactPath = await firstContactPath(probe);
+    await probe.close();
+  }
   if (WARM) await warmRoutes(browser, contactPath);
   const profiles = PROFILE === "both" ? ["desktop", "mobile4g"] : [PROFILE];
   const results = {};

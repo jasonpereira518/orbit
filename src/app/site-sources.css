@@ -141,6 +141,7 @@
 @source "../lib/big-dipper-figure.ts";
 @source "../lib/blob-lazy.ts";
 @source "../lib/bot-check.ts";
+@source "../lib/botid-client.ts";
 @source "../lib/calendar-feed.ts";
 @source "../lib/capture/closeness.ts";
 @source "../lib/capture/person-enrichment.ts";

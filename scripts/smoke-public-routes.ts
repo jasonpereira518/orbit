@@ -29,6 +29,9 @@ function publicAssetExtensions(dir = PUBLIC_DIR): Map<string, string> {
   const found = new Map<string, string>();
   const walk = (current: string, prefix: string) => {
     for (const entry of readdirSync(current)) {
+      // Dotfiles are OS/editor junk (.DS_Store, .gitkeep), never assets we ship — and they
+      // are gitignored, so CI never sees them. Treating them as shipped made a local run fail.
+      if (entry.startsWith(".")) continue;
       const full = join(current, entry);
       if (statSync(full).isDirectory()) {
         walk(full, `${prefix}/${entry}`);

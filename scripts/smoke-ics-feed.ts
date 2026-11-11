@@ -9,6 +9,11 @@ import { parseIcsEvents } from "../src/lib/calendar-import";
 import { isDateOnly } from "../src/lib/calendar-feed";
 import { atLocalNoon } from "../src/lib/interaction-date";
 
+// The date-only rule is defined on a UTC server (`isDateOnlyDue` accepts UTC midnight/noon,
+// and `atLocalNoon` is local). Pin the zone so a developer laptop in another timezone runs
+// the same assertions as CI and Vercel instead of failing on local noon.
+process.env.TZ = "UTC";
+
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
   console.log(`  ok  ${label}`);

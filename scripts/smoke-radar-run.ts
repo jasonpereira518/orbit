@@ -787,15 +787,20 @@ run(async () => {
       if (others.length) await db.update(userSettings).set({ radarLeaseUntil: null }).where(inArray(userSettings.userId, others));
       await db.update(userSettings).set({ radarLeaseUntil: null }).where(inArray(userSettings.userId, [opened, unopened]));
     };
-    const gated = await claimRadarUsers(100, passNow, { includeUnopened: false });
+    // The suite shares one PGlite, so earlier scripts leave other accounts eligible with
+    // `radar_next_at IS NULL`, which sorts ahead of this script's rows. A limit of 100 filled
+    // with those and dropped `opened`/`unopened` from the result — fine standalone, flaky in
+    // the suite. Claim everything; `handBack` releases every lease afterwards.
+    const ALL_ELIGIBLE = 100_000;
+    const gated = await claimRadarUsers(ALL_ELIGIBLE, passNow, { includeUnopened: false });
     await handBack(gated);
     check("while coming-soon, an account that opened Radar is claimed", gated.includes(opened));
     check("and one that never did is not", !gated.includes(unopened));
-    const released = await claimRadarUsers(100, passNow, { includeUnopened: true });
+    const released = await claimRadarUsers(ALL_ELIGIBLE, passNow, { includeUnopened: true });
     await handBack(released);
     check("after release, both are", released.includes(opened) && released.includes(unopened));
     await db.update(userSettings).set({ lastActiveAt: new Date(passNow.getTime() - 90 * DAY) }).where(eq(userSettings.userId, unopened));
-    const idle = await claimRadarUsers(100, passNow, { includeUnopened: true });
+    const idle = await claimRadarUsers(ALL_ELIGIBLE, passNow, { includeUnopened: true });
     await handBack(idle);
     check("an account idle for months is left alone", !idle.includes(unopened));
     await db.update(userSettings).set({ lastActiveAt: passNow, radarEnabledAt: null }).where(eq(userSettings.userId, unopened));

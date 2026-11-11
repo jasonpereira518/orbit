@@ -16,7 +16,12 @@ import { TermsUpdateNotice } from "@/components/legal/terms-update-notice";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
 import { LearnedBrandColors } from "@/components/layout/learned-brand-colors";
 import { registerLearnedBrands } from "@/lib/brand-colors";
-import { learnOrgBrandColors, loadOrgBrandColors } from "@/lib/org-brand-learn";
+import {
+  EMPTY_ORG_BRAND_COLORS,
+  learnOrgBrandColors,
+  loadOrgBrandColors,
+  peekOrgBrandColors,
+} from "@/lib/org-brand-learn";
 import { OfflineSync } from "@/components/layout/offline-sync";
 import { MeetingSessionProvider } from "@/components/capture/meeting-session";
 import { captureAttribution } from "@/lib/attribution-capture";
@@ -149,22 +154,28 @@ export default async function AppLayout({
   // `linkedinReminder` arms the once-per-account "Is your LinkedIn export ready?" screen.
   // It is free on nearly every request: the settings row above answers it unless the
   // account is 24h–14d old and has not been shown it yet — only then is `imports` read.
-  // `brandColors` is the brand color Orbit has learned for each of the viewer's companies and
-  // schools that the curated table does not know, plus which ones it has not looked up yet.
-  // Those are learned after the response is sent, so a newly added company shows its own
-  // color from the next page load on. A failed read costs only the colors, never the page.
-  const [{ plan, canUseMeetings }, visibility, linkedinReminder, brandColors] = await Promise.all([
+  // Brand colors are cosmetic. A memo hit stays on the critical path; a miss used to block
+  // first bytes on a whole-network company/school scan (~120 ms DB at 25k). Serve empty on
+  // miss and fill the memo in `after()` so the next navigation has colors.
+  const brandHit = peekOrgBrandColors(userId);
+  const [{ plan, canUseMeetings }, visibility, linkedinReminder] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
     getLinkedInReminderState(userId, settings),
-    loadOrgBrandColors(userId).catch(() => ({ learned: [], missing: [] })),
   ]);
+  const brandColors = brandHit ?? EMPTY_ORG_BRAND_COLORS;
   // The server-component realm has its own copy of the registry; the client component below
   // fills the SSR and browser ones.
   registerLearnedBrands(brandColors.learned);
-  if (brandColors.missing.length) {
-    after(() => learnOrgBrandColors(userId, brandColors.missing).catch(() => {}));
-  }
+  after(() => {
+    void loadOrgBrandColors(userId)
+      .then((colors) => {
+        if (colors.missing.length) {
+          return learnOrgBrandColors(userId, colors.missing);
+        }
+      })
+      .catch(() => {});
+  });
 
   // Whether included AI can run on this deployment at all — see ViewerPlanProvider.
   const includedAiAvailable = Object.values(managedKeysConfigured()).some(Boolean);
