@@ -51,6 +51,10 @@ export function noteLinkedInDirectRateLimit(resetAtMs: number): void {
   directCooldownUntil = Math.max(directCooldownUntil, resetAtMs, Date.now() + 60_000);
 }
 
+export function resetLinkedInDirectCooldownForTesting(): void {
+  directCooldownUntil = 0;
+}
+
 /**
  * Extract image URL from raw HTML via OpenGraph, Twitter card, or JSON-LD schema.
  */

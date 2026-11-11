@@ -56,7 +56,8 @@ async function main() {
   check("a sharing user's email fills the shared row", same.id === created.id && same.email === "pat@acme.test");
   const fresh = (await db.query.recruiters.findFirst({ where: eq(recruiters.id, created.id) }))!;
   check("the private owner still sees their own address", toPublicRecruiter(fresh, privateLink, false).email === "pat.private@r.test");
-  check("a pooled viewer sees the contributed one", toPublicRecruiter(fresh, null, true).email === "pat@acme.test");
+  check("a pooled viewer has contact locked by default", toPublicRecruiter(fresh, null, true).email === null && toPublicRecruiter(fresh, null, true).hasEmail === true);
+  check("an unlocked pooled viewer sees the contributed one", toPublicRecruiter(fresh, null, true, true).email === "pat@acme.test");
 
   await db.update(userSettings).set({ recruiterSharing: 0 }).where(eq(userSettings.userId, "smoke-pii-sharer"));
   await resweepUserRatings("smoke-pii-sharer");

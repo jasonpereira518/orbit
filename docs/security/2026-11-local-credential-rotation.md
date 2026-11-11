@@ -7,8 +7,12 @@ shipped in PR #529.
 
 Nothing here needs a code change to start: each step is a provider dashboard action
 plus a Vercel environment-variable update. Every step that changes a *serving*
-credential does need a new deployment before it takes effect — see
-[Build window](#build-window) before scheduling one.
+credential needs a new deployment before it takes effect — see
+[Build window](#build-window) for the ordering rule.
+
+**Status: completed 2026-11-09.** The rotation window ran and production was verified
+healthy; see [Completed](#completed-2026-11-09). The rest of this document stays as the
+record of what was exposed, the ordering rule, and the checklist for re-running any key.
 
 ## What was actually exposed
 
@@ -53,7 +57,8 @@ same `GEMINI_API_KEY` and `GOOGLE_CLIENT_SECRET`.
 - **Local development no longer points at production.** A Neon branch `dev`
   (`br-broad-morning-ausulm0j`, endpoint `ep-sparkling-paper-au160m2g`) was branched from
   `production`, and `.env.local` now uses its pooled URL. The production branch's
-  credential is no longer on disk; rotating that credential (P0 #1) is still outstanding.
+  credential is no longer on disk; the production role password was rotated on
+  2026-11-09 (see [Completed](#completed-2026-11-09)).
 
 ## Build window
 
@@ -62,16 +67,35 @@ deployment keeps the values it was built with. That matters here because rolling
 credential revokes the old one before the new one is live, so the order is always
 **update Vercel → deploy → confirm → revoke**, not the other way round.
 
-On 2026-11-08 the project hit Vercel's deployment rate limit ("retry in 24 hours",
-first reported 08:08Z), so no new production build — and therefore no credential
-rotation that production depends on — could be validated until roughly 08:08Z on
-2026-11-09. Do the P0 rotations as one window after that: each rotation should cost
-at most one deploy, not one deploy per key.
+The rotation window ran on 2026-11-09, after the 2026-11-08 rate limit ("retry in 24
+hours") cleared. Each serving credential was updated in Vercel and shipped in a
+deployment before the old value was revoked, so each rotation cost at most one deploy.
 
-The same window also carries **SEC-15**: `CSP_ENFORCE=1` is now set for Production
-and Preview, and the first successful build after it is what switches the policy from
-`Content-Security-Policy-Report-Only` to `Content-Security-Policy`. Verify the header
-on that deployment before treating SEC-15 as closed.
+The same window carried **SEC-15**. `CSP_ENFORCE=1` is set for Production and Preview,
+and the production response now carries an enforcing `Content-Security-Policy` header
+(not `Content-Security-Policy-Report-Only`), with `https://clerk-telemetry.com`
+allowed in `connect-src`. Verified on 2026-11-09; SEC-15 is closed.
+
+## Completed (2026-11-09)
+
+The SEC-17 rotation window ran on 2026-11-09. What is verified from outside the
+provider dashboards:
+
+- **Neon role.** `https://myorbitnetwork.com/api/health` returns 200 with
+  `env: production`, `schema.expected = schema.recorded = 208`, and `db.ok: true`, so
+  the production `DATABASE_URL` carries the new role password.
+- **Deploy.** The production deployment reports `success` and its SHA is on `main`; a
+  manually dispatched `post-deploy` smoke run passed against the live site.
+- **SEC-15 / CSP.** The production response carries an enforcing
+  `Content-Security-Policy` (not `-Report-Only`) with `clerk-telemetry.com` in
+  `connect-src`.
+- **Local.** `.env.local` remains mode `0600`, points only at the Neon `dev` branch,
+  and now carries a `sk_test_…` Stripe key; no live Stripe key is active there.
+- **Archives.** The pre-`dev`-branch `.env.local` copy, the 14-worktree env tarball,
+  and both Vercel env exports were deleted once the rotation was confirmed.
+
+The P0 steps below are kept as the record of what was rolled and the checks to repeat
+on the next rotation. The P1/P2 tables remain the provider-owned checklist.
 
 ## Rotation, in order
 
@@ -80,9 +104,8 @@ Deploy (or redeploy) after the Vercel variables change.
 
 ### P0 — production data and money
 
-1. **Neon database role.** *Local half done 2026-11-08:* development runs on the `dev`
-   branch, so the production password is no longer in `.env.local`. What remains is the
-   rotation itself.
+1. **Neon database role.** *Rotated 2026-11-09.* Development runs on the `dev` branch,
+   so the production password is no longer in `.env.local`.
    - Rotate the password of the role used by production `DATABASE_URL`
      (`neondb_owner` on `br-winter-flower-aud7dsc2`).
    - Update Vercel `DATABASE_URL` (Production) — that is the only variable that
@@ -95,7 +118,7 @@ Deploy (or redeploy) after the Vercel variables change.
    - Do this last in the P0 group: the app is down between the password roll and the
      Vercel update + redeploy.
 
-2. **Stripe live secret key.**
+2. **Stripe live secret key.** *Rotated 2026-11-09.*
    - Dashboard → Developers → API keys → roll the live secret key. Read Stripe's
      rollover notice first: if the old key is disabled immediately, every Stripe call
      fails between the roll and the deploy that carries the new value. Keep that gap to
@@ -104,7 +127,7 @@ Deploy (or redeploy) after the Vercel variables change.
    - Use **test** keys (`sk_test_…`) locally from now on; live mode should not be in
      a dev file at all.
 
-3. **Stripe webhook signing secret.**
+3. **Stripe webhook signing secret.** *Rotated 2026-11-09.*
    - Roll the endpoint's signing secret in the dashboard, put the new value in Vercel
      `STRIPE_WEBHOOK_SECRET`, deploy, and confirm a test event is accepted before
      deleting the old secret. Stripe's exact overlap window is per-endpoint — do not

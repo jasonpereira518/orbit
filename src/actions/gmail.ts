@@ -21,6 +21,7 @@ import {
   GMAIL_SCAN_IMPORT_TYPE,
   runGmailRecruiterScanJob,
 } from "@/lib/gmail-scan-processor";
+import { type RecruitingCycle } from "@/lib/recruiter-scan-state";
 import {
   hasCalendarScope,
   buildGmailAuthUrl,
@@ -358,7 +359,9 @@ function toScanStatus(row: typeof imports.$inferSelect): GmailScanStatus {
  * backstop), so it survives navigation, a closed tab, and a dead invocation. The client
  * only polls.
  */
-export async function startGmailRecruiterScan(): Promise<
+export async function startGmailRecruiterScan(opts?: {
+  cycle?: RecruitingCycle;
+}): Promise<
   ActionResult<{ importId: string }>
 > {
   return asActionResult(async () => {
@@ -415,7 +418,11 @@ export async function startGmailRecruiterScan(): Promise<
         status: "processing",
         totalRows: null,
         rowsProcessed: 0,
-        stats: { discoveryComplete: false, messagesScanned: 0 },
+        stats: {
+          discoveryComplete: false,
+          messagesScanned: 0,
+          cycle: opts?.cycle ?? "current",
+        },
       })
       .returning();
 

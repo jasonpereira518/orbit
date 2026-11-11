@@ -197,6 +197,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
   const displayRef = useRef<MediaStream | null>(null);
   const micRef = useRef<MediaStream | null>(null);
   const nodesRef = useRef<AudioNode[]>([]);
+  const micGainRef = useRef<GainNode | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const chunkerRef = useRef<MeetingChunker | null>(null);
   /**
@@ -237,6 +238,7 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
       }
     }
     nodesRef.current = [];
+    micGainRef.current = null;
 
     // Stopping every track is what takes down Chrome's "sharing" bar and the mic light.
     // A meeting recorder that keeps either up after Stop is a trust problem.
@@ -304,6 +306,11 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
       // A disabled track delivers silence into the graph; the track and the permission stay,
       // so unmuting is instant and needs no new prompt. (Chrome's mic indicator stays on.)
       track.enabled = !muted;
+      const ctx = ctxRef.current;
+      const gain = micGainRef.current;
+      if (ctx && gain) {
+        gain.gain.setTargetAtTime(muted ? 0.0 : 1.0, ctx.currentTime, 0.01);
+      }
       if (muted) micLevel.set(0);
       setMicMutedState(muted);
     },
@@ -479,13 +486,17 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
         nodes.push(callSource, callAnalyser);
 
         let micAnalyser: AnalyserNode | null = null;
+        let micGain: GainNode | null = null;
         if (mic) {
           const micSource = ctx.createMediaStreamSource(mic);
           micAnalyser = ctx.createAnalyser();
           micAnalyser.fftSize = 1024;
-          micSource.connect(worklet);
+          micGain = ctx.createGain();
+          micGainRef.current = micGain;
+          micSource.connect(micGain);
+          micGain.connect(worklet);
           micSource.connect(micAnalyser);
-          nodes.push(micSource, micAnalyser);
+          nodes.push(micSource, micAnalyser, micGain);
         }
         // Never connected to the speakers: the call is already playing, and routing the mic
         // out would be feedback.
@@ -506,7 +517,8 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
           quiet: false,
         };
         runRef.current = run;
-        const meterBuf = new Float32Array(callAnalyser.fftSize);
+        const callMeterBuf = new Float32Array(callAnalyser.fftSize);
+        const micMeterBuf = new Float32Array(1024);
         worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
           if (session !== sessionRef.current || chunkerRef.current !== run.chunker) return;
           // Paused: the share is still open but nothing is recorded, metered or streamed.
@@ -516,13 +528,13 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
           const { chunker } = run;
 
           // Once per message (~30 Hz, see BATCH_QUANTA).
-          callAnalyser.getFloatTimeDomainData(meterBuf);
-          const callRms = rmsLevel(meterBuf);
+          callAnalyser.getFloatTimeDomainData(callMeterBuf);
+          const callRms = rmsLevel(callMeterBuf);
           smooth(callLevel, callRms);
           if (!micOnly) {
             // Raw loudness, not the meter's dB-scaled `callRms`: the same floor the chunker
             // calls "sound", so the two cannot disagree about what silence is.
-            if (timeDomainRms(meterBuf) >= ABSOLUTE_VOICE_RMS) run.lastSoundMs = chunker.elapsedMs;
+            if (timeDomainRms(callMeterBuf) >= ABSOLUTE_VOICE_RMS) run.lastSoundMs = chunker.elapsedMs;
             const quiet = chunker.elapsedMs - run.lastSoundMs > CALL_QUIET_MS;
             if (quiet !== run.quiet) {
               run.quiet = quiet;
@@ -531,9 +543,19 @@ export function useMeetingRecorder(options: UseMeetingRecorderOptions): MeetingR
           }
           let micRms = 0;
           if (micAnalyser) {
-            micAnalyser.getFloatTimeDomainData(meterBuf);
-            micRms = rmsLevel(meterBuf);
+            micAnalyser.getFloatTimeDomainData(micMeterBuf);
+            micRms = rmsLevel(micMeterBuf);
             smooth(micLevel, micRms);
+
+            // Acoustic echo suppression: when the call is speaking and the mic is only hearing
+            // bleed from the speakers (mic is substantially lower than call), duck the mic gain
+            // so call audio doesn't duplicate into the worklet recording.
+            if (micGain) {
+              const callSpeaking = callRms > 0.025;
+              const isBleed = callSpeaking && micRms < callRms * 0.75;
+              const targetGain = isBleed ? 0.0 : 1.0;
+              micGain.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.015);
+            }
           }
           // Raw values, not the smoothed motion values above — smoothing is for the eye,
           // and would blur exactly the loudness contrast the speaker map depends on.
