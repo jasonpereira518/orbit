@@ -141,6 +141,9 @@ export function ConstellationTabs({
           onDeleted={() => {
             setConfirmDelete(false);
             router.push("/graph");
+            // The client cache can still hold a /graph payload listing this sky; refresh takes
+            // over the push and fetches the strip fresh.
+            router.refresh();
           }}
         />
       )}
@@ -164,6 +167,8 @@ function NewConstellation({ canCreate }: { canCreate: boolean }) {
       setOpen(false);
       setPrompt("");
       router.push(`/graph?c=${id}`);
+      // Without this the client cache can serve a strip from before the new tab existed.
+      router.refresh();
     } catch (err) {
       toast.error(friendlyError(err, "Couldn’t draw that constellation — try again?"));
     } finally {
