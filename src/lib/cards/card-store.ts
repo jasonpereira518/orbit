@@ -94,7 +94,7 @@ export async function saveCard(userId: string, draft: CardDraft): Promise<{ slug
       .values({ userId, slug, ...values })
       // The slug is kept on update: a saved card never changes its link by itself.
       .onConflictDoUpdate({ target: shareCards.userId, set: values })
-      .returning({ slug: shareCards.slug })
+      .returning()
   );
   return { slug: row.slug };
 }
@@ -106,7 +106,7 @@ export async function resetCardSlug(userId: string): Promise<{ slug: string }> {
       .update(shareCards)
       .set({ slug, updatedAt: new Date() })
       .where(eq(shareCards.userId, userId))
-      .returning({ slug: shareCards.slug })
+      .returning()
   );
   if (!row) throw new Error("No card to reset");
   return { slug: row.slug };
