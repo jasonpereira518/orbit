@@ -49,8 +49,8 @@ import {
   type SnapshotRole,
 } from "@/lib/job-changes";
 import { gateSkips } from "@/lib/decisions/gates";
-import type { Engines } from "@/lib/decisions/engine";
-import { recheckGateState } from "@/lib/work-history-gates";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
+import { recheckGateState, verifyGateState } from "@/lib/work-history-gates";
 import { updateContactForUser } from "@/lib/contact-writes";
 import { reportError } from "@/lib/report-error";
 
@@ -120,6 +120,8 @@ export type WorkHistoryAnswer = {
   headline: string | null;
   confident: boolean;
   sources: WebSource[];
+  /** Jev vetoed the verify search: the first search's candidate is someone else. Nothing is written. */
+  vetoed?: true;
 };
 
 /** What the cheap re-check found: where they work now, if a source says so. */
@@ -138,6 +140,8 @@ export type CurrentRoleChecker = (
 export type WorkHistoryResearcher = (
   userId: string,
   subject: WorkHistorySubject,
+  /** `vetoVerify`: Jev's veto of the second (verify) search; absent when this run may not ask it. */
+  opts?: { vetoVerify?: (firstJson: string) => Promise<boolean> },
 ) => Promise<WorkHistoryAnswer>;
 
 const SYSTEM = `You research the professional background of one specific person using web search.
@@ -228,7 +232,7 @@ export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, 
  * when the first is unsure (`searchOnceThenVerify`) — most profiles resolve on the LinkedIn
  * URL alone.
  */
-export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subject) => {
+export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subject, opts) => {
   const call = (user: string, maxSearches: number) =>
     webSearchJson(userId, {
       system: SYSTEM,
@@ -237,9 +241,11 @@ export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subje
       maxSearches,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
     });
-  const { json, sources } = legacyWebSearch()
+  const { json, sources, vetoed }: { json: string; sources: WebSource[]; vetoed?: true } = legacyWebSearch()
     ? await call(subjectPrompt(subject), MAX_SEARCHES_PER_PERSON)
-    : await searchOnceThenVerify(call, subjectPrompt(subject));
+    : await searchOnceThenVerify(call, subjectPrompt(subject), { vetoVerify: opts?.vetoVerify });
+  // Jev ruled the unsure candidate someone else: nothing to read, nothing to write.
+  if (vetoed) return { confident: false, headline: null, experiences: [], sources, vetoed };
   const raw = parseAiJson<RawAnswer>(json);
   // Tripwire, never a block: the answer was read off pages anyone can publish.
   auditUntrustedWrite(userId, "work_history.research", "answer", json);
@@ -511,6 +517,7 @@ async function researchOnce(
     // have not moved since the last look, and confirming that costs one search and a few
     // dozen tokens — the full history (two searches and a list) runs only when the answer
     // differs. A forced search (the profile's button) always does the full history.
+    let movedTo: { organization: string; title: string | null } | null = null;
     if (!options.force && stored?.source === "web") {
       storedRoles ??= (await loadJobBaseline(userId, contactId, now)).roles;
       if (storedRoles.some((r) => r.isCurrent)) {
@@ -528,6 +535,7 @@ async function researchOnce(
         }
         // Something moved: the full history is worth its cost now. It is a second search, so
         // it spends a second lookup from the account's allowance.
+        movedTo = check.current;
         try {
           await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
         } catch (err) {
@@ -537,7 +545,18 @@ async function researchOnce(
       }
     }
 
-    answer = await research(userId, subject);
+    // Jev's veto of the verify search, on any search nobody forced — opened on demand outside
+    // the sweep, so it is asked only when a first search really was unsure.
+    const vetoVerify = jevMayGate
+      ? async (firstJson: string) =>
+          gateSkips(
+            options.gates ?? (await openEngines(userId)),
+            "workHistoryVerify",
+            verifyGateState(subject, firstJson, movedTo),
+          )
+      : undefined;
+    answer = await research(userId, subject, { vetoVerify });
+    if (answer.vetoed) return { outcome: "jev_vetoed", cadence };
     // Only a confident answer from the public web is shared; the next account reuses it.
     if (answer.confident && answer.experiences.length) {
       await writePublicWorkHistory(contact.linkedinSlug, answer, now);

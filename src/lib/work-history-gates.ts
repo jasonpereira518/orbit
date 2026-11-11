@@ -2,6 +2,7 @@ import { and, desc, eq, gt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interactions, relationshipDigests } from "@/db/schema";
 import type { SnapshotRole } from "@/lib/job-changes";
+import { fenceUntrusted } from "@/lib/ai-security";
 
 /**
  * What Jev reads before a work-history search (spec 2026-11-10-jev-work-history-design.md).
@@ -74,6 +75,30 @@ export function shapeRecheckGateState(input: RecheckGateInput): Record<string, u
       what_they_do: trim(input.digest?.whatTheyDo, L.digestChars),
       working_on: trim(input.digest?.workingOn, L.digestChars),
     },
+  };
+}
+
+/**
+ * The verify-veto gate's state: Orbit's facts about the contact, the first search's answer
+ * (public web text, fenced as untrusted and capped), and — on a re-check that found a new
+ * employer — where they moved, so a stale stored company does not read as "someone else".
+ */
+export function verifyGateState(
+  subject: { fullName: string; title: string | null; company: string | null; location: string | null; school: string | null; linkedinUrl: string | null },
+  firstAnswerJson: string,
+  movedTo: { organization: string; title: string | null } | null,
+): Record<string, unknown> {
+  return {
+    contact: {
+      name: subject.fullName,
+      title: subject.title,
+      company: subject.company,
+      location: subject.location,
+      school: subject.school,
+      linkedin_url: subject.linkedinUrl,
+    },
+    first_answer: fenceUntrusted("first_answer", firstAnswerJson.slice(0, WORK_HISTORY_GATE_LIMITS.firstAnswerChars)),
+    ...(movedTo ? { moved_to: { organization: movedTo.organization, title: movedTo.title } } : {}),
   };
 }
 

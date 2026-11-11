@@ -442,6 +442,68 @@ async function main() {
   check("…each summary trimmed", since.every((i) => (i.summary ?? "").length <= WORK_HISTORY_GATE_LIMITS.summaryChars));
   check("…and never the raw note", !JSON.stringify(state).includes("RAW-SECRET"));
 
+  // --- Jev's veto of the verify search: any non-forced full search, never twice in a row ----
+  await reset();
+  /** Asks the veto the way researchWithWebSearch does after an unsure first search. */
+  const vetoing = () => {
+    const seen: Array<((firstJson: string) => Promise<boolean>) | undefined> = [];
+    const researcher: WorkHistoryResearcher = async (_u, _s, opts) => {
+      seen.push(opts?.vetoVerify);
+      if (await opts?.vetoVerify?.(JSON.stringify({ match: "unsure", experiences: [] }))) {
+        return { confident: false, experiences: [], headline: null, sources: [], vetoed: true };
+      }
+      return { confident: true, experiences: [role("Ramp", { isCurrent: true, title: "Staff PM" })], headline: null, sources: [] };
+    };
+    return { researcher, seen };
+  };
+  const savedVerify = SKIP_GATE_TUNING.skipAtOrBelow.workHistoryVerify;
+  SKIP_GATE_TUNING.skipAtOrBelow.workHistoryVerify = 0.2;
+  try {
+    const stranger = await makeContact("Veto Rao", "https://www.linkedin.com/in/veto-rao");
+    const sure = scripted(0.1);
+    const v1 = vetoing();
+    const vetoedOutcome = await researchContactWorkHistory(USER, stranger, { researcher: v1.researcher, gates: sure });
+    check("a confident 'someone else' vetoes the verify search", vetoedOutcome === "jev_vetoed", vetoedOutcome);
+    check("…asked under the verify gate's operation", sure.last?.operation === "contact.work_history.verify.gate", String(sure.last?.operation));
+    check("…nothing is written to the contact", (await getContactProfile(USER, stranger)) === null);
+    check("…nothing is shared with other accounts", (await readPublicWorkHistory("veto-rao", 30)) === null);
+    const vetoRow = await (await getDb()).query.contacts.findFirst({ where: eq(contacts.id, stranger) });
+    check("…no miss is counted", vetoRow?.workHistoryMisses === 0, String(vetoRow?.workHistoryMisses));
+    check("…and the marker is set", vetoRow?.workHistoryJevSkippedAt instanceof Date);
+
+    const v2 = vetoing();
+    const retried = await researchContactWorkHistory(USER, stranger, { researcher: v2.researcher, gates: scripted(0.1) });
+    check("never twice in a row: the next run offers no veto", v2.seen[0] === undefined && retried === "saved", retried);
+
+    const v3 = vetoing();
+    await researchContactWorkHistory(USER, stranger, { researcher: v3.researcher, gates: scripted(0.1), force: true });
+    check("the profile's button (force) offers no veto", v3.seen.length === 1 && v3.seen[0] === undefined);
+
+    const newcomer = await makeContact("First Rao", "https://www.linkedin.com/in/first-rao");
+    const v4 = vetoing();
+    const firstTime = await researchContactWorkHistory(USER, newcomer, { researcher: v4.researcher });
+    check("first-time research outside the sweep can still be vetoed (engines open on demand)", typeof v4.seen[0] === "function");
+    check("…and with no decision model it runs as before", firstTime === "saved", firstTime);
+
+    // Review Focus 5: a re-check that found a new employer tells the veto where they went.
+    const mover = await makeContact("Mover Rao", "https://www.linkedin.com/in/mover-rao");
+    await researchContactWorkHistory(USER, mover, { researcher: fake({ experiences: [role("Stripe", { isCurrent: true })] }).researcher });
+    const watching = scripted(0.9);
+    const v5 = vetoing();
+    const movedOn = await researchContactWorkHistory(USER, mover, {
+      researcher: v5.researcher,
+      checker: checker({ organization: "Ramp", title: "Staff PM" }),
+      gates: watching,
+      now: new Date(Date.now() + (WORK_HISTORY_REFRESH_DAYS + PUBLIC_WORK_HISTORY_DAYS + 5) * 86_400_000),
+    });
+    const vetoState = watching.last?.state as { moved_to?: { organization?: string }; first_answer?: string } | undefined;
+    check("on a move, the veto sees the new employer", vetoState?.moved_to?.organization === "Ramp", JSON.stringify(vetoState?.moved_to));
+    check("…reads the first answer fenced as untrusted", typeof vetoState?.first_answer === "string" && vetoState.first_answer.includes("UNTRUSTED DATA") && vetoState.first_answer.includes("<<<FIRSTANSWER_"));
+    check("…and a likely match is kept, not vetoed", movedOn === "saved", movedOn);
+  } finally {
+    SKIP_GATE_TUNING.skipAtOrBelow.workHistoryVerify = savedVerify;
+  }
+
   // --- cost: background extraction runs on the cheap tier, thinking minimal ----------------
   check("work-history research runs on the fast tier", aiOperationTier("contact.work_history") === "fast");
   check("…with minimal thinking", aiOperationThinking("contact.work_history") === "minimal");
