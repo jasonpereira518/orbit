@@ -111,8 +111,8 @@ export const APP_NAV_CORE: AppNavItem[] = [
   REMINDERS,
   CHAT,
   CONSTELLATION,
-  EVENTS,
   KNOWLEDGE,
+  EVENTS,
 ];
 
 /**
@@ -124,6 +124,12 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * default order.
  */
 export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH];
+
+/**
+ * Pages the sidebar groups under "Special features", in default order. A page marked coming
+ * soon overrides this and sits under the "Coming soon" divider instead.
+ */
+export const APP_NAV_SPECIAL_HREFS: readonly string[] = ["/events", "/outreach"];
 
 export const APP_NAV_SETTINGS: AppNavItem = {
   href: "/settings",
