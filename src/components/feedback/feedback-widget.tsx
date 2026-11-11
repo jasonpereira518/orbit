@@ -705,7 +705,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
 
   return (
     <>
-      {/* The desktop rail button is `FeedbackRail`, mounted by the layout so it renders with the
+      {/* The desktop rail button is the rail copy in `(app)/layout.tsx` so it renders with the
           page; the mobile copy lives in `AppShell`'s header. Both reach this widget through
           `src/lib/feedback-events.ts`. */}
 
