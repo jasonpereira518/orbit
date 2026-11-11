@@ -35,7 +35,9 @@ export function buildVCard(p: VCardPerson): string {
 
   const lines: string[] = ["BEGIN:VCARD", "VERSION:3.0"];
   lines.push(`N:${escapeIcsText(name.last)};${escapeIcsText(name.first)};;;`);
-  lines.push(`FN:${escapeIcsText(p.fullName.trim())}`);
+  // FN is required in vCard 3.0, so a blank full name falls back to the parts, then "Contact".
+  const fn = p.fullName.trim() || [name.first, name.last].filter(Boolean).join(" ") || "Contact";
+  lines.push(`FN:${escapeIcsText(fn)}`);
 
   const org = clean(p.org);
   if (org) lines.push(`ORG:${escapeIcsText(org)}`);

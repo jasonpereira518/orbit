@@ -55,6 +55,24 @@ t.check("null phone emits no TEL line", !sparse.includes("TEL"));
 t.check("empty org, title, and note emit no line", !/^(ORG|TITLE|NOTE):/m.test(sparse));
 t.check("no urls emits no URL line", !sparse.includes("URL"));
 
+// Injection: CR/LF in any field must not start a new vCard line. Unfold first, then count.
+const hostile = buildVCard({
+  fullName: "A",
+  urls: ["https://x.test\r\nEND:VCARD\r\nBEGIN:VCARD"],
+  email: "a@x.test\r\nTEL:1",
+});
+const hostileLines = hostile.replace(/\r\n /g, "").split("\r\n");
+t.check("injected CR/LF does not add a BEGIN:VCARD line", hostileLines.filter((l) => l === "BEGIN:VCARD").length === 1);
+t.check("injected CR/LF does not add an END:VCARD line", hostileLines.filter((l) => l === "END:VCARD").length === 1);
+t.check("injected CR/LF does not add a TEL line", !hostileLines.some((l) => l.startsWith("TEL")));
+
+// Blank full name: FN is required, so it falls back to the parts, then "Contact".
+t.check(
+  "blank fullName falls back to first and last",
+  buildVCard({ fullName: " ", firstName: "Ada", lastName: "Lovelace" }).includes("FN:Ada Lovelace\r\n")
+);
+t.check("blank name everywhere falls back to Contact", buildVCard({ fullName: "" }).includes("FN:Contact\r\n"));
+
 // Phone and URLs.
 const full = buildVCard({
   fullName: "Sam Lee",
