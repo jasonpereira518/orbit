@@ -2153,6 +2153,8 @@ export type ImportStats = {
    */
   scanAfter?: string;
   scanIsFull?: boolean;
+  /** Recruiting cycle mode requested for the scan. */
+  cycle?: "current" | "july" | "august" | "january";
   /**
    * Job start, used to advance the watermark on completion. Deliberately the start and not
    * the finish — mail that arrived mid-scan was never in this job's result set.
@@ -3214,6 +3216,8 @@ export const userRecruiterLinks = pgTable(
     aiSummary: text("ai_summary"),
     companiesMentioned: jsonb("companies_mentioned").$type<string[]>().default([]),
     rolesDiscussed: jsonb("roles_discussed").$type<string[]>().default([]),
+    /** Specific role being interviewed for, extracted from recruiter threads or manually logged. */
+    roleInterviewingFor: text("role_interviewing_for"),
     firstEmailAt: timestamp("first_email_at", { withTimezone: true }),
     lastEmailAt: timestamp("last_email_at", { withTimezone: true }),
     emailCount: integer("email_count").default(0).notNull(),
@@ -3280,6 +3284,31 @@ export const recruiterMessages = pgTable(
     index("recruiter_messages_recruiter_idx").on(t.recruiterId),
     // Backs the daily send cap, which counts this user's sends since midnight.
     index("recruiter_messages_sent_idx").on(t.userId, t.sentAt),
+  ]
+);
+
+/**
+ * Tracks credit-based contact reveals for shared community recruiters.
+ * When unlocked, contact details (email, LinkedIn) remain permanently viewable by this user.
+ */
+export const recruiterContactUnlocks = pgTable(
+  "recruiter_contact_unlocks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    recruiterId: uuid("recruiter_id")
+      .notNull()
+      .references(() => recruiters.id, { onDelete: "cascade" }),
+    costCredits: integer("cost_credits").default(1).notNull(),
+    unlockedAt: timestamp("unlocked_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiter_contact_unlocks_user_idx").on(t.userId),
+    index("recruiter_contact_unlocks_recruiter_idx").on(t.recruiterId),
+    uniqueIndex("recruiter_contact_unlocks_user_recruiter_uidx").on(
+      t.userId,
+      t.recruiterId
+    ),
   ]
 );
 
@@ -6387,6 +6416,7 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type Recruiter = typeof recruiters.$inferSelect;
 export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
 export type RecruiterMessage = typeof recruiterMessages.$inferSelect;
+export type RecruiterContactUnlock = typeof recruiterContactUnlocks.$inferSelect;
 export type RecruiterScanState = typeof recruiterScanState.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
