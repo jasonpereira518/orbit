@@ -9,7 +9,7 @@ import {
   setSurfaceHiddenAction,
   setSurfaceTiersAction,
 } from "@/actions/admin";
-import { APP_NAV_CORE, APP_NAV_EXTRAS } from "@/components/layout/app-nav";
+import { APP_NAV_CORE, APP_NAV_EXTRAS, APP_NAV_SPECIAL_HREFS } from "@/components/layout/app-nav";
 import { PLANS, PLAN_SHORT_LABELS, type Plan } from "@/lib/plans/plan-config";
 import {
   PAGE_FEATURE,
@@ -22,6 +22,18 @@ import {
 import { cn } from "@/lib/utils";
 
 const DEFAULT_ITEMS = [...APP_NAV_CORE, ...APP_NAV_EXTRAS];
+
+/** Pages grouped under "Special features", as in the sidebar. Soon overrides it. */
+const SPECIAL_KEYS: ReadonlySet<string> = new Set(
+  APP_NAV_SPECIAL_HREFS.map((href) => surfaceKeyForHref(href)).filter((k): k is string => k !== null)
+);
+
+type Group = "pages" | "special" | "soon";
+const GROUPS: Array<{ id: Group; title: string | null }> = [
+  { id: "pages", title: null },
+  { id: "special", title: "Special features" },
+  { id: "soon", title: "Coming soon" },
+];
 
 type Flags = { hidden: boolean; soon: boolean };
 export type PageStatus = "live" | "soon" | "hidden";
@@ -208,6 +220,11 @@ export function PageStatusList({
       .map((p) => ({ key: p.key, icon: null, navIndex: -1 })),
   ].filter((r) => byKey.has(r.key));
 
+  // Anything marked Soon sits in the last group, as in the sidebar, whatever else it is.
+  // Hidden pages stay where they were.
+  const groupOf = (key: string): Group =>
+    statusOf(flagsFor(key)) === "soon" ? "soon" : SPECIAL_KEYS.has(key) ? "special" : "pages";
+
   function setError(key: string, message: string | null) {
     setErrors((prev) => {
       const next = { ...prev };
@@ -291,10 +308,19 @@ export function PageStatusList({
     }
   }
 
+  /** The nav row next to `navIndex` inside the same group, or -1 at the group's edge. */
+  function neighbour(navIndex: number, by: -1 | 1) {
+    const group = groupOf(navKeys[navIndex]!);
+    for (let i = navIndex + by; i >= 0 && i < navKeys.length; i += by) {
+      if (groupOf(navKeys[i]!) === group) return i;
+    }
+    return -1;
+  }
+
   function move(navIndex: number, by: -1 | 1) {
+    const target = neighbour(navIndex, by);
+    if (target < 0) return;
     const next = [...navKeys];
-    const target = navIndex + by;
-    if (target < 0 || target >= next.length) return;
     [next[navIndex], next[target]] = [next[target]!, next[navIndex]!];
     void saveOrder(next);
   }
@@ -303,8 +329,18 @@ export function PageStatusList({
 
   return (
     <div>
+      {GROUPS.map(({ id, title }) => {
+        const groupRows = rows.filter((r) => groupOf(r.key) === id);
+        if (groupRows.length === 0) return null;
+        return (
+          <section key={id} aria-label={title ?? "Pages"} className={title ? "mt-5" : undefined}>
+            {title && (
+              <h3 className="border-b border-border/50 pb-1 text-2xs font-medium uppercase tracking-wider text-muted-foreground-subtle">
+                {title}
+              </h3>
+            )}
       <ul className="divide-y divide-border/50">
-        {rows.map((row) => {
+        {groupRows.map((row) => {
           const surface = byKey.get(row.key)!;
           const flags = flagsFor(row.key);
           const status = statusOf(flags);
@@ -380,8 +416,7 @@ export function PageStatusList({
               <div className="flex shrink-0 gap-1">
                 {(["up", "down"] as const).map((dir) => {
                   const Arrow = dir === "up" ? ArrowUp : ArrowDown;
-                  const edge =
-                    dir === "up" ? row.navIndex === 0 : row.navIndex === navKeys.length - 1;
+                  const edge = row.navIndex >= 0 && neighbour(row.navIndex, dir === "up" ? -1 : 1) < 0;
                   return (
                     <button
                       key={dir}
@@ -404,6 +439,9 @@ export function PageStatusList({
           );
         })}
       </ul>
+          </section>
+        );
+      })}
 
       <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border/50 pt-3">
         <button
@@ -416,8 +454,8 @@ export function PageStatusList({
           Reset sidebar order
         </button>
         <p className="text-xs text-muted-foreground">
-          Arrows set the sidebar order. Pages marked Soon always sit under the sidebar&apos;s
-          divider; order only ranks them within it. Plan chips choose who can open a page:
+          Arrows set the sidebar order within each group. Pages marked Soon always sit under the
+          sidebar&apos;s divider; order only ranks them within it. Plan chips choose who can open a page:
           a plan that is struck through sees it locked, with an upgrade screen.
         </p>
         {errors.__order && (
