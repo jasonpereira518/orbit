@@ -614,6 +614,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-poll-routes": "pglite",
   "smoke-latency-depth": "pglite",
   "smoke-avatar-sql-classify": "pglite",
+  "smoke-avatar-upgrade": "pglite",
   "smoke-related-sql-lower": "pglite",
   "smoke-chat-lookup-tools": "pglite",
   "smoke-calendar-events": "pglite",

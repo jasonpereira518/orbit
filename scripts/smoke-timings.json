@@ -61,6 +61,7 @@
 "smoke-avatar-sql-classify": 1.3,
 "smoke-avatar-storage": 0.4,
 "smoke-avatar-tiers": 0.5,
+"smoke-avatar-upgrade": 3.5,
 "smoke-awaiting-reply": 2.0,
 "smoke-backdrop-filter": 0.2,
 "smoke-batched-writes": 3.1,

@@ -95,6 +95,8 @@ import {
   resolveAvatarNow,
   runAvatarBackfillBatch,
 } from "@/lib/avatar-backfill";
+import { runAvatarUpgradePass } from "@/lib/avatar-upgrade";
+import { reportError } from "@/lib/report-error";
 import { reindexInteractionPassages } from "@/lib/memory-backfill";
 import { traced } from "@/lib/perf-trace";
 import {
@@ -1112,6 +1114,12 @@ export type AvatarBackfillResult = {
   rateLimitedUntil: number | null;
   /** Set when the photo store itself is broken — the whole run should stop. */
   storageError: string | null;
+  /**
+   * Contacts whose small stored photo was swapped for a bigger one by the idle-tick upgrade
+   * pass (`avatar-upgrade.ts`). Not counted in `saved`: nothing new was fetched, so the
+   * "Fetching LinkedIn photos" card must not appear for it.
+   */
+  upgradedIds?: string[];
 };
 
 export type AvatarBackfillOptions = {
@@ -1144,6 +1152,18 @@ export async function backfillContactAvatars(
   ]);
 
   if (candidates.length === 0) {
+    // First-time photos come first; only a tick with none left to fetch is spent on swapping a
+    // few small stored photos for bigger ones. Total on purpose: it is a nicety, and a fault
+    // in it must not turn the backfill's "nothing to do" into a 500.
+    const upgrade = await runAvatarUpgradePass(db, userId).catch((err) => {
+      reportError(err, { where: "avatar.upgrade", userId, level: "warning" });
+      return null;
+    });
+    if (upgrade && upgrade.upgraded > 0) {
+      revalidatePath("/contacts");
+      revalidatePath("/");
+      revalidatePath("/graph");
+    }
     return {
       saved: 0,
       savedIds: [],
@@ -1152,6 +1172,7 @@ export async function backfillContactAvatars(
       failed: 0,
       rateLimitedUntil: null,
       storageError: null,
+      upgradedIds: upgrade?.upgradedIds ?? [],
     };
   }
 
