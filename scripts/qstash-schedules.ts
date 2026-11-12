@@ -1,13 +1,13 @@
 /**
  * The scheduler for everything Orbit runs on a clock: ONE Upstash QStash schedule, a tick every
- * five minutes, on the free tier. What runs when lives in `src/lib/schedules.ts`; the tick
+ * thirty minutes, on the free tier. What runs when lives in `src/lib/schedules.ts`; the tick
  * route starts whatever is due. Re-run after changing this file; it upserts `orbit-tick` and
  * deletes any other `orbit-*` schedule (an earlier one-schedule-per-job setup included).
  *
  * Why not GitHub Actions: on this public repository GitHub fired ~36 of ~350 scheduled
- * `ops.yml` runs a day (Oct 2026), rotating through the cron lines, so the ten-minute sweep
- * — and the Better Stack heartbeat it pings — ran every two to four hours. `ops.yml` now
- * only reports deploy drift and probes health from outside.
+ * `ops.yml` runs a day (Oct 2026), rotating through the cron lines, so the sweep — and the
+ * Better Stack heartbeat it pings — ran every two to four hours. `ops.yml` now only reports
+ * deploy drift and probes health from outside, every three hours.
  *
  * Each call carries the same `Authorization: Bearer $CRON_SECRET` the routes already check
  * (`isInternalRequest`), forwarded by QStash. No retries: the next tick is the retry, and a
@@ -27,8 +27,8 @@ config();
 type Schedule = { id: string; cron: string; method: "GET" | "POST"; path: string };
 
 // ONE schedule: the tick (`src/app/api/cron/tick`) starts every job in `src/lib/schedules.ts`
-// that is due in its five-minute window. 288 calls a day keeps this on QStash's free tier
-// (1,000 a day); a schedule per job would be about 1,100 a day and need a paid plan.
+// that is due in its thirty-minute window. 48 calls a day, well inside QStash's free tier
+// (1,000 a day, 10 schedules). Thirty minutes is for Neon Free; see `src/lib/schedules.ts`.
 const SCHEDULES: Schedule[] = [{ id: "tick", cron: `*/${TICK_MINUTES} * * * *`, method: "POST", path: TICK_PATH }];
 
 const PREFIX = "orbit-";
@@ -64,7 +64,7 @@ async function main() {
         "Upstash-Cron": s.cron,
         "Upstash-Method": s.method,
         "Upstash-Retries": "0",
-        "Upstash-Timeout": "300s",
+        "Upstash-Timeout": "30s",
         "Upstash-Forward-Authorization": `Bearer ${cronSecret}`,
       },
     });

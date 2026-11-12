@@ -1,7 +1,7 @@
 /**
- * The one scheduled call Orbit needs: every five minutes, start whichever jobs are due
- * (`src/lib/schedules.ts`). One outside schedule instead of twenty keeps the scheduler on a
- * free tier (288 calls a day).
+ * The one scheduled call Orbit needs: every thirty minutes, start whichever jobs are due
+ * (`src/lib/schedules.ts`, which says why thirty: Neon Free's compute hours). One outside
+ * schedule instead of twenty keeps the scheduler on a free tier (48 calls a day).
  *
  * Answers at once and starts the jobs after the response (`after()`), so a scheduler with a
  * short request timeout (cron-job.org's is about 30 seconds) is fine. Each job is its own

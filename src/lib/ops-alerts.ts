@@ -52,7 +52,7 @@ export type OpsSnapshot = {
      * a feed that stopped being read is indistinguishable from a quiet hiring season.
      */
     jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
-    /** Radar's pass (`/api/radar/run`), hourly at :17 (QStash); each account is due at its own 5am. */
+    /** Radar's pass (`/api/radar/run`), hourly at :30 (the tick); each account is due at its own 5am. */
     radarRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
     /** Radar's Monday email (`/api/radar/digest`), hourly at :13 through Sunday and Monday UTC. */
     radarDigest: { lastStartedAt: Date | null; lastState: CronRunState | null };
@@ -224,7 +224,7 @@ const RADAR_SILENT_MS = 30 * 60 * 60 * 1000;
 const RADAR_DIGEST_SILENT_MS = 6 * 24 * 60 * 60 * 1000;
 
 /**
- * The work-history sweep runs hourly (QStash, :37); six hours of silence is five missed
+ * The work-history sweep runs hourly (the tick, :00); six hours of silence is five missed
  * runs, not one lost tick. `warning`: a job move noticed a day late costs nothing.
  */
 const WORK_HISTORY_SILENT_MS = 6 * 60 * 60 * 1000;

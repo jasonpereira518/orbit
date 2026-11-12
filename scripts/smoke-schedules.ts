@@ -1,6 +1,6 @@
 /**
  * One scheduler per job. process-stalled once ran hourly from GitHub AND daily from Vercel
- * while its own comment said daily. Now ONE outside schedule (a QStash tick every five
+ * while its own comment said daily. Now ONE outside schedule (a QStash tick every thirty
  * minutes, `scripts/qstash-schedules.ts`) calls `/api/cron/tick`, which starts the jobs in
  * `src/lib/schedules.ts` that are due; `ops.yml` only posts the drift sweep and probes health.
  *
@@ -37,25 +37,38 @@ for (const s of table) {
   // redirect instead of the route, and QStash records a "success".
   check(`${s.path} is a public route`, publicRoutes.includes(`"${s.path}"`));
 }
-check("the ops sweep runs every ten minutes", scheduled("/api/ops/sweep")[0]?.cron === "*/10 * * * *");
-check("process-stalled is a GET at :07", scheduled("/api/imports/process-stalled")[0]?.cron === "7 * * * *" &&
+check("the ops sweep runs every tick", scheduled("/api/ops/sweep")[0]?.cron === "*/30 * * * *");
+check("process-stalled is a GET at :30", scheduled("/api/imports/process-stalled")[0]?.cron === "30 * * * *" &&
   scheduled("/api/imports/process-stalled")[0]?.method === "GET");
 // The work-history sweep spends people's own AI keys: exactly one caller, on its own line.
-check("the work-history sweep runs at :37", scheduled("/api/work-history/sweep")[0]?.cron === "37 * * * *");
-check("QStash sets ONE schedule, the five-minute tick (free tier)",
-  /const SCHEDULES: Schedule\[\] = \[\{ id: "tick", cron: `\*\/\$\{TICK_MINUTES\} \* \* \* \*`, method: "POST", path: TICK_PATH \}\];/.test(qstash) && TICK_PATH === "/api/cron/tick" && TICK_MINUTES === 5);
+check("the work-history sweep runs at :00", scheduled("/api/work-history/sweep")[0]?.cron === "0 * * * *");
+check("QStash sets ONE schedule, the thirty-minute tick (free tier)",
+  /const SCHEDULES: Schedule\[\] = \[\{ id: "tick", cron: `\*\/\$\{TICK_MINUTES\} \* \* \* \*`, method: "POST", path: TICK_PATH \}\];/.test(qstash) && TICK_PATH === "/api/cron/tick" && TICK_MINUTES === 30);
 check("the tick is a public route", publicRoutes.includes(`"${TICK_PATH}"`));
 check("QStash never retries (the next tick is the retry)", qstash.includes(`"Upstash-Retries": "0"`));
 check("QStash forwards the cron bearer", qstash.includes("Upstash-Forward-Authorization") && qstash.includes("Bearer ${cronSecret}"));
 
-check("ops.yml has one schedule", (ops.match(/- cron: /g) ?? []).length === 1 && ops.includes(`- cron: "*/30 * * * *"`));
+// Each GitHub run wakes the Neon Free database outside the tick's windows: keep it rare.
+check("ops.yml has one schedule, every three hours", (ops.match(/- cron: /g) ?? []).length === 1 && ops.includes(`- cron: "15 */3 * * *"`) &&
+  ops.includes(`github.event.schedule == '15 */3 * * *'`));
 const opsRoutes = [...new Set(ops.match(/\$APP_URL(\/api\/[\w/-]+)/g) ?? [])].sort();
 check("ops.yml calls only the health probe and the drift sweep",
   JSON.stringify(opsRoutes) === JSON.stringify(["$APP_URL/api/health", "$APP_URL/api/ops/sweep"]), opsRoutes.join(", "));
 check("the drift sweep posts where main is", ops.includes("mainSha") && ops.includes("git rev-parse HEAD"));
 // The other jobs with their own cadence, and every job GitHub ran before this move (Nov 12 2026).
-check("the email-intel sweep runs on its own quarter-hours", scheduled("/api/email-intel/sweep")[0]?.cron === "5,20,35,50 * * * *");
-check("Radar's pass runs hourly at :17 (each account is due at its own local 5am)", scheduled("/api/radar/run")[0]?.cron === "17 * * * *");
+check("Radar's pass runs hourly at :30 (each account is due at its own local 5am)", scheduled("/api/radar/run")[0]?.cron === "30 * * * *");
+// Neon Free (100 compute-hours a month) sleeps after five idle minutes. Two bursts an hour let it;
+// a faster tick, or a job listed between the marks, keeps it awake. See src/lib/schedules.ts.
+check("no more than 48 ticks a day (Neon Free budget)", (24 * 60) / TICK_MINUTES <= 48, String(TICK_MINUTES));
+const offMark: string[] = [];
+for (let t = Date.parse("2026-11-29T00:00:00Z"); t < Date.parse("2026-12-06T00:00:00Z"); t += 60_000) {
+  const at = new Date(t);
+  if (at.getUTCMinutes() % TICK_MINUTES === 0) continue;
+  for (const job of table) if (cronMatches(job.cron, at)) offMark.push(`${job.id} ${at.toISOString()}`);
+}
+check("every job is listed on a tick mark, so it runs at the minute it says", offMark.length === 0, offMark.slice(0, 3).join(", "));
+const hourlyAt = (minute: string) => table.filter((j) => j.cron === `${minute} * * * *`).length;
+check("the hourly jobs are split between :00 and :30", hourlyAt("0") === 3 && hourlyAt("30") === 3, `${hourlyAt("0")} / ${hourlyAt("30")}`);
 const MOVED_FROM_GITHUB = [
   "/api/ops/sweep", "/api/imports/process-stalled", "/api/webhooks/outbound/drain", "/api/connectors/outbox/drain",
   "/api/email/drain", "/api/credits/notices", "/api/sync/run", "/api/jobs/feed/sweep", "/api/work-history/sweep",
@@ -77,17 +90,18 @@ for (let t = weekStart; t < weekStart + 7 * 86_400_000; t += TICK_MINUTES * 60_0
   for (const job of dueJobs(new Date(t))) starts.set(job.id, (starts.get(job.id) ?? 0) + 1);
 }
 const perWeek: Record<string, number> = {
-  "ops-sweep": 1008, "sync-run": 672, "email-intel": 672, "cloud-notes": 336, "process-stalled": 168, "radar-run": 168,
+  "ops-sweep": 336, "sync-run": 336, "email-intel": 336, "cloud-notes": 336, "process-stalled": 168, "radar-run": 168,
   "radar-web": 168, "radar-digest": 48, "ops-rollup": 7, "billing-reconcile": 7, "weekly-digest": 1, "contacts-upkeep": 1,
 };
 for (const [id, n] of Object.entries(perWeek)) check(`a week of ticks starts ${id} ${n} times`, starts.get(id) === n, String(starts.get(id)));
 // A tick a minute or two late, or early, still stands for its own window: nothing repeats or goes missing.
-const late = tickWindow(new Date("2026-11-16T10:21:40Z"));
-const early = tickWindow(new Date("2026-11-16T10:18:30Z"));
+const late = tickWindow(new Date("2026-11-16T10:33:40Z"));
+const early = tickWindow(new Date("2026-11-16T10:27:30Z"));
 check("a late or early tick covers the same window as an on-time one",
-  late.to.toISOString() === "2026-11-16T10:20:00.000Z" && early.to.toISOString() === "2026-11-16T10:20:00.000Z");
-check("Radar's :17 runs at the :20 tick, never at :15", dueJobs(new Date("2026-11-16T10:20:00Z")).some((j) => j.id === "radar-run") &&
-  !dueJobs(new Date("2026-11-16T10:15:00Z")).some((j) => j.id === "radar-run"));
+  late.to.toISOString() === "2026-11-16T10:30:00.000Z" && early.to.toISOString() === "2026-11-16T10:30:00.000Z");
+check("Radar's pass runs at the :30 tick, never at :00", dueJobs(new Date("2026-11-16T10:30:00Z")).some((j) => j.id === "radar-run") &&
+  !dueJobs(new Date("2026-11-16T11:00:00Z")).some((j) => j.id === "radar-run"));
+check("a late :30 tick still starts Radar's pass once", dueJobs(new Date("2026-11-16T10:31:50Z")).some((j) => j.id === "radar-run"));
 // A step that curls $APP_URL / $CRON_SECRET with no env block hits an empty host and a
 // blank bearer, so the sweep silently never runs. Every such step declares what it uses.
 for (const chunk of ops.split(/^ {6}- name: /m).slice(1)) {

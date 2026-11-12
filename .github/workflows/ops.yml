@@ -1,13 +1,18 @@
-# Deploy drift and an outside health probe. NOT the scheduler: everything Orbit runs on a
-# clock is started by ONE outside five-minute tick (`/api/cron/tick`, the jobs listed in
-# `src/lib/schedules.ts`), set as a free QStash schedule by `scripts/qstash-schedules.ts`.
+# Deploy drift and an outside health probe, every three hours. NOT the scheduler: everything
+# Orbit runs on a clock is started by ONE outside thirty-minute tick (`/api/cron/tick`, the
+# jobs listed in `src/lib/schedules.ts`), set as a free QStash schedule by
+# `scripts/qstash-schedules.ts`.
+#
+# Every three hours, not more: each run wakes the Neon Free database (the health probe and
+# the sweep both query it) at a time GitHub picks, outside the tick's windows, and every
+# wake costs about five minutes of compute. Drift is judged over six hours anyway.
 #
 # GitHub used to drive all of it, and on this public repository it fired ~36 of ~350
 # scheduled runs a day (Oct 2026), rotating through ten cron lines, so the ten-minute sweep
 # and the Better Stack heartbeat it pings ran every two to four hours. What is left here is
 # what QStash cannot do and what tolerates GitHub's lag:
 #   - `deploy.drift`: only a checkout knows where `main` is, so this sweep posts its sha.
-#     The QStash sweeps carry none, and the sweep keeps a drift verdict they cannot judge.
+#     The tick's sweeps carry none, and the sweep keeps a drift verdict they cannot judge.
 #   - the health probe, which pages Slack if production answers anything but 200 — a check
 #     from outside Vercel and QStash both.
 # On a public repository GitHub disables schedules after 60 days without a commit; that now
@@ -22,7 +27,7 @@ name: ops
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "15 */3 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -114,9 +119,9 @@ jobs:
         env:
           SLACK_OPS_CRITICAL_WEBHOOK_URL: ${{ secrets.SLACK_OPS_CRITICAL_WEBHOOK_URL }}
 
-      # The drift sweep: the same route QStash calls every ten minutes, plus where `main` is.
+      # The drift sweep: the same route the tick starts every thirty minutes, plus where `main` is.
       - name: Run the ops sweep
-        if: (github.event.schedule == '*/30 * * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        if: (github.event.schedule == '15 */3 * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
         run: |
           main_sha=$(git rev-parse HEAD)
           main_at=$(git log -1 --format=%cI)

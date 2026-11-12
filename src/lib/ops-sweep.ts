@@ -350,8 +350,9 @@ export type OpsSweepDeps = {
 };
 
 /**
- * Better Stack heartbeat: a GET the monitor expects every ten minutes. When it stops
- * arriving — a dead QStash schedule, a broken deploy — the monitor pages. Best-effort;
+ * Better Stack heartbeat: a GET the monitor expects every thirty minutes (set its period to
+ * 30 min with a grace of 15 or more). When it stops arriving — a dead tick, a broken
+ * deploy — the monitor pages. Best-effort;
  * a slow heartbeat endpoint must not fail the sweep that just succeeded.
  */
 async function pingHeartbeat(): Promise<void> {

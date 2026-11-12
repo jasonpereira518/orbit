@@ -1,7 +1,7 @@
 /**
  * Radar's nightly pass: rebuild every due account's list of people to reach out to.
  *
- * Driven by QStash (scripts/qstash-schedules.ts) hourly at :17; each account is due at its own
+ * Started by the tick (src/lib/schedules.ts) hourly at :30; each account is due at its own
  * local 5am, and same-day alerts go out after the pass in each person's waking hours.
  * Self-continuation posts back to this same route when a claim came back full or the budget
  * ran out, the same shape as `/api/sync/run`.
