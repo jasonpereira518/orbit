@@ -212,12 +212,18 @@ load average ~45 (another session's build) and is directionally the same but not
   (−67% / −75%). Fewer DOM stars mount on the way out of the summary view.
 - **Same:** hover, drift, search (search-type never leaves the summary view, where the canvas is not
   mounted; its 10,000 worst frame moved 30 → 38ms within a 26–65ms spread across reps).
-- **Worse: mouse-wheel notches at 10,000** — 19 → 25 frames over budget, 2.8 → 7.4 commits a notch
-  (confirmed on the final build; commit counts do not depend on load). The gesture's four notches
-  carry the camera 0.3 → ~0.52 and back, across 0.4 every time, and the camera settles between
-  180ms notches, so each crossing swaps ~300 stars between canvas and DOM. Any single threshold
-  has a gesture that straddles it. If it matters: keep unnamed stars DOM above 0.4 only once the
-  window has *stayed* there (a longer settle for the band switch), or move the threshold.
+- **Was worse, fixed: mouse-wheel notches at 10,000** — 19 → 25 frames over budget and 2.8 → 7.4
+  React commits a notch in the run above. Not the 0.4 crossing (hysteresis, enter < 0.4 / leave
+  > 0.6, left commits at 7.44): the DOM set was the stars *named at the camera's zoom*, re-chosen at
+  every zoom step, so each notch mounted and dropped stars. The named stars to mount are now chosen
+  at the window's zoom, which holds through a zoom; the names drawn still follow the camera. Brief
+  re-check on the final build, 10,000, 2 headful reps (load ~7):
+
+  | Gesture | Commits/event before → after | Frames over 8.3ms | gaps120 |
+  |---|---|---|---|
+  | Mouse-wheel notches | 2.76 → 2.76 | 21, 20 → 15, 16 | 11, 3 → 2, 3 |
+  | Trackpad pinch | 0.77 → 0.83 | 29, 29 → 5, 3 | 34, 26 → 15, 10 |
+  | Drag-pan @0.3 | — | 4, 5 → 0, 1 | 2, 4 → 0, 0 |
 
 ### Not done / known gaps
 

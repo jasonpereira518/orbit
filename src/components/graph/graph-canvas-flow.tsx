@@ -1443,17 +1443,43 @@ function GraphCanvasInner({
   // stars mid-gesture; the switch lands with the window, when the camera stops.
   const canvasZoom =
     activeWindow !== null && activeWindow.zoom < CANVAS_STARS_BELOW_ZOOM;
+  /**
+   * Which of them are named, for mounting: chosen at the window's zoom too. The names drawn follow
+   * the camera (`labelled`), but choosing the DOM set by them re-chose it at every zoom step, and a
+   * few mouse-wheel notches mounted and dropped stars on every one (2.8 → 7.4 React commits a notch
+   * at 10,000 contacts). Mid-zoom a mounted star may briefly show no name, or a name wait for its
+   * star, until the camera stops and the window is placed at the new zoom.
+   */
+  const windowLabelZoom = activeWindow ? zoomStep(activeWindow.zoom) : labelZoom;
   const mountTarget = useMemo(() => {
     if (!canvasZoom) return target;
+    let named = labelled;
+    if (windowLabelZoom !== labelZoom) {
+      const list: LayoutNodes[number][] = [];
+      for (const id of target) {
+        const n = contactById.get(id);
+        if (n) list.push(n);
+      }
+      named = labelWinners(list, windowLabelZoom, (id) => searchDimActive && searchHitIds.has(id));
+    }
     const out = new Set<string>();
     for (const id of target) {
       // Comets too: a few a cluster, and their head and trail are CSS the canvas does not draw.
-      if (labelled.has(id) || (contactById.get(id)?.data as GraphNodeData | undefined)?.comet) {
+      if (named.has(id) || (contactById.get(id)?.data as GraphNodeData | undefined)?.comet) {
         out.add(id);
       }
     }
     return out;
-  }, [canvasZoom, target, labelled, contactById]);
+  }, [
+    canvasZoom,
+    target,
+    labelled,
+    labelZoom,
+    windowLabelZoom,
+    contactById,
+    searchDimActive,
+    searchHitIds,
+  ]);
 
   const [mounted, setMounted] = useState<ReadonlySet<string>>(NO_IDS);
   let adding = false;
