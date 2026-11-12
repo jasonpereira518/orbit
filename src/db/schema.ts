@@ -2075,6 +2075,8 @@ export type CareerProfile = {
   };
   /** The confirm screen's "Your major(s)", at most 3. A jsonb key, so no DDL. */
   majors?: string[];
+  /** The city the person typed in Settings (Radar's events near you). Beats `profile.location`, which an import sets; kept when imports are removed. */
+  city?: string;
   importedAt?: string;
 };
 

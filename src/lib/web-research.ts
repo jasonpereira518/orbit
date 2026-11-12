@@ -852,7 +852,7 @@ export type DiscoverPeopleResult =
   | { ok: true; key: string; result: DiscoveryResult }
   | { ok: false; reason: "invalid" | "no_ai" | "rate_limited"; message: string };
 
-const DISCOVER_SYSTEM = `You find people who match a description, using web search, for someone looking to reach out to people they do not know yet.
+export const DISCOVER_SYSTEM = `You find people who match a description, using web search, for someone looking to reach out to people they do not know yet.
 
 Use as few searches as possible — every search costs money. Good sources: public LinkedIn profile snippets in search results, company team and leadership pages, conference speaker lists, press releases, university and alumni pages, personal sites.
 

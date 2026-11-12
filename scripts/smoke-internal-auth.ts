@@ -25,6 +25,7 @@ import { POST as emailIntelSweep } from "../src/app/api/email-intel/sweep/route"
 import { POST as timelineBackfill } from "../src/app/api/linkedin/timeline-events/backfill/route";
 import { POST as runCaptureJob } from "../src/app/api/capture/jobs/[id]/run/route";
 import { POST as radarRun } from "../src/app/api/radar/run/route";
+import { POST as radarWeb } from "../src/app/api/radar/web/route";
 import { POST as radarDigest } from "../src/app/api/radar/digest/route";
 
 const SECRET = "smoke-internal-auth-secret";
@@ -145,6 +146,8 @@ async function main() {
   check("capture/jobs/[id]/run → 401", cap.status === 401, `got ${cap.status}`);
   const radar = await radarRun(req());
   check("radar/run → 401", radar.status === 401, `got ${radar.status}`);
+  const web = await radarWeb(req());
+  check("radar/web → 401", web.status === 401, `got ${web.status}`);
   const digest = await radarDigest(req());
   check("radar/digest → 401", digest.status === 401, `got ${digest.status}`);
 
@@ -157,10 +160,11 @@ async function main() {
     timelineBackfill(req("Bearer nope")),
     runCaptureJob(req("Bearer nope"), { params: Promise.resolve({ id: "smoke-capture" }) }),
     radarRun(req("Bearer nope")),
+    radarWeb(req("Bearer nope")),
     radarDigest(req("Bearer nope")),
   ]);
   check(
-    "all seven → 401",
+    "all eight → 401",
     wrong.every((r) => r.status === 401),
     wrong.map((r) => r.status).join(",")
   );

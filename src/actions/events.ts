@@ -99,6 +99,7 @@ import {
   getRecommendedUpcomingEvents,
   type RecommendedEvent,
 } from "@/lib/events/recommendations";
+import { markOpportunitySaved } from "@/lib/radar/opportunities";
 import { saveAndSyncEventNotes } from "@/lib/events/notes-sync";
 import {
   findAttendeeLinkedIn,
@@ -995,6 +996,8 @@ export async function addRecommendedEvent(
       },
       "page"
     );
+    // A Radar find (the Recommended tab's ids are `radar_opportunities` rows) is now the person's.
+    await markOpportunitySaved(userId, rec.id);
 
     revalidateEvents(found.id);
     return { id: found.id, existing: found.existing };

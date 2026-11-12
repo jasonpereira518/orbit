@@ -162,6 +162,7 @@ console.log("\nDerived lists");
         "radar.draft",
         "radar.projects.extract",
         "radar.rerank",
+        "radar.web",
         "radar.why",
         "recruiter.gate",
         "recruiter.prefilter",
