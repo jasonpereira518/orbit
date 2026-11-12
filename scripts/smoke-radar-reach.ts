@@ -131,7 +131,9 @@ run(async () => {
     t.check("a link for an account never sent one does nothing", !(await unsubscribeRadarMoments(new URL(radarMomentUnsubscribeUrl(neverSent)).searchParams.get("token"))));
     t.check("a forged token does nothing", !(await unsubscribeRadarMoments("not-a-token")));
 
-    const good = { endpoint: "https://fcm.googleapis.com/fcm/send/abc", keys: { p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM", auth: "tBHItJI5svbpez7KI4CCXg" } };
+    // Shaped like a browser's PushSubscription.toJSON() (an 87-char P-256 key, a 22-char auth
+    // secret, both base64url) but built here, so no secret-shaped literal sits in the repo.
+    const good = { endpoint: "https://fcm.googleapis.com/fcm/send/abc", keys: { p256dh: `B${"A".repeat(86)}`, auth: "a".repeat(22) } };
     t.check("a real browser subscription is accepted", parsePushSubscription(good) !== null);
     t.check("a plain-http endpoint is refused", parsePushSubscription({ ...good, endpoint: "http://fcm.googleapis.com/x" }) === null);
     t.check("a local endpoint is refused", parsePushSubscription({ ...good, endpoint: "https://127.0.0.1/x" }) === null);
