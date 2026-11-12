@@ -203,9 +203,14 @@ export function OrbitVoiceSwitch({
                     })
                   }
                 >
-                  {DEEPGRAM_VOICES.map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
+                  {DEEPGRAM_VOICES.map((v) => {
+                    const name = v.replace(/^aura-2-|-en$/g, "");
+                    return (
+                      <option key={v} value={v}>
+                        {name.charAt(0).toUpperCase() + name.slice(1)}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
             </>
