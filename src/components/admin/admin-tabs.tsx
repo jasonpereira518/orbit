@@ -40,6 +40,7 @@ export const MONEY_TABS: SectionTab[] = [
   { href: "/admin/billing", label: "Overview" },
   { href: "/admin/billing/revenue", label: "Revenue" },
   { href: "/admin/billing/costs", label: "Costs" },
+  { href: "/admin/billing/usage", label: "Usage" },
 ];
 
 export const ACCESS_TABS: SectionTab[] = [
@@ -62,6 +63,7 @@ export const OPS_TABS: SectionTab[] = [
   { href: "/admin/health", label: "Accounts" },
   { href: "/admin/health/systems", label: "Systems" },
   { href: "/admin/health/ai", label: "AI & data" },
+  { href: "/admin/health/refresh", label: "Refresh" },
 ];
 
 export function UsersTabs() {

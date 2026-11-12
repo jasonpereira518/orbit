@@ -1,23 +1,25 @@
 /**
  * Upkeep of the shared LinkedIn photo pool (`linkedin_avatars`): seeding slugs whose contact
  * already shows an Unavatar photo (seed script, by a fresh public lookup), filling the most-shared slugs a little each hour, and
- * removing rows once no contact in any account carries the slug.
+ * removing rows once no contact in any account carries the slug. The email pool
+ * (`email_avatars`) is filled and swept the same way, keyed by address hash.
  */
 import { createHash } from "node:crypto";
 import { and, isNull, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { linkedinAvatars, rateLimitBuckets } from "@/db/schema";
+import { emailAvatars, linkedinAvatars, rateLimitBuckets } from "@/db/schema";
 import { deleteSharedAvatarBlob } from "@/lib/avatar-blob";
 import {
   AvatarSourceRateLimitError,
   downloadAndPersistSharedAvatar,
   hasBlobStorage,
 } from "@/lib/contact-avatar";
-import { LINKEDIN_HOST_RE } from "@/lib/contact-avatar-sql";
+import { LINKEDIN_HOST_RE, emailAvatarKeySql } from "@/lib/contact-avatar-sql";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import {
   adoptSharedPhoto,
   getSharedAvatar,
+  poolGravatarPhoto,
   resolveLinkedInPhotoCached,
 } from "@/lib/shared-avatars";
 
@@ -26,6 +28,8 @@ export const SHARED_AVATAR_FILL_PER_RUN = 20;
 /** Rows removed per statement, and statements per run. */
 export const SHARED_AVATAR_SWEEP_BATCH = 200;
 const SWEEP_MAX_BATCHES = 10;
+/** `sharedEmailKey`'s printable-ASCII rule in SQL, so the fill never picks a key JS refuses. */
+const SHAREABLE_EMAIL_SQL = "^[!-~]+@[!-~]+$";
 /** The fill stops while the app-wide allowance of either source has fewer than this left. */
 export const SHARED_FILL_RESERVE = 10;
 /** Wall-clock ceiling on one fill run. */
@@ -137,8 +141,26 @@ export async function fillSharedAvatars(
       break;
     }
   }
+
+  // The email pool: Gravatar is free and unmetered, so only the run's limit and clock apply.
+  const emails = await db.execute(sql`
+    SELECT ${emailAvatarKeySql} AS key
+      FROM contacts
+     WHERE contacts.email IS NOT NULL
+       AND btrim(contacts.email) ~ ${SHAREABLE_EMAIL_SQL}
+       AND NOT EXISTS (SELECT 1 FROM email_avatars ea WHERE ea.email_hash = ${emailAvatarKeySql})
+     GROUP BY 1
+     ORDER BY count(*) DESC, 1
+     LIMIT ${limit}
+  `);
+  for (const { key } of rowsOf<{ key: string }>(emails)) {
+    if (Date.now() > deadline) break;
+    if (await poolGravatarPhoto(key, null)) out.found += 1;
+    else out.missed += 1;
+  }
   return out;
 }
+
 
 /**
  * Delete pool rows no contact in any account refers to any more (blocked rows stay: they
@@ -148,6 +170,10 @@ export async function fillSharedAvatars(
  * object is deleted after, best-effort. Returns rows removed.
  */
 export async function sweepOrphanedSharedAvatars(): Promise<number> {
+  return (await sweepLinkedInPool()) + (await sweepEmailPool());
+}
+
+async function sweepLinkedInPool(): Promise<number> {
   const db = await getDb();
   const orphan = sql`blocked_at IS NULL AND NOT EXISTS (SELECT 1 FROM contacts c WHERE c.linkedin_slug = linkedin_avatars.slug)`;
   let removed = 0;
@@ -158,6 +184,32 @@ export async function sweepOrphanedSharedAvatars(): Promise<number> {
         and(
           isNull(linkedinAvatars.blockedAt),
           sql`${orphan} AND linkedin_avatars.slug IN (SELECT slug FROM linkedin_avatars WHERE ${orphan} LIMIT ${SHARED_AVATAR_SWEEP_BATCH})`
+        )
+      )
+      .returning();
+    for (const g of gone) await deleteSharedAvatarBlob(g.imageUrl);
+    removed += gone.length;
+    if (gone.length < SHARED_AVATAR_SWEEP_BATCH) break;
+  }
+  return removed;
+}
+
+/**
+ * The email pool's sweep, same rules. The NOT EXISTS hashes every contact's address once per
+ * statement (a hash anti-join), not once per pool row.
+ * ponytail: linear in contacts with an email, hourly; store the hash on contacts if it grows.
+ */
+async function sweepEmailPool(): Promise<number> {
+  const db = await getDb();
+  const orphan = sql`blocked_at IS NULL AND NOT EXISTS (SELECT 1 FROM contacts WHERE contacts.email IS NOT NULL AND ${emailAvatarKeySql} = email_avatars.email_hash)`;
+  let removed = 0;
+  for (let i = 0; i < SWEEP_MAX_BATCHES; i++) {
+    const gone = await db
+      .delete(emailAvatars)
+      .where(
+        and(
+          isNull(emailAvatars.blockedAt),
+          sql`${orphan} AND email_avatars.email_hash IN (SELECT email_hash FROM email_avatars WHERE ${orphan} LIMIT ${SHARED_AVATAR_SWEEP_BATCH})`
         )
       )
       .returning();

@@ -205,7 +205,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       page.getByRole("button", { name: "Mute", exact: true }),
     ).toBeVisible();
     await expect.poll(() => connected).toBe(1);
-    const inputLevel = () => page.locator(".voice-orbit").evaluate(el => Number((el as SVGElement).style.getPropertyValue("--voice-input")));
+    const inputLevel = () => page.locator(".voice-orbit").evaluate(el => Number((el as HTMLElement).style.getPropertyValue("--voice-input")));
     await expect.poll(inputLevel).toBeGreaterThan(.01);
     const send = (message: unknown) => socket!.send(JSON.stringify(message));
     if (provider === "deepgram") {
@@ -225,7 +225,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       await expect(
         page.getByRole("status").filter({ hasText: "Orbit is speaking" }),
       ).toBeVisible();
-      await expect.poll(() => page.locator(".voice-orbit").evaluate(el => Number((el as SVGElement).style.getPropertyValue("--voice-output")))).toBeGreaterThan(.01);
+      await expect.poll(() => page.locator(".voice-orbit").evaluate(el => Number((el as HTMLElement).style.getPropertyValue("--voice-output")))).toBeGreaterThan(.01);
       const closes = await page.evaluate(
         () => (window as unknown as { voiceCloses: number }).voiceCloses,
       );
@@ -377,7 +377,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await page.evaluate(() => document.documentElement.classList.add("dark"));
     await page.emulateMedia({reducedMotion: "reduce"});
     await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toHaveCSS("color", "rgb(231, 236, 241)");
-    await expect(page.locator(".voice-orbit-moon")).toHaveCSS("animation-name", "none");
+    await expect(page.locator(".voice-orbit")).toHaveAttribute("data-reduced", "");
     const darkScreenshot = test.info().outputPath(`${provider}-dark-mobile.png`);
     await page.screenshot({path: darkScreenshot});
     await test.info().attach(`${provider} dark mobile voice`, {path: darkScreenshot, contentType: "image/png"});

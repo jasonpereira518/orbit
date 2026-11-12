@@ -1,10 +1,12 @@
 import { and, eq, ilike, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, linkedinAvatars, publicWorkHistory } from "@/db/schema";
+import { contacts, emailAvatars, linkedinAvatars, publicWorkHistory } from "@/db/schema";
 import { recordAdminAction, requireReason } from "@/lib/admin-operations";
 import { deleteAvatarBlobs, deleteSharedAvatarBlob } from "@/lib/avatar-blob";
 import { UserFacingError } from "@/lib/errors";
+import { emailAvatarKeySql } from "@/lib/contact-avatar-sql";
 import { provablePublicPhotoSource } from "@/lib/shared-avatar-upkeep";
+import { sharedEmailKey } from "@/lib/shared-avatars";
 
 /**
  * Admin takedown of a shared LinkedIn photo. The caller (`src/actions/admin.ts`) has already
@@ -118,4 +120,79 @@ export async function listSharedAvatars(input: { q?: string }) {
     .where(where)
     .orderBy(sql`${linkedinAvatars.blockedAt} DESC NULLS LAST`, linkedinAvatars.slug)
     .limit(100);
+}
+
+/** An email pool key: the 64-hex hash itself, or an address to hash. Never stored raw. */
+function cleanEmailKey(raw: string): string {
+  const v = raw.trim().toLowerCase();
+  const key = /^[0-9a-f]{64}$/.test(v) ? v : sharedEmailKey(v);
+  if (!key) throw new UserFacingError("Enter an email address");
+  return key;
+}
+
+/**
+ * {@link blockSharedAvatar} for the email pool: remove the shared photo and block the address
+ * hash so it is never re-fetched. Per-contact Gravatar copies of that address are removed in
+ * every account; mailbox, extension, Apollo and uploaded photos are never touched. The audit
+ * row names the hash, not the address.
+ * ponytail: matching contacts hashes every address (a scan), fine for a rare admin action.
+ */
+export async function blockSharedEmailAvatar(
+  adminUserId: string,
+  input: { email: string; reason: string }
+): Promise<void> {
+  const key = cleanEmailKey(input.email);
+  const reason = requireReason(input.reason);
+  const db = await getDb();
+  const [previous] = await db
+    .select({ imageUrl: emailAvatars.imageUrl })
+    .from(emailAvatars)
+    .where(eq(emailAvatars.emailHash, key));
+
+  await recordAdminAction({
+    adminUserId,
+    action: "avatar.block",
+    resourceType: "email_avatar",
+    resourceId: key,
+    reason,
+  });
+  const set = { imageUrl: null, blockedAt: new Date(), blockedBy: adminUserId };
+  await db
+    .insert(emailAvatars)
+    .values({ emailHash: key, source: "gravatar", ...set })
+    .onConflictDoUpdate({ target: emailAvatars.emailHash, set });
+  const sameAddress = sql`${contacts.email} IS NOT NULL AND ${emailAvatarKeySql} = ${key}`;
+  const gravatarCopies = await db
+    .select({ id: contacts.id, url: contacts.profileImageUrl })
+    .from(contacts)
+    .where(and(sameAddress, eq(contacts.profileImageSource, "gravatar")));
+  await db.update(contacts).set({ profileImageCheckedAt: null }).where(sameAddress);
+  if (gravatarCopies.length > 0) {
+    await db
+      .update(contacts)
+      .set({ profileImageUrl: null, profileImageSource: null })
+      .where(inArray(contacts.id, gravatarCopies.map((c) => c.id)));
+  }
+  await deleteAvatarBlobs(gravatarCopies.map((c) => c.url));
+  await deleteSharedAvatarBlob(previous?.imageUrl);
+}
+
+/** Lift an email block. The row goes, so the next lookup resolves the address afresh. */
+export async function unblockSharedEmailAvatar(
+  adminUserId: string,
+  input: { email: string; reason: string }
+): Promise<void> {
+  const key = cleanEmailKey(input.email);
+  const reason = requireReason(input.reason);
+  await recordAdminAction({
+    adminUserId,
+    action: "avatar.unblock",
+    resourceType: "email_avatar",
+    resourceId: key,
+    reason,
+  });
+  const db = await getDb();
+  await db
+    .delete(emailAvatars)
+    .where(and(eq(emailAvatars.emailHash, key), isNotNull(emailAvatars.blockedAt)));
 }

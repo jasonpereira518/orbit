@@ -133,11 +133,13 @@ export default function PrivacyPage() {
               stored; photos from a capture you never save are deleted after 24 hours.
             </li>
             <li>
-              <strong>Contact photos</strong> — shared photos come only from public LinkedIn profile
-              photos found by a public lookup on the web: one is added to a shared set once and shown
-              to any Orbit user who has that person. Photos from Google or Outlook contacts, photos the
-              Orbit browser extension captures, and Gravatar and Apollo photos are never shared: they
-              stay with your account.
+              <strong>Contact photos</strong> — shared photos come only from public lookups: public
+              LinkedIn profile photos found on the web, and public Gravatar photos found by a
+              contact&rsquo;s email address. One is added to a shared set once and shown to any Orbit
+              user who has that person. A photo found by email is kept under a one-way hash of the
+              address, never the address itself. Photos from Google or Outlook contacts, photos the
+              Orbit browser extension captures, Apollo photos and photos you upload are never shared:
+              they stay with your account.
             </li>
             <li>
               <strong>Contact work history</strong> — when a web search finds a contact&rsquo;s work
@@ -749,7 +751,7 @@ export default function PrivacyPage() {
             your account.
           </p>
           <p>
-            A shared LinkedIn photo or shared work history is deleted within a day once no Orbit
+            A shared photo or shared work history is deleted within a day once no Orbit
             account has that person, and a shared work history after 90 days at most. To have one
             removed sooner, email us through the <Link href="/contact">contact page</Link>.
           </p>

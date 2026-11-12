@@ -38,6 +38,10 @@
   "smoke-admin-export.ts": [
     "src/app/api/admin/export/route.ts"
   ],
+  "smoke-admin-refresh.ts": [
+    "src/actions/admin.ts",
+    "src/lib/admin-refresh-jobs.ts"
+  ],
   "smoke-agent-sends.ts": [
     "src/lib/agent-sends.ts",
     "src/lib/mcp/server.ts",
@@ -524,6 +528,11 @@
     "src/a.ts",
     "src/app/page.tsx",
     "src/lib/x.ts"
+  ],
+  "smoke-vercelignore-reach.ts": [
+    "extension/package.json",
+    "extension/src/background/index.ts",
+    "src/lib/extension/auth.ts"
   ],
   "smoke-waitlist-analytics.ts": [
     "src/components/interest/interest-hero.tsx",
