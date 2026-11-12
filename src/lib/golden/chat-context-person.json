@@ -86,7 +86,6 @@
       "radarDigestLastWeek": null,
       "radarDigestTz": null,
       "radarDigestUnsubTokenHash": null,
-      "radarDiscoveryEnabled": 1,
       "radarEnabledAt": null,
       "radarLastRunAt": null,
       "radarLeaseUntil": null,

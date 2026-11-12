@@ -284,25 +284,6 @@ export type RadarCalendarInvite = {
   calendarEventKey?: string;
 };
 
-/** A new prospective connection discovered outside the user's current network. */
-export type RadarDiscoveredPerson = {
-  fullName: string;
-  title?: string | null;
-  company?: string | null;
-  location?: string | null;
-  bio?: string | null;
-  avatarUrl?: string | null;
-  linkedinUrl?: string | null;
-  twitterHandle?: string | null;
-  githubHandle?: string | null;
-  website?: string | null;
-  sourceUrl?: string | null;
-  sourcePlatform: "linkedin" | "twitter" | "github" | "research" | "event" | "web";
-  matchReason: string;
-  matchingProjectId?: string;
-  matchingProjectTitle?: string;
-};
-
 /**
  * What one account has taught Radar: accept and decline tallies per kind and per reason
  * code, rebuilt from the last 90 days of rows at the end of every run. `a` counts accepts
@@ -354,9 +335,6 @@ export type ContactSignalPayload = {
 
 /** What the people check reports about someone (`src/lib/radar/pulse.ts`). */
 export type MentionKind = "post" | "talk" | "news";
-
-/** The retired global news tables' source kinds (`external_sources.kind`); the tables drop in Radar PR 12. */
-export type ExternalSourceKind = "rss" | "atom" | "hn" | "edgar";
 
 /**
  * An opportunity with no contact row (`radar_opportunities`): an event near the person, someone

@@ -32,7 +32,6 @@ import {
   leadReason,
   type RadarAiNote,
   type RadarCalendarInvite,
-  type RadarDiscoveredPerson,
   type RadarDraft,
   type RadarEvidence,
   type RadarReason,
@@ -67,8 +66,6 @@ export type RecommendationCardData = {
   draft?: RadarDraft | null;
   /** Suggested calendar invite for 1-click execution */
   suggestedCalendarInvite?: RadarCalendarInvite | null;
-  /** Discovered prospective connection metadata */
-  discoveredPerson?: RadarDiscoveredPerson | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -163,11 +160,6 @@ export function RecommendationCard({
                 {rec.draft && (
                   <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-primary">
                     Draft ready
-                  </span>
-                )}
-                {rec.discoveredPerson && (
-                  <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                    Discovered ({rec.discoveredPerson.sourcePlatform})
                   </span>
                 )}
               </div>

@@ -24,7 +24,7 @@ Data Access declares only `drive.file` and `calendar.readonly`. `src/lib/google-
 | `contacts.readonly` | sensitive | **no** | Imports → Google Contacts |
 | `calendar.events` | sensitive | **no** | Chat → "Add to calendar" on a meeting |
 | `gmail.send` | sensitive | **no** | Compose, Settings → Email, recruiter composer, Chat drafts |
-| `gmail.readonly` | **restricted** | **no** | Recruiters scan, Events confirmation emails, Settings → Email insights |
+| `gmail.readonly` | **restricted** | **no** | Recruiters scan, Settings → Email insights, reply threading |
 | `drive.readonly` | **restricted** | **no** | Capture → Drive & OneDrive (Cloud notes) |
 
 Decision (Jason, Nov 12): submit all of them. Restricted scopes need CASA. Adding them to the in-flight review can hold the sensitive scopes behind CASA. If speed matters, the alternative is to fix the video, get calendar and contacts approved, then add the restricted scopes as a second submission.
@@ -32,7 +32,7 @@ Decision (Jason, Nov 12): submit all of them. Restricted scopes need CASA. Addin
 ## Console justification (Data Access, 1000-character limit, one field for all scopes)
 
 ```
-Orbit is a personal networking CRM. Each scope is requested only when the user turns that feature on. calendar.readonly: reads events (title, time, location, description, attendee emails; past 90 days, next 60) from the calendars the user selects, matches attendees to their contacts, shows meetings on contact timelines and suggests follow-ups. calendar.events: adds a meeting the user sets up in Chat to their calendar; Undo removes it; no other event is changed. contacts.readonly: user picks contacts to import. gmail.send: sends emails the user writes and sends. gmail.readonly: opt-in recruiter scan, event-confirmation detection, Email insights and reply threading; bodies are not stored. drive.readonly: lists recent Docs to find meeting notes. drive.file: Picker import. Data stays in the user's account and is never sold, shared, or used for ads or model training. Disconnect anytime in Settings → Integrations. Follows the Google API Services User Data Policy, including Limited Use.
+Orbit is a personal networking CRM. Connect asks for contacts and calendar; every other scope is requested only when the user turns on the feature that needs it. calendar.readonly: reads events (title, time, location, description, attendee emails; past 90 days, next 60) from the calendars the user selects, matches attendees to their contacts, shows meetings on contact timelines and suggests follow-ups. calendar.events: adds a meeting the user sets up in Chat to their calendar; Undo removes it; no other event is changed. contacts.readonly: user picks contacts to import. gmail.send: sends emails the user writes and sends. gmail.readonly and drive.readonly: see their own boxes. drive.file: Picker import. Data stays in the user's account and is never sold or used for ads or model training. Only text a feature needs goes to the user's AI provider, to produce the result shown. Disconnect in Settings → Integrations. Follows the Google API Services User Data Policy, including Limited Use.
 ```
 
 Check the length before pasting. It must be 1000 characters or fewer.
@@ -47,7 +47,7 @@ Google's two findings map to these rules. One YouTube link (unlisted is fine), E
    2. Calendar read: Events → connect calendar, meetings appear on a contact's timeline and in prep.
    3. Calendar write: Chat → "Add to calendar" on a meeting, event appears in Google Calendar, Undo removes it.
    4. Gmail send: Compose on a contact, Send, show the 10-second undo, show it in Gmail Sent.
-   5. Gmail read: recruiter scan, event confirmations on Events, Email insights toggle in Settings.
+   5. Gmail read: recruiter scan on Recruiters, Email insights toggle in Settings.
    6. Drive picker: Imports → Google Drive.
    7. Drive read: Capture → Drive & OneDrive, recent Docs listed, extract one.
 3. Say what is stored and what is not (message bodies are not stored) as each clip plays.
@@ -89,7 +89,7 @@ Console edits take up to five minutes to apply.
 **Throwaway Google account, seeded before recording:**
 - Contacts: 5–10 people with company, title, email, phone.
 - Calendar: 2–3 meetings in the next two weeks with guests who are in those contacts.
-- Gmail: two recruiter threads, one confirmation each from Luma and Eventbrite, one job-related thread for Email insights, and a Sent message to a contact.
+- Gmail: two recruiter threads, one hiring-process thread for Email insights, and one Sent message to a contact. Use `seed_demo_mailbox.py` (see below). Event confirmation emails are not read any more; events now come from calendar invites.
 - Drive: a Google Doc of meeting notes (for Cloud notes) and a Doc or Slides file to pick.
 - Consent costs one of the 100 unverified-user slots per new Google account that connects (3 used today).
 
@@ -124,7 +124,7 @@ Adding scopes, saving and submitting in the console are outward-facing steps for
 > Hi, thanks for the review. Both App functionality findings are addressed:
 >
 > 1. **OAuth consent flow.** The new video starts from a fresh Google connection and shows the consent screen with the client ID (`368910954513-87cnquv95u5b370fqdbp1gpu1ojecibf.apps.googleusercontent.com`) in the address bar, including the unverified-app screen and every requested scope. It also shows the second consent window the Google Picker opens.
-> 2. **App functionality.** The video then shows each requested scope doing its job in the live app at https://myorbitnetwork.com: Google Contacts import, calendar sync, adding a meeting to the calendar (with Undo), sending an email, Gmail-based recruiter scan, event confirmations and Email insights, the Drive Picker, and Drive-based notes.
+> 2. **App functionality.** The video then shows each requested scope doing its job in the live app at https://myorbitnetwork.com: Google Contacts import, calendar sync, adding a meeting to the calendar (with Undo), sending an email, Gmail-based recruiter scan and Email insights, the Drive Picker, and Drive-based notes.
 >
 > I have also updated the declared scopes under Data Access to match what the app requests, with a justification for each. Video: <YouTube link>. Please let me know if anything else is needed.
 >

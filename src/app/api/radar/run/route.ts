@@ -13,7 +13,7 @@
  * cached, so no cache configuration is needed here.
  */
 import { NextResponse, after } from "next/server";
-import { finishCronRun, startCronRun } from "@/lib/cron-runs";
+import { cronTrigger, finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { internalFetch, isInternalRequest } from "@/lib/internal-auth";
 import { runRadarPass } from "@/lib/radar/run";
 import { RADAR_MOMENTS_BUDGET_MS, sendRadarMoments } from "@/lib/radar/moments";
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   }
 
   const startedAt = Date.now();
-  const handle = await startCronRun("radar.run");
+  const handle = await startCronRun("radar.run", cronTrigger(request));
   try {
     const [hidden, soon] = await Promise.all([getHiddenSurfaceKeys(), getComingSoonKeys()]);
     if (hidden.has(SURFACE_KEY)) {

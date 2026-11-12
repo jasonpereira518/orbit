@@ -18,12 +18,10 @@ import { relations, sql } from "drizzle-orm";
 import type {
   ContactSignalKind,
   ContactSignalPayload,
-  ExternalSourceKind,
   RadarAiNote,
   RadarAutopilot,
   RadarAutopilotAction,
   RadarCalendarInvite,
-  RadarDiscoveredPerson,
   RadarDraft,
   RadarEvidence,
   RadarFeedbackAction,
@@ -691,8 +689,6 @@ export const userSettings = pgTable("user_settings", {
   radarDailyEnabled: integer("radar_daily_enabled").default(1).notNull(),
   /** 1 = automatically extract active projects from Gmail, calendar, notes. */
   radarAutoProjects: integer("radar_auto_projects").default(1).notNull(),
-  /** 1 = outbound web discovery for prospective connections matching projects/goals. */
-  radarDiscoveryEnabled: integer("radar_discovery_enabled").default(1).notNull(),
   /** When Radar's web lane (events, people to meet, programs) is next due for this account. */
   radarWebNextAt: timestamp("radar_web_next_at", { withTimezone: true }),
   /** Local day ("2026-11-11") of the last same-day Radar email, claimed before sending. */
@@ -2893,8 +2889,6 @@ export const recommendations = pgTable(
     autopilot: jsonb("autopilot").$type<RadarAutopilotAction>(),
     /** A suggested calendar invite, prepared ahead of time so the user can send/confirm in 1 click. */
     suggestedCalendarInvite: jsonb("suggested_calendar_invite").$type<RadarCalendarInvite>(),
-    /** Prospective new connection discovered outside the user's current network. */
-    discoveredPerson: jsonb("discovered_person").$type<RadarDiscoveredPerson>(),
     /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
@@ -2998,68 +2992,10 @@ export const contactSignals = pgTable(
   ]
 );
 
-/**
- * Public news feeds Radar reads (global, no `user_id`), beside `job_feed_sources`. Adding or
- * disabling a source is a row, not a deploy.
- */
-export const externalSources = pgTable("external_sources", {
-  id: text("id").primaryKey(),
-  label: text("label").notNull(),
-  url: text("url").notNull(),
-  kind: text("kind").$type<ExternalSourceKind>().notNull(),
-  enabled: boolean("enabled").default(true).notNull(),
-  etag: text("etag"),
-  lastModified: text("last_modified"),
-  lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true }),
-  lastStatus: text("last_status"),
-  lastError: text("last_error"),
-  consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
-
-/** One headline from one source (global). Pruned after 30 days. */
-export const externalItems = pgTable(
-  "external_items",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    sourceId: text("source_id")
-      .notNull()
-      .references(() => externalSources.id, { onDelete: "cascade" }),
-    externalId: text("external_id").notNull(),
-    title: text("title").notNull(),
-    summary: text("summary"),
-    url: text("url"),
-    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
-    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => [
-    uniqueIndex("external_items_source_external_uidx").on(t.sourceId, t.externalId),
-    index("external_items_published_idx").on(t.publishedAt),
-  ]
-);
-
-/**
- * The companies a headline may be about, keyed by `jobCompanyBucketKey` so the per-user
- * probe is one indexed lookup with the account's own company keys. Candidates, not
- * verdicts: `companiesMatch` confirms each hit before a signal is written.
- */
-export const externalItemCompanies = pgTable(
-  "external_item_companies",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    itemId: uuid("item_id")
-      .notNull()
-      .references(() => externalItems.id, { onDelete: "cascade" }),
-    companyKey: text("company_key").notNull(),
-    companyName: text("company_name").notNull(),
-    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
-  },
-  (t) => [
-    uniqueIndex("external_item_companies_item_key_uidx").on(t.itemId, t.companyKey),
-    index("external_item_companies_key_published_idx").on(t.companyKey, t.publishedAt.desc()),
-  ]
-);
+// Radar's retired news tables (external_sources, external_items, external_item_companies),
+// recommendations.discovered_person and user_settings.radar_discovery_enabled are out of the
+// code as of Radar PR 12a; the database keeps them until PR 12b drops them, so a deploy still
+// serving during the next migration never selects a column that is gone.
 
 export type AudienceFilters = {
   titles?: string[];
@@ -5711,6 +5647,22 @@ export const linkedinAvatars = pgTable(
   },
   (t) => [index("linkedin_avatars_resolved_at_idx").on(t.resolvedAt)]
 );
+
+/**
+ * Cross-user photo cache for people found by email (`src/lib/shared-avatars.ts`), the email
+ * twin of `linkedinAvatars`: keyed by sha256 of the lowercased, trimmed address, never the
+ * address itself. Public lookups (Gravatar) only; never a Google/Outlook mailbox photo, an
+ * extension capture or an upload. `imageUrl` null = looked and found nothing. Deleted once no
+ * contact in any account has the address; `blockedAt` rows stay (admin takedown).
+ */
+export const emailAvatars = pgTable("email_avatars", {
+  emailHash: text("email_hash").primaryKey(),
+  imageUrl: text("image_url"),
+  source: text("source").$type<"gravatar">().notNull(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
+  blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  blockedBy: text("blocked_by"),
+});
 
 /**
  * Work history found by a public web search (`src/lib/public-work-history.ts`), shared across

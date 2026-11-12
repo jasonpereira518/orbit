@@ -25,6 +25,7 @@ import { sweepEmailAttachments } from "@/lib/email/attachments";
 import { runRetentionSweeps } from "@/lib/retention";
 import { backfillInterestListTokens } from "@/lib/interest-list-tokens";
 import {
+  cronTrigger,
   finishCronRun,
   startCronRun,
   type CronRunStatus,
@@ -126,7 +127,7 @@ export async function GET(request: Request) {
     return new NextResponse(null, { status: 401 });
   }
 
-  const run = await startCronRun("imports.process-stalled");
+  const run = await startCronRun("imports.process-stalled", cronTrigger(request));
 
   let status: CronRunStatus = "ok";
   let error: unknown = null;

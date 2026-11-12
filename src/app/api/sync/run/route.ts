@@ -8,7 +8,7 @@
  * cached, so no cache configuration is needed here.
  */
 import { NextResponse, after } from "next/server";
-import { finishCronRun, startCronRun } from "@/lib/cron-runs";
+import { cronTrigger, finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { internalFetch, isInternalRequest } from "@/lib/internal-auth";
 import { runSyncPass } from "@/lib/sync-scheduler";
 import { reportAndContinue, reportError } from "@/lib/report-error";
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const handle = await startCronRun("sync.run");
+  const handle = await startCronRun("sync.run", cronTrigger(request));
   try {
     const stats = await runSyncPass();
 

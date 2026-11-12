@@ -166,11 +166,6 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
               <IntentLink href={`/contacts/${rec.contactId}`} className="truncate text-sm font-medium text-primary hover:underline">
                 {rec.contactName}
               </IntentLink>
-              {rec.discoveredPerson && (
-                <span className="inline-flex items-center rounded-md bg-sky-500/10 px-1.5 py-0.5 text-2xs font-medium text-sky-600 dark:text-sky-400">
-                  Discovered ({rec.discoveredPerson.sourcePlatform})
-                </span>
-              )}
               <span className="hidden shrink-0 text-2xs text-muted-foreground sm:inline">{KIND_LABELS[rec.kind]}</span>
             </div>
             {/* On a phone the kind moves down here, so the name gets the row's width. */}
