@@ -204,7 +204,7 @@ function registryChecks() {
   const features = surfacesOfKind("feature");
   check("compose is registered as a feature surface", features.some((s) => s.key === COMPOSE_SURFACE_KEY));
   check("a feature surface declares no href", features.every((s) => s.href === undefined));
-  check("compose ships coming-soon", DEFAULT_COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
+  check("compose ships released", !DEFAULT_COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
   check(
     "outlook send ships coming-soon",
     DEFAULT_COMING_SOON_KEYS.has(OUTLOOK_SEND_SURFACE_KEY) && getSurface(OUTLOOK_SEND_SURFACE_KEY)?.kind === "feature"
@@ -373,13 +373,19 @@ async function main() {
       }
       check("requireOutreachUser requires a released surface",
         callsIn("src/lib/plan-guards.ts", "requireOutreachUser").has("requireReleasedSurface"));
-      // Compose is a FEATURE: coming soon puts it in `hidden`, so even the visibility-only guard
+      // A FEATURE that is coming soon goes into `hidden`, so even the visibility-only guard
       // refuses it; the AI-spending draft action states the intent with the released-surface guard.
-      check("feature.compose is coming soon by default", DEFAULT_COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
+      // Compose itself is released, so chat imports (still a coming-soon feature) stands in for the
+      // refusal, and Compose must now pass both guards.
+      check("feature.compose is released by default", !DEFAULT_COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
+      check("a feature that is still coming soon exists to test the guards", DEFAULT_COMING_SOON_KEYS.has(CHAT_IMPORTS_SURFACE_KEY));
       for (const [guard, label] of [[requireVisibleSurface, "requireVisibleSurface"], [requireReleasedSurface, "requireReleasedSurface"]] as const) {
+        let refusedSoon: unknown = null;
+        try { await guard(USER, CHAT_IMPORTS_SURFACE_KEY); } catch (err) { refusedSoon = err; }
+        check(`${label} refuses a feature while it is coming soon`, isSurfaceHiddenError(refusedSoon));
         let refusedCompose: unknown = null;
         try { await guard(USER, COMPOSE_SURFACE_KEY); } catch (err) { refusedCompose = err; }
-        check(`${label} refuses Compose while it is coming soon`, isSurfaceHiddenError(refusedCompose));
+        check(`${label} lets Compose through now that it is released`, !isSurfaceHiddenError(refusedCompose));
       }
       const draftCalls = callsIn("src/actions/email-compose.ts", "draftComposeWithAi");
       check("draftComposeWithAi requires Compose to be released",
@@ -429,9 +435,12 @@ async function main() {
       );
       check(
         "a coming-soon feature is hidden outright for an ordinary user and a default admin",
-        forUser.hidden.has(COMPOSE_SURFACE_KEY) && forAdmin.hidden.has(COMPOSE_SURFACE_KEY)
+        forUser.hidden.has(CHAT_IMPORTS_SURFACE_KEY) && forAdmin.hidden.has(CHAT_IMPORTS_SURFACE_KEY)
       );
-      check("compose's settings section is hidden with it", forUser.hidden.has("settings.email"));
+      check(
+        "compose and its settings section are visible now it is released",
+        !forUser.hidden.has(COMPOSE_SURFACE_KEY) && !forUser.hidden.has("settings.email")
+      );
       const companions = Object.values(COMING_SOON_COMPANIONS).flat();
       check(
         "a coming-soon page hides its companion surfaces for both a user and a default admin",
@@ -469,7 +478,7 @@ async function main() {
         );
         check(
           "the demo workspace still has unreleased features hidden",
-          forDemo.hidden.has(COMPOSE_SURFACE_KEY) && forDemo.hidden.has(CHAT_IMPORTS_SURFACE_KEY)
+          forDemo.hidden.has(OUTLOOK_SEND_SURFACE_KEY) && forDemo.hidden.has(CHAT_IMPORTS_SURFACE_KEY)
         );
         check(
           "the demo workspace sees companions of unreleased pages",
