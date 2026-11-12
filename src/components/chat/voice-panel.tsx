@@ -438,7 +438,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
         <div className={cn("flex min-h-0 w-full items-center justify-center", compact ? "py-0.5" : "py-4 sm:py-6")}>
           <VoiceOrbit controls={controls} mode={mode} muted={muted} />
         </div>
-        <p role="status" className={compact ? "text-[11px] leading-tight text-muted-foreground" : "min-h-6 text-sm text-muted-foreground"}>
+        <p role="status" className={compact ? "text-2xs leading-tight text-muted-foreground" : "min-h-6 text-sm text-muted-foreground"}>
           {busy
             ? "Connecting…"
             : mode === "speaking"
@@ -515,9 +515,9 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
           </Button>
         </div>
       </div>
-      {saveError && <div role="status" className={cn("text-center", compact ? "mt-2 text-[11px] leading-tight" : "mt-4 text-sm")}>
+      {saveError && <div role="status" className={cn("text-center", compact ? "mt-2 text-2xs leading-tight" : "mt-4 text-sm")}>
         {compact ? "Transcript not saved yet." : "Some transcript turns haven’t saved yet. Keep this window open."}
-        <Button variant="link" size={compact ? "sm" : "default"} className={cn(compact && "h-auto px-0 text-[11px]")} onClick={async () => {
+        <Button variant="link" size={compact ? "sm" : "default"} className={cn(compact && "h-auto px-0 text-2xs")} onClick={async () => {
           for (const item of pending.current.values()) persist(item.sessionId, item.turn);
           await writes.current;
           setSaveError(pending.current.size > 0);
@@ -532,7 +532,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
       )}
       {error && (
         <div className={cn("space-y-2 text-center", compact ? "mt-2" : "mt-3")}>
-          <p role="alert" className={compact ? "text-[11px] leading-tight text-destructive" : "text-sm text-destructive"}>
+          <p role="alert" className={compact ? "text-2xs leading-tight text-destructive" : "text-sm text-destructive"}>
             {error}
           </p>
           {failed &&
@@ -542,7 +542,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
               <Button
                 size="sm"
                 variant="outline"
-                className={cn(compact && "h-auto w-full whitespace-normal px-1 py-1 text-[11px]")}
+                className={cn(compact && "h-auto w-full whitespace-normal px-1 py-1 text-2xs")}
                 onClick={() => void start(true)}
               >
                 Try {PROVIDER_LABELS[state.fallbackProvider]}
