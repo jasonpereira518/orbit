@@ -722,8 +722,9 @@ function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
  * free plan's limit (audit H-01). Server callers that need options use the `*ForUser`
  * functions in `@/lib/contact-writes` directly.
  */
-export async function createContact(input: ContactInput) {
-  const { contact } = await createContactDetailed(input);
+/** `typedName`: the contact form, where the person typed the name; automation never renames it. */
+export async function createContact(input: ContactInput, opts?: { typedName?: boolean }) {
+  const { contact } = await createContactDetailed(input, opts);
   return contact;
 }
 
@@ -739,11 +740,12 @@ export async function createContact(input: ContactInput) {
  * Separate from `createContact` rather than a changed return type, so the outreach path
  * that only wants the row keeps working unchanged.
  */
-export async function createContactDetailed(input: ContactInput) {
+export async function createContactDetailed(input: ContactInput, opts?: { typedName?: boolean }) {
   const userId = await requirePageUser("page.contacts");
   const { contactId, outcome, reason } = await resolveOrCreateContact(
     userId,
-    clientContactInput(input)
+    clientContactInput(input),
+    opts?.typedName ? { nameBy: "user" } : {}
   );
   const db = await getDb();
 
@@ -776,8 +778,9 @@ export async function createContactDetailed(input: ContactInput) {
 // same server-only `options` — so it was never callable from a browser on purpose, yet an
 // action id was still minted for it. Importers call `createContactsBulkForUser` directly.
 
+/** A name in the patch is one the person typed (only the contact form sends one): final. */
 export async function updateContact(id: string, input: Partial<ContactInput>) {
-  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input));
+  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input), { nameBy: "user" });
 }
 
 /**
@@ -789,16 +792,18 @@ export async function reviewContactName(id: string, name?: { firstName: string; 
   if (name) {
     const firstName = name.firstName.trim();
     const lastName = name.lastName.trim();
-    await updateContactForUser(userId, id, {
-      fullName: [firstName, lastName].filter(Boolean).join(" "),
-      firstName,
-      lastName,
-    });
+    await updateContactForUser(
+      userId,
+      id,
+      { fullName: [firstName, lastName].filter(Boolean).join(" "), firstName, lastName },
+      { nameBy: "user" }
+    );
   }
+  // Confirmed or typed, the name is now the person's: final for every automated writer.
   const db = await getDb();
   await db
     .update(contacts)
-    .set({ nameGuess: sql`${contacts.nameGuess} || '{"weak": false}'::jsonb` })
+    .set({ nameGuess: sql`${contacts.nameGuess} || '{"weak": false, "source": "user"}'::jsonb` })
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId), sql`${contacts.nameGuess} IS NOT NULL`));
   revalidatePath("/contacts");
   revalidatePath(`/contacts/${id}`);

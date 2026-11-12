@@ -45,11 +45,14 @@ import { DUPLICATE_TUNING } from "@/lib/decisions/catalog";
 import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { nameMergeVetoes, personCard } from "@/lib/decisions/duplicates";
 import {
+  addTagsForUser,
   createContactForUser,
   updateContactForUser,
   type ContactInput,
   type ContactWriteOptions,
 } from "@/lib/contact-writes";
+import { shouldReplaceName } from "@/lib/names/compare";
+import { formatPersonName } from "@/lib/names/parse";
 
 export type ResolveOutcome =
   /** No existing contact held any of this record's identifiers. */
@@ -112,6 +115,64 @@ export async function pickWinner(userId: string, a: string, b: string): Promise<
 }
 
 /**
+ * The spellings a stored row for this person may carry, lower-cased: as given, formatted
+ * ("Jane Doe"), and "Last, First" ("doe, jane") — how address books and older imports
+ * stored names before they were formatted. The index on `lower(trim(full_name))` serves
+ * each one.
+ */
+function nameSpellings(fullName: string): string[] {
+  const name = formatPersonName(fullName);
+  const all = [fullName, name?.fullName, name?.firstName && name.lastName ? `${name.lastName}, ${name.firstName}` : null];
+  return [...new Set(all.filter((n): n is string => Boolean(n?.trim())).map((n) => n.trim().toLowerCase()))];
+}
+
+/** Never filled from an incoming record: the person's own words, and where the row came from. */
+const NEVER_FOLDED = new Set(["fullName", "firstName", "lastName", "nameGuess", "notes", "source", "tagNames"]);
+
+const isBlank = (v: unknown) => v == null || v === "" || (Array.isArray(v) && v.length === 0);
+
+/**
+ * Write an incoming record into the contact it matched.
+ *
+ * The person at the form (`nameBy: "user"`) states the contact, so their record is written
+ * as given. Anything automated only FILLS: a field the contact already has is left alone
+ * (a re-import, a lookup or an outreach list never overwrites a company, a role or a
+ * where-met someone kept), fact lists are unioned, tags added, and the name changes only
+ * by `shouldReplaceName` — a handle becomes a name, "Sarah" becomes "Sarah Chen", and a
+ * name the user typed or confirmed never moves. Notes and `source` are never touched.
+ */
+async function foldIntoExisting(userId: string, contactId: string, input: ContactInput, options: ResolveOptions) {
+  if (options.nameBy === "user") {
+    await updateContactForUser(userId, contactId, input, options);
+    return;
+  }
+  const db = await getDb();
+  const [current] = await db
+    .select()
+    .from(contacts)
+    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)))
+    .limit(1);
+  if (!current) return;
+  const row = current as unknown as Record<string, unknown>;
+  const patch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (NEVER_FOLDED.has(key) || isBlank(value)) continue;
+    // Lists are unioned by `mergeFactLists` below; scalars fill only a blank.
+    if (Array.isArray(value) || isBlank(row[key])) patch[key] = value;
+  }
+  if (shouldReplaceName(current.fullName, input.fullName, { confirmed: current.nameGuess?.source === "user", email: current.email })) {
+    const name = formatPersonName(input.fullName);
+    patch.fullName = name?.fullName ?? input.fullName;
+    patch.firstName = input.firstName ?? name?.firstName ?? undefined;
+    patch.lastName = input.lastName ?? name?.lastName ?? undefined;
+  }
+  if (Object.keys(patch).length) {
+    await updateContactForUser(userId, contactId, patch, { ...options, mergeFactLists: true });
+  }
+  if (input.tagNames?.length) await addTagsForUser(userId, contactId, input.tagNames);
+}
+
+/**
  * Contacts sharing this record's full name, scored.
  *
  * Deliberately a narrow candidate set — contacts with the identical normalised name — rather
@@ -146,7 +207,9 @@ export async function nameMatchesFor(
       and(
         eq(contacts.userId, userId),
         contactId ? sql`${contacts.id} <> ${contactId}::uuid` : undefined,
-        sql`lower(btrim(${contacts.fullName})) = ${input.fullName.trim().toLowerCase()}`
+        // The raw spelling or the formatted one: a row stored before names were formatted
+        // ("DOE, JANE") still meets the same person arriving as "Jane Doe", and vice versa.
+        sql`lower(btrim(${contacts.fullName})) IN (${sql.join(nameSpellings(input.fullName).map((n) => sql`${n}`), sql`, `)})`
       )
     )
     .limit(25)) as DuplicateSubject[];
@@ -275,7 +338,7 @@ export async function resolveOrCreateContact(
 
     if (distinct.length === 1) {
       const contactId = distinct[0];
-      await updateContactForUser(userId, contactId, input, options);
+      await foldIntoExisting(userId, contactId, input, options);
       // The record may carry identifiers the existing contact lacks; claim those too.
       await claimIdentities(userId, contactId, keys, options.source);
       return {
@@ -300,7 +363,7 @@ export async function resolveOrCreateContact(
         });
         survivor = winner;
       }
-      await updateContactForUser(userId, survivor, input, options);
+      await foldIntoExisting(userId, survivor, input, options);
       await claimIdentities(userId, survivor, keys, options.source);
       return { contactId: survivor, outcome: "matched", reason: "Shared identifier", suggestions: [] };
     }
@@ -343,7 +406,7 @@ export async function resolveOrCreateContact(
 
   if (confident) {
     const contactId = confident.contact.id;
-    await updateContactForUser(userId, contactId, input, options);
+    await foldIntoExisting(userId, contactId, input, options);
     // The record may carry identifiers the matched contact lacks — an email for someone
     // previously known only by name. Claiming them now is what makes the NEXT write on this
     // person resolve by identifier instead of by name.
