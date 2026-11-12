@@ -82,12 +82,9 @@ export async function getEffectiveBrightDataConfig(userId?: string): Promise<Bri
     }
   }
 
-  if (!apiKey) {
-    apiKey = process.env.BRIGHTDATA_API_KEY?.trim() || null;
-  }
-  if (zone === "web_unlocker1" && process.env.BRIGHTDATA_ZONE?.trim()) {
-    zone = process.env.BRIGHTDATA_ZONE.trim();
-  }
+  const env = getBrightDataConfig();
+  if (!apiKey) apiKey = env.apiKey;
+  if (zone === "web_unlocker1") zone = env.zone;
 
   return {
     apiKey,
