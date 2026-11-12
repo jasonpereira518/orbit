@@ -887,6 +887,8 @@ export type StarDustData = {
   minY: number;
   width: number;
   height: number;
+  /** False while the chart keeps the dots mounted but hidden: no redraws until they show. */
+  shown?: boolean;
 };
 
 /** Longest side of the dust canvas's backing store, whatever the sky's size. */
@@ -917,6 +919,7 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
    * rest of the sky, and is redrawn at its proper scale the moment the camera stops.
    */
   const moving = useCameraMoving();
+  const shown = data.shown;
   const drawnOnce = useRef(false);
   const drawn = useRef<DrawnCanvas | null>(null);
 
@@ -926,16 +929,19 @@ function StarDustNodeComponent({ data }: NodeProps & { data: StarDustData }) {
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    // Hidden (the chart keeps it mounted between uses), it waits to be shown before drawing.
+    if (shown === false) return;
     // Never skip the first draw: the canvas can appear mid-gesture, and an empty one is a hole.
     if (moving && drawnOnce.current) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    if (alreadyDrawn(drawn.current, data, zoom, dpr)) return;
+    // Keyed on the points, not the node data, so showing and hiding alone never redraws.
+    if (alreadyDrawn(drawn.current, data.points, zoom, dpr)) return;
     return drawNowUnlessHidden(canvas, () => {
       drawnOnce.current = true;
-      drawn.current = { data, zoom, dpr };
+      drawn.current = { data: data.points, zoom, dpr };
       render({ kind: "dust", data, zoom, dpr, maxBackingPx: STAR_DUST_MAX_BACKING_PX });
     });
-  }, [data, zoom, moving, canvasRef, render]);
+  }, [data, shown, zoom, moving, canvasRef, render]);
 
   return (
     // Canvas until its first image is ready, then the image — see `useSkyBitmap`.
