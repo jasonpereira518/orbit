@@ -171,12 +171,18 @@ export function planetNameLayout(width: number, height: number) {
   return { cx, top: cy + RING_REACH.y * r + 0.02 * Math.min(width, height) };
 }
 
-/** Where the gold ring and the QR tile sit on the back, in the SVG's own units. */
+/**
+ * Where the gold orbit and the QR tile sit on the back, in the SVG's own units. Upright cards
+ * keep a circle; a horizontal card's orbit is an ellipse, which is what lets the code take two
+ * thirds of the card's height (a circle would cap it near a third) and still scan at arm's length.
+ */
 export function backLayout(width: number, height: number) {
   const s = Math.min(width, height);
-  const landscape = width >= height;
-  const R = (landscape ? 0.36 : 0.44) * s;
-  return { s, cx: width / 2, cy: height * (landscape ? 0.44 : 0.42), R, tile: R * 1.36 };
+  if (width >= height) {
+    return { s, cx: width / 2, cy: height * 0.43, rx: 0.7 * s, ry: 0.38 * s, tile: 0.66 * s };
+  }
+  const R = 0.44 * s;
+  return { s, cx: width / 2, cy: height * 0.42, rx: R, ry: R, tile: R * 1.36 };
 }
 
 const n = (v: number) => (Math.round(v * 100) / 100).toString();
@@ -246,17 +252,20 @@ function constellation(art: CardArt, w: number, h: number) {
 }
 
 function back(art: CardArt, w: number, h: number) {
-  const { s, cx, cy, R, tile } = backLayout(w, h);
+  const { s, cx, cy, rx, ry, tile } = backLayout(w, h);
   const a = (art.dotAngle * Math.PI) / 180;
-  const dx = cx + Math.cos(a) * R;
-  const dy = cy + Math.sin(a) * R;
+  const dx = cx + Math.cos(a) * rx;
+  const dy = cy + Math.sin(a) * ry;
   const hex = ACCENTS[art.accent].hex;
+  const tileSvg = `<rect x="${n(cx - tile / 2)}" y="${n(cy - tile / 2)}" width="${n(tile)}" height="${n(tile)}" rx="${n(tile * 0.08)}" fill="${TILE}"/>`;
+  // A horizontal back is the code on its own against the stars — no orbit around it.
+  if (w >= h) return tileSvg;
   return (
-    `<circle cx="${n(cx)}" cy="${n(cy)}" r="${n(R * 1.09)}" fill="none" stroke="${GOLD}" stroke-opacity="0.25" stroke-width="${n(0.004 * s)}"/>` +
-    `<circle cx="${n(cx)}" cy="${n(cy)}" r="${n(R)}" fill="none" stroke="${GOLD}" stroke-width="${n(0.012 * s)}"/>` +
+    `<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(rx * 1.05)}" ry="${n(ry * 1.05)}" fill="none" stroke="${GOLD}" stroke-opacity="0.25" stroke-width="${n(0.004 * s)}"/>` +
+    `<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(rx)}" ry="${n(ry)}" fill="none" stroke="${GOLD}" stroke-width="${n(0.012 * s)}"/>` +
     `<circle cx="${n(dx)}" cy="${n(dy)}" r="${n(0.05 * s)}" fill="url(#${art.id}-halo)"/>` +
     `<circle cx="${n(dx)}" cy="${n(dy)}" r="${n(0.02 * s)}" fill="${hex}"/>` +
-    `<rect x="${n(cx - tile / 2)}" y="${n(cy - tile / 2)}" width="${n(tile)}" height="${n(tile)}" rx="${n(tile * 0.08)}" fill="${TILE}"/>`
+    tileSvg
   );
 }
 

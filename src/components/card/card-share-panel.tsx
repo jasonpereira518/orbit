@@ -57,7 +57,7 @@ export function CardSharePanel({ url, svg, paused, card }: { url: string; svg: s
     });
 
   return (
-    <div className="flex flex-col items-center gap-5 md:flex-row md:items-start md:gap-8">
+    <div className="flex flex-col items-center gap-5 md:items-start">
       {card ? (
         <OrbitCard
           art={card.art}
@@ -66,10 +66,10 @@ export function CardSharePanel({ url, svg, paused, card }: { url: string; svg: s
           firstName={card.firstName}
           qrSvg={svg}
           side="back"
-          orientation="portrait"
+          orientation="landscape"
           still
-          // Upright and 26rem wide on desktop: the code is ~230 px, as large as it was before the card.
-          className={cn("max-w-[26rem] shrink-0 md:w-[26rem]", paused && "opacity-40")}
+          // Horizontal and up to 34rem wide: the code is ~210 px, about as large as before the card.
+          className={cn("w-full max-w-[34rem] shrink-0", paused && "opacity-40")}
         />
       ) : (
         <CardQr svg={svg} className={cn("w-56 shrink-0", paused && "opacity-40")} />
