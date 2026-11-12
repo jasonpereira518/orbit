@@ -16,13 +16,14 @@ import { EVIDENCE_FLOOR } from "@/lib/closeness-evidence";
 import { attendedEventFilter } from "@/lib/events/store";
 import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { JOB_SIGNAL_SUGGESTION_TYPE } from "@/lib/jobs/matcher";
-import { metContactSql } from "@/lib/met-contact";
+import { ENCOUNTER_TYPES, metContactSql } from "@/lib/met-contact";
 import { jobChangeSentence } from "@/lib/contact-profile-format";
 import { isCongratsWorthy } from "@/lib/job-changes";
 import { OPEN_OPPORTUNITY_STATUSES } from "@/lib/opportunity-kinds";
 import { LINKEDIN_QUIET_MAX_DAYS } from "@/lib/outreach-thresholds";
 import { RADAR_WINDOWS, type RadarTier } from "@/lib/radar/score";
 import type { RadarSignal } from "@/lib/radar/types";
+import type { RelationshipOpenThread } from "@/db/schema";
 
 const DAY_MS = 86_400_000;
 
@@ -54,7 +55,7 @@ function asDate(value: string | Date | null | undefined): Date | null {
 
 export async function produceInternalSignals(userId: string, now: Date): Promise<RadarSignal[]> {
   const db = await getDb();
-  const [messages, meetings, events, items, opportunities, briefs, jobs, moves] = await Promise.all([
+  const [messages, meetings, events, items, opportunities, briefs, jobs, moves, threads, encounters] = await Promise.all([
     // LinkedIn threads, one row per contact whose latest message is in the window. Direction
     // is only ever set on linkedin_message rows, which is what separates "they are waiting
     // on you" from "the thread went quiet".
@@ -63,7 +64,8 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
              count(*)::int AS n,
              max(interaction_date) AS last_at,
              max(interaction_date) FILTER (WHERE direction = 'in') AS last_in,
-             max(interaction_date) FILTER (WHERE direction = 'out') AS last_out
+             max(interaction_date) FILTER (WHERE direction = 'out') AS last_out,
+             (array_agg(id ORDER BY interaction_date DESC))[1] AS last_id
         FROM interactions
        WHERE user_id = ${userId}
          AND interaction_type = 'linkedin_message'
@@ -74,7 +76,7 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
     `),
     // The soonest meeting ahead per contact. Calendar sync writes these up to 60 days out.
     db.execute(sql`
-      SELECT DISTINCT ON (contact_id) contact_id, interaction_date AS at, left(ai_summary, 120) AS title
+      SELECT DISTINCT ON (contact_id) id, contact_id, interaction_date AS at, left(ai_summary, 120) AS title
         FROM interactions
        WHERE user_id = ${userId}
          AND interaction_type = 'meeting'
@@ -84,7 +86,7 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
     `),
     // Events the user attended or will attend, with the contacts linked to their rosters.
     db.execute(sql`
-      SELECT a.contact_id, e.title, e.starts_at, e.ends_at
+      SELECT e.id, a.contact_id, e.title, e.starts_at, e.ends_at
         FROM events e
         JOIN event_attendees a ON a.event_id = e.id AND a.user_id = e.user_id
        WHERE e.user_id = ${userId}
@@ -98,16 +100,20 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
       SELECT contact_id,
              count(*)::int AS n,
              min(created_at) AS oldest,
-             (array_agg(left(text, 160) ORDER BY created_at ASC))[1] AS first_text
+             (array_agg(left(text, 160) ORDER BY created_at ASC))[1] AS first_text,
+             (array_agg(id ORDER BY created_at ASC))[1] AS first_id
         FROM action_items
        WHERE user_id = ${userId}
          AND status = 'open'
+         -- Something the person owes. An item they are waiting on from the other side is not
+         -- a loop for them to close.
+         AND owed_by IS DISTINCT FROM 'them'
          AND created_at >= ${daysBefore(now, ACTION_ITEM_MAX_DAYS)}
        GROUP BY contact_id
     `),
     // The most pressing open opportunity per contact with a due date near now.
     db.execute(sql`
-      SELECT DISTINCT ON (contact_id) contact_id, left(label, 160) AS label, due_date
+      SELECT DISTINCT ON (contact_id) id, contact_id, left(label, 160) AS label, due_date
         FROM contact_opportunities
        WHERE user_id = ${userId}
          AND status IN (${sql.join(OPEN_OPPORTUNITY_STATUSES.map((status) => sql`${status}`), sql`, `)})
@@ -126,7 +132,7 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
     `),
     // Job-feed matches the hourly sweep already wrote. Read, never re-derived.
     db.execute(sql`
-      SELECT related_contact_ids ->> 0 AS contact_id, coalesce(description, title) AS text, created_at
+      SELECT id, related_contact_ids ->> 0 AS contact_id, coalesce(description, title) AS text, created_at
         FROM ai_suggestions
        WHERE user_id = ${userId}
          AND status = 'pending'
@@ -135,58 +141,88 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
     // Job moves the work-history check logged (`recordJobChanges`, lib/job-changes.ts): the
     // newest per contact in the window. Read, never re-derived, and already sanitized there.
     db.execute(sql`
-      SELECT DISTINCT ON (contact_id) contact_id, kind, from_org, from_title, to_org, to_title,
+      SELECT DISTINCT ON (contact_id) id, contact_id, kind, from_org, from_title, to_org, to_title,
              started_year, started_month, detected_at
         FROM contact_career_moves
        WHERE user_id = ${userId}
          AND detected_at >= ${daysBefore(now, RADAR_WINDOWS.jobChangeMax)}
        ORDER BY contact_id, detected_at DESC
     `),
+    // Loops in their messages the person owes a reply on, distilled by the relationship engine.
+    // Only digests with at least one such thread come back.
+    db.execute(sql`
+      SELECT contact_id, open_threads
+        FROM relationship_digests
+       WHERE user_id = ${userId}
+         AND open_threads @> '[{"owedBy":"me"}]'::jsonb
+    `),
+    // The latest real encounter per contact (a meeting, call, coffee, event) in the follow-up
+    // window. The scorer decides whether it was followed up.
+    db.execute(sql`
+      SELECT DISTINCT ON (contact_id) id, contact_id, interaction_date AS at
+        FROM interactions
+       WHERE user_id = ${userId}
+         AND interaction_type IN (${sql.join(ENCOUNTER_TYPES.map((t) => sql`${t}`), sql`, `)})
+         AND interaction_date <= ${now}
+         AND interaction_date >= ${daysBefore(now, RADAR_WINDOWS.metRecentlyMax)}
+         AND (source IS NULL OR source <> ${AI_DERIVED_SOURCE})
+       ORDER BY contact_id, interaction_date DESC
+    `),
   ]);
 
   const out: RadarSignal[] = [];
 
-  for (const r of rowsOf<{ contact_id: string; n: number; last_at: string | Date; last_in: string | Date | null; last_out: string | Date | null }>(messages)) {
+  for (const r of rowsOf<{ contact_id: string; n: number; last_at: string | Date; last_in: string | Date | null; last_out: string | Date | null; last_id: string }>(messages)) {
+    const source = { table: "interactions" as const, id: r.last_id };
     const lastAt = asDate(r.last_at);
     const lastIn = asDate(r.last_in);
     const lastOut = asDate(r.last_out);
     if (!lastAt) continue;
     const theyWroteLast = lastIn !== null && lastIn.getTime() === lastAt.getTime() && (!lastOut || lastOut < lastIn);
-    if (theyWroteLast) out.push({ kind: "inbound_unanswered", contactId: r.contact_id, at: lastIn });
-    else out.push({ kind: "linkedin_thread_quiet", contactId: r.contact_id, at: lastAt, count: Number(r.n) });
+    if (theyWroteLast) out.push({ kind: "inbound_unanswered", contactId: r.contact_id, at: lastIn, source });
+    else out.push({ kind: "linkedin_thread_quiet", contactId: r.contact_id, at: lastAt, count: Number(r.n), source });
   }
 
-  for (const r of rowsOf<{ contact_id: string; at: string | Date; title: string | null }>(meetings)) {
+  for (const r of rowsOf<{ id: string; contact_id: string; at: string | Date; title: string | null }>(meetings)) {
     const at = asDate(r.at);
-    if (at) out.push({ kind: "upcoming_meeting", contactId: r.contact_id, at, title: r.title?.trim() || null });
+    if (at) out.push({ kind: "upcoming_meeting", contactId: r.contact_id, at, title: r.title?.trim() || null, source: { table: "interactions", id: r.id } });
   }
 
   // One upcoming and one past event per contact: the soonest ahead, the latest behind.
-  const upcoming = new Map<string, { at: Date; title: string }>();
-  const past = new Map<string, { at: Date; title: string }>();
-  for (const r of rowsOf<{ contact_id: string; title: string; starts_at: string | Date; ends_at: string | Date | null }>(events)) {
+  const upcoming = new Map<string, { at: Date; title: string; id: string }>();
+  const past = new Map<string, { at: Date; title: string; id: string }>();
+  for (const r of rowsOf<{ id: string; contact_id: string; title: string; starts_at: string | Date; ends_at: string | Date | null }>(events)) {
     const start = asDate(r.starts_at);
     if (!start) continue;
     const end = asDate(r.ends_at) ?? start;
     if (start > now) {
       const seen = upcoming.get(r.contact_id);
-      if (!seen || start < seen.at) upcoming.set(r.contact_id, { at: start, title: r.title });
+      if (!seen || start < seen.at) upcoming.set(r.contact_id, { at: start, title: r.title, id: r.id });
     } else if (end < now) {
       const seen = past.get(r.contact_id);
-      if (!seen || end > seen.at) past.set(r.contact_id, { at: end, title: r.title });
+      if (!seen || end > seen.at) past.set(r.contact_id, { at: end, title: r.title, id: r.id });
     }
   }
-  for (const [contactId, e] of upcoming) out.push({ kind: "event_upcoming", contactId, at: e.at, title: e.title });
-  for (const [contactId, e] of past) out.push({ kind: "post_event", contactId, at: e.at, title: e.title });
+  for (const [contactId, e] of upcoming) out.push({ kind: "event_upcoming", contactId, at: e.at, title: e.title, source: { table: "events", id: e.id } });
+  for (const [contactId, e] of past) out.push({ kind: "post_event", contactId, at: e.at, title: e.title, source: { table: "events", id: e.id } });
 
-  for (const r of rowsOf<{ contact_id: string; n: number; oldest: string | Date; first_text: string }>(items)) {
+  for (const r of rowsOf<{ contact_id: string; n: number; oldest: string | Date; first_text: string; first_id: string }>(items)) {
     const at = asDate(r.oldest);
-    if (at) out.push({ kind: "action_item_open", contactId: r.contact_id, at, text: r.first_text, count: Number(r.n) });
+    if (at) {
+      out.push({
+        kind: "action_item_open",
+        contactId: r.contact_id,
+        at,
+        text: r.first_text,
+        count: Number(r.n),
+        source: { table: "action_items", id: r.first_id, text: r.first_text, quote: r.first_text },
+      });
+    }
   }
 
-  for (const r of rowsOf<{ contact_id: string; label: string; due_date: string | Date }>(opportunities)) {
+  for (const r of rowsOf<{ id: string; contact_id: string; label: string; due_date: string | Date }>(opportunities)) {
     const at = asDate(r.due_date);
-    if (at) out.push({ kind: "opportunity_due", contactId: r.contact_id, at, label: r.label });
+    if (at) out.push({ kind: "opportunity_due", contactId: r.contact_id, at, label: r.label, source: { table: "contact_opportunities", id: r.id, text: r.label, quote: r.label } });
   }
 
   for (const r of rowsOf<{ contact_id: string; next_step: string; generated_at: string | Date }>(briefs)) {
@@ -194,14 +230,15 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
   }
 
   const jobSeen = new Set<string>();
-  for (const r of rowsOf<{ contact_id: string | null; text: string | null; created_at: string | Date }>(jobs)) {
+  for (const r of rowsOf<{ id: string; contact_id: string | null; text: string | null; created_at: string | Date }>(jobs)) {
     const at = asDate(r.created_at);
     if (!r.contact_id || !r.text || !at || jobSeen.has(r.contact_id)) continue;
     jobSeen.add(r.contact_id);
-    out.push({ kind: "job_posting", contactId: r.contact_id, at, text: r.text });
+    out.push({ kind: "job_posting", contactId: r.contact_id, at, text: r.text, source: { table: "ai_suggestions", id: r.id, text: r.text, quote: r.text } });
   }
 
   for (const r of rowsOf<{
+    id: string;
     contact_id: string;
     kind: "joined" | "left" | "title_change";
     from_org: string | null;
@@ -224,7 +261,26 @@ export async function produceInternalSignals(userId: string, now: Date): Promise
       toOrg: r.to_org,
       toTitle: r.to_title,
     }).slice(0, 200);
-    out.push({ kind: "job_change", contactId: r.contact_id, at, move: r.kind, text });
+    out.push({ kind: "job_change", contactId: r.contact_id, at, move: r.kind, text, source: { table: "contact_career_moves", id: r.id } });
+  }
+
+  // The newest open thread the person owes, per contact. Quoted from the digest row, so the
+  // card's line is checkable against it.
+  // A digest row is keyed by its contact (one per person), so the proof names it by contact id.
+  for (const r of rowsOf<{ contact_id: string; open_threads: RelationshipOpenThread[] | string }>(threads)) {
+    const all = typeof r.open_threads === "string" ? (JSON.parse(r.open_threads) as RelationshipOpenThread[]) : r.open_threads;
+    const owed = (Array.isArray(all) ? all : [])
+      .filter((t) => t.owedBy === "me" && typeof t.text === "string" && t.text.trim())
+      .sort((a, b) => b.sinceIso.localeCompare(a.sinceIso))[0];
+    const at = owed ? asDate(owed.sinceIso) : null;
+    if (!owed || !at) continue;
+    const text = owed.text.trim().slice(0, 160);
+    out.push({ kind: "open_thread", contactId: r.contact_id, at, text, source: { table: "relationship_digests", id: r.contact_id, text: owed.text, quote: text } });
+  }
+
+  for (const r of rowsOf<{ id: string; contact_id: string; at: string | Date }>(encounters)) {
+    const at = asDate(r.at);
+    if (at) out.push({ kind: "met_recently", contactId: r.contact_id, at, source: { table: "interactions", id: r.id } });
   }
 
   return out;
@@ -295,10 +351,10 @@ export async function loadCandidates(userId: string, signalContactIds: readonly 
          AND ${metContactSql(sql`contacts.id`, userId)}
          AND (
            id = ANY(${idArray})
-           OR priority_level >= 2
-           OR relationship_score >= 4
-           OR stated_closeness >= 4
-           OR (closeness_tier IN ('inner', 'mid') AND closeness_evidence >= ${EVIDENCE_FLOOR})
+           -- Silence alone is a reason only for someone with a stated rhythm or an inner-circle
+           -- tie with real evidence (the scorer's dormancy rule); everyone else needs a signal.
+           OR cadence_days IS NOT NULL
+           OR (closeness_tier = 'inner' AND closeness_evidence >= ${EVIDENCE_FLOOR})
          )
        ORDER BY (id = ANY(${idArray})) DESC, closeness DESC NULLS LAST, id
        LIMIT ${RADAR_CANDIDATE_CAP}

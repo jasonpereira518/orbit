@@ -19,10 +19,8 @@ import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { guardModelOutput } from "@/lib/ai-security";
 import { friendlyError } from "@/lib/errors";
 import { chooseCompletionKey } from "@/lib/managed-ai-policy";
-import { RADAR_CAPS } from "@/lib/radar/score";
 import type { RadarAiNote, RadarEvidence, RadarReason, RecommendationKind } from "@/lib/radar/types";
 import { buildRadarWhyPrompt, radarWhyInputs } from "@/lib/radar/why-prompt";
-import { reportUnlessQuiet } from "@/lib/report-error";
 
 const noteSchema = z.object({ why: z.string(), opener: z.string() });
 
@@ -130,41 +128,6 @@ async function loadTargets(userId: string, where: ReturnType<typeof sql>, limit:
     title: r.title,
     company: r.company,
   }));
-}
-
-/**
- * Notes for the cards a person sees first, during a run: the top of the pending list,
- * where the stored note is missing or was written from different facts. Sequential, under
- * one deadline, so a slow provider costs the run its notes rather than its schedule.
- */
-export async function explainTopForRun(
-  userId: string,
-  access: AiAccess,
-  opts: { budgetMs: number }
-): Promise<number> {
-  const signal = AbortSignal.timeout(Math.max(1_000, opts.budgetMs));
-  const top = await loadTargets(userId, sql`TRUE`, RADAR_CAPS.today);
-  const db = await getDb();
-  const current = rowsOf<{ id: string }>(
-    await db.execute(sql`
-      SELECT id FROM recommendations
-       WHERE user_id = ${userId} AND status = 'pending'
-         AND ai_note IS NOT NULL AND ai_note ->> 'inputsHash' = inputs_hash
-    `)
-  );
-  const fresh = new Set(current.map((r) => r.id));
-  let written = 0;
-  for (const target of top) {
-    if (fresh.has(target.id)) continue;
-    if (signal.aborted) break;
-    try {
-      if (await writeNote(userId, target, access, signal)) written++;
-    } catch (err) {
-      reportUnlessQuiet(err, { where: "job.radar.why", userId, level: "warning" });
-      if (signal.aborted) break;
-    }
-  }
-  return written;
 }
 
 /** One card's note on demand, from the page. */

@@ -54,9 +54,9 @@ const FORBIDDEN_IMPORTERS = [
   "src/lib/radar/digest-email.ts",
   "src/lib/radar/drafts.ts",
   "src/lib/radar/why-prompt.ts",
-  "src/lib/radar/rerank-prompt.ts",
+  "src/lib/radar/editor-prompt.ts",
   "src/lib/radar/explain.ts",
-  "src/lib/radar/rerank.ts",
+  "src/lib/radar/editor.ts",
   "src/lib/radar/autopilot.ts",
   "src/lib/radar/signals/email.ts",
 ];

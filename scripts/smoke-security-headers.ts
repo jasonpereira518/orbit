@@ -64,6 +64,10 @@ function main() {
   console.log("\nEnforced...");
   const enforced = buildSecurityHeaders({ dev: false, enforce: true, clerkPublishableKey: pk });
   check("CSP_ENFORCE moves the policy to the enforcing header", Boolean(header(enforced, "Content-Security-Policy")) && header(enforced, "Content-Security-Policy-Report-Only") === null);
+  // Both Orbit Voice SDKs load their microphone AudioWorklet from a blob: URL, and worklet
+  // loads answer to script-src. Without blob: every call dies right after connecting.
+  check("enforced script-src allows blob: (Orbit Voice audio worklets)",
+    /script-src[^;]*blob:/.test(header(enforced, "Content-Security-Policy") ?? ""));
 
   console.log("\nDevelopment...");
   const dev = buildSecurityHeaders({ dev: true, enforce: false, clerkPublishableKey: undefined });

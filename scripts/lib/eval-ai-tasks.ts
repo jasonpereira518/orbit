@@ -77,6 +77,7 @@ import { buildWindow } from "../../src/lib/relationship-engine/gather";
 import { buildDigestPrompt, extractRelationshipDigest, isTrivialWindow } from "../../src/lib/relationship-engine/extract";
 import { locateExcerpt, validateDigest } from "../../src/lib/relationship-engine/validate";
 import { planDigestWrites } from "../../src/lib/relationship-engine/rules";
+import { buildEditorPrompt, parseEditorReply, type EditorCandidate } from "../../src/lib/radar/editor-prompt";
 import type {
   CalendarEvalFixture,
   CaptureChecksEvalFixture,
@@ -94,6 +95,7 @@ import type {
   OcrEvalFixture,
   RecruiterEvalFixture,
   RelationshipEvalFixture,
+  RadarEditorEvalFixture,
   ResearchEvalFixture,
   TranscribeEvalFixture,
 } from "./eval-ai-fixtures";
@@ -146,6 +148,7 @@ export type TaskName =
   | "research"
   | "digest"
   | "relationship"
+  | "radar-editor"
   | "web-search";
 
 export const TASK_NAMES: TaskName[] = [
@@ -166,6 +169,7 @@ export const TASK_NAMES: TaskName[] = [
   "research",
   "digest",
   "relationship",
+  "radar-editor",
   "web-search",
 ];
 
@@ -1949,6 +1953,94 @@ export async function runDigestTask({ userId, limit, log }: RunOpts): Promise<Ta
   };
 }
 
+/* -------------------------------------------------------------------- radar editor ----- */
+
+/**
+ * Radar's weekly editor (`src/lib/radar/editor-prompt.ts`): one call that nudges a verified
+ * shortlist and writes each card's why and opener. Pure path, no database: the same prompt,
+ * the same call, the same checked parse the run uses. Scored on what a bad edit looks like:
+ * an unusable reply, cards left without a why, words that were never in the facts (the
+ * fixture's forbidden list), obeying an instruction planted in the goals or a brief, and
+ * ranking against the goal.
+ */
+export async function runRadarEditorTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<RadarEditorEvalFixture>("ai-radar-editor-eval.json").cases.slice(0, limit);
+  const usable = tally();
+  const whyCoverage = tally();
+  const injectionHeld = tally();
+  const goalOrder = tally();
+  let inventedFacts = 0;
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+  const now = new Date();
+  const at = (days: number | null) => (days === null ? null : new Date(now.getTime() + days * 86_400_000).toISOString());
+
+  for (const c of cases) {
+    try {
+      const candidates: EditorCandidate[] = c.cards.map((card) => ({
+        contactId: card.id,
+        kind: card.kind,
+        score: card.score,
+        baseScore: card.score,
+        bucket: "soon",
+        reasons: card.reasons,
+        evidence: card.evidence.map((e) => ({ label: e.label, at: at(e.daysFromNow) })),
+        expiresAt: new Date(now.getTime() + 7 * 86_400_000),
+        inputsHash: `eval-${c.id}-${card.id}`,
+        title: card.title,
+        company: card.company,
+        tier: card.tier,
+        standing: card.standing,
+      }));
+      const prompt = buildEditorPrompt(candidates, c.goals);
+      const raw = await timed(latenciesMs, () =>
+        completeJson(userId, { system: prompt.system, user: prompt.user, operation: "radar.rerank", maxOutputTokens: 3_000 })
+      );
+      const parsed = parseEditorReply(raw, prompt);
+      count(usable, Boolean(parsed && parsed.size > 0));
+      let missed = !parsed || parsed.size === 0;
+      const items = c.cards.map((card) => ({ card, item: parsed?.get(`${card.id}:${card.kind}`) }));
+      for (const { item } of items) count(whyCoverage, Boolean(item?.why));
+      const words = items.flatMap(({ item }) => [item?.why ?? "", item?.opener ?? ""]).join(" ").toLowerCase();
+      const invented = c.expect.forbidden.filter((f) => words.includes(f.toLowerCase()));
+      if (invented.length) {
+        inventedFacts += invented.length;
+        missed = true;
+      }
+      if (c.expect.injection) {
+        const obeyed = items.length > 1 && items.every(({ item }) => item?.adjust === 15);
+        count(injectionHeld, !obeyed);
+        missed ||= obeyed;
+      }
+      if (c.expect.higher && c.expect.lower) {
+        const adj = (id: string) => items.find(({ card }) => card.id === id)?.item?.adjust ?? 0;
+        const ok = adj(c.expect.higher) >= adj(c.expect.lower);
+        count(goalOrder, ok);
+        missed ||= !ok;
+      }
+      if (missed) misses.push(c.id);
+      log(`  ${missed ? "MISS" : "ok  "} radar-editor/${c.id}${invented.length ? ` (invented: ${invented.join(", ")})` : ""}`);
+    } catch (err) {
+      misses.push(c.id);
+      count(usable, false);
+      log(`  FAIL radar-editor/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      replyUsable: rate(usable),
+      whyCoverage: rate(whyCoverage),
+      inventedFacts,
+      injectionHeld: rate(injectionHeld),
+      goalOrder: rate(goalOrder),
+    },
+  };
+}
+
 /* -------------------------------------------------------------------- relationship ----- */
 
 /**
@@ -2159,5 +2251,6 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   research: runResearchTask,
   digest: runDigestTask,
   relationship: runRelationshipTask,
+  "radar-editor": runRadarEditorTask,
   "web-search": runWebSearchTask,
 };

@@ -102,7 +102,7 @@ export async function loadPostSignals(
   const db = await getDb();
   const since = new Date(now.getTime() - RADAR_WINDOWS.postMax * DAY_MS);
   const rows = await db
-    .select({ contactId: contactSignals.contactId, occurredAt: contactSignals.occurredAt, payload: contactSignals.payload })
+    .select({ id: contactSignals.id, contactId: contactSignals.contactId, occurredAt: contactSignals.occurredAt, payload: contactSignals.payload })
     .from(contactSignals)
     .where(
       and(
@@ -125,6 +125,7 @@ export async function loadPostSignals(
       excerpt: r.payload.excerpt,
       network: "linkedin",
       url: safeHttpUrl(r.payload.url ?? null),
+      source: { table: "contact_signals", id: r.id, text: r.payload.excerpt, quote: r.payload.excerpt, urls: r.payload.url ? [r.payload.url] : [] },
     });
   }
   return out;

@@ -16,7 +16,7 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   actionItems,
@@ -56,7 +56,7 @@ import { loadNotificationPanel } from "../src/lib/notification-panel";
 import { getAttentionBrief } from "../src/lib/chat-attention";
 import { isSurfaceLive } from "../src/lib/surface-visibility";
 import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
-import { loadRadarBriefing } from "../src/lib/radar/page-data";
+import { loadRadarBriefing, loadRunProgress } from "../src/lib/radar/page-data";
 import { applyAutopilot, undoAutopilotForUser } from "../src/lib/radar/autopilot";
 import { draftChannel, draftTodayForRun } from "../src/lib/radar/drafts";
 import { draftIntent } from "../src/lib/radar/types";
@@ -216,7 +216,7 @@ async function seed() {
 async function pending() {
   const db = await getDb();
   return db
-    .select({ id: recommendations.id, contactId: recommendations.contactId, kind: recommendations.kind, aiNote: recommendations.aiNote })
+    .select({ id: recommendations.id, contactId: recommendations.contactId, kind: recommendations.kind, aiNote: recommendations.aiNote, evidence: recommendations.evidence })
     .from(recommendations)
     .where(and(eq(recommendations.userId, USER), eq(recommendations.status, "pending")));
 }
@@ -232,11 +232,18 @@ run(async () => {
 
   console.log("\nthe first run");
   startQueryCount();
-  const first = await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
+  const first = await runRadarForUser(USER, { mode: "weekly", trigger: "manual", now: NOW, ai: false });
   const statements = stopQueryCount();
   const queries = capturedQueries();
   check("the run succeeds", first.ok, JSON.stringify(first));
   const rows = await pending();
+  // No proof, no card: every producer hands its source row over, so nothing real is dropped.
+  check("every card the run built carried proof", first.unproven === 0, `unproven=${first.unproven}`);
+  check(
+    "and the stored evidence says which reason it proves and how",
+    rows.length > 0 && rows.every((r) => r.evidence.some((e) => typeof e.code === "string" && e.proof !== undefined)),
+    JSON.stringify(rows.map((r) => r.evidence))
+  );
   const kindOf = (id: string) => rows.filter((r) => r.contactId === id).map((r) => r.kind).join(",");
   check("a dormant close tie is a reconnect", kindOf(ids.dormant) === "reconnect", kindOf(ids.dormant));
   check("a fresh import is not a reach_out: first and last interaction are the import's, not a meeting", kindOf(ids.intro) === "", kindOf(ids.intro));
@@ -269,7 +276,7 @@ run(async () => {
 
   console.log("\nno AI key");
   await claimRadarLease(USER, NOW);
-  const noKey = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+  const noKey = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
   check("a run asked for AI without a key still succeeds", noKey.ok);
   check("and says it skipped the notes", noKey.skippedNoKey && noKey.aiNotes === 0);
   check("every card still has its reasons", (await db.select({ reasons: recommendations.reasons }).from(recommendations).where(eq(recommendations.userId, USER))).every((r) => r.reasons.length > 0));
@@ -278,6 +285,8 @@ run(async () => {
   {
     const sent: string[] = [];
     const reranks: string[] = [];
+    // A Today moment (a reply owed) can also get a draft on the same run; those are not notes.
+    const otherCalls: string[] = [];
     let rerankReply: "good" | "garbage" | "neutral" = "good";
     const realFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -289,18 +298,23 @@ run(async () => {
       const body = typeof init?.body === "string" ? init.body : "";
       // The rerank is the one call that carries a CANDIDATES fence.
       const isRerank = body.includes("<<<CANDIDATES_");
-      (isRerank ? reranks : sent).push(body);
+      (isRerank ? reranks : body.includes("<<<FACTS_") ? sent : otherCalls).push(body);
       const reply = isRerank
         ? rerankReply === "garbage"
           ? "not json at all"
           : rerankReply === "neutral"
-            ? JSON.stringify({ items: Array.from({ length: 20 }, (_, i) => ({ id: `c${i + 1}`, adjust: 0, angle: "" })) })
+            ? JSON.stringify({ items: Array.from({ length: 20 }, (_, i) => ({ id: `c${i + 1}`, adjust: 0, why: "", opener: "" })) })
             : JSON.stringify({
               items: [
-                { id: "c1", adjust: 40, angle: "Worth a message while it is fresh." },
-                { id: "c2", adjust: -9, angle: "Nothing is waiting on you here." },
-                { id: "c3", adjust: 3, angle: "Call them in 97 weeks." },
-                { id: "c99", adjust: 15, angle: "Not a candidate." },
+                {
+                  id: "c1",
+                  adjust: 40,
+                  why: "Worth a message while it is fresh.",
+                  opener: "Good to see you recently. My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123",
+                },
+                { id: "c2", adjust: -9, why: "Nothing is waiting on you here.", opener: "Hope the new quarter is going well." },
+                { id: "c3", adjust: 3, why: "Call them in 97 weeks.", opener: "" },
+                { id: "c99", adjust: 15, why: "Not a candidate.", opener: "Hi" },
               ],
             })
         : JSON.stringify({
@@ -317,16 +331,14 @@ run(async () => {
       .set({ aiProvider: "gemini", aiModel: "gemini-3.5-flash", geminiApiKeyEncrypted: encrypt("fake-gemini") })
       .where(eq(userSettings.userId, USER));
     await claimRadarLease(USER, NOW);
-    const withAi = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
-    check("the run writes notes for the top cards", withAi.aiNotes > 0 && withAi.aiNotes <= 5, JSON.stringify(withAi));
-    // When it fails, say what the unexpected calls were: a count alone sent the last
-    // investigation through a whole CI shard to find out.
-    const unexpected = sent.filter((b) => !b.includes("<<<FACTS_")).map((b) => b.slice(0, 600));
-    check("one call per note", sent.length === withAi.aiNotes, `${sent.length} calls${unexpected.length ? `; not notes: ${JSON.stringify(unexpected)}` : ""}`);
-    check("the facts reach the model fenced", sent.every((b) => b.includes("<<<FACTS_")));
-    check("and no notes do", sent.every((b) => !/Met at|raw_notes/.test(b)));
+    const withAi = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
+    // The editor (Radar revision PR 5): one call orders the plan and writes the notes. There
+    // is no per-card why-line call any more.
+    check("the run writes notes for the top cards from the editor", withAi.aiNotes > 0, JSON.stringify(withAi));
+    check("with no separate why-line calls", sent.length === 0, `${sent.length} calls`);
+    check("and no notes reach the editor", reranks.every((b) => !/Met at|raw_notes/.test(b)));
 
-    check("one rerank call per run", reranks.length === 1, `${reranks.length}`);
+    check("one editor call per weekly build", reranks.length === 1, `${reranks.length}`);
     check("it moved cards", withAi.reranked > 0 && !withAi.rerankFailed, JSON.stringify(withAi));
     check("the goals and the candidates reach it fenced", reranks.every((b) => b.includes("<<<GOALS_") && b.includes("<<<CANDIDATES_")));
     check("it never sees a name", reranks.every((b) => !/Dormant Dana|Intro Ivan|Inbound Ines|Meeting Mo/.test(b)));
@@ -343,14 +355,14 @@ run(async () => {
 
     reranks.length = 0;
     await claimRadarLease(USER, NOW);
-    const cachedRun = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    const cachedRun = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
     check("an unchanged shortlist reuses the answer without a call", reranks.length === 0 && cachedRun.rerankCached, JSON.stringify(cachedRun));
 
     // A malformed reply leaves the rules' order: nothing moved, the run still fine.
     await db.execute(sql`DELETE FROM ai_result_cache WHERE user_id = ${USER} AND operation = 'radar.rerank'`);
     rerankReply = "garbage";
     await claimRadarLease(USER, NOW);
-    const garbled = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
+    const garbled = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
     const afterGarbage = await db
       .select({ delta: recommendations.aiDelta, score: recommendations.score, base: recommendations.baseScore })
       .from(recommendations)
@@ -362,16 +374,21 @@ run(async () => {
     const noted = (await db.select({ aiNote: recommendations.aiNote }).from(recommendations).where(eq(recommendations.userId, USER)))
       .map((r) => r.aiNote)
       .filter((n): n is NonNullable<typeof n> => n !== null);
-    check("the why is stored", noted.some((n) => n.why.startsWith("You met recently")));
+    check("the why is stored", noted.some((n) => n.why === "Worth a message while it is fresh."), JSON.stringify(noted));
+    check("an opener that invents nothing is stored", noted.some((n) => n.opener === "Hope the new quarter is going well."));
     check("a secret in the reply never reaches the row", noted.every((n) => !n.opener.includes("sk-ant-api03")));
-    sent.length = 0;
+    // The failed run above cached nothing: one neutral run caches the editor's answer first.
     await claimRadarLease(USER, NOW);
-    const again = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: true });
-    check("unchanged facts cost no second call", again.aiNotes === 0 && sent.length === 0, `${sent.length} calls`);
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
+    sent.length = 0;
+    reranks.length = 0;
+    await claimRadarLease(USER, NOW);
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
+    check("unchanged facts cost no second call", sent.length === 0 && reranks.length === 0, `${sent.length + reranks.length} calls`);
     const nextDay = new Date(NOW.getTime() + DAY);
     await claimRadarLease(USER, nextDay);
-    await runRadarForUser(USER, { trigger: "schedule", now: nextDay, ai: true });
-    check("nor does a day passing", sent.length === 0, `${sent.length} calls`);
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: nextDay, ai: true });
+    check("nor does a day passing", sent.length === 0 && reranks.length === 0, `${sent.length + reranks.length} calls`);
     globalThis.fetch = realFetch;
     await db.update(userSettings).set({ geminiApiKeyEncrypted: null }).where(eq(userSettings.userId, USER));
     await db.update(recommendations).set({ aiNote: null }).where(eq(recommendations.userId, USER));
@@ -381,7 +398,7 @@ run(async () => {
   await db.insert(contacts).values(scaleContactRows(USER, 300, {}));
   await claimRadarLease(USER, NOW);
   startQueryCount();
-  const bigger = await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
+  const bigger = await runRadarForUser(USER, { mode: "weekly", trigger: "manual", now: NOW, ai: false });
   const biggerStatements = stopQueryCount();
   check("the run still succeeds", bigger.ok);
   check("the same statements at 312 contacts as at 12", biggerStatements === statements, `${biggerStatements} vs ${statements}`);
@@ -391,19 +408,24 @@ run(async () => {
   // (`loadUserFocus`) and the email-insights opt-in check (`produceEmailSignals`, one statement
   // that returns nothing for an account that has not opted in); see smoke-page-budgets.
   // 29: plus active-projects read folded alongside user_settings (which now provides focus, tz, plan, and toggles).
-  check("and a bounded number of them", statements <= 29, String(statements));
+  // 30 (Radar revision PR 3): the news probe is gone (PR 1), and two constant reads joined the
+  // signal batch: open threads the person owes (relationship_digests) and the latest real
+  // encounter per contact (met_recently). Neither grows with the size of the network.
+  // 44 (Refresh now's progress): plus one best-effort `radar_runs` UPDATE per stage the run enters
+  // (at most 9) and per draft (at most 5), a constant that does not grow with the network.
+  check("and a bounded number of them", statements <= 44, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);
   await db.delete(contacts).where(and(eq(contacts.userId, USER), notInArray(contacts.id, named)));
   await claimRadarLease(USER, NOW);
-  await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "manual", now: NOW, ai: false });
 
   console.log("\na second run changes nothing");
   const before = await pending();
   await db.update(recommendations).set({ aiNote: { why: "w", opener: "o", inputsHash: "h", generatedAt: NOW.toISOString() } }).where(eq(recommendations.id, before[0]!.id));
   await claimRadarLease(USER, NOW);
-  const second = await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: false });
+  const second = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: false });
   const after = await pending();
   check("nothing inserted, nothing expired", second.inserted === 0 && second.expired === 0, JSON.stringify(second));
   check("the same rows", JSON.stringify(after.map((r) => r.id).sort()) === JSON.stringify(before.map((r) => r.id).sort()));
@@ -413,13 +435,13 @@ run(async () => {
   const dormantRec = after.find((r) => r.contactId === ids.dormant)!;
   await db.update(recommendations).set({ status: "snoozed", snoozedUntil: ahead(5) }).where(eq(recommendations.id, dormantRec.id));
   await claimRadarLease(USER, NOW);
-  await runRadarForUser(USER, { trigger: "schedule", now: NOW, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: false });
   const [snoozed] = await db.select().from(recommendations).where(eq(recommendations.id, dormantRec.id));
   check("a live snooze survives a run", snoozed?.status === "snoozed");
   check("and is not replaced by a new card", !(await pending()).some((r) => r.contactId === ids.dormant));
   const later = new Date(NOW.getTime() + 6 * DAY);
   await claimRadarLease(USER, later);
-  await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
   const [woken] = await db.select().from(recommendations).where(eq(recommendations.id, dormantRec.id));
   check("an ended snooze wakes the same row", woken?.status === "pending");
 
@@ -427,14 +449,14 @@ run(async () => {
   await db.update(recommendations).set({ status: "dismissed", resolvedAt: later }).where(eq(recommendations.id, dismissedRec.id));
   await db.insert(recommendationFeedback).values({ userId: USER, contactId: ids.dormant, recommendationId: dismissedRec.id, kind: dismissedRec.kind, action: "dismissed", createdAt: later });
   await claimRadarLease(USER, later);
-  await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
   check("a dismissal is not re-raised the next night", !(await pending()).some((r) => r.contactId === ids.dormant));
 
   const itemRec = (await pending()).find((r) => r.contactId === ids.item)!;
   await db.update(contacts).set({ title: "Head of Platform" }).where(eq(contacts.id, ids.item));
   await db.update(recommendations).set({ aiNote: { why: "w", opener: "o", inputsHash: "h", generatedAt: NOW.toISOString() } }).where(eq(recommendations.id, itemRec.id));
   await claimRadarLease(USER, later);
-  await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+  await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
   const [itemAfter] = await db.select().from(recommendations).where(eq(recommendations.id, itemRec.id));
   check("an AI note is dropped when what it was written from changes", itemAfter?.aiNote === null);
 
@@ -510,7 +532,7 @@ run(async () => {
     const opportunity = pick(ids.opportunity);
     await neverForContactForUser(USER, opportunity.id);
     await claimRadarLease(USER, later);
-    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
     check("'Not for this person' survives the next run", !(await pending()).some((r) => r.contactId === ids.opportunity));
     check("nor does the scheduled contact come back as a new card", !(await pending()).some((r) => r.contactId === ids.job));
     check("Undo on 'not for this person' restores the card", (await restoreRecommendationForUser(USER, opportunity.id)).restored);
@@ -535,6 +557,21 @@ run(async () => {
   check("a paused account is never run", runsPaused.length === runsStale.length);
   const hiddenBriefing = await loadRadarBriefing(USER);
   check("a switched-off account has no dashboard briefing, whatever it ran before", !hiddenBriefing.hasRun && hiddenBriefing.top.length === 0);
+
+  // Refresh now's progress bar: a finished run reads 100%, a crashed one never holds the bar.
+  const [lastRun] = await db.select().from(radarRuns).where(eq(radarRuns.userId, USER)).orderBy(desc(radarRuns.startedAt)).limit(1);
+  check("a finished run reads 100% with no stage left", lastRun?.status === "ok" && lastRun.progress === 100 && lastRun.stage === null, JSON.stringify({ p: lastRun?.progress, s: lastRun?.stage }));
+  const idle = await loadRunProgress(USER);
+  check("and is not running", !idle.running && idle.progress === 100 && idle.status === "ok");
+  const started = new Date(later.getTime() + 61 * 3_600_000);
+  const [live] = await db
+    .insert(radarRuns)
+    .values({ userId: USER, trigger: "manual", startedAt: started, stage: "Writing drafts", progress: 78, detail: "3 of 5" })
+    .returning();
+  const going = await loadRunProgress(USER, new Date(started.getTime() + 5_000));
+  check("a run under way reports its stage, bar and count", going.running && going.label === "Writing drafts" && going.progress === 78 && going.detail === "3 of 5", JSON.stringify(going));
+  check("a 'running' row older than the lease (a crash) is not running", !(await loadRunProgress(USER, new Date(started.getTime() + 11 * 60_000))).running);
+  await db.delete(radarRuns).where(eq(radarRuns.id, live!.id));
 
   const fresh = "smoke-radar-run-fresh";
   await db.delete(userSettings).where(eq(userSettings.userId, fresh));
@@ -576,7 +613,7 @@ run(async () => {
     );
     await db.update(userSettings).set({ radarPaused: 0 }).where(eq(userSettings.userId, USER));
     await claimRadarLease(USER, learnAt);
-    const taught = await runRadarForUser(USER, { trigger: "schedule", now: learnAt, ai: false });
+    const taught = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: learnAt, ai: false });
     check("the run succeeds with a model", taught.ok, JSON.stringify(taught));
     const [lee] = await db
       .select({ score: recommendations.score, base: recommendations.baseScore, kind: recommendations.kind })
@@ -610,7 +647,7 @@ run(async () => {
       detectedAt: new Date(later.getTime() - 2 * DAY),
     });
     await claimRadarLease(USER, later);
-    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
     const [card] = await db
       .select({ kind: recommendations.kind, reasons: recommendations.reasons })
       .from(recommendations)
@@ -639,7 +676,7 @@ run(async () => {
       detectedAt: new Date(later.getTime() - 2 * DAY),
     });
     await claimRadarLease(USER, later);
-    await runRadarForUser(USER, { trigger: "schedule", now: later, ai: false });
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: later, ai: false });
     const lateCards = await db
       .select({ kind: recommendations.kind })
       .from(recommendations)
@@ -713,9 +750,14 @@ run(async () => {
       draftChannel({ reasons: [{ code: "dormant", label: "A while", points: 30 }], hasEmail: false }) === "linkedin");
     check("a secret in the reply never reaches the card", !(withDraft?.draft?.body ?? "").includes("sk-ant-api03"));
     check("the draft is tied to the card's facts", withDraft?.draft?.inputsHash === "draft-h1");
-    draftCalls.length = 0;
-    const again = await draftTodayForRun(USER, access!, { deadline: Date.now() + 30_000 });
-    check("unchanged facts cost no second draft", again === 0 && draftCalls.length === 0, `${again} / ${draftCalls.length}`);
+    // Drafts now cover the week's whole plan (Today first), so a second pass may draft cards the
+    // first pass's limit left out; what it may never do is redraft one whose facts are unchanged.
+    const firstAt = withDraft?.draft?.generatedAt;
+    await draftTodayForRun(USER, access!, { deadline: Date.now() + 30_000 });
+    const [stillDrafted] = await db.select({ draft: recommendations.draft }).from(recommendations).where(eq(recommendations.id, draftCard.id));
+    check("unchanged facts cost no second draft", stillDrafted?.draft?.generatedAt === firstAt, `${firstAt} vs ${stillDrafted?.draft?.generatedAt}`);
+    const third = await draftTodayForRun(USER, access!, { deadline: Date.now() + 30_000 });
+    check("and once every card has one, a pass writes nothing", third === 0, String(third));
     const pageRows = await listPendingRecommendations(USER, 50);
     check("the page gets the draft", pageRows.find((r) => r.id === draftCard.id)?.draft?.body.startsWith("Hi Dee") === true);
     await db.update(recommendations).set({ inputsHash: "draft-h2" }).where(eq(recommendations.id, draftCard.id));
@@ -730,7 +772,9 @@ run(async () => {
     const applied = await applyAutopilot(USER, { reach_out: true }, NOW);
     const [piloted] = await db.select().from(recommendations).where(eq(recommendations.id, pilotCard.id));
     const [pilotContact] = await db.select({ next: contacts.nextFollowUpAt }).from(contacts).where(eq(contacts.id, pilot!.id));
-    check("autopilot schedules an opted-in kind", applied === 1 && piloted?.status === "auto_applied", `${applied} ${piloted?.status}`);
+    // Every pending Today reach-out with nothing scheduled qualifies; an unanswered message is a
+    // Today moment now (week.ts), so Inbound Ines is opted in alongside the seeded card.
+    check("autopilot schedules an opted-in kind", applied >= 1 && piloted?.status === "auto_applied", `${applied} ${piloted?.status}`);
     check("and remembers exactly what it set", Boolean(piloted?.autopilot?.reminderId) && pilotContact?.next?.toISOString() === piloted?.autopilot?.dueDate);
     const [otherKind] = await db.select({ status: recommendations.status }).from(recommendations).where(eq(recommendations.id, draftCard.id));
     check("but not a kind left off", otherKind?.status === "pending");
@@ -761,7 +805,7 @@ run(async () => {
     await applyAutopilot(USER, { reach_out: true }, NOW);
     await db.update(recommendations).set({ expiresAt: ago(1) }).where(eq(recommendations.id, pilotCard.id));
     await claimRadarLease(USER, NOW);
-    await runRadarForUser(USER, { trigger: "manual", now: NOW, ai: false });
+    await runRadarForUser(USER, { mode: "weekly", trigger: "manual", now: NOW, ai: false });
     const [settled] = await db.select({ status: recommendations.status }).from(recommendations).where(eq(recommendations.id, pilotCard.id));
     check("an autopilot card settles as accepted when it expires", settled?.status === "accepted", settled?.status);
     const tallies = await loadModelTallies(USER, NOW);

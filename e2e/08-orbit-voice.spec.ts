@@ -198,7 +198,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await expect(page.getByRole("button", {name: "Send", exact: true})).toBeVisible();
     await composer.fill("   ");
     await page.getByRole("button", { name: "Start Orbit Voice" }).click();
-    await expect(page.getByRole("dialog", {name: "Orbit Voice", exact: true})).toBeVisible();
+    await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Mute", exact: true }),
     ).toBeVisible();
@@ -316,9 +316,28 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       "true",
     );
     await page.getByRole("button", { name: "Unmute" }).click();
+    // Leaving Chat keeps the call: it docks at the middle right of the next page, then
+    // comes back inline when Chat opens again — one connection throughout.
+    const voice = page.getByRole("region", {name: "Orbit Voice", exact: true});
+    await page.locator('a[href="/contacts"]:visible').first().click();
+    await expect(page).toHaveURL(/\/contacts/);
+    await expect(voice.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
+    await expect.poll(async () => {
+      const box = await voice.boundingBox();
+      const view = page.viewportSize()!;
+      return Boolean(box && Math.abs(box.y + box.height / 2 - view.height / 2) < 4 && view.width - (box.x + box.width) < 32);
+    }).toBe(true);
+    const docked = test.info().outputPath(`${provider}-docked.png`);
+    await page.screenshot({ path: docked });
+    await test.info().attach(`${provider} docked voice`, { path: docked, contentType: "image/png" });
+    await voice.getByRole("link", { name: "Open chat" }).click();
+    await expect(page).toHaveURL(/\/chat/);
+    await expect(voice.getByRole("button", { name: "Transcript", exact: true })).toBeVisible();
+    expect(connected).toBe(1);
+    expect(ends).toBe(0);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect.poll(async () => {
-      const box = await page.getByRole("dialog", {name: "Orbit Voice", exact: true}).boundingBox();
+      const box = await page.getByRole("region", {name: "Orbit Voice", exact: true}).boundingBox();
       return box && box.x >= -1 && box.x + box.width <= 391;
     }).toBe(true);
     await expect(page.getByRole("button", {name: "Transcript", exact: true})).toBeInViewport({ratio: 1});
@@ -338,8 +357,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     });
     await page.evaluate(() => document.documentElement.classList.add("dark"));
     await page.emulateMedia({reducedMotion: "reduce"});
-    await expect(page.getByRole("dialog", {name: "Orbit Voice", exact: true})).toHaveCSS("background-color", "rgb(20, 21, 23)");
-    await expect(page.getByRole("dialog", {name: "Orbit Voice", exact: true})).toHaveCSS("color", "rgb(231, 236, 241)");
+    await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toHaveCSS("color", "rgb(231, 236, 241)");
     await expect(page.locator(".voice-orbit-moon")).toHaveCSS("animation-name", "none");
     const darkScreenshot = test.info().outputPath(`${provider}-dark-mobile.png`);
     await page.screenshot({path: darkScreenshot});
@@ -421,7 +439,7 @@ test("fallback is explicit; microphone permissions fail gracefully", async ({
   );
   expect(starts.length).toBe(2);
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog", {name: "Orbit Voice", exact: true})).toHaveCount(0);
+  await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toHaveCount(0);
   await expect(page.getByRole("combobox", {name: "Message Orbit"})).toBeFocused();
 });
 
