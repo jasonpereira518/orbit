@@ -38,6 +38,7 @@ const TOC: readonly TocItem[] = [
   { id: "use", label: "How it's used" },
   { id: "google", label: "Google user data" },
   { id: "recruiters", label: "Recruiter scan & directory" },
+  { id: "radar", label: "Radar" },
   { id: "third-parties", label: "Who else sees it" },
   { id: "ai", label: "AI processing" },
   { id: "payments", label: "Payments" },
@@ -52,7 +53,7 @@ const TOC: readonly TocItem[] = [
   { id: "contact", label: "Questions" },
 ];
 
-/** Every service that receives personal data, verified against the code on 2026-10-13. */
+/** Every service that receives personal data, verified against the code on 2026-11-12. */
 const PROCESSORS = [
   { name: "Clerk", badge: "Required", body: "Sign-in, sessions and account lifecycle. Holds your sign-in identity and records when you accepted these terms." },
   { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed, and BotID, which checks forms for automated traffic." },
@@ -71,13 +72,14 @@ const PROCESSORS = [
   { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Those run only if you add your own TypeSafe key in Settings. On every account, Orbit's own TypeSafe account also decides whether keeping a contact's work history current needs another web search: it reads the job history Orbit already has for that contact, when it was last checked, and short summaries of your notes and messages about them since — never the notes themselves, an email address or a phone number — and, when a search was unsure it found the right person, the public answer that search found." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Apple iCloud", badge: "Optional", body: "Your iCloud calendars, if you connect them with an app-specific password, which Orbit stores encrypted. Used to log meetings with people you know and for the meeting features described under Connected accounts." },
-  { name: "Bluesky and Mastodon", badge: "Optional", body: "For contacts whose Bluesky or Mastodon handle you added, a nightly read of their public posts for Radar. Each request carries only that public handle, to the server that hosts it." },
   { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know and for meeting prep, reminders and Chat, your mail for the recruiter scan you start, and sending the email you write from your own address, and your OneDrive files for cloud notes. See What Orbit collects and The recruiter scan." },
+  { name: "Web push services (Google, Apple, Mozilla)", badge: "Optional", body: "Deliver Radar's push notifications to devices where you turned push on. Each receives the device's push address and an encrypted message it cannot read." },
+  { name: "Event websites", badge: "Optional", body: "With Radar on, Orbit's server may open the public page of an event a search found, to check its date and place. The site sees a request from Orbit, with nothing about you." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), your personal Luma calendar link if you paste it, and the guest list you have open on an event page when you save it from the browser extension." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to, and the guest list you have open on an event page when you save it from the browser extension." },
   { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your own Apollo key. Orbit does not run it on an Apollo account of its own." },
-  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead. Resend reports back when a message bounces or is marked as spam and, for outreach sent through Orbit's Resend account, when it was delivered, first opened and first clicked. See Cookies, storage & analytics." },
+  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation, Radar's Monday and same-day emails, and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead. Resend reports back when a message bounces or is marked as spam and, for outreach sent through Orbit's Resend account, when it was delivered, first opened and first clicked. See Cookies, storage & analytics." },
   { name: "Twilio", badge: "Optional", body: "SMS outreach you send, through the Twilio account you connect." },
 ] as const;
 
@@ -388,7 +390,68 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="third-parties" index={6} title="Who else touches your data">
+        <DocSection id="radar" index={6} title="Radar">
+          <p>
+            Radar suggests who to reach out to and why. It is off until you turn it on, and while it
+            is off it reads nothing and runs no searches. With it on:
+          </p>
+          <ul>
+            <li>
+              <strong>What it reads.</strong> Your contacts, notes, meetings, reminders, the email
+              insights you turned on, and the goals, projects and city you give Orbit. Every
+              suggestion shows what it rests on: a quote from your own notes or messages, a record in
+              Orbit such as a meeting or a job change, or a link a web search returned. A suggestion
+              whose proof doesn&rsquo;t check out is dropped.
+            </li>
+            <li>
+              <strong>Links between people you know.</strong> To suggest an introduction or an ask,
+              Radar compares a recent note about one person with notes about other people you have
+              met, and sends the matching passages to your AI provider to judge whether the link is
+              real. A draft introduction never quotes one person&rsquo;s note to the other.
+            </li>
+            <li>
+              <strong>Web searches about people you know.</strong> When Orbit re-checks where a
+              contact works (see <em>Contact work history</em> above), Radar also asks the same search
+              for that person&rsquo;s recent public posts, talks and news. This happens only for
+              people you have met, at most a set number of times a month for your plan, and costs no
+              extra search. The search sends the person&rsquo;s name and the details Orbit uses to
+              recognize them: LinkedIn URL, title, company, location and school. Orbit keeps a result
+              only if the search itself returned its link. It keeps it as a short excerpt and that
+              link, in your account only. Unlike work history, it is never shared with other Orbit
+              users.
+            </li>
+            <li>
+              <strong>Web searches for opportunities.</strong> About once a week Radar searches the
+              web for events in your city, people who could help with your goals, and programs with
+              deadlines. The search sends your city and up to five of your goals, and nothing about
+              your contacts. To check an event&rsquo;s date and place, Orbit&rsquo;s server may open
+              the event&rsquo;s public page; it never opens lu.ma pages. A person it finds is shown
+              only when someone you know works or used to work where they work, and stays in Radar until you choose{" "}
+              <strong>Save person</strong>: nothing is added to your contacts on its own. Finds you
+              don&rsquo;t save are deleted 30 days after they end or expire.
+            </li>
+            <li>
+              <strong>Alerts.</strong> When something on Radar&rsquo;s Today list won&rsquo;t keep,
+              Radar can send a push notification to each device where you turned push on, and an
+              email, at most one a day. A push travels through your browser&rsquo;s push service
+              (Google, Apple or Mozilla, depending on the browser), encrypted so that service
+              can&rsquo;t read it, and never includes anyone&rsquo;s name. Radar&rsquo;s emails (the
+              Monday email and the same-day email) do name the people on your list. They are sent
+              through Resend, and each has its own one-click unsubscribe.
+            </li>
+            <li>
+              <strong>Learning.</strong> When you hide a suggestion and say why, Radar uses your
+              answer to adjust future suggestions for your account. It is not used for anyone
+              else&rsquo;s.
+            </li>
+          </ul>
+          <p>
+            You can turn Radar off, and each of its emails and push, in Radar&rsquo;s settings at any
+            time. Deleting your data or your account deletes everything Radar keeps.
+          </p>
+        </DocSection>
+
+        <DocSection id="third-parties" index={7} title="Who else touches your data">
           <p>
             Orbit relies on the processors and integrations below. &ldquo;Required&rdquo; ones handle
             every account; &ldquo;Automatic&rdquo; ones run without a setting (photo lookups for
@@ -421,7 +484,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="ai" index={7} title="AI processing">
+        <DocSection id="ai" index={8} title="AI processing">
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
             photos of pages you scan, recruiter emails when you run the scan — is sent to an AI
@@ -471,6 +534,14 @@ export default function PrivacyPage() {
             search; it never changes a contact.
           </p>
           <p>
+            With Radar on, some of its work runs in the background on your plan&rsquo;s monthly
+            allowance: a weekly pass that picks and words your plan, the check for links between
+            people you know, drafts written ahead, and the web searches described under{" "}
+            <a href="#radar">Radar</a>. Web searches run through your AI provider&rsquo;s own search,
+            so the provider sees the text of each search. Background work on Orbit&rsquo;s accounts
+            pauses once half a month&rsquo;s credits or fewer remain.
+          </p>
+          <p>
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
             the people you talked with most. Deriving timeline events from imported LinkedIn
@@ -491,7 +562,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="payments" index={8} title="Payments">
+        <DocSection id="payments" index={9} title="Payments">
           <p>
             The Free Plan needs no payment details. Orbit Pro, Orbit Max and credit packs are sold
             through Stripe. Orbit Lifetime is no longer sold.
@@ -503,7 +574,7 @@ export default function PrivacyPage() {
             id removed. Pricing is on the <Link href="/pricing">pricing page</Link>.
           </p>
         </DocSection>
-        <DocSection id="cookies" index={9} title="Cookies, local storage, and analytics">
+        <DocSection id="cookies" index={10} title="Cookies, local storage, and analytics">
           <p>
             Orbit uses Clerk session cookies to keep you signed in. When you
             first arrive from another site or a link with campaign tags, it also
@@ -518,7 +589,9 @@ export default function PrivacyPage() {
             preferences on your device in <code>localStorage</code> —
             theme flash helpers, saved graph layout positions, and per-device
             notification opt-in. Delivered notification history and account
-            preferences live with your account instead.
+            preferences live with your account instead. If you turn on push, Orbit stores your
+            browser&rsquo;s push address and keys so it can reach that device; they are deleted when
+            you turn push off.
           </p>
           <p>
             Orbit counts its own traffic, and does it{" "}
@@ -606,7 +679,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="controls" index={10} title="Your controls">
+        <DocSection id="controls" index={11} title="Your controls">
           <p>
             In Settings, under <Link href="/settings">Data and privacy</Link>, on every plan
             including Free:
@@ -635,7 +708,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="retention" index={11} title="How long data is kept">
+        <DocSection id="retention" index={12} title="How long data is kept">
           <p>
             Your Orbit data is kept while your account is active, until you delete it with the
             controls above. Downgrading never deletes anything: contacts added while you were
@@ -649,6 +722,12 @@ export default function PrivacyPage() {
             Audio is never kept. Page views are
             deleted after 180 days; deleting your data or your account unlinks the ones made while
             you were signed in, keeping only the anonymous count.
+          </p>
+          <p>
+            Radar&rsquo;s suggestions you acted on, hid or let expire are kept as history while your
+            account exists. Finds you didn&rsquo;t save (events, people and programs from its web
+            searches) are deleted 30 days after they end or expire. A push subscription is deleted
+            when you turn push off or the push service reports it gone.
           </p>
           <p>
             Records of AI calls (which operation ran, on which model, whether it worked, never what
@@ -677,7 +756,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="security" index={12} title="Security">
+        <DocSection id="security" index={13} title="Security">
           <p>
             Traffic runs over HTTPS, every database query is scoped to your account, and API keys and
             account tokens are encrypted at rest (AES-256-GCM). Sign-in is handled by Clerk, and card
@@ -690,7 +769,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="operator-access" index={13} title="Operator access">
+        <DocSection id="operator-access" index={14} title="Operator access">
           <p>
             Running Orbit means occasionally looking at how it is doing, and at one account when
             something goes wrong for it. There is an internal operator console for that. This is what
@@ -737,7 +816,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="transfers" index={14} title="Where data is processed">
+        <DocSection id="transfers" index={15} title="Where data is processed">
           <p>
             Orbit&rsquo;s hosting, database, payment and AI providers operate globally, so your data
             may be processed outside the country you live in — most often the United States. Where
@@ -746,7 +825,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="children" index={15} title="Children">
+        <DocSection id="children" index={16} title="Children">
           <p>
             Orbit is not directed at children under 13, and we do not knowingly collect personal
             information from them. If you believe a child has provided information to Orbit, get in
@@ -754,7 +833,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="changes" index={16} title="Changes to this policy">
+        <DocSection id="changes" index={17} title="Changes to this policy">
           <p>
             This policy will change as the product does. The <strong>Last updated</strong> date at
             the top is revised whenever it happens, and material changes are called out in the app.
@@ -762,7 +841,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="contact" index={17} title="Questions">
+        <DocSection id="contact" index={18} title="Questions">
           <p>
             Questions about this policy, or about what Orbit holds on you, can go to the operator
             through the <Link href="/contact">contact page</Link>. For routine export or deletion,

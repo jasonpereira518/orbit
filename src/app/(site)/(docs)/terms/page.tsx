@@ -290,6 +290,14 @@ export default function TermsPage() {
             . You remain responsible for every message that leaves your account,
             regardless of which tool drafted it.
           </p>
+          <p>
+            Radar&apos;s suggestions can be wrong, including the people and
+            events it finds on the web: a person may not be who Radar thinks,
+            and an event may move or be cancelled. Check before you act on one.
+            Radar never contacts anyone for you. It suggests and drafts, and it
+            only schedules reminders when you ask or turn on autopilot. You are
+            responsible for any introduction or message you send.
+          </p>
         </DocSection>
 
         <DocSection id="availability" index={9} title="Availability and changes">

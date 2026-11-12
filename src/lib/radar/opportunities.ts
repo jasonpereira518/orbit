@@ -317,6 +317,30 @@ export async function runRadarWebForUser(userId: string, deps: RadarWebDeps = {}
   return stats;
 }
 
+/** How long a find that was not saved is kept after it ends or expires (the privacy page says 30 days). */
+export const RADAR_FIND_RETENTION_DAYS = 30;
+
+/**
+ * The retention promise on /privacy: every find nobody saved (found, pending, dismissed or
+ * expired) is deleted 30 days after it ended or expired, for every account, whether or not
+ * Radar is still on. Some finds are people outside the account's network, so they must not
+ * linger. Saved finds stay: they are the record of what the person chose to keep.
+ */
+export async function purgeOldRadarFinds(now: Date = new Date()): Promise<number> {
+  const db = await getDb();
+  const cutoff = new Date(now.getTime() - RADAR_FIND_RETENTION_DAYS * DAY_MS);
+  const gone = await db
+    .delete(radarOpportunities)
+    .where(
+      and(
+        inArray(radarOpportunities.status, ["found", "pending", "dismissed", "expired"]),
+        sql`coalesce(${radarOpportunities.expiresAt}, ${radarOpportunities.startsAt}, ${radarOpportunities.createdAt}) <= ${cutoff}`
+      )
+    )
+    .returning();
+  return gone.length;
+}
+
 /** Accounts whose weekly web pass is due: Radar on, not paused, never run or past their date. */
 export async function dueRadarWebAccounts(now: Date, limit: number): Promise<string[]> {
   const db = await getDb();
