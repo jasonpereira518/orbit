@@ -46,8 +46,8 @@ export function DeepgramAdapter({
         if (value) microphone.mute();
         else microphone.unmute();
       },
-      // A confirmed CRM result is an Orbit-authored agent update, never a fabricated user command.
-      sendContext: (text) => agent.injectAgentMessage(text),
+      // No sendContext: injectAgentMessage SPEAKS its text, so silent notes ride on tool results.
+      say: (text) => agent.injectAgentMessage(text),
     });
     agent.on("settings-applied", () => {
       if (closed) return;

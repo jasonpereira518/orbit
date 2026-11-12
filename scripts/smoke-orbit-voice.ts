@@ -49,6 +49,7 @@ import { VOICE_PROMPT_BUDGET, voiceReadTools } from "../src/lib/voice/tools";
 import { VOICE_MAX_TOOL_CALLS, voicePagePath } from "../src/lib/voice/policy";
 import { commitProposedAction } from "../src/actions/chat-actions";
 import { easeOrbWeights, orbParams, orbWeights } from "../src/lib/voice/visual-level";
+import { withAppEvents } from "../src/lib/voice/app-events";
 
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 delete process.env.CLERK_SECRET_KEY;
@@ -94,6 +95,14 @@ async function main() {
   assert.equal(voiceConfigSchema.parse({ elevenlabs: { ttsModel: "eleven_flash_v2_5" } }).elevenlabs.ttsModel, "eleven_flash_v2");
   assert.equal(voiceConfigSchema.parse({}).elevenlabs.ttsModel, "eleven_flash_v2");
   console.log("ok legacy ElevenLabs model names still parse");
+  // App events ride on the next tool result: the agent learns silently, nothing is spoken.
+  const note = ["The user confirmed the card: Remind me Friday"];
+  assert.deepEqual(JSON.parse(withAppEvents('{"ok":true}', note)), { ok: true, app_events: note });
+  assert.equal(withAppEvents('{"ok":true}', []), '{"ok":true}', "no events, untouched");
+  assert.deepEqual(JSON.parse(withAppEvents("not json", note)), { result: "not json", app_events: note });
+  assert.deepEqual(JSON.parse(withAppEvents("[1,2]", note)), { result: "[1,2]", app_events: note }, "arrays are wrapped, not mutated");
+  assert.deepEqual(JSON.parse(withAppEvents('{"app_events":["old"]}', note)), { app_events: ["old", ...note] }, "existing events kept");
+  console.log("ok app events");
   const db = await getDb();
   await bootstrapAuthenticatedUser(USER);
   await db
@@ -222,6 +231,7 @@ async function main() {
         for (const name of ["delete_contact(", "create_event(", "mark_spoke_to(", "open_page(", "daily_briefing(", "ask_chat(", "start_recording(", "set_theme(", "draft_email("])
           assert.ok(agent.think?.prompt?.includes(name), `voice can propose or drive ${name}`);
         assert.ok(agent.think?.prompt?.includes("Never\nuse markdown") || agent.think?.prompt?.includes("Never use markdown"), "speech-only formatting rule");
+        assert.ok(agent.think?.prompt?.includes("app_events"), "the agent is told what app_events are");
         assert.ok((agent.think?.prompt?.length ?? 0) <= VOICE_PROMPT_BUDGET, "prompt fits Deepgram's limit");
         assert.ok(
           agent.think?.functions?.every(
