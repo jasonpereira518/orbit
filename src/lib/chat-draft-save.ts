@@ -32,7 +32,7 @@ export async function saveDraftEdit(
   const index = recs.findIndex((r) => r.contact_id === contactId);
   const next = recs.slice();
   if (index >= 0) {
-    next[index] = { ...recs[index]!, edited_draft: draft.trim() ? draft : null };
+    next[index] = { ...recs[index], edited_draft: draft.trim() ? draft : null };
   } else {
     if (!draft.trim()) return true;
     // Only one of this person's own contacts can be added to their answer.
@@ -92,7 +92,7 @@ export async function saveDraftBlockEdit(
   if (!row?.content) return { saved: false };
   const next = replaceDraftBlock(row.content, index, edit);
   if (next === null) return { saved: false };
-  const after = draftBlocksIn(next)[index]!;
+  const after = draftBlocksIn(next)[index];
   if (next !== row.content) {
     const updated = await db
       .update(chatMessages)

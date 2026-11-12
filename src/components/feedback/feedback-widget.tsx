@@ -737,6 +737,7 @@ export function FeedbackWidget({ viewingAsUser = false }: { viewingAsUser?: bool
             onBodyChange: setChatBody,
             shots: chatShots,
             canCapture: captureSupported,
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the callback is async by design; failures are handled inside it
             onAddScreenshot: () => addScreenshot("chat"),
             onAddImageFiles: (files) => void addImageFiles(files, "chat"),
             onRemoveShot: removeChatShot,

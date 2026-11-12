@@ -229,7 +229,7 @@ export async function mergeCaptureBatchRows(
     const [only] = await db
       .update(captureJobs)
       .set({ status: "ready", batchGroupId: null, updatedAt: new Date() })
-      .where(eq(captureJobs.id, parts[0]!.id))
+      .where(eq(captureJobs.id, parts[0].id))
       .returning();
     return only ?? null;
   }
@@ -245,7 +245,7 @@ export async function mergeCaptureBatchRows(
         userId,
         sourceKind: "messy",
         status: "ready",
-        entryPoint: parts[0]!.entryPoint,
+        entryPoint: parts[0].entryPoint,
         sourceLabel: `${parts.length} notes`,
         result: { ...combined.result, parts: parts.map((r) => r.id) },
         sourceText: combined.sourceText,
@@ -320,7 +320,7 @@ export type CreateCaptureJobInput = {
 export async function createCaptureJob(userId: string, input: CreateCaptureJobInput): Promise<CaptureJobRow> {
   const db = await getDb();
   const [row] = await db.insert(captureJobs).values(captureJobValues(userId, input)).returning();
-  return row!;
+  return row;
 }
 
 /**
@@ -792,7 +792,7 @@ export async function discardCaptureJobRow(
   if (rows.length > 0) {
     // Stop pressed on a half-uploaded job is still the person discarding it; the id is the
     // dedupe key, so a repeated press is one event.
-    trackCaptureDiscarded(rows[0]!, rows[0]!.result?.items?.length ?? 0);
+    trackCaptureDiscarded(rows[0], rows[0].result?.items?.length ?? 0);
     return true;
   }
   if (opts.tombstone) {

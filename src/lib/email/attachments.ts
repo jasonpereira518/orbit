@@ -65,10 +65,6 @@ let client: BlobClient = realClient;
 export function setAttachmentBlobClientForTests(c: BlobClient | null) {
   client = c ?? realClient;
 }
-export function attachmentBlobClient(): BlobClient {
-  return client;
-}
-
 export type AttachmentInput = { pathname: string; filename: string };
 export type AttachmentFailure = {
   ok: false;

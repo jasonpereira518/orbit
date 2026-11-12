@@ -251,7 +251,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
       const camp = await getCampaign(id);
       if (camp) {
         if (camp.prospects && camp.prospects.length > 0) {
-          setDiscoveredProspects(camp.prospects as DiscoveredProspect[]);
+          setDiscoveredProspects(camp.prospects);
           setSelectedProspectIds(new Set(camp.prospects.map((p) => p.id)));
           setSearchTotal(camp.prospects.length);
         }
@@ -268,12 +268,12 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
     let list = discoveredProspects;
     if (matchPriorityFilter === "high") {
       list = list.filter((p) => {
-        const score = ((p.enrichment || {}) as Record<string, unknown>).effectivenessScore;
+        const score = ((p.enrichment || {})).effectivenessScore;
         return typeof score === "number" && score >= 80;
       });
     } else if (matchPriorityFilter === "strong") {
       list = list.filter((p) => {
-        const score = ((p.enrichment || {}) as Record<string, unknown>).effectivenessScore;
+        const score = ((p.enrichment || {})).effectivenessScore;
         return typeof score === "number" && score >= 60;
       });
     }
@@ -573,7 +573,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 <Select
                   value={replyCta}
                   onValueChange={(v) => {
-                    if (v) setReplyCta(v as OutreachReplyCta);
+                    if (v) setReplyCta(v);
                   }}
                   items={REPLY_CTA_OPTIONS}
                 >
@@ -597,7 +597,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 <Select
                   value={channel}
                   onValueChange={(v) => {
-                    if (v) setChannel(v as OutreachChannel);
+                    if (v) setChannel(v);
                   }}
                   items={CHANNEL_OPTIONS}
                 >
@@ -795,7 +795,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredProspects.map((prospect) => {
                   const isSelected = selectedProspectIds.has(prospect.id);
-                  const enrichment = (prospect.enrichment || {}) as Record<string, unknown>;
+                  const enrichment = (prospect.enrichment || {});
                   const avatarUrl = (enrichment.avatarUrl as string) || null;
                   const score = typeof enrichment.effectivenessScore === "number" ? enrichment.effectivenessScore : null;
                   const reasons = (enrichment.scoreReasons as string[]) || [];
@@ -1027,7 +1027,7 @@ export function OutreachWizard({ campaignId: initialCampaignId }: { campaignId?:
                 <Select
                   value={channel}
                   onValueChange={(v) => {
-                    if (v) setChannel(v as OutreachChannel);
+                    if (v) setChannel(v);
                   }}
                   items={CHANNEL_OPTIONS}
                 >

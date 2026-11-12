@@ -1,6 +1,7 @@
 "use server";
 
 import { and, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
+import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
@@ -254,9 +255,9 @@ export async function getCampaign(campaignId: string) {
   const userSchools: string[] = (userSettingsRow?.schools || []).filter(Boolean);
 
   // Ensure each prospect has calculated effectiveness score
-  const targetFilters = (campaign.audienceFilters || {}) as AudienceFilters;
+  const targetFilters = (campaign.audienceFilters || {});
   const enrichedProspects = campaign.prospects.map((p) => {
-    const enrichment = (p.enrichment || {}) as Record<string, unknown>;
+    const enrichment = (p.enrichment || {});
     const orgKey = p.company ? normalizeCompanyKey(p.company) : "";
     const paths = orgKey ? warmPathsRecord[orgKey] || [] : [];
     const hasWarmPath = paths.length > 0;
@@ -481,7 +482,7 @@ export async function updateCampaign(
   // Allowlisted, never spread: every export here is a public POST endpoint, and spreading
   // the argument into `.set()` let a caller write any real column — `userId` included,
   // which moved a campaign and its drafts into another account.
-  const fields = pickCampaignFields(input as Record<string, unknown>);
+  const fields = pickCampaignFields(input);
   const patch: Record<string, unknown> = {
     ...fields,
     updatedAt: new Date(),
@@ -491,7 +492,7 @@ export async function updateCampaign(
     if (!Array.isArray(sequenceSteps) || sequenceSteps.length > MAX_SEQUENCE_STEPS) {
       throw new UserFacingError(`A sequence can have at most ${MAX_SEQUENCE_STEPS} steps`);
     }
-    patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
+    patch.sequenceSteps = sequenceSteps;
   }
 
   if (audienceFilters !== undefined) {
@@ -523,7 +524,7 @@ async function searchProspectsCore(campaignId: string, _page = 1) {
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
 
-  const filters = (campaign.audienceFilters ?? {}) as AudienceFilters;
+  const filters = (campaign.audienceFilters ?? {});
   const targetCompany = filters.organizationNames?.[0] || undefined;
   const targetTitles = filters.titles?.length ? filters.titles : undefined;
 
@@ -542,15 +543,20 @@ async function searchProspectsCore(campaignId: string, _page = 1) {
   const source: OutreachSearchSource = isDemo ? "demo" : "brightdata";
   const total = bdResult.candidates.length;
 
-  const prospects: NormalizedProspect[] = bdResult.candidates.map((c, i) => {
+  const prospects: NormalizedProspect[] = bdResult.candidates.map((c) => {
     const cleanCompany = (c.company || "company").toLowerCase().replace(/[^a-z0-9]/g, "");
     const cleanName = c.fullName.toLowerCase().replace(/[^a-z0-9]/g, "");
     const email = isDemo
       ? `${cleanName}@${cleanCompany}.example.com`
-      : (((c as { email?: string }).email as string | undefined) ?? null);
+      : (((c as { email?: string }).email) ?? null);
 
     return {
-      externalId: `bd-${c.id}-${i}`,
+      // Stable across searches (c.id embeds a timestamp) so the re-run upsert matches.
+      externalId: `bd-${crypto
+        .createHash("sha256")
+        .update(`${c.linkedinUrl || ""}|${c.fullName}|${c.company}`.toLowerCase())
+        .digest("hex")
+        .slice(0, 24)}`,
       fullName: c.fullName,
       title: c.title,
       company: c.company,
@@ -1391,7 +1397,7 @@ async function sendOutreachMessageNow(messageId: string) {
 
   // Before anything else, and outside the try below: a refusal is not a failed send, so
   // the draft must not be marked "failed".
-  if (isDemoProspect(message.prospect.enrichment)) {
+  if (isDemoProspect(message.prospect)) {
     throw new UserFacingError(DEMO_PROSPECT_SEND_MESSAGE);
   }
 
@@ -1525,7 +1531,7 @@ export async function previewBulkSendQuality(input: {
       channel: m.channel as OutreachChannel,
       subject: m.subject,
       body: m.body,
-      isDemo: isDemoProspect(m.prospect.enrichment),
+      isDemo: isDemoProspect(m.prospect),
     }))
   );
 }
@@ -1613,7 +1619,7 @@ export async function saveProspectAsContact(input: {
   if (prospect.contactId) return { contactId: prospect.contactId, created: false };
 
   // A sample's email, phone and profile URL were made up: never copy them into the network.
-  const demo = isDemoProspect(prospect.enrichment);
+  const demo = isDemoProspect(prospect);
   let email = demo ? null : prospect.email;
   let phone = demo ? null : prospect.phone;
 
@@ -1773,7 +1779,7 @@ export async function triggerCampaignBackgroundSearchAction(
     after(runTask);
   } catch {
     // Outside request context (e.g. CLI or test)
-    runTask();
+    void runTask();
   }
 
   revalidatePath(`/outreach/${campaignId}`);
@@ -1966,7 +1972,7 @@ export async function bulkSendMailMergeAction(input: {
       // Apply mail merge template interpolation if template provided
       if (input.templateSubject || input.templateBody) {
         const prospect = message.prospect;
-        const enrichment = (prospect.enrichment ?? {}) as Record<string, unknown>;
+        const enrichment = (prospect.enrichment ?? {});
         const recentSignal =
           (typeof enrichment.newsContext === "string" ? enrichment.newsContext : null) ||
           (typeof enrichment.recentNews === "string" ? enrichment.recentNews : null) ||

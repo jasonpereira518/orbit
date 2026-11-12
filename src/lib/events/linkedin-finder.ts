@@ -12,6 +12,7 @@
  * identity and person keys for cross-event deduping.
  */
 
+import { linkedinFinderReplySchema } from "@/lib/ai-reply-schemas";
 import { and, eq, ilike, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactIdentities, contacts, eventAttendees, events } from "@/db/schema";
@@ -255,7 +256,7 @@ Return strictly valid JSON:
 
     // 1. Check parsed JSON
     try {
-      const parsed = parseAiJson<{ found?: boolean; linkedinUrl?: string | null }>(result.json);
+      const parsed = parseAiJson(linkedinFinderReplySchema, result.json);
       if (parsed?.found && parsed.linkedinUrl) {
         const valid = normalizeLinkedInUrl(parsed.linkedinUrl);
         if (valid) return valid;

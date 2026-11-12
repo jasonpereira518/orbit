@@ -65,7 +65,7 @@ const list = <T extends z.ZodTypeAny>(item: T) =>
   z.unknown().optional().transform((v) =>
     (Array.isArray(v) ? v : []).flatMap((entry) => {
       const parsed = item.safeParse(entry);
-      return parsed.success ? [parsed.data as z.output<T>] : [];
+      return parsed.success ? [parsed.data] : [];
     })
   );
 
@@ -572,7 +572,7 @@ async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T, i: numb
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i]!, i);
+      out[i] = await fn(items[i], i);
     }
   });
   await Promise.all(workers);

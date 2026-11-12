@@ -5,6 +5,7 @@ import { adminProviderSnapshots, userSettings } from "@/db/schema";
 import { probeDeepgramKey } from "@/lib/deepgram";
 import { getStripe, LIFETIME_METADATA_KEY, LIFETIME_METADATA_VALUE } from "@/lib/stripe";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
+import { withTimeout as sharedWithTimeout } from "@/lib/async";
 
 export type ProviderName =
   | "vercel"
@@ -117,22 +118,12 @@ function fromSnapshot(
     checkedAt: row.checkedAt,
     stale,
     href: typeof href === "string" ? href : configuredLink(provider),
-    metrics: metrics as Record<string, string | number | boolean | null>,
+    metrics: metrics,
   };
 }
 
 async function withTimeout<T>(label: string, run: () => Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      run(),
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out`)), TIMEOUT_MS);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  return sharedWithTimeout(run(), TIMEOUT_MS, `${label} timed out`);
 }
 
 async function fetchJson(url: string, token: string): Promise<unknown> {
@@ -215,7 +206,7 @@ async function checkVercel(): Promise<ProviderStatus> {
         return event.type === "stderr" || event.level === "error";
       }).length;
     } catch {
-      // Deployment reachability is still useful when the event stream is unavailable.
+      // best-effort: Deployment reachability is still useful when the event stream is unavailable.
     }
   }
   return {
@@ -419,7 +410,7 @@ async function fetchRaw(
       signal: controller.signal,
       cache: "no-store",
     });
-    const json = await response.json().catch(() => null);
+    const json = await response.json().catch(() => null); // best-effort: a non-JSON body is just "no body"
     return { status: response.status, json };
   } finally {
     clearTimeout(timer);

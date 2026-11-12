@@ -147,6 +147,13 @@ export async function getSettings() {
       apollo:
         Boolean(settings?.apolloApiKeyEncrypted) ||
         (hostedEnrichment && Boolean(process.env.APOLLO_API_KEY)),
+      brightdata:
+        Boolean(settings?.brightDataApiKeyEncrypted) ||
+        Boolean(process.env.BRIGHTDATA_API_KEY),
+      brightDataZone:
+        settings?.brightDataZone ||
+        process.env.BRIGHTDATA_ZONE ||
+        "web_unlocker1",
       resend:
         Boolean(settings?.resendApiKeyEncrypted) ||
         (hostedSending && Boolean(process.env.RESEND_API_KEY)),
@@ -427,6 +434,8 @@ export async function clearDecisionKey() {
 
 export async function saveOutreachSettings(input: {
   apolloApiKey?: string;
+  brightDataApiKey?: string;
+  brightDataZone?: string;
   resendApiKey?: string;
   twilioAccountSid?: string;
   twilioAuthToken?: string;
@@ -442,6 +451,10 @@ export async function saveOutreachSettings(input: {
     apolloApiKeyEncrypted: input.apolloApiKey?.trim()
       ? encrypt(input.apolloApiKey.trim())
       : (existing?.apolloApiKeyEncrypted ?? null),
+    brightDataApiKeyEncrypted: input.brightDataApiKey?.trim()
+      ? encrypt(input.brightDataApiKey.trim())
+      : (existing?.brightDataApiKeyEncrypted ?? null),
+    brightDataZone: input.brightDataZone?.trim() || (existing?.brightDataZone ?? null),
     resendApiKeyEncrypted: input.resendApiKey?.trim()
       ? encrypt(input.resendApiKey.trim())
       : (existing?.resendApiKeyEncrypted ?? null),

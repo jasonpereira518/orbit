@@ -23,7 +23,8 @@
  * `v1=` is versioned so a future scheme can be added alongside rather than replacing it, and
  * receivers are expected to ignore versions they do not understand.
  */
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
+import { safeEqual } from "@/lib/crypto";
 
 /** How far out of step a receiver should tolerate. Five minutes is the conventional value. */
 export const SIGNATURE_TOLERANCE_SECONDS = 300;
@@ -84,13 +85,8 @@ export function verifySignature(opts: {
   const expected = createHmac("sha256", opts.secret)
     .update(`${parsed.timestamp}.${opts.body}`)
     .digest("hex");
-  const expectedBuf = Buffer.from(expected, "utf8");
 
-  return parsed.signatures.some((candidate) => {
-    const candidateBuf = Buffer.from(candidate, "utf8");
-    if (candidateBuf.length !== expectedBuf.length) return false;
-    return timingSafeEqual(candidateBuf, expectedBuf);
-  });
+  return parsed.signatures.some((candidate) => safeEqual(candidate, expected));
 }
 
 export type WebhookEventType =

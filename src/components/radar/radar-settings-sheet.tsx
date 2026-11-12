@@ -159,7 +159,7 @@ function PushRow() {
       const reg = await navigator.serviceWorker.getRegistration("/");
       return (await reg?.pushManager.getSubscription()) ? "on" : "off";
     };
-    read()
+    void read()
       .catch((): PushState => "unsupported")
       .then((next) => {
         if (live) setState(next);

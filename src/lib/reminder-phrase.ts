@@ -134,7 +134,7 @@ function tidy(text: string): string {
     .replace(/\s+/g, " ")
     .replace(/^[\s,;:.\-–—]+|[\s,;:.\-–—!?]+$/g, "")
     .replace(/^(?:to|that|about)\s+/i, "");
-  return t ? t[0]!.toUpperCase() + t.slice(1) : "";
+  return t ? t[0].toUpperCase() + t.slice(1) : "";
 }
 
 /**
@@ -160,7 +160,7 @@ export function parseReminderPhrase(text: string, now: Date = new Date()): Remin
   let found: { index: number; length: number; day: Date } | null = null;
   for (const m of rest.matchAll(DATE_RE)) {
     const day = resolve(m.groups ?? {}, today);
-    if (day) found = { index: m.index!, length: m[0].length, day };
+    if (day) found = { index: m.index, length: m[0].length, day };
   }
 
   let title = rest;

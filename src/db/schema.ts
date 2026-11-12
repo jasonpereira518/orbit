@@ -97,7 +97,7 @@ export type ClosenessCohortSnapshot = {
  * Structural mirror of `ClosenessBreakdown` in `@/lib/closeness`.
  *
  * Declared here rather than imported so `schema.ts` keeps no dependency on the lib layer —
- * drizzle-kit loads this file directly and cannot resolve the `@/` alias. A compile-time
+ * drizzle-kit (since removed) loaded this file directly and could not resolve the `@/` alias. A compile-time
  * assertion in `@/lib/closeness-materialize` keeps the two in step.
  */
 export type StoredClosenessBreakdown = {
@@ -213,6 +213,8 @@ export const userSettings = pgTable("user_settings", {
    */
   estimatedMonthlyChurnPct: real("estimated_monthly_churn_pct"),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
+  brightDataApiKeyEncrypted: text("bright_data_api_key_encrypted"),
+  brightDataZone: text("bright_data_zone"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
   twilioAuthTokenEncrypted: text("twilio_auth_token_encrypted"),
@@ -3150,7 +3152,8 @@ export const outreachMessages = pgTable(
  *
  * The same warning as `contactEmbeddings` applies to `embedding_vector`: it is created and
  * indexed at runtime by `migratePgvector`, is deliberately absent from this declaration, and
- * `drizzle-kit push` would drop it. Migrations here are hand-written SQL on purpose.
+ * a schema-diffing tool (`drizzle-kit push`, since removed) would drop it. Migrations here are
+ * hand-written SQL on purpose.
  */
 export const memoryChunks = pgTable(
   "memory_chunks",
@@ -3225,11 +3228,10 @@ export const contactEmbeddings = pgTable(
      * `scripts/migrate-embedding-stale.ts`. All four must agree on name AND column list.
      *
      * Nothing at runtime reads this declaration — Orbit's migrations are hand-written SQL,
-     * deliberately, because `drizzle-kit push` drops the runtime-managed
-     * `embedding_vector` column. But `drizzle.config.ts` points `schema` at this file and
-     * `package.json` still ships `db:push`/`db:generate`, so a stale declaration here is a
-     * loaded gun: running either would recreate whatever this says against whatever
-     * `DATABASE_URL` resolves to.
+     * deliberately, because a schema-diffing tool (`drizzle-kit push`, since
+     * removed) drops the runtime-managed `embedding_vector` column. A stale declaration here
+     * would be a loaded gun if such a tool were ever reintroduced: it would recreate whatever
+     * this says against whatever `DATABASE_URL` resolves to.
      *
      * `source_id` is in the key because that is the real uniqueness contract.
      * `upsertContactEmbedding` (`src/lib/search.ts`) keys its existence check on all four

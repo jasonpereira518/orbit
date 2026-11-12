@@ -1,6 +1,7 @@
 "use server";
 
 import { after } from "next/server";
+import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { requirePageUser } from "@/lib/plan-guards";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
@@ -52,7 +53,6 @@ import {
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
 import { kickWorkHistoryResearch } from "@/lib/work-history-research";
-import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
@@ -112,16 +112,14 @@ import {
   type RelatedContactCandidate,
 } from "@/lib/related-contacts";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
+import { isLinkedInProfileUrl } from "@/lib/identity/linkedin";
 import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 import { trackSearchPerformed } from "@/lib/search-events";
 import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
 
-export type {
-  ContactInput,
-  ContactWriteOptions,
-} from "@/lib/contact-writes";
+export type { ContactInput } from "@/lib/contact-writes";
 
 export type {
   ContactListRow,
@@ -1304,20 +1302,6 @@ export async function backfillContactAvatars(
   };
 }
 
-function isLinkedInProfileUrl(raw: string) {
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  try {
-    const url = new URL(
-      trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
-    );
-    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
-    return host === "linkedin.com" && /\/in\//i.test(url.pathname);
-  } catch {
-    return /linkedin\.com\/in\//i.test(trimmed);
-  }
-}
-
 /**
  * Look up a LinkedIn profile (via Apollo) to autofill role and related fields
  * on the contact form. Does not write to the database.
@@ -1839,7 +1823,7 @@ export async function sendContactFollowUpEmail(
   });
   if (!queued.ok) return queued;
   scheduleDispatch(queued.id, queued.sendAt);
-  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0]! };
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0] };
 }
 
 // The related-contacts SQL lives in two IMMUTABLE functions defined with the schema

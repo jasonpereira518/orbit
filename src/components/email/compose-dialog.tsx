@@ -268,7 +268,7 @@ export function ComposeDialog({
             <div className="flex min-h-9 items-center gap-2 border-b border-border/60 py-1.5">
               <span className="w-10 shrink-0 text-xs font-medium text-muted-foreground">From</span>
               {capability?.ok && sendable.length > 1 ? (
-                <MailboxSelect mailboxes={capability.mailboxes} value={fromProvider ?? sendable[0]!.id} onChange={setFromProvider} disabled={sending} />
+                <MailboxSelect mailboxes={capability.mailboxes} value={fromProvider ?? sendable[0].id} onChange={setFromProvider} disabled={sending} />
               ) : capability?.ok ? (
                 <span className="min-w-0 truncate font-medium">{capability.fromEmail}</span>
               ) : capability && capability.reason !== "cap_reached" ? (

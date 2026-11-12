@@ -9,6 +9,7 @@ import { SHARE_TOKEN_MAX } from "@/lib/interest-list";
 import { joinInterestListCore, plausibleTicket, saveInterestListNameCore } from "@/lib/interest-list-join";
 import { isBotRequest, recordBotBlocked } from "@/lib/bot-check";
 import { recordPassCheck } from "@/lib/interest-list-ticket";
+import { reportError } from "@/lib/report-error";
 import { recordWaitlistShareCore } from "@/lib/waitlist-share";
 
 /**
@@ -55,7 +56,7 @@ export async function recordPassCheckAction(shareToken: string): Promise<void> {
   try {
     await recordPassCheck(token);
   } catch (err) {
-    console.error("[interest-list] pass check failed", err);
+    reportError(err, { where: "interest.pass.check", level: "warning" });
   }
 }
 

@@ -228,7 +228,7 @@ export async function findConfidentDuplicate(
           company: true,
           title: true,
         },
-      })) as DuplicateSubject | undefined;
+      }));
       if (contact) {
         const kind = owners[0].key.kind;
         const confidence =

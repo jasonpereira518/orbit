@@ -21,8 +21,6 @@ import {
   contacts,
   reminders,
   suggestedReminders,
-  type ReminderActionKind,
-  type ReminderOrigin,
 } from "@/db/schema";
 import { dueDayOf, isDateOnlyDue, ymdInZone } from "@/lib/reminder-due-bucket";
 import {
@@ -270,8 +268,8 @@ export async function queryRemindersPage(
         : null,
     status: r.status,
     reminderType: r.reminderType,
-    actionKind: (r.actionKind || "task") as ReminderActionKind,
-    origin: (r.origin || "explicit") as ReminderOrigin,
+    actionKind: (r.actionKind || "task"),
+    origin: (r.origin || "explicit"),
     confidenceScore: r.confidenceScore,
     listId: r.listId ?? opts.inboxId,
     contactId: r.contactId,

@@ -113,11 +113,12 @@ export function CampaignWorkspace({
   useEffect(() => {
     if (bgJob?.status !== "running") return;
 
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the callback is async by design; failures are handled inside it
     const interval = setInterval(async () => {
       try {
         const latest = await getCampaignBackgroundStatusAction(campaign.id);
         if (latest) {
-          setBgJob(latest as CampaignBackgroundJob);
+          setBgJob(latest);
           if (latest.status === "completed") {
             toast.success(latest.message || "Background deep search completed!");
             router.refresh();

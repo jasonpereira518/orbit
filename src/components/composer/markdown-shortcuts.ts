@@ -41,8 +41,8 @@ export function toggleWrap(
   end: number,
   marker: WrapMarker,
 ): TextEdit {
-  while (start < end && /\s/.test(value[start]!)) start += 1;
-  while (end > start && /\s/.test(value[end - 1]!)) end -= 1;
+  while (start < end && /\s/.test(value[start])) start += 1;
+  while (end > start && /\s/.test(value[end - 1])) end -= 1;
   const m = marker.length;
   const inner = value.slice(start, end);
   const isItalicStar = (at: number) => value[at] === "*" && value[at - 1] !== "*" && value[at + 1] !== "*";
@@ -117,14 +117,14 @@ function rewriteLines(
     let lineFrom = from;
     let newLineFrom = from;
     for (let i = 0; i < lines.length; i += 1) {
-      const lineTo = lineFrom + lines[i]!.length;
+      const lineTo = lineFrom + lines[i].length;
       if (pos <= lineTo || i === lines.length - 1) {
-        const delta = next[i]!.length - lines[i]!.length;
+        const delta = next[i].length - lines[i].length;
         const offset = Math.max(0, pos - lineFrom + delta);
-        return newLineFrom + Math.min(offset, next[i]!.length);
+        return newLineFrom + Math.min(offset, next[i].length);
       }
       lineFrom = lineTo + 1;
-      newLineFrom += next[i]!.length + 1;
+      newLineFrom += next[i].length + 1;
     }
     return pos;
   };
@@ -221,14 +221,14 @@ export function indentList(
     lineFrom += line.length + 1;
     const m = LIST_ITEM.exec(line);
     if (!m) return line;
-    const depth = m[1]!.length;
+    const depth = m[1].length;
     if (line.startsWith("\t")) return outdent ? line.slice(1) : `\t${line}`;
     if (outdent) {
       if (depth === 0) return line;
       let parent = 0;
       for (const p of listItemsAbove(value, at)) {
-        if (p[1]!.length < depth) {
-          parent = p[1]!.length;
+        if (p[1].length < depth) {
+          parent = p[1].length;
           break;
         }
       }
@@ -237,11 +237,11 @@ export function indentList(
     // No sibling above: the line's own marker width, which is what a later sibling will use.
     let width = m[0].length - depth;
     for (const p of listItemsAbove(value, at)) {
-      if (p[1]!.length === depth) {
+      if (p[1].length === depth) {
         width = p[0].length - depth;
         break;
       }
-      if (p[1]!.length < depth) break;
+      if (p[1].length < depth) break;
     }
     return " ".repeat(width) + line;
   });
@@ -268,12 +268,12 @@ export function tokenizeMarkdown(value: string): MarkRange[] {
     const h = HEADING.exec(line);
     const li = h ? null : LIST_ITEM.exec(line);
     if (h) {
-      out.push({ start: lineFrom, end: lineFrom + h[1]!.length, kind: "marker" });
+      out.push({ start: lineFrom, end: lineFrom + h[1].length, kind: "marker" });
       out.push({ start: lineFrom + h[0].length, end: lineFrom + line.length, kind: "heading" });
       bodyFrom = h[0].length;
     } else if (li) {
-      const at = lineFrom + li[1]!.length;
-      out.push({ start: at, end: at + li[2]!.length, kind: "marker" });
+      const at = lineFrom + li[1].length;
+      out.push({ start: at, end: at + li[2].length, kind: "marker" });
       bodyFrom = li[0].length;
     }
     // Blank code spans out first so a `*` inside one cannot open an italic.
@@ -323,8 +323,8 @@ export function segmentMarks<K extends string>(
   const points = [...cuts].sort((a, b) => a - b);
   const out: Segment<K>[] = [];
   for (let i = 0; i < points.length - 1; i += 1) {
-    const start = points[i]!;
-    const end = points[i + 1]!;
+    const start = points[i];
+    const end = points[i + 1];
     if (start === end) continue;
     const kinds = ranges.filter((r) => r.start <= start && r.end >= end).map((r) => r.kind);
     out.push({ start, end, kinds });

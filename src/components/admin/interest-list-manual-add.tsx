@@ -60,7 +60,7 @@ export function InterestListManualAddForm() {
             );
           }
           if (res.parseErrors.length > 0 && res.added === 0) {
-            toast.error(res.parseErrors[0]!);
+            toast.error(res.parseErrors[0]);
           }
           if (res.added > 0) {
             setPaste("");

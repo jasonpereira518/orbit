@@ -40,6 +40,7 @@ export const NEVER_REVEALABLE: readonly string[] = [
   "user_settings.openrouter_api_key_encrypted",
   "user_settings.typesafe_api_key_encrypted",
   "user_settings.apollo_api_key_encrypted",
+  "user_settings.bright_data_api_key_encrypted",
   "user_settings.resend_api_key_encrypted",
   "user_settings.twilio_account_sid_encrypted",
   "user_settings.twilio_auth_token_encrypted",

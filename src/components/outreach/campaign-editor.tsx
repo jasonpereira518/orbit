@@ -216,7 +216,7 @@ export function CampaignEditor({
               <Select
                 value={channel}
                 onValueChange={(v) => {
-                  if (v) setChannel(v as OutreachChannel);
+                  if (v) setChannel(v);
                 }}
                 items={CHANNEL_OPTIONS}
               >

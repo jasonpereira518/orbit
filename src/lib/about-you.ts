@@ -171,7 +171,7 @@ export function buildDiscoveryQuery(input: {
   schools: string[];
 }): string | null {
   const school = input.schools.map((s) => s.trim()).find(Boolean) ?? null;
-  const field = input.aim?.field ? FIELD_LABELS[input.aim.field as Field].toLowerCase() : null;
+  const field = input.aim?.field ? FIELD_LABELS[input.aim.field].toLowerCase() : null;
   const at = atCompanies(input.companies.map((c) => c.trim()).filter(Boolean).slice(0, 3));
   const what = field ? ` working in ${field}${at}` : at ? ` working${at}` : "";
   if (school) return `${school} alumni${what}`;

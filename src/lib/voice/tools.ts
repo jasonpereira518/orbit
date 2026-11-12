@@ -120,7 +120,7 @@ export function voiceToolLine(t: { name: string; description: string; inputSchem
   const args = Object.entries(schema.properties ?? {})
     .map(([name, s]) => `${name}${required.has(name) ? "" : "?"}: ${typeOf(s)}`)
     .join(", ");
-  const first = t.description.split(/(?<=\.)\s/)[0]!.slice(0, 220);
+  const first = t.description.split(/(?<=\.)\s/)[0].slice(0, 220);
   return `${t.name}(${args}) — ${first}`;
 }
 
@@ -167,7 +167,7 @@ than loading the whole account. Do not request tools not listed below.
 Call orbit_tool with tool (name) and input (a JSON object string of the arguments; "?" marks
 optional ones). If a call returns a validation error, fix the arguments and retry. Available tools:
 ${tools.map(voiceToolLine).join("\n")}
-${OPEN_PAGE_TOOL}(page: ${Object.keys(VOICE_PAGES).map((p) => JSON.stringify(p)).join("|")}, id?: string, filters?: object) — Open a page of the Orbit app. "contact" and "event" need that record's id from a lookup. filters by page: ${Object.entries(VOICE_PAGE_FILTERS).map(([page, names]) => `${page}: ${names!.join(", ")}`).join("; ")}.
+${OPEN_PAGE_TOOL}(page: ${Object.keys(VOICE_PAGES).map((p) => JSON.stringify(p)).join("|")}, id?: string, filters?: object) — Open a page of the Orbit app. "contact" and "event" need that record's id from a lookup. filters by page: ${Object.entries(VOICE_PAGE_FILTERS).map(([page, names]) => `${page}: ${names.join(", ")}`).join("; ")}.
 ${ASK_CHAT_TOOL}(question: string) — Ask Orbit Chat in this conversation and get its answer (up to ~20s; longer answers land in the chat).
 ${START_RECORDING_TOOL}() — Start the meeting recorder on the microphone.
 ${SET_THEME_TOOL}(theme: ${VOICE_THEMES.map((t) => JSON.stringify(t)).join("|")}) — Switch the app's appearance.`;

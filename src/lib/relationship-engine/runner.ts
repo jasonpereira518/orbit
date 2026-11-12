@@ -229,7 +229,7 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
       userId,
       "relationship.digest",
       slice.map((q, n) => ({ customId: `r${n}`, system: q.system, user: q.user, temperature: 0.1, maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS })),
-      payload as unknown as Record<string, unknown>
+      payload
     );
     if (jobId) {
       const until = new Date(now.getTime() + BATCH_STALE_HOURS * 3_600_000);

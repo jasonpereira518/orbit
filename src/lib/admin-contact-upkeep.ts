@@ -387,7 +387,7 @@ export async function runGlobalContactUpkeepBatch(
 
     try {
       if (Object.keys(patch).length > 0) {
-        await updateContactForUser(c.userId, c.id, patch as never, {
+        await updateContactForUser(c.userId, c.id, patch, {
           skipRevalidate: true,
           skipEmbedding: true,
           skipSummary: true,

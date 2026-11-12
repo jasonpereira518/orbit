@@ -12,7 +12,8 @@ import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
 import { RELATED_SQL_LOWER } from "@/lib/related-contacts";
 import { AI_DERIVED_SOURCE, EXCHANGE_TOUCH_TYPES, MEETING_TOUCH_TYPES, NOTE_TOUCH_TYPES, sqlList } from "@/lib/touch-kinds";
-import { createHash, randomUUID } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -3188,6 +3189,7 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // person's own off switch for the email Radar sends when a Today item won't keep (PR 9b).
 // Scanned remote refs on Nov 12 2026: custom constellations (youthful-herschel) holds 232 and
 // the Orbit Card / planet PR (#635) will need 233, so this takes 234.
+// 235 = user_settings.bright_data_api_key_encrypted + bright_data_zone
 // 236 = the email photo pool (admin refresh plan, PR 2): email_avatars (global, keyed by sha256 of
 // the lowercased trimmed address; public Gravatar lookups only) and contacts_email_lower_idx.
 // Scanned remote refs and local worktrees on Nov 12 2026: #655 (outreach) holds 235.
@@ -4102,7 +4104,7 @@ export function schemaFingerprint(): string {
     const statements = [DDL, ...SCALE_DDL, ...alters]
       .map((s) => s.replace(/\s+/g, " ").trim())
       .filter(Boolean);
-    fingerprintMemo = createHash("sha256").update(statements.join("\n")).digest("hex");
+    fingerprintMemo = sha256Hex(statements.join("\n"));
   }
   return fingerprintMemo;
 }
@@ -4303,6 +4305,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
+  await ensureColumn(client, "user_settings", "bright_data_api_key_encrypted", "text");
+  await ensureColumn(client, "user_settings", "bright_data_zone", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_auth_token_encrypted", "text");
@@ -4740,7 +4744,7 @@ const ADMIN_V2_STATEMENTS = [
  */
 export function rowsOf<T>(result: unknown): T[] {
   if (Array.isArray(result)) return result as T[];
-  return ((result as { rows?: T[] } | null)?.rows ?? []) as T[];
+  return ((result as { rows?: T[] } | null)?.rows ?? []);
 }
 
 export function isPgvectorAvailable() {
@@ -4946,6 +4950,8 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bright_data_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bright_data_zone text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_auth_token_encrypted text`,
@@ -6190,7 +6196,7 @@ export async function runAtomicWrite(
   };
 
   if (typeof batchable.batch === "function") {
-    const statements = build(db as unknown as AtomicWriter);
+    const statements = build(db);
     if (!statements.length) return;
     await batchable.batch(statements);
     return;
@@ -6200,7 +6206,7 @@ export async function runAtomicWrite(
   await local.transaction(async (tx) => {
     // Awaited one at a time on purpose: these are ordered writes (delete-then-insert),
     // and a `Promise.all` would let the driver interleave them.
-    for (const statement of build(tx as unknown as AtomicWriter)) {
+    for (const statement of build(tx)) {
       await (statement as unknown as Promise<unknown>);
     }
   });
@@ -6224,15 +6230,15 @@ export async function runAtomicBatch(
     batch?: (statements: AtomicStatement[]) => Promise<unknown[]>;
   };
   if (typeof batchable.batch === "function") {
-    const statements = build(db as unknown as AtomicWriter);
+    const statements = build(db);
     if (!statements.length) return [];
     return batchable.batch(statements);
   }
   const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
   return local.transaction(async (tx) => {
     const results: unknown[] = [];
-    for (const statement of build(tx as unknown as AtomicWriter)) {
-      results.push(await (statement as unknown as Promise<unknown>));
+    for (const statement of build(tx)) {
+      results.push(await (statement as unknown));
     }
     return results;
   });

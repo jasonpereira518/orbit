@@ -29,7 +29,7 @@ export function normalizeMastodonAcct(input: string | null | undefined): string 
   v = v.replace(/^@/, "");
   const m = v.match(/^([A-Za-z0-9_]{1,64})@([^@\s]+)$/);
   if (!m) return null;
-  const host = m[2]!.toLowerCase();
+  const host = m[2].toLowerCase();
   if (host.length > 253 || !DOMAIN.test(host)) return null;
   return `${m[1]}@${host}`;
 }

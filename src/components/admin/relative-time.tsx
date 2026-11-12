@@ -1,9 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { relativeLabel, type RelativeFormat } from "@/lib/relative-date";
 
 /**
- * A relative timestamp ("3d", "2h") with the absolute value in the tooltip.
+ * A relative timestamp with the absolute value in the tooltip. `format="short"` (default)
+ * reads "3d", "2h"; `format="long"` reads "11 minutes ago". The wording lives in
+ * `relativeLabel` (`src/lib/relative-date.ts`), so the component only owns the hydration
+ * handling below.
  *
  * Client-side and effect-driven on purpose. A relative label is a function of "now", so
  * computing it during render is both a React purity violation and a real hydration
@@ -14,21 +18,23 @@ import { useEffect, useState } from "react";
 export function RelativeTime({
   date,
   fallback = "—",
+  format = "short",
 }: {
   date: Date | string | null | undefined;
   fallback?: string;
+  format?: RelativeFormat;
 }) {
   const iso = normalizeIso(date);
   const [label, setLabel] = useState<string | null>(null);
 
   useEffect(() => {
     if (!iso) return;
-    const update = () => setLabel(relativeLabel(new Date(iso)));
+    const update = () => setLabel(relativeLabel(new Date(iso), new Date(), format));
     update();
     // Cheap enough to keep honest on a long-lived console tab.
     const timer = setInterval(update, 60_000);
     return () => clearInterval(timer);
-  }, [iso]);
+  }, [iso, format]);
 
   if (!iso) return <span className="text-muted-foreground">{fallback}</span>;
 
@@ -43,19 +49,4 @@ function normalizeIso(date: Date | string | null | undefined): string | null {
   if (!date) return null;
   const d = typeof date === "string" ? new Date(date) : date;
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
-}
-
-function relativeLabel(d: Date): string {
-  const diff = Date.now() - d.getTime();
-  const mins = Math.round(diff / 60_000);
-  if (Math.abs(mins) < 1) return "just now";
-  if (Math.abs(mins) < 60) return `${mins}m`;
-
-  const hours = Math.round(diff / 3_600_000);
-  if (Math.abs(hours) < 24) return `${hours}h`;
-
-  const days = Math.round(diff / 86_400_000);
-  if (Math.abs(days) < 365) return `${days}d`;
-
-  return `${Math.round(days / 365)}y`;
 }

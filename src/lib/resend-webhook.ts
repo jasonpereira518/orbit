@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
+import { safeEqual } from "@/lib/crypto";
 
 /**
  * Standard Webhooks signature verification, as used by Resend (and by Svix, which is where
@@ -32,15 +33,6 @@ export function resendWebhookSecret(): string | null {
 function secretKey(secret: string): Buffer {
   const raw = secret.startsWith("whsec_") ? secret.slice("whsec_".length) : secret;
   return Buffer.from(raw, "base64");
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  // timingSafeEqual throws on a length mismatch, which would itself leak length — so the
-  // lengths are compared first and the result folded in.
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
 }
 
 export function verifyResendSignature(input: {
