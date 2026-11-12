@@ -3,7 +3,7 @@ import { CircleAlert, MousePointerClick, UserX, WifiOff } from "lucide-react";
 import type { MatchCandidate } from "@contract";
 import { APP_URL } from "@/lib/env";
 import { relativeTime } from "@/lib/format";
-import { isConnectionsPage, isPersonPage } from "@/lib/page";
+import { isConnectionsPage, isPersonPage, isScanPage } from "@/lib/page";
 import {
   IdentityZone,
   PanelHeader,
@@ -19,6 +19,7 @@ import { EventRosterView } from "./views/EventRosterView";
 import { LogConnectionsView } from "./views/LogConnectionsView";
 import { GrantAccessView } from "./views/GrantAccessView";
 import { KnownContactView } from "./views/KnownContactView";
+import { ScanPageView } from "./views/ScanPageView";
 import { usePanel } from "./state/usePanel";
 
 const TIER_WORD = {
@@ -219,6 +220,9 @@ export function App() {
       );
     }
 
+    // The feed has no one to resolve; the Scan card below is the whole panel there.
+    if (isScanPage(state.page) && !isPersonPage(state.page)) return null;
+
     if (!isPersonPage(state.page) && state.resolved.status === "none") {
       return (
         <Notice
@@ -282,6 +286,10 @@ export function App() {
       <IdentityZone page={state.page} sealed={sealed} stale={staleOffline} />
       {verdict()}
       {body()}
+      {/* "Scan this page for people I know": the feed and a person's activity pages, signed in. */}
+      {state.page && isScanPage(state.page) && state.me && (
+        <ScanPageView api={api} enabled={state.me.capabilities.radarCaptureLinkedinActivity === true} />
+      )}
     </>
   );
 }

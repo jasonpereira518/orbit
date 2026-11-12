@@ -209,7 +209,14 @@ export default function PrivacyPage() {
               people you connected with at one of your events: it sends Orbit only the names,
               profile links and headlines of the connections you tick, when you press Log, and they
               are added to that event&rsquo;s guest list. None becomes a contact until you review
-              and save them in Orbit.
+              and save them in Orbit. With Radar&rsquo;s &ldquo;Save LinkedIn posts from the
+              extension&rdquo; setting on, you can save the post you have open to Radar, or press{" "}
+              <strong>Scan</strong> on your LinkedIn feed or someone&rsquo;s activity page. A scan reads
+              only the posts already on your screen, at most 25. It first sends Orbit just the
+              authors&rsquo; profile links; Orbit answers which of them are your contacts and keeps
+              none of the links. Only those contacts&rsquo; posts (their text and link) are then sent
+              and kept, as Radar activity for that contact. Posts by anyone else never leave your
+              browser.
             </li>
             <li>
               <strong>Secrets you provide</strong> — API keys for AI, enrichment, email, SMS and
@@ -398,7 +405,9 @@ export default function PrivacyPage() {
           <ul>
             <li>
               <strong>What it reads.</strong> Your contacts, notes, meetings, reminders, the email
-              insights you turned on, and the goals, projects and city you give Orbit. Every
+              insights you turned on, the goals, projects and city you give Orbit, the LinkedIn posts
+              you save or scan with the browser extension, and, if you uploaded your LinkedIn export,
+              the hashtags you use most in your own posts. Every
               suggestion shows what it rests on: a quote from your own notes or messages, a record in
               Orbit such as a meeting or a job change, or a link a web search returned. A suggestion
               whose proof doesn&rsquo;t check out is dropped.
@@ -423,8 +432,8 @@ export default function PrivacyPage() {
             <li>
               <strong>Web searches for opportunities.</strong> About once a week Radar searches the
               web for events in your city, people who could help with your goals, and programs with
-              deadlines. The search sends your city and up to five of your goals, and nothing about
-              your contacts. To check an event&rsquo;s date and place, Orbit&rsquo;s server may open
+              deadlines. The search sends your city, up to five of your goals and up to eight of the
+              hashtags you use most, and nothing about your contacts. To check an event&rsquo;s date and place, Orbit&rsquo;s server may open
               the event&rsquo;s public page; it never opens lu.ma pages. A person it finds is shown
               only when someone you know works or used to work where they work, and stays in Radar until you choose{" "}
               <strong>Save person</strong>: nothing is added to your contacts on its own. Finds you

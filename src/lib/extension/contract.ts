@@ -474,6 +474,24 @@ export type SaveActivityResponse = {
   duplicate: boolean;
 };
 
+/**
+ * "Scan this page for people I know", step one: the authors' LinkedIn profile links only.
+ * Orbit answers which are the person's contacts and keeps none of them.
+ */
+export type ScanMatchRequest = { authors: string[] };
+export type ScanMatchResponse = { contacts: { profileUrl: string; contactId: string; name: string }[] };
+
+/** Step two: only the matched contacts' posts. Each author is matched again on the server. */
+export type ScanSaveRequest = { posts: { authorProfileUrl: string; excerpt: string; url?: string | null }[] };
+export type ScanSaveResponse = {
+  /** New posts kept. */
+  saved: number;
+  /** Posts already kept from an earlier save or scan. */
+  duplicate: number;
+  /** Who they were by, for the panel's "Saved 3 posts from …". */
+  people: string[];
+};
+
 /* -------------------------------------------------------------------------- */
 /* Search + session                                                           */
 /* -------------------------------------------------------------------------- */
