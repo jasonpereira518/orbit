@@ -36,6 +36,7 @@ import { findWarmPaths } from "@/lib/warm-paths-server";
 import { DISCOVER_SYSTEM, toDiscoveryResult } from "@/lib/web-research";
 import { backgroundSearchRoom } from "@/lib/web-search-budget";
 import type { RadarEvidence } from "@/lib/radar/types";
+import { personTitle } from "@/lib/radar/person-title";
 
 export type RadarWebKind = "event" | "person" | "program";
 
@@ -60,6 +61,7 @@ export type RadarWebStats = {
 type NewOpportunity = typeof radarOpportunities.$inferInsert;
 
 const DAY_MS = 86_400_000;
+
 /** One pass a week; each kind's monthly allowance caps how many of those passes search it. */
 export const RADAR_WEB_PASS_DAYS = 7;
 const MONTH_SEC = 31 * 86_400;
@@ -183,7 +185,7 @@ async function findPeople(userId: string, city: string | null, goals: string[], 
     out.push({
       userId,
       kind: "person",
-      title: `${c.fullName}${c.title ? `, ${c.title}` : ""} at ${c.company}`,
+      title: personTitle({ ...c, company: c.company! }),
       url,
       why: c.whyMatches,
       expiresAt: new Date(now.getTime() + PERSON_OFFER_DAYS * DAY_MS),

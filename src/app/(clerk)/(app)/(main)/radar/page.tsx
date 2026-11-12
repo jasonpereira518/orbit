@@ -26,6 +26,7 @@ async function RadarBody({ searchParams }: { searchParams: Promise<Params> }) {
           id: r.id,
           contactId: r.contactId,
           kind: r.kind,
+          bucket: r.bucket,
           reasons: r.reasons,
           evidence: r.evidence,
           aiNote: r.aiNote,
@@ -59,6 +60,9 @@ async function RadarBody({ searchParams }: { searchParams: Promise<Params> }) {
           at: p.at.toISOString(),
         }))}
         focusId={focus}
+        opportunities={page.opportunities}
+        weekBuiltAt={page.weekBuiltAt ? page.weekBuiltAt.toISOString() : null}
+        coldStart={page.coldStart}
       />
       {networkStats && (
         <aside className="min-w-0">

@@ -22,6 +22,7 @@ import {
   type RecommendationRow,
 } from "@/lib/radar/store";
 import type { RadarAutopilot } from "@/lib/radar/types";
+import { listOpenOpportunities, type OpportunityView } from "@/lib/radar/opportunity-actions";
 
 export type RadarSettingsView = {
   paused: boolean;
@@ -45,7 +46,18 @@ export type RadarPageData = {
   signalsThisWeek: number;
   /** People the account's email names who are not in the network yet. Empty unless Email insights is on. */
   inboxPeople: InboxPerson[];
+  /** The weekly web pass's open finds: events, people to meet, programs. */
+  opportunities: OpportunityView[];
+  /** When this week's plan was built (the last weekly run). Null before the first. */
+  weekBuiltAt: Date | null;
+  /** What Radar still needs from the person. Only when the week is thin, else null. */
+  coldStart: RadarColdStart | null;
 };
+
+/** The help panel's checklist: each item is done or not. */
+export type RadarColdStart = { closePeople: number; hasCity: boolean; goals: number; recentNotes: boolean };
+/** The week counts as thin below this many cards and finds together. */
+export const RADAR_THIN_WEEK = 3;
 
 type PageState = {
   last_run_at: string | Date | null;
@@ -57,11 +69,17 @@ type PageState = {
   has_contacts: boolean;
   signals_week: number | string;
   email_intel: number | null;
+  week_built_at: string | Date | null;
+  close_people: number | string;
+  has_city: boolean;
+  goals: number | string;
+  recent_notes: boolean;
 };
 
 async function loadPageState(userId: string): Promise<PageState | null> {
   const db = await getDb();
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const notesSince = new Date(Date.now() - 30 * 86_400_000).toISOString();
   const [row] = rowsOf<PageState>(
     await db.execute(sql`
       SELECT s.radar_last_run_at AS last_run_at, s.radar_next_at AS next_at, s.radar_paused AS paused,
@@ -70,7 +88,14 @@ async function loadPageState(userId: string): Promise<PageState | null> {
              EXISTS (SELECT 1 FROM contacts WHERE user_id = ${userId}) AS has_contacts,
              (SELECT count(*) FROM contact_signals WHERE user_id = ${userId} AND created_at > ${since}::timestamptz)
                + (SELECT count(*) FROM contact_career_moves WHERE user_id = ${userId} AND detected_at > ${since}::timestamptz)
-               AS signals_week
+               AS signals_week,
+             (SELECT max(started_at) FROM radar_runs
+               WHERE user_id = ${userId} AND status = 'ok' AND stats ->> 'mode' = 'weekly') AS week_built_at,
+             -- The help panel's checklist, read here so a thin week costs no extra statement.
+             (SELECT count(*) FROM contacts WHERE user_id = ${userId} AND stated_closeness >= 4) AS close_people,
+             coalesce(nullif(s.career_profile ->> 'city', ''), nullif(s.career_profile -> 'profile' ->> 'location', '')) IS NOT NULL AS has_city,
+             (SELECT count(*) FROM user_goals WHERE user_id = ${userId} AND active = 1) AS goals,
+             EXISTS (SELECT 1 FROM interactions WHERE user_id = ${userId} AND interaction_date > ${notesSince}::timestamptz) AS recent_notes
         FROM (SELECT 1) one
         LEFT JOIN user_settings s ON s.user_id = ${userId}
     `)
@@ -81,11 +106,12 @@ async function loadPageState(userId: string): Promise<PageState | null> {
 const toDate = (v: string | Date | null | undefined) => (v ? new Date(v) : null);
 
 export async function loadRadarPage(userId: string): Promise<RadarPageData> {
-  const [recommendations, state, ai, autopilotActions] = await Promise.all([
+  const [recommendations, state, ai, autopilotActions, opportunities] = await Promise.all([
     listPendingRecommendations(userId, RADAR_CAPS.pending),
     loadPageState(userId),
     openRadarAi(userId),
     listAutopilotActions(userId),
+    listOpenOpportunities(userId),
   ]);
   const paused = state?.paused === 1;
   const now = new Date();
@@ -110,6 +136,17 @@ export async function loadRadarPage(userId: string): Promise<RadarPageData> {
     changes: whatChanged(recommendations, now),
     signalsThisWeek: Number(state?.signals_week ?? 0),
     inboxPeople,
+    opportunities,
+    weekBuiltAt: toDate(state?.week_built_at),
+    coldStart:
+      state?.has_contacts && recommendations.length + opportunities.length < RADAR_THIN_WEEK
+        ? {
+            closePeople: Number(state.close_people ?? 0),
+            hasCity: Boolean(state.has_city),
+            goals: Number(state.goals ?? 0),
+            recentNotes: Boolean(state.recent_notes),
+          }
+        : null,
   };
 }
 
