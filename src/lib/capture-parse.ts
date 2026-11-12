@@ -76,8 +76,11 @@ import {
   validateConnections,
   validatePromises,
 } from "@/lib/capture/person-enrichment";
+import {
+  scoreReminderImportance,
+  resolveSmartFollowUpTiming,
+} from "@/lib/smart-reminders-extract";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
-import { DEFAULT_FOLLOW_UP_WINDOW_DAYS, windowDueDate } from "@/lib/note-batches";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import type {
   BulkNotePersonPreview,
@@ -608,51 +611,91 @@ export async function runCaptureParse(
 
   const sourceHash = hashSourceNote(corpus);
   const suggestedReminders: SuggestedReminderPreview[] = commitmentResult.commitments.map(
-    (c, index) => ({
-      key: `${index}-${c.rawDatePhrase}`,
-      title: c.title,
-      description: c.description,
-      rawDatePhrase: c.rawDatePhrase,
-      dueDateIso: isoDay(c.dueDate),
-      yearInferred: c.yearInferred,
-      personName: c.personName,
-      actionKind: c.actionKind,
-      confidenceScore: c.confidenceScore,
-      sourceExcerpt: c.sourceExcerpt,
-      dateBasis: c.dateBasis,
-      anchorIso: c.anchorIso,
-      origin: "explicit" as const,
-      rationale: null,
-    })
+    (c, index) => {
+      const scoring = scoreReminderImportance({
+        title: c.title,
+        description: c.description,
+        sourceExcerpt: c.sourceExcerpt,
+        hasExplicitDate: true,
+      });
+      const timing = resolveSmartFollowUpTiming({
+        anchorDate: anchor,
+        rawDatePhrase: c.rawDatePhrase,
+        resolvedDueDate: c.dueDate,
+        noteContext: c.sourceExcerpt,
+        category: scoring.category,
+        priority: scoring.priority,
+      });
+      return {
+        key: `${index}-${c.rawDatePhrase}`,
+        title: c.title,
+        description: c.description,
+        rawDatePhrase: c.rawDatePhrase,
+        dueDateIso: isoDay(c.dueDate),
+        yearInferred: c.yearInferred,
+        personName: c.personName,
+        actionKind: c.actionKind,
+        confidenceScore: c.confidenceScore,
+        sourceExcerpt: c.sourceExcerpt,
+        dateBasis: c.dateBasis,
+        anchorIso: c.anchorIso,
+        origin: "explicit" as const,
+        rationale: null,
+        priority: scoring.priority,
+        category: scoring.category,
+        importanceReason: scoring.importanceReason,
+        timingRationale: timing.timingRationale,
+      };
+    }
   );
 
   // Implied next steps ride the same review list as dated commitments, because they end up
   // as the same kind of row — but they carry `origin: "implied"` and a rationale instead of
   // a date phrase, and `defaultReminderKeys` only pre-ticks the ones above the auto-tick bar.
   const impliedReminders: SuggestedReminderPreview[] = items.flatMap((item, personIndex) =>
-    item.impliedSteps.map((step, stepIndex) => ({
-      key: `implied-${personIndex}-${stepIndex}`,
-      title: step.text,
-      description: step.rationale,
-      // No date was said, so there is no phrase to quote. The review UI shows the rationale
-      // in this slot instead — see `SourceLine`.
-      rawDatePhrase: null,
-      dueDateIso: isoDay(windowDueDate(anchor, DEFAULT_FOLLOW_UP_WINDOW_DAYS)),
-      yearInferred: false,
-      personName: item.parsed.name,
-      actionKind: inferReminderActionKind({
+    item.impliedSteps.map((step, stepIndex) => {
+      const scoring = scoreReminderImportance({
         title: step.text,
         description: step.rationale,
-        reminderType: "ai_suggested",
-        contactId: item.suggestedMergeId,
-      }),
-      confidenceScore: step.confidenceScore,
-      sourceExcerpt: step.sourceExcerpt,
-      dateBasis: "vague" as const,
-      anchorIso: isoDay(anchor),
-      origin: "implied" as const,
-      rationale: step.rationale,
-    }))
+        sourceExcerpt: step.sourceExcerpt,
+        contactCloseness: item.parsed.relationship_score_suggestion,
+        hasExplicitDate: false,
+      });
+      const timing = resolveSmartFollowUpTiming({
+        anchorDate: anchor,
+        noteContext: `${step.rationale} ${step.sourceExcerpt}`,
+        category: scoring.category,
+        priority: scoring.priority,
+        closeness: item.parsed.relationship_score_suggestion,
+      });
+      return {
+        key: `implied-${personIndex}-${stepIndex}`,
+        title: step.text,
+        description: step.rationale,
+        // No date was said, so there is no phrase to quote. The review UI shows the rationale
+        // in this slot instead — see `SourceLine`.
+        rawDatePhrase: null,
+        dueDateIso: timing.dueDateIso,
+        yearInferred: false,
+        personName: item.parsed.name,
+        actionKind: inferReminderActionKind({
+          title: step.text,
+          description: step.rationale,
+          reminderType: "ai_suggested",
+          contactId: item.suggestedMergeId,
+        }),
+        confidenceScore: step.confidenceScore,
+        sourceExcerpt: step.sourceExcerpt,
+        dateBasis: "vague" as const,
+        anchorIso: isoDay(anchor),
+        origin: "implied" as const,
+        rationale: step.rationale,
+        priority: scoring.priority,
+        category: scoring.category,
+        importanceReason: scoring.importanceReason,
+        timingRationale: timing.timingRationale,
+      };
+    })
   );
 
   // Promises said out loud, in either direction. Explicit, so they ride with the dated
@@ -667,13 +710,30 @@ export async function runCaptureParse(
       (promise, promiseIndex) => {
         const title = promiseReminderTitle(promise, item.parsed.name);
         const resolved = promise.due_phrase ? resolveDuePhrase(promise.due_phrase, { today, anchor }) : null;
-        const due = resolved ?? windowDueDate(anchor, DEFAULT_FOLLOW_UP_WINDOW_DAYS);
+        const scoring = scoreReminderImportance({
+          title,
+          sourceExcerpt: promise.source_excerpt,
+          direction: promise.direction,
+          contactCloseness: item.parsed.relationship_score_suggestion,
+          hasExplicitDate: Boolean(resolved),
+        });
+        const timing = resolveSmartFollowUpTiming({
+          anchorDate: anchor,
+          rawDatePhrase: promise.due_phrase,
+          resolvedDueDate: resolved,
+          noteContext: promise.source_excerpt,
+          category: scoring.category,
+          priority: scoring.priority,
+          closeness: item.parsed.relationship_score_suggestion,
+        });
         return {
           key: `promise-${personIndex}-${promiseIndex}`,
           title,
           description: null,
           rawDatePhrase: promise.due_phrase,
-          dueDateIso: isoDay(due),
+          // A stated date is used exactly as resolved (main's behaviour); only an undated
+          // promise takes the timing rule's date.
+          dueDateIso: resolved ? isoDay(resolved) : timing.dueDateIso,
           yearInferred: false,
           personName: item.parsed.name,
           actionKind: inferReminderActionKind({
@@ -689,6 +749,10 @@ export async function runCaptureParse(
           anchorIso: isoDay(anchor),
           origin: "explicit" as const,
           rationale: null,
+          priority: scoring.priority,
+          category: scoring.category,
+          importanceReason: scoring.importanceReason,
+          timingRationale: timing.timingRationale,
         };
       }
     )

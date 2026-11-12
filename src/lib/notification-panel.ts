@@ -3,7 +3,16 @@ import { unreadRepliesFor } from "@/lib/feedback-thread";
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getDb, rowsOf } from "@/db";
-import { aiSuggestions, captureJobs, cloudNoteFiles, contacts, reminders, suggestedReminders } from "@/db/schema";
+import {
+  aiSuggestions,
+  captureJobs,
+  cloudNoteFiles,
+  contacts,
+  reminders,
+  suggestedReminders,
+  type ReminderPriority,
+  type ReminderCategory,
+} from "@/db/schema";
 import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
 import {
   getAccountAlerts,
@@ -205,6 +214,10 @@ export async function loadNotificationPanel(
     /** Follow-ups only: the contact's role and company, so the UI can tint the company. */
     contactTitle?: string | null;
     company?: string | null;
+    priority?: ReminderPriority;
+    category?: ReminderCategory;
+    timingRationale?: string | null;
+    importanceReason?: string | null;
   };
 
   const items: PanelItem[] = [];
@@ -262,6 +275,10 @@ export async function loadNotificationPanel(
       urgency: isDue ? "due" : "upcoming",
       reminderId: r.id,
       contactId: r.contactId,
+      priority: r.priority,
+      category: r.category,
+      timingRationale: r.timingRationale,
+      importanceReason: r.importanceReason,
     });
   }
 
@@ -321,6 +338,10 @@ export async function loadNotificationPanel(
       urgency: "info",
       suggestedReminderId: s.id,
       contactId: s.contactId,
+      priority: s.priority,
+      category: s.category,
+      timingRationale: s.timingRationale,
+      importanceReason: s.importanceReason,
     });
   }
 
@@ -381,9 +402,14 @@ export async function loadNotificationPanel(
   }
 
   const urgencyRank = { due: 0, upcoming: 1, info: 2 } as const;
+  const priorityRank = { critical: 0, high: 1, normal: 2, low: 3 } as const;
   items.sort((a, b) => {
     const ur = urgencyRank[a.urgency] - urgencyRank[b.urgency];
     if (ur !== 0) return ur;
+    const prA = a.priority ? priorityRank[a.priority] : 2;
+    const prB = b.priority ? priorityRank[b.priority] : 2;
+    const pr = prA - prB;
+    if (pr !== 0) return pr;
     const aTime = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
     const bTime = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
     return aTime - bTime;

@@ -74,11 +74,15 @@ export function GoalsSummary({
             {shownGoals.map((g) => (
               <li
                 key={g.id}
-                // A goal can be 200 characters (the input's maxLength), which as a
-                // single unbroken pill ran past the card's right edge.
-                className="max-w-full break-words rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-sm"
+                className="max-w-full break-words rounded-2xl border border-border/60 bg-muted/40 px-3 py-1.5 text-sm space-y-0.5"
               >
-                {g.text}
+                <div className="font-medium text-foreground">{g.text}</div>
+                {g.progress && (
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="size-1.5 rounded-full bg-emerald-500 shrink-0" />
+                    <span className="line-clamp-1">{g.progress}</span>
+                  </div>
+                )}
               </li>
             ))}
             {goals.length > 5 && (

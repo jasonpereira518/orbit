@@ -40,6 +40,7 @@ export const MONEY_TABS: SectionTab[] = [
   { href: "/admin/billing", label: "Overview" },
   { href: "/admin/billing/revenue", label: "Revenue" },
   { href: "/admin/billing/costs", label: "Costs" },
+  { href: "/admin/billing/usage", label: "Usage" },
 ];
 
 export const ACCESS_TABS: SectionTab[] = [

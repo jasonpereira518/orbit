@@ -10,6 +10,8 @@ import type {
   OpportunityKind,
   ReminderActionKind,
   ReminderOrigin,
+  ReminderPriority,
+  ReminderCategory,
 } from "@/db/schema";
 import type { ImpliedNextStep } from "@/lib/implied-next-steps";
 import type { LinkedInLookupSummary } from "@/lib/linkedin-paste";
@@ -106,6 +108,10 @@ export type SuggestedReminderPreview = {
   origin: ReminderOrigin;
   /** Why Orbit thinks this follows. Only set for implied items, which have no date phrase. */
   rationale: string | null;
+  priority?: ReminderPriority;
+  category?: ReminderCategory;
+  timingRationale?: string | null;
+  importanceReason?: string | null;
 };
 
 /** A person the note only referred to, with enough detail to offer as a contact later. */
