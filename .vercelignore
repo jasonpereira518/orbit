@@ -1,5 +1,18 @@
 # The browser extension is built and published separately, never deployed.
 # Anchored to the repo root: an unanchored "extension/" also matches
-# src/lib/extension/, which pruned the extension API's shared library from the
-# deployment and failed the production build.
-/extension/
+# src/lib/extension/, which pruned the extension API's shared library from the deployment and
+# failed the production build.
+#
+# One file ships on purpose: scripts/smoke-radar-scan.ts imports the LinkedIn scan adapter, and
+# `typecheck:fast` type-checks every script in the deployment. Without it the build fails with
+# "Cannot find module '../extension/src/inject/adapters/linkedin-scan'". Directories are
+# excluded by their contents (`dir/*`), because git-style rules cannot re-include a file whose
+# parent directory is itself excluded.
+/extension/*
+!/extension/src/
+/extension/src/*
+!/extension/src/inject/
+/extension/src/inject/*
+!/extension/src/inject/adapters/
+/extension/src/inject/adapters/*
+!/extension/src/inject/adapters/linkedin-scan.ts
