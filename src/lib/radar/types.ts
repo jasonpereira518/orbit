@@ -151,6 +151,13 @@ export const JOB_MOVE_CODE = "job_change";
 /** A departure with no new role yet: a check-in, never a congratulation. */
 export const JOB_LEFT_CODE = "job_change_left";
 
+/** The intent a Connect card's draft is written to. Fixed: never the other person's name or note. */
+const CONNECT_DRAFT_INTENTS: Partial<Record<RecommendationKind, string>> = {
+  introduce: "Offer an introduction to someone you know who could help with what they are working on. Name no one, and share nothing anyone else told you.",
+  ask: "Ask whether they could help with something you are working on, briefly and with an easy way to say no.",
+  share: "Pass on something you came across that is relevant to what they are working on.",
+};
+
 /** The intent a draft is written to, per email reason: fixed words, never third-party text. */
 export const EMAIL_DRAFT_INTENTS: Readonly<Record<string, string>> = {
   email_prep: "an interview or call coming up",
@@ -168,6 +175,10 @@ export const EMAIL_DRAFT_INTENTS: Readonly<Record<string, string>> = {
  * drafts and the card's on-demand draft sheet call this, so one rule covers both.
  */
 export function draftIntent(target: { kind: RecommendationKind; reasons: readonly RadarReason[] }): string {
+  // A Connect card names someone else and quotes notes about them: its draft gets fixed words,
+  // so a message to one person never carries what the person wrote about another.
+  const connect = CONNECT_DRAFT_INTENTS[target.kind];
+  if (connect) return connect;
   const lead = leadReason(target.reasons);
   const fixed = lead ? EMAIL_DRAFT_INTENTS[lead.code] : undefined;
   if (fixed) return `${KIND_LABELS[target.kind]}: ${fixed}`;
@@ -190,7 +201,8 @@ export type RadarProofTable =
   | "contact_career_moves"
   | "email_events"
   | "contact_signals"
-  | "ai_suggestions";
+  | "ai_suggestions"
+  | "memory_chunks";
 
 /**
  * Why a piece of evidence can be trusted (`src/lib/radar/verify.ts`). Built by code from rows
@@ -225,6 +237,11 @@ export type RadarEvidence = {
   /** The reason code this evidence backs. The lead reason must have one whose proof holds. */
   code?: string;
   proof?: RadarProof;
+  /**
+   * The person this evidence is about, when it is not the card's own (the other side of a
+   * Connect card). Its proof is checked against that person's rows, never the card's.
+   */
+  aboutContactId?: string;
   /**
    * Set on evidence that comes from the user's mail: which `email_events` row, and whether
    * this person is on the email. Accepting the card reads it to create the email's own task.
@@ -365,6 +382,19 @@ type RadarSignalFact =
   | { kind: "open_thread"; contactId: string; at: Date; text: string }
   /** The person's latest real encounter with them (a meeting, call, coffee, event). */
   | { kind: "met_recently"; contactId: string; at: Date }
+  /**
+   * A link between two of the person's notes (`src/lib/radar/connect.ts`): one about this contact,
+   * one about `other`. `quote` and `otherQuote` are each from its own note; `other.source` is
+   * the other note, checked against the other person.
+   */
+  | {
+      kind: "connect";
+      contactId: string;
+      at: Date;
+      connectType: "introduce" | "ask" | "share";
+      why: string;
+      other: { contactId: string; name: string; source: RadarSignalSource };
+    }
   /** A LinkedIn post of theirs the person saved with the extension. */
   | {
       kind: "social_post";

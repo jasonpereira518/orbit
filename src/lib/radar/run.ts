@@ -62,7 +62,9 @@ import { focusFitComponent, type UserFocus } from "@/lib/focus-fit";
 import { listActiveProjectsForUser, scoreProjectMatch, type UserProject } from "@/lib/projects/store";
 import { extractActiveProjectsForUser } from "@/lib/projects/extract";
 import { prepareSuggestedCalendarInvite } from "@/lib/radar/invites";
-import { leadReason } from "@/lib/radar/types";
+import { LANE_OF_KIND, leadReason } from "@/lib/radar/types";
+import { connectSignals, judgeConnectPairs, loadConnectPairs } from "@/lib/radar/connect";
+import { metContactIds } from "@/lib/met-contact";
 import { buildProofIndex, verifyPicks } from "@/lib/radar/verify";
 import { composeDay, composeWeek, nextLocal5am, nextRadarRunAt, radarRunMode, type RadarRunMode } from "@/lib/radar/week";
 
@@ -415,8 +417,21 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
 
         // No outbound people discovery here: Radar never writes to `contacts`. New people are
         // shown as opportunities the user chooses to save (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
+        // Connect (weekly, plan-gated): links between the person's notes and the people they
+        // know, judged in one call. Only people they have met can be paired.
+        let connect: RadarSignal[] = [];
+        if (mode === "weekly" && access && radarLimits.connectPerWeek > 0 && !deadlineReached(aiDeadline)) {
+          connect = await metContactIds(userId)
+            .then((met) => loadConnectPairs(userId, met, now))
+            .then(async (pairs) => connectSignals(pairs, await judgeConnectPairs(userId, access, pairs, goals, { timeoutMs: Math.max(1_000, Math.min(10_000, aiDeadline - Date.now())) })))
+            .catch((err) => {
+              reportUnlessQuiet(err, { where: "job.radar.connect", userId, level: "warning" });
+              return [];
+            });
+        }
+
         const [candidates, suppressions] = await Promise.all([
-          loadCandidates(userId, [...emailSignals, ...signals].map((s) => s.contactId)),
+          loadCandidates(userId, [...emailSignals, ...signals, ...connect].map((s) => s.contactId)),
           loadSuppressions(userId, live, now),
         ]);
 
@@ -429,7 +444,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         stats.posts = posts.length;
         // Email signals first: a card keeps at most two pieces of evidence, and the one from
         // mail is the one an accept needs to find its email again.
-        const allSignals = [...emailSignals, ...signals, ...posts];
+        const allSignals = [...emailSignals, ...signals, ...posts, ...connect];
         const scored = scorePicks(
           candidates,
           allSignals,
@@ -449,6 +464,8 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         // is spent on a card that would be dropped.
         const proofIndex = buildProofIndex([
           ...allSignals.flatMap((s) => (s.source ? [{ ...s.source, contactId: s.contactId }] : [])),
+          // The other side of a Connect link is read for the other person.
+          ...allSignals.flatMap((s) => (s.kind === "connect" ? [{ ...s.other.source, contactId: s.other.contactId }] : [])),
           ...candidates.map((c) => ({ table: "contacts" as const, id: c.id, contactId: c.id })),
         ]);
         const verified = verifyPicks(scored, proofIndex);
@@ -472,6 +489,16 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           stats.rerankCached = result.status === "cached";
           stats.aiNotes = result.noted;
         }
+
+        // Connect cards per week, by plan: the best few, never more.
+        const connectKeep = new Set(
+          ranked
+            .filter((p) => LANE_OF_KIND[p.kind] === "connect")
+            .sort((a, b) => b.score - a.score)
+            .slice(0, radarLimits.connectPerWeek)
+            .map((p) => `${p.contactId}:${p.kind}`)
+        );
+        ranked = ranked.filter((p) => LANE_OF_KIND[p.kind] !== "connect" || connectKeep.has(`${p.contactId}:${p.kind}`));
 
         // Weekly: build the plan (and Today's moments) from scratch. Daily: keep the plan's rows
         // as they are, add new moments to Today, retire cards whose person has no reason left.

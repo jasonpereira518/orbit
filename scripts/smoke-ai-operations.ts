@@ -158,6 +158,7 @@ console.log("\nDerived lists");
         "import.linkedin.timeline.decide",
         "notes.detect",
         "notes.detect.llm",
+        "radar.connect",
         "radar.draft",
         "radar.projects.extract",
         "radar.rerank",
