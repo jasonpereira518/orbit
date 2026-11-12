@@ -2079,6 +2079,8 @@ export type CareerProfile = {
   majors?: string[];
   /** The city the person typed in Settings (Radar's events near you). Beats `profile.location`, which an import sets; kept when imports are removed. */
   city?: string;
+  /** The hashtags the person uses most in their own LinkedIn posts (Shares.csv), at most 8. Imported, so "Remove imported details" clears it. */
+  postTopics?: string[];
   importedAt?: string;
 };
 
