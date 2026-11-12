@@ -1,6 +1,7 @@
 "use server";
 
 import { and, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
+import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
@@ -542,7 +543,7 @@ async function searchProspectsCore(campaignId: string, _page = 1) {
   const source: OutreachSearchSource = isDemo ? "demo" : "brightdata";
   const total = bdResult.candidates.length;
 
-  const prospects: NormalizedProspect[] = bdResult.candidates.map((c, i) => {
+  const prospects: NormalizedProspect[] = bdResult.candidates.map((c) => {
     const cleanCompany = (c.company || "company").toLowerCase().replace(/[^a-z0-9]/g, "");
     const cleanName = c.fullName.toLowerCase().replace(/[^a-z0-9]/g, "");
     const email = isDemo
@@ -550,7 +551,12 @@ async function searchProspectsCore(campaignId: string, _page = 1) {
       : (((c as { email?: string }).email as string | undefined) ?? null);
 
     return {
-      externalId: `bd-${c.id}-${i}`,
+      // Stable across searches (c.id embeds a timestamp) so the re-run upsert matches.
+      externalId: `bd-${crypto
+        .createHash("sha256")
+        .update(`${c.linkedinUrl || ""}|${c.fullName}|${c.company}`.toLowerCase())
+        .digest("hex")
+        .slice(0, 24)}`,
       fullName: c.fullName,
       title: c.title,
       company: c.company,
