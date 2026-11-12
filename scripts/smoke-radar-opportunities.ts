@@ -26,7 +26,7 @@ import { consumeBucket, RATE_LIMITS } from "../src/lib/rate-limit";
 import { orgKeysFor } from "../src/lib/warm-paths";
 import { WEB_SEARCH_BACKGROUND_SHARE, WEB_SEARCH_SCOPE, webSearchMonthKey } from "../src/lib/web-search-budget";
 import { ensureUserSettings } from "../src/lib/user-settings";
-import { clearCareerProfile, setCity } from "../src/lib/career-profile-server";
+import { clearCareerProfile, setCity, setPostTopics } from "../src/lib/career-profile-server";
 import { checker } from "./smoke/check";
 import { fakeUserId, insertContact, purgeUsers } from "./smoke/factories";
 
@@ -40,8 +40,10 @@ const cited = (...urls: string[]): WebSource[] => urls.map((url) => ({ url, titl
 /** One fake provider: answers by what the prompt asks for, and records every call. */
 function fakeSearch() {
   const asked: string[] = [];
+  const prompts: Record<string, string> = {};
   const search: RadarWebSearch = async (_userId, req) => {
     asked.push(req.kind);
+    prompts[req.kind] = req.user;
     if (req.kind === "event") {
       return {
         json: JSON.stringify({
@@ -78,7 +80,7 @@ function fakeSearch() {
       sources: cited("https://example.org/fellowship", "https://example.org/closed"),
     };
   };
-  return { search, asked };
+  return { search, asked, prompts };
 }
 
 /** The page reader: real details for the meetup, a past date for the moved one, refusal for Luma. */
@@ -129,10 +131,14 @@ run(async () => {
     await db.insert(contactExperiences).values({ userId: PRO, contactId: maya.id, kind: "role", organization: "Ramp", organizationNormalized: orgKeysFor(["Ramp"])[0]!, isCurrent: true, source: "web" });
 
     console.log("\na Pro account's weekly pass");
+    // The hashtags from their own posts (Shares.csv, PR 11) ride along as context.
+    await setPostTopics(PRO, ["ClimateTech", "Fintech"]);
     const s = fakeSearch();
     const f = fakeFetch();
     const stats = await runRadarWebForUser(PRO, { search: s.search, fetchPage: f.fetchPage, now: NOW });
     t.check("one search per kind", [...s.asked].sort().join() === "event,person,program", s.asked.join());
+    t.check("the event and people searches carry the topics they post about, fenced", /Topics they post about:[\s\S]*ClimateTech, Fintech/.test(s.prompts.event ?? "") && /Topics they post about: ClimateTech, Fintech/.test(s.prompts.person ?? ""));
+    t.check("the program search does not", !/Topics they post about/.test(s.prompts.program ?? ""));
     const rows = await db.select().from(radarOpportunities).where(eq(radarOpportunities.userId, PRO));
     const byUrl = new Map(rows.map((r) => [r.url, r]));
     t.check("the cited future event is kept", byUrl.has("https://www.meetup.com/austin-fintech/events/1"), JSON.stringify(stats));
