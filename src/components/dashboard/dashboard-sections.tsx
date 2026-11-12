@@ -516,6 +516,10 @@ export async function RemindersAndFollowUpsSection({
               ? data.contactNameById.get(r.contactId) ?? null
               : null,
             noteBatchId: r.noteBatchId,
+            priority: r.priority,
+            category: r.category,
+            timingRationale: r.timingRationale,
+            importanceReason: r.importanceReason,
           }))}
         />
       </div>
