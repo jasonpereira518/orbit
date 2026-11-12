@@ -138,6 +138,9 @@ export const AI_OPERATIONS = {
   "radar.connect": { label: "Radar: connecting your notes", tier: "fast", thinking: "minimal", background: true },
   // Extracts ongoing user projects from interactions, calendar, and notes during Radar runs.
   "radar.projects.extract": { label: "Radar: extracting active projects", tier: "fast", thinking: "minimal", background: true },
+  // Radar's weekly web pass: events near the person, people to meet, open programs
+  // (src/lib/radar/opportunities.ts). Every link it keeps is one the search cited.
+  "radar.web": { label: "Radar: events, people and programs (web search)", tier: "fast", thinking: "minimal", background: true },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
   // "Talking points" on a meeting's prep card: the user asked, so a foreground operation.

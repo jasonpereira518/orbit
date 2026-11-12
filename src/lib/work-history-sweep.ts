@@ -29,8 +29,8 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { userCanUseAi } from "@/lib/ai";
-import { bucketCount, consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
-import { WEB_SEARCH_BACKGROUND_SHARE, WEB_SEARCH_SCOPE, webSearchMonthKey } from "@/lib/web-search-budget";
+import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
+import { backgroundSearchRoom } from "@/lib/web-search-budget";
 import { utcDayKey } from "@/lib/timeline-cost";
 import {
   researchContactWorkHistory,
@@ -246,8 +246,7 @@ export async function runWorkHistorySweep(deps: WorkHistorySweepDeps = {}): Prom
         gates: await enginesFor(userId),
         spend: async () => {
           // Background stops at its share of the account's monthly searches.
-          const used = await bucketCount(WEB_SEARCH_SCOPE, webSearchMonthKey(userId, now), RATE_LIMITS.webSearchMonthly);
-          if (used >= RATE_LIMITS.webSearchMonthly.limit * WEB_SEARCH_BACKGROUND_SHARE) return false;
+          if (!(await backgroundSearchRoom(userId, now))) return false;
           try {
             await consumeBucket(
               "work-history-background",

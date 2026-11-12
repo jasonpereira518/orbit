@@ -7,7 +7,7 @@ import { clerkAppearance } from "@/lib/clerk-appearance";
 import Link from "next/link";
 import type { CareerProfile } from "@/db/schema";
 import { clearLinkedInYou } from "@/actions/imports";
-import { saveSenderBio, saveSocialLinks } from "@/actions/settings";
+import { saveCity, saveSenderBio, saveSocialLinks } from "@/actions/settings";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -189,6 +189,9 @@ export function AboutYouSettings({
   // time out before it was read.
   const [bioError, setBioError] = useState<string | null>(null);
   const [clearError, setClearError] = useState<string | null>(null);
+  const [city, setCity] = useState(initialCareer?.city ?? initialCareer?.profile?.location ?? "");
+  const [cityPending, startCity] = useGuardedTransition();
+  const [cityError, setCityError] = useState<string | null>(null);
 
   return (
     <SettingsSection title="About you">
@@ -236,6 +239,46 @@ export function AboutYouSettings({
           </p>
           <FormError className="basis-full">{bioError}</FormError>
         </div>
+      </SettingsRow>
+
+      <SettingsRow
+        title="City"
+        labelFor="your-city"
+        description="Where you are. Radar looks for events near you here."
+      >
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            startCity(async () => {
+              setCityError(null);
+              try {
+                const saved = await saveCity(city);
+                setCity(saved.city);
+                toast.success(saved.city ? "Saved" : "Cleared");
+              } catch (err) {
+                const message = friendlyError(err, "Couldn’t save that — try again?");
+                toast.error(message);
+                setCityError(message);
+              }
+            });
+          }}
+        >
+          <Input
+            id="your-city"
+            aria-describedby="your-city-description"
+            value={city}
+            maxLength={120}
+            autoComplete="address-level2"
+            placeholder="Austin, TX"
+            className="max-w-xs"
+            onChange={(e) => setCity(e.target.value)}
+          />
+          <Button type="submit" size="sm" disabled={cityPending}>
+            {cityPending ? "Saving…" : "Save"}
+          </Button>
+          <FormError className="basis-full">{cityError}</FormError>
+        </form>
       </SettingsRow>
 
       <SettingsRow

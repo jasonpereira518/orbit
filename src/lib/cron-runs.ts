@@ -32,6 +32,7 @@ export type CronJobName =
   | "product.digest"
   | "radar.digest"
   | "radar.run"
+  | "radar.web"
   | "sync.run"
   | "webhooks.drain"
   | "work-history.sweep";

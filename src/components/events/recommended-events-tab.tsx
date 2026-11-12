@@ -196,10 +196,12 @@ export function RecommendedEventsTab({
                 ) : null}
 
                 {/* Match Score Badge */}
-                <div className="absolute right-10 top-2.5 flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-xs font-semibold text-white shadow-sm backdrop-blur-md">
+                {event.matchScore > 0 ? (
+                  <div className="absolute right-10 top-2.5 flex items-center gap-1.5 rounded-full bg-black/75 px-2.5 py-1 text-xs font-semibold text-white shadow-sm backdrop-blur-md">
                   <Flame className="size-3.5 text-amber-400" aria-hidden />
                   <span>{event.matchScore}% Match</span>
                 </div>
+                ) : null}
 
                 {/* Hide Button */}
                 <button

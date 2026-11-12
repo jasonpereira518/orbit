@@ -123,6 +123,7 @@ const COVERED_BY_INTERNAL_AUTH = new Set([
   "linkedin/timeline-events/backfill",
   "capture/jobs/[id]/run",
   "radar/run",
+  "radar/web",
   "radar/digest",
 ]);
 
