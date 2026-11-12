@@ -83,6 +83,21 @@ export async function setCity(userId: string, input: string): Promise<string | n
   return city;
 }
 
+/** The hashtags from the person's own LinkedIn posts (`linkedin-shares.ts`). Empty removes the key. */
+export async function setPostTopics(userId: string, topics: readonly string[]): Promise<void> {
+  const db = await getDb();
+  const value = topics.length ? JSON.stringify(topics) : null;
+  await db.execute(sql`
+    INSERT INTO user_settings (user_id, career_profile)
+    VALUES (${userId}, ${JSON.stringify(value ? { postTopics: topics } : {})}::jsonb)
+    ON CONFLICT (user_id) DO UPDATE SET
+      career_profile = CASE WHEN ${value}::text IS NULL
+        THEN NULLIF(COALESCE(user_settings.career_profile, '{}'::jsonb) - 'postTopics', '{}'::jsonb)
+        ELSE COALESCE(user_settings.career_profile, '{}'::jsonb) || jsonb_build_object('postTopics', ${value}::jsonb) END,
+      updated_at = now()
+  `);
+}
+
 /**
  * Forget what was imported. Leaves `sender_bio` and everything else the person typed alone,
  * including `aim`: that came from the onboarding About you step, not from an export.
