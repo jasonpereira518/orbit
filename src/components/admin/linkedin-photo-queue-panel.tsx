@@ -21,16 +21,25 @@ function clock(ms: number, withDay = false): string {
   return new Date(ms).toLocaleString([], { ...(withDay ? { weekday: "short" as const } : {}), hour: "numeric", minute: "2-digit" });
 }
 
+/** Why LinkedIn said no, from `LinkedInDirectRateLimitError.status`. */
+function refusal(status: number | null | undefined): string {
+  if (status === 1) return "a sign-in wall";
+  return status ? `HTTP ${status}` : "a cooldown";
+}
+
+const finishing = (m: LinkedInPhotoQueueMetrics) =>
+  m.finishAt ? ` At this rate it finishes around ${clock(m.finishAt, true)}.` : "";
+
 function stateLine(m: LinkedInPhotoQueueMetrics): string {
   switch (m.state) {
     case "idle":
       return "Not started yet.";
     case "running":
-      return m.finishAt
-        ? `Running. At this rate it finishes around ${clock(m.finishAt, true)}.`
-        : "Running: one person every few seconds.";
+      return `Running: one person every few seconds.${finishing(m)}`;
+    case "fallbacks":
+      return `LinkedIn is refusing us (${refusal(m.run?.lastRefusal)}), so this runs on Unavatar and Microlink: ${m.fallbackLeftToday} lookups left today. LinkedIn is asked again around ${clock(m.run!.directOffUntil!)}.${finishing(m)}`;
     case "paused":
-      return `Paused: LinkedIn pushed back. Resumes on its own around ${clock(m.run!.resumeAt!)}.`;
+      return `Out of today’s lookups${m.run?.lastRefusal ? ` and LinkedIn is refusing us (${refusal(m.run.lastRefusal)})` : ""}. Resumes on its own around ${clock(m.run!.resumeAt!)}.`;
     case "waiting":
       return "Between steps. If this lasts more than a few minutes, press Resume.";
     case "done":
@@ -50,7 +59,9 @@ export function LinkedInPhotoQueuePanel({ initial }: { initial: LinkedInPhotoQue
   const m = useLivePoll<LinkedInPhotoQueueMetrics>("/api/admin/linkedin-queue/live", initial, 5000);
   const [isPending, startTransition] = useTransition();
 
-  const active = m.state === "running" || m.state === "paused" || m.state === "waiting";
+  const active = m.state === "running" || m.state === "fallbacks" || m.state === "paused" || m.state === "waiting";
+  // A tick is mid-run in these two; Resume would only bounce off its lease.
+  const working = m.state === "running" || m.state === "fallbacks";
   const found = m.run?.found ?? 0;
   const missed = m.run?.missed ?? 0;
   const done = active || m.state === "done" ? found + missed : 0;
@@ -87,7 +98,7 @@ export function LinkedInPhotoQueuePanel({ initial }: { initial: LinkedInPhotoQue
               Stop
             </button>
           )}
-          {m.state !== "running" && (
+          {!working && (
             <button
               type="button"
               disabled={isPending || (!active && m.pending === 0)}
@@ -110,8 +121,8 @@ export function LinkedInPhotoQueuePanel({ initial }: { initial: LinkedInPhotoQue
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
           Looks up each LinkedIn person once for every account, most-shared first: LinkedIn directly, then
-          Unavatar and Microlink while their daily allowance lasts. Paced to about 15 a minute; if LinkedIn
-          pushes back it pauses (30 min, doubling up to 6 h) and resumes on its own.
+          Unavatar and Microlink while their daily allowance lasts. Paced to about 15 a minute. LinkedIn usually refuses Orbit’s
+          servers; then it keeps going on Unavatar and Microlink (a few dozen a day), asks LinkedIn again after 30 min (doubling up to 6 h), and resumes on its own.
           {!m.blobReady && " Needs photo storage (BLOB_READ_WRITE_TOKEN) before it can start."}
         </p>
 
