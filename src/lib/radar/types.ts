@@ -325,6 +325,8 @@ export type RadarAutopilot = Partial<Record<RecommendationKind, boolean>>;
 export const CONTACT_SIGNAL_KINDS = [
   "social_post",
   "linkedin_activity",
+  /** A recent public post, talk or news item the people check found, on a link the search cited. */
+  "web_mention",
 ] as const;
 export type ContactSignalKind = (typeof CONTACT_SIGNAL_KINDS)[number];
 
@@ -340,7 +342,12 @@ export type ContactSignalPayload = {
   url?: string | null;
   /** Human label for where it came from ("Hacker News", "SEC EDGAR", "Extension"). */
   sourceLabel?: string;
+  /** web_mention: what kind of mention it is. */
+  mentionKind?: MentionKind;
 };
+
+/** What the people check reports about someone (`src/lib/radar/pulse.ts`). */
+export type MentionKind = "post" | "talk" | "news";
 
 /** The retired global news tables' source kinds (`external_sources.kind`); the tables drop in Radar PR 12. */
 export type ExternalSourceKind = "rss" | "atom" | "hn" | "edgar";
@@ -404,6 +411,8 @@ type RadarSignalFact =
       network: "linkedin";
       url: string | null;
     }
+  /** A public post, talk or news item the people check found (`web_mention`); `url` is a cited link. */
+  | { kind: "public_mention"; contactId: string; at: Date; text: string; url: string; mentionKind: MentionKind }
   /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */
   | { kind: "job_change"; contactId: string; at: Date; move: "joined" | "left" | "title_change"; text: string }
   /**

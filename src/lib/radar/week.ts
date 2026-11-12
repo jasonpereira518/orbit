@@ -56,7 +56,7 @@ export function nextRadarRunAt(now: Date, tz: string, dailyEnabled: boolean): Da
 /** Due within two days: a meeting or event, a due date. */
 const DATED_MOMENTS: ReadonlySet<string> = new Set(["upcoming_meeting", "event_upcoming", "email_prep", "opportunity_due"]);
 /** Fresh for two days after Orbit learns it: news about them that goes stale. */
-const FRESH_MOMENTS: ReadonlySet<string> = new Set(["job_change", "job_change_left", "social_post", "email_followup", "email_job", "email_process", "email_news", "email_event"]);
+const FRESH_MOMENTS: ReadonlySet<string> = new Set(["job_change", "job_change_left", "social_post", "public_mention", "email_followup", "email_job", "email_process", "email_news", "email_event"]);
 /** A moment for as long as it lasts: someone is waiting on the person. */
 const OWED_MOMENTS: ReadonlySet<string> = new Set(["inbound_unanswered", "open_thread", "opportunity_overdue"]);
 const MOMENT_WINDOW_MS = 2 * DAY_MS;

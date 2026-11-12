@@ -53,6 +53,7 @@ import { openEngines, type Engines } from "@/lib/decisions/engine";
 import { recheckGateState, verifyGateState } from "@/lib/work-history-gates";
 import { updateContactForUser } from "@/lib/contact-writes";
 import { reportError } from "@/lib/report-error";
+import { keepCitedMentions, radarPulseAllowed, storeMentions, MENTIONS_PER_CHECK, type Mention } from "@/lib/radar/pulse";
 
 /** A web-found history is re-researched at most this often on its own. */
 export const WORK_HISTORY_REFRESH_DAYS = 30;
@@ -128,12 +129,16 @@ export type WorkHistoryAnswer = {
 export type CurrentRoleAnswer = {
   confident: boolean;
   current: { organization: string; title: string | null } | null;
+  /** Radar's people check: recent public mentions, each on a link the search cited. */
+  mentions?: Mention[];
 };
 
 /** The cheap re-check call, injectable like the researcher. */
 export type CurrentRoleChecker = (
   userId: string,
   subject: WorkHistorySubject,
+  /** `mentions`: also ask for recent posts, talks and news (Radar's people check). Same one search. */
+  opts?: { mentions?: boolean; now?: Date },
 ) => Promise<CurrentRoleAnswer>;
 
 /** The web-research call, injectable so the smoke can run with no key and no network. */
@@ -203,19 +208,33 @@ Report their CURRENT job as the sources show it — do not assume the title or c
 Respond with JSON only:
 { "match": "confident" | "unsure" | "none", "current": { "organization": string, "title": string | null } | null }`;
 
+/**
+ * Radar's people check rides the same search: up to three recent public posts, talks or news
+ * items about the person. Code keeps only those whose url the search provider cited.
+ */
+const CURRENT_ROLE_MENTIONS = `
+
+Also list up to ${MENTIONS_PER_CHECK} public posts, talks or news items about THIS person from the last 90 days, newest first, only from the sources you found. Each "url" must be the exact address of one of those sources. Add them to the same JSON object as "recent": [{ "kind": "post" | "talk" | "news", "text": string, "url": string, "date": string | null }], empty if there are none.`;
+
 /** Output cap for the re-check: one small object. */
 const CURRENT_ROLE_OUTPUT_TOKENS = 200;
+/** With mentions: three short items more. */
+const CURRENT_ROLE_MENTIONS_OUTPUT_TOKENS = 600;
 
-type RawCurrentRole = { match?: unknown; current?: { organization?: unknown; title?: unknown } | null };
+type RawCurrentRole = {
+  match?: unknown;
+  current?: { organization?: unknown; title?: unknown } | null;
+  recent?: unknown;
+};
 
 /** The production re-check: one search, one short answer. */
-export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, subject) => {
-  const { json } = await webSearchJson(userId, {
-    system: CURRENT_ROLE_SYSTEM,
+export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, subject, opts) => {
+  const { json, sources } = await webSearchJson(userId, {
+    system: opts?.mentions ? CURRENT_ROLE_SYSTEM + CURRENT_ROLE_MENTIONS : CURRENT_ROLE_SYSTEM,
     user: subjectPrompt(subject).replace("Find the work history and education of this person:", "Where does this person work now?"),
     operation: "contact.work_history",
     maxSearches: 1,
-    maxOutputTokens: CURRENT_ROLE_OUTPUT_TOKENS,
+    maxOutputTokens: opts?.mentions ? CURRENT_ROLE_MENTIONS_OUTPUT_TOKENS : CURRENT_ROLE_OUTPUT_TOKENS,
   });
   const raw = parseAiJson<RawCurrentRole>(json);
   auditUntrustedWrite(userId, "work_history.recheck", "answer", json);
@@ -224,6 +243,13 @@ export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, 
   return {
     confident: raw.match === "confident",
     current: org ? { organization: org, title } : null,
+    mentions: opts?.mentions && Array.isArray(raw.recent)
+      ? keepCitedMentions(
+          raw.recent.map((r: { kind?: unknown; text?: unknown; url?: unknown; date?: unknown }) => ({ ...r, dateIso: r?.date })),
+          sources,
+          opts.now ?? new Date()
+        )
+      : undefined,
   };
 };
 
@@ -521,10 +547,19 @@ async function researchOnce(
     if (!options.force && stored?.source === "web") {
       storedRoles ??= (await loadJobBaseline(userId, contactId, now)).roles;
       if (storedRoles.some((r) => r.isCurrent)) {
-        const check = await (options.checker ?? checkCurrentRoleWithWebSearch)(userId, subject);
+        // Radar's people check widens this same search for a met contact, within the plan's
+        // monthly allowance (src/lib/radar/pulse.ts). Past it, the question is only the role.
+        const mentions = await radarPulseAllowed(userId, contactId, now);
+        const check = await (options.checker ?? checkCurrentRoleWithWebSearch)(userId, subject, { mentions, now });
         // Nothing clear enough to act on. Not worth the full search to find out: the next
         // scheduled check asks again.
         if (!check.confident || !check.current) return { outcome: "not_found", cadence };
+        // Only a confident match: a namesake's talk is not this person's news.
+        if (mentions && check.mentions?.length) {
+          await storeMentions(userId, contactId, check.mentions, now).catch((err) =>
+            reportError(err, { where: "job.work-history.mentions", userId, level: "warning" })
+          );
+        }
         if (isStoredCurrentRole(check.current, storedRoles)) {
           // Still true. Record that it was checked — the provenance line reads this date.
           await db
