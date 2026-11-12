@@ -108,6 +108,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-settle-once": "pure",
   "smoke-vercel-ignore-build": "pure",
   "smoke-admin-gate": "pure",
+  "smoke-admin-refresh": "pure",
   "smoke-admin-redaction": "pure",
   "smoke-admin-yc-calculations": "pure",
   "smoke-ai-key-check": "pure",

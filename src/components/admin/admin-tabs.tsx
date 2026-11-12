@@ -63,6 +63,7 @@ export const OPS_TABS: SectionTab[] = [
   { href: "/admin/health", label: "Accounts" },
   { href: "/admin/health/systems", label: "Systems" },
   { href: "/admin/health/ai", label: "AI & data" },
+  { href: "/admin/health/refresh", label: "Refresh" },
 ];
 
 export function UsersTabs() {
