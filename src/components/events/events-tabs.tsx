@@ -56,7 +56,7 @@ export function EventsTabs({
       event.key === "ArrowRight"
         ? (curIdx + 1) % tabs.length
         : (curIdx - 1 + tabs.length) % tabs.length;
-    const next = tabs[nextIdx]!.key;
+    const next = tabs[nextIdx].key;
     setTab(next);
     refs.current[next]?.focus();
   }

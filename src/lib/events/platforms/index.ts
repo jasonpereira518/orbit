@@ -81,7 +81,7 @@ export function platformOf(input: string | URL): PlatformMatch | null {
     if (PARTIFUL_NON_EVENT.test(path)) return null;
     // `/e/<id>` is the event route; a bare `/<id>` also resolves.
     const hit = /^\/(?:e\/)?([A-Za-z0-9_-]{4,})\/?$/.exec(path);
-    return hit ? { platform: "partiful", providerEventId: hit[1]! } : null;
+    return hit ? { platform: "partiful", providerEventId: hit[1] } : null;
   }
 
   if (isEventbrite(host)) {
@@ -96,12 +96,12 @@ export function platformOf(input: string | URL): PlatformMatch | null {
 
   if (hostMatches(host, "meetup.com")) {
     const hit = /^\/[^/]+\/events\/(\d{6,})(?:\/|$)/.exec(path);
-    return hit ? { platform: "meetup", providerEventId: hit[1]! } : null;
+    return hit ? { platform: "meetup", providerEventId: hit[1] } : null;
   }
 
   if (hostMatches(host, "posh.vip")) {
     const hit = /^\/e\/([A-Za-z0-9_-]{3,})\/?$/.exec(path);
-    return hit ? { platform: "posh", providerEventId: hit[1]! } : null;
+    return hit ? { platform: "posh", providerEventId: hit[1] } : null;
   }
 
   return null;
@@ -172,7 +172,7 @@ export function extractEventLinks(text: string, options: { max?: number } = {}):
     if (!platformOf(candidate)) continue;
     const outcome = canonicalizeEventUrl(candidate);
     if (outcome.kind !== "ok") continue;
-    const href = outcome.candidates[0]!;
+    const href = outcome.candidates[0];
     // Re-checked after canonicalisation: a rewrite can move the path (Eventbrite `/x/` to
     // `/e/`), and the stored link is the one that has to be an event.
     if (!platformOf(href)) continue;

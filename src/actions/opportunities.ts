@@ -5,7 +5,7 @@
  *
  * House conventions: every export is async, every one starts with `requireUserId()`, every
  * write is scoped by `(id, userId)` so an id from a browser cannot reach another account, and
- * validation is by hand — there is no zod in `src/actions`.
+ * the browser-supplied shape is checked with `parseInput` before anything runs.
  *
  * No rate-limit bucket: nothing here calls a model or fans out. The brief regeneration each
  * write schedules is the only expensive thing, and it runs in `after()`.
@@ -22,6 +22,8 @@ import {
 } from "@/lib/contact-opportunities";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { friendlyError } from "@/lib/errors";
+import { parseInput } from "@/lib/action";
+import { createOpportunitySchema, updateOpportunitySchema } from "@/lib/opportunity-input";
 import { MAX_OPPORTUNITY_LABEL_CHARS } from "@/lib/opportunity-kinds";
 
 type Fail = { ok: false; error: string };
@@ -55,6 +57,9 @@ export async function createOpportunity(input: {
 }): Promise<Ok | Fail> {
   try {
     const userId = await requireUserId();
+    const parsed = parseInput(createOpportunitySchema, input, "opportunities.create-opportunity");
+    if (!parsed.ok) return parsed;
+    input = parsed.value;
     if (typeof input.label === "string" && input.label.trim().length > MAX_OPPORTUNITY_LABEL_CHARS) {
       // Not an error — the label is truncated. Said out loud so a long paste does not look
       // like it saved whole.
@@ -80,6 +85,9 @@ export async function updateOpportunity(
 ): Promise<Ok | Fail> {
   try {
     const userId = await requireUserId();
+    const parsed = parseInput(updateOpportunitySchema, { id, patch }, "opportunities.update-opportunity");
+    if (!parsed.ok) return parsed;
+    ({ id, patch } = parsed.value);
     const changed = await updateOpportunityForUser(userId, id, patch);
     if (!changed) return { ok: false, error: "That opportunity is gone" };
     afterWrite(userId, changed.after.contactId);

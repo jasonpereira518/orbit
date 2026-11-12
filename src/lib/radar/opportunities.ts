@@ -18,6 +18,7 @@
  * Openings are not searched here: the job feed already pairs a role with the person to ask
  * (`job_posting` cards from `src/lib/radar/signals/internal.ts`).
  */
+import { eventsListReplySchema, programsListReplySchema } from "@/lib/ai-reply-schemas";
 import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { radarOpportunities, userSettings } from "@/db/schema";
@@ -134,7 +135,7 @@ async function findEvents(
   const cited = citedSet(sources);
   const horizon = now.getTime() + EVENT_HORIZON_DAYS * DAY_MS;
   const out: NewOpportunity[] = [];
-  for (const e of items(parseAiJson<{ events?: unknown }>(json).events)) {
+  for (const e of items(parseAiJson(eventsListReplySchema, json).events)) {
     const url = safeHttpUrl(typeof e.url === "string" ? e.url : null);
     const title = text(e.title, 200);
     let startsAt = dateOf(e.startsAt);
@@ -211,7 +212,7 @@ async function findPrograms(userId: string, goals: string[], now: Date, search: 
   const { json, sources } = await search(userId, { kind: "program", system: PROGRAM_SYSTEM, user });
   const cited = citedSet(sources);
   const out: NewOpportunity[] = [];
-  for (const p of items(parseAiJson<{ programs?: unknown }>(json).programs)) {
+  for (const p of items(parseAiJson(programsListReplySchema, json).programs)) {
     const url = safeHttpUrl(typeof p.url === "string" ? p.url : null);
     const title = text(p.title, 200);
     const deadline = dateOf(p.deadline);

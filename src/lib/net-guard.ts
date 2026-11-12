@@ -175,7 +175,7 @@ export async function pinDeliverable(url: string): Promise<{
       callback(null, wanted);
       return;
     }
-    callback(null, wanted[0]!.address, wanted[0]!.family);
+    callback(null, wanted[0].address, wanted[0].family);
   };
 
   const agent = new Agent({ connect: { lookup: lookupPinned } });

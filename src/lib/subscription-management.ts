@@ -13,6 +13,7 @@ import {
 } from "@/lib/stripe";
 import { resolvePortalConfigurationId, resolvePriceIds, subscriptionPriceId } from "@/lib/stripe-prices";
 import { getAppBaseUrl } from "@/lib/app-url";
+import { reportError } from "@/lib/report-error";
 import type { PurchasablePlan } from "@/lib/plans/plan-config";
 
 /**
@@ -143,7 +144,7 @@ async function findForUser(userId: string, stripe?: SubscriptionStripe): Promise
   try {
     subs = await client.list(customer);
   } catch (err) {
-    console.error("Stripe subscription lookup did not complete:", err);
+    reportError(err, { where: "lib.subscription.lookup", userId });
     return { ok: false, error: SUBSCRIPTION_COPY.unavailable };
   }
   const sub = pickProSubscription(subs);
@@ -178,7 +179,7 @@ async function setCancelAtPeriodEnd(
     );
     return { ok: true, subscription: detailsOf(updated) };
   } catch (err) {
-    console.error("Stripe subscription update did not complete:", err);
+    reportError(err, { where: "lib.subscription.update", userId, extra: { cancel } });
     return { ok: false, error: SUBSCRIPTION_COPY.unavailable };
   }
 }
@@ -241,7 +242,7 @@ export async function createPlanSwitchUrl(
     });
     return session.url ? { ok: true, url: session.url } : { ok: false, error: SUBSCRIPTION_COPY.unavailable };
   } catch (err) {
-    console.error("Stripe plan-switch session did not complete:", err);
+    reportError(err, { where: "lib.subscription.plan-switch", userId, extra: { target } });
     return { ok: false, error: SUBSCRIPTION_COPY.unavailable };
   }
 }
@@ -273,7 +274,7 @@ export async function lifetimeGrantSubscriptionEffect(
       alreadyEnding: details.cancelAtPeriodEnd,
     };
   } catch (err) {
-    console.error("Stripe lookup for a Lifetime grant did not complete:", err);
+    reportError(err, { where: "lib.subscription.lifetime-lookup", userId });
     return { kind: "error", error: SUBSCRIPTION_COPY.unavailable };
   }
 }
@@ -299,7 +300,7 @@ export async function endSubscriptionForLifetime(
     }
     return "scheduled";
   } catch (err) {
-    console.error("Ending a subscription for a Lifetime grant did not complete:", err);
+    reportError(err, { where: "lib.subscription.lifetime-end", userId });
     return "error";
   }
 }

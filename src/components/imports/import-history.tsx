@@ -10,6 +10,7 @@ import {
 } from "react";
 import { IntentLink } from "@/components/ui/intent-link";
 import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import {
   BookUser,
   Calendar as CalendarIcon,
@@ -373,7 +374,7 @@ export function ImportDetailBody({
         <SheetTitle>{item.fileName || label}</SheetTitle>
         <SheetDescription>
           {label} ·{" "}
-          {formatDistanceToNow(new Date(item.createdAt), { addSuffix: true })}
+          {longRelativeLabel(new Date(item.createdAt))}
         </SheetDescription>
       </SheetHeader>
 

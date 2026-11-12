@@ -188,7 +188,7 @@ export function productConditions(f: ProductOpsFacts, now: Date): OpsCondition[]
       out.push({
         id: `quality.failure_rate:${flow.flow}`,
         severity: "warning",
-        title: `${flow.flow[0]!.toUpperCase()}${flow.flow.slice(1)} failures are above ${Math.round(T.failureShare * 100)}%`,
+        title: `${flow.flow[0].toUpperCase()}${flow.flow.slice(1)} failures are above ${Math.round(T.failureShare * 100)}%`,
         detail: `${flow.failed} of ${flow.attempts} ${flow.flow} attempts failed in the last 24 hours.`,
         href: "/admin/health",
       });

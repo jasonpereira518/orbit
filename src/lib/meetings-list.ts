@@ -30,6 +30,7 @@ import {
   orgBrandColors,
   type MeetingSessionStatus,
 } from "@/db/schema";
+import { decodePgTimestampIdCursor, encodeIsoIdCursor } from "@/lib/cursor";
 import { brandKey, CURATED_COMPANIES, type CuratedCompany } from "@/lib/brand-colors";
 import { companyFromEmail } from "@/lib/guest-profiles";
 import { toDomain } from "@/lib/org-brand-learn";
@@ -75,14 +76,7 @@ export type MeetingsPage = {
 
 /** `started_at` as Postgres prints it (microseconds survive; a JS Date would round them), then the id. */
 function decodeCursor(cursor: string | null | undefined): { at: string; id: string } | null {
-  if (!cursor) return null;
-  const bar = cursor.lastIndexOf("|");
-  if (bar <= 0) return null;
-  const at = cursor.slice(0, bar);
-  const id = cursor.slice(bar + 1);
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
-  if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2}(:?\d{2})?|Z)?$/.test(at)) return null;
-  return { at, id };
+  return decodePgTimestampIdCursor(cursor);
 }
 
 /** A user's text as a LIKE pattern: wildcards are theirs to type, not to have interpreted. */
@@ -124,7 +118,7 @@ export async function listMeetingsFor(
   await addCallsAndCompanies(userId, page);
   return {
     items: page.map((r) => r.item),
-    nextCursor: merged.length > limit && last ? `${last.atText}|${last.item.id}` : null,
+    nextCursor: merged.length > limit && last ? encodeIsoIdCursor(last.atText, last.item.id, "plain") : null,
   };
 }
 

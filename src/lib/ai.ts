@@ -36,6 +36,7 @@ import { speechAllowance, recordSpeechSeconds } from "@/lib/speech-quota";
 import { speechKindForOperation } from "@/lib/speech-limits";
 import { speechTagIdFor } from "@/lib/speech-tag-id";
 import { z } from "zod";
+import { excerptRetrySchema, transcriptJsonSchema } from "@/lib/ai-reply-schemas";
 import {
   impliedStepListSchema,
   opportunityListSchema,
@@ -102,6 +103,7 @@ export {
   resolveAiModel,
   resolveAiProvider,
 } from "@/lib/ai-providers";
+import { sleep } from "@/lib/async";
 
 /** AI often omits unknown fields; accept missing/null. */
 /**
@@ -152,7 +154,7 @@ export async function withRateLimitBackoff<T>(fn: () => Promise<T>): Promise<T> 
       }
       const backoff = RATE_LIMIT_BASE_DELAY_MS * 2 ** attempt;
       const jitter = backoff * (0.5 + Math.random() * 0.5);
-      await new Promise((resolve) => setTimeout(resolve, jitter));
+      await sleep(jitter);
     }
   }
 }
@@ -513,7 +515,7 @@ function repairTruncatedJson(text: string): string | null {
   const stack: string[] = [];
 
   for (let i = 0; i < slice.length; i++) {
-    const ch = slice[i]!;
+    const ch = slice[i];
     if (inString) {
       if (escaped) {
         escaped = false;
@@ -548,7 +550,28 @@ function repairTruncatedJson(text: string): string | null {
   }
 }
 
-export function parseAiJson<T = unknown>(raw: string): T {
+/**
+ * Read a model's JSON reply.
+ *
+ * `parseAiJson(raw)` returns whatever parsed, typed by the caller's say-so (`parseAiJson<T>`).
+ * That is an assertion, not a check: a model that answers `null`, a string, or `{ "text": 5 }`
+ * is read as `T` and fails later at `.trim()` or `.map()`, far from the cause.
+ *
+ * `parseAiJson(schema, raw)` checks the parsed value against a zod schema and throws one
+ * error naming the paths that did not match (never the values), which the caller's existing
+ * catch handles like any other unreadable reply.
+ */
+export function parseAiJson<T = unknown>(raw: string): T;
+export function parseAiJson<S extends z.ZodType>(schema: S, raw: string): z.output<S>;
+export function parseAiJson(schemaOrRaw: z.ZodType | string, maybeRaw?: string): unknown {
+  if (typeof schemaOrRaw === "string") return parseAiJsonText(schemaOrRaw);
+  const result = schemaOrRaw.safeParse(parseAiJsonText(maybeRaw ?? ""));
+  if (result.success) return result.data;
+  const paths = result.error.issues.map((issue) => issue.path.join(".") || "(root)");
+  throw new Error(`AI reply did not match the expected shape: ${[...new Set(paths)].join(", ")}`);
+}
+
+function parseAiJsonText<T = unknown>(raw: string): T {
   const text = extractJsonText(raw);
   try {
     return JSON.parse(text) as T;
@@ -1273,7 +1296,7 @@ export async function transcribeAudioWithAI(
         report(tokensFromGemini(response));
         const raw = response.text;
         if (!raw) return empty("gemini");
-        const parsed = parseAiJson<{ text?: string }>(raw);
+        const parsed = parseAiJson(transcriptJsonSchema, raw);
         const text = parsed.text?.trim();
         if (!text) return empty("gemini");
         return { text, engine: "gemini" as const };
@@ -1344,7 +1367,7 @@ Rules:
       } satisfies MultimodalPart,
     ],
   });
-  const parsed = parseAiJson<{ text?: string }>(content);
+  const parsed = parseAiJson(transcriptJsonSchema, content);
   return (parsed.text || "").trim();
 }
 
@@ -1388,7 +1411,7 @@ export async function transcribeImagePages(
       if (i >= total) return;
       const pageNumber = numbering.offset + i + 1;
       try {
-        const text = await transcribeNotePage(userId, images[i]!, pageNumber, noteTotal);
+        const text = await transcribeNotePage(userId, images[i], pageNumber, noteTotal);
         results[i] = { pageNumber, text, ok: true };
       } catch (err) {
         // One bad photo must not cost the person the other seven — but the REASON is kept
@@ -1742,7 +1765,7 @@ export function matchDetailResults(
   const claim = (j: number, matches: (a: string) => boolean) => {
     const candidates = answered.flatMap((a, k) => (!taken.has(k) && matches(nameKey(a.name)) ? [k] : []));
     if (candidates.length !== 1) return;
-    taken.add(candidates[0]!);
+    taken.add(candidates[0]);
     out[j] = candidates[0]!;
   };
   requested.forEach((name, j) => {
@@ -1757,8 +1780,8 @@ export function matchDetailResults(
     if (out[j] !== null) return;
     const words = nameKey(name).split(" ").filter(Boolean);
     if (words.length === 0) return;
-    const first = words[0]!;
-    const last = words[words.length - 1]!;
+    const first = words[0];
+    const last = words[words.length - 1];
     if (words.length === 1) claim(j, (a) => a.split(" ")[0] === first);
     else claim(j, (a) => a.split(" ")[0] === first && a.split(" ").pop() === last);
   });
@@ -1894,9 +1917,9 @@ ${PERSON_FIELD_RULES}`,
     );
     const missing = foundList.flatMap((f, j) => (f ? [] : [j]));
     if (missing.length > 0) {
-      const again = await callDetails(missing.map((j) => batch[j]!)).catch(() => []);
-      matchDetailResults(missing.map((j) => batch[j]!.name), again).forEach((m, k) => {
-        if (m !== null) foundList[missing[k]!] = again[m];
+      const again = await callDetails(missing.map((j) => batch[j])).catch(() => []);
+      matchDetailResults(missing.map((j) => batch[j].name), again).forEach((m, k) => {
+        if (m !== null) foundList[missing[k]] = again[m];
       });
     }
     return batch.map((requested, j) => {
@@ -1950,13 +1973,13 @@ ${PERSON_FIELD_RULES}`,
   const batches: Requested[][] = [];
   for (let i = 0; i < peopleIds.length; i += DETAIL_BATCH_SIZE) batches.push(peopleIds.slice(i, i + DETAIL_BATCH_SIZE));
   const detailedBatches: ParsedPersonNote[][] = new Array(batches.length);
-  if (batches.length > 0) detailedBatches[0] = await detailBatch(batches[0]!);
+  if (batches.length > 0) detailedBatches[0] = await detailBatch(batches[0]);
   let nextBatch = 1;
   await Promise.all(
     Array.from({ length: Math.min(DETAIL_CONCURRENCY, Math.max(0, batches.length - 1)) }, async () => {
       while (nextBatch < batches.length) {
         const at = nextBatch++;
-        detailedBatches[at] = await detailBatch(batches[at]!);
+        detailedBatches[at] = await detailBatch(batches[at]);
       }
     }),
   );
@@ -1985,7 +2008,7 @@ ${PERSON_FIELD_RULES}`,
           "Return strict JSON with one entry per requested person: source_excerpt = that person's portion of the notes, copied verbatim. Never return the whole dump. Use an empty string when the notes say nothing specific about them.",
       });
       await beat(onProgress);
-      const retry = parseAiJson<{ excerpts?: Array<{ name?: string; source_excerpt?: string }> }>(retryRaw);
+      const retry = parseAiJson(excerptRetrySchema, retryRaw);
       for (const entry of retry.excerpts ?? []) {
         const excerpt = entry.source_excerpt?.trim();
         if (!excerpt) continue;

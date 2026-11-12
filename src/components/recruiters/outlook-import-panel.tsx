@@ -125,7 +125,7 @@ export function OutlookImportPanel({
                 provider="outlook"
                 disabled={busy || running}
                 onConfirm={(opts) => {
-                  conn.disconnect(opts).then(() => {
+                  void conn.disconnect(opts).then(() => {
                     resetScan();
                   });
                 }}

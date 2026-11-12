@@ -145,7 +145,7 @@ export function EarlyAccessPath({
         />
         {here >= 0 ? (
           <path
-            d={arcTo(STOP_T[here]!)}
+            d={arcTo(STOP_T[here])}
             pathLength={1}
             fill="none"
             stroke="#f2c14e"
@@ -284,7 +284,7 @@ function StopDetail({
 }) {
   const link =
     "inline-flex items-center rounded-full border border-[#f2c14e]/40 px-3 py-1.5 text-xs text-[#f2c14e] transition-colors hover:border-[#f2c14e] hover:bg-[#f2c14e]/10";
-  const stop = stops[index]!;
+  const stop = stops[index];
   return (
     <div key={index} className="early-path-detail">
       <p className="text-sm leading-relaxed text-[#9aada8]">{stop.body}</p>

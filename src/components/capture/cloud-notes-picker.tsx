@@ -109,7 +109,7 @@ async function extractPicked(picked: Pickable[]): Promise<number> {
     toast.info(duplicates === 1 ? "That doc was already captured" : `Those ${duplicates} docs were already captured`);
   }
   if (failures.length) {
-    toast.error(failures.length === 1 ? failures[0]! : `${failures.length} docs couldn’t be read`, {
+    toast.error(failures.length === 1 ? failures[0] : `${failures.length} docs couldn’t be read`, {
       description: failures.length > 1 ? failures.slice(0, 3).join(" · ") : undefined,
     });
   }
@@ -206,7 +206,7 @@ export function CloudNotesPicker({
     for (const f of want) requested.current.add(keyOf(f));
     for (let i = 0; i < want.length; i += THUMB_BATCH) {
       const batch = want.slice(i, i + THUMB_BATCH);
-      void cloudNoteThumbnails({ provider: batch[0]!.provider, files: batch.map((f) => ({ id: f.id, name: f.name })) })
+      void cloudNoteThumbnails({ provider: batch[0].provider, files: batch.map((f) => ({ id: f.id, name: f.name })) })
         .then((res) => (res.ok ? res.value : {}))
         .catch((): Record<string, string | null> => ({}))
         .then((byId) =>
@@ -404,7 +404,7 @@ export function CloudNotesPicker({
                 </div>
                 <div className="flex items-center gap-1">
                   {picked.length === 1 && (
-                    <Button type="button" variant="ghost" size="sm" onClick={() => setPeek(picked[0]!)}>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setPeek(picked[0])}>
                       <Eye className="size-4" />
                       Preview
                     </Button>

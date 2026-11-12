@@ -86,6 +86,7 @@ export async function findWarmPaths(
       fullName: r.fullName,
       orgKey: r.orgKey,
       orgLabel: r.orgLabel,
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- keeps the literal union through the mapped array
       reason: (r.isCurrent ? "works_there" : "worked_there") as WarmPathCandidate["reason"],
       title: r.roleTitle,
       startYear: r.startYear,

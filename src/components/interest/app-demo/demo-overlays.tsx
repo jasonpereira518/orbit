@@ -71,7 +71,7 @@ export function SearchPalette() {
                 e.preventDefault();
                 setActive((a) => Math.max(0, a - 1));
               } else if (e.key === "Enter" && results[active]) {
-                open(results[active]!.id);
+                open(results[active].id);
               }
             }}
             placeholder="Search people, companies, tags…"
@@ -108,7 +108,7 @@ export function SearchPalette() {
 
 export function LogSheet() {
   const { state, dispatch } = useDemo();
-  const [personId, setPersonId] = useState(state.logFor ?? DEMO_PEOPLE[0]!.id);
+  const [personId, setPersonId] = useState(state.logFor ?? DEMO_PEOPLE[0].id);
   const [type, setType] = useState<TimelineType>("Meeting");
   const [note, setNote] = useState("");
   const textarea = useFocusOnMount<HTMLTextAreaElement>();

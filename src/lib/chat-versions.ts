@@ -1,7 +1,7 @@
 import type { ChatAttachment } from "@/lib/chat-attachments";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
-import { getDb } from "@/db";
+import { type getDb } from "@/db";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 import { chatMessages } from "@/db/schema";

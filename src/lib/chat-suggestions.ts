@@ -163,14 +163,7 @@ export type SuggestionSignals = {
 export const MAX_CARDS = 6;
 export const MAX_PER_KIND = 2;
 /** The first pass takes one card per category; the second fills up to `MAX_PER_KIND`. */
-export const MAX_PER_CATEGORY = 1;
-/**
- * The load-bearing cap. An overdue contact you also had coffee with last week fires the
- * overdue, recent-interaction and gone-quiet rungs at once; without this the row is three
- * cards about one person.
- */
-export const MAX_PER_PERSON = 1;
-/** Grounded but not recent — the cold-start tier, below every windowed rung. */
+export const MAX_PER_CATEGORY = 1;/** Grounded but not recent — the cold-start tier, below every windowed rung. */
 export const STARTER_RANK = 20;
 export const GENERIC_RANK = 30;
 /** "Who else do I know at X" needs at least one else. */
@@ -607,7 +600,7 @@ export function buildChatSuggestions(
   let pool = deduped.filter((c) => !asked.has(normalizeQuestionKey(c.question)));
   // If it removed everything, keep the best one anyway: a card you asked about eleven days
   // ago still beats "Who do I know at AWS?".
-  if (!pool.length && deduped.length) pool = [deduped[0]!];
+  if (!pool.length && deduped.length) pool = [deduped[0]];
 
   const buckets = new Map<SuggestionKind, Candidate[]>();
   for (const c of pool) {
@@ -617,7 +610,7 @@ export function buildChatSuggestions(
   }
   // Kinds are visited in the order of their best candidate, so a strong rung still leads.
   const kindOrder = [...buckets.entries()]
-    .sort((a, b) => compareCandidates(a[1][0]!, b[1][0]!))
+    .sort((a, b) => compareCandidates(a[1][0], b[1][0]))
     .map(([kind]) => kind);
 
   const chosen: ChatSuggestion[] = [];
@@ -644,7 +637,7 @@ export function buildChatSuggestions(
         const bucket = buckets.get(kind)!;
         let i = cursor.get(kind) ?? 0;
         while (i < bucket.length) {
-          const c = bucket[i]!;
+          const c = bucket[i];
           i++;
           // Every person on the card counts against the per-person cap, so a mention card
           // about A and B blocks a later card about either of them.

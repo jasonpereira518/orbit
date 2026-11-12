@@ -16,7 +16,7 @@ import { failImport, truncateStoredError } from "@/lib/import-job-processor";
 import { isRealHumanName } from "@/lib/recruiter-detect";
 import {
   buildRecruiterQuery,
-  fetchGmailHeaders,
+  type fetchGmailHeaders,
   fetchGmailHeadersBatched,
   fetchGmailMessages,
   firmFromEmail,
@@ -671,7 +671,7 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
       );
       const keys = await Promise.all(calls.map((c) => completionCacheKey(userId, c)));
       const known = await Promise.all(keys.map((k) => readAiResult<string>(userId, "recruiter.scan", k, RECRUITER_VERDICT_TTL_DAYS)));
-      const fresh = batchable.flatMap((b, i) => (known[i] === undefined ? [{ b, call: calls[i]!, key: keys[i]! }] : []));
+      const fresh = batchable.flatMap((b, i) => (known[i] === undefined ? [{ b, call: calls[i], key: keys[i] }] : []));
       batchable = fresh.map((f) => f.b);
 
       if (batchable.length > 0) {

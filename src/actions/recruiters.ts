@@ -33,7 +33,7 @@ import {
   unlockedRecruiterIdsForViewer,
   type PublicRecruiter,
 } from "@/lib/recruiters";
-import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { logRecruiterForUser, updateMyLinkForUser, type LogRecruiterInput } from "@/lib/recruiter-writes";
 import { reportError } from "@/lib/report-error";
 

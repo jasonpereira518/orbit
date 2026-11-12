@@ -13,6 +13,7 @@ import {
 } from "@/actions/radar";
 import { friendlyError } from "@/lib/errors";
 import { runToastAction, toast } from "@/lib/toast";
+import { sleep } from "@/lib/async";
 import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /**
@@ -24,7 +25,7 @@ const restored = new Set<string>();
 /** How long a resolved card takes to fold away before the list is refreshed around it. */
 const COLLAPSE_MS = 260;
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, prefersReducedMotion() ? 0 : COLLAPSE_MS));
+const settle = () => sleep(prefersReducedMotion() ? 0 : COLLAPSE_MS);
 
 /**
  * One card's actions, shared by the full card, the dashboard's compact row and focus mode's

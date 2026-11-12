@@ -196,7 +196,7 @@ export async function captureOneFrame(): Promise<CapturedFrame> {
     }
 
     const previewUrl = await blobToUrl(
-      makeCanvas(width, height, (ctx) => ctx.drawImage(source as CanvasImageSource, 0, 0))
+      makeCanvas(width, height, (ctx) => ctx.drawImage(source, 0, 0))
     );
 
     return { source, width, height, previewUrl };
@@ -422,7 +422,7 @@ export async function cropDownscaleEncode(
     const scale = Math.min(1, edge / Math.max(crop.w, crop.h));
     const width = Math.max(1, Math.round(crop.w * scale));
     const height = Math.max(1, Math.round(crop.h * scale));
-    const canvas = drawScaled(frame.source as CanvasImageSource, crop, width, height);
+    const canvas = drawScaled(frame.source, crop, width, height);
     paintRedactions(canvas, redactions);
 
     for (const quality of QUALITY_LADDER) {

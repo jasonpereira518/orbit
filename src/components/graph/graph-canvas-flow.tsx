@@ -52,7 +52,7 @@ import { setCameraMoving, setSkyDrift } from "@/components/graph/camera-motion";
 import { WindowStarCanvas } from "@/components/graph/window-star-canvas";
 import { useGraphLayout } from "@/components/graph/use-graph-layout";
 import {
-  buildHybridGraphLayout,
+  type buildHybridGraphLayout,
   type ClusterLabelData,
   type GraphNodeData,
   type NebulaData,
@@ -656,7 +656,7 @@ function buildStructuralNodes(
       ...n,
       draggable: false,
       ...(prev && prev.type === n.type ? measuredOf(measured, n.id) : null),
-    } as Node;
+    };
   });
 }
 
@@ -1775,7 +1775,7 @@ function GraphCanvasInner({
           withEmphasis(
             n,
             selected ? "sel" : "",
-            () => ({ ...n, ...measuredOf(measured, n.id), selected }) as Node
+            () => ({ ...n, ...measuredOf(measured, n.id), selected })
           )
         );
         continue;
@@ -1839,7 +1839,7 @@ function GraphCanvasInner({
                   transition: "opacity 200ms ease",
                   ...(pinnable ? { pointerEvents: "none" as const } : null),
                 },
-              }) as Node
+              })
           )
         );
         continue;
@@ -1903,7 +1903,7 @@ function GraphCanvasInner({
               // 300-person cluster spiked the chart from ~40 layers to ~400 on every move,
               // blanking parts of the page. The dim is instant instead.
               style: { opacity: emphasis.opacity },
-            }) as Node
+            })
         )
       );
     }
@@ -2023,7 +2023,7 @@ function GraphCanvasInner({
               animated: false,
               data: { ...e.data, label: undefined },
               style: { ...e.style, opacity, strokeWidth },
-            }) as Edge
+            })
         )
       );
     }
@@ -2423,7 +2423,7 @@ function GraphCanvasInner({
         onInit={(instance) => {
           const pane = document.querySelector(
             ".constellation-stage.react-flow"
-          ) as HTMLElement | null;
+          );
           const w = pane?.clientWidth ?? 0;
           const h = pane?.clientHeight ?? 0;
           if (w < 48 || h < 48) return;

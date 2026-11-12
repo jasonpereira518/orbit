@@ -24,11 +24,11 @@ export function compareNames(a: string | null | undefined, b: string | null | un
   if (ta.join(" ") === tb.join(" ")) return "variant";
   if ([...ta].sort().join(" ") === [...tb].sort().join(" ")) return "variant";
   if (ta.length === 1 || tb.length === 1) {
-    if (ta.length === 1 && tb.length === 1) return sameGivenName(ta[0]!, tb[0]!) ? "variant" : nameSimilarity(a, b) >= 0.88 ? "typo" : "different";
+    if (ta.length === 1 && tb.length === 1) return sameGivenName(ta[0], tb[0]) ? "variant" : nameSimilarity(a, b) >= 0.88 ? "typo" : "different";
     const [single, multi] = ta.length === 1 ? [ta, tb] : [tb, ta];
-    return sameGivenName(single[0]!, multi[0]!) ? "first_only" : "different";
+    return sameGivenName(single[0], multi[0]) ? "first_only" : "different";
   }
-  if (ta[ta.length - 1] === tb[tb.length - 1] && firstCompatible(ta[0]!, tb[0]!)) return "variant";
+  if (ta[ta.length - 1] === tb[tb.length - 1] && firstCompatible(ta[0], tb[0])) return "variant";
   return nameSimilarity(a, b) >= 0.88 ? "typo" : "different";
 }
 

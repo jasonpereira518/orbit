@@ -60,8 +60,8 @@ export function combineCaptureResults(parts: readonly CombinePart[]): {
 
   // The anchor is the date the notes are about; for several notes, the newest. Every card
   // and reminder keeps its own date, so this only dates the batch row and fills gaps.
-  let anchorIso = parts[0]!.result.anchorIso;
-  let anchorBasis: AnchorBasis = parts[0]!.result.anchorBasis;
+  let anchorIso = parts[0].result.anchorIso;
+  let anchorBasis: AnchorBasis = parts[0].result.anchorBasis;
   for (const p of parts) {
     if (p.result.anchorIso > anchorIso) {
       anchorIso = p.result.anchorIso;

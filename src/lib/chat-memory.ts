@@ -40,7 +40,7 @@ export async function addMemory(userId: string, raw: string, sourceThreadId: str
     throw new UserFacingError(`Orbit is already remembering ${MEMORIES_MAX} things — remove one first`);
   }
   const [saved] = await db.insert(chatMemories).values({ userId, text, sourceThreadId }).returning();
-  return { id: saved!.id, text: saved!.text, createdAt: saved!.createdAt };
+  return { id: saved.id, text: saved.text, createdAt: saved.createdAt };
 }
 
 /** True when a memory of this person's was removed. */

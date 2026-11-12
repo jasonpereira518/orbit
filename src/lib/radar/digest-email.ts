@@ -193,7 +193,7 @@ export function buildRadarMomentEmail(
   const radarUrl = `${links.appUrl}/radar`;
   const cardUrl = (id: string) => `${radarUrl}?focus=${encodeURIComponent(id)}`;
   const settingsUrl = `${links.appUrl}/radar`;
-  const only = n === 1 ? people[0]! : null;
+  const only = n === 1 ? people[0] : null;
   const button = only ? { href: cardUrl(only.id), label: only.hasDraft ? "Review the draft" : "Open it on Radar" } : { href: radarUrl, label: "Open Radar" };
   const rows = people.map((p) => personRow({ ...p, company: null }, cardUrl(p.id))).join("\n            ");
 

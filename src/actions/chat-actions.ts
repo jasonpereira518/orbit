@@ -23,7 +23,7 @@ import { requireUserForSurface } from "@/lib/plan-guards";
 import { UserFacingError } from "@/lib/errors";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
-import { chatWriteNamed, parseWriteInput, runUndo, type UndoStep } from "@/lib/tools/chat-writes";
+import { chatWriteNamed, parseWriteInput, runUndo } from "@/lib/tools/chat-writes";
 import { addReminderMeetingToCalendar, calendarWriteState, type CalendarProvider } from "@/lib/calendar-write";
 
 type ClaimOk = { ok: true; actions: StoredProposedAction[]; index: number; action: StoredProposedAction };
@@ -52,7 +52,7 @@ async function claim(
   const actions = row.proposedActions ?? [];
   const index = actions.findIndex((a) => a.id === actionId);
   if (index === -1) return { ok: false, reason: "not_found" };
-  const current = actions[index]!;
+  const current = actions[index];
   if (from === "proposed") {
     if (current.status === "done") return { ok: false, reason: "already_done" };
     if (current.status === "dismissed") return { ok: false, reason: "already_dismissed" };
@@ -76,7 +76,7 @@ async function claim(
     )
     .returning(); // bare: a field selector breaks over the Db union
   if (!updated.length) return { ok: false, reason: "conflict" };
-  return { ok: true, actions: claimed, index, action: claimed[index]! };
+  return { ok: true, actions: claimed, index, action: claimed[index] };
 }
 
 /** Writes the array back with one entry settled, by the same CAS the claim used to set it. */
@@ -90,7 +90,7 @@ async function settle(
   const db = await getDb();
   const before = JSON.stringify(claimedActions);
   const after = claimedActions.slice();
-  after[index] = { ...after[index]!, ...next };
+  after[index] = { ...after[index], ...next };
   await db
     .update(chatMessages)
     .set({ proposedActions: after })
@@ -171,7 +171,7 @@ export async function undoProposedAction(messageId: string, actionId: string): P
   const userId = await requireUserForSurface("page.chat");
   const claimed = await claim(userId, messageId, actionId, "undoing", "done");
   if (!claimed.ok) return { ok: false, reason: REASON_COPY[claimed.reason] };
-  const step = claimed.action.undo as UndoStep | null | undefined;
+  const step = claimed.action.undo;
   if (!step) {
     await settle(userId, messageId, claimed.actions, claimed.index, { status: "done" });
     return { ok: false, reason: "That can’t be undone from here." };

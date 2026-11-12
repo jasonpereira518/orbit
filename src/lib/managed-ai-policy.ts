@@ -173,7 +173,7 @@ export function managedModel(provider: AiProvider, requested: string | null | un
   // The allowlist protects Orbit's money. With managed AI off the only key behind this path
   // is the developer's own, so `next dev` keeps running whatever model Settings asks for.
   if (!MANAGED_AI_ENABLED) return requested || MANAGED_DEFAULT_MODELS[provider];
-  if (tier === "fast" && MANAGED_FAST_MODELS[provider]) return MANAGED_FAST_MODELS[provider]!;
+  if (tier === "fast" && MANAGED_FAST_MODELS[provider]) return MANAGED_FAST_MODELS[provider];
   if (requested && MANAGED_MODELS[provider].includes(requested)) return requested;
   return MANAGED_DEFAULT_MODELS[provider];
 }

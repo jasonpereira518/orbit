@@ -57,7 +57,7 @@ export function MailMergeDialog({
 
   useEffect(() => {
     if (open) {
-      getOutreachSendQuotaAction().then((res) => {
+      void getOutreachSendQuotaAction().then((res) => {
         setQuotaData(res);
         if (res.providers.gmail.connected) {
           setProvider("gmail");

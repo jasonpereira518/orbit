@@ -178,7 +178,7 @@ export async function rankEventContacts(
       via: { thread: v.thread, search: v.search, searchRelevance: v.searchRelevance },
       targetKeys: context.targetKeys,
       goalFit: goalRelevanceComponent(
-        { company: row.company, title: row.title, industry: row.industry } as Parameters<typeof goalRelevanceComponent>[0],
+        { company: row.company, title: row.title, industry: row.industry },
         context.goals
       ),
     });

@@ -494,7 +494,7 @@ function firstReadableWord(text: string | null | undefined, skipSurname: boolean
     if (INITIALS.test(word)) continue;
     const key = fold(word);
     if (!key) continue;
-    if (key in GENDERED_TITLES) return GENDERED_TITLES[key]!;
+    if (key in GENDERED_TITLES) return GENDERED_TITLES[key];
     if (NEUTRAL_TITLES.has(key)) continue;
     if (skipSurname && words.length > 1 && i === words.length - 1) return "unknown";
     return lookupName(key);

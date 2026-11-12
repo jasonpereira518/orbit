@@ -165,7 +165,7 @@ export const RULED_OUT_VERDICT: RecruiterScanResult = Object.freeze({
   companiesMentioned: [],
   rolesDiscussed: [],
   summary: null,
-}) as RecruiterScanResult;
+});
 
 /** How long a classification stays good. A sender is re-read on every scan; the verdict is not redone. */
 export const RECRUITER_VERDICT_TTL_DAYS = 90;
