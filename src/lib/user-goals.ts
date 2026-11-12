@@ -61,6 +61,8 @@ export type GoalSnapshot = {
 /** Longest goal text Settings and chat accept. */
 export const MAX_GOAL_CHARS = 200;
 export const MAX_PROGRESS_CHARS = 500;
+/** A goal's category is a short tag ("Career", "Fundraising"). */
+export const MAX_GOAL_CATEGORY_CHARS = 60;
 
 /**
  * Add one active goal. The body of `addGoal` (src/actions/goals.ts), user-scoped so chat's
@@ -85,7 +87,7 @@ export async function addGoalForUser(
       userId,
       text: trimmed,
       progress: progressTrimmed,
-      category: options?.category?.trim() || null,
+      category: options?.category?.trim().slice(0, MAX_GOAL_CATEGORY_CHARS) || null,
       active: 1,
     })
     .returning();

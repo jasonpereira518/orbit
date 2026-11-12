@@ -202,7 +202,7 @@ export function ReminderCard({
             >
               {due.text}
               {timingRationale && (
-                <span className="ml-1.5 italic text-3xs text-muted-foreground/80">
+                <span className="ml-1.5 italic text-3xs text-muted-foreground-subtle">
                   · {timingRationale}
                 </span>
               )}
