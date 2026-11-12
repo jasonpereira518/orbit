@@ -123,3 +123,106 @@ hotspot above ~1% of the pan: it is React Flow's per-node and per-edge store sel
 every camera update, d3's `getBoundingClientRect` per mousemove, NodeRenderer commits as stars
 cross the edge, and Layerize. That is the DOM-stars ceiling the bench README already names; the
 next real step is drawing stars on a canvas (as `graph-canvas-mobile.tsx` does), not tuning.
+
+## Mid-zoom stars on a canvas (Nov 12)
+
+### What changed
+
+Below zoom 0.4 (and above the summary view, 0.13), a large sky's star window keeps a star in the
+DOM only when it is named, a comet, or asked for — hovered, selected, a search hit, a peek. Every
+other window star is drawn on one canvas, `WindowStarCanvas` (`src/components/graph/window-star-canvas.tsx`):
+
+- **Drawn once per window placement, moved by a CSS transform.** The canvas covers the window
+  (view + 25% a side) in world space; each camera update writes one `transform` on it, so a pan
+  is compositor work. It is redrawn when the window moves, the emphasis changes, the DOM set
+  changes at rest, or the camera stops at a new zoom (a zoom scales the old drawing meanwhile).
+  While the camera moves, a star leaving the DOM is painted onto the canvas incrementally; one
+  joining it stays drawn under itself until the camera stops.
+- **Under `.react-flow__renderer`, never inside the viewport.** A composited canvas among the
+  stars is what once gave each star its own layer (README, Sept 25). Beneath the renderer it is one
+  layer; the whole renderer composites above it. Traced pan at 2,500: Layerize 407 → 272ms per pan.
+- **The DOM star, baked.** `starSprite` from the phone renderer read smaller and dimmer than a DOM
+  star side by side (its body fades at 78% of the radius; the DOM gradient runs to the far corner),
+  so the canvas bakes `ContactNode`'s own halo and disc gradients per score tier × colour × emphasis.
+  Figure lines with a canvas end are drawn there too; sub-pixel lines are drawn one device pixel
+  wide at proportional alpha (a 0.33px GPU-canvas line broke into dots). Comets stay DOM (CSS
+  head and trail; a few a cluster).
+- **Hover and click** hit-test the canvas stars on the pane (same reach as the DOM star's hit
+  disc, so hover mounts the star under the pointer without flapping); a click selects it.
+  Checked in a real browser: hovering an unnamed canvas star mounted it as a DOM star and a click
+  opened its inspect panel. Labels, search spotlight (same `starEmphasis`) and screenshots at
+  0.3 matched the baseline.
+- **Named stars arrive 4 a frame while the camera moves** in this band (16 before). A traced pan
+  showed the remaining over-budget frames were 16 named stars' text layout landing at once after a
+  window move; the canvas shows them unnamed until they arrive.
+- The band is decided by the **window's** zoom, not the camera's, so the switch lands with the
+  window when the camera stops rather than mid-gesture. The star dust now only covers a zoom-out
+  that outruns the window (`windowOutrun`); the canvas covers the window ramp.
+
+### Results — real 120Hz (`--headful`, ProMotion), 5 reps, baseline = the Nov 11 pass
+
+Vsync gaps per ~360-frame pan (`gaps120`), per repetition:
+
+| Pan | Contacts | before | after |
+|---|---:|---|---|
+| Zoom 0.3, names showing | 2,500 | 1, 4, 3, 1, 5 | **0, 0, 0, 0, 0** |
+| Zoom 0.3, names showing | 10,000 | 4, 2, 1, 44, 22 | **0, 0, 1, 2, 8** |
+| Home | 2,500 / 10,000 | all 0 / 0,0,0,2,0 | all 0 / 0,0,0,0,2 |
+| Close-up 0.5 | 2,500 / 10,000 | 0,0,0,1,0 / 0,0,0,3,5 | all 0 / 0,0,0,2,1 |
+
+Repetitions 4–5 at 10,000 ran under load in both builds (the baseline's close-up pans degraded in
+the same reps). An earlier 8-rep after-only run at 2,500: 0,0,0,3,0,1,1,0, no 60Hz gap; several of
+those single gaps had no main-thread frame over budget (compositor side).
+
+| Gesture | Contacts | Frames over 8.3ms: before | after | Change | p95 frame ms: before | after | Worst frame ms: before | after | Long frames (LoAF): before | after | Commits/event: before | after |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Drag-pan at home (240px circle) | 2,500 | 0 (0.0%) | 0 (0.0%) | 0% | 1.5 | 2.2 | 3.6 | 4.5 | 0 | 0 | — | — |
+| Drag-pan at home (240px circle) | 10,000 | 0 (0.0%) | 0 (0.0%) | 0% | 1.9 | 1.9 | 4.3 | 3.0 | 0 | 0 | — | — |
+| Drag-pan @0.3, names showing (1,200px) | 2,500 | 6 (1.7%) | 0 (0.0%) | -100.0% | 6.4 | 5.0 | 10.4 | 7.3 | 0 | 0 | — | — |
+| Drag-pan @0.3, names showing (1,200px) | 10,000 | 7 (2.0%) | 3 (0.8%) | -57.1% | 6.9 | 5.6 | 15.3 | 10.6 | 0 | 0 | — | — |
+| Drag-pan @0.5, close-up (1,800px) | 2,500 | 0 (0.0%) | 0 (0.0%) | 0% | 2.7 | 2.9 | 6.4 | 5.7 | 0 | 0 | — | — |
+| Drag-pan @0.5, close-up (1,800px) | 10,000 | 1 (0.3%) | 0 (0.0%) | -100.0% | 3.6 | 3.0 | 9.1 | 7.4 | 0 | 0 | — | — |
+| Drag-pan @0.5, back over drawn sky | 2,500 | 0 (0.0%) | 0 (0.0%) | 0% | 3.0 | 3.0 | 7.0 | 7.4 | 0 | 0 | — | — |
+| Drag-pan @0.5, back over drawn sky | 10,000 | 2 (0.6%) | 0 (0.0%) | -100.0% | 3.8 | 3.3 | 10.5 | 7.6 | 0 | 0 | — | — |
+
+### No regression elsewhere? — `--suite frame`, headful, 3 reps
+
+Measured on the build before the last two changes (window-zoom switch, stable pane handlers),
+which only reduce work; a brief 2-rep re-run on the final build at 10,000 ran with the machine at
+load average ~45 (another session's build) and is directionally the same but not quotable.
+
+| Gesture | Contacts | Frames over 8.3ms: before | after | Change | p95 frame ms: before | after | Worst frame ms: before | after | Long frames (LoAF): before | after | Commits/event: before | after |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Zoom across the summary view (0.09 ↔ 0.25) | 2,500 | 91 (27.8%) | 99 (30.0%) | +8.8% | 13.0 | 12.0 | 28.7 | 24.2 | 0 | 0 | — | — |
+| Zoom across the summary view (0.09 ↔ 0.25) | 10,000 | 88 (26.3%) | 10 (2.9%) | -88.6% | 11.4 | 7.8 | 18.8 | 13.6 | 0 | 1 | — | — |
+| Trackpad pinch (0.05 → 1 → 0.05) | 2,500 | 40 (12.9%) | 28 (8.5%) | -30.0% | 10.4 | 9.4 | 15.0 | 12.4 | 1 | 1 | 0.86 | 0.92 |
+| Trackpad pinch (0.05 → 1 → 0.05) | 10,000 | 31 (9.8%) | 13 (3.8%) | -58.1% | 10.3 | 7.8 | 19.5 | 11.7 | 0 | 0 | 0.76 | 0.84 |
+| Mouse-wheel notches | 2,500 | 12 (3.3%) | 10 (2.8%) | -16.7% | 7.3 | 6.6 | 16.8 | 13.5 | 0 | 0 | 2.76 | 5.72 |
+| Mouse-wheel notches | 10,000 | 19 (5.4%) | 25 (6.9%) | +31.6% | 9.2 | 10.0 | 17.4 | 19.5 | 0 | 0 | 2.76 | 8.04 |
+| Hover star to star | 2,500 | 0 (0.0%) | 0 (0.0%) | 0% | 1.6 | 1.6 | 2.1 | 2.4 | 0 | 0 | 1.98 | 1.98 |
+| Hover star to star | 10,000 | 0 (0.0%) | 0 (0.0%) | 0% | 2.0 | 2.1 | 8.0 | 8.3 | 0 | 0 | 1.97 | 1.96 |
+| Pointer drifting over the sky | 2,500 | 0 (0.0%) | 0 (0.0%) | 0% | 1.1 | 1.3 | 2.0 | 2.5 | 0 | 0 | 0.04 | 0.04 |
+| Pointer drifting over the sky | 10,000 | 0 (0.0%) | 0 (0.0%) | 0% | 0.9 | 1.0 | 3.0 | 2.0 | 0 | 0 | 0.02 | 0.03 |
+| Typing a search + camera flight | 2,500 | 1 (0.3%) | 1 (0.3%) | 0.0% | 0.9 | 1.1 | 8.9 | 12.7 | 0 | 0 | 5.25 | 5.25 |
+| Typing a search + camera flight | 10,000 | 3 (1.0%) | 3 (1.0%) | 0.0% | 0.7 | 0.8 | 30.4 | 38.0 | 0 | 0 | 4.75 | 4.50 |
+| Clicking a cluster (flight in) | 2,500 | 6 (3.7%) | 2 (1.2%) | -66.7% | 6.0 | 5.9 | 40.3 | 16.1 | 1 | 1 | 107.00 | 107.00 |
+| Clicking a cluster (flight in) | 10,000 | 8 (4.8%) | 2 (1.1%) | -75.0% | 7.5 | 4.4 | 13.0 | 17.3 | 0 | 0 | 107.00 | 98.00 |
+
+- **Better:** summary zoom at 10,000 (−89% frames over budget), pinch (−30% / −58%), cluster click
+  (−67% / −75%). Fewer DOM stars mount on the way out of the summary view.
+- **Same:** hover, drift, search (search-type never leaves the summary view, where the canvas is not
+  mounted; its 10,000 worst frame moved 30 → 38ms within a 26–65ms spread across reps).
+- **Worse: mouse-wheel notches at 10,000** — 19 → 25 frames over budget, 2.8 → 7.4 commits a notch
+  (confirmed on the final build; commit counts do not depend on load). The gesture's four notches
+  carry the camera 0.3 → ~0.52 and back, across 0.4 every time, and the camera settles between
+  180ms notches, so each crossing swaps ~300 stars between canvas and DOM. Any single threshold
+  has a gesture that straddles it. If it matters: keep unnamed stars DOM above 0.4 only once the
+  window has *stayed* there (a longer settle for the band switch), or move the threshold.
+
+### Not done / known gaps
+
+- Keyboard: canvas stars are not tab stops (only window stars ever were).
+- Canvas stars sit under the cluster washes (DOM stars sit above), so they take a faint tint of the
+  wash; not visible side by side in the screenshots.
+- Layer count was not measured directly (the CDP LayerTree probe returned nothing); Layerize time
+  above is the evidence.
