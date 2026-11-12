@@ -8,7 +8,7 @@
  * fence, and the card only as text.
  */
 import { createHash } from "node:crypto";
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactSignals, contacts } from "@/db/schema";
 import { cleanSingleLine } from "@/lib/ai-security";
@@ -90,7 +90,7 @@ export async function saveLinkedinActivity(
 }
 
 /**
- * The run's one read of stored posts: recent `social_post` and `linkedin_activity` rows for
+ * The run's one read of stored posts: recent `linkedin_activity` rows (posts saved with the extension) for
  * the people it is scoring, newest per person.
  */
 export async function loadPostSignals(
@@ -102,12 +102,12 @@ export async function loadPostSignals(
   const db = await getDb();
   const since = new Date(now.getTime() - RADAR_WINDOWS.postMax * DAY_MS);
   const rows = await db
-    .select({ contactId: contactSignals.contactId, occurredAt: contactSignals.occurredAt, payload: contactSignals.payload })
+    .select({ id: contactSignals.id, contactId: contactSignals.contactId, occurredAt: contactSignals.occurredAt, payload: contactSignals.payload })
     .from(contactSignals)
     .where(
       and(
         eq(contactSignals.userId, userId),
-        inArray(contactSignals.kind, ["social_post", "linkedin_activity"]),
+        eq(contactSignals.kind, "linkedin_activity"),
         gte(contactSignals.occurredAt, since)
       )
     )
@@ -123,8 +123,9 @@ export async function loadPostSignals(
       contactId: r.contactId,
       at: r.occurredAt,
       excerpt: r.payload.excerpt,
-      network: r.payload.network ?? "linkedin",
+      network: "linkedin",
       url: safeHttpUrl(r.payload.url ?? null),
+      source: { table: "contact_signals", id: r.id, text: r.payload.excerpt, quote: r.payload.excerpt, urls: r.payload.url ? [r.payload.url] : [] },
     });
   }
   return out;

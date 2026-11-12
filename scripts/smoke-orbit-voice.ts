@@ -22,6 +22,7 @@ import {
 } from "../src/lib/voice/settings";
 import {
   startVoiceSession,
+  saveVoiceTurn,
   callVoiceTool,
   endVoiceSession,
   requireVoiceSession,
@@ -142,12 +143,27 @@ async function main() {
       .returning();
     fixtureContacts.push(mine.id, other.id);
     const sessions: string[] = [];
+    const [shared] = await db.insert(chatThreads).values({userId: USER, title: "Shared text and voice"}).returning();
+    fixtureThreads.push(shared.id);
+    await db.insert(chatMessages).values({userId: USER, threadId: shared.id, role: "user", content: "Remember the Ada meeting"});
     for (const provider of ["deepgram", "elevenlabs"] as VoiceProvider[]) {
       await setVoiceConfig("test-admin", { ...DEFAULT_VOICE_CONFIG, provider });
       await setVoiceEnabled("test-admin", true);
       const start = await startVoiceSession(USER, "America/New_York", false, [
         { source: "user", text: "Prepare for Ada" },
-      ]);
+      ], shared.id);
+      assert.equal(start.threadId, shared.id, "voice continues the selected thread");
+      const turn = {id: crypto.randomUUID(), source: "ai" as const, text: "First response", interrupted: false, revision: 1};
+      await saveVoiceTurn(USER, start.sessionId, turn);
+      await saveVoiceTurn(USER, start.sessionId, {...turn, text: "Corrected response", interrupted: true, revision: 2});
+      await saveVoiceTurn(USER, start.sessionId, turn); // A late retry must not restore the original text.
+      const savedTurns = await db.query.chatMessages.findMany({where: eq(chatMessages.id, turn.id)});
+      assert.equal(savedTurns.length, 1, "transcript retries and corrections update one turn");
+      assert.equal(savedTurns[0].content, "Corrected response\n\n[Interrupted]");
+      assert.equal(savedTurns[0].threadId, shared.id);
+      await assert.rejects(saveVoiceTurn(OTHER, start.sessionId, turn));
+      const [foreign] = await db.insert(chatMessages).values({userId: OTHER, threadId: shared.id, role: "assistant", content: "Private"}).returning();
+      await assert.rejects(saveVoiceTurn(USER, start.sessionId, {...turn, id: foreign.id}));
       sessions.push(start.sessionId);
       assert.equal(start.credentials.provider, provider);
       if (start.credentials.provider === "deepgram") {
@@ -161,7 +177,8 @@ async function main() {
             }>;
           };
         };
-        assert.ok(agent.think?.prompt?.includes("Prepare for Ada"));
+        assert.ok(agent.think?.prompt?.includes("Remember the Ada meeting"));
+        assert.ok(!agent.think?.prompt?.includes("Prepare for Ada"), "client history cannot override stored context");
         assert.ok(agent.think?.prompt?.includes("America/New_York"));
         assert.ok(
           agent.think?.functions?.every(
@@ -365,6 +382,21 @@ async function main() {
       })
       .returning();
     await guardVoiceProposal(USER, textMessage.id);
+    const [sharedTextProposal] = await db.insert(chatMessages).values({
+      userId: USER, threadId: shared.id, role: "assistant", content: "Text proposal",
+      clientTurnId: "chat-proposal",
+    }).returning();
+    await guardVoiceProposal(USER, sharedTextProposal.id);
+    const [priorText] = await db.insert(chatMessages).values({
+      userId: USER, threadId: shared.id, role: "assistant", content: "Prior text proposal",
+      createdAt: new Date(Date.now() - 3600000),
+    }).returning();
+    await guardVoiceProposal(USER, priorText.id);
+    const [legacyVoice] = await db.insert(chatMessages).values({
+      userId: USER, threadId: lease.threadId, role: "assistant", content: "Legacy voice proposal",
+    }).returning();
+    await db.update(chatThreads).set({title: "Renamed conversation"}).where(eq(chatThreads.id, lease.threadId));
+    await assert.rejects(guardVoiceProposal(USER, legacyVoice.id), VoiceUnavailableError);
     await endVoiceSession(USER, lease.sessionId);
     await setVoiceEnabled("test-admin", true);
     rejectDeepgram = true;

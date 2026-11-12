@@ -21,8 +21,18 @@ export const RECOMMENDATION_KINDS = [
   "opportunity",
   "reach_out",
   "reconnect",
+  // Connect lane: links between the person's notes and the people they know.
+  "introduce",
+  "ask",
+  "share",
 ] as const;
 export type RecommendationKind = (typeof RECOMMENDATION_KINDS)[number];
+
+/**
+ * The kinds autopilot may act on. Not the Connect kinds: an introduction or an ask involves a
+ * second person, so it only ever happens when the person chooses it.
+ */
+export const AUTOPILOT_KINDS = ["prep", "heads_up", "follow_up", "opportunity", "reach_out", "reconnect"] as const satisfies readonly RecommendationKind[];
 
 export const KIND_PRIORITY: Record<RecommendationKind, number> = {
   prep: 6,
@@ -31,6 +41,9 @@ export const KIND_PRIORITY: Record<RecommendationKind, number> = {
   opportunity: 3,
   reach_out: 2,
   reconnect: 1,
+  introduce: 3,
+  ask: 2,
+  share: 1,
 };
 
 /** The chip on a card. Short, because it sits beside a name. */
@@ -41,6 +54,9 @@ export const KIND_LABELS: Record<RecommendationKind, string> = {
   opportunity: "Opportunity",
   reach_out: "Reach out",
   reconnect: "Reconnect",
+  introduce: "Introduce",
+  ask: "Ask",
+  share: "Share",
 };
 
 /** The section a kind is grouped under below "Today". */
@@ -51,6 +67,29 @@ export const KIND_SECTION_TITLES: Record<RecommendationKind, string> = {
   opportunity: "Opportunities",
   reach_out: "Waiting on you",
   reconnect: "Drifting",
+  introduce: "People to connect",
+  ask: "Who could help",
+  share: "Worth passing on",
+};
+
+/**
+ * Radar's three lanes (docs/superpowers/specs/2026-11-10-radar-analyst-design.md). Follow up:
+ * people the person has met where something is open. Connect: links between their notes and
+ * their people. Opportunities: things to go after, with someone they know attached.
+ */
+export const RADAR_LANES = ["follow_up", "connect", "opportunities"] as const;
+export type RadarLane = (typeof RADAR_LANES)[number];
+
+export const LANE_OF_KIND: Record<RecommendationKind, RadarLane> = {
+  prep: "follow_up",
+  heads_up: "follow_up",
+  follow_up: "follow_up",
+  reach_out: "follow_up",
+  reconnect: "follow_up",
+  introduce: "connect",
+  ask: "connect",
+  share: "connect",
+  opportunity: "opportunities",
 };
 
 export const RECOMMENDATION_BUCKETS = ["today", "soon", "later"] as const;
@@ -138,6 +177,43 @@ export function draftIntent(target: { kind: RecommendationKind; reasons: readonl
 }
 
 /**
+ * The tables a proof may point at: rows Radar's run read. A quote proof must appear in the
+ * text the run read from that row; a record proof says the row exists for this account.
+ */
+export type RadarProofTable =
+  | "contacts"
+  | "interactions"
+  | "events"
+  | "action_items"
+  | "contact_opportunities"
+  | "relationship_digests"
+  | "contact_career_moves"
+  | "email_events"
+  | "contact_signals"
+  | "ai_suggestions";
+
+/**
+ * Why a piece of evidence can be trusted (`src/lib/radar/verify.ts`). Built by code from rows
+ * the run read, never by a model: a model may only cite a source, and the check confirms it.
+ */
+export type RadarProof =
+  | { type: "record"; table: RadarProofTable; id: string }
+  | { type: "quote"; table: RadarProofTable; id: string; quote: string }
+  | { type: "url"; url: string };
+
+/** Where a signal came from: the row, and the text the run read from it, if any. */
+export type RadarSignalSource = {
+  table: RadarProofTable;
+  id: string;
+  /** The row's text as read. A quote proof is checked against it. */
+  text?: string | null;
+  /** The part of `text` the card quotes. Absent: the proof is the record itself. */
+  quote?: string | null;
+  /** Links this row handed over (a saved post's URL). */
+  urls?: readonly string[];
+};
+
+/**
  * The most specific fact behind a card, shown under the reasons ("Meeting · Thu 3 Oct").
  * `url` only for a public source (a headline), already through `safeHttpUrl`, and rendered
  * through it again.
@@ -146,6 +222,9 @@ export type RadarEvidence = {
   label: string;
   at: string | null;
   url?: string | null;
+  /** The reason code this evidence backs. The lead reason must have one whose proof holds. */
+  code?: string;
+  proof?: RadarProof;
   /**
    * Set on evidence that comes from the user's mail: which `email_events` row, and whether
    * this person is on the email. Accepting the card reads it to create the email's own task.
@@ -227,7 +306,6 @@ export type RadarAutopilot = Partial<Record<RecommendationKind, boolean>>;
  * `contact_signals`, deduplicated per account, and read by the scorer like any other signal.
  */
 export const CONTACT_SIGNAL_KINDS = [
-  "company_news",
   "social_post",
   "linkedin_activity",
 ] as const;
@@ -239,10 +317,7 @@ export type ContactSignalKind = (typeof CONTACT_SIGNAL_KINDS)[number];
  * to a model. `url` has already been through `safeHttpUrl`.
  */
 export type ContactSignalPayload = {
-  /** company_news: the headline and the company it matched. */
-  title?: string;
-  company?: string;
-  /** social_post and linkedin_activity: a short excerpt. */
+  /** social_post and linkedin_activity: a short excerpt. Bluesky and Mastodon rows are history: nothing polls them now. */
   excerpt?: string;
   network?: "bluesky" | "mastodon" | "linkedin";
   url?: string | null;
@@ -250,8 +325,17 @@ export type ContactSignalPayload = {
   sourceLabel?: string;
 };
 
-/** The global news tables' source kinds (`external_sources.kind`). */
+/** The retired global news tables' source kinds (`external_sources.kind`); the tables drop in Radar PR 12. */
 export type ExternalSourceKind = "rss" | "atom" | "hn" | "edgar";
+
+/**
+ * An opportunity with no contact row (`radar_opportunities`): an event near the person, someone
+ * new to meet, an opening, a program or deadline. Nothing here becomes a contact until saved.
+ */
+export const RADAR_OPPORTUNITY_KINDS = ["event", "person", "opening", "program"] as const;
+export type RadarOpportunityKind = (typeof RADAR_OPPORTUNITY_KINDS)[number];
+/** `found` = checked but not shown yet; `pending` = on the page; `saved` = the person kept it. */
+export type RadarOpportunityStatus = "found" | "pending" | "saved" | "dismissed" | "expired";
 
 /** What a person did with a recommendation, recorded so the next run respects it. */
 export type RadarFeedbackAction = "accepted" | "dismissed" | "snoozed" | "never";
@@ -260,11 +344,14 @@ export type RadarRunTrigger = "schedule" | "page" | "manual" | "first_visit";
 export type RadarRunStatus = "running" | "ok" | "partial" | "failed";
 
 /**
- * A dated fact about one contact that the scorer turns into points. Internal facts only in
- * phase one: every one of these is read from a table Orbit already keeps. Dormancy and a
- * fresh intro are not signals; the scorer derives them from the contact's own dates.
+ * A dated fact about one contact that the scorer turns into points, read from a table Orbit
+ * already keeps. Dormancy is not a signal; the scorer derives it from the contact's own dates.
+ * `source` is the row it came from and the text read from it: the scorer turns it into the
+ * evidence's proof, and `verify.ts` checks that proof before a card is written.
  */
-export type RadarSignal =
+export type RadarSignal = RadarSignalFact & { source?: RadarSignalSource };
+
+type RadarSignalFact =
   | { kind: "upcoming_meeting"; contactId: string; at: Date; title: string | null }
   | { kind: "event_upcoming"; contactId: string; at: Date; title: string }
   | { kind: "post_event"; contactId: string; at: Date; title: string }
@@ -274,24 +361,17 @@ export type RadarSignal =
   | { kind: "inbound_unanswered"; contactId: string; at: Date }
   | { kind: "linkedin_thread_quiet"; contactId: string; at: Date; count: number }
   | { kind: "job_posting"; contactId: string; at: Date; text: string }
-  /** A headline about the company they work at (`src/lib/radar/signals/news.ts`). */
-  | {
-      kind: "company_news";
-      contactId: string;
-      at: Date;
-      title: string;
-      source: string;
-      url: string | null;
-      itemId: string;
-      company: string;
-    }
-  /** A post of theirs: public Bluesky or Mastodon, or LinkedIn saved via the extension. */
+  /** An unresolved loop in their messages that the person owes (`relationship_digests.open_threads`). */
+  | { kind: "open_thread"; contactId: string; at: Date; text: string }
+  /** The person's latest real encounter with them (a meeting, call, coffee, event). */
+  | { kind: "met_recently"; contactId: string; at: Date }
+  /** A LinkedIn post of theirs the person saved with the extension. */
   | {
       kind: "social_post";
       contactId: string;
       at: Date;
       excerpt: string;
-      network: "bluesky" | "mastodon" | "linkedin";
+      network: "linkedin";
       url: string | null;
     }
   /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */
@@ -319,17 +399,6 @@ export type RadarSignal =
       hasAsk: boolean;
       /** 0..1: how relevant the ranker found this person. */
       fit: number;
-    }
-  /** A prospective connection discovered outside the network (papers, GitHub, web, Twitter). */
-  | {
-      kind: "discovery";
-      contactId: string;
-      at: Date;
-      platform: "research" | "github" | "twitter" | "linkedin" | "web";
-      title: string;
-      summary: string;
-      url?: string | null;
-      matchingProjectTitle?: string;
     };
 
 export type RadarSignalKind = RadarSignal["kind"];

@@ -26,17 +26,24 @@ import {
   type SnoozeLength,
 } from "@/lib/radar/actions-core";
 import { explainRecommendation } from "@/lib/radar/explain";
-import { loadRadarBriefing, loadRadarPage, type RadarBriefing, type RadarPageData } from "@/lib/radar/page-data";
-import { claimRadarLease, ensureRadarRun, maybeRefreshRadar, refreshRadarForNewContact, runRadarForUser } from "@/lib/radar/run";
+import {
+  loadRadarActivation,
+  loadRadarBriefing,
+  loadRadarPage,
+  type RadarActivation,
+  type RadarBriefing,
+  type RadarPageData,
+} from "@/lib/radar/page-data";
+import { claimRadarLease, ensureRadarRun, loadRadarState, maybeRefreshRadar, refreshRadarForNewContact, runRadarForUser, turnOnRadarForUser } from "@/lib/radar/run";
 import { rebuildContactEmbedding } from "@/lib/search";
-import { markRecommendationsSeen } from "@/lib/radar/store";
+import { markRecommendationsSeen, stampRadarOpened } from "@/lib/radar/store";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { setRadarAutopilotForUser, undoAutopilotForUser } from "@/lib/radar/autopilot";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
-import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS, type RecommendationKind } from "@/lib/radar/types";
 import type { NetworkStats } from "@/lib/network-stats";
 
 const SURFACE = "page.radar";
@@ -44,6 +51,12 @@ const SURFACE = "page.radar";
 function revalidateRadar() {
   revalidatePathIfRequestScoped("/radar");
   revalidatePathIfRequestScoped("/dashboard");
+}
+
+/** Is Radar on for this account, and if not, the people the turn-on scene draws. Builds nothing. */
+export async function fetchRadarActivation(): Promise<RadarActivation> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  return loadRadarActivation(userId);
 }
 
 /**
@@ -61,6 +74,8 @@ export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats:
   ]);
   const shown = page.recommendations.map((r) => r.id);
   after(() => markRecommendationsSeen(userId, shown).catch(() => undefined));
+  // Opening the page is what clears the nav's green "new suggestions" pulse.
+  after(() => stampRadarOpened(userId).catch(() => undefined));
   // The zone Radar's Monday email is timed by: the browser's, as the cookie last reported it.
   const tz = (await cookies()).get(TZ_COOKIE)?.value;
   after(() => captureRadarTimeZone(userId, tz).catch(() => undefined));
@@ -163,6 +178,8 @@ export async function refreshRadarNow(): Promise<RadarActionResult> {
     if (isRateLimitedError(err)) return { ok: false, message: err.message };
     throw err;
   }
+  const state = await loadRadarState(userId);
+  if (!state || state.paused) return { ok: false, message: "Turn on Radar first" };
   if (!(await claimRadarLease(userId))) {
     return { ok: false, message: "Radar is already updating — give it a moment" };
   }
@@ -203,10 +220,28 @@ export async function undoAutopilot(id: string): Promise<RadarActionResult> {
 /** Turn autopilot on or off for one kind of card. Autopilot schedules; it never sends. */
 export async function setRadarAutopilot(kind: RecommendationKind, on: boolean): Promise<RadarActionResult> {
   const userId = await requireUserForReleasedSurface(SURFACE);
-  if (!RECOMMENDATION_KINDS.includes(kind)) return { ok: false, message: "That isn’t a kind of card Radar makes" };
+  if (!(AUTOPILOT_KINDS as readonly string[]).includes(kind)) return { ok: false, message: "Autopilot doesn’t run on that kind of card" };
   await setRadarAutopilotForUser(userId, kind, on);
   revalidateRadar();
   return { ok: true, message: on ? `Autopilot on for ${KIND_LABELS[kind]}` : `Autopilot off for ${KIND_LABELS[kind]}` };
+}
+
+/**
+ * "Turn on Radar". Radar is off by default (schema v225): this stamps the first time it was
+ * turned on (kept forever, so a later turn-on plays the short animation), clears a pause, and
+ * builds the first plan with AI after the response, while the animation plays.
+ */
+export async function turnOnRadar(): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  await turnOnRadarForUser(userId);
+  after(async () => {
+    if (await claimRadarLease(userId).catch(() => false)) {
+      await runRadarForUser(userId, { trigger: "manual", ai: true, budgetMs: 60_000 }).catch(() => undefined);
+    }
+  });
+  // No revalidation here on purpose: it would re-render /radar as "on" in this action's own
+  // response and unmount the turn-on animation mid-play. The client refreshes when it lands.
+  return { ok: true, message: "Radar is on" };
 }
 
 export async function setRadarPaused(paused: boolean): Promise<RadarActionResult> {
@@ -214,7 +249,7 @@ export async function setRadarPaused(paused: boolean): Promise<RadarActionResult
   const db = await getDb();
   await db.update(userSettings).set({ radarPaused: paused ? 1 : 0 }).where(eq(userSettings.userId, userId));
   revalidateRadar();
-  return { ok: true, message: paused ? "Radar paused" : "Radar resumed" };
+  return { ok: true, message: paused ? "Radar is off" : "Radar is on" };
 }
 
 /** Radar's Monday email on or off. Also reachable from Settings and the email's own link. */

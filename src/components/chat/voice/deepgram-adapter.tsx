@@ -34,6 +34,7 @@ export function DeepgramAdapter({
       if (!closed) events.onError();
     };
     events.onReady({
+      getLevels: () => ({ input: microphone.getInputVolume(), output: player.getOutputVolume() }),
       disconnect: () => {
         closed = true;
         clearTimeout(playbackTimer);
@@ -79,6 +80,7 @@ export function DeepgramAdapter({
     agent.on("user-started-speaking", () => {
       clearTimeout(playbackTimer);
       player.interrupt();
+      if (!closed) events.onInterrupted();
       if (!closed) events.onMode("listening");
     });
     agent.on("agent-thinking", () => {

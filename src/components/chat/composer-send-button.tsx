@@ -14,7 +14,7 @@
  */
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowUp, Loader2, Square } from "lucide-react";
+import { ArrowUp, AudioLines, Loader2, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -32,7 +32,7 @@ export function ComposerSendButton({
   onStop,
 }: {
   /** "recall" reuses this control to pull the last message back. */
-  mode: "send" | "recall";
+  mode: "send" | "recall" | "voice";
   busy: boolean;
   disabled: boolean;
   onClick: () => void;
@@ -44,7 +44,7 @@ export function ComposerSendButton({
   // While streaming this is the only control in reach, so it stops rather than sits
   // disabled — a long answer the user no longer wants had no way out before.
   const stopping = busy && Boolean(onStop);
-  const label = stopping ? "Stop generating" : mode === "send" ? "Send" : "Recall last message";
+  const label = stopping ? "Stop generating" : mode === "voice" ? "Start Orbit Voice" : mode === "send" ? "Send" : "Recall last message";
 
   return (
     <Button
@@ -85,14 +85,14 @@ export function ComposerSendButton({
             </motion.span>
           ) : (
             <motion.span
-              key="arrow"
+              key={mode === "voice" ? "voice" : "arrow"}
               className="absolute inset-0 inline-flex items-center justify-center"
               initial={{ y: 14, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: LAUNCH_Y, opacity: 0 }}
               transition={{ duration, ease: EASE_HOUSE }}
             >
-              <ArrowUp className="size-4" />
+              {mode === "voice" ? <AudioLines className="size-4" /> : <ArrowUp className="size-4" />}
             </motion.span>
           )}
         </AnimatePresence>

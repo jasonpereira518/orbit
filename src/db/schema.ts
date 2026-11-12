@@ -28,6 +28,8 @@ import type {
   RadarEvidence,
   RadarFeedbackAction,
   RadarModel,
+  RadarOpportunityKind,
+  RadarOpportunityStatus,
   RadarReason,
   RadarRunStatus,
   RadarRunTrigger,
@@ -689,6 +691,20 @@ export const userSettings = pgTable("user_settings", {
   radarAutoProjects: integer("radar_auto_projects").default(1).notNull(),
   /** 1 = outbound web discovery for prospective connections matching projects/goals. */
   radarDiscoveryEnabled: integer("radar_discovery_enabled").default(1).notNull(),
+  /** When Radar's web lane (events, people to meet, programs) is next due for this account. */
+  radarWebNextAt: timestamp("radar_web_next_at", { withTimezone: true }),
+  /** Local day ("2026-11-11") of the last same-day Radar email, claimed before sending. */
+  radarMomentLastDay: text("radar_moment_last_day"),
+  /**
+   * When the person first pressed "Turn on Radar". Null = never: Radar is off by default and
+   * spends nothing until then. On = set AND `radarPaused` = 0 (`radarIsOn` in run.ts).
+   */
+  radarEnabledAt: timestamp("radar_enabled_at", { withTimezone: true }),
+  /**
+   * When the person last opened the Radar page. Suggestions created after it are "new": the
+   * nav's Radar icon pulses green while there are any (`countNewRadarSuggestions`).
+   */
+  radarOpenedAt: timestamp("radar_opened_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -1166,6 +1182,64 @@ export const userProjects = pgTable(
   (t) => [
     index("user_projects_user_status_idx").on(t.userId, t.status),
     index("user_projects_user_activity_idx").on(t.userId, t.lastActivityAt),
+  ]
+);
+
+/**
+ * Radar's Opportunities lane: events near the person, people to meet, openings and programs.
+ * No contact row on purpose: nothing here enters `contacts` until the person saves it.
+ * `related_contact_ids` are people they already know who connect to it (who is going, who can
+ * introduce, who works there). One row per (user, dedupe_key), so a search that finds the same
+ * thing again updates it. See docs/superpowers/specs/2026-11-10-radar-analyst-design.md.
+ */
+export const radarOpportunities = pgTable(
+  "radar_opportunities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    kind: text("kind").$type<RadarOpportunityKind>().notNull(),
+    title: text("title").notNull(),
+    url: text("url"),
+    why: text("why"),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    evidence: jsonb("evidence").$type<RadarEvidence[]>().default([]).notNull(),
+    relatedContactIds: uuid("related_contact_ids").array().notNull().default(sql`'{}'`),
+    score: integer("score").default(0).notNull(),
+    status: text("status").$type<RadarOpportunityStatus>().default("found").notNull(),
+    dismissReason: text("dismiss_reason"),
+    dedupeKey: text("dedupe_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("radar_opportunities_user_dedupe_uidx").on(t.userId, t.dedupeKey),
+    index("radar_opportunities_user_status_idx").on(t.userId, t.status),
+  ]
+);
+
+/**
+ * Web push subscriptions, one per browser or installed app the person allowed notifications
+ * on. `endpoint` is the push service URL and is unique; `p256dh` and `auth` are the browser's
+ * public keys for encrypting a message to it. A subscription the push service rejects for good
+ * (404/410) is deleted; `failure_count` counts other failures in a row.
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    userAgent: text("user_agent"),
+    failureCount: integer("failure_count").default(0).notNull(),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("push_subscriptions_endpoint_uidx").on(t.endpoint),
+    index("push_subscriptions_user_idx").on(t.userId),
   ]
 );
 
@@ -2805,7 +2879,7 @@ export const radarRuns = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     durationMs: integer("duration_ms"),
-    stats: jsonb("stats").$type<Record<string, number | boolean>>().default({}).notNull(),
+    stats: jsonb("stats").$type<Record<string, number | boolean | string>>().default({}).notNull(),
     error: text("error"),
   },
   (t) => [index("radar_runs_user_started_idx").on(t.userId, t.startedAt.desc())]
@@ -3941,7 +4015,9 @@ export const chatMessages = pgTable(
     /**
      * The id the client minted for the turn that wrote this question, so a Stop that reaches
      * the server after the question was saved can find and discard it. Null on assistant rows,
-     * versioned turns and every row from before SCHEMA_VERSION 174.
+     * versioned turns and every row from before SCHEMA_VERSION 174. Assistant proposal
+     * rows may carry chat/voice origin markers; finalized voice turns carry their session
+     * and transcript revision so late retries cannot overwrite a correction.
      */
 /**
      * Files attached to this question: their names and the text read from them (never the

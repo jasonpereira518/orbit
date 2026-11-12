@@ -36,6 +36,7 @@ import {
 } from "@/lib/surfaces";
 import { PLAN_SHORT_LABELS, type Plan } from "@/lib/plans/plan-config";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
+import { RadarNewText, RadarShimmerIcon } from "@/components/layout/radar-shimmer-icon";
 import { MobileCaptureButton } from "@/components/layout/mobile-capture-button";
 import {
   TAB_CONTENT_CLASS,
@@ -522,8 +523,10 @@ export function MobileNav({
                           className={TAB_CONTENT_CLASS}
                           style={tabContentStyle(myIndex === pressedItemIndex)}
                         >
-                          <Icon className="size-[18px]" aria-hidden />
+                          {/* Radar behind More: the door carries its "new suggestions" shimmer. */}
+                          <RadarShimmerIcon icon={Icon} radar={moreNav.some((m) => m.href === "/radar")} className="size-[18px]" />
                           <span>{item.label}</span>
+                          {moreNav.some((m) => m.href === "/radar") && <RadarNewText />}
                         </span>
                       </span>
                     </button>
@@ -587,8 +590,9 @@ export function MobileNav({
                         className={TAB_CONTENT_CLASS}
                         style={tabContentStyle(myIndex === pressedItemIndex)}
                       >
-                        <Icon className="size-[18px]" aria-hidden />
+                        <RadarShimmerIcon icon={Icon} radar={navItem.href === "/radar"} className="size-[18px]" />
                         <span>{navItem.label}</span>
+                        {navItem.href === "/radar" && <RadarNewText />}
                       </span>
                     </span>
                   </IntentLink>
@@ -697,8 +701,9 @@ export function MobileNav({
                       : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
                   )}
                 >
-                  <Icon className="h-5 w-5 shrink-0" />
+                  <RadarShimmerIcon icon={Icon} radar={item.href === "/radar"} className="h-5 w-5 shrink-0" />
                   {item.label}
+                  {item.href === "/radar" && <RadarNewText />}
                   {isHrefComingSoon(item.href, comingSoon) ? (
                     <span className="rounded-full border border-warning/40 px-1.5 py-px text-3xs uppercase tracking-wide text-warning">
                       Soon

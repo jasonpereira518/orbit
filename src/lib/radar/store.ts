@@ -40,6 +40,7 @@ export type LiveRecommendation = {
   id: string;
   contactId: string;
   kind: RecommendationKind;
+  bucket: RecommendationBucket | null;
   status: RecommendationStatus;
   snoozedUntil: Date | null;
   inputsHash: string;
@@ -55,6 +56,7 @@ export async function loadLiveRecommendations(userId: string): Promise<LiveRecom
       id: recommendations.id,
       contactId: recommendations.contactId,
       kind: recommendations.kind,
+      bucket: recommendations.bucket,
       status: recommendations.status,
       snoozedUntil: recommendations.snoozedUntil,
       inputsHash: recommendations.inputsHash,
@@ -148,6 +150,23 @@ export function planRunResult(live: readonly LiveRecommendation[], next: readonl
   return { inserted, updated, expired };
 }
 
+/** `planRunResult` for a daily pass (`composeDay`): new Today cards, promotions, retirements. */
+export function planDayResult(
+  live: readonly LiveRecommendation[],
+  day: { insert: readonly NewRecommendation[]; promote: readonly string[]; keepContacts: ReadonlySet<string> },
+  now: Date
+): WriteCounts {
+  const expired = live.filter(
+    (r) =>
+      (r.status === "pending" || (r.status === "snoozed" && r.snoozedUntil !== null && r.snoozedUntil <= now)) &&
+      !day.keepContacts.has(r.contactId)
+  ).length;
+  return { inserted: day.insert.length, updated: day.promote.length, expired };
+}
+
+/** A daily pass's write: the plan's rows stay, only Today and retirements change. */
+export type DailyWrite = { mode: "daily"; keepContacts: ReadonlySet<string>; promote: readonly string[] };
+
 /**
  * Replace this account's live list with the run's result, in one atomic write:
  *
@@ -156,14 +175,20 @@ export function planRunResult(live: readonly LiveRecommendation[], next: readonl
  *   3. upsert the run's rows on the live unique index, keeping a live snooze's status and
  *      keeping the AI note while the inputs it was written from are unchanged,
  *   4. prune history older than `RADAR_HISTORY_DAYS`.
+ *
+ * A daily pass (`daily`) never touches a plan row's content. Step 2 retires only pending cards
+ * whose person has no reason left (`keepContacts`), step 3 inserts new Today cards and leaves
+ * any existing row as it is, and one more statement moves `promote` cards into Today.
  */
 export async function writeRunResult(
   userId: string,
   runId: string,
   next: readonly NewRecommendation[],
-  now: Date
+  now: Date,
+  daily?: DailyWrite
 ): Promise<void> {
   const db = await getDb();
+  const keepIds = daily ? [...daily.keepContacts] : [];
   const keys = next.map((r) => recommendationKey(r.contactId, r.kind));
   const historyCutoff = new Date(now.getTime() - RADAR_HISTORY_DAYS * DAY_MS);
   await runAtomicWrite(db, (tx) => {
@@ -194,7 +219,14 @@ export async function writeRunResult(
             or(
               and(
                 eq(recommendations.status, "pending"),
-                keys.length
+                daily
+                  ? keepIds.length
+                    ? sql`NOT (${recommendations.contactId}::text = ANY(ARRAY[${sql.join(
+                        keepIds.map((k) => sql`${k}`),
+                        sql`, `
+                      )}]::text[]))`
+                    : undefined
+                  : keys.length
                   ? sql`NOT ((${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
                       keys.map((k) => sql`${k}`),
                       sql`, `
@@ -226,12 +258,15 @@ export async function writeRunResult(
               expiresAt: r.expiresAt,
               runId,
               inputsHash: r.inputsHash,
+              aiNote: r.aiNote ?? null,
               suggestedCalendarInvite: r.suggestedCalendarInvite ?? null,
               discoveredPerson: r.discoveredPerson ?? null,
               createdAt: now,
               updatedAt: now,
             }))
           )
+          // A daily pass inserts only Today cards for people with no live card; should one race
+          // a live row, the live row wins (`setWhere` false), so the plan is never rewritten.
           .onConflictDoUpdate({
             target: [recommendations.userId, recommendations.contactId, recommendations.kind],
             // Must imply `recommendations_live_v2_uidx`'s predicate, or Postgres finds no
@@ -249,13 +284,32 @@ export async function writeRunResult(
               runId: sql`excluded.run_id`,
               suggestedCalendarInvite: sql`coalesce(excluded.suggested_calendar_invite, ${recommendations.suggestedCalendarInvite})`,
               discoveredPerson: sql`coalesce(excluded.discovered_person, ${recommendations.discoveredPerson})`,
-              // Every SET expression reads the OLD row, so this compares the stored hash
-              // with the new one before the new one is written.
-              aiNote: sql`case when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
+              // The editor's fresh note wins. Otherwise every SET expression reads the OLD row,
+              // so this compares the stored hash with the new one before the new one is written,
+              // and keeps the old note only while the facts it was written from are unchanged.
+              aiNote: sql`case when excluded.ai_note is not null then excluded.ai_note when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
               inputsHash: sql`excluded.inputs_hash`,
               updatedAt: sql`excluded.updated_at`,
             },
+            ...(daily ? { setWhere: sql`false` } : {}),
           })
+      );
+    }
+    if (daily?.promote.length) {
+      statements.push(
+        tx
+          .update(recommendations)
+          .set({ bucket: "today", updatedAt: now })
+          .where(
+            and(
+              eq(recommendations.userId, userId),
+              eq(recommendations.status, "pending"),
+              sql`(${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
+                daily.promote.map((k) => sql`${k}`),
+                sql`, `
+              )}]::text[])`
+            )
+          )
       );
     }
     statements.push(
@@ -459,7 +513,10 @@ export async function loadModelTallies(userId: string, now: Date): Promise<Radar
                END AS a,
                CASE
                  WHEN status = 'dismissed' THEN ${V.dismissed}::numeric
-                 WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN} THEN ${V.ignored}::numeric
+                 -- Ignored only when it ran its course. A daily pass retires a card early when its
+                 -- reason is gone (the person already wrote to them): that is not a vote.
+                 WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN}
+                      AND resolved_at >= expires_at THEN ${V.ignored}::numeric
                  ELSE 0
                END AS d
           FROM recommendations
@@ -508,6 +565,29 @@ export async function markRecommendationsSeen(userId: string, ids: readonly stri
         or(sql`${recommendations.lastSeenAt} is null`, lt(recommendations.lastSeenAt, debounceCutoff))
       )
     );
+}
+
+/**
+ * Suggestions created since the person last opened /radar: while there are any, the nav's
+ * Radar icon pulses green. A rebuild that rewrites a card keeps its `created_at`, so only a
+ * genuinely new person counts. Never opened = everything pending counts.
+ */
+export async function countNewRadarSuggestions(userId: string, openedAt: Date | null, now: Date = new Date()): Promise<number> {
+  const db = await getDb();
+  const [row] = rowsOf<{ n: number }>(
+    await db.execute(sql`
+      SELECT count(*)::int AS n FROM recommendations
+       WHERE user_id = ${userId} AND status = 'pending' AND expires_at > ${now.toISOString()}::timestamptz
+         AND created_at > ${openedAt ? openedAt.toISOString() : "-infinity"}::timestamptz
+    `)
+  );
+  return Number(row?.n ?? 0);
+}
+
+/** The person just opened /radar: everything until now is no longer new. */
+export async function stampRadarOpened(userId: string, now: Date = new Date()): Promise<void> {
+  const db = await getDb();
+  await db.execute(sql`UPDATE user_settings SET radar_opened_at = ${now.toISOString()}::timestamptz WHERE user_id = ${userId}`);
 }
 
 /** A conversation this soon after an accept is what the accept was for. */

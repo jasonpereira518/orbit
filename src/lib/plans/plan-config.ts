@@ -330,36 +330,76 @@ export function formatPlanPrice(cents: number): string {
 }
 
 export type RadarPlanLimits = {
-  maxRecommendations: number;
-  discoveryEnabled: boolean;
+  /** People in the weekly plan. Never padded: a quiet week shows fewer. */
+  planSize: number;
+  /** Today strip: expiring moments shown on top of the plan, at most this many. */
+  todayMax: number;
+  /** Connect-lane cards (introduce, ask, share) per week. */
+  connectPerWeek: number;
+  /** Web checks on people the person knows (role, posts, talks), per month. */
+  pulsePerMonth: number;
+  /** Web searches for events near the person, per month. */
+  eventSearchesPerMonth: number;
+  /** Web searches for new people to meet, per month. */
+  peopleSearchesPerMonth: number;
+  /** Web searches for programs and deadlines, per month. */
+  programSearchesPerMonth: number;
+  /** Drafts written ahead overnight, per week. 0 = drafts on demand only. */
+  draftsPerWeek: number;
+  /** The AI editor's pick and why-lines. Off = the deterministic scorer's order and reasons. */
   aiExplanations: boolean;
-  dailyPassEnabled: boolean;
 };
 
+/**
+ * Radar per plan (docs/superpowers/specs/2026-11-10-radar-analyst-design.md). Every plan gets
+ * the web side; Free gets a taste. Lifetime gets Pro's limits: its credit allowance cannot
+ * carry Max's web budget. Searches here are background work, capped again by
+ * `web-search-budget.ts` (300 a month per account, half of it for background).
+ */
 export const RADAR_PLAN_LIMITS: Record<Plan, RadarPlanLimits> = {
   free: {
-    maxRecommendations: 3,
-    discoveryEnabled: false,
+    planSize: 3,
+    todayMax: 2,
+    connectPerWeek: 1,
+    pulsePerMonth: 2,
+    eventSearchesPerMonth: 1,
+    peopleSearchesPerMonth: 0,
+    programSearchesPerMonth: 0,
+    draftsPerWeek: 0,
     aiExplanations: false,
-    dailyPassEnabled: true,
   },
   orbit: {
-    maxRecommendations: 10,
-    discoveryEnabled: true,
+    planSize: 7,
+    todayMax: 3,
+    connectPerWeek: 2,
+    pulsePerMonth: 20,
+    eventSearchesPerMonth: 4,
+    peopleSearchesPerMonth: 4,
+    programSearchesPerMonth: 2,
+    draftsPerWeek: 3,
     aiExplanations: true,
-    dailyPassEnabled: true,
   },
   max: {
-    maxRecommendations: 25,
-    discoveryEnabled: true,
+    planSize: 10,
+    todayMax: 3,
+    connectPerWeek: 3,
+    pulsePerMonth: 48,
+    eventSearchesPerMonth: 8,
+    peopleSearchesPerMonth: 4,
+    programSearchesPerMonth: 4,
+    draftsPerWeek: 5,
     aiExplanations: true,
-    dailyPassEnabled: true,
   },
   lifetime: {
-    maxRecommendations: 25,
-    discoveryEnabled: true,
+    planSize: 7,
+    todayMax: 3,
+    connectPerWeek: 2,
+    pulsePerMonth: 20,
+    eventSearchesPerMonth: 4,
+    peopleSearchesPerMonth: 4,
+    programSearchesPerMonth: 2,
+    draftsPerWeek: 3,
     aiExplanations: true,
-    dailyPassEnabled: true,
   },
 };
 

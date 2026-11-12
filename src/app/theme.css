@@ -1315,6 +1315,17 @@
   }
 }
 
+/* The stars trail the camera (camera-motion.ts `setSkyDrift`); reduced motion holds them still.
+   JS already stops writing the offset, this also clears one set before the setting changed. */
+@media (prefers-reduced-motion: reduce) {
+  .constellation-starfield-drift {
+    transform: none !important;
+  }
+}
+html[data-motion="reduce"] .constellation-starfield-drift {
+  transform: none !important;
+}
+
 .constellation-comet {
   display: flex;
   align-items: center;
@@ -3291,6 +3302,24 @@ html[data-celebration-handoff] [data-app-logo] {
   50% {
     opacity: 0.25;
   }
+}
+
+/* ── Radar "new suggestions" shimmer ──
+ * Colours for the gradient `components/layout/radar-shimmer-icon.tsx` puts on the Radar icon's
+ * stroke while Radar holds suggestions created since /radar was last opened: a green icon
+ * with a pale glint sweeping across it. The sweep itself is SVG (animateTransform), and
+ * reduced motion drops it in the component, leaving the icon green and still. */
+.radar-shimmer-base {
+  stop-color: #059669;
+}
+.radar-shimmer-glint {
+  stop-color: #6ee7b7;
+}
+.dark .radar-shimmer-base {
+  stop-color: #34d399;
+}
+.dark .radar-shimmer-glint {
+  stop-color: #ecfdf5;
 }
 
 /* --- Per-event theming ------------------------------------------------------------------

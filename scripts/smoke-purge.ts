@@ -510,13 +510,15 @@ async function seed() {
   });
   await db.insert(schema.radarRuns).values({ userId: USER, trigger: "manual" });
   await db.insert(schema.userProjects).values({ userId: USER, title: "Smoke project", detectedFrom: "manual" });
+  await db.insert(schema.radarOpportunities).values({ userId: USER, kind: "event", title: "Smoke meetup", dedupeKey: "smoke-purge-opportunity" });
+  await db.insert(schema.pushSubscriptions).values({ userId: USER, endpoint: "https://push.example.com/smoke-purge", p256dh: "smoke-key", auth: "smoke-auth" });
   await db.insert(schema.contactSignals).values({
     userId: USER,
     contactId: contact.id,
-    kind: "company_news",
+    kind: "linkedin_activity",
     occurredAt: new Date(),
-    source: "manual",
-    payload: { title: "Globex raises a Series B", company: "Globex" },
+    source: "linkedin",
+    payload: { excerpt: "Shipped our new API today", network: "linkedin", url: null },
     dedupeHash: "smoke-purge-signal",
   });
 

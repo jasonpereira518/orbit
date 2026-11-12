@@ -279,7 +279,7 @@ async function openZones(now: Date): Promise<Map<string, string[]>> {
     await db.execute(sql`
       SELECT DISTINCT coalesce(radar_digest_tz, 'UTC') AS tz
         FROM user_settings
-       WHERE radar_digest_enabled = 1 AND radar_paused = 0
+       WHERE radar_digest_enabled = 1 AND radar_paused = 0 AND radar_enabled_at IS NOT NULL
     `)
   );
   return openDigestZones(now, rows.map((r) => r.tz));
@@ -299,6 +299,7 @@ async function eligibleBatch(
         FROM user_settings s
        WHERE s.radar_digest_enabled = 1
          AND s.radar_paused = 0
+         AND s.radar_enabled_at IS NOT NULL
          AND s.suspended_at IS NULL
          AND s.email IS NOT NULL AND btrim(s.email) <> ''
          AND coalesce(s.radar_digest_tz, 'UTC') IN (${sql.join(zones.map((z) => sql`${z}`), sql`, `)})
@@ -309,6 +310,13 @@ async function eligibleBatch(
            SELECT 1 FROM recommendations r
             WHERE r.user_id = s.user_id AND r.status = 'pending'
               AND r.bucket IN ('today', 'soon') AND r.expires_at > now()
+         )
+         -- The week's plan exists: the email is about it, so it waits for the Monday build
+         -- (the pass reaches accounts 25 at a time; a plan from last week is not this week's).
+         AND EXISTS (
+           SELECT 1 FROM radar_runs rr
+            WHERE rr.user_id = s.user_id AND rr.status = 'ok' AND rr.stats ->> 'mode' = 'weekly'
+              AND rr.started_at > now() - interval '6 days'
          )
        ORDER BY s.user_id
        LIMIT ${RADAR_DIGEST_BATCH}
