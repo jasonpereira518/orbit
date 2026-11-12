@@ -66,8 +66,10 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // sends Orbit only the authors' profile links first; only contacts' posts follow and are kept;
 // strangers' posts never leave the browser), and the hashtags from your own posts (Shares.csv)
 // as something Radar reads and adds to its weekly web search.
-export const TERMS_VERSION = "2026-11-12.4";
-export const LEGAL_LAST_UPDATED = "November 12, 2026 (revision 3)";
+// 2026-11-12.5 (admin refresh, PR 2): public Gravatar photos found by email join the shared photo
+// set, kept under a one-way hash of the address; uploads named as never shared.
+export const TERMS_VERSION = "2026-11-12.5";
+export const LEGAL_LAST_UPDATED = "November 12, 2026 (revision 4)";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
