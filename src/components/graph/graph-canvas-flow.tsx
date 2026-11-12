@@ -1478,9 +1478,24 @@ function GraphCanvasInner({
     () => ({ hoveredId: null, selectedContactId: null, searchHitIds, searchDimActive }),
     [searchHitIds, searchDimActive]
   );
+  // Kept while the window fills: stars land on top of their own dots.
+  const dustShown = summary || rampActive;
+  /**
+   * The search the dots are built for. Hidden, they keep the last one: a search typed in the
+   * close-up must not rebuild every contact's dot per keystroke for a canvas nobody sees. The
+   * render that shows them again catches up before it commits, so they never show stale.
+   */
+  const [dustBuiltFor, setDustBuiltFor] = useState(dustFocus);
+  if (dustShown && dustBuiltFor !== dustFocus) setDustBuiltFor(dustFocus);
+  /**
+   * Built once per sky (and search) for every large sky, not only while the dots show. They
+   * show in the summary and while the star window fills, and a pan re-places the window every
+   * ~6% of the view: rebuilding them each time walked every contact, and the node's remount drew
+   * them all on a main-thread canvas before the worker's image took over — a stall per window
+   * move. Now the node stays mounted and `starDustNode` only hides it.
+   */
   const starDust = useMemo((): StarDustData | null => {
-    // Kept while the window fills: stars land on top of their own dots.
-    if (!summary && !rampActive) return null;
+    if (!summaryAllowed) return null;
     const points: StarDustPoint[] = [];
     let minX = Infinity;
     let minY = Infinity;
@@ -1490,7 +1505,7 @@ function GraphCanvasInner({
       if (n.type !== "contact") continue;
       const d = n.data as GraphNodeData;
       const { disc, fill, alphaScale } = starVisual(d, false);
-      const { opacity, spotlight } = starEmphasis(n.id, dustFocus);
+      const { opacity, spotlight } = starEmphasis(n.id, dustBuiltFor);
       points.push({
         id: n.id,
         x: n.position.x,
@@ -1516,7 +1531,7 @@ function GraphCanvasInner({
       width: maxX - minX + pad * 2,
       height: maxY - minY + pad * 2,
     };
-  }, [summary, rampActive, skyLayoutNodes, dustFocus]);
+  }, [summaryAllowed, skyLayoutNodes, dustBuiltFor]);
 
   /**
    * The nodes React Flow draws: each structural node with this moment's emphasis applied.
@@ -1545,15 +1560,18 @@ function GraphCanvasInner({
       width: starDust.width,
       height: starDust.height,
       measured: { width: starDust.width, height: starDust.height },
-      data: starDust,
+      data: { ...starDust, shown: dustShown },
       draggable: false,
       selectable: false,
       focusable: false,
       // Above the rings (-2), beneath the clusters' haze (0) and every real star.
       zIndex: -1,
-      style: { pointerEvents: "none" },
+      // Hidden rather than removed (see `starDust`): the canvas keeps its drawing.
+      style: dustShown
+        ? { pointerEvents: "none" }
+        : { pointerEvents: "none", visibility: "hidden" },
     };
-  }, [starDust]);
+  }, [starDust, dustShown]);
 
   /**
    * Every cluster's wash, as one canvas payload: where each cloud is, how big, and how dimmed.
