@@ -486,7 +486,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           const day = composeDay(ranked, live, limits, now);
           next = day.insert;
           counts = planDayResult(live, day, now);
-          await writeRunResult(userId, runId, next, now, { mode: "daily", keepContacts: day.keepContacts, promote: day.promote });
+          await writeRunResult(userId, runId, next, now, { mode: "daily", keepContacts: day.keepContacts, promote: day.promote, supersede: day.supersede });
         }
 
         // Autopilot, for the kinds this person opted into: schedules, never sends. Only on

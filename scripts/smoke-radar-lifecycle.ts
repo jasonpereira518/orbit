@@ -15,8 +15,9 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, radarRuns, recommendations, userSettings } from "../src/db/schema";
+import { contactCareerMoves, contacts, interactions, radarRuns, recommendations, userSettings } from "../src/db/schema";
 import { claimRadarLease, claimRadarUsers, runRadarForUser } from "../src/lib/radar/run";
+import { whatChanged } from "../src/lib/radar/briefing";
 import { loadModelTallies } from "../src/lib/radar/store";
 import { isMoment, nextRadarRunAt, radarRunMode } from "../src/lib/radar/week";
 import { localClock } from "../src/lib/radar/digest";
@@ -153,6 +154,32 @@ run(async () => {
     for (let d = 3; d <= 6; d++) await runAt(at(d));
     t.check("four quiet days later, the plan is the same rows", (await planRows()) === before);
     t.check("and the meeting card left Today once the meeting was over", !(await live()).some((r) => r.contactId === meetingPerson.id));
+
+    // Saturday: news for someone already on the plan. It reaches the dashboard that day, not
+    // next Monday, and nobody else's card moves.
+    console.log("\nnews for someone already on the plan");
+    const newsPerson = quiet[1]!;
+    const cardsFor = async (id: string) => (await db.select().from(recommendations).where(and(eq(recommendations.userId, USER), eq(recommendations.contactId, id), inArray(recommendations.status, ["pending", "snoozed", "auto_applied"]))));
+    const planBefore = (await live()).filter((r) => r.contactId !== newsPerson.id).map((r) => r.id).sort();
+    await db.update(recommendations).set({ seenCount: 2, firstSeenAt: at(1) }).where(and(eq(recommendations.userId, USER), eq(recommendations.contactId, newsPerson.id)));
+    await db.insert(contactCareerMoves).values({ userId: USER, contactId: newsPerson.id, kind: "joined", toOrg: "Ramp", toTitle: "Staff PM", source: "web", dedupeKey: "joined-ramp", detectedAt: at(6, 6) });
+    await runAt(at(6, 8));
+    const [news] = await cardsFor(newsPerson.id);
+    t.check("they still have exactly one card", (await cardsFor(newsPerson.id)).length === 1);
+    t.check("it now leads with the job move, on Today", news?.reasons[0]?.code === "job_change" && news.bucket === "today", JSON.stringify(news?.reasons[0]));
+    t.check("and counts as new again: unseen, made today", news?.firstSeenAt === null && news.createdAt.getTime() === at(6, 8).getTime());
+    t.check("the rest of the plan is the same rows", JSON.stringify((await live()).filter((r) => r.contactId !== newsPerson.id).map((r) => r.id).sort()) === JSON.stringify(planBefore));
+    const changes = whatChanged([{ ...news!, contactName: "News" }], at(6, 9));
+    t.check("the dashboard's What changed shows it", changes.length === 1 && changes[0]!.label === "Joined Ramp as Staff PM", JSON.stringify(changes));
+    await runAt(at(6, 10));
+    const [again] = await cardsFor(newsPerson.id);
+    t.check("an unchanged day later does nothing more", again?.id === news?.id && again.updatedAt.getTime() === news?.updatedAt.getTime());
+    await db.update(recommendations).set({ firstSeenAt: at(6, 11) }).where(eq(recommendations.id, news!.id));
+    // The card's facts change (the profile refresh gave them a new title): same card, new again.
+    await db.update(contacts).set({ title: "Director of Product" }).where(eq(contacts.id, newsPerson.id));
+    await runAt(at(6, 14));
+    const [updated] = await cardsFor(newsPerson.id);
+    t.check("a change to the card's facts updates the same card in place", updated?.id === news?.id && updated.firstSeenAt === null, JSON.stringify({ same: updated?.id === news?.id, seen: updated?.firstSeenAt }));
 
     // Next Monday: a fresh plan, and the fifth person is in it.
     const nextMonday = await runAt(at(7));
