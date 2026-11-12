@@ -4,12 +4,19 @@
  * /admin/product/photos; it then continues itself, one route invocation at a time.
  *
  * There is no queue table. A slug is pending while it has no `linkedin_avatars` row (or only
- * a stale "found nothing" row); every slug the queue attempts ends with a row, unless LinkedIn
- * pushes back, and then the whole run pauses. So the candidate query IS the queue.
+ * a stale "found nothing" row); every slug the queue attempts ends with a row, unless nothing
+ * could be asked, and then the run pauses with that slug still pending. So the candidate query
+ * IS the queue.
+ *
+ * LinkedIn refuses unauthenticated profile fetches from datacenter IPs (Vercel's), usually on
+ * the first request. A refusal therefore only turns LinkedIn off for a backoff window; the run
+ * keeps going on Unavatar/Microlink within their daily allowance, and pauses only when those
+ * are spent too.
  *
  * The run's state is one `cron_runs` row (job `avatars.linkedin-queue`). Its stats hold:
  *   total, found, missed: progress
- *   resumeAt (ms), strikes: the durable LinkedIn backoff (the scraper's own is per-lambda)
+ *   directOffUntil (ms), strikes, lastRefusal: the durable LinkedIn backoff and why it started
+ *   resumeAt (ms): the run is paused until then (nothing left to ask)
  *   leaseUntil (ms): one tick at a time, whoever kicks it
  *   stopped: an admin stopped it
  */
@@ -35,7 +42,7 @@ import {
 import { notTourExample } from "@/lib/onboarding-examples/sql";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
-import { SHARED_FILL_RESERVE, sharedAllowanceLeft } from "@/lib/shared-avatar-upkeep";
+import { SHARED_FILL_RESERVE, avatarFillLeft, sharedAllowanceLeft } from "@/lib/shared-avatar-upkeep";
 import {
   adoptPhotoIntoSharedPool,
   adoptSharedPhoto,
@@ -52,6 +59,8 @@ const LEASE_MS = 300_000;
 const BATCH = 60;
 const BASE_PAUSE_MS = 30 * 60_000;
 const MAX_PAUSE_MS = 6 * 60 * 60_000;
+/** Shortest wait when a run has nothing it can ask (LinkedIn's own cooldown, not a strike). */
+const MIN_PAUSE_MS = 10 * 60_000;
 
 /** Pause after the `strikes`-th LinkedIn refusal in a row: 30 min, doubling, at most 6 h. */
 export function pauseMsFor(strikes: number): number {
@@ -142,30 +151,54 @@ async function claimFallback(): Promise<boolean> {
   }
 }
 
-export type SlugOutcome = "found" | "missed" | "rate-limited";
+/**
+ * Per-tick state, persisted on the run row after every person.
+ *   directOffUntil: LinkedIn refused us; ask it again after this (ms).
+ *   strikes: refusals in a row, for the backoff.
+ *   lastRefusal: why (`LinkedInDirectRateLimitError.status`).
+ *   fallbacks: whether Unavatar/Microlink still had room this tick.
+ */
+type TickState = { directOffUntil: number; strikes: number; lastRefusal: number; fallbacks: boolean };
 
-/** One slug: LinkedIn directly, then (while they have room) Unavatar and Microlink. */
-async function resolveSlug(slug: string, state: { fallbacks: boolean }): Promise<SlugOutcome> {
-  let direct: string | null;
-  try {
-    direct = await fetchLinkedInOgImageDirect(slug);
-  } catch (err) {
-    if (err instanceof LinkedInDirectRateLimitError) return "rate-limited";
-    throw err;
+/** "blocked": nothing could be asked (LinkedIn off and fallbacks spent); the slug is left pending. */
+export type SlugOutcome = "found" | "missed" | "blocked";
+
+/**
+ * One slug. LinkedIn directly while it answers; a refusal turns it off for a backoff window
+ * instead of stopping the run. Then (on a miss, or with LinkedIn off) Unavatar and Microlink
+ * while they have room. A real answer from either writes a row; nothing asked writes nothing.
+ */
+async function resolveSlug(slug: string, st: TickState): Promise<SlugOutcome> {
+  let askedLinkedIn = false;
+  if (Date.now() >= st.directOffUntil && !isLinkedInDirectRateLimited()) {
+    try {
+      const direct = await fetchLinkedInOgImageDirect(slug);
+      askedLinkedIn = true;
+      st.strikes = 0;
+      if (direct && isLinkedInProfilePhoto(direct) && (await adoptPhotoIntoSharedPool(slug, direct, "linkedin_direct"))) {
+        return "found";
+      }
+    } catch (err) {
+      if (!(err instanceof LinkedInDirectRateLimitError)) throw err;
+      st.lastRefusal = err.status;
+      st.directOffUntil = Date.now() + pauseMsFor(st.strikes);
+      st.strikes += 1;
+    }
   }
-  if (direct && isLinkedInProfilePhoto(direct)) {
-    if (await adoptPhotoIntoSharedPool(slug, direct, "linkedin_direct")) return "found";
-  }
-  if (state.fallbacks && (state.fallbacks = await claimFallback())) {
+  if (st.fallbacks && (st.fallbacks = await claimFallback())) {
     try {
       const systemId = `system:avatar-queue:${createHash("sha256").update(slug).digest("hex").slice(0, 16)}`;
       const got = await fetchLinkedInPhoto(`https://www.linkedin.com/in/${slug}`, systemId, { sharedSlug: slug }, { skipDirect: true });
       if (got && (await adoptSharedPhoto(slug, await getSharedAvatar(slug), got.url, got.source))) return "found";
+      await upsertSharedAvatar({ slug, imageUrl: null, source: "linkedin_direct" });
+      return "missed";
     } catch (err) {
       if (!(err instanceof AvatarSourceRateLimitError)) throw err;
-      state.fallbacks = false;
+      st.fallbacks = false;
     }
   }
+  if (!askedLinkedIn) return "blocked";
+  // LinkedIn answered "no photo" and the fallbacks are spent: that answer stands for 30 days.
   await upsertSharedAvatar({ slug, imageUrl: null, source: "linkedin_direct" });
   return "missed";
 }
@@ -188,29 +221,36 @@ export async function runLinkedInPhotoQueueTick(
   if (!claimed) return "not-claimed";
   let found = Number(claimed.found ?? 0);
   let missed = Number(claimed.missed ?? 0);
-  let strikes = Number(claimed.strikes ?? 0);
-  const state = { fallbacks: true };
+  const st: TickState = {
+    directOffUntil: Number(claimed.directOffUntil ?? 0),
+    strikes: Number(claimed.strikes ?? 0),
+    lastRefusal: Number(claimed.lastRefusal ?? 0),
+    fallbacks: true,
+  };
+  const progress = () => ({ found, missed, strikes: st.strikes, directOffUntil: st.directOffUntil, lastRefusal: st.lastRefusal });
 
   try {
     while (Date.now() < deadline) {
       const slugs = await nextPendingSlugs();
       if (slugs.length === 0) {
-        await patchRun(runId, { found, missed, strikes });
+        await patchRun(runId, progress());
         await closeRun(runId, "ok");
         return "done";
       }
       for (const slug of slugs) {
         if (Date.now() >= deadline) break;
-        const outcome = isLinkedInDirectRateLimited() ? "rate-limited" : await resolveSlug(slug, state);
-        if (outcome === "rate-limited") {
-          await patchRun(runId, { found, missed, strikes: strikes + 1, resumeAt: Date.now() + pauseMsFor(strikes), leaseUntil: 0 });
+        const outcome = await resolveSlug(slug, st);
+        if (outcome === "blocked") {
+          // LinkedIn is off and today's fallback lookups are spent: wait for the next LinkedIn
+          // retry (at most 6 h), when the daily allowance may have reset too.
+          const resumeAt = Math.max(st.directOffUntil, Date.now() + MIN_PAUSE_MS);
+          await patchRun(runId, { ...progress(), resumeAt, leaseUntil: 0 });
           return "paused";
         }
-        strikes = 0;
         if (outcome === "found") found += 1;
         else missed += 1;
         // Progress for the admin panel, and the status read that lets Stop land within a slug.
-        if ((await patchRun(runId, { found, missed, strikes })) !== "running") return "stopped";
+        if ((await patchRun(runId, progress())) !== "running") return "stopped";
         if (paceMs > 0) await new Promise((r) => setTimeout(r, paceMs));
       }
     }
@@ -221,7 +261,7 @@ export async function runLinkedInPhotoQueueTick(
       return "failed";
     }
     // Anything else: free the lease, and the hourly backstop picks the run up again.
-    await patchRun(runId, { found, missed, strikes, leaseUntil: 0 }).catch(() => null);
+    await patchRun(runId, { ...progress(), leaseUntil: 0 }).catch(() => null);
     throw err;
   }
   await patchRun(runId, { leaseUntil: 0 });
@@ -258,7 +298,8 @@ export async function startLinkedInPhotoQueue(
 ): Promise<string> {
   const active = await latestRun();
   if (active?.status === "running") {
-    await patchRun(active.id, { resumeAt: 0 });
+    // Resume now: also ask LinkedIn again straight away.
+    await patchRun(active.id, { resumeAt: 0, directOffUntil: 0 });
     await kick(active.id);
     return active.id;
   }
@@ -270,7 +311,7 @@ export async function startLinkedInPhotoQueue(
       job: QUEUE_JOB,
       trigger: "manual",
       status: "running",
-      stats: { total, found: 0, missed: 0, strikes: 0, resumeAt: 0, leaseUntil: 0 },
+      stats: { total, found: 0, missed: 0, strikes: 0, directOffUntil: 0, lastRefusal: 0, resumeAt: 0, leaseUntil: 0 },
     })
     .returning();
   await kick(row.id);
@@ -301,7 +342,8 @@ export async function isLinkedInPhotoQueueRunning(): Promise<boolean> {
   return (await latestRun())?.status === "running";
 }
 
-export type LinkedInPhotoQueueState = "idle" | "running" | "paused" | "waiting" | "done" | "stopped" | "failed";
+/** "fallbacks": running, but LinkedIn is refusing us, so only Unavatar/Microlink are asked. */
+export type LinkedInPhotoQueueState = "idle" | "running" | "fallbacks" | "paused" | "waiting" | "done" | "stopped" | "failed";
 
 export type LinkedInPhotoQueueMetrics = {
   blobReady: boolean;
@@ -313,8 +355,13 @@ export type LinkedInPhotoQueueMetrics = {
     found: number;
     missed: number;
     resumeAt: number | null;
+    /** LinkedIn is off until then (ms), and why: its HTTP status, or 1 for an authwall. */
+    directOffUntil: number | null;
+    lastRefusal: number | null;
     error: string | null;
   } | null;
+  /** Fallback (Unavatar/Microlink) lookups the queue may still spend today. */
+  fallbackLeftToday: number;
   /** People per hour over the run so far, pauses included, so the estimate stays honest. */
   perHour: number | null;
   /** Estimated ms to clear `pending` at `perHour`, and the moment that lands (epoch ms). */
@@ -323,20 +370,32 @@ export type LinkedInPhotoQueueMetrics = {
 };
 
 export async function getLinkedInPhotoQueueMetrics(now = Date.now()): Promise<LinkedInPhotoQueueMetrics> {
-  const [pending, run] = await Promise.all([countPendingSlugs(), latestRun()]);
+  const [pending, run, unavatar, microlink, fill] = await Promise.all([
+    countPendingSlugs(),
+    latestRun(),
+    sharedAllowanceLeft("unavatar"),
+    sharedAllowanceLeft("microlink"),
+    avatarFillLeft(),
+  ]);
   const blobReady = hasBlobStorage();
-  if (!run) return { blobReady, pending, state: "idle", run: null, perHour: null, etaMs: null, finishAt: null };
+  // The same rule as claimFallback: the shared reserve is kept for interactive lookups.
+  const fallbackLeftToday = Math.max(0, Math.min(unavatar - SHARED_FILL_RESERVE, microlink - SHARED_FILL_RESERVE, fill));
+  if (!run) return { blobReady, pending, state: "idle", run: null, fallbackLeftToday, perHour: null, etaMs: null, finishAt: null };
 
   const s = run.stats ?? {};
   const found = Number(s.found ?? 0);
   const missed = Number(s.missed ?? 0);
   const resumeAt = Number(s.resumeAt ?? 0);
+  const directOffUntil = Number(s.directOffUntil ?? 0);
+  const lastRefusal = Number(s.lastRefusal ?? 0);
   const state: LinkedInPhotoQueueState =
     run.status === "running"
       ? resumeAt > now
         ? "paused"
         : Number(s.leaseUntil ?? 0) >= now
-          ? "running"
+          ? directOffUntil > now
+            ? "fallbacks"
+            : "running"
           : "waiting"
       : run.status === "ok"
         ? "done"
@@ -359,8 +418,11 @@ export async function getLinkedInPhotoQueueMetrics(now = Date.now()): Promise<Li
       found,
       missed,
       resumeAt: resumeAt > now ? resumeAt : null,
+      directOffUntil: directOffUntil > now ? directOffUntil : null,
+      lastRefusal: lastRefusal || null,
       error: run.error,
     },
+    fallbackLeftToday,
     perHour,
     etaMs,
     finishAt: etaMs ? now + etaMs : null,
