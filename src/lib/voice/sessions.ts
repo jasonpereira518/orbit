@@ -29,11 +29,11 @@ export async function startVoiceSession(
   }
   if (!voiceConfigured(provider)) throw new VoiceProviderError(provider);
   await consumeBucket("voice-start-hour", userId, {
-    limit: 3,
+    limit: 6,
     windowSec: 3600,
   });
   await consumeBucket("voice-start-day", userId, {
-    limit: 6,
+    limit: 20,
     windowSec: 86400,
   });
   await consumeBucket("voice-start-global", "all", {
