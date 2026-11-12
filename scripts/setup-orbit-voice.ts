@@ -55,7 +55,7 @@ async function main() {
   );
   if (!response.ok)
     throw new Error(
-      `Agent creation failed (HTTP ${response.status}). Client tool ${tool.id} was created; review it in ElevenLabs before retrying.`,
+      `Agent creation failed (HTTP ${response.status}): ${(await response.text()).slice(0, 500)}\nClient tool ${tool.id} was created; review it in ElevenLabs before retrying.`,
     );
   const data = await response.json();
   if (typeof data.agent_id !== "string")
