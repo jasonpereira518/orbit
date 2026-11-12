@@ -18,7 +18,7 @@ import { hybridSearchContacts, type RankedContact } from "@/lib/hybrid-search";
 import { shouldUseSemanticArm } from "@/lib/search-adapter";
 
 /** Lexical results are never held hostage by the embedding API. */
-const EMBED_SOFT_TIMEOUT_MS = 300;
+export const EMBED_SOFT_TIMEOUT_MS = 300;
 
 async function embeddingWithSoftTimeout(
   userId: string,

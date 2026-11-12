@@ -126,7 +126,7 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "contacts",
     label: "Contacts and companies",
     description:
-      "Everyone in your network, with their profiles, work history and company records — plus the merge history and duplicate-matching records behind them, and any companies you've marked as a target to work at.",
+      "Everyone in your network, with their profiles, work history and company records — plus the merge history and duplicate-matching records behind them, any companies you've marked as a target to work at, and your saved constellations.",
     // Not a tidiness rule — `interactions`, `reminders`, `contact_embeddings` and
     // `contact_tags` are all `on delete cascade` from `contacts`, so the database removes
     // them whether or not the box is ticked.

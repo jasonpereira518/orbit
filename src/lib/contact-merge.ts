@@ -80,6 +80,9 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   { table: "contact_identities", column: "contact_id", scoped: true },
   { table: "note_batches", column: "seed_contact_id", scoped: true },
   { table: "import_job_rows", column: "contact_id", scoped: true },
+  // No unique key on (constellation_id, contact_id) on purpose, so repointing a loser that
+  // shares a constellation with the winner cannot collide; readers take DISTINCT contact_id.
+  { table: "custom_constellation_members", column: "contact_id", scoped: true },
   // memory_chunks is unique on (user_id, source_kind, source_id, chunk_index) — no contact
   // column in the key, so this cannot collide either. Only `contact_id` moves here; the
   // `contact_ids` array it also carries is rewritten separately (step 4c-2), because an

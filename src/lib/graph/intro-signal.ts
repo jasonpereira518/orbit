@@ -201,6 +201,19 @@ export function beginIntro(reason: IntroReason): boolean {
   return true;
 }
 
+const readyListeners = new Set<() => void>();
+
+/**
+ * Hear every viewport-ready cue, run or no run. The generating scene (`generating-signal.ts`)
+ * ends on the first one after a new view's route change; returns the unsubscribe.
+ */
+export function onGraphViewportReady(fn: () => void) {
+  readyListeners.add(fn);
+  return () => {
+    readyListeners.delete(fn);
+  };
+}
+
 /**
  * The chart is genuinely visible.
  *
@@ -209,6 +222,7 @@ export function beginIntro(reason: IntroReason): boolean {
  */
 export function markGraphViewportReady() {
   ready = true;
+  for (const fn of readyListeners) fn();
   // Before anything else: a chart that settles at 1190ms must not trip a fallback at 1200ms and
   // then be held for the full minimum beat. Cancelling here is what stops the safety net from
   // making a nearly-finished load longer than it was.

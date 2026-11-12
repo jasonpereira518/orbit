@@ -58,6 +58,11 @@ export async function loadGraphData(
   options: {
     profile: Promise<UserProfile | null> | UserProfile | null;
     scope?: GraphScope;
+    /**
+     * Draw exactly these contacts (a custom constellation). Replaces the engaged filter;
+     * everything on the payload is derived from this set, `summary.total` stays network-wide.
+     */
+    onlyIds?: ReadonlySet<string>;
   }
 ) {
   const db = await getDb();
@@ -215,10 +220,13 @@ export async function loadGraphData(
    *     were never really "drifting".
    */
   const eligibleCount = graphContacts.filter((c) => c.substantive).length;
-  const filterActive = constellationConfig.enabled && options.scope !== "all";
-  const visibleContacts = filterActive
-    ? graphContacts.filter((c) => c.substantive)
-    : graphContacts;
+  const { onlyIds } = options;
+  const filterActive = !onlyIds && constellationConfig.enabled && options.scope !== "all";
+  const visibleContacts = onlyIds
+    ? graphContacts.filter((c) => onlyIds.has(c.id))
+    : filterActive
+      ? graphContacts.filter((c) => c.substantive)
+      : graphContacts;
 
   const { clusters: built } = buildConstellationClusters(visibleContacts);
   const clusters: GraphCluster[] = toNamedGraphClusters(built);

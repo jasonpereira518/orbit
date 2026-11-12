@@ -94,6 +94,8 @@ import {
   radarOpportunities,
   userProjects,
   contactSignals,
+  customConstellationMembers,
+  customConstellations,
   emailEvents,
   emailThreads,
   recommendationFeedback,
@@ -707,6 +709,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(contactProfiles),
       own(contactExperiences),
       own(contactCareerMoves),
+      own(customConstellations),
+      own(customConstellationMembers),
       own(emailSends),
       joined("contact_tags", (userId, limit, offset) => sql`SELECT ct.* FROM contact_tags ct JOIN contacts c ON c.id = ct.contact_id WHERE c.user_id = ${userId} ORDER BY ct.id LIMIT ${limit} OFFSET ${offset}`),
     ],
@@ -714,7 +718,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     // exceeding a partial request: `interactions`, `reminders`, `contact_embeddings` and
     // `contact_tags` are all `on delete cascade` from `contacts` and go the moment a
     // contact does, ticked or not.
-    counts: [contacts, companies, contactMerges, emailSends],
+    counts: [contacts, companies, contactMerges, emailSends, customConstellations],
     run: async (db, userId) => {
       // Queued and sent 1:1 mail. Deleted with contacts so a purge also stops anything still
       // waiting in the outbox — a queued send outliving its contact would still go out.
@@ -750,6 +754,11 @@ const STEPS: Record<DataCategory, CategoryStep> = {
           db.select({ id: contacts.id }).from(contacts).where(eq(contacts.userId, userId))
         )
       );
+      // Custom constellations are groupings of these contacts. Members cascade from both
+      // parents, but carry their own `user_id`, so they go first and explicitly, then the
+      // constellations (their prompts describe the person's network).
+      await db.delete(customConstellationMembers).where(eq(customConstellationMembers.userId, userId));
+      await db.delete(customConstellations).where(eq(customConstellations.userId, userId));
       await db.delete(contacts).where(eq(contacts.userId, userId));
       // Cascades from `companies`, and deleted explicitly for the same reason as the
       // duplicate-prevention rows above — it carries its own `user_id`. It's also a

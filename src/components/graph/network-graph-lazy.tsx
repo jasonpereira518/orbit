@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import type { GraphPayload } from "@/components/graph/graph-chart-types";
+import type { GraphConstellation, GraphPayload } from "@/components/graph/graph-chart-types";
 import { decodeGraphPayload, type GraphWire } from "@/lib/graph-wire";
 import { predictSlowIntro } from "@/lib/graph/intro-choreography";
 import { beginIntro } from "@/lib/graph/intro-signal";
@@ -58,10 +58,13 @@ function decideFromPayload(contactCount: number | null) {
 export function NetworkGraphLazy({
   initialData = null,
   compact = false,
+  constellation,
 }: {
   /** The server action's columnar wire form (see lib/graph-wire.ts). */
   initialData?: GraphWire | null;
   compact?: boolean;
+  /** Set when the chart shows a custom constellation rather than the whole network. */
+  constellation?: GraphConstellation;
 }) {
   // One decode for the session: the payload arrives once, and both the intro decision and the
   // chart should see the same objects rather than each rebuilding their own.
@@ -89,5 +92,5 @@ export function NetworkGraphLazy({
   if (!graph || !layoutReady) {
     return <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />;
   }
-  return <graph.NetworkGraph initialData={payload} />;
+  return <graph.NetworkGraph initialData={payload} constellation={constellation} />;
 }

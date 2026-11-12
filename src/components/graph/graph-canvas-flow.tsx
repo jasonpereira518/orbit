@@ -787,6 +787,7 @@ function GraphCanvasInner({
   compact,
   data,
   constellationFilterOn,
+  emptySky,
   onShowAll,
   loadingAll,
 }: GraphChartProps & {
@@ -2486,7 +2487,7 @@ function GraphCanvasInner({
         there genuinely are none — said to someone whose 800 contacts were filtered out it is
         both wrong and unactionable, and it points at the one button that will not help.
       */}
-      {isEmpty && (
+      {isEmpty && !emptySky && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/10 bg-[#080b12]/90 px-6 py-5 text-center shadow-xl">
             {data.summary.total === 0 ? (

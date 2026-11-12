@@ -1396,6 +1396,49 @@ export const reminderLists = pgTable(
   ]
 );
 
+/** A person's own named grouping of their contacts, described in words (`prompt`) and filled by AI or by hand. */
+export const customConstellations = pgTable(
+  "custom_constellations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull(),
+    prompt: text("prompt").notNull(),
+    position: integer("position").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("custom_constellations_user_idx").on(t.userId)]
+);
+
+/**
+ * No unique key on (constellation_id, contact_id) on purpose: merging two contacts that are
+ * both in one constellation leaves two rows for the survivor, and a unique key would make that
+ * repoint collide. Readers take DISTINCT contact_id.
+ */
+export const customConstellationMembers = pgTable(
+  "custom_constellation_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    constellationId: uuid("constellation_id")
+      .notNull()
+      .references(() => customConstellations.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    /** 'ai' (the prompt picked this person) or 'manual' (the person added them). */
+    source: text("source").$type<"ai" | "manual">().notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("custom_constellation_members_constellation_idx").on(t.constellationId),
+    index("custom_constellation_members_contact_idx").on(t.contactId),
+    index("custom_constellation_members_user_idx").on(t.userId),
+  ]
+);
+
 export const reminders = pgTable(
   "reminders",
   {
@@ -6625,6 +6668,8 @@ export type ExtensionUsage = typeof extensionUsage.$inferSelect;
 export type Interaction = typeof interactions.$inferSelect;
 export type Reminder = typeof reminders.$inferSelect;
 export type ReminderList = typeof reminderLists.$inferSelect;
+export type CustomConstellation = typeof customConstellations.$inferSelect;
+export type CustomConstellationMember = typeof customConstellationMembers.$inferSelect;
 export type SuggestedReminder = typeof suggestedReminders.$inferSelect;
 export type NoteBatch = typeof noteBatches.$inferSelect;
 export type InteractionMention = typeof interactionMentions.$inferSelect;

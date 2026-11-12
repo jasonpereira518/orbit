@@ -47,8 +47,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // contact's work history needs another web search, reading the stored job history and short
 // summaries of the user's notes and messages since the last check (never the notes, an email
 // address or a phone number), and may judge an unsure search's public answer to be someone else.
-export const TERMS_VERSION = "2026-11-11";
-export const LEGAL_LAST_UPDATED = "November 11, 2026";
+// 2026-11-12: custom constellations — the prompt you write, the people picked for it and a
+// one-line reason for each are kept (the AI provider sees the prompt and a short card per
+// contact, the same processing Chat already described).
+export const TERMS_VERSION = "2026-11-12";
+export const LEGAL_LAST_UPDATED = "November 12, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

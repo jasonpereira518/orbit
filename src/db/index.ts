@@ -325,6 +325,28 @@ CREATE TABLE IF NOT EXISTS interactions (
   direction text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS custom_constellations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  name text NOT NULL,
+  prompt text NOT NULL,
+  position integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS custom_constellations_user_idx ON custom_constellations(user_id);
+CREATE TABLE IF NOT EXISTS custom_constellation_members (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  constellation_id uuid NOT NULL REFERENCES custom_constellations(id) ON DELETE CASCADE,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  source text NOT NULL,
+  reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS custom_constellation_members_constellation_idx ON custom_constellation_members(constellation_id);
+CREATE INDEX IF NOT EXISTS custom_constellation_members_contact_idx ON custom_constellation_members(contact_id);
+CREATE INDEX IF NOT EXISTS custom_constellation_members_user_idx ON custom_constellation_members(user_id);
 CREATE TABLE IF NOT EXISTS reminder_lists (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3175,7 +3197,12 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 231 = Radar run progress: radar_runs.stage / progress / detail, written as a run moves through
 // its stages so "Refresh now" can show how much is done. Scanned every remote ref on Nov 12 2026:
 // custom constellations holds 229 and the Orbit Card / planet PR (#635) holds 230.
-export const SCHEMA_VERSION = 231;
+// 232 = custom constellations (new tables custom_constellations + custom_constellation_members:
+// a person's own prompt-built groupings of their contacts). New tables only, so DDL + this bump
+// and no alters entry. Built as 220; renumbered 223, then 229 (reserved, but main reached 231
+// first, and the gate only runs DDL on a version increase), then 232 on Nov 12 2026. Scanned
+// every remote ref and worktree: 231 was the highest claimed.
+export const SCHEMA_VERSION = 232;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,

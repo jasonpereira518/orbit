@@ -216,6 +216,7 @@
 "smoke-cron-gates": 4.2,
 "smoke-cross-tenant-refs": 2.2,
 "smoke-csp-report": 1.2,
+"smoke-custom-constellations": 2.5,
 "smoke-dashboard-aggregates": 1.8,
 "smoke-dashboard-parity": 3.2,
 "smoke-dashboard-search": 0.1,

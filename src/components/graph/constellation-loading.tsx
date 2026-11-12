@@ -11,8 +11,9 @@ import { cn } from "@/lib/utils";
  *
  * Below `md` it is 15.125rem, not the 18.5rem it was: the page's description is hidden on
  * phones (three lines on a 402px screen), and the height it freed went to the chart. The
- * header above the canvas is now just the kicker and title, so its height no longer depends
- * on how the description wraps, and the canvas's bottom edge sits where it always did —
+ * header above the canvas is now just the kicker and title (the constellation controls sit on
+ * the title's row, not a row of their own), so its height no longer depends on how the
+ * description wraps, and the canvas's bottom edge sits where it always did —
  * clear of the nav. `network-graph.tsx` repeats this value on the real stage; keep the two
  * in step.
  *

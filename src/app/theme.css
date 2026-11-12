@@ -1260,6 +1260,38 @@
   animation: constellation-twinkle 1.4s ease-in-out infinite;
 }
 
+/* The "drawing your constellation" scene (constellation-generating.tsx). Stars fade in one by
+   one, then twinkle; lines draw between them on `pathLength=1` dash offsets. Without the
+   `.constellation-generating` parent (reduced motion) everything is simply shown, static. */
+@keyframes constellation-generating-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes constellation-generating-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.constellation-generating .constellation-generating-star {
+  animation:
+    constellation-generating-in 0.6s ease-out both,
+    constellation-twinkle 2.4s ease-in-out infinite;
+}
+
+.constellation-generating .constellation-generating-line {
+  stroke-dasharray: 1;
+  animation: constellation-generating-draw 0.9s ease-out both;
+}
+
 /* The sun keeps one slow breath — the outer corona — as the chart's single standing
    animation inside the viewport. Its inner corona and core used to pulse too; three
    overlapping layers of the same glow read as one, at three times the cost. */
