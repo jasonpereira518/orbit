@@ -48,6 +48,7 @@ import { voiceUsageSummary } from "../src/lib/voice/admin";
 import { VOICE_PROMPT_BUDGET, voiceReadTools } from "../src/lib/voice/tools";
 import { VOICE_MAX_TOOL_CALLS, voicePagePath } from "../src/lib/voice/policy";
 import { commitProposedAction } from "../src/actions/chat-actions";
+import { easeOrbWeights, orbParams, orbWeights } from "../src/lib/voice/visual-level";
 
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 delete process.env.CLERK_SECRET_KEY;
@@ -59,6 +60,21 @@ process.env.ELEVENLABS_AGENT_ID = "fake-private-agent";
 const USER = "demo-user";
 const OTHER = "voice-other-user";
 async function main() {
+  // The orb: the user's voice reads cool and drawn in, Orbit's warm with a ripple; silence is the idle breath.
+  const hearing = orbParams(orbWeights("listening"), 1, 0);
+  const talking = orbParams(orbWeights("speaking"), 0, 1);
+  const idle = orbParams(orbWeights("listening"), 0, 0);
+  assert.ok(hearing.tint < 0 && talking.tint > 0, "listening tints cool, speaking warm");
+  assert.ok(hearing.lightRadius < talking.lightRadius, "listening draws the lights in");
+  assert.ok(talking.ripple > 0 && hearing.ripple === 0, "only Orbit's voice ripples the surface");
+  assert.ok(idle.breath > 0 && idle.tint === 0, "silence breathes, untinted");
+  const still = orbParams(orbWeights("speaking"), 0, 1, true);
+  assert.deepEqual([still.scale, still.breath, still.wobble, still.ripple, still.lightSpeed], [1, 0, 0, 0, 0], "reduced motion stops all movement");
+  let weights = orbWeights("listening");
+  assert.equal(easeOrbWeights(weights, "thinking", 0).thinking, 0, "no jump at zero elapsed");
+  for (let ms = 0; ms < 600; ms += 16) weights = easeOrbWeights(weights, "thinking", 16);
+  assert.ok(weights.thinking > 0.95 && weights.listening < 0.05, "a mode change settles within ~0.5s");
+
   // open_page runs in the browser: only allowlisted pages, record pages only with a UUID.
   const uuid = "0f536784-23b9-40d6-87da-072b79aa47a3";
   assert.equal(voicePagePath("contacts"), "/contacts");
