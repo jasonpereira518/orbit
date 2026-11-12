@@ -28,20 +28,39 @@ export type ChangeLine = { id: string; contactId: string; contactName: string; l
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** The briefing's headline. The dashboard's small card and its full card say the same thing. */
-export function briefingHeadline(today: number): string {
-  return today > 0 ? `${plural(today, "person", "people")} worth a message today` : "All clear today";
+const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six"];
+
+/**
+ * The briefing's headline, led by Today (Radar PR 9b): the things that won't keep, else the
+ * week's plan. The dashboard's small card and its full card say the same thing.
+ */
+export function briefingHeadline(today: number, total = 0): string {
+  if (today > 0) return `${COUNT_WORDS[today] ?? today} ${today === 1 ? "thing won’t" : "things won’t"} keep today`;
+  return total > 0 ? `${plural(total, "move", "moves")} on this week’s plan` : "All clear this week";
 }
 
-/** "2 drafts ready to review · 4 more queued": the line under the headline, empty when there is nothing to say. */
-export function briefingSubline(b: { drafts: number; total: number; today: number; paused: boolean }): string {
-  return [
-    b.drafts > 0 ? `${plural(b.drafts, "draft", "drafts")} ready to review` : null,
-    b.total > b.today ? `${b.total - b.today} more queued` : null,
+/** This week's plan by lane: what the briefing's subline counts. */
+export type BriefingLanes = { followUp: number; connect: number; opportunities: number };
+
+/**
+ * "This week: 3 to follow up · 1 to connect · 4 opportunities · 2 drafts ready", empty when
+ * there is nothing to say. Without lanes (the collapsed card), the drafts and the queue.
+ */
+export function briefingSubline(b: { drafts: number; total: number; today: number; paused: boolean; lanes?: BriefingLanes }): string {
+  const lanes = b.lanes
+    ? [
+        b.lanes.followUp > 0 ? `${b.lanes.followUp} to follow up` : null,
+        b.lanes.connect > 0 ? `${b.lanes.connect} to connect` : null,
+        b.lanes.opportunities > 0 ? plural(b.lanes.opportunities, "opportunity", "opportunities") : null,
+      ].filter(Boolean)
+    : [];
+  const parts = [
+    lanes.length ? `This week: ${lanes.join(" · ")}` : null,
+    b.drafts > 0 ? `${plural(b.drafts, "draft", "drafts")} ${b.lanes ? "ready" : "ready to review"}` : null,
+    !b.lanes && b.total > b.today ? `${b.total - b.today} more queued` : null,
     b.paused ? "Radar is paused" : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ];
+  return parts.filter(Boolean).join(" · ");
 }
 
 /**

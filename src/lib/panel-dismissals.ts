@@ -18,5 +18,5 @@ export const panelDismissals = createDismissStore("orbit:dismissed-panel:v1");
 /** `cloud-notes:found` is one id for every batch; the title is what carries the count. */
 export const panelItemKey = (item: { id: string; title: string }) => `${item.id}|${item.title}`;
 
-export const radarKey = (r: { count: number; drafts: number; names: string[] }) =>
-  `radar|${r.count}|${r.drafts}|${r.names.join(",")}`;
+export const radarKey = (r: { count: number; drafts: number; names: string[]; today?: number; todayNames?: string[] }) =>
+  `radar|${r.count}|${r.drafts}|${r.names.join(",")}|${r.today ?? 0}|${(r.todayNames ?? []).join(",")}`;

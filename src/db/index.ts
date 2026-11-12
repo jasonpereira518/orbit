@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   radar_discovery_enabled integer NOT NULL DEFAULT 1,
   radar_web_next_at timestamptz,
   radar_moment_last_day text,
+  radar_moment_email_enabled integer NOT NULL DEFAULT 1,
   radar_enabled_at timestamptz,
   radar_opened_at timestamptz
 );
@@ -3176,7 +3177,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 231 = Radar run progress: radar_runs.stage / progress / detail, written as a run moves through
 // its stages so "Refresh now" can show how much is done. Scanned every remote ref on Nov 12 2026:
 // custom constellations holds 229 and the Orbit Card / planet PR (#635) holds 230.
-export const SCHEMA_VERSION = 231;
+// 234 = Radar same-day email switch: user_settings.radar_moment_email_enabled (1 = on), the
+// person's own off switch for the email Radar sends when a Today item won't keep (PR 9b).
+// Scanned remote refs on Nov 12 2026: custom constellations (youthful-herschel) holds 232 and
+// the Orbit Card / planet PR (#635) will need 233, so this takes 234.
+export const SCHEMA_VERSION = 234;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -5660,6 +5665,8 @@ const alters = [
   `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS stage text`,
   `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS progress integer NOT NULL DEFAULT 0`,
   `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS detail text`,
+  // Schema v234: the same-day Radar email's off switch.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_moment_email_enabled integer NOT NULL DEFAULT 1`,
 ];
 
 /**

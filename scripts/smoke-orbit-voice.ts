@@ -74,6 +74,10 @@ async function main() {
   );
   assert.equal(voicePagePath("dashboard", undefined, { q: "x" }), "/dashboard", "pages without filters ignore them");
   console.log("ok open_page allowlist");
+  // Saved before ElevenLabs required English v2 models: still parses, as the v2 twin.
+  assert.equal(voiceConfigSchema.parse({ elevenlabs: { ttsModel: "eleven_flash_v2_5" } }).elevenlabs.ttsModel, "eleven_flash_v2");
+  assert.equal(voiceConfigSchema.parse({}).elevenlabs.ttsModel, "eleven_flash_v2");
+  console.log("ok legacy ElevenLabs model names still parse");
   const db = await getDb();
   await bootstrapAuthenticatedUser(USER);
   await db

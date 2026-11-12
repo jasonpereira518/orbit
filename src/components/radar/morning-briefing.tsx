@@ -16,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { IntentLink } from "@/components/ui/intent-link";
-import { briefingHeadline, briefingSubline, cardLine, type ChangeLine } from "@/lib/radar/briefing";
+import { briefingHeadline, briefingSubline, cardLine, type BriefingLanes, type ChangeLine } from "@/lib/radar/briefing";
 import { RadarCollapseButton } from "@/components/radar/radar-dock";
 import { KIND_LABELS } from "@/lib/radar/types";
 import { cn } from "@/lib/utils";
@@ -26,8 +26,9 @@ export type MorningBriefingProps = {
   items: RecommendationCardData[];
   /** Everyone on Radar's list. */
   total: number;
-  /** Today's section on `/radar`. */
+  /** Today's moments: the things that won't keep. */
   today: number;
+  lanes?: BriefingLanes;
   drafts: number;
   changes: ChangeLine[];
   paused: boolean;
@@ -44,14 +45,15 @@ export function MorningBriefing({
   items,
   total,
   today,
+  lanes,
   drafts,
   changes,
   paused,
   networkStats,
   activeProjectsCount,
 }: MorningBriefingProps) {
-  const headline = briefingHeadline(today);
-  const sub = briefingSubline({ drafts, total, today, paused });
+  const headline = briefingHeadline(today, total);
+  const sub = briefingSubline({ drafts, total, today, paused, lanes });
 
   return (
     <section aria-labelledby="radar-briefing-title">
@@ -107,7 +109,10 @@ export function MorningBriefing({
           {(items.length > 0 || changes.length > 0) && (
             <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
               {items.length > 0 && (
-                <ul className="space-y-2" aria-label="Today’s first people">
+                <ul
+                  className={cn("space-y-2", today > 0 && "rounded-xl border border-amber-500/25 bg-amber-500/5 p-2")}
+                  aria-label={today > 0 ? "Won’t keep today" : "This week’s first people"}
+                >
                   {items.map((rec) => (
                     <BriefingRow key={rec.id} rec={rec} />
                   ))}

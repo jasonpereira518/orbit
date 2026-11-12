@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Settings2 } from "lucide-react";
@@ -8,12 +8,16 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
+  removeRadarPushSubscription,
+  saveRadarPushSubscription,
   setRadarAutopilot,
   setRadarCaptureLinkedin,
   setRadarDigest,
+  setRadarMomentEmail,
   setRadarPaused,
   type RadarActionResult,
 } from "@/actions/radar";
+import { SW_PATH } from "@/lib/browser-notifications";
 import { friendlyError } from "@/lib/errors";
 import type { RadarSettingsView } from "@/lib/radar/page-data";
 import { AUTOPILOT_KINDS, KIND_LABELS } from "@/lib/radar/types";
@@ -116,6 +120,117 @@ function Toggle({
   );
 }
 
+type PushState = "loading" | "unset" | "unsupported" | "denied" | "off" | "on";
+
+const PUSH_HINTS: Record<PushState, string> = {
+  loading: "Checking this browser…",
+  unset: "Push isn’t set up on this server yet.",
+  unsupported: "This browser can’t receive push. On iPhone, add Orbit to your Home Screen first.",
+  denied: "Notifications are blocked for Orbit in this browser’s settings.",
+  off: "An alert on this device when something on Today won’t keep.",
+  on: "On for this device.",
+};
+
+/** The VAPID public key as the bytes `pushManager.subscribe` wants. */
+function keyBytes(base64url: string): Uint8Array<ArrayBuffer> {
+  const pad = "=".repeat((4 - (base64url.length % 4)) % 4);
+  const raw = atob((base64url + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  const out = new Uint8Array(new ArrayBuffer(raw.length));
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+/**
+ * "Push on this device": one browser's subscription, made here and saved for the account
+ * (`src/lib/push.ts`). Registers the notification worker itself, since the app only registers
+ * it in production builds.
+ */
+function PushRow() {
+  const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim() || "";
+  const [state, setState] = useState<PushState>("loading");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    const read = async (): Promise<PushState> => {
+      if (!key) return "unset";
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return "unsupported";
+      if (Notification.permission === "denied") return "denied";
+      const reg = await navigator.serviceWorker.getRegistration("/");
+      return (await reg?.pushManager.getSubscription()) ? "on" : "off";
+    };
+    void read()
+      .catch((): PushState => "unsupported")
+      .then((next) => {
+        if (live) setState(next);
+      });
+    return () => {
+      live = false;
+    };
+  }, [key]);
+
+  const turnOn = async () => {
+    setBusy(true);
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setState(permission === "denied" ? "denied" : "off");
+        return;
+      }
+      await navigator.serviceWorker.register(SW_PATH, { scope: "/" });
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) });
+      const result = await saveRadarPushSubscription(sub.toJSON());
+      if (!result.ok) {
+        await sub.unsubscribe().catch(() => false);
+        toast.error(result.message);
+        return;
+      }
+      setState("on");
+      if (result.message) toast.success(result.message);
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t turn on push in this browser — try again?"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const turnOff = async () => {
+    setBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.getRegistration("/");
+      const sub = await reg?.pushManager.getSubscription();
+      if (sub) {
+        await removeRadarPushSubscription(sub.endpoint);
+        await sub.unsubscribe().catch(() => false);
+      }
+      setState("off");
+      toast.success("Push off for this device");
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t turn that off — try again?"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const actionable = state === "on" || state === "off";
+  return (
+    <div className="flex items-center gap-3 rounded-lg p-2">
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium text-ink">Push on this device</span>
+        <span className="block text-xs text-muted-foreground" role="status">
+          {PUSH_HINTS[state]}
+        </span>
+      </span>
+      {actionable && (
+        <Button type="button" size="sm" variant="outline" className="h-8 shrink-0" disabled={busy} onClick={state === "on" ? turnOff : turnOn}>
+          {state === "on" ? "Turn off" : "Turn on"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /**
  * Radar's settings, in one sheet: pause, autopilot per kind, the Monday email, and whether the
  * extension may save LinkedIn posts. Each change is saved on its own and says so.
@@ -197,7 +312,7 @@ export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }
 
             <section className="space-y-1" aria-labelledby="radar-settings-email">
               <h3 id="radar-settings-email" className="px-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                Email and extension
+                How Radar reaches you
               </h3>
               <Toggle
                 id="radar-digest"
@@ -207,6 +322,22 @@ export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }
                 disabled={pending}
                 onChange={(on) => save((s) => ({ ...s, digestEnabled: on }), () => setRadarDigest(on))}
               />
+              <Toggle
+                id="radar-moment-email"
+                label="Same-day email"
+                hint="When something on Today won’t keep. At most one a day."
+                checked={state.momentEmailEnabled}
+                disabled={pending}
+                onChange={(on) => save((s) => ({ ...s, momentEmailEnabled: on }), () => setRadarMomentEmail(on))}
+              />
+              <PushRow />
+              <p className="px-2 text-xs text-muted-foreground">At most two alerts a day, and never twice for the same card.</p>
+            </section>
+
+            <section className="space-y-1" aria-labelledby="radar-settings-extension">
+              <h3 id="radar-settings-extension" className="px-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Extension
+              </h3>
               <Toggle
                 id="radar-capture-linkedin"
                 label="Save LinkedIn posts from the extension"

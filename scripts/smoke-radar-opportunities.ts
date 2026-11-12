@@ -21,7 +21,7 @@ import type { WebSource } from "../src/lib/ai";
 import { EventPageError } from "../src/lib/events/fetch-page";
 import type { EventPageDetails } from "../src/lib/events/parse-page";
 import { getRecommendedUpcomingEvents } from "../src/lib/events/recommendations";
-import { runRadarWebForUser, type RadarWebSearch } from "../src/lib/radar/opportunities";
+import { purgeOldRadarFinds, runRadarWebForUser, type RadarWebSearch } from "../src/lib/radar/opportunities";
 import { consumeBucket, RATE_LIMITS } from "../src/lib/rate-limit";
 import { orgKeysFor } from "../src/lib/warm-paths";
 import { WEB_SEARCH_BACKGROUND_SHARE, WEB_SEARCH_SCOPE, webSearchMonthKey } from "../src/lib/web-search-budget";
@@ -161,6 +161,22 @@ run(async () => {
       recommended.map((r) => r.url).join()
     );
     t.check("with the venue its page gave", recommended[0]?.venue === "Capital Factory, 701 Brazos St", String(recommended[0]?.venue));
+
+    console.log("\nretention");
+    const daysAgo = (d: number) => new Date(NOW.getTime() - d * DAY);
+    const old = await db
+      .insert(radarOpportunities)
+      .values([
+        { userId: OFF, kind: "event", title: "Long gone", url: "https://example.com/old", startsAt: daysAgo(40), expiresAt: daysAgo(40), status: "expired", dedupeKey: "ret:old" },
+        { userId: OFF, kind: "person", title: "Dismissed, Long ago at Co", url: "https://example.com/p", expiresAt: daysAgo(35), status: "dismissed", dedupeKey: "ret:dismissed" },
+        { userId: OFF, kind: "event", title: "Ended last week", url: "https://example.com/recent", startsAt: daysAgo(7), expiresAt: daysAgo(7), status: "expired", dedupeKey: "ret:recent" },
+        { userId: OFF, kind: "event", title: "Saved long ago", url: "https://example.com/saved", startsAt: daysAgo(60), expiresAt: daysAgo(60), status: "saved", dedupeKey: "ret:saved" },
+      ])
+      .returning();
+    await purgeOldRadarFinds(NOW);
+    const left = new Set((await db.select({ k: radarOpportunities.dedupeKey }).from(radarOpportunities).where(eq(radarOpportunities.userId, OFF))).map((r) => r.k));
+    t.check("unsaved finds go 30 days after they end, even with Radar off", !left.has("ret:old") && !left.has("ret:dismissed"), [...left].join());
+    t.check("a recent one and a saved one stay", left.has("ret:recent") && left.has("ret:saved") && old.length === 4, [...left].join());
 
     console.log("\nthe rhythm and the budgets");
     const again = fakeSearch();

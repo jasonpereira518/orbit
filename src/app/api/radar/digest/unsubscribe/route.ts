@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { unsubscribePage, unsubscribeTokenOf } from "@/lib/unsubscribe-page";
-import { unsubscribeRadarDigest } from "@/lib/radar/digest";
+import { escapeHtml } from "@/lib/interest-list-email";
+import { unsubscribeRadarDigest, unsubscribeRadarMoments } from "@/lib/radar/digest";
 import { recordUnsubscribeMiss, unsubscribeAttemptsExhausted } from "@/lib/unsubscribe-guard";
 
 // Clicked from Radar's Monday email, often in a mail client with no session. Authenticated
@@ -10,10 +10,42 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 function page(message: string, action?: { href: string; label: string }) {
-  return unsubscribePage(message, action, "Radar email");
+  return `<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Radar email</title></head>
+  <body style="margin:0;padding:0;background-color:#05070f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="min-height:100vh;">
+      <tr>
+        <td align="center" valign="middle" style="padding:40px 20px;">
+          <table role="presentation" width="420" cellpadding="0" cellspacing="0" style="max-width:420px;width:100%;text-align:center;">
+            <tr><td style="font-size:15px;line-height:1.6;color:#9aada8;">${message}</td></tr>
+            ${
+              action
+                ? `<tr><td style="padding-top:22px;">
+              <form method="post" action="${escapeHtml(action.href)}" style="margin:0;">
+                <button type="submit" style="font:inherit;font-size:15px;font-weight:600;color:#05070f;background:#f2c14e;border:0;border-radius:10px;padding:12px 24px;cursor:pointer;">${escapeHtml(action.label)}</button>
+              </form>
+            </td></tr>`
+                : ""
+            }
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
 }
 
 const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-store" };
+
+function tokenOf(request: NextRequest) {
+  return request.nextUrl.searchParams.get("token")?.trim() || null;
+}
+
+/** Which email the link came from: the same-day email adds `kind=moment`; the Monday one has none. */
+function isMoment(request: NextRequest) {
+  return request.nextUrl.searchParams.get("kind") === "moment";
+}
 
 /**
  * The footer link opens a one-button confirmation, not an immediate change: link scanners
@@ -22,11 +54,15 @@ const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8", "Cache-Contro
  * read or written on GET, so a bogus token learns nothing either.
  */
 export async function GET(request: NextRequest) {
-  const token = unsubscribeTokenOf(request);
+  const token = tokenOf(request);
   if (!token) return new NextResponse(page("This link is missing its token."), { status: 400, headers: HTML_HEADERS });
-  const self = `${request.nextUrl.pathname}?token=${encodeURIComponent(token)}`;
+  const moment = isMoment(request);
+  const self = `${request.nextUrl.pathname}?${moment ? "kind=moment&" : ""}token=${encodeURIComponent(token)}`;
   return new NextResponse(
-    page("Stop Radar’s Monday email? You can turn it back on in Settings.", { href: self, label: "Turn it off" }),
+    page(
+      moment ? "Stop Radar’s same-day emails? You can turn them back on in Settings." : "Stop Radar’s Monday email? You can turn it back on in Settings.",
+      { href: self, label: "Turn it off" }
+    ),
     { status: 200, headers: HTML_HEADERS }
   );
 }
@@ -37,7 +73,7 @@ export async function GET(request: NextRequest) {
  * unsubscribe buttons call it directly. The token is the whole request.
  */
 export async function POST(request: NextRequest) {
-  const token = unsubscribeTokenOf(request);
+  const token = tokenOf(request);
   if (!token) return new NextResponse(page("This link is missing its token."), { status: 400, headers: HTML_HEADERS });
   if (await unsubscribeAttemptsExhausted(request)) {
     return new NextResponse(page("Too many invalid links from this network. Try again in an hour."), {
@@ -45,13 +81,18 @@ export async function POST(request: NextRequest) {
       headers: { ...HTML_HEADERS, "Retry-After": "3600" },
     });
   }
-  if (!(await unsubscribeRadarDigest(token))) {
+  const moment = isMoment(request);
+  if (!(await (moment ? unsubscribeRadarMoments(token) : unsubscribeRadarDigest(token)))) {
     // The same answer whether the token was mistyped, forged or never issued.
     await recordUnsubscribeMiss(request);
     return new NextResponse(page("This link is invalid."), { status: 404, headers: HTML_HEADERS });
   }
   return new NextResponse(
-    page("Done. Radar won’t email you on Mondays any more. Turn it back on any time in Settings."),
+    page(
+      moment
+        ? "Done. Radar won’t email you when something won’t keep. Turn it back on any time in Settings."
+        : "Done. Radar won’t email you on Mondays any more. Turn it back on any time in Settings."
+    ),
     { status: 200, headers: HTML_HEADERS }
   );
 }

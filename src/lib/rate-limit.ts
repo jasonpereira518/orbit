@@ -50,6 +50,7 @@ const BUCKET_LABELS: Record<string, string> = {
   "voice-start-day": "Orbit Voice sessions today",
   "voice-start-global": "Orbit Voice sessions across Orbit today",
   "voice-web": "Orbit Voice web lookups this call",
+  "voice-preview": "Voice previews this minute",
   chat: "chat",
   emailSend: "email send",
   emailAttachmentUpload: "attachment upload",

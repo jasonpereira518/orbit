@@ -1,6 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Mic, MicOff, X, Captions, Loader2, MessageSquare } from "lucide-react";
@@ -370,6 +370,25 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
       },
     };
   }, [active, stop, persist, router, meeting, setTheme, askChat]);
+  // The adapters connect once per session and must NEVER see a new `events`: their effect
+  // reconnects on it, and a reconnect is a new conversation ("Hi, I'm Orbit" mid-sentence).
+  // `events` changes whenever the theme, the router or the meeting recorder's state does, so
+  // the adapters get this stable object, which always calls the latest handlers.
+  const eventsRef = useRef(events);
+  useLayoutEffect(() => {
+    eventsRef.current = events;
+  });
+  const stableEvents = useMemo<VoiceAgentEvents>(() => ({
+    onReady: (controls) => eventsRef.current.onReady(controls),
+    onConnected: () => eventsRef.current.onConnected(),
+    onMode: (mode) => eventsRef.current.onMode(mode),
+    onInterrupted: () => eventsRef.current.onInterrupted(),
+    onMessage: (source, text) => eventsRef.current.onMessage(source, text),
+    onCorrection: (original, corrected) => eventsRef.current.onCorrection(original, corrected),
+    onError: () => eventsRef.current.onError(),
+    onDisconnected: () => eventsRef.current.onDisconnected(),
+    onTool: (tool, input) => eventsRef.current.onTool(tool, input),
+  }), []);
   async function start(fallback = false) {
     if (starting.current || session.current) return;
     starting.current = true;
@@ -465,20 +484,20 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
       {active && (
         <VoiceTransportBoundary
           key={active.sessionId}
-          onFailure={events.onError}
+          onFailure={stableEvents.onError}
         >
           {active?.credentials.provider === "deepgram" && (
             <DeepgramAdapter
               key={active.sessionId}
               credentials={active.credentials}
-              events={events}
+              events={stableEvents}
             />
           )}
           {active?.credentials.provider === "elevenlabs" && (
             <ElevenLabsAdapter
               key={active.sessionId}
               credentials={active.credentials}
-              events={events}
+              events={stableEvents}
             />
           )}
         </VoiceTransportBoundary>

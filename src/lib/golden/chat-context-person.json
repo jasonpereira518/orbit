@@ -89,6 +89,7 @@
       "radarLastRunAt": null,
       "radarLeaseUntil": null,
       "radarModel": null,
+      "radarMomentEmailEnabled": 1,
       "radarMomentLastDay": null,
       "radarNextAt": null,
       "radarOpenedAt": null,

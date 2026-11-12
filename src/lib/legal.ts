@@ -47,8 +47,23 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // contact's work history needs another web search, reading the stored job history and short
 // summaries of the user's notes and messages since the last check (never the notes, an email
 // address or a phone number), and may judge an unsure search's public answer to be someone else.
-export const TERMS_VERSION = "2026-11-11";
-export const LEGAL_LAST_UPDATED = "November 11, 2026";
+// 2026-11-12.2 (Google verification): the calendar wording now matches the code — Google
+// calendars are the ones you tick (primary by default, not primary only), and meetings from 90
+// days back to 60 days ahead are matched to your contacts, besides the two-week window kept for
+// prep. Both were true and unsaid. A suffix, not a new date: the constellations PR (#636) also
+// claims 2026-11-12, and needsTermsAcceptance compares strings, so whichever merges second must
+// still ask everyone again.
+// 2026-11-12.3 (Radar, revision PR 10): a Radar section — off until turned on; what it reads;
+// Connect compares notes about people you have met; the people check widens the work-history
+// search to recent posts, talks and news (kept for the account only); the weekly web search
+// sends only city and up to five goals and may open public event pages (never lu.ma); people it
+// finds stay out of contacts until saved; unsaved finds deleted 30 days after they end; push
+// carries no names; Radar's emails go through Resend with their own unsubscribe; dismiss reasons
+// shape that account only. Processors: Bluesky and Mastodon removed (Radar PR 1), web push
+// services and event websites added, Radar's emails added to Resend. Terms: Radar can be wrong
+// and never contacts anyone for you.
+export const TERMS_VERSION = "2026-11-12.3";
+export const LEGAL_LAST_UPDATED = "November 12, 2026 (revised)";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -131,7 +146,7 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.calendar,
     permission: "See your calendar events (calendar.readonly)",
-    use: "Reads your primary calendar from two days back to two weeks ahead and keeps that window in Orbit, updating it as your calendar changes and deleting meetings that leave it. Adds meetings with people in your network to their timelines, and uses upcoming meetings for prep and follow-up reminders, recording suggestions, meeting prep, recording summaries and answers in Chat and in assistants you connect.",
+    use: "Reads the calendars you choose (your primary calendar by default). Keeps the meetings from two days back to two weeks ahead in Orbit, updating them as your calendar changes and deleting meetings that leave that window. Looks from 90 days back to 60 days ahead to match meetings to people in your network, add them to those people’s timelines and suggest follow-up reminders. Uses upcoming meetings for prep and follow-up reminders, recording suggestions, meeting prep, recording summaries and answers in Chat and in assistants you connect.",
     askedWhen: "Connect Google Calendar on Events",
   },
   {

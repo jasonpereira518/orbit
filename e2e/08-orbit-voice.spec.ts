@@ -46,6 +46,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     let connected = 0;
     let tools = 0;
     let socket: WebSocketRoute | undefined;
+    let sockets = 0;
     const frames: Record<string, unknown>[] = [];
     const turns: Array<{ id: string; text: string; interrupted: boolean }> = [];
     let rejectedTranscript = false;
@@ -168,6 +169,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
         : "wss://api.elevenlabs.io/**",
       (ws) => {
         socket = ws;
+        sockets++;
         ws.onMessage((raw) => {
           if (typeof raw !== "string") return;
           const message = JSON.parse(raw);
@@ -254,6 +256,20 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
           frames.some((frame) => frame.type === "FunctionCallResponse"),
         )
         .toBe(true);
+      // App control mid-call: the theme flips, the agent hears it worked, and the call is NOT
+      // restarted (a theme change re-renders the panel; a reconnect would greet again).
+      for (const theme of ["dark", "light"] as const) {
+        send({
+          type: "FunctionCallRequest",
+          functions: [{ id: `theme_${theme}`, name: "orbit_tool", client_side: true,
+            arguments: JSON.stringify({ tool: "set_theme", input: JSON.stringify({ theme }) }) }],
+        });
+        await expect
+          .poll(() => frames.find((f) => f.type === "FunctionCallResponse" && f.id === `theme_${theme}`)?.content)
+          .toContain(theme);
+        await expect(page.locator("html")).toHaveClass(theme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b)/);
+      }
+      expect(sockets).toBe(1);
     } else {
       send({
         type: "user_transcript",
@@ -335,6 +351,9 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await expect(voice.getByRole("button", { name: "Transcript", exact: true })).toBeVisible();
     expect(connected).toBe(1);
     expect(ends).toBe(0);
+    // Leaving Chat and coming back must not reopen the provider socket: a new socket is a new
+    // conversation, so the agent would start over mid-sentence.
+    expect(sockets).toBe(1);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect.poll(async () => {
       const box = await page.getByRole("region", {name: "Orbit Voice", exact: true}).boundingBox();
@@ -465,7 +484,7 @@ test("admin persists provider and model choices without redeployment", async ({
   );
   await page
     .getByLabel("ElevenLabs speech model")
-    .selectOption("eleven_turbo_v2_5");
+    .selectOption("eleven_turbo_v2");
   await page.getByRole("button", { name: "Save voice settings" }).click();
   await expect
     .poll(
@@ -476,7 +495,7 @@ test("admin persists provider and model choices without redeployment", async ({
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(provider).toHaveValue("elevenlabs");
   await expect(page.getByLabel("ElevenLabs speech model")).toHaveValue(
-    "eleven_turbo_v2_5",
+    "eleven_turbo_v2",
   );
   await untilHydrated(
     async () => {

@@ -11,7 +11,7 @@ import { getDb, rowsOf } from "@/db";
 import { contacts, radarRuns } from "@/db/schema";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { loadInboxPeople, type InboxPerson } from "@/lib/email-intel/inbox-people";
-import { BRIEFING_TOP, draftsReady, whatChanged, type ChangeLine } from "@/lib/radar/briefing";
+import { BRIEFING_TOP, draftsReady, whatChanged, type BriefingLanes, type ChangeLine } from "@/lib/radar/briefing";
 import { openRadarAi } from "@/lib/radar/explain";
 import { loadRadarState, RADAR_LEASE_MS } from "@/lib/radar/run";
 import { RADAR_CAPS } from "@/lib/radar/score";
@@ -21,13 +21,15 @@ import {
   type AutopilotActionRow,
   type RecommendationRow,
 } from "@/lib/radar/store";
-import type { RadarAutopilot } from "@/lib/radar/types";
+import { LANE_OF_KIND, type RadarAutopilot } from "@/lib/radar/types";
 import { listOpenOpportunities, type OpportunityView } from "@/lib/radar/opportunity-actions";
 
 export type RadarSettingsView = {
   paused: boolean;
   autopilot: RadarAutopilot;
   digestEnabled: boolean;
+  /** The same-day email when something on Today won't keep. */
+  momentEmailEnabled: boolean;
   captureLinkedinActivity: boolean;
 };
 
@@ -65,6 +67,7 @@ type PageState = {
   paused: number | null;
   autopilot: RadarAutopilot | null;
   digest_enabled: number | null;
+  moment_email: number | null;
   capture_linkedin: number | null;
   has_contacts: boolean;
   signals_week: number | string;
@@ -83,7 +86,7 @@ async function loadPageState(userId: string): Promise<PageState | null> {
   const [row] = rowsOf<PageState>(
     await db.execute(sql`
       SELECT s.radar_last_run_at AS last_run_at, s.radar_next_at AS next_at, s.radar_paused AS paused,
-             s.radar_autopilot AS autopilot, s.radar_digest_enabled AS digest_enabled,
+             s.radar_autopilot AS autopilot, s.radar_digest_enabled AS digest_enabled, s.radar_moment_email_enabled AS moment_email,
              s.radar_capture_linkedin_activity AS capture_linkedin, s.email_intel_enabled AS email_intel,
              EXISTS (SELECT 1 FROM contacts WHERE user_id = ${userId}) AS has_contacts,
              (SELECT count(*) FROM contact_signals WHERE user_id = ${userId} AND created_at > ${since}::timestamptz)
@@ -130,6 +133,7 @@ export async function loadRadarPage(userId: string): Promise<RadarPageData> {
       paused,
       autopilot: state?.autopilot ?? {},
       digestEnabled: (state?.digest_enabled ?? 1) !== 0,
+      momentEmailEnabled: (state?.moment_email ?? 1) !== 0,
       captureLinkedinActivity: state?.capture_linkedin === 1,
     },
     autopilotActions,
@@ -160,8 +164,10 @@ export type RadarBriefing = {
   top: RecommendationRow[];
   /** Everyone on the list. */
   total: number;
-  /** Today's section, as `/radar` draws it. */
+  /** Today's moments (`bucket = 'today'`): the things that won't keep. */
   today: number;
+  /** This week's plan by lane, finds included in Opportunities. */
+  lanes: BriefingLanes;
   drafts: number;
   changes: ChangeLine[];
   /** Overview stats about the user's network. */
@@ -176,20 +182,24 @@ export async function loadRadarBriefing(userId: string): Promise<RadarBriefing> 
   // `state.paused` means "not on" (never turned on, or switched off): the dashboard hides
   // Radar then, however much it ran before, and shows its legacy suggestions card instead.
   if (!state?.lastRunAt || state.paused) {
-    return { hasRun: false, paused: state?.paused ?? false, top: [], total: 0, today: 0, drafts: 0, changes: [] };
+    return { hasRun: false, paused: state?.paused ?? false, top: [], total: 0, today: 0, lanes: { followUp: 0, connect: 0, opportunities: 0 }, drafts: 0, changes: [] };
   }
   const { listActiveProjectsForUser } = await import("@/lib/projects/store");
-  const [pending, projects] = await Promise.all([
+  const [pending, projects, finds] = await Promise.all([
     listPendingRecommendations(userId, RADAR_CAPS.pending),
     listActiveProjectsForUser(userId, { limit: 10 }).catch(() => []),
+    listOpenOpportunities(userId).catch(() => []),
   ]);
-  const today = pending.slice(0, RADAR_CAPS.today);
+  // Today's moments lead when there are any; otherwise the week's best few.
+  const today = pending.filter((r) => r.bucket === "today");
+  const lane = (l: string) => pending.filter((r) => LANE_OF_KIND[r.kind] === l).length;
   return {
     hasRun: true,
     paused: state.paused,
-    top: today.slice(0, BRIEFING_TOP),
-    total: pending.length,
+    top: (today.length > 0 ? today : pending).slice(0, BRIEFING_TOP),
+    total: pending.length + finds.length,
     today: today.length,
+    lanes: { followUp: lane("follow_up"), connect: lane("connect"), opportunities: lane("opportunities") + finds.length },
     drafts: draftsReady(pending),
     changes: whatChanged(pending, new Date()),
     activeProjectsCount: projects.length,
