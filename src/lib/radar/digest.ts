@@ -32,7 +32,6 @@ import { isValidTimeZone } from "@/lib/reminder-due-bucket";
 import { buildRadarDigestEmail, type DigestContent } from "@/lib/radar/digest-email";
 import { digestLineFor } from "@/lib/radar/email-text";
 import type { RadarReason, RecommendationKind } from "@/lib/radar/types";
-import { listOpenOpportunities } from "@/lib/radar/opportunity-actions";
 
 /** People shown in the email; the rest are counted. */
 export const RADAR_DIGEST_TOP = 5;
@@ -276,6 +275,10 @@ export async function loadDigestContent(userId: string): Promise<DigestContent |
   );
   if (rows.length === 0) return null;
   // The Opportunities lane's finds, counted. A failure here costs the email its one line, never the email.
+  // Loaded here, not at the top: the app layout imports this file (`captureRadarTimeZone`), and a
+  // static import would pull contact resolution, search and the AI module into every page's
+  // server graph (`smoke-server-graph`).
+  const { listOpenOpportunities } = await import("@/lib/radar/opportunity-actions");
   const finds = await listOpenOpportunities(userId, new Date(), 20).catch(() => []);
   const events = finds.filter((f) => f.kind === "event");
   return {
