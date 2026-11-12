@@ -70,7 +70,7 @@ export async function seedSharedAvatar(slug: string, url: string, dryRun = false
 }
 
 /** Lookups left today in an app-wide source allowance (`consumeBucket`'s window rule). */
-async function sharedAllowanceLeft(source: "unavatar" | "microlink"): Promise<number> {
+export async function sharedAllowanceLeft(source: "unavatar" | "microlink"): Promise<number> {
   const db = await getDb();
   const policy = RATE_LIMITS.avatarSourceShared;
   const [b] = await db
