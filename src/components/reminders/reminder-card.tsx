@@ -19,7 +19,7 @@ import {
   draftFollowUpResponse,
   moveReminderToList,
 } from "@/actions/reminders";
-import type { ReminderActionKind } from "@/db/schema";
+import type { ReminderActionKind, ReminderPriority, ReminderCategory } from "@/db/schema";
 import { ACTION_KIND_LABELS } from "@/lib/reminder-action-kind";
 import { dueDayOf, dueLabelFor, ymdInZone } from "@/lib/reminder-due-bucket";
 import { reminderTypeLabel, reminderTypeStyle } from "@/lib/reminder-display";
@@ -70,6 +70,9 @@ export function ReminderCard({
   showListMove = false,
   compact = false,
   noteBatchId,
+  priority,
+  category,
+  timingRationale,
 }: {
   id: string;
   title: string;
@@ -87,6 +90,10 @@ export function ReminderCard({
   compact?: boolean;
   /** When this reminder came from a confirmed note paste, links the type chip back to its results page. */
   noteBatchId?: string | null;
+  priority?: ReminderPriority;
+  category?: ReminderCategory;
+  timingRationale?: string | null;
+  importanceReason?: string | null;
 }) {
   const due = dueLabel(dueDate);
   const typeLabel = reminderTypeLabel(reminderType, noteBatchId);
@@ -128,6 +135,21 @@ export function ReminderCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-medium">{title}</p>
+            {priority === "critical" && (
+              <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
+                Critical
+              </span>
+            )}
+            {priority === "high" && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                High
+              </span>
+            )}
+            {category === "waiting_on" && (
+              <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-3xs font-medium text-sky-700 dark:text-sky-300">
+                Waiting on them
+              </span>
+            )}
             {noteBatchId ? (
               <Link
                 href={`/capture/${noteBatchId}`}
@@ -179,6 +201,11 @@ export function ReminderCard({
               )}
             >
               {due.text}
+              {timingRationale && (
+                <span className="ml-1.5 italic text-3xs text-muted-foreground/80">
+                  · {timingRationale}
+                </span>
+              )}
             </p>
           )}
 

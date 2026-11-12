@@ -824,7 +824,15 @@ export async function loadDashboardReminders(userId: string, now: Date) {
         )`
       )
     )
-    .orderBy(asc(reminders.dueDate))
+    .orderBy(
+      sql`case
+        when ${reminders.priority} = 'critical' then 0
+        when ${reminders.priority} = 'high' then 1
+        when ${reminders.priority} = 'normal' then 2
+        else 3
+      end asc`,
+      asc(reminders.dueDate)
+    )
     .limit(REMINDER_CAP);
   const total = rows[0]?.total ?? 0;
   return {
