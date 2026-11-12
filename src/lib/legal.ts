@@ -62,10 +62,14 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // shape that account only. Processors: Bluesky and Mastodon removed (Radar PR 1), web push
 // services and event websites added, Radar's emails added to Resend. Terms: Radar can be wrong
 // and never contacts anyone for you.
-// 2026-11-12.4 (admin refresh, PR 2): public Gravatar photos found by email join the shared photo
+// 2026-11-12.4 (Radar PR 11): the extension's "Save post to Radar" and "Scan this page" (a scan
+// sends Orbit only the authors' profile links first; only contacts' posts follow and are kept;
+// strangers' posts never leave the browser), and the hashtags from your own posts (Shares.csv)
+// as something Radar reads and adds to its weekly web search.
+// 2026-11-12.5 (admin refresh, PR 2): public Gravatar photos found by email join the shared photo
 // set, kept under a one-way hash of the address; uploads named as never shared.
-export const TERMS_VERSION = "2026-11-12.4";
-export const LEGAL_LAST_UPDATED = "November 12, 2026 (rev. 4)";
+export const TERMS_VERSION = "2026-11-12.5";
+export const LEGAL_LAST_UPDATED = "November 12, 2026 (revision 4)";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
