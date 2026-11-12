@@ -23,10 +23,10 @@
 .voice-orbit[data-mode="thinking"] .voice-orbit-moon { animation-duration: 3s; }
 .voice-orbit[data-mode="connecting"] { animation: voice-orbit-arrive 1.8s ease-in-out infinite alternate; }
 .voice-orbit[data-muted] .voice-orbit-user { opacity: .18; }
-.voice-orbit { max-height: min(40dvh, 280px); }
+.voice-orbit { max-height: min(40dvh, 280px, 100%); }
 /* Inline on a phone the composer and nav share the height: keep the controls on screen. */
-@media (max-width: 639.98px) { .voice-orbit { max-height: min(24dvh, 200px); } }
-.voice-stage[data-transcript] .voice-orbit { max-height: min(22dvh, 200px); }
+@media (max-width: 639.98px) { .voice-orbit { max-height: min(24dvh, 200px, 100%); } }
+.voice-stage[data-transcript] .voice-orbit { max-height: min(22dvh, 200px, 100%); }
 .voice-stage[data-compact] .voice-orbit { max-height: 120px; }
 @keyframes voice-orbit-travel { to { transform: rotate(360deg); } }
 @keyframes voice-orbit-arrive { from { opacity: .45; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
