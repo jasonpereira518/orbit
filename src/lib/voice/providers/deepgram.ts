@@ -3,9 +3,12 @@ import { UserFacingError } from "@/lib/errors";
 import { CRM_VOICE_TOOL } from "../config";
 import type { VoiceConfig } from "../config";
 import type { VoiceCredentials } from "../contracts";
+export const VOICE_GREETING = "Hi, I’m Orbit. Who would you like to catch up with?";
+export const COSMO_GREETING = "Hi, I’m Cosmo. What can I help with?";
 export async function deepgramCredentials(
   instructions: string,
   config: VoiceConfig,
+  greeting = VOICE_GREETING,
 ): Promise<VoiceCredentials> {
   if (!deepgramEnabled())
     throw new UserFacingError(
@@ -33,7 +36,7 @@ export async function deepgramCredentials(
         ],
       },
       speak: { provider: { type: "deepgram", model: config.deepgram.voice } },
-      greeting: "Hi, I’m Orbit. Who would you like to catch up with?",
+      greeting,
     },
   };
 }

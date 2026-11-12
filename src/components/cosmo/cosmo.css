@@ -1,0 +1,34 @@
+/* Cosmo's idle orb: the live canvas orb's colours, drawn in CSS so an idle page runs no loop. */
+.cosmo-idle {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 34% 30%, rgb(244 114 182 / 0.85), transparent 46%),
+    radial-gradient(circle at 70% 66%, rgb(34 211 238 / 0.8), transparent 50%),
+    radial-gradient(circle at 50% 50%, rgb(167 139 250 / 0.9), #160c3a 72%);
+  box-shadow:
+    0 0 0 1px rgb(167 139 250 / 0.35),
+    0 10px 28px -8px rgb(76 29 149 / 0.6);
+  animation: cosmo-breathe 4.8s ease-in-out infinite;
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cosmo-idle:hover {
+  transform: scale(1.06);
+}
+.cosmo-idle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+@keyframes cosmo-breathe {
+  50% {
+    filter: brightness(1.12) saturate(1.1);
+    box-shadow:
+      0 0 0 1px rgb(167 139 250 / 0.5),
+      0 10px 34px -6px rgb(124 58 237 / 0.7);
+  }
+}
+/* The live orb in the docked bar; the canvas sizes itself by height. */
+.cosmo-live .voice-orbit {
+  height: 44px;
+}

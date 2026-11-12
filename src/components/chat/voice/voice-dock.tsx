@@ -6,6 +6,7 @@ import { closeVoice, useVoiceDock } from "@/lib/voice/dock-store";
 
 // Both lazy: this dock is in every page's layout, and the call code is only needed on a call.
 const VoiceEngine = dynamic(() => import("./voice-engine").then((m) => m.VoiceEngine), { ssr: false });
+const CosmoRoot = dynamic(() => import("@/components/cosmo/cosmo-root").then((m) => m.CosmoRoot), { ssr: false });
 const VoicePanel = dynamic(
   () => import("../voice-panel").then((m) => m.VoicePanel),
   { ssr: false },
@@ -29,30 +30,40 @@ function voiceHost() {
  * (inline) and the fixed middle-right dock (every other tab), which keeps the view's own state
  * (transcript open, scroll) across the move.
  */
-export function VoiceDock() {
+export function VoiceDock({ cosmo = false }: { cosmo?: boolean }) {
   const { call, slot } = useVoiceDock();
   const floating = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const parent = slot ?? floating.current;
+    // With Cosmo, off Chat the call is Cosmo's docked bar; the panel only renders in Chat's slot.
+    const parent = cosmo ? slot : (slot ?? floating.current);
     if (!call || !parent) return;
     const host = voiceHost();
     if (host.parentElement !== parent) parent.appendChild(host);
-  }, [call, slot]);
+  }, [call, slot, cosmo]);
+  const showPanel = Boolean(call && (!cosmo || slot));
   return (
     <>
       <div
         ref={floating}
         className={
-          call && !slot
+          call && !slot && !cosmo
             ? "fixed right-4 top-1/2 z-40 -translate-y-1/2"
             : "hidden"
         }
       />
+      {/* Keyed on the call, not its thread: a Cosmo call adopts its thread after it starts. */}
       {call && (
-        <VoiceEngine key={call.threadId} state={call.state} threadId={call.threadId} onClose={async () => closeVoice()} />
+        <VoiceEngine
+          key={call.id}
+          state={call.state}
+          threadId={call.threadId}
+          origin={call.origin}
+          onClose={async () => closeVoice()}
+        />
       )}
-      {call &&
-        createPortal(<VoicePanel key={call.threadId} state={call.state} compact={!slot} />, voiceHost())}
+      {call && showPanel &&
+        createPortal(<VoicePanel key={call.id} state={call.state} compact={!slot} />, voiceHost())}
+      {cosmo && <CosmoRoot />}
     </>
   );
 }

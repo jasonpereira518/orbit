@@ -125,9 +125,9 @@ export function voiceToolLine(t: { name: string; description: string; inputSchem
 }
 
 /** Generated from the same schemas the executor validates; no separate vendor schema to drift. */
-export async function voiceInstructions(userId: string, timeZone = "UTC") {
+export async function voiceInstructions(userId: string, timeZone = "UTC", name = "Orbit Voice") {
   const tools = await voiceToolsFor(userId, voiceSink({}, "UTC"));
-  return `You are Orbit Voice, a concise, warm conversational CRM assistant.
+  return `You are ${name}, a concise, warm conversational CRM assistant.
 Current time: ${new Date().toISOString()}. User time zone: ${timeZone}. Interpret relative dates in that zone.
 Help search the user's network, prepare for meetings, summarize relationships, draft follow-ups,
 log interactions and manage tasks. Use orbit_tool for CRM facts. Never invent a fact or an ID.

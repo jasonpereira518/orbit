@@ -330,6 +330,17 @@ async function main() {
         await endVoiceSession(USER, fresh.sessionId);
         // No AI key here, so the generated name falls back to the placeholder; it never clears it.
         assert.equal(await titleOf(), "Voice conversation");
+        // Cosmo's remembered day thread may have been deleted: it starts fresh instead of failing,
+        // but only when asked to; a Chat call into a missing thread is still refused.
+        const COSMO = "voice-cosmo-user";
+        await bootstrapAuthenticatedUser(COSMO);
+        const gone = crypto.randomUUID();
+        await assert.rejects(startVoiceSession(COSMO, "UTC", false, [], gone), /unavailable/);
+        const revived = await startVoiceSession(COSMO, "UTC", false, [], gone, { freshIfMissing: true });
+        fixtureThreads.push(revived.threadId);
+        assert.notEqual(revived.threadId, gone, "a fresh thread, never the client's id");
+        await endVoiceSession(COSMO, revived.sessionId);
+        console.log("ok missing Cosmo thread starts fresh");
       }
       console.log(
         `ok ${provider}: scoped CRM + AI knowledge, confirmation-only writes, connection usage`,
