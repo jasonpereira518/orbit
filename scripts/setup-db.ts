@@ -60,9 +60,6 @@ import { sql } from "drizzle-orm";
   "radar_runs",
   "recommendation_feedback",
   "contact_signals",
-  "external_sources",
-  "external_items",
-  "external_item_companies",
   "email_threads",
   "email_events",
 ] as const;

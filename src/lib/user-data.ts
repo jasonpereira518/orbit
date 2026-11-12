@@ -170,9 +170,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *   - `relationship_digests` -> cascades from `contacts`
  * `recommendations`, `recommendation_feedback` and `contact_signals` also cascade from
  * `contacts`, but are deleted explicitly by `insights`, which can run without deleting
- * contacts. `radar_runs` has no parent and is always deleted explicitly. Radar's news tables
- * (`external_sources`, `external_items`, `external_item_companies`) are global, like the
- * job feed's, carry no `user_id`, and are never deleted with an account.
+ * contacts. `radar_runs` has no parent and is always deleted explicitly.
  * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
  * `note_batches` and `extension_usage` both have one and neither has a foreign key to
  * anything, so both are deleted explicitly. `suggested_reminders` looks like it would cascade

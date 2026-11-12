@@ -2992,11 +2992,6 @@ export const contactSignals = pgTable(
   ]
 );
 
-// Radar's retired news tables (external_sources, external_items, external_item_companies),
-// recommendations.discovered_person and user_settings.radar_discovery_enabled are out of the
-// code as of Radar PR 12a; the database keeps them until PR 12b drops them, so a deploy still
-// serving during the next migration never selects a column that is gone.
-
 export type AudienceFilters = {
   titles?: string[];
   locations?: string[];
