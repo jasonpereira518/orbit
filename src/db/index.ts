@@ -3180,7 +3180,8 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // person's own off switch for the email Radar sends when a Today item won't keep (PR 9b).
 // Scanned remote refs on Nov 12 2026: custom constellations (youthful-herschel) holds 232 and
 // the Orbit Card / planet PR (#635) will need 233, so this takes 234.
-export const SCHEMA_VERSION = 234;
+// 235 = user_settings.bright_data_api_key_encrypted + bright_data_zone
+export const SCHEMA_VERSION = 235;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4290,6 +4291,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
+  await ensureColumn(client, "user_settings", "bright_data_api_key_encrypted", "text");
+  await ensureColumn(client, "user_settings", "bright_data_zone", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_auth_token_encrypted", "text");
@@ -4933,6 +4936,8 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bright_data_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bright_data_zone text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_auth_token_encrypted text`,

@@ -213,6 +213,8 @@ export const userSettings = pgTable("user_settings", {
    */
   estimatedMonthlyChurnPct: real("estimated_monthly_churn_pct"),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
+  brightDataApiKeyEncrypted: text("bright_data_api_key_encrypted"),
+  brightDataZone: text("bright_data_zone"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
   twilioAuthTokenEncrypted: text("twilio_auth_token_encrypted"),
