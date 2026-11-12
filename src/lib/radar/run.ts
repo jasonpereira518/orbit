@@ -47,6 +47,7 @@ import { buildRadarModel } from "@/lib/radar/model";
 import { RADAR_EDITOR_TIMEOUT_MS, editPicks, editorUnchanged } from "@/lib/radar/editor";
 import { applyAutopilot, loadRadarAutopilot } from "@/lib/radar/autopilot";
 import { draftTodayForRun } from "@/lib/radar/drafts";
+import { detailFor, progressAt, stageLabel, type RunStageKey } from "@/lib/radar/run-progress";
 import { loadPostSignals } from "@/lib/radar/signals/activity";
 import { produceEmailSignals } from "@/lib/radar/signals/email";
 import { openRadarAi } from "@/lib/radar/explain";
@@ -328,12 +329,27 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
   let userTz = "UTC";
   let dailyEnabled = true;
 
+  // Where the run is, for "Refresh now". Best-effort: a failed progress write never costs the run
+  // anything. `GREATEST` keeps the bar from ever moving backward, whatever order writes land in.
+  const mark = async (stage: RunStageKey, done?: number, total?: number) => {
+    if (!runId) return;
+    await db
+      .update(radarRuns)
+      .set({
+        stage: stageLabel(stage),
+        progress: sql`GREATEST(${radarRuns.progress}, ${progressAt(stage, done, total)})`,
+        detail: detailFor(done, total),
+      })
+      .where(eq(radarRuns.id, runId))
+      .catch(() => undefined);
+  };
   try {
     await traced(
       "radar.run",
       async () => {
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
         runId = run!.id;
+        await mark("read");
 
         const [signals, emailSignals, goals, targetKeys, live, outcomes, tallies, settingsRow, initialProjects] = await Promise.all([
           produceInternalSignals(userId, now),
@@ -406,6 +422,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           mode === "weekly" &&
           (projectAi || (activeProjects.length === 0 && goals.length > 0))
         ) {
+          await mark("projects");
           activeProjects = await extractActiveProjectsForUser(userId, projectAi ?? undefined, {
             since: settingsRow?.lastRunAt ?? undefined,
             goals,
@@ -415,6 +432,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
 
         // No outbound people discovery here: Radar never writes to `contacts`. New people are
         // shown as opportunities the user chooses to save (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
+        await mark("people");
         const [candidates, suppressions] = await Promise.all([
           loadCandidates(userId, [...emailSignals, ...signals].map((s) => s.contactId)),
           loadSuppressions(userId, live, now),
@@ -429,6 +447,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         stats.posts = posts.length;
         // Email signals first: a card keeps at most two pieces of evidence, and the one from
         // mail is the one an accept needs to find its email again.
+        await mark("score");
         const allSignals = [...emailSignals, ...signals, ...posts];
         const scored = scorePicks(
           candidates,
@@ -459,6 +478,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         // The editor: once a week, it orders the verified picks and writes each card's why and
         // opener in one call. A daily pass leaves the plan's words as they are.
         if (mode === "weekly" && access && RADAR_EDITOR_ENABLED && radarLimits.aiExplanations) {
+          await mark("editor");
           const profiles = new Map(candidates.map((c) => [c.id, { title: c.title, company: c.company, tier: c.tier }]));
           const result = await editPicks(userId, access, picks, { goals, profiles }, now, {
             timeoutMs: Math.min(RADAR_EDITOR_TIMEOUT_MS, Math.max(1_000, aiDeadline - Date.now())),
@@ -478,6 +498,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const limits = { planSize: Math.min(RADAR_CAPS.pending, radarLimits.planSize), todayMax: radarLimits.todayMax };
         let next: NewRecommendation[];
         let counts: WriteCounts;
+        await mark("save");
         if (mode === "weekly") {
           next = composeWeek(ranked, limits, now);
           counts = planRunResult(live, next, now);
@@ -492,6 +513,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         // Autopilot, for the kinds this person opted into: schedules, never sends. Only on
         // the nightly pass and an explicit refresh, never while someone is opening the page.
         if (opts.trigger === "schedule" || opts.trigger === "manual") {
+          await mark("autopilot");
           const autopilot = await loadRadarAutopilot(userId).catch(() => ({}));
           stats.autopilot = await applyAutopilot(userId, autopilot, now);
         }
@@ -499,12 +521,17 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         // Drafts written ahead, on the weekly build only and only as many as the plan allows
         // (Free none: a draft is written when the person asks for one).
         if (mode === "weekly" && access && radarLimits.draftsPerWeek > 0 && !deadlineReached(aiDeadline)) {
-          stats.drafts = await draftTodayForRun(userId, access, { deadline: aiDeadline, limit: radarLimits.draftsPerWeek }).catch((err) => {
+          stats.drafts = await draftTodayForRun(userId, access, {
+            deadline: aiDeadline,
+            limit: radarLimits.draftsPerWeek,
+            onItem: (done, total) => mark("drafts", done, total),
+          }).catch((err) => {
             reportUnlessQuiet(err, { where: "job.radar.draft", userId, level: "warning" });
             return 0;
           });
         }
 
+        await mark("wrap");
         stats.candidates = candidates.length;
         stats.signals = signals.length;
         stats.emailSignals = emailSignals.length;
@@ -548,6 +575,8 @@ async function finishRun(
           .update(radarRuns)
           .set({
             status: ok ? "ok" : "failed",
+            // A finished run reads 100%; a failed one keeps where it got to.
+            ...(ok ? { progress: 100, stage: null, detail: null } : {}),
             finishedAt: new Date(),
             durationMs: stats.durationMs,
             stats: counts,

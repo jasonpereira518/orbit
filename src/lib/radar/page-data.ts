@@ -8,12 +8,12 @@
  */
 import { desc, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { contacts } from "@/db/schema";
+import { contacts, radarRuns } from "@/db/schema";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { loadInboxPeople, type InboxPerson } from "@/lib/email-intel/inbox-people";
 import { BRIEFING_TOP, draftsReady, whatChanged, type ChangeLine } from "@/lib/radar/briefing";
 import { openRadarAi } from "@/lib/radar/explain";
-import { loadRadarState } from "@/lib/radar/run";
+import { loadRadarState, RADAR_LEASE_MS } from "@/lib/radar/run";
 import { RADAR_CAPS } from "@/lib/radar/score";
 import {
   listAutopilotActions,
@@ -185,4 +185,39 @@ export async function loadRadarActivation(userId: string): Promise<RadarActivati
     .orderBy(sql`${contacts.closeness} DESC NULLS LAST`, sql`${contacts.lastInteractionAt} DESC NULLS LAST`, desc(contacts.id))
     .limit(ACTIVATION_FACES);
   return { on, faces: rows.map((r) => ({ contactId: r.contactId, name: r.name, photo: r.photo ?? null })) };
+}
+
+export type RadarRunProgress = {
+  /** A run is under way for this account right now. */
+  running: boolean;
+  /** What it is doing ("Writing drafts"), and how far (0-100, monotonic). */
+  label: string | null;
+  progress: number;
+  /** "3 of 5" while a counted stage runs. */
+  detail: string | null;
+  /** The newest run's outcome; null before the account has any run. */
+  status: "running" | "ok" | "partial" | "failed" | null;
+};
+
+/**
+ * The newest run, for "Refresh now". `running` ignores a `running` row older than the lease: a
+ * crashed run never finishes its row, and must not hold the bar on screen forever.
+ */
+export async function loadRunProgress(userId: string, now: Date = new Date()): Promise<RadarRunProgress> {
+  const db = await getDb();
+  const [run] = await db
+    .select({
+      status: radarRuns.status,
+      startedAt: radarRuns.startedAt,
+      stage: radarRuns.stage,
+      progress: radarRuns.progress,
+      detail: radarRuns.detail,
+    })
+    .from(radarRuns)
+    .where(eq(radarRuns.userId, userId))
+    .orderBy(desc(radarRuns.startedAt))
+    .limit(1);
+  if (!run) return { running: false, label: null, progress: 0, detail: null, status: null };
+  const running = run.status === "running" && now.getTime() - run.startedAt.getTime() < RADAR_LEASE_MS;
+  return { running, label: run.stage, progress: run.progress, detail: run.detail, status: run.status };
 }

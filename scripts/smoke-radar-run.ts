@@ -16,7 +16,7 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
   actionItems,
@@ -56,7 +56,7 @@ import { loadNotificationPanel } from "../src/lib/notification-panel";
 import { getAttentionBrief } from "../src/lib/chat-attention";
 import { isSurfaceLive } from "../src/lib/surface-visibility";
 import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
-import { loadRadarBriefing } from "../src/lib/radar/page-data";
+import { loadRadarBriefing, loadRunProgress } from "../src/lib/radar/page-data";
 import { applyAutopilot, undoAutopilotForUser } from "../src/lib/radar/autopilot";
 import { draftChannel, draftTodayForRun } from "../src/lib/radar/drafts";
 import { draftIntent } from "../src/lib/radar/types";
@@ -411,7 +411,9 @@ run(async () => {
   // 30 (Radar revision PR 3): the news probe is gone (PR 1), and two constant reads joined the
   // signal batch: open threads the person owes (relationship_digests) and the latest real
   // encounter per contact (met_recently). Neither grows with the size of the network.
-  check("and a bounded number of them", statements <= 30, String(statements));
+  // 44 (Refresh now's progress): plus one best-effort `radar_runs` UPDATE per stage the run enters
+  // (at most 9) and per draft (at most 5), a constant that does not grow with the network.
+  check("and a bounded number of them", statements <= 44, String(statements));
 
   // Back to the named cast, so the caps are decided by the people the checks below name.
   const named = Object.values(ids);
@@ -553,6 +555,21 @@ run(async () => {
   await maybeRefreshRadar(USER, new Date(later.getTime() + 60 * 3_600_000));
   const runsPaused = await db.select({ id: radarRuns.id }).from(radarRuns).where(eq(radarRuns.userId, USER));
   check("a paused account is never run", runsPaused.length === runsStale.length);
+
+  // Refresh now's progress bar: a finished run reads 100%, a crashed one never holds the bar.
+  const [lastRun] = await db.select().from(radarRuns).where(eq(radarRuns.userId, USER)).orderBy(desc(radarRuns.startedAt)).limit(1);
+  check("a finished run reads 100% with no stage left", lastRun?.status === "ok" && lastRun.progress === 100 && lastRun.stage === null, JSON.stringify({ p: lastRun?.progress, s: lastRun?.stage }));
+  const idle = await loadRunProgress(USER);
+  check("and is not running", !idle.running && idle.progress === 100 && idle.status === "ok");
+  const started = new Date(later.getTime() + 61 * 3_600_000);
+  const [live] = await db
+    .insert(radarRuns)
+    .values({ userId: USER, trigger: "manual", startedAt: started, stage: "Writing drafts", progress: 78, detail: "3 of 5" })
+    .returning();
+  const going = await loadRunProgress(USER, new Date(started.getTime() + 5_000));
+  check("a run under way reports its stage, bar and count", going.running && going.label === "Writing drafts" && going.progress === 78 && going.detail === "3 of 5", JSON.stringify(going));
+  check("a 'running' row older than the lease (a crash) is not running", !(await loadRunProgress(USER, new Date(started.getTime() + 11 * 60_000))).running);
+  await db.delete(radarRuns).where(eq(radarRuns.id, live!.id));
 
   const fresh = "smoke-radar-run-fresh";
   await db.delete(userSettings).where(eq(userSettings.userId, fresh));
