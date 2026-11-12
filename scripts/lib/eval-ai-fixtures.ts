@@ -386,3 +386,14 @@ export type RadarEditorEvalFixture = {
     };
   }>;
 };
+
+/** `scripts/eval-fixtures/ai-radar-connect-eval.json` — Radar's Connect judge (`src/lib/radar/connect.ts`). */
+export type RadarConnectEvalFixture = {
+  cases: Array<{
+    id: string;
+    goals: string[];
+    a: { name: string; note: string };
+    b: { name: string; note: string };
+    expect: { type: "introduce" | "ask" | "share" | "none"; forbidden: string[] };
+  }>;
+};

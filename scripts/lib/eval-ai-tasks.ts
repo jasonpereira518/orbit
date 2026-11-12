@@ -78,6 +78,8 @@ import { buildDigestPrompt, extractRelationshipDigest, isTrivialWindow } from ".
 import { locateExcerpt, validateDigest } from "../../src/lib/relationship-engine/validate";
 import { planDigestWrites } from "../../src/lib/relationship-engine/rules";
 import { buildEditorPrompt, parseEditorReply, type EditorCandidate } from "../../src/lib/radar/editor-prompt";
+import { buildConnectPrompt, parseConnectReply, type ConnectPair } from "../../src/lib/radar/connect";
+import { containsVerbatim, normalizeForMatch } from "../../src/lib/verbatim";
 import type {
   CalendarEvalFixture,
   CaptureChecksEvalFixture,
@@ -96,6 +98,7 @@ import type {
   RecruiterEvalFixture,
   RelationshipEvalFixture,
   RadarEditorEvalFixture,
+  RadarConnectEvalFixture,
   ResearchEvalFixture,
   TranscribeEvalFixture,
 } from "./eval-ai-fixtures";
@@ -149,6 +152,7 @@ export type TaskName =
   | "digest"
   | "relationship"
   | "radar-editor"
+  | "radar-connect"
   | "web-search";
 
 export const TASK_NAMES: TaskName[] = [
@@ -170,6 +174,7 @@ export const TASK_NAMES: TaskName[] = [
   "digest",
   "relationship",
   "radar-editor",
+  "radar-connect",
   "web-search",
 ];
 
@@ -2041,6 +2046,70 @@ export async function runRadarEditorTask({ userId, limit, log }: RunOpts): Promi
   };
 }
 
+/* ------------------------------------------------------------------- radar connect ----- */
+
+/**
+ * Radar's Connect judge (`src/lib/radar/connect.ts`): the same prompt and checked parse the run
+ * uses, on synthetic note pairs. Scored on an unusable reply, quotes that are not word for word
+ * in their own note (which the run's proof check would drop), the wrong type, and words that
+ * would only appear if the model invented a fact or obeyed an instruction inside a note.
+ */
+export async function runRadarConnectTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<RadarConnectEvalFixture>("ai-radar-connect-eval.json").cases.slice(0, limit);
+  const usable = tally();
+  const grounded = tally();
+  const typed = tally();
+  let inventedFacts = 0;
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+  for (const c of cases) {
+    try {
+      const pair: ConnectPair = {
+        id: "p1",
+        a: { contactId: "a", name: c.a.name, chunk: { id: "na", content: c.a.note, occurredAt: null } },
+        b: { contactId: "b", name: c.b.name, chunk: { id: "nb", content: c.b.note, occurredAt: null } },
+      };
+      const prompt = buildConnectPrompt([pair], c.goals);
+      const raw = await timed(latenciesMs, () =>
+        completeJson(userId, { system: prompt.system, user: prompt.user, operation: "radar.connect", maxOutputTokens: 1_000 })
+      );
+      let parsedOk = true;
+      try {
+        JSON.parse(raw);
+      } catch {
+        parsedOk = false;
+      }
+      count(usable, parsedOk);
+      const item = parseConnectReply(raw, prompt)[0];
+      const type = item?.type ?? "none";
+      const typeOk = type === c.expect.type;
+      count(typed, typeOk);
+      let missed = !parsedOk || !typeOk;
+      if (item) {
+        const ok = containsVerbatim(normalizeForMatch(c.a.note), item.quoteA) && containsVerbatim(normalizeForMatch(c.b.note), item.quoteB);
+        count(grounded, ok);
+        missed ||= !ok;
+        const words = `${item.why} ${item.quoteA} ${item.quoteB}`.toLowerCase();
+        const invented = c.expect.forbidden.filter((f) => words.includes(f.toLowerCase()));
+        inventedFacts += invented.length;
+        missed ||= invented.length > 0;
+      }
+      if (missed) misses.push(c.id);
+      log(`  ${missed ? "MISS" : "ok  "} radar-connect/${c.id} (${type})`);
+    } catch (err) {
+      misses.push(c.id);
+      count(usable, false);
+      log(`  FAIL radar-connect/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: { replyUsable: rate(usable), quotesGrounded: rate(grounded), typeAccuracy: rate(typed), inventedFacts },
+  };
+}
+
 /* -------------------------------------------------------------------- relationship ----- */
 
 /**
@@ -2252,5 +2321,6 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   digest: runDigestTask,
   relationship: runRelationshipTask,
   "radar-editor": runRadarEditorTask,
+  "radar-connect": runRadarConnectTask,
   "web-search": runWebSearchTask,
 };

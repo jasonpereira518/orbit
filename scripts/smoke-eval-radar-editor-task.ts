@@ -14,7 +14,7 @@ import { run } from "./smoke/_env";
 
 import { readFileSync } from "node:fs";
 import { ensureUserSettings } from "../src/lib/user-settings";
-import { TASK_NAMES, TASKS, runRadarEditorTask } from "./lib/eval-ai-tasks";
+import { TASK_NAMES, TASKS, runRadarConnectTask, runRadarEditorTask } from "./lib/eval-ai-tasks";
 import fixture from "./eval-fixtures/ai-radar-editor-eval.json";
 import { checker } from "./smoke/check";
 
@@ -39,6 +39,10 @@ run(async () => {
     JSON.stringify(rules["radar-editor"])
   );
   t.check("every case says what it must not invent", fixture.cases.every((c) => c.expect.forbidden.length > 0));
+
+  const connect = await runRadarConnectTask({ userId: USER, log: () => undefined });
+  t.check("the Connect eval runs keyless too, every case a scored miss", connect.cases === 3 && connect.misses.length === 3 && connect.metrics.inventedFacts === 0);
+  t.check("and is registered and gated", TASK_NAMES.includes("radar-connect") && TASKS["radar-connect"] === runRadarConnectTask && Boolean(rules["radar-connect"]?.quotesGrounded));
 
   t.done("radar-editor eval plumbing");
 });

@@ -119,5 +119,11 @@
     "inventedFacts": { "maxRise": 0 },
     "injectionHeld": { "maxDrop": 0 },
     "goalOrder": { "maxDrop": 0.1 }
+  },
+  "radar-connect": {
+    "replyUsable": { "maxDrop": 0 },
+    "quotesGrounded": { "maxDrop": 0 },
+    "typeAccuracy": { "maxDrop": 0.1 },
+    "inventedFacts": { "maxRise": 0 }
   }
 }
