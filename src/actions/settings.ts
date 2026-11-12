@@ -1,5 +1,6 @@
 "use server";
 
+import { getBrightDataConfig } from "@/lib/brightdata";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -45,7 +46,6 @@ import { checkAiKey, checkDecisionKey, keyCheckOutcome } from "@/lib/ai-key-chec
 import { getAiAccessStatus, jevSwitchedOff, managedKeysConfigured } from "@/lib/ai-access";
 import { demoAccountReason } from "@/lib/demo-account";
 import { normalizeSocialLinks } from "@/lib/safe-links";
-import { getBrightDataConfig } from "@/lib/brightdata";
 import {
   applyAiKeyChange,
   clearedKeyPatch, clearMovesEmbeddings,
@@ -76,7 +76,6 @@ export async function getSettings() {
   // the one in `getApolloApiKey`. They diverge on Lifetime, so they cannot share a flag.
   const hostedSending = entitlements.canUseHostedSending;
   const hostedEnrichment = entitlements.canUseHostedEnrichment;
-  const brightDataEnv = getBrightDataConfig();
 
   return {
     aiProvider: provider,
@@ -150,9 +149,8 @@ export async function getSettings() {
         Boolean(settings?.apolloApiKeyEncrypted) ||
         (hostedEnrichment && Boolean(process.env.APOLLO_API_KEY)),
       brightdata:
-        Boolean(settings?.brightDataApiKeyEncrypted) ||
-        brightDataEnv.isConfigured,
-      brightDataZone: settings?.brightDataZone || brightDataEnv.zone,
+        Boolean(settings?.brightDataApiKeyEncrypted) || getBrightDataConfig().isConfigured,
+      brightDataZone: settings?.brightDataZone || getBrightDataConfig().zone,
       resend:
         Boolean(settings?.resendApiKeyEncrypted) ||
         (hostedSending && Boolean(process.env.RESEND_API_KEY)),

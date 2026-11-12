@@ -236,8 +236,11 @@ CREATE TABLE IF NOT EXISTS user_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   text text NOT NULL,
+  progress text,
+  category text,
   active integer NOT NULL DEFAULT 1,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id);
 CREATE TABLE IF NOT EXISTS user_projects (
@@ -351,6 +354,10 @@ CREATE TABLE IF NOT EXISTS reminders (
   status text NOT NULL DEFAULT 'pending',
   reminder_type text NOT NULL DEFAULT 'manual',
   action_kind text NOT NULL DEFAULT 'task',
+  priority text NOT NULL DEFAULT 'normal',
+  category text NOT NULL DEFAULT 'action_item',
+  timing_rationale text,
+  importance_reason text,
   created_by text NOT NULL DEFAULT 'user',
   note_batch_id uuid,
   import_id uuid,
@@ -378,6 +385,10 @@ CREATE TABLE IF NOT EXISTS suggested_reminders (
   source_hash text NOT NULL,
   item_hash text NOT NULL,
   action_kind text NOT NULL DEFAULT 'task',
+  priority text NOT NULL DEFAULT 'normal',
+  category text NOT NULL DEFAULT 'action_item',
+  timing_rationale text,
+  importance_reason text,
   confidence_score integer,
   status text NOT NULL DEFAULT 'pending',
   reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
@@ -385,6 +396,8 @@ CREATE TABLE IF NOT EXISTS suggested_reminders (
   resolved_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS suggested_reminders_user_status_idx ON suggested_reminders(user_id, status);
+CREATE INDEX IF NOT EXISTS suggested_reminders_user_priority_idx ON suggested_reminders(user_id, priority, status);
+CREATE INDEX IF NOT EXISTS reminders_user_priority_idx ON reminders(user_id, priority, status);
 CREATE INDEX IF NOT EXISTS suggested_reminders_batch_idx ON suggested_reminders(capture_batch_id);
 CREATE UNIQUE INDEX IF NOT EXISTS suggested_reminders_user_item_uidx ON suggested_reminders(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS note_batches (
@@ -3182,7 +3195,12 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // Scanned remote refs on Nov 12 2026: custom constellations (youthful-herschel) holds 232 and
 // the Orbit Card / planet PR (#635) will need 233, so this takes 234.
 // 235 = user_settings.bright_data_api_key_encrypted + bright_data_zone
-export const SCHEMA_VERSION = 235;
+// 237 = reminder priority and goal progress (cut from #609, which also proposed a Smart
+// Opportunities table that Radar's Connect lane replaced): reminders and suggested_reminders get
+// priority / category / timing_rationale / importance_reason (+ a (user_id, priority, status)
+// index each), and user_goals gets progress / category / updated_at. Built as 209/210 on #609;
+// renumbered on Nov 12 2026 above main's 235 and claude/email-avatar-cache's 236.
+export const SCHEMA_VERSION = 237;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -5672,6 +5690,21 @@ const alters = [
   `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS detail text`,
   // Schema v234: the same-day Radar email's off switch.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_moment_email_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v237 (cut from #609): reminder priority — priority, category, timing_rationale and importance_reason
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal'`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'action_item'`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS timing_rationale text`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS importance_reason text`,
+  `CREATE INDEX IF NOT EXISTS reminders_user_priority_idx ON reminders (user_id, priority, status)`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal'`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'action_item'`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS timing_rationale text`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS importance_reason text`,
+  `CREATE INDEX IF NOT EXISTS suggested_reminders_user_priority_idx ON suggested_reminders (user_id, priority, status)`,
+  // Schema v237: goal progress
+  `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS progress text`,
+  `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS category text`,
+  `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`,
 ];
 
 /**
