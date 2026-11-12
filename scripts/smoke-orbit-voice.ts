@@ -45,7 +45,7 @@ import {
   voiceCredentials,
 } from "../src/lib/voice/providers";
 import { voiceUsageSummary } from "../src/lib/voice/admin";
-import { voiceReadTools } from "../src/lib/voice/tools";
+import { VOICE_PROMPT_BUDGET, voiceReadTools } from "../src/lib/voice/tools";
 import { VOICE_MAX_TOOL_CALLS } from "../src/lib/voice/policy";
 import { commitProposedAction } from "../src/actions/chat-actions";
 
@@ -180,6 +180,11 @@ async function main() {
         assert.ok(agent.think?.prompt?.includes("Remember the Ada meeting"));
         assert.ok(!agent.think?.prompt?.includes("Prepare for Ada"), "client history cannot override stored context");
         assert.ok(agent.think?.prompt?.includes("America/New_York"));
+        // Voice reads what Chat reads (minus paid web lookups), inside Deepgram's prompt limit.
+        for (const name of ["get_dossier(", "query_interactions(", "list_events(", "search_notes("])
+          assert.ok(agent.think?.prompt?.includes(name), `voice catalog offers ${name}`);
+        assert.ok(!agent.think?.prompt?.includes("research_person("), "no web lookups in voice");
+        assert.ok((agent.think?.prompt?.length ?? 0) <= VOICE_PROMPT_BUDGET, "prompt fits Deepgram's limit");
         assert.ok(
           agent.think?.functions?.every(
             (f) => !f.endpoint && f.defer_until_eot,
@@ -255,6 +260,23 @@ async function main() {
       assert.equal(row.provider, provider);
       await endVoiceSession(OTHER, start.sessionId);
       assert.ok(!(await requireVoiceSession(USER, start.sessionId)).endedAt);
+      if (provider === "deepgram") {
+        // A call that joins a titled text chat never renames it.
+        await saveVoiceTurn(USER, start.sessionId, {id: crypto.randomUUID(), source: "user", text: "Who is Ada?", interrupted: false, revision: 1});
+        assert.equal((await db.query.chatThreads.findFirst({where: eq(chatThreads.id, shared.id)}))?.title, "Shared text and voice");
+        // A call in a new chat is untitled (out of Recents) until the person speaks.
+        const fresh = await startVoiceSession(USER, "UTC");
+        fixtureThreads.push(fresh.threadId);
+        const titleOf = async () => (await db.query.chatThreads.findFirst({where: eq(chatThreads.id, fresh.threadId)}))?.title;
+        assert.equal(await titleOf(), null, "an unspoken call stays out of Recents");
+        await saveVoiceTurn(USER, fresh.sessionId, {id: crypto.randomUUID(), source: "ai", text: "Hi, I'm Orbit.", interrupted: false, revision: 1});
+        assert.equal(await titleOf(), null, "the greeting alone does not list it");
+        await saveVoiceTurn(USER, fresh.sessionId, {id: crypto.randomUUID(), source: "user", text: "Help me prepare for coffee with Ada Lovelace", interrupted: false, revision: 1});
+        assert.equal(await titleOf(), "Voice conversation", "speaking lists the call in Recents");
+        await endVoiceSession(USER, fresh.sessionId);
+        // No AI key here, so the generated name falls back to the placeholder; it never clears it.
+        assert.equal(await titleOf(), "Voice conversation");
+      }
       console.log(
         `ok ${provider}: scoped CRM + AI knowledge, confirmation-only writes, connection usage`,
       );

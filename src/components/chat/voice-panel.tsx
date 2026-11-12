@@ -378,7 +378,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
         "voice-stage flex min-h-0 min-w-0 flex-col text-foreground",
         compact
           ? "w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-border/70 bg-card p-4 shadow-lg"
-          : "w-full flex-1 overflow-y-auto px-6 pt-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-10 sm:pt-9",
+          : "w-full flex-1 overflow-y-auto px-6 py-4 sm:px-10",
       )}
     >
       {active && (
@@ -402,14 +402,17 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
           )}
         </VoiceTransportBoundary>
       )}
-      <div className="flex flex-1 flex-col items-center text-center">
+      {/* One centred column: `m-auto` centres it in Chat's space, and unlike justify-center
+          it still scrolls from the top when the transcript makes it taller than the page. */}
+      <div className={cn("flex w-full flex-col", !compact && "m-auto max-h-full min-h-0 max-w-2xl")}>
+      <div className="flex min-h-0 flex-col items-center text-center">
         <div>
           <h2 className={compact ? "text-sm font-medium" : "text-lg font-medium"}>Orbit Voice</h2>
           {!compact && (
             <p className="mt-2 text-sm text-muted-foreground">In this conversation · {PROVIDER_LABELS[provider]}</p>
           )}
         </div>
-        <div className={cn("flex min-h-0 w-full flex-1 items-center justify-center", compact ? "py-2" : "py-5 sm:py-7")}>
+        <div className={cn("flex min-h-0 w-full items-center justify-center", compact ? "py-2" : "py-4 sm:py-6")}>
           <VoiceOrbit controls={controls} mode={mode} muted={muted} />
         </div>
         <p role="status" className="min-h-6 text-sm text-muted-foreground">
@@ -570,6 +573,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
           ))}
         </div>
       )}
+      </div>
     </section>
   );
 }

@@ -1019,10 +1019,11 @@ export function ChatPanel({
     () =>
       onVoiceEnded(async (id) => {
         threadPrefetch.forget(id);
-        await loadThread(id);
+        // The call's thread is now named (nameVoiceThread), so Recents shows it under that name.
+        await Promise.all([loadThread(id), refreshThreads()]);
         requestAnimationFrame(() => textareaRef.current?.focus());
       }),
-    [loadThread, threadPrefetch],
+    [loadThread, refreshThreads, threadPrefetch],
   );
 
   const saveContext = useCallback(async () => {
