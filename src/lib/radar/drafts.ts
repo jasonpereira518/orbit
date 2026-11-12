@@ -90,7 +90,7 @@ async function loadDraftTargets(userId: string, limit: number): Promise<DraftTar
 export async function draftTodayForRun(
   userId: string,
   access: AiAccess,
-  opts: { deadline: number; limit?: number }
+  opts: { deadline: number; limit?: number; /** Called before each draft with how many are done, for the run's progress. */ onItem?: (done: number, total: number) => void | Promise<void> }
 ): Promise<number> {
   const targets = await loadDraftTargets(userId, opts.limit ?? RADAR_DRAFTS_PER_RUN);
   if (targets.length === 0) return 0;
@@ -100,7 +100,9 @@ export async function draftTodayForRun(
   ]);
   const db = await getDb();
   let written = 0;
+  let done = 0;
   for (const target of targets) {
+    await opts.onItem?.(done++, targets.length);
     const left = opts.deadline - Date.now();
     if (deadlineReached(opts.deadline) || left < DRAFT_MIN_REMAINING_MS) break;
     const channel = draftChannel(target);

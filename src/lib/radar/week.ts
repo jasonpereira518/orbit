@@ -97,11 +97,17 @@ export function composeWeek<T extends RadarPick>(ranked: readonly T[], limits: L
   return [...plan, ...extra];
 }
 
-export type LiveCard = { contactId: string; kind: RecommendationKind; bucket: RecommendationBucket | null; status: string };
+export type LiveCard = { contactId: string; kind: RecommendationKind; bucket: RecommendationBucket | null; status: string; inputsHash: string };
 
 export type DayResult<T> = {
-  /** New Today cards, for people with no live card. */
+  /**
+   * Today cards to write: new ones for people with no live card, and fresh news for people who
+   * already have one. News on a card of the same kind refreshes that row in place (same id); news
+   * of another kind is a new row, and the person's old pending card is retired (`supersede`).
+   */
   insert: T[];
+  /** People whose pending card is retired because `insert` carries a card of another kind for them. */
+  supersede: string[];
   /** Live cards (`contactId:kind`) whose reason is now a moment: they move to Today. */
   promote: string[];
   /** People who still have a reason. A pending card for anyone else is retired. */
@@ -110,11 +116,16 @@ export type DayResult<T> = {
 
 /**
  * One daily pass over a live plan. The plan's rows are left as they are; only the Today strip
- * changes, and only a person with no reason left loses their card.
+ * changes, and only a person with no reason left loses their card. The one exception is news:
+ * a job move, a post or a mail spotted in the last two days for someone already on the list
+ * updates their card and puts it on Today, as a new card (unseen, created now), so the
+ * dashboard's "What changed" shows it instead of waiting for next Monday's plan.
  */
-export function composeDay<T extends RadarPick>(ranked: readonly T[], live: readonly LiveCard[], limits: Pick<Limits, "todayMax">, now: Date): DayResult<T> {
+export function composeDay<T extends RadarPick & { inputsHash: string }>(ranked: readonly T[], live: readonly LiveCard[], limits: Pick<Limits, "todayMax">, now: Date): DayResult<T> {
   const liveByKey = new Map(live.map((c) => [recommendationKey(c.contactId, c.kind), c]));
-  const liveContacts = new Set(live.map((c) => c.contactId));
+  const liveByContact = new Map<string, LiveCard[]>();
+  for (const c of live) liveByContact.set(c.contactId, [...(liveByContact.get(c.contactId) ?? []), c]);
+  const liveContacts = new Set(liveByContact.keys());
   const keepContacts = new Set(ranked.map((p) => p.contactId));
   const moments = ranked.filter((p) => isMoment(p, now)).map((p) => ({ ...p, bucket: "today" as const }));
 
@@ -126,9 +137,27 @@ export function composeDay<T extends RadarPick>(ranked: readonly T[], live: read
     });
   const onToday = live.filter((c) => c.bucket === "today" && c.status === "pending" && keepContacts.has(c.contactId)).length + promote.length;
   const room = Math.max(0, limits.todayMax - onToday);
-  const insert = rankPicks(
-    moments.filter((p) => !liveContacts.has(p.contactId)),
-    { pending: room, perKind: room }
-  );
-  return { insert, promote, keepContacts };
+  // News for someone who already has a card: fresh outside signal, only on a card that is still
+  // pending (a snooze or an autopilot action is the person's own call), and only when the card's
+  // facts actually differ, so the next day's pass finds nothing left to do.
+  const news = moments.filter((p) => {
+    const lead = leadReason(p.reasons);
+    const cards = liveByContact.get(p.contactId);
+    if (!lead || !FRESH_MOMENTS.has(lead.code) || !cards || cards.some((c) => c.status !== "pending")) return false;
+    const same = cards.find((c) => c.kind === p.kind);
+    return !same || same.inputsHash !== p.inputsHash;
+  });
+  // A card already on Today takes its news in place; one that is not needs room on the strip.
+  const onTodayKey = (p: T) => liveByKey.get(recommendationKey(p.contactId, p.kind))?.bucket === "today";
+  const fresh = [
+    ...rankPicks(
+      [...moments.filter((p) => !liveContacts.has(p.contactId)), ...news.filter((p) => !onTodayKey(p))],
+      { pending: room, perKind: room }
+    ),
+    ...news.filter(onTodayKey),
+  ];
+  const supersede = [
+    ...new Set(fresh.filter((p) => liveContacts.has(p.contactId) && !liveByKey.has(recommendationKey(p.contactId, p.kind))).map((p) => p.contactId)),
+  ];
+  return { insert: fresh, supersede, promote, keepContacts };
 }

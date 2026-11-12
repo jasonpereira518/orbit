@@ -1015,16 +1015,27 @@ export function ChatPanel({
     if (id) queueMicrotask(() => void loadThread(id));
   }, [loadThread]);
   // The call ended (here or on another page): show what it saved, then hand back the keyboard.
+  // The focus waits for an effect that sees the composer enabled: the field is disabled while a
+  // thread loads, and a `requestAnimationFrame` right after the load can run before React has
+  // committed "loaded", when `focus()` on a disabled field does nothing and is never retried.
+  const wantComposerFocusRef = useRef(false);
+  const [composerFocusTick, setComposerFocusTick] = useState(0);
   useEffect(
     () =>
       onVoiceEnded(async (id) => {
         threadPrefetch.forget(id);
         // The call's thread is now named (nameVoiceThread), so Recents shows it under that name.
         await Promise.all([loadThread(id), refreshThreads()]);
-        requestAnimationFrame(() => textareaRef.current?.focus());
+        wantComposerFocusRef.current = true;
+        setComposerFocusTick((n) => n + 1);
       }),
     [loadThread, refreshThreads, threadPrefetch],
   );
+  useEffect(() => {
+    if (!wantComposerFocusRef.current || loadingThread || voiceCall) return;
+    wantComposerFocusRef.current = false;
+    textareaRef.current?.focus();
+  }, [composerFocusTick, loadingThread, voiceCall]);
 
   const saveContext = useCallback(async () => {
     setContextSaving(true);
