@@ -2462,6 +2462,19 @@
     ],
     "clusters": [
       {
+        "id": "role:founders",
+        "name": "Founders & Execs",
+        "company": "Founders & Execs",
+        "kind": "role",
+        "count": 4,
+        "contactIds": [
+          "<contacts:Nina Petrova>",
+          "<contacts:Leo Fernandez>",
+          "<contacts:Daniel Osei>",
+          "<contacts:Maya Thompson>"
+        ]
+      },
+      {
         "id": "company:google",
         "name": "Google",
         "company": "Google",
@@ -8933,6 +8946,19 @@
     ],
     "clusters": [
       {
+        "id": "role:founders",
+        "name": "Founders & Execs",
+        "company": "Founders & Execs",
+        "kind": "role",
+        "count": 4,
+        "contactIds": [
+          "<contacts:Nina Petrova>",
+          "<contacts:Leo Fernandez>",
+          "<contacts:Daniel Osei>",
+          "<contacts:Maya Thompson>"
+        ]
+      },
+      {
         "id": "company:google",
         "name": "Google",
         "company": "Google",
@@ -9021,6 +9047,17 @@
         "contactIds": [
           "<contacts:David Kim>",
           "<contacts:Sarah Chen>"
+        ]
+      },
+      {
+        "id": "role:engineering",
+        "name": "Engineers",
+        "company": "Engineers",
+        "kind": "role",
+        "count": 2,
+        "contactIds": [
+          "<contacts:Marcus Webb>",
+          "<contacts:Golden Newperson>"
         ]
       }
     ],

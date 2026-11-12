@@ -968,8 +968,9 @@ export async function getDashboardData(
   const clusterCounts = clusterCountsFromTallies(clusterTallies);
   const groupRefs = chartGroups.map((g) => ({ group: g, ref: clusterRefFor(g, clusterCounts) }));
   // The preview draws constellations only — no lone stars. Keep a contact only when at
-  // least one other shown contact shares its company/school cluster; singletons and Deep
-  // Space are individual connections, which belong on /graph.
+  // least one other shown contact shares its company/school/industry cluster; singletons and
+  // Deep Space are individual connections, which belong on /graph. (Role clusters, which
+  // /graph also has, are formed among the shown few in the browser, not used to pick them.)
   const shownPerCluster = new Map<string, number>();
   for (const { group, ref } of groupRefs) {
     if (ref.kind !== "other") shownPerCluster.set(ref.id, (shownPerCluster.get(ref.id) ?? 0) + group.n);

@@ -183,6 +183,7 @@ export type LayoutEdge = {
     company?: string;
     reason?:
       | "company"
+      | "role"
       | "school"
       | "event"
       | "howMet"
@@ -917,7 +918,12 @@ export function* buildHybridGraphLayoutSteps(
   yield;
   const edges: LayoutEdge[] = [];
   for (const fitEdge of constellationFitEdges(fit)) {
-    const reason = fitEdge.clusterKind === "school" ? "school" : "company";
+    const reason =
+      fitEdge.clusterKind === "school"
+        ? "school"
+        : fitEdge.clusterKind === "role"
+          ? "role"
+          : "company";
     const peer: PeerEdge = {
       source: fitEdge.source,
       target: fitEdge.target,
