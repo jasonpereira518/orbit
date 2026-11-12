@@ -26,6 +26,18 @@ export const excerptRetrySchema = z.object({
 /** `{ "first": …, "last": … }`, or a bare `null`; `sanitizeGuessedName` decides what is usable. */
 export const contactNameGuessSchema = z.object({ first: z.unknown().optional(), last: z.unknown().optional() }).nullable();
 
+/** `{ "found": boolean, "linkedinUrl": string | null }`, or a bare `null`. */
+export const linkedinFinderReplySchema = z
+  .object({ found: z.boolean().optional().catch(undefined), linkedinUrl: z.string().nullish().catch(undefined) })
+  .nullable();
+
+/** Each list is checked item by item where it is read (`items`); this fixes the outer shape. */
+export const eventsListReplySchema = z.object({ events: z.unknown().optional() });
+export const programsListReplySchema = z.object({ programs: z.unknown().optional() });
+
+/** `{ "match": "confident" | "unsure" | "none" }`; the reader checks the value. */
+export const matchReplySchema = z.object({ match: z.unknown().optional() });
+
 /** `{ "title": … }`, or a bare `null`; `sanitizeChatTitle` decides whether the title is usable. */
 export const chatTitleReplySchema = z.object({ title: z.unknown().optional() }).nullable();
 
@@ -49,6 +61,7 @@ export const workHistoryAnswerSchema = z.object({ match: z.unknown().optional(),
 export const currentRoleAnswerSchema = z.object({
   match: z.unknown().optional(),
   current: z.object({ organization: z.unknown().optional(), title: z.unknown().optional() }).nullish().catch(null),
+  recent: z.unknown().optional(),
 });
 
 /** Fields are `unknown` on purpose: each goes through `clean` or its own sanitizer. This fixes the outer shape. */

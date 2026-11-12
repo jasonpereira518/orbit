@@ -23,6 +23,7 @@
  * Auth-free and free of `next/server`, like `note-batch-save.ts`: server actions schedule
  * it in `after()`, and `scripts/smoke-work-history-research.ts` drives it with a fake model.
  */
+import { currentRoleAnswerSchema, workHistoryAnswerSchema } from "@/lib/ai-reply-schemas";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactProfiles, contacts } from "@/db/schema";
@@ -194,7 +195,6 @@ function subjectPrompt(subject: WorkHistorySubject): string {
   return `Find the work history and education of this person:\n\n${fenceUntrusted("contact", lines.join("\n"))}`;
 }
 
-type RawAnswer = { match?: unknown; headline?: unknown; experiences?: unknown };
 
 /**
  * The re-check prompt. Asks ONE thing — where they work now — so it needs one search and a
@@ -221,12 +221,6 @@ const CURRENT_ROLE_OUTPUT_TOKENS = 200;
 /** With mentions: three short items more. */
 const CURRENT_ROLE_MENTIONS_OUTPUT_TOKENS = 600;
 
-type RawCurrentRole = {
-  match?: unknown;
-  current?: { organization?: unknown; title?: unknown } | null;
-  recent?: unknown;
-};
-
 /** The production re-check: one search, one short answer. */
 export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, subject, opts) => {
   const { json, sources } = await webSearchJson(userId, {
@@ -236,7 +230,7 @@ export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, 
     maxSearches: 1,
     maxOutputTokens: opts?.mentions ? CURRENT_ROLE_MENTIONS_OUTPUT_TOKENS : CURRENT_ROLE_OUTPUT_TOKENS,
   });
-  const raw = parseAiJson<RawCurrentRole>(json);
+  const raw = parseAiJson(currentRoleAnswerSchema, json);
   auditUntrustedWrite(userId, "work_history.recheck", "answer", json);
   const org = cleanSingleLine(typeof raw.current?.organization === "string" ? raw.current.organization : null, 200) ?? "";
   const title = cleanSingleLine(typeof raw.current?.title === "string" ? raw.current.title : null, 200);
@@ -272,7 +266,7 @@ export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subje
     : await searchOnceThenVerify(call, subjectPrompt(subject), { vetoVerify: opts?.vetoVerify });
   // Jev ruled the unsure candidate someone else: nothing to read, nothing to write.
   if (vetoed) return { confident: false, headline: null, experiences: [], sources, vetoed };
-  const raw = parseAiJson<RawAnswer>(json);
+  const raw = parseAiJson(workHistoryAnswerSchema, json);
   // Tripwire, never a block: the answer was read off pages anyone can publish.
   auditUntrustedWrite(userId, "work_history.research", "answer", json);
   return {

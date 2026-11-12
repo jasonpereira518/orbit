@@ -27,7 +27,7 @@ import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiResultCache, userSettings } from "@/db/schema";
 import { parseAiJson, userCanUseAi, webSearchJson, type WebSource } from "@/lib/ai";
-import { companyResearchSchema, discoveryResearchSchema, personResearchSchema } from "@/lib/ai-reply-schemas";
+import { companyResearchSchema, discoveryResearchSchema, personResearchSchema, matchReplySchema } from "@/lib/ai-reply-schemas";
 import { RESEARCH_CACHE_DAYS, aiResultCacheKey, withAiResultCache } from "@/lib/ai-result-cache";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { linkedinSlug } from "@/lib/duplicates";
@@ -59,7 +59,7 @@ export function legacyWebSearch(): boolean {
 /** The model's verdict in a raw answer, or null when the answer does not parse. */
 export function answerMatch(json: string): "confident" | "unsure" | "none" | null {
   try {
-    const match = parseAiJson<{ match?: unknown }>(json).match;
+    const match = parseAiJson(matchReplySchema, json).match;
     return match === "confident" || match === "unsure" || match === "none" ? match : null;
   } catch {
     return null;

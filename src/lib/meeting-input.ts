@@ -16,6 +16,7 @@ export const createMeetingSessionSchema = z.object({
   recorderId: z.string(),
   calendarEventKey: optionalText,
   calendarSeriesId: optionalText,
+  calendarAgenda: optionalText,
 });
 
 export const analyzeMeetingSessionSchema = z.object({
