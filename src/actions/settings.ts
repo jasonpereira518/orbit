@@ -45,6 +45,7 @@ import { checkAiKey, checkDecisionKey, keyCheckOutcome } from "@/lib/ai-key-chec
 import { getAiAccessStatus, jevSwitchedOff, managedKeysConfigured } from "@/lib/ai-access";
 import { demoAccountReason } from "@/lib/demo-account";
 import { normalizeSocialLinks } from "@/lib/safe-links";
+import { getBrightDataConfig } from "@/lib/brightdata";
 import {
   applyAiKeyChange,
   clearedKeyPatch, clearMovesEmbeddings,
@@ -75,6 +76,7 @@ export async function getSettings() {
   // the one in `getApolloApiKey`. They diverge on Lifetime, so they cannot share a flag.
   const hostedSending = entitlements.canUseHostedSending;
   const hostedEnrichment = entitlements.canUseHostedEnrichment;
+  const brightDataEnv = getBrightDataConfig();
 
   return {
     aiProvider: provider,
@@ -149,11 +151,8 @@ export async function getSettings() {
         (hostedEnrichment && Boolean(process.env.APOLLO_API_KEY)),
       brightdata:
         Boolean(settings?.brightDataApiKeyEncrypted) ||
-        Boolean(process.env.BRIGHTDATA_API_KEY),
-      brightDataZone:
-        settings?.brightDataZone ||
-        process.env.BRIGHTDATA_ZONE ||
-        "web_unlocker1",
+        brightDataEnv.isConfigured,
+      brightDataZone: settings?.brightDataZone || brightDataEnv.zone,
       resend:
         Boolean(settings?.resendApiKeyEncrypted) ||
         (hostedSending && Boolean(process.env.RESEND_API_KEY)),
