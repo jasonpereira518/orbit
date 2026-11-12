@@ -1,5 +1,6 @@
 # Deploy drift and an outside health probe. NOT the scheduler: everything Orbit runs on a
-# clock is an Upstash QStash schedule, set from `scripts/qstash-schedules.ts`.
+# clock is started by ONE outside five-minute tick (`/api/cron/tick`, the jobs listed in
+# `src/lib/schedules.ts`), set as a free QStash schedule by `scripts/qstash-schedules.ts`.
 #
 # GitHub used to drive all of it, and on this public repository it fired ~36 of ~350
 # scheduled runs a day (Oct 2026), rotating through ten cron lines, so the ten-minute sweep

@@ -1,7 +1,8 @@
 /**
- * The scheduler for everything Orbit runs on a clock: Upstash QStash, configured from the
- * table below. Re-run after changing it; it upserts each `orbit-*` schedule by id and
- * deletes any `orbit-*` schedule the table no longer names.
+ * The scheduler for everything Orbit runs on a clock: ONE Upstash QStash schedule, a tick every
+ * five minutes, on the free tier. What runs when lives in `src/lib/schedules.ts`; the tick
+ * route starts whatever is due. Re-run after changing this file; it upserts `orbit-tick` and
+ * deletes any other `orbit-*` schedule (an earlier one-schedule-per-job setup included).
  *
  * Why not GitHub Actions: on this public repository GitHub fired ~36 of ~350 scheduled
  * `ops.yml` runs a day (Oct 2026), rotating through the cron lines, so the ten-minute sweep
@@ -18,41 +19,17 @@
  * Run: npx tsx scripts/qstash-schedules.ts [--dry-run]
  */
 import { config } from "dotenv";
+import { TICK_MINUTES, TICK_PATH } from "../src/lib/schedules";
 
 config({ path: ".env.local" });
 config();
 
 type Schedule = { id: string; cron: string; method: "GET" | "POST"; path: string };
 
-const SCHEDULES: Schedule[] = [
-  // Every ten minutes: the alerting path, the outbound drains, the credit emails.
-  { id: "ops-sweep", cron: "*/10 * * * *", method: "POST", path: "/api/ops/sweep" },
-  { id: "webhooks-drain", cron: "*/10 * * * *", method: "POST", path: "/api/webhooks/outbound/drain" },
-  { id: "connectors-outbox", cron: "*/10 * * * *", method: "POST", path: "/api/connectors/outbox/drain" },
-  { id: "email-drain", cron: "*/10 * * * *", method: "POST", path: "/api/email/drain" },
-  { id: "credit-notices", cron: "*/10 * * * *", method: "POST", path: "/api/credits/notices" },
-  { id: "sync-run", cron: "*/15 * * * *", method: "POST", path: "/api/sync/run" },
-  // Every quarter-hour on its own minutes: email insights reads mail metadata, apart from the sync.
-  { id: "email-intel", cron: "5,20,35,50 * * * *", method: "POST", path: "/api/email-intel/sweep" },
-  { id: "cloud-notes", cron: "29,59 * * * *", method: "POST", path: "/api/cloud-notes/run" },
-  // Hourly, each on its own minute so no two long jobs are in flight together.
-  { id: "process-stalled", cron: "7 * * * *", method: "GET", path: "/api/imports/process-stalled" },
-  // Radar's pass: each account is due at its own local 5am, and same-day alerts follow it.
-  { id: "radar-run", cron: "17 * * * *", method: "POST", path: "/api/radar/run" },
-  { id: "jobs-feed", cron: "23 * * * *", method: "POST", path: "/api/jobs/feed/sweep" },
-  { id: "work-history", cron: "37 * * * *", method: "POST", path: "/api/work-history/sweep" },
-  { id: "name-sweep", cron: "43 * * * *", method: "POST", path: "/api/contacts/name-sweep" },
-  { id: "radar-web", cron: "53 * * * *", method: "POST", path: "/api/radar/web" },
-  // Every hour of Sunday AND Monday UTC: the route sends only to people whose own Monday
-  // 06:00–09:00 it is (Auckland's Monday morning is Sunday evening in UTC).
-  { id: "radar-digest", cron: "13 * * * 0,1", method: "POST", path: "/api/radar/digest" },
-  // Daily, weekly, monthly.
-  { id: "ops-rollup", cron: "31 0 * * *", method: "POST", path: "/api/ops/rollup" },
-  { id: "speech-usage", cron: "41 5 * * *", method: "POST", path: "/api/ops/speech-usage" },
-  { id: "billing-reconcile", cron: "23 6 * * *", method: "POST", path: "/api/ops/billing-reconcile" },
-  { id: "weekly-digest", cron: "47 13 * * 1", method: "POST", path: "/api/ops/weekly-digest" },
-  { id: "contacts-upkeep", cron: "19 3 1 * *", method: "POST", path: "/api/contacts/monthly-upkeep" },
-];
+// ONE schedule: the tick (`src/app/api/cron/tick`) starts every job in `src/lib/schedules.ts`
+// that is due in its five-minute window. 288 calls a day keeps this on QStash's free tier
+// (1,000 a day); a schedule per job would be about 1,100 a day and need a paid plan.
+const SCHEDULES: Schedule[] = [{ id: "tick", cron: `*/${TICK_MINUTES} * * * *`, method: "POST", path: TICK_PATH }];
 
 const PREFIX = "orbit-";
 

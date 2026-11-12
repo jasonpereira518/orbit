@@ -67,17 +67,26 @@ BEHIND the code — a build whose migration did not run — and is worth waking 
 
 ## The nightly job or the sweep stopped (the heartbeat went quiet)
 
-Every job on a clock is an Upstash QStash schedule, set from `scripts/qstash-schedules.ts`.
+Every job on a clock is started by ONE outside schedule: a tick every five minutes to
+`POST /api/cron/tick`, which starts whatever `src/lib/schedules.ts` says is due in that
+window. One schedule is 288 calls a day, which keeps it free: QStash's free tier allows 1,000
+a day (`scripts/qstash-schedules.ts` sets it up), and any free cron service can stand in.
 The Better Stack heartbeat is pinged by each completed ten-minute sweep, so a quiet
-heartbeat means QStash stopped calling, the call fails, or production is down.
+heartbeat means the tick stopped arriving, the call fails, or production is down.
 
 1. `/admin/health` → "Ops sweep" tile. Quiet for over 30 min: Upstash console → QStash →
-   Logs, filter on `orbit-ops-sweep`. A 401 means `CRON_SECRET` in Vercel no longer matches
-   the one the schedules forward — re-run the script with the current value. No calls at
-   all: check the schedules exist (Upstash → QStash → Schedules, 20 `orbit-*` rows) and the
-   account's billing, then re-run:
+   Logs, filter on `orbit-tick`. A 401 means `CRON_SECRET` in Vercel no longer matches the
+   one the schedule forwards — re-run the script with the current value. No calls at all:
+   check the schedule exists (Upstash → QStash → Schedules, ONE `orbit-tick` row) and that
+   the free tier's daily quota is not spent, then re-run:
    `npx tsx scripts/qstash-schedules.ts` (needs `APP_URL`, `CRON_SECRET`, `QSTASH_TOKEN` in `.env.local`).
-2. "Nightly job" tile red (it runs hourly, schedule `orbit-process-stalled`): trigger it by hand —
+   **Without any Upstash account:** create one free job at cron-job.org — every 5 minutes,
+   `POST https://myorbitnetwork.com/api/cron/tick`, header
+   `Authorization: Bearer <CRON_SECRET>`. The tick answers at once and starts the jobs
+   after, so cron-job.org's short request timeout is fine. Run only ONE of the two, or
+   every job starts twice.
+2. "Nightly job" tile red (it runs hourly from the tick, `process-stalled` in
+   `src/lib/schedules.ts`): trigger it by hand —
    `curl -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/imports/process-stalled`
    A 401 means `CRON_SECRET` differs between Vercel and what you sent.
 
@@ -110,7 +119,7 @@ Or GitHub → Actions → the workflow → **Enable workflow**, then **Run workf
 | `purge.stuck` | `SELECT id, target_user_id, last_error, completed_steps FROM data_purge_runs WHERE status = 'failed';` Fix the cause `last_error` names, then requeue: `UPDATE data_purge_runs SET status = 'running', attempts = 0, last_attempt_at = now() - interval '1 hour' WHERE id = '<id>';` The next nightly run finishes it (or trigger `/api/imports/process-stalled`). |
 | `cron.partial_streak` | `/admin/health` → Nightly job → the run's stats. Each housekeeping step in `src/app/api/imports/process-stalled/route.ts` is its own try/catch; the one whose counter stays at zero is failing. Sentry has the exception. |
 | `drain.failed` | No outbound webhook is being retried. Run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/webhooks/outbound/drain`; a 500 means the drain throws — Sentry has it. |
-| `radar.schedule_missed` | Radar's nightly pass started once and then went quiet for over 30 hours, so nobody's list is being refreshed overnight. Check the QStash `orbit-radar-run` schedule (hourly at :17) is firing, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/run`. Pages still rebuild a list older than a day when someone opens Radar. |
+| `radar.schedule_missed` | Radar's nightly pass started once and then went quiet for over 30 hours, so nobody's list is being refreshed overnight. Check the five-minute tick is arriving (`radar-run` starts at the :20 tick every hour), then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/run`. Pages still rebuild a list older than a day when someone opens Radar. |
 | `radar.run_failed` | The last nightly pass failed or was killed at the 300 s ceiling. Read its `cron_runs` row and the `job.radar` / `job.radar.user` errors, fix, then run it by hand with the same `curl`. One account failing marks the pass `partial`, which is not an alert. |
 | `radardigest.schedule_missed` | Radar's Monday email, which runs hourly through Sunday and Monday UTC, has not started for six days, so a whole Sunday passed without a run and nobody gets their weekly list. Check the ops workflow ran the `13 * * * 0,1` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/digest`. A run outside someone's Monday 06:00–09:00 sends them nothing, and the week claim means a repeated run never sends twice. |
 | `radardigest.run_failed` | The last Monday-email run failed or was killed. Read its `cron_runs` row and the `job.radar.digest` error. A send Resend refused marks the run `partial`, which is not an alert: that person's claim is released and the next hour retries; the `resend.rejected` error (kind `radar.digest`) carries Resend's reason, recorded once per run. `notConfigured` in the stats means `RESEND_API_KEY` or `RESEND_FROM_EMAIL` is unset. To stop the email for everyone, hide `page.radar`; for one person, set their `radar_digest_enabled` to 0. |
