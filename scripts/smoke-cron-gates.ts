@@ -56,6 +56,7 @@ import { POST as cloudNotesRun } from "../src/app/api/cloud-notes/run/route";
 import { POST as syncRun } from "../src/app/api/sync/run/route";
 import { POST as speechUsage } from "../src/app/api/ops/speech-usage/route";
 import { POST as avatarsEncode } from "../src/app/api/avatars/encode/route";
+import { POST as avatarsLinkedinQueue } from "../src/app/api/avatars/linkedin-queue/route";
 
 const API_DIR = "src/app/api";
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
@@ -142,6 +143,7 @@ const DYNAMIC: Record<string, Handler> = {
   "ops/rollup": metricsRollup,
   "ops/weekly-digest": weeklyDigest,
   "avatars/encode": avatarsEncode,
+  "avatars/linkedin-queue": avatarsLinkedinQueue,
 };
 
 // --- Static analysis ---------------------------------------------------------------------------
@@ -437,6 +439,8 @@ run(async () => {
     t.check("control: relationships/run with the right bearer passes the gate (400: userId required)", rel.status === 400, String(rel.status));
     const enc = await avatarsEncode(cronRequest(`Bearer ${FAKE_SECRET}`, new Uint8Array(0)));
     t.check("control: avatars/encode with the right bearer passes the gate (422: empty image)", enc.status === 422, String(enc.status));
+    const lq = await avatarsLinkedinQueue(cronRequest(`Bearer ${FAKE_SECRET}`, JSON.stringify({})));
+    t.check("control: avatars/linkedin-queue with the right bearer passes the gate (400: runId required)", lq.status === 400, String(lq.status));
   } finally {
     globalThis.fetch = realFetch;
     for (const [k, v] of Object.entries(saved)) {

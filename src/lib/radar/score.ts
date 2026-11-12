@@ -74,6 +74,8 @@ export const RADAR_WEIGHTS = {
   jobPosting: 28,
   // heads_up: a job move. A new employer is news; a new title at the same one, less so.
   jobChange: { joined: 32, left: 24, title_change: 18 },
+  // Connect: a link between two of the person's notes.
+  connect: { introduce: 30, ask: 26, share: 22 },
   // heads_up: a LinkedIn post the person chose to save with the extension.
   savedPost: 16,
   // An event read from the user's own mail, scaled by how well the ranker matched the person
@@ -463,6 +465,17 @@ export function scoreContactKinds(
           { code: "job_posting", label: s.text, points: decayed(W.jobPosting, age, RADAR_HALF_LIFE_DAYS.jobPosting) },
           { label: "New roles at their company", at: iso(s.at) }
         );
+        break;
+      }
+      case "connect": {
+        const code = `connect_${s.connectType}`;
+        const verb = s.connectType === "introduce" ? `Introduce to ${s.other.name}` : s.connectType === "ask" ? `Ask, with ${s.other.name} in mind` : `Share what ${s.other.name} told you`;
+        put(s.connectType, { code, label: `${verb}${s.why ? `: ${s.why}` : ""}`.slice(0, 200), points: W.connect[s.connectType] }, { label: "From your note on them", at: iso(s.at) });
+        // The other side's note, proven against the other person.
+        const otherProof: RadarProof | undefined = s.other.source.quote
+          ? { type: "quote", table: s.other.source.table, id: s.other.source.id, quote: s.other.source.quote }
+          : undefined;
+        drafts.get(s.connectType)?.evidence.push({ label: `From your note on ${s.other.name}`, at: null, code, proof: otherProof, aboutContactId: s.other.contactId });
         break;
       }
       case "open_thread": {

@@ -19,6 +19,7 @@ import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { fillSharedAvatars, sweepOrphanedSharedAvatars } from "@/lib/shared-avatar-upkeep";
+import { isLinkedInPhotoQueueRunning, resumeLinkedInPhotoQueueIfDue } from "@/lib/linkedin-photo-queue";
 import { sweepPublicWorkHistory } from "@/lib/public-work-history";
 import { sweepEmailAttachments } from "@/lib/email/attachments";
 import { runRetentionSweeps } from "@/lib/retention";
@@ -164,6 +165,8 @@ export async function GET(request: Request) {
     sharedAvatarsMissed: 0,
     sharedAvatarFillDeferred: false,
     sharedAvatarsSwept: 0,
+    /** The admin LinkedIn photo queue was kicked: its pause ended or its chain was lost. */
+    linkedinPhotoQueueResumed: false,
     publicWorkHistorySwept: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
@@ -458,10 +461,20 @@ export async function GET(request: Request) {
       reportError(err, { where: "job.process-stalled.relationship-kicks" });
     }
 
+    if (stage("linkedin-photo-queue")) try {
+      stats.linkedinPhotoQueueResumed = await resumeLinkedInPhotoQueueIfDue();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.linkedin-photo-queue" });
+    }
+
     if (stage("shared-avatar-fill")) try {
       // A little of the shared photo pool each hour, most-shared slugs first. Last, with the
       // orphan sweep: lookups are slow, and must never push the stages above past maxDuration.
-      const fill = await fillSharedAvatars();
+      // Skipped while the admin photo queue runs: it covers the same slugs and allowances.
+      const fill = (await isLinkedInPhotoQueueRunning())
+        ? { found: 0, missed: 0, deferred: false }
+        : await fillSharedAvatars();
       stats.sharedAvatarsFilled = fill.found;
       stats.sharedAvatarsMissed = fill.missed;
       stats.sharedAvatarFillDeferred = fill.deferred;

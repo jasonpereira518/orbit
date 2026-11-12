@@ -72,6 +72,8 @@ import {
   type GlobalUpkeepMetrics,
   type GlobalUpkeepStats,
 } from "@/lib/admin-contact-upkeep";
+import { hasBlobStorage } from "@/lib/contact-avatar";
+import { startLinkedInPhotoQueue, stopLinkedInPhotoQueue } from "@/lib/linkedin-photo-queue";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -1425,12 +1427,11 @@ export async function getGlobalContactUpkeepMetricsAction(): Promise<GlobalUpkee
 }
 
 /**
- * Trigger global network upkeep: runs multi-source name repair and avatar resolution
- * with rate-limit pacing and automatic cooldown backoff. Audited.
+ * Trigger global network upkeep: name repair and photos from the shared pool, address books
+ * and Gravatar. Never calls LinkedIn (the LinkedIn photo queue does). Audited.
  */
 export async function triggerGlobalContactUpkeepAction(options?: {
   batchSize?: number;
-  pacingDelayMs?: number;
 }): Promise<{ ok: boolean; stats: GlobalUpkeepStats }> {
   const adminUserId = await requireAdminUserId();
   await recordAdminAction({
@@ -1441,4 +1442,25 @@ export async function triggerGlobalContactUpkeepAction(options?: {
   const res = await triggerAdminContactUpkeepJob(options);
   revalidatePath("/admin/product/photos");
   return res;
+}
+
+/**
+ * Start the LinkedIn photo queue, or resume the running one now (clearing a LinkedIn pause).
+ * Refused without a Blob store: the shared pool would keep media.licdn.com URLs, which expire.
+ */
+export async function startLinkedInPhotoQueueAction(): Promise<{ ok: true; runId: string } | { ok: false; error: string }> {
+  const adminUserId = await requireAdminUserId();
+  // Returned, not thrown: production strips a thrown action's message, and this one is the fix.
+  if (!hasBlobStorage()) {
+    return { ok: false, error: "Photo storage isn’t connected (no Blob token or OIDC store), so the queue can’t save photos" };
+  }
+  await recordAdminAction({ adminUserId, action: "avatars.linkedin_queue.start", detail: {} });
+  return { ok: true, runId: await startLinkedInPhotoQueue() };
+}
+
+/** Stop the LinkedIn photo queue; the tick in flight finishes its current person and exits. */
+export async function stopLinkedInPhotoQueueAction(): Promise<void> {
+  const adminUserId = await requireAdminUserId();
+  await recordAdminAction({ adminUserId, action: "avatars.linkedin_queue.stop", detail: {} });
+  await stopLinkedInPhotoQueue();
 }

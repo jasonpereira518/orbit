@@ -1024,11 +1024,12 @@ export function ChatPanel({
     () =>
       onVoiceEnded(async (id) => {
         threadPrefetch.forget(id);
-        await loadThread(id);
+        // The call's thread is now named (nameVoiceThread), so Recents shows it under that name.
+        await Promise.all([loadThread(id), refreshThreads()]);
         wantComposerFocusRef.current = true;
         setComposerFocusTick((n) => n + 1);
       }),
-    [loadThread, threadPrefetch],
+    [loadThread, refreshThreads, threadPrefetch],
   );
   useEffect(() => {
     if (!wantComposerFocusRef.current || loadingThread || voiceCall) return;

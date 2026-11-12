@@ -9,12 +9,13 @@
 export const RUN_STAGES = [
   { key: "read", label: "Reading your network and email", weight: 25 },
   { key: "projects", label: "Checking your active projects", weight: 5 },
+  { key: "connect", label: "Linking your notes to people you know", weight: 10 },
   { key: "people", label: "Finding who needs you", weight: 5 },
   { key: "score", label: "Scoring and checking proof", weight: 5 },
-  { key: "editor", label: "Editing your plan with AI", weight: 25 },
+  { key: "editor", label: "Editing your plan with AI", weight: 20 },
   { key: "save", label: "Saving your plan", weight: 5 },
   { key: "autopilot", label: "Running autopilot", weight: 3 },
-  { key: "drafts", label: "Writing drafts", weight: 25 },
+  { key: "drafts", label: "Writing drafts", weight: 20 },
   { key: "wrap", label: "Wrapping up", weight: 2 },
 ] as const;
 

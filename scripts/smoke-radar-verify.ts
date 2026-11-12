@@ -121,4 +121,26 @@ console.log("\nnamesakes: a proof belongs to one person");
 }
 
 
+console.log("\nConnect: two notes, two people");
+{
+  const notes = buildProofIndex([
+    { table: "memory_chunks", id: "na", contactId: "priya", text: "Priya is hiring a product designer" },
+    { table: "memory_chunks", id: "nb", contactId: "sam", text: "Sam is looking for a design role" },
+  ]);
+  const lead: RadarReason = { code: "connect_introduce", label: "Introduce to Sam", points: 30 };
+  const mine: RadarEvidence = { label: "Your note on them", at: null, code: "connect_introduce", proof: { type: "quote", table: "memory_chunks", id: "na", quote: "hiring a product designer" } };
+  const theirs: RadarEvidence = { label: "Your note on Sam", at: null, code: "connect_introduce", aboutContactId: "sam", proof: { type: "quote", table: "memory_chunks", id: "nb", quote: "looking for a design role" } };
+  t.check("both sides proven, each against its own person: the card stands", verifyPick({ contactId: "priya", reasons: [lead], evidence: [mine, theirs] }, notes) !== null);
+  t.check("one side alone is not enough", verifyPick({ contactId: "priya", reasons: [lead], evidence: [mine] }, notes) === null);
+  t.check(
+    "the other side checked against the card's person fails",
+    verifyPick({ contactId: "priya", reasons: [lead], evidence: [mine, { ...theirs, aboutContactId: undefined }] }, notes) === null
+  );
+  t.check(
+    "an invented quote on the other side drops the card",
+    verifyPick({ contactId: "priya", reasons: [lead], evidence: [mine, { ...theirs, proof: { type: "quote", table: "memory_chunks", id: "nb", quote: "is a famous designer" } }] }, notes) === null
+  );
+}
+
+
 t.done("radar proof check");

@@ -100,8 +100,11 @@ type Checkable = { contactId?: string; reasons: readonly RadarReason[]; evidence
 export function verifyPick<T extends Checkable>(pick: T, index: ProofIndex): T | null {
   const lead = leadReason(pick.reasons);
   if (!lead) return null;
-  const evidence = pick.evidence.filter((e) => proofHolds(e.proof, index, pick.contactId));
-  if (!evidence.some((e) => e.code === lead.code)) return null;
+  // Evidence about someone else (the other side of a Connect card) is checked against them.
+  const evidence = pick.evidence.filter((e) => proofHolds(e.proof, index, e.aboutContactId ?? pick.contactId));
+  const proven = evidence.filter((e) => e.code === lead.code).length;
+  // A Connect card links two notes: it stands only when both sides are proven.
+  if (proven < (lead.code.startsWith("connect_") ? 2 : 1)) return null;
   return evidence.length === pick.evidence.length ? pick : { ...pick, evidence };
 }
 
