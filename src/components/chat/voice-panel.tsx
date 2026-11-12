@@ -2,6 +2,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Mic, MicOff, X, Captions, Loader2, MessageSquare } from "lucide-react";
 import { VoiceOrbit } from "./voice/voice-orbit";
 import { cn } from "@/lib/utils";
@@ -10,7 +11,19 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { VoiceTransportBoundary } from "./voice/transport-boundary";
 import { ProposedActionsCard } from "./proposed-actions";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
-import { VOICE_DURATION_SECONDS } from "@/lib/voice/policy";
+import {
+  ASK_CHAT_TOOL,
+  OPEN_PAGE_TOOL,
+  SET_THEME_TOOL,
+  START_RECORDING_TOOL,
+  VOICE_DURATION_SECONDS,
+  VOICE_THEMES,
+  voicePagePath,
+} from "@/lib/voice/policy";
+import { useTheme } from "next-themes";
+import { saveThemePreference } from "@/actions/settings";
+import { streamChat } from "@/lib/chat-stream-client";
+import { useMeetingSession } from "@/components/capture/meeting-session";
 import {
   PROVIDER_LABELS,
   type VoiceProvider,
@@ -30,6 +43,17 @@ const ElevenLabsAdapter = dynamic(
   () => import("./voice/elevenlabs-adapter").then((m) => m.ElevenLabsAdapter),
   { ssr: false },
 );
+/**
+ * A turn as words, without the markdown a model sometimes writes despite the prompt: links keep
+ * their text, and emphasis, code ticks, headings and list markers go. Display only; the prompt
+ * is what keeps the symbols out of the speech itself.
+ */
+function plainSpeech(text: string) {
+  return text
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/gm, "")
+    .replace(/(\*\*|__|\*|`)/g, "");
+}
 class VoiceRequestError extends Error {
   constructor(
     message: string,
@@ -63,6 +87,9 @@ type TranscriptTurn = { id: string; source: "user" | "ai"; text: string; interru
 export function VoicePanel({ state, threadId, onClose, compact = false }: {
   state: VoicePublicState; threadId: string; onClose(): Promise<void>; compact?: boolean;
 }) {
+  const router = useRouter();
+  const { setTheme } = useTheme();
+  const meeting = useMeetingSession();
   const [active, setActive] = useState<VoiceSessionStart | null>(null);
   const [mode, setMode] = useState<VoiceMode>("disconnected");
   const [busy, setBusy] = useState(false);
@@ -198,6 +225,35 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
       clearInterval(heartbeat);
     };
   }, [active, stop]);
+  /**
+   * ask_chat: the question goes to Orbit Chat in this call's own thread, exactly as if typed.
+   * A spoken answer can't wait minutes, so after 20 seconds the agent is told Chat is still
+   * working; the turn finishes server-side regardless and shows in the thread.
+   */
+  const askChat = useCallback(async (question: unknown) => {
+    if (typeof question !== "string" || !question.trim())
+      return JSON.stringify({ error: "Give ask_chat a question." });
+    let answer = "";
+    const finished = new Promise<string | null>((resolve) => {
+      void streamChat(
+        { question: question.trim().slice(0, 2000), threadId, turnId: crypto.randomUUID() },
+        {
+          onAnswer: (delta) => { answer += delta; },
+          onRecommendations: () => {},
+          onDone: () => resolve(null),
+          onError: (message) => resolve(message),
+        },
+      );
+    });
+    const outcome = await Promise.race([
+      finished,
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 20_000)),
+    ]);
+    if (outcome === "pending")
+      return JSON.stringify({ status: "still_working", note: "Chat is still answering. The full answer will appear in this conversation." });
+    if (outcome) return JSON.stringify({ error: outcome });
+    return JSON.stringify({ untrusted_chat_answer: plainSpeech(answer).slice(0, 3000) });
+  }, [threadId]);
   const events = useMemo<VoiceAgentEvents>(() => {
     const id = active?.sessionId;
     const current = () =>
@@ -270,6 +326,31 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
         try {
           if (!current())
             return JSON.stringify({ error: "Voice session ended" });
+          // App control runs here, not on the server: the call lives in the layout, so it keeps
+          // going on the page it opens. Only allowlisted pages; record pages need a real id.
+          const args = JSON.parse(input || "{}") as Record<string, unknown>;
+          if (tool === ASK_CHAT_TOOL) return await askChat(args.question);
+          if (tool === START_RECORDING_TOOL) {
+            if (!meeting?.ready)
+              return JSON.stringify({ error: "The meeting recorder isn't ready on this page yet. Try again in a moment." });
+            meeting.startRecording(null, "mic");
+            router.push("/meetings");
+            return JSON.stringify({ started: true, note: "Recording on the microphone. The user can pause or finish it on Meetings." });
+          }
+          if (tool === SET_THEME_TOOL) {
+            const theme = VOICE_THEMES.find((t) => t === args.theme);
+            if (!theme) return JSON.stringify({ error: "Theme must be light, dark or system." });
+            setTheme(theme);
+            void saveThemePreference(theme).catch(() => {});
+            return JSON.stringify({ theme });
+          }
+          if (tool === OPEN_PAGE_TOOL) {
+            const path = voicePagePath(args.page, args.id, args.filters);
+            if (!path)
+              return JSON.stringify({ error: "Unknown page, or that page needs a valid id from a lookup." });
+            router.push(path);
+            return JSON.stringify({ opened: path });
+          }
           const response = await command({
             action: "tool",
             sessionId: id,
@@ -288,7 +369,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
         }
       },
     };
-  }, [active, stop, persist]);
+  }, [active, stop, persist, router, meeting, setTheme, askChat]);
   async function start(fallback = false) {
     if (starting.current || session.current) return;
     starting.current = true;
@@ -377,7 +458,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
       className={cn(
         "voice-stage flex min-h-0 min-w-0 flex-col text-foreground",
         compact
-          ? "w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-border/70 bg-card p-4 shadow-lg"
+          ? "w-[4.75rem] items-stretch rounded-[1.75rem] border border-border/70 bg-card px-2 py-3 shadow-lg"
           : "w-full flex-1 overflow-y-auto px-6 py-4 sm:px-10",
       )}
     >
@@ -403,38 +484,40 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
         </VoiceTransportBoundary>
       )}
       {/* One centred column: `m-auto` centres it in Chat's space, and unlike justify-center
-          it still scrolls from the top when the transcript makes it taller than the page. */}
+          it still scrolls from the top when the transcript makes it taller than the page.
+          Docked on another page it is a slim vertical card: orbit, a word of status, then
+          icon buttons stacked, so it sits at the edge without covering the page. */}
       <div className={cn("flex w-full flex-col", !compact && "m-auto max-h-full min-h-0 max-w-2xl")}>
       <div className="flex min-h-0 flex-col items-center text-center">
-        <div>
-          <h2 className={compact ? "text-sm font-medium" : "text-lg font-medium"}>Orbit Voice</h2>
-          {!compact && (
-            <p className="mt-2 text-sm text-muted-foreground">In this conversation · {PROVIDER_LABELS[provider]}</p>
-          )}
+        <div className={cn(compact && "sr-only")}>
+          <h2 className="text-lg font-medium">Orbit Voice</h2>
+          <p className="mt-2 text-sm text-muted-foreground">In this conversation · {PROVIDER_LABELS[provider]}</p>
         </div>
-        <div className={cn("flex min-h-0 w-full items-center justify-center", compact ? "py-2" : "py-4 sm:py-6")}>
+        <div className={cn("flex min-h-0 w-full items-center justify-center", compact ? "py-0.5" : "py-4 sm:py-6")}>
           <VoiceOrbit controls={controls} mode={mode} muted={muted} />
         </div>
-        <p role="status" className="min-h-6 text-sm text-muted-foreground">
+        <p role="status" className={compact ? "text-2xs leading-tight text-muted-foreground" : "min-h-6 text-sm text-muted-foreground"}>
           {busy
             ? "Connecting…"
             : mode === "speaking"
-              ? "Orbit is speaking · interrupt anytime"
+              ? compact ? "Speaking" : "Orbit is speaking · interrupt anytime"
               : mode === "thinking"
-                ? "Looking that up…"
+                ? compact ? "Thinking" : "Looking that up…"
                 : connected
                   ? muted
-                    ? "Microphone muted"
-                    : "Listening…"
-                  : "Ready when you are"}
+                    ? compact ? "Muted" : "Microphone muted"
+                    : compact ? "Listening" : "Listening…"
+                  : compact ? "Ready" : "Ready when you are"}
         </p>
-        <div className={cn("flex flex-wrap items-center justify-center gap-3", compact ? "mt-3" : "mt-5")}>
+        <div className={cn("flex items-center justify-center", compact ? "mt-2 flex-col gap-2" : "mt-5 flex-wrap gap-3")}>
           {connected && (
             <Button
-              size="sm"
+              size={compact ? "icon" : "sm"}
               variant="secondary"
-              className="h-11 rounded-full px-5"
+              className={compact ? "size-10 rounded-full" : "h-11 rounded-full px-5"}
               aria-pressed={muted}
+              aria-label={compact ? (muted ? "Unmute" : "Mute") : undefined}
+              title={compact ? (muted ? "Unmute" : "Mute") : undefined}
               onClick={() => {
                 controls.current?.setMuted(!muted);
                 setMuted(!muted);
@@ -445,25 +528,31 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
               ) : (
                 <Mic className="size-4" aria-hidden />
               )}
-              {muted ? "Unmute" : "Mute"}
+              {!compact && (muted ? "Unmute" : "Mute")}
             </Button>
           )}
           {!busy && !active && (
-            <Button size="sm" className="h-11 rounded-full px-5" onClick={() => void start()}>
+            <Button
+              size={compact ? "icon" : "sm"}
+              className={compact ? "size-10 rounded-full" : "h-11 rounded-full px-5"}
+              aria-label={compact ? (error ? `Retry ${PROVIDER_LABELS[state.provider]}` : "Start conversation") : undefined}
+              onClick={() => void start()}
+            >
               <Mic className="size-4" aria-hidden />
-              {error
+              {!compact && (error
                 ? `Retry ${PROVIDER_LABELS[state.provider]}`
-                : "Start conversation"}
+                : "Start conversation")}
             </Button>
           )}
           {compact ? (
             <Link
               href="/chat"
-              aria-label="Open chat"
-              title="Open chat"
-              className={cn(buttonVariants({ variant: "secondary", size: "icon" }), "size-11 rounded-full")}
+              aria-label={waiting ? "Open chat · a change is waiting for you to confirm" : "Open chat"}
+              title={waiting ? "A change is waiting for you to confirm in Chat" : "Open chat"}
+              className={cn(buttonVariants({ variant: "secondary", size: "icon" }), "relative size-10 rounded-full")}
             >
               <MessageSquare className="size-4" aria-hidden />
+              {waiting && <span aria-hidden className="absolute right-0.5 top-0.5 size-2.5 rounded-full bg-primary ring-2 ring-card" />}
             </Link>
           ) : (
             <Button variant="secondary" className="h-11 rounded-full px-5" aria-expanded={showTranscript} aria-controls="voice-transcript" onClick={() => setShowTranscript(value => !value)}>
@@ -476,7 +565,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
             size="icon"
             aria-label="End conversation"
             title="End conversation"
-            className="size-11 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+            className={cn(compact ? "size-10" : "size-11", "rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground")}
             disabled={closing}
             onClick={() => void close()}
           >
@@ -484,9 +573,9 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
           </Button>
         </div>
       </div>
-      {saveError && <div role="status" className="mt-4 text-center text-sm">
-        Some transcript turns haven’t saved yet. Keep this window open.
-        <Button variant="link" onClick={async () => {
+      {saveError && <div role="status" className={cn("text-center", compact ? "mt-2 text-2xs leading-tight" : "mt-4 text-sm")}>
+        {compact ? "Transcript not saved yet." : "Some transcript turns haven’t saved yet. Keep this window open."}
+        <Button variant="link" size={compact ? "sm" : "default"} className={cn(compact && "h-auto px-0 text-2xs")} onClick={async () => {
           for (const item of pending.current.values()) persist(item.sessionId, item.turn);
           await writes.current;
           setSaveError(pending.current.size > 0);
@@ -500,8 +589,8 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
         </p>
       )}
       {error && (
-        <div className="mt-3 space-y-2 text-center">
-          <p role="alert" className="text-sm text-destructive">
+        <div className={cn("space-y-2 text-center", compact ? "mt-2" : "mt-3")}>
+          <p role="alert" className={compact ? "text-2xs leading-tight text-destructive" : "text-sm text-destructive"}>
             {error}
           </p>
           {failed &&
@@ -511,17 +600,13 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
               <Button
                 size="sm"
                 variant="outline"
+                className={cn(compact && "h-auto w-full whitespace-normal px-1 py-1 text-2xs")}
                 onClick={() => void start(true)}
               >
                 Try {PROVIDER_LABELS[state.fallbackProvider]}
               </Button>
             )}
         </div>
-      )}
-      {compact && waiting && (
-        <p className="mt-3 text-center text-xs text-muted-foreground">
-          Orbit has a change for you to confirm in Chat.
-        </p>
       )}
       {showTranscript && !compact && (
         <div
@@ -542,7 +627,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
                 {line.source === "user" ? "You" : "Orbit"}
               </span>
               <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-                {line.text}
+                {plainSpeech(line.text)}
                 {line.interrupted && <span className="ml-2 text-muted-foreground">(interrupted)</span>}
               </span>
             </p>

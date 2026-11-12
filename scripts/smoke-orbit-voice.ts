@@ -46,7 +46,7 @@ import {
 } from "../src/lib/voice/providers";
 import { voiceUsageSummary } from "../src/lib/voice/admin";
 import { VOICE_PROMPT_BUDGET, voiceReadTools } from "../src/lib/voice/tools";
-import { VOICE_MAX_TOOL_CALLS } from "../src/lib/voice/policy";
+import { VOICE_MAX_TOOL_CALLS, voicePagePath } from "../src/lib/voice/policy";
 import { commitProposedAction } from "../src/actions/chat-actions";
 
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -59,6 +59,21 @@ process.env.ELEVENLABS_AGENT_ID = "fake-private-agent";
 const USER = "demo-user";
 const OTHER = "voice-other-user";
 async function main() {
+  // open_page runs in the browser: only allowlisted pages, record pages only with a UUID.
+  const uuid = "0f536784-23b9-40d6-87da-072b79aa47a3";
+  assert.equal(voicePagePath("contacts"), "/contacts");
+  assert.equal(voicePagePath("contact", uuid), `/contacts/${uuid}`);
+  assert.equal(voicePagePath("contact", "../admin"), null, "no path injection through id");
+  assert.equal(voicePagePath("contact"), null, "record pages need an id");
+  assert.equal(voicePagePath("admin"), null, "unknown pages are refused");
+  assert.equal(voicePagePath("toString"), null, "prototype keys are not pages");
+  assert.equal(
+    voicePagePath("contacts", undefined, { company: "Stripe & Co", tag: "investor", evil: "x", q: "  " }),
+    "/contacts?company=Stripe+%26+Co&tag=investor",
+    "only the page's own filters pass, encoded; blanks dropped",
+  );
+  assert.equal(voicePagePath("dashboard", undefined, { q: "x" }), "/dashboard", "pages without filters ignore them");
+  console.log("ok open_page allowlist");
   const db = await getDb();
   await bootstrapAuthenticatedUser(USER);
   await db
@@ -183,7 +198,10 @@ async function main() {
         // Voice reads what Chat reads (minus paid web lookups), inside Deepgram's prompt limit.
         for (const name of ["get_dossier(", "query_interactions(", "list_events(", "search_notes("])
           assert.ok(agent.think?.prompt?.includes(name), `voice catalog offers ${name}`);
-        assert.ok(!agent.think?.prompt?.includes("research_person("), "no web lookups in voice");
+        assert.ok(!agent.think?.prompt?.includes("research_person("), "no web lookups when web search is unavailable (no AI provider here)");
+        for (const name of ["delete_contact(", "create_event(", "mark_spoke_to(", "open_page(", "daily_briefing(", "ask_chat(", "start_recording(", "set_theme(", "draft_email("])
+          assert.ok(agent.think?.prompt?.includes(name), `voice can propose or drive ${name}`);
+        assert.ok(agent.think?.prompt?.includes("Never\nuse markdown") || agent.think?.prompt?.includes("Never use markdown"), "speech-only formatting rule");
         assert.ok((agent.think?.prompt?.length ?? 0) <= VOICE_PROMPT_BUDGET, "prompt fits Deepgram's limit");
         assert.ok(
           agent.think?.functions?.every(
@@ -201,6 +219,12 @@ async function main() {
         requireVoiceSession(OTHER, start.sessionId),
         VoiceUnavailableError,
       );
+      if (provider === "deepgram") {
+        const briefing = JSON.parse((await callVoiceTool(USER, start.sessionId, "daily_briefing", { day: "2026-11-12" })).result);
+        const data = briefing.untrusted_crm_data ?? briefing;
+        for (const key of ["meetings", "reminders", "followUps", "commitments"])
+          assert.ok(key in data, `daily_briefing returns ${key}`);
+      }
       const hidden = await callVoiceTool(USER, start.sessionId, "get_contact", {
         contactId: other.id,
       });

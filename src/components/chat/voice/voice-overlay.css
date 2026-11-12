@@ -27,7 +27,7 @@
 /* Inline on a phone the composer and nav share the height: keep the controls on screen. */
 @media (max-width: 639.98px) { .voice-orbit { max-height: min(24dvh, 200px, 100%); } }
 .voice-stage[data-transcript] .voice-orbit { max-height: min(22dvh, 200px, 100%); }
-.voice-stage[data-compact] .voice-orbit { max-height: 120px; }
+.voice-stage[data-compact] .voice-orbit { max-height: 52px; }
 @keyframes voice-orbit-travel { to { transform: rotate(360deg); } }
 @keyframes voice-orbit-arrive { from { opacity: .45; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) {
