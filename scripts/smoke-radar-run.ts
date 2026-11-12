@@ -303,13 +303,18 @@ run(async () => {
         ? rerankReply === "garbage"
           ? "not json at all"
           : rerankReply === "neutral"
-            ? JSON.stringify({ items: Array.from({ length: 20 }, (_, i) => ({ id: `c${i + 1}`, adjust: 0, angle: "" })) })
+            ? JSON.stringify({ items: Array.from({ length: 20 }, (_, i) => ({ id: `c${i + 1}`, adjust: 0, why: "", opener: "" })) })
             : JSON.stringify({
               items: [
-                { id: "c1", adjust: 40, angle: "Worth a message while it is fresh." },
-                { id: "c2", adjust: -9, angle: "Nothing is waiting on you here." },
-                { id: "c3", adjust: 3, angle: "Call them in 97 weeks." },
-                { id: "c99", adjust: 15, angle: "Not a candidate." },
+                {
+                  id: "c1",
+                  adjust: 40,
+                  why: "Worth a message while it is fresh.",
+                  opener: "Good to see you recently. My key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123",
+                },
+                { id: "c2", adjust: -9, why: "Nothing is waiting on you here.", opener: "Hope the new quarter is going well." },
+                { id: "c3", adjust: 3, why: "Call them in 97 weeks.", opener: "" },
+                { id: "c99", adjust: 15, why: "Not a candidate.", opener: "Hi" },
               ],
             })
         : JSON.stringify({
@@ -327,15 +332,13 @@ run(async () => {
       .where(eq(userSettings.userId, USER));
     await claimRadarLease(USER, NOW);
     const withAi = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
-    check("the run writes notes for the top cards", withAi.aiNotes > 0 && withAi.aiNotes <= 5, JSON.stringify(withAi));
-    // When it fails, say what the unexpected calls were: a count alone sent the last
-    // investigation through a whole CI shard to find out.
-    const unexpected = sent.filter((b) => !b.includes("<<<FACTS_")).map((b) => b.slice(0, 600));
-    check("one call per note", sent.length === withAi.aiNotes, `${sent.length} calls${unexpected.length ? `; not notes: ${JSON.stringify(unexpected)}` : ""}`);
-    check("the facts reach the model fenced", sent.every((b) => b.includes("<<<FACTS_")));
-    check("and no notes do", sent.every((b) => !/Met at|raw_notes/.test(b)));
+    // The editor (Radar revision PR 5): one call orders the plan and writes the notes. There
+    // is no per-card why-line call any more.
+    check("the run writes notes for the top cards from the editor", withAi.aiNotes > 0, JSON.stringify(withAi));
+    check("with no separate why-line calls", sent.length === 0, `${sent.length} calls`);
+    check("and no notes reach the editor", reranks.every((b) => !/Met at|raw_notes/.test(b)));
 
-    check("one rerank call per run", reranks.length === 1, `${reranks.length}`);
+    check("one editor call per weekly build", reranks.length === 1, `${reranks.length}`);
     check("it moved cards", withAi.reranked > 0 && !withAi.rerankFailed, JSON.stringify(withAi));
     check("the goals and the candidates reach it fenced", reranks.every((b) => b.includes("<<<GOALS_") && b.includes("<<<CANDIDATES_")));
     check("it never sees a name", reranks.every((b) => !/Dormant Dana|Intro Ivan|Inbound Ines|Meeting Mo/.test(b)));
@@ -371,16 +374,21 @@ run(async () => {
     const noted = (await db.select({ aiNote: recommendations.aiNote }).from(recommendations).where(eq(recommendations.userId, USER)))
       .map((r) => r.aiNote)
       .filter((n): n is NonNullable<typeof n> => n !== null);
-    check("the why is stored", noted.some((n) => n.why.startsWith("You met recently")));
+    check("the why is stored", noted.some((n) => n.why === "Worth a message while it is fresh."), JSON.stringify(noted));
+    check("an opener that invents nothing is stored", noted.some((n) => n.opener === "Hope the new quarter is going well."));
     check("a secret in the reply never reaches the row", noted.every((n) => !n.opener.includes("sk-ant-api03")));
-    sent.length = 0;
+    // The failed run above cached nothing: one neutral run caches the editor's answer first.
     await claimRadarLease(USER, NOW);
-    const again = await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
-    check("unchanged facts cost no second call", again.aiNotes === 0 && sent.length === 0, `${sent.length} calls`);
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
+    sent.length = 0;
+    reranks.length = 0;
+    await claimRadarLease(USER, NOW);
+    await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: NOW, ai: true });
+    check("unchanged facts cost no second call", sent.length === 0 && reranks.length === 0, `${sent.length + reranks.length} calls`);
     const nextDay = new Date(NOW.getTime() + DAY);
     await claimRadarLease(USER, nextDay);
     await runRadarForUser(USER, { mode: "weekly", trigger: "schedule", now: nextDay, ai: true });
-    check("nor does a day passing", sent.length === 0, `${sent.length} calls`);
+    check("nor does a day passing", sent.length === 0 && reranks.length === 0, `${sent.length + reranks.length} calls`);
     globalThis.fetch = realFetch;
     await db.update(userSettings).set({ geminiApiKeyEncrypted: null }).where(eq(userSettings.userId, USER));
     await db.update(recommendations).set({ aiNote: null }).where(eq(recommendations.userId, USER));
@@ -723,9 +731,14 @@ run(async () => {
       draftChannel({ reasons: [{ code: "dormant", label: "A while", points: 30 }], hasEmail: false }) === "linkedin");
     check("a secret in the reply never reaches the card", !(withDraft?.draft?.body ?? "").includes("sk-ant-api03"));
     check("the draft is tied to the card's facts", withDraft?.draft?.inputsHash === "draft-h1");
-    draftCalls.length = 0;
-    const again = await draftTodayForRun(USER, access!, { deadline: Date.now() + 30_000 });
-    check("unchanged facts cost no second draft", again === 0 && draftCalls.length === 0, `${again} / ${draftCalls.length}`);
+    // Drafts now cover the week's whole plan (Today first), so a second pass may draft cards the
+    // first pass's limit left out; what it may never do is redraft one whose facts are unchanged.
+    const firstAt = withDraft?.draft?.generatedAt;
+    await draftTodayForRun(USER, access!, { deadline: Date.now() + 30_000 });
+    const [stillDrafted] = await db.select({ draft: recommendations.draft }).from(recommendations).where(eq(recommendations.id, draftCard.id));
+    check("unchanged facts cost no second draft", stillDrafted?.draft?.generatedAt === firstAt, `${firstAt} vs ${stillDrafted?.draft?.generatedAt}`);
+    const third = await draftTodayForRun(USER, access!, { deadline: Date.now() + 30_000 });
+    check("and once every card has one, a pass writes nothing", third === 0, String(third));
     const pageRows = await listPendingRecommendations(USER, 50);
     check("the page gets the draft", pageRows.find((r) => r.id === draftCard.id)?.draft?.body.startsWith("Hi Dee") === true);
     await db.update(recommendations).set({ inputsHash: "draft-h2" }).where(eq(recommendations.id, draftCard.id));
