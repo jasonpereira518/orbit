@@ -24,7 +24,7 @@ import type {
   RecommendationKind,
   RecommendationStatus,
 } from "@/lib/radar/types";
-import { LIVE_RECOMMENDATION_STATUSES, recommendationKey } from "@/lib/radar/types";
+import { LIVE_RECOMMENDATION_STATUSES, RECOMMENDATION_KINDS, recommendationKey } from "@/lib/radar/types";
 import { RADAR_MODEL_HISTORY_DAYS, RADAR_MODEL_VOTES, type RadarModelTallyRow } from "@/lib/radar/model";
 import { RADAR_IGNORED_MIN_SEEN } from "@/lib/radar/metrics";
 
@@ -82,6 +82,7 @@ export async function loadSuppressions(
       contactId: recommendationFeedback.contactId,
       kind: recommendationFeedback.kind,
       action: recommendationFeedback.action,
+      reason: recommendationFeedback.reason,
       at: sql<Date>`max(${recommendationFeedback.createdAt})`.mapWith(recommendationFeedback.createdAt),
     })
     .from(recommendationFeedback)
@@ -91,7 +92,7 @@ export async function loadSuppressions(
         or(eq(recommendationFeedback.action, "never"), gte(recommendationFeedback.createdAt, since))
       )
     )
-    .groupBy(recommendationFeedback.contactId, recommendationFeedback.kind, recommendationFeedback.action);
+    .groupBy(recommendationFeedback.contactId, recommendationFeedback.kind, recommendationFeedback.action, recommendationFeedback.reason);
 
   const out = new Map<string, RadarSuppression>();
   const entry = (contactId: string) => {
@@ -108,7 +109,11 @@ export async function loadSuppressions(
       if (r.kind === null) e.never = "all";
       else if (e.never !== "all") e.never = new Set([...(e.never ?? []), r.kind]);
     } else if (r.kind !== null && r.action === "dismissed") {
-      e.dismissedAt[r.kind] = r.at;
+      // "Wrong person" quiets every kind about them, not only the one dismissed.
+      for (const k of r.reason === "wrong_person" ? RECOMMENDATION_KINDS : [r.kind]) {
+        const prev = e.dismissedAt[k];
+        if (!prev || prev < r.at) e.dismissedAt[k] = r.at;
+      }
     } else if (r.kind !== null && r.action === "accepted") {
       e.acceptedAt[r.kind] = r.at;
     }
@@ -546,7 +551,12 @@ export async function loadModelTallies(userId: string, now: Date): Promise<Radar
                  ELSE 0
                END AS a,
                CASE
-                 WHEN status = 'dismissed' THEN ${V.dismissed}::numeric
+                 -- "Wrong person" and "already handled" say nothing about the kind or its reasons.
+                 WHEN status = 'dismissed' AND NOT EXISTS (
+                   SELECT 1 FROM recommendation_feedback f
+                    WHERE f.recommendation_id = recommendations.id AND f.action = 'dismissed'
+                      AND f.reason IN ('wrong_person', 'already_handled')
+                 ) THEN ${V.dismissed}::numeric
                  -- Ignored only when it ran its course. A daily pass retires a card early when its
                  -- reason is gone (the person already wrote to them): that is not a vote.
                  WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN}

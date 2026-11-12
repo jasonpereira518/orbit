@@ -80,6 +80,12 @@ export const KIND_SECTION_TITLES: Record<RecommendationKind, string> = {
 export const RADAR_LANES = ["follow_up", "connect", "opportunities"] as const;
 export type RadarLane = (typeof RADAR_LANES)[number];
 
+export const LANE_TITLES: Record<RadarLane, string> = {
+  follow_up: "Follow up",
+  connect: "Connect",
+  opportunities: "Opportunities",
+};
+
 export const LANE_OF_KIND: Record<RecommendationKind, RadarLane> = {
   prep: "follow_up",
   heads_up: "follow_up",
@@ -360,6 +366,27 @@ export const RADAR_OPPORTUNITY_KINDS = ["event", "person", "opening", "program"]
 export type RadarOpportunityKind = (typeof RADAR_OPPORTUNITY_KINDS)[number];
 /** `found` = checked but not shown yet; `pending` = on the page; `saved` = the person kept it. */
 export type RadarOpportunityStatus = "found" | "pending" | "saved" | "dismissed" | "expired";
+
+/**
+ * Why a card was dismissed, asked on the page. `wrong_reason` is a vote against the kind and its
+ * reasons (a plain dismissal); `wrong_person` is about the person, not the kind, so it quiets
+ * every card about them for a while and teaches the model nothing; `already_handled` is not a
+ * vote; `not_now` is a week's snooze.
+ */
+export const RADAR_DISMISS_REASONS = ["wrong_person", "wrong_reason", "already_handled", "not_now"] as const;
+export type RadarDismissReason = (typeof RADAR_DISMISS_REASONS)[number];
+export const RADAR_DISMISS_LABELS: Record<RadarDismissReason, string> = {
+  wrong_person: "Wrong person",
+  wrong_reason: "Wrong reason",
+  already_handled: "Already handled",
+  not_now: "Not now",
+};
+/** Dismissal reasons that are not a vote against the card's kind or reasons. */
+export const NON_VOTING_DISMISS_REASONS = ["wrong_person", "already_handled"] as const satisfies readonly RadarDismissReason[];
+
+export function isRadarDismissReason(v: unknown): v is RadarDismissReason {
+  return typeof v === "string" && (RADAR_DISMISS_REASONS as readonly string[]).includes(v);
+}
 
 /** What a person did with a recommendation, recorded so the next run respects it. */
 export type RadarFeedbackAction = "accepted" | "dismissed" | "snoozed" | "never";

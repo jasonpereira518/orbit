@@ -66,7 +66,7 @@ import {
   updateMeetingDetails,
 } from "@/lib/meeting-sessions";
 import { loadRadarAutopilot, setRadarAutopilotForUser } from "@/lib/radar/autopilot";
-import { AUTOPILOT_KINDS, KIND_LABELS, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS, RADAR_DISMISS_REASONS, isRadarDismissReason, type RecommendationKind } from "@/lib/radar/types";
 import { requireReleasedSurface } from "@/lib/surface-visibility";
 import { addGoalForUser, deleteGoalForUser, MAX_GOAL_CHARS, restoreGoalForUser, type GoalSnapshot } from "@/lib/user-goals";
 import { isoDay, name, s, text, uuid, type ChatWrite, type UndoFn } from "@/lib/tools/chat-write-kit";
@@ -298,14 +298,16 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
   {
     name: "dismiss_recommendation",
     title: "Dismiss a radar card",
-    description: "Propose dismissing one of radar's suggestions the user does not want to act on.",
-    inputSchema: { recommendationId: uuid },
+    description:
+      "Propose dismissing one of radar's suggestions the user does not want to act on. Pass the user's reason when they " +
+      "gave one: wrong_person, wrong_reason (radar picked the wrong thing to say), already_handled, or not_now (a week's snooze).",
+    inputSchema: { recommendationId: uuid, reason: z.enum(RADAR_DISMISS_REASONS).optional() },
     tier: "confirm",
     refs: (i) => ({ recommendations: [s(i.recommendationId)] }),
     preview: (i, sc) => `Dismiss the radar card for ${name(sc.recommendations, i.recommendationId, "this person")}`,
     async commit(userId, i) {
       await requireReleasedSurface(userId, "page.radar");
-      const out = await dismissRecommendationForUser(userId, s(i.recommendationId));
+      const out = await dismissRecommendationForUser(userId, s(i.recommendationId), isRadarDismissReason(i.reason) ? i.reason : null);
       if (!out.ok) throw new UserFacingError("That radar card has moved on — open radar to see it");
       return { resultId: null, href: "/radar", undo: { tool: "restore_recommendation", input: { recommendationId: s(i.recommendationId) } } };
     },

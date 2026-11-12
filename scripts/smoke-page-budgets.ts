@@ -302,8 +302,9 @@ async function main() {
   const radarPageCount = stopQueryCount();
   console.log(`  page statements: ${radarPageCount}`);
   // 5: the list, one settings read (which also answers "anyone in the network?" and "signals
-  // this week"), the AI key check (two), and what autopilot did. The plan's ceiling is 6.
-  check("radar page issues ≤ 6 statements", radarPageCount <= 6, `got ${radarPageCount}`);
+  // this week"), the AI key check (two), and what autopilot did; plus, since Radar PR 9a, the
+  // Opportunities lane's finds (introducer joined in, so one). The ceiling is 7.
+  check("radar page issues ≤ 7 statements", radarPageCount <= 7, `got ${radarPageCount}`);
   const radarJson = JSON.stringify(radarPage);
   check("radar page payload carries no inline base64", !radarJson.includes("data:image/"));
   check("radar page payload under 100 KB", radarJson.length < 100_000, `${(radarJson.length / 1024).toFixed(0)} KB`);

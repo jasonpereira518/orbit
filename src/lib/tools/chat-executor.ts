@@ -103,6 +103,8 @@ export function describeCall(call: ToolCall, ctx: ChatContext): string {
       return "Checking open opportunities";
     case "list_radar_cards":
       return "Checking your radar";
+    case "list_radar_finds":
+      return "Checking what radar found";
     case "list_campaigns":
       return "Checking your outreach campaigns";
     case "list_my_recruiters":

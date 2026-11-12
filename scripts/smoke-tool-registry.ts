@@ -89,6 +89,7 @@ const EXPECTED_MCP_TOOLS = [
   "events_with_contact",
   "list_opportunities",
   "list_radar_cards",
+  "list_radar_finds",
   "list_campaigns",
   "list_my_recruiters",
   "get_dossier",
@@ -203,6 +204,7 @@ async function main() {
       (n) => chatTools.find((t) => t.name === n)?.releasedSurface === "page.events"
     ) &&
       chatTools.find((t) => t.name === "list_radar_cards")?.releasedSurface === "page.radar" &&
+      chatTools.find((t) => t.name === "list_radar_finds")?.releasedSurface === "page.radar" &&
       chatTools.find((t) => t.name === "list_campaigns")?.releasedSurface === "page.outreach" &&
       chatTools.find((t) => t.name === "list_my_recruiters")?.releasedSurface === "page.recruiters" &&
       chatTools.find((t) => t.name === "get_dossier")?.releasedSurface === "page.knowledge"

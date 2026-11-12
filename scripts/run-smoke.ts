@@ -657,6 +657,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-radar-connect": "pglite",
   "smoke-radar-people-check": "pglite",
   "smoke-radar-opportunities": "pglite",
+  "smoke-radar-page": "pglite",
   "smoke-radar-activation": "pglite",
   "smoke-radar-discovery-cleanup": "pglite",
   "smoke-radar-email-signals": "pglite",

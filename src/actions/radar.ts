@@ -43,7 +43,8 @@ import { eq } from "drizzle-orm";
 import { setRadarAutopilotForUser, undoAutopilotForUser } from "@/lib/radar/autopilot";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
-import { AUTOPILOT_KINDS, KIND_LABELS, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS, isRadarDismissReason, type RecommendationKind } from "@/lib/radar/types";
+import { dismissOpportunityForUser, saveOpportunityForUser } from "@/lib/radar/opportunity-actions";
 import type { NetworkStats } from "@/lib/network-stats";
 
 const SURFACE = "page.radar";
@@ -118,9 +119,9 @@ export async function snoozeRecommendation(id: string, length: SnoozeLength): Pr
   return result.ok ? { ok: true } : { ok: false, message: "That card has already changed — refresh to see the latest" };
 }
 
-export async function dismissRecommendation(id: string): Promise<RadarActionResult> {
+export async function dismissRecommendation(id: string, reason?: string | null): Promise<RadarActionResult> {
   const userId = await requireUserForReleasedSurface(SURFACE);
-  const result = await dismissRecommendationForUser(userId, id);
+  const result = await dismissRecommendationForUser(userId, id, isRadarDismissReason(reason) ? reason : null);
   revalidateRadar();
   return result.ok ? { ok: true } : { ok: false, message: "That card has already changed — refresh to see the latest" };
 }
@@ -168,6 +169,33 @@ export async function dismissInboxPerson(key: string): Promise<RadarActionResult
   await dismissInboxPersonForUser(userId, key);
   revalidateRadar();
   return { ok: true, message: "Dismissed. You can still add them from Ignored people on Capture" };
+}
+
+/** Keep a find from the Opportunities lane: an event, a contact or a reminder, by its kind. */
+export async function saveRadarOpportunity(id: string): Promise<RadarActionResult & { href?: string }> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  try {
+    const result = await saveOpportunityForUser(userId, id);
+    if (!result.ok) return result;
+    if (result.kind === "event") revalidatePathIfRequestScoped("/events");
+    const contactId = result.contactId;
+    if (contactId) {
+      after(() => rebuildContactEmbedding(userId, contactId).catch(() => undefined));
+      revalidatePathIfRequestScoped("/contacts");
+    }
+    if (result.kind === "program") revalidatePathIfRequestScoped("/reminders");
+    revalidateRadar();
+    return { ok: true, message: result.message, href: result.href };
+  } catch (err) {
+    return { ok: false, message: friendlyError(err, "Couldn’t save that just now — try again?") };
+  }
+}
+
+export async function dismissRadarOpportunity(id: string, reason?: string | null): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const result = await dismissOpportunityForUser(userId, id, isRadarDismissReason(reason) ? reason : null);
+  revalidateRadar();
+  return result.ok ? { ok: true } : { ok: false, message: "That find has already changed — refresh to see the latest" };
 }
 
 /** "Refresh now": the same run the nightly pass does, inline and rate-limited. */

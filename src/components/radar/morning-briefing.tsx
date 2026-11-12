@@ -221,7 +221,7 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
             className={iconButton}
             disabled={actions.pending}
             aria-label={`Dismiss the suggestion about ${rec.contactName}`}
-            onClick={actions.dismiss}
+            onClick={() => actions.dismiss()}
           >
             <X className="size-4" aria-hidden />
           </button>
