@@ -207,6 +207,13 @@ export default function PrivacyPage() {
               and save them in Orbit.
             </li>
             <li>
+              <strong>Your Orbit card.</strong> If you make a card, the fields you switch on are
+              visible to anyone with its link. When someone shares their details back through your
+              card, we store what they typed and add them to your Orbit only — they are not added to
+              anyone else&rsquo;s. You can pause your card or reset its link at any time, which
+              makes the old link stop working.
+            </li>
+            <li>
               <strong>Secrets you provide</strong> — API keys for AI, enrichment, email, SMS and
               transcription providers, and the tokens for accounts you connect. Encrypted at rest.
             </li>

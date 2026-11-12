@@ -374,7 +374,10 @@ export function CommandPaletteDialog({
     // Empty, the palette is mostly a way back to someone, so they lead.
     if (!term) out.push(...personRows);
 
-    const visibleActions = available(ACTIONS);
+    // "Share my card" is off until the card is released, like the header icon.
+    const visibleActions = available(ACTIONS).filter(
+      (c) => c.id !== "action:share-card" || !comingSoon.has("page.card")
+    );
     const actions = term ? rankEntries(visibleActions, term) : visibleActions.filter((c) => c.featured);
     const theme = term ? rankEntries([themeCommand], term) : [];
     const actionRows: Row[] = [

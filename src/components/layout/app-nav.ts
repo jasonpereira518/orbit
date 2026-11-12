@@ -13,6 +13,7 @@ import {
   PartyPopper,
   Radar,
   AudioLines,
+  QrCode,
 } from "lucide-react";
 
 export type AppNavItem = {
@@ -95,6 +96,11 @@ const MEETINGS: AppNavItem = {
   label: "Meetings",
   icon: AudioLines,
 };
+const CARD: AppNavItem = {
+  href: "/card",
+  label: "Your card",
+  icon: QrCode,
+};
 const KNOWLEDGE: AppNavItem = {
   href: "/knowledge",
   label: "Knowledge",
@@ -123,7 +129,7 @@ export const APP_NAV_CORE: AppNavItem[] = [
  * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
  * default order.
  */
-export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH];
+export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH, CARD];
 
 /**
  * Pages the sidebar groups under "Special features", in default order. A page marked coming
@@ -166,6 +172,7 @@ export const MOBILE_MORE_NAV = [
   MEETINGS,
   EVENTS,
   OUTREACH,
+  CARD,
   KNOWLEDGE,
   APP_NAV_SETTINGS,
 ];

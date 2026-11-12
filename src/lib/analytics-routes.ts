@@ -49,6 +49,8 @@ export const ROUTE_PATTERNS: readonly string[] = [
   // The phone side of a scan handoff. The segment is a one-time credential, which is one
   // more reason the stored route must be the pattern and never the path.
   "/scan/[token]",
+  // A public Orbit card. The slug is the card link; resetting it kills the old one, so only the pattern is stored.
+  "/c/[slug]",
   // Account states
   "/suspended",
   "/onboarding",
@@ -59,6 +61,8 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/dashboard",
   "/capture",
   "/capture/[batchId]",
+  "/card",
+  "/card/show",
   "/chat",
   "/contacts",
   "/contacts/new",

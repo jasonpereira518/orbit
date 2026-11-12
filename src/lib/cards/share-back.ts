@@ -1,0 +1,304 @@
+/**
+ * A visitor sending their details back through someone's card, minus the request. The server
+ * action reads the IP and hands it in, so a smoke can drive this with a fake one.
+ *
+ * The input is a stranger's, so it never goes through `resolveOrCreateContact`: on an
+ * identifier match that overwrites and merges the owner's real contacts. `resolveUntrusted`
+ * matches on email/phone only and then writes nothing; a new person is created without
+ * claiming their LinkedIn slug; lookalikes become review suggestions, never merges. Only
+ * fixed server text reaches the owner's timeline — the visitor's message stays on the
+ * `card_shares` row.
+ */
+import { and, asc, count, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
+import { getDb } from "@/db";
+import { cardShares, contacts, type CardShareStatus } from "@/db/schema";
+import { auditUntrustedWrite, cleanAgentContactFields, cleanSingleLine, safeHttpUrl } from "@/lib/ai-security";
+import { isBotRequest, recordBotBlocked } from "@/lib/bot-check";
+import { loadPublicCard } from "@/lib/cards/card-store";
+import { liveEventFor } from "@/lib/cards/live-event";
+import { shareBackSchema } from "@/lib/cards/share-back-schema";
+import { findIdentityOwners, type IdentityOwner } from "@/lib/contact-identity";
+import { recordDuplicateSuggestions } from "@/lib/contact-merge";
+import { MIN_FILL_MS } from "@/lib/contact-message";
+import { nameMatchesFor } from "@/lib/contact-resolve";
+import {
+  contactHeadroomForUser,
+  createContactForUser,
+  logNoteInteractionForUser,
+  type ContactInput,
+} from "@/lib/contact-writes";
+import { identityKeysFor } from "@/lib/duplicates";
+import { isPaywallError } from "@/lib/entitlements";
+import { recordMetAtEvent } from "@/lib/events/store";
+import { ipLogTag } from "@/lib/log-redaction";
+import { sanitizeAgentText } from "@/lib/mcp/sanitize";
+import { track } from "@/lib/product-events";
+import { RATE_LIMITS, consumeBucket, consumeIpBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { reportError } from "@/lib/report-error";
+
+export type ShareBackInput = {
+  slug: string;
+  nonce: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  company?: string;
+  title?: string;
+  linkedinUrl?: string;
+  message?: string;
+  /** Honeypot (the form's `hp_x` field). */
+  honeypot?: string;
+  elapsedMs: number;
+};
+
+export type ShareBackResult = { ok: true } | { ok: false; message: string; fieldErrors?: Record<string, string> };
+
+/** Contacts one card may create in 24 hours; past it arrivals are held for the owner. */
+const DAILY_CARD_CONTACTS = 300;
+
+const SHARED_TEXT = "Shared their details via your card";
+
+/** Our own copy for the visitor's fields, whatever zod said. */
+const FIELD_COPY: Record<string, string> = {
+  name: "Add your name (up to 120 characters).",
+  email: "That address doesn't look right.",
+  phone: "That number doesn't look right.",
+  company: "Keep it under 200 characters.",
+  title: "Keep it under 200 characters.",
+  linkedinUrl: "That doesn't look like a LinkedIn profile link.",
+  message: "Please keep it under 500 characters.",
+};
+
+/** Smoke seam: stands in for `resolveUntrusted` inside `shareBackCore`. */
+let resolveForTests: typeof resolveUntrusted | null = null;
+export function setShareBackResolveForTests(fn: typeof resolveUntrusted | null) {
+  resolveForTests = fn;
+}
+
+export async function shareBackCore(input: ShareBackInput, ctx: { ip: string }): Promise<ShareBackResult> {
+  const parsed = shareBackSchema.safeParse(input);
+  if (!parsed.success) {
+    // A filled honeypot is a bot: plausible success, nothing written.
+    if (parsed.error.issues.some((i) => i.path[0] === "honeypot")) return { ok: true };
+    const fields = parsed.error.issues.map((i) => String(i.path[0] ?? ""));
+    // Slug, nonce and timing are the form's own; a bad one is a tampered post, not a typo.
+    if (fields.some((f) => !Object.hasOwn(FIELD_COPY, f))) return { ok: false, message: "That submission didn't look right. Please try again." };
+    const fieldErrors = Object.fromEntries(fields.map((f) => [f, FIELD_COPY[f]]));
+    return { ok: false, message: "Please fix the highlighted fields.", fieldErrors };
+  }
+  const data = parsed.data;
+
+  // A person can be this quick (autofill, a second try), so say so rather than drop them.
+  if (data.elapsedMs < MIN_FILL_MS) return { ok: false, message: "That was quick — please press send again." };
+  if (await isBotRequest()) {
+    await recordBotBlocked();
+    return { ok: true };
+  }
+
+  const card = await loadPublicCard(data.slug);
+  if (!card) return { ok: false, message: "This card isn't available." };
+
+  const email = cleanSingleLine(data.email, 320) ?? undefined;
+  const phone = cleanSingleLine(data.phone, 50) ?? undefined;
+  if (identityKeysFor({ email, phone }).length === 0) {
+    return {
+      ok: false,
+      message: "Please fix the highlighted fields.",
+      fieldErrors: { email: "Add an email or phone so they can reach you." },
+    };
+  }
+
+  // A venue's Wi-Fi puts a room behind one IP, so a per-IP trip is said out loud; a limiter
+  // that cannot count rethrows, and the action answers with generic copy.
+  try {
+    await consumeIpBucket("cardShare", ctx.ip, RATE_LIMITS.cardShare);
+  } catch (err) {
+    if (!isRateLimitedError(err)) throw err;
+    console.warn("[card-share] ip rate-limited", { ipTag: ipLogTag(ctx.ip) });
+    track("card_share_limited", { reason: "ip" }, { actor: "system" });
+    return { ok: false, message: "Lots of people on this network just shared — try again in a minute." };
+  }
+  // Past the per-card limit the details are still kept, held: the owner sees the person,
+  // nothing reaches their contacts.
+  let cardLimited = false;
+  try {
+    await consumeBucket("cardShareCard", card.cardId, RATE_LIMITS.cardShareCard);
+  } catch (err) {
+    if (!isRateLimitedError(err)) throw err;
+    console.warn("[card-share] card rate-limited", { cardId: card.cardId });
+    track("card_share_limited", { reason: "card" }, { actor: "system" });
+    cardLimited = true;
+  }
+
+  const { fields } = cleanAgentContactFields({
+    fullName: data.name,
+    company: data.company,
+    title: data.title,
+    linkedinUrl: data.linkedinUrl,
+  });
+  const fullName = cleanSingleLine(fields.fullName, 120);
+  if (!fullName) return { ok: false, message: "Please fix the highlighted fields.", fieldErrors: { name: "Add your name." } };
+  const message = data.message ? sanitizeAgentText(data.message).trim().slice(0, 500) || null : null;
+  const linkedinUrl = safeHttpUrl(fields.linkedinUrl) ?? undefined;
+
+  const db = await getDb();
+  const event = await liveEventFor(card.ownerId);
+  // The share row first, keyed by the form's nonce: a replayed submit stops here. Held until
+  // resolved below, so a crash in between leaves an honest row.
+  const [share] = await db
+    .insert(cardShares)
+    .values({
+      userId: card.ownerId,
+      cardId: card.cardId,
+      nonce: data.nonce,
+      name: fullName,
+      email: email ?? null,
+      phone: phone ?? null,
+      company: fields.company ?? null,
+      title: fields.title ?? null,
+      linkedinUrl: linkedinUrl ?? null,
+      message,
+      eventId: event?.id ?? null,
+      status: "held" satisfies CardShareStatus,
+    })
+    .onConflictDoNothing({ target: [cardShares.cardId, cardShares.nonce] })
+    .returning();
+  if (!share) return { ok: true };
+
+  auditUntrustedWrite(card.ownerId, "card.share", "message", message);
+  auditUntrustedWrite(card.ownerId, "card.share", "fields", [fullName, fields.company, fields.title].filter(Boolean).join("\n"));
+
+  if (cardLimited) return { ok: true };
+
+  await resolveArrival(card.ownerId, share.id, { fullName, email, phone, company: fields.company, title: fields.title, linkedinUrl }, event);
+  return { ok: true };
+}
+
+/**
+ * Resolves a saved share to the owner's contact and, when there is one, writes the fixed
+ * timeline line and the event link. Shared by the share-back and the owner's "Add to
+ * contacts" on a held arrival. A resolve that throws leaves the row held.
+ */
+export async function resolveArrival(
+  ownerId: string,
+  shareId: string,
+  input: ContactInput,
+  event: { id: string; title: string } | null
+): Promise<CardShareStatus> {
+  const db = await getDb();
+  let resolved: { contactId: string | null; status: CardShareStatus } = { contactId: null, status: "held" };
+  try {
+    resolved = await (resolveForTests ?? resolveUntrusted)(ownerId, input);
+  } catch (err) {
+    // The details are already saved on the share row; held keeps them in front of the owner.
+    reportError(err, { where: "card.shareBack.resolve" });
+  }
+  await db
+    .update(cardShares)
+    .set({ status: resolved.status, contactId: resolved.contactId })
+    .where(and(eq(cardShares.id, shareId), eq(cardShares.userId, ownerId)));
+
+  if (resolved.contactId) {
+    try {
+      await logNoteInteractionForUser(
+        ownerId,
+        {
+          contactId: resolved.contactId,
+          rawNotes: event ? `${SHARED_TEXT} at ${event.title}` : SHARED_TEXT,
+          interactionType: event ? "event" : "note",
+          source: "card",
+          externalId: `card:${shareId}`,
+        },
+        // Fixed text, so nothing worth a brief refresh or an embedding on the owner's budget.
+        { skipSummary: true, skipEmbedding: true, skipRevalidate: true }
+      );
+      if (event) await recordMetAtEvent(ownerId, event.id, [resolved.contactId], { source: "card", byName: false });
+    } catch (err) {
+      reportError(err, { where: "card.shareBack.log" });
+    }
+  }
+  return resolved.status;
+}
+
+/**
+ * The owner's contact for an untrusted arrival. Matches on email/phone only; a match is
+ * returned untouched. Otherwise creates one (or holds it, at a cap) without claiming the
+ * LinkedIn slug and without merging anything.
+ */
+export async function resolveUntrusted(
+  userId: string,
+  input: ContactInput
+): Promise<{ contactId: string | null; status: CardShareStatus }> {
+  const db = await getDb();
+  const keys = identityKeysFor({ email: input.email, phone: input.phone });
+  const oldest = await oldestOwner(userId, await findIdentityOwners(userId, keys));
+  if (oldest) return { contactId: oldest, status: "matched" };
+
+  const [{ added }] = await db
+    .select({ added: count() })
+    .from(cardShares)
+    .where(
+      and(
+        eq(cardShares.userId, userId),
+        eq(cardShares.status, "added"),
+        isNotNull(cardShares.contactId),
+        gt(cardShares.createdAt, sql`now() - interval '24 hours'`)
+      )
+    );
+  if (added >= DAILY_CARD_CONTACTS || (await contactHeadroomForUser(userId)) === 0) {
+    return { contactId: null, status: "held" };
+  }
+
+  const { linkedinUrl, ...rest } = input;
+  let contactId: string;
+  try {
+    // Without linkedinUrl: createContactForUser claims every identity key it can see, and a
+    // stranger's pasted URL must not capture the real person's future imports.
+    const created = await createContactForUser(
+      userId,
+      { ...rest, source: "card" },
+      { settleClaims: false, skipSummary: true, skipEmbedding: true, skipRevalidate: true }
+    );
+    contactId = created.id;
+  } catch (err) {
+    // Lost the cap to a concurrent create.
+    if (isPaywallError(err)) return { contactId: null, status: "held" };
+    throw err;
+  }
+
+  // The lookup above is read-then-create: a concurrent share of the same email can claim it
+  // first, leaving this contact with no identity rows — which the deploy-time identity
+  // backfill would later fill in, LinkedIn slug included. Seconds old, nothing points at it
+  // yet (no interaction, no suggestion), so it goes and the arrival is the winner's.
+  const winner = await oldestOwner(userId, (await findIdentityOwners(userId, keys)).filter((o) => o.contactId !== contactId));
+  if (winner) {
+    await db.delete(contacts).where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+    return { contactId: winner, status: "matched" };
+  }
+  if (linkedinUrl) {
+    await db
+      .update(contacts)
+      .set({ linkedinUrl })
+      .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+  }
+
+  const lookalikes = await nameMatchesFor(userId, contactId, rest);
+  await recordDuplicateSuggestions(
+    userId,
+    lookalikes.map((m) => ({ contactIdA: contactId, contactIdB: m.contact.id, reason: m.reason, confidence: m.confidence }))
+  );
+  return { contactId, status: "added" };
+}
+
+/** The oldest of the contacts holding these identities, by (created_at, id). */
+async function oldestOwner(userId: string, owners: IdentityOwner[]): Promise<string | null> {
+  if (!owners.length) return null;
+  const db = await getDb();
+  const [row] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, [...new Set(owners.map((o) => o.contactId))])))
+    .orderBy(asc(contacts.createdAt), asc(contacts.id))
+    .limit(1);
+  return row?.id ?? null;
+}

@@ -150,6 +150,8 @@ const nextConfig: NextConfig = {
       "./src/app/api/interest-list/ticket-image/fonts/*",
       "./public/landing/planets/*.png",
     ],
+    // The Orbit Card's link preview borrows the ticket's vendored Fraunces.
+    "/c/\\[slug\\]/image": ["./src/app/api/interest-list/ticket-image/fonts/Fraunces-Regular.ttf"],
   },
   // Dev logs every Server Function call with its arguments by default, which prints the
   // API keys a person saves in Settings (saveAiSettings, saveOutreachSettings) into the

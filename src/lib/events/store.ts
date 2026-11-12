@@ -544,11 +544,18 @@ export async function attendeeIdsByIdentityKey(userId: string, eventId: string, 
  *
  * A contact already on the roster — linked to it, or sharing its LinkedIn URL, email or exact
  * name with an unlinked row — is linked to that row, so a ticked guest never becomes a second
- * line. Everyone else is added (source `capture`) and linked. Either way the row ends with
+ * line (`byName: false` drops the exact-name match, for callers whose people are unverified).
+ * Everyone else is added (source `capture` unless `opts.source`) and linked. Either way the row ends with
  * `contact_id` set and `spoke_to = 1`, which is what "People you met", events-together and
  * repeat people all read.
  */
-export async function recordMetAtEvent(userId: string, eventId: string, contactIds: string[]): Promise<number> {
+export async function recordMetAtEvent(
+  userId: string,
+  eventId: string,
+  contactIds: string[],
+  opts: { source?: AttendeeSource; byName?: boolean } = {}
+): Promise<number> {
+  const { source = "capture", byName = true } = opts;
   if (contactIds.length === 0) return 0;
   await assertEventOwnedBy(userId, eventId);
   const db = await getDb();
@@ -588,7 +595,7 @@ export async function recordMetAtEvent(userId: string, eventId: string, contactI
           !taken.has(r.id) &&
           ((norm(r.linkedinUrl) && norm(r.linkedinUrl) === norm(person.linkedinUrl)) ||
             (norm(r.email) && norm(r.email) === norm(person.email)) ||
-            (norm(r.fullName) && norm(r.fullName) === norm(person.fullName)))
+            (byName && norm(r.fullName) && norm(r.fullName) === norm(person.fullName)))
       );
     if (row) {
       taken.add(row.id);
@@ -607,7 +614,7 @@ export async function recordMetAtEvent(userId: string, eventId: string, contactI
     added.push({ ...person, identityKey });
   }
   if (added.length) {
-    await upsertEventAttendees(userId, eventId, added, "capture");
+    await upsertEventAttendees(userId, eventId, added, source);
     for (const row of await attendeeRowsByIdentityKey(userId, eventId, [...keyToContact.keys()])) {
       links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
     }

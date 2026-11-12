@@ -109,6 +109,8 @@ export const BOTID_PROTECTED_POSTS = [
   { path: "/interest", method: "POST" },
   { path: "/", method: "POST" },
   { path: "/waitlist/*", method: "POST" },
+  // The public Orbit Card: its share-back form posts a server action from `/c/<slug>`.
+  { path: "/c/*", method: "POST" },
 ];
 
 /**
@@ -274,6 +276,7 @@ export const STEALTH_HIDDEN_API = ["/api/v1/openapi.json"] as const;
  *   start either: the sub-paths bounce back to `/sign-up`, which bounces to the waitlist.
  * - `/scan/`: the phone half of note scanning, authenticated by a token in the path and
  *   opened by an existing user's own phone.
+ * - `/c/`: a user's public Orbit Card, opened by strangers who scanned their QR code.
  * - `/.well-known/` and `/__clerk/`: machine endpoints (OAuth discovery, Clerk's proxy).
  * - `/<BOTID_PATH_PREFIX>/`: Vercel BotID's script and proxy, which `/interest`'s join
  *   needs while stealth leaves that page open (no waitlist host).
@@ -282,6 +285,7 @@ export const STEALTH_OPEN_PREFIXES = [
   "/sign-in",
   "/sign-up/",
   "/scan/",
+  "/c/",
   "/.well-known/",
   "/__clerk/",
   `/${BOTID_PATH_PREFIX}/`,

@@ -47,6 +47,8 @@ const USER = fakeUserId("merge-coverage");
  * `table.column` keys.
  */
 const DELIBERATE: Record<string, string> = {
+  "card_shares.contact_id":
+    "an arrival keeps what the visitor typed; if its contact is merged away the link goes null and the row still lists on /card",
   "contact_touch_counts.contact_id":
     "derived, never written by the app: the interactions triggers move the loser's tallies to the winner as its interactions move, and the loser's row cascades with it",
   // 4f: every pair naming the loser is resolved by the merge itself; repointing would collide.

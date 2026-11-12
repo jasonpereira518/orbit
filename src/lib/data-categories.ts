@@ -20,6 +20,7 @@ export type DataCategory =
   | "connections"
   | "events"
   | "goals"
+  | "card"
   | "chat"
   | "recruiters"
   | "api"
@@ -86,6 +87,12 @@ export const DATA_CATEGORY_META: readonly DataCategoryMeta[] = [
     id: "goals",
     label: "Networking goals",
     description: "The goals you set for yourself, used to steer suggestions.",
+  },
+  {
+    id: "card",
+    label: "Orbit Card",
+    description:
+      "Your shareable contact card and everything people sent back through it. Contacts those shares created stay.",
   },
   {
     id: "chat",

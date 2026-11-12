@@ -4436,6 +4436,79 @@ export const captureHandoffs = pgTable(
   ]
 );
 
+/** Which parts of the owner's profile their Orbit Card shows. Name is always shown. */
+export type CardFields = {
+  photo: boolean;
+  role: boolean;
+  headline: boolean;
+  linkedin: boolean;
+  email: boolean;
+  phone: boolean;
+  website: boolean;
+  location: boolean;
+};
+
+/** What happened to a card share: made a contact, matched an existing one, or waits for review. */
+export type CardShareStatus = "added" | "matched" | "held";
+
+/** One personal contact card per person, reached by its slug. */
+export const shareCards = pgTable(
+  "share_cards",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    slug: text("slug").notNull(),
+    fields: jsonb("fields").$type<CardFields>().notNull(),
+    phone: text("phone"),
+    tagline: text("tagline"),
+    /** Bumped by "Shuffle my stars": part of the card art's seed (see lib/cards/card-art.ts). */
+    artSalt: integer("art_salt").notNull().default(0),
+    /** One of `ACCENTS` (lib/cards/card-art.ts); null = picked from the seed. */
+    accent: text("accent"),
+    /** Set while the card is switched off; the link then shows nothing. */
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("share_cards_user_uidx").on(t.userId),
+    uniqueIndex("share_cards_slug_uidx").on(t.slug),
+  ]
+);
+
+/** What a visitor sent back through a card. Untrusted: never edits an existing contact. */
+export const cardShares = pgTable(
+  "card_shares",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    cardId: uuid("card_id")
+      .notNull()
+      .references(() => shareCards.id, { onDelete: "cascade" }),
+    /** Makes a retried submit land once. */
+    nonce: text("nonce").notNull(),
+    contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    eventId: uuid("event_id").references(() => events.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    email: text("email"),
+    phone: text("phone"),
+    company: text("company"),
+    title: text("title"),
+    linkedinUrl: text("linkedin_url"),
+    message: text("message"),
+    ownerNote: text("owner_note"),
+    status: text("status").$type<CardShareStatus>().notNull(),
+    visitorUserId: text("visitor_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("card_shares_card_nonce_uidx").on(t.cardId, t.nonce),
+    index("card_shares_user_created_idx").on(t.userId, t.createdAt.desc()),
+    index("card_shares_contact_idx").on(t.contactId).where(sql`contact_id IS NOT NULL`),
+    index("card_shares_event_idx").on(t.eventId).where(sql`event_id IS NOT NULL`),
+  ]
+);
+
 /**
  * A durable capture: one paste, recording, scan or meeting on its way to becoming
  * contacts. The /capture page is a view over this row, so navigating away, reloading or

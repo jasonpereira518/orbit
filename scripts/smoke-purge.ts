@@ -82,6 +82,15 @@ async function seed() {
 
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
   await db.insert(schema.chatMemories).values({ userId: USER, text: "raising a seed round" });
+  const [card] = await db
+    .insert(schema.shareCards)
+    .values({
+      userId: USER,
+      slug: "purge-smoke-card",
+      fields: { photo: true, role: true, headline: true, linkedin: true, email: false, phone: false, website: false, location: false },
+    })
+    .returning();
+  await db.insert(schema.cardShares).values({ userId: USER, cardId: card.id, nonce: "purge-smoke", name: "Grace Hopper", status: "held" });
 
   const [feedbackRow] = await db
     .insert(schema.feedback)

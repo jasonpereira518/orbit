@@ -47,7 +47,9 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // contact's work history needs another web search, reading the stored job history and short
 // summaries of the user's notes and messages since the last check (never the notes, an email
 // address or a phone number), and may judge an unsure search's public answer to be someone else.
-export const TERMS_VERSION = "2026-11-11";
+// 2026-11-11.2: Orbit card — fields you switch on are public via your card link; details shared
+// back are stored in your Orbit only.
+export const TERMS_VERSION = "2026-11-11.2";
 export const LEGAL_LAST_UPDATED = "November 11, 2026";
 
 /**

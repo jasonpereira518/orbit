@@ -90,6 +90,8 @@ const BUCKET_LABELS: Record<string, string> = {
   // Scope strings some call sites pass verbatim (dotted / kebab). Keyed by the literal scope
   // rather than renaming the scope, which would reset those buckets' counters.
   contactForm: "contact form",
+  cardShare: "card share",
+  cardShareCard: "card share (per card)",
   "interest.join": "sign-up",
   "interest.name": "sign-up",
   "interest.welcome": "welcome email",
@@ -278,6 +280,14 @@ export const RATE_LIMITS = {
   emailIntelExtractDaily: { limit: 40, windowSec: 86_400 },
   /** `/contact`: sends on Orbit's own Resend key. Per IP, shared across instances. */
   contactForm: { limit: 3, windowSec: 600 },
+  /**
+   * A visitor sending their details back through someone's card (`shareBackCore`). Public and
+   * account-free, and each one can create a contact on the owner's account. Sixty an hour per
+   * IP: a venue's Wi-Fi puts a whole room behind one address.
+   */
+  cardShare: { limit: 60, windowSec: 3600 },
+  /** The same, per card: loose, because a speaker's card is scanned by a room at once. */
+  cardShareCard: { limit: 200, windowSec: 3600 },
   /**
    * `submitFeedback`: a form post carrying up to three screenshots. Generous per
    * submission, tight per window — this is the largest row a user can create directly,

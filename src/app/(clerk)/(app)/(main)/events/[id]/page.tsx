@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, QrCode } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EventHero } from "@/components/events/event-hero";
 import { AttendeeRoster, type RosterMatch } from "@/components/events/attendee-roster";
@@ -22,6 +22,9 @@ import {
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { requireUserId } from "@/lib/auth";
+import { liveEventFor } from "@/lib/cards/live-event";
+import { isSurfaceLive } from "@/lib/surface-visibility";
+import { buttonVariants } from "@/components/ui/button";
 import { userTimeZone } from "@/lib/meeting-context";
 import { ymdInZone } from "@/lib/reminder-due-bucket";
 import { offsetMinutes } from "@/lib/events/wall-clock";
@@ -126,7 +129,14 @@ export default async function EventDetailPage({
   const event = await loadEvent(id);
   if (!event) notFound();
 
-  const zone = await userTimeZone(await requireUserId());
+  const userId = await requireUserId();
+  const [zone, liveEvent, cardLive] = await Promise.all([
+    userTimeZone(userId),
+    liveEventFor(userId),
+    isSurfaceLive(userId, "page.card"),
+  ]);
+  // Only while the owner is at this event: that is when someone is standing in front of them.
+  const showCardLink = cardLive && liveEvent?.id === event.id;
   const eventDay = event.startsAt
     ? new Date(event.startsAt.getTime() + (offsetMinutes(event.timezone, event.startsAt) ?? 0) * 60_000)
         .toISOString()
@@ -159,6 +169,12 @@ export default async function EventDetailPage({
 
       {/* Themed Event Hero Banner */}
       <EventHero event={event} />
+
+      {showCardLink ? (
+        <Link href="/card/show" className={buttonVariants({ variant: "outline" })}>
+          <QrCode aria-hidden /> Share your card
+        </Link>
+      ) : null}
 
       {event.enrichError ? (
         <p className="rounded-xl border border-border/70 bg-card px-4 py-3 text-sm text-muted-foreground">

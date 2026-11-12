@@ -2136,6 +2136,40 @@ CREATE TABLE IF NOT EXISTS capture_handoffs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS capture_handoffs_token_uidx ON capture_handoffs(token_hash);
 CREATE INDEX IF NOT EXISTS capture_handoffs_expiry_idx ON capture_handoffs(expires_at);
+CREATE TABLE IF NOT EXISTS share_cards (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  slug text NOT NULL,
+  fields jsonb NOT NULL,
+  phone text,
+  tagline text,
+  paused_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS share_cards_user_uidx ON share_cards(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS share_cards_slug_uidx ON share_cards(slug);
+CREATE TABLE IF NOT EXISTS card_shares (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  card_id uuid NOT NULL REFERENCES share_cards(id) ON DELETE CASCADE,
+  nonce text NOT NULL,
+  contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  event_id uuid REFERENCES events(id) ON DELETE SET NULL,
+  name text NOT NULL,
+  email text,
+  phone text,
+  company text,
+  title text,
+  linkedin_url text,
+  message text,
+  owner_note text,
+  status text NOT NULL,
+  visitor_user_id text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS card_shares_card_nonce_uidx ON card_shares(card_id, nonce);
+CREATE INDEX IF NOT EXISTS card_shares_user_created_idx ON card_shares(user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS capture_jobs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3169,7 +3203,14 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 228 = Radar's "new suggestions" pulse: user_settings.radar_opened_at — when the person last
 // opened /radar; pending cards created after it make the nav icon pulse. Scanned every remote
 // ref and local worktree on Nov 11 2026: contact sharing holds 226 and 227.
-export const SCHEMA_VERSION = 228;
+//
+// 230 = the Orbit Card, in one bump: share_cards + card_shares (a personal contact card shared
+// by QR/link, and what visitors send back; built as 223, then 226) and share_cards.art_salt +
+// share_cards.accent (the card's artwork: Shuffle my stars and the accent colour,
+// docs/superpowers/specs/2026-11-11-orbit-card-design-ui.md; built as 228). Moved to 230 on the
+// Nov 12 2026 main merge: main took 228 (Radar's radar_opened_at) and custom constellations
+// (#636) holds 229. Scanned every remote ref: 229 was the highest claimed.
+export const SCHEMA_VERSION = 230;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3400,6 +3441,9 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS outcome text NOT NULL DEFAULT 'starting'`,
   `CREATE INDEX IF NOT EXISTS orbit_voice_sessions_user_idx ON orbit_voice_sessions(user_id)`,
   `CREATE INDEX IF NOT EXISTS orbit_voice_sessions_thread_idx ON orbit_voice_sessions(thread_id)`,
+  // --- v230 (built as 226): Orbit Card — FK lookups so deleting a contact/event does not scan card_shares ---
+  `CREATE INDEX IF NOT EXISTS card_shares_contact_idx ON card_shares(contact_id) WHERE contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS card_shares_event_idx ON card_shares(event_id) WHERE event_id IS NOT NULL`,
   // --- v62: meeting-notes workflow ---------------------------------------------------
   //
   // A cadence the notes actually stated ("check in monthly"). Days, because every consumer
@@ -4666,6 +4710,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v182: which model made a stored vector.
   await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
   await ensureColumn(client, "memory_chunks", "embedding_model", "text");
+  // v230 (built as 228): the Orbit Card's artwork.
+  await ensureColumn(client, "share_cards", "art_salt", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "share_cards", "accent", "text");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -5649,6 +5696,9 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_enabled_at timestamptz`,
   // Schema v228: when the person last opened /radar (the nav pulse's "new since").
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_opened_at timestamptz`,
+  // Schema v230 (built as 228): the Orbit Card's artwork — the salt Shuffle bumps, and the chosen accent.
+  `ALTER TABLE share_cards ADD COLUMN IF NOT EXISTS art_salt integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE share_cards ADD COLUMN IF NOT EXISTS accent text`,
 ];
 
 /**

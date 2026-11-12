@@ -37,6 +37,8 @@ import {
   aiResultCache,
   chatMessages,
   chatMemories,
+  shareCards,
+  cardShares,
   chatThreads,
   orbitVoiceSessions,
   closenessCohorts,
@@ -499,6 +501,15 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     counts: [userGoals],
     run: async (db, userId) => {
       await db.delete(userGoals).where(eq(userGoals.userId, userId));
+    },
+  },
+  card: {
+    exports: [own(shareCards), own(cardShares)],
+    counts: [shareCards, cardShares],
+    run: async (db, userId) => {
+      // card_shares cascades from share_cards, but both carry user_id, so say so.
+      await db.delete(cardShares).where(eq(cardShares.userId, userId));
+      await db.delete(shareCards).where(eq(shareCards.userId, userId));
     },
   },
   chat: {
