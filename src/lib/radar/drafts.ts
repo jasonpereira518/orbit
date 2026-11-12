@@ -24,8 +24,9 @@ import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 
 /** Kinds a message is the answer to. Prep is a meeting to get ready for; an opportunity, a role. */
 export const RADAR_DRAFT_KINDS: readonly RecommendationKind[] = ["reach_out", "reconnect", "follow_up", "heads_up"];
+/** The most drafts one weekly build writes; the plan's own `draftsPerWeek` is usually lower. */
 export const RADAR_DRAFTS_PER_RUN = 5;
-/** A draft is not started with less than this left, so the why-lines still get a turn. */
+/** A draft is not started with less than this left, so a slow provider costs drafts, not the run. */
 const DRAFT_MIN_REMAINING_MS = 6_000;
 const DRAFT_MAX = 2_000;
 
@@ -47,7 +48,7 @@ export function draftChannel(target: Pick<DraftTarget, "reasons" | "hasEmail">):
   return target.hasEmail ? "email" : "linkedin";
 }
 
-async function loadDraftTargets(userId: string): Promise<DraftTarget[]> {
+async function loadDraftTargets(userId: string, limit: number): Promise<DraftTarget[]> {
   const db = await getDb();
   const rows = rowsOf<{
     id: string;
@@ -64,11 +65,11 @@ async function loadDraftTargets(userId: string): Promise<DraftTarget[]> {
         JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
        WHERE r.user_id = ${userId}
          AND r.status IN ('pending', 'auto_applied')
-         AND r.bucket = 'today'
          AND r.kind IN (${sql.join(RADAR_DRAFT_KINDS.map((k) => sql`${k}`), sql`, `)})
          AND (r.draft IS NULL OR r.draft ->> 'inputsHash' IS DISTINCT FROM r.inputs_hash)
-       ORDER BY r.score DESC, r.id
-       LIMIT ${RADAR_DRAFTS_PER_RUN}
+       -- The week's plan, Today's moments first: the cards most likely to be acted on.
+       ORDER BY (r.bucket = 'today') DESC, r.score DESC, r.id
+       LIMIT ${Math.min(limit, RADAR_DRAFTS_PER_RUN)}
     `)
   );
   return rows.map((r) => ({
@@ -82,11 +83,16 @@ async function loadDraftTargets(userId: string): Promise<DraftTarget[]> {
 }
 
 /**
- * Write drafts for this run's Today cards that lack a current one. Sequential, stopping
- * when the shared deadline is near. Returns how many were written. Never throws.
+ * Write drafts for the week's plan (Today's moments first) that lack a current one, at most
+ * `limit` (the plan's `draftsPerWeek`). Sequential, stopping when the shared deadline is near.
+ * Returns how many were written. Never throws.
  */
-export async function draftTodayForRun(userId: string, access: AiAccess, opts: { deadline: number }): Promise<number> {
-  const targets = await loadDraftTargets(userId);
+export async function draftTodayForRun(
+  userId: string,
+  access: AiAccess,
+  opts: { deadline: number; limit?: number }
+): Promise<number> {
+  const targets = await loadDraftTargets(userId, opts.limit ?? RADAR_DRAFTS_PER_RUN);
   if (targets.length === 0) return 0;
   const [goals, writingInstructions] = await Promise.all([
     listActiveGoalTextsForUser(userId, { limit: 8 }),

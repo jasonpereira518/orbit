@@ -638,6 +638,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-feature-tools": "pglite",
   "smoke-chat-answer-deadline": "pglite",
   "smoke-eval-research-task": "pglite",
+  "smoke-eval-radar-editor-task": "pglite",
   "smoke-agent-sends": "pglite",
   "smoke-dashboard-aggregates": "pglite",
   "smoke-dashboard-parity": "pglite",

@@ -112,5 +112,12 @@
     "inventedItems": { "maxRise": 0 },
     "silentOnTrivial": { "maxDrop": 0 },
     "planAccuracy": { "maxDrop": 0.05 }
+  },
+  "radar-editor": {
+    "replyUsable": { "maxDrop": 0 },
+    "whyCoverage": { "maxDrop": 0.05 },
+    "inventedFacts": { "maxRise": 0 },
+    "injectionHeld": { "maxDrop": 0 },
+    "goalOrder": { "maxDrop": 0.1 }
   }
 }

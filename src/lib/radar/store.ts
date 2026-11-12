@@ -258,6 +258,7 @@ export async function writeRunResult(
               expiresAt: r.expiresAt,
               runId,
               inputsHash: r.inputsHash,
+              aiNote: r.aiNote ?? null,
               suggestedCalendarInvite: r.suggestedCalendarInvite ?? null,
               discoveredPerson: r.discoveredPerson ?? null,
               createdAt: now,
@@ -283,9 +284,10 @@ export async function writeRunResult(
               runId: sql`excluded.run_id`,
               suggestedCalendarInvite: sql`coalesce(excluded.suggested_calendar_invite, ${recommendations.suggestedCalendarInvite})`,
               discoveredPerson: sql`coalesce(excluded.discovered_person, ${recommendations.discoveredPerson})`,
-              // Every SET expression reads the OLD row, so this compares the stored hash
-              // with the new one before the new one is written.
-              aiNote: sql`case when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
+              // The editor's fresh note wins. Otherwise every SET expression reads the OLD row,
+              // so this compares the stored hash with the new one before the new one is written,
+              // and keeps the old note only while the facts it was written from are unchanged.
+              aiNote: sql`case when excluded.ai_note is not null then excluded.ai_note when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
               inputsHash: sql`excluded.inputs_hash`,
               updatedAt: sql`excluded.updated_at`,
             },

@@ -33,6 +33,7 @@ import {
   JOB_MOVE_CODE,
   KIND_PRIORITY,
   leadReason,
+  type RadarAiNote,
   type RadarCalendarInvite,
   type RadarDiscoveredPerson,
   type RadarEvidence,
@@ -225,6 +226,8 @@ export type RadarPick = {
   /** What the AI rerank moved the score by, and its one-line angle. Unset without it. */
   aiDelta?: number | null;
   aiAngle?: string | null;
+  /** The editor's why and opener, tied to this card's facts. Unset without the editor. */
+  aiNote?: RadarAiNote | null;
   bucket: RecommendationBucket;
   reasons: RadarReason[];
   evidence: RadarEvidence[];

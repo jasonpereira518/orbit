@@ -44,12 +44,12 @@ import {
 } from "@/lib/radar/store";
 import type { RadarModel, RadarRunTrigger, RadarSignal } from "@/lib/radar/types";
 import { buildRadarModel } from "@/lib/radar/model";
-import { RADAR_RERANK_TIMEOUT_MS, rerankPicks, rerankUnchanged } from "@/lib/radar/rerank";
+import { RADAR_EDITOR_TIMEOUT_MS, editPicks, editorUnchanged } from "@/lib/radar/editor";
 import { applyAutopilot, loadRadarAutopilot } from "@/lib/radar/autopilot";
 import { draftTodayForRun } from "@/lib/radar/drafts";
 import { loadPostSignals } from "@/lib/radar/signals/activity";
 import { produceEmailSignals } from "@/lib/radar/signals/email";
-import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
+import { openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
 import { runSettledPool } from "@/lib/sync-scheduler";
@@ -77,15 +77,17 @@ const RETRY_AFTER_MS = 6 * HOUR_MS;
 /** A page view older than this since the last run refreshes in the background. */
 export const RADAR_STALE_MS = 24 * HOUR_MS;
 /**
- * The most a run spends on AI, shared in order: the rerank (at most
- * `RADAR_RERANK_TIMEOUT_MS`), then Today's drafts, then the why-lines with whatever is left.
+ * The most a weekly build spends on AI, shared in order: the editor (at most
+ * `RADAR_EDITOR_TIMEOUT_MS`), which orders the plan and writes each card's why and opener in
+ * one call, then the plan-gated drafts with whatever is left. A daily pass spends none.
  */
 export const RADAR_AI_BUDGET_MS = 25_000;
 /**
- * The AI rerank's off switch. If `/admin/analytics/radar` shows cards it moved up are not
- * accepted more often than cards it moved down, it is noise: turn it off here.
+ * The editor's off switch. If `/admin/analytics/radar` shows cards it moved up are not
+ * accepted more often than cards it moved down, it is noise: turn it off here, and the plan
+ * keeps the scorer's order and reasons (a card's why can still be asked for on demand).
  */
-export const RADAR_RERANK_ENABLED = true;
+export const RADAR_EDITOR_ENABLED = true;
 
 export type RadarRunOptions = {
   trigger: RadarRunTrigger;
@@ -395,14 +397,16 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const { plan: userPlan } = resolvePlan(settingsRow, now);
         const radarLimits = getRadarLimitsForPlan(userPlan);
 
-        // Active projects: extract/refresh only when AI is available (or seed from goals once)
+        // Active projects: refreshed on the weekly build only. The model reads recent notes and
+        // mail only on plans with AI explanations; otherwise projects are seeded from goals, no AI.
         let activeProjects: UserProject[] = initialProjects;
+        const projectAi = radarLimits.aiExplanations ? access : null;
         if (
           settingsRow?.autoProjects !== 0 &&
-          (opts.trigger === "schedule" || opts.trigger === "manual") &&
-          (access || (activeProjects.length === 0 && goals.length > 0))
+          mode === "weekly" &&
+          (projectAi || (activeProjects.length === 0 && goals.length > 0))
         ) {
-          activeProjects = await extractActiveProjectsForUser(userId, access ?? undefined, {
+          activeProjects = await extractActiveProjectsForUser(userId, projectAi ?? undefined, {
             since: settingsRow?.lastRunAt ?? undefined,
             goals,
             existingProjects: activeProjects,
@@ -452,18 +456,21 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         stats.unproven = verified.dropped;
 
         let ranked: NewRecommendation[] = picks;
-        if (access && RADAR_RERANK_ENABLED && radarLimits.aiExplanations) {
+        // The editor: once a week, it orders the verified picks and writes each card's why and
+        // opener in one call. A daily pass leaves the plan's words as they are.
+        if (mode === "weekly" && access && RADAR_EDITOR_ENABLED && radarLimits.aiExplanations) {
           const profiles = new Map(candidates.map((c) => [c.id, { title: c.title, company: c.company, tier: c.tier }]));
-          const result = await rerankPicks(userId, access, picks, { goals, profiles }, now, {
-            timeoutMs: Math.min(RADAR_RERANK_TIMEOUT_MS, Math.max(1_000, aiDeadline - Date.now())),
+          const result = await editPicks(userId, access, picks, { goals, profiles }, now, {
+            timeoutMs: Math.min(RADAR_EDITOR_TIMEOUT_MS, Math.max(1_000, aiDeadline - Date.now())),
           }).catch((err) => {
-            reportUnlessQuiet(err, { where: "job.radar.rerank", userId, level: "warning" });
-            return rerankUnchanged(picks, "failed");
+            reportUnlessQuiet(err, { where: "job.radar.editor", userId, level: "warning" });
+            return editorUnchanged(picks, "failed");
           });
           ranked = result.picks;
           stats.reranked = result.adjusted;
           stats.rerankFailed = result.status === "failed";
           stats.rerankCached = result.status === "cached";
+          stats.aiNotes = result.noted;
         }
 
         // Weekly: build the plan (and Today's moments) from scratch. Daily: keep the plan's rows
@@ -489,18 +496,11 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           stats.autopilot = await applyAutopilot(userId, autopilot, now);
         }
 
-        // Drafts for Today's cards, then the why-lines with whatever budget is left.
-        if (access && !deadlineReached(aiDeadline)) {
-          stats.drafts = await draftTodayForRun(userId, access, { deadline: aiDeadline }).catch((err) => {
+        // Drafts written ahead, on the weekly build only and only as many as the plan allows
+        // (Free none: a draft is written when the person asks for one).
+        if (mode === "weekly" && access && radarLimits.draftsPerWeek > 0 && !deadlineReached(aiDeadline)) {
+          stats.drafts = await draftTodayForRun(userId, access, { deadline: aiDeadline, limit: radarLimits.draftsPerWeek }).catch((err) => {
             reportUnlessQuiet(err, { where: "job.radar.draft", userId, level: "warning" });
-            return 0;
-          });
-        }
-        if (access && !deadlineReached(aiDeadline) && radarLimits.aiExplanations) {
-          stats.aiNotes = await explainTopForRun(userId, access, {
-            budgetMs: Math.max(1_000, aiDeadline - Date.now()),
-          }).catch((err) => {
-            reportUnlessQuiet(err, { where: "job.radar.why", userId, level: "warning" });
             return 0;
           });
         }
