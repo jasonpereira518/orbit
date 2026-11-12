@@ -38,6 +38,10 @@
   "smoke-admin-export.ts": [
     "src/app/api/admin/export/route.ts"
   ],
+  "smoke-admin-refresh.ts": [
+    "src/actions/admin.ts",
+    "src/lib/admin-refresh-jobs.ts"
+  ],
   "smoke-agent-sends.ts": [
     "src/lib/agent-sends.ts",
     "src/lib/mcp/server.ts",
