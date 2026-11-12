@@ -484,7 +484,7 @@ test("admin persists provider and model choices without redeployment", async ({
   );
   await page
     .getByLabel("ElevenLabs speech model")
-    .selectOption("eleven_turbo_v2_5");
+    .selectOption("eleven_turbo_v2");
   await page.getByRole("button", { name: "Save voice settings" }).click();
   await expect
     .poll(
@@ -495,7 +495,7 @@ test("admin persists provider and model choices without redeployment", async ({
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(provider).toHaveValue("elevenlabs");
   await expect(page.getByLabel("ElevenLabs speech model")).toHaveValue(
-    "eleven_turbo_v2_5",
+    "eleven_turbo_v2",
   );
   await untilHydrated(
     async () => {

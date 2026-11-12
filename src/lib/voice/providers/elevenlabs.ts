@@ -1,5 +1,5 @@
 import { UserFacingError } from "@/lib/errors";
-import { isSafeVoiceAgent } from "../agent-config";
+import { agentOverrides, isSafeVoiceAgent } from "../agent-config";
 import type { VoiceConfig } from "../config";
 import type { VoiceCredentials } from "../contracts";
 export async function elevenCredentials(
@@ -15,7 +15,15 @@ export async function elevenCredentials(
       signal: AbortSignal.timeout(10000),
     },
   );
-  const agent = agentResponse.ok ? await agentResponse.json() : null;
+  // Say WHY in the log (reportError in voiceCredentials): a deleted agent or an ID from another
+  // workspace is a 404, and the person only ever sees the generic "couldn't connect" line.
+  if (agentResponse.status === 404)
+    throw new Error(
+      "ElevenLabs agent not found (HTTP 404): ELEVENLABS_AGENT_ID doesn't exist for this API key's workspace. Run scripts/setup-orbit-voice.ts --create and update the ID.",
+    );
+  if (!agentResponse.ok)
+    throw new Error(`ElevenLabs agent lookup failed (HTTP ${agentResponse.status})`);
+  const agent = await agentResponse.json();
   const toolIds: unknown = agent?.conversation_config?.agent?.prompt?.tool_ids;
   let resolvedTools: unknown[] | undefined;
   if (toolIds !== undefined && toolIds !== null) {
@@ -66,7 +74,7 @@ export async function elevenCredentials(
   )
     throw new Error("Invalid ElevenLabs session response");
 
-  const overrides = agent?.platform_settings?.overrides?.tts;
+  const overrides = agentOverrides(agent)?.tts;
   const tts: { modelId?: string; voiceId?: string } = {};
   if (overrides?.model_id === true) tts.modelId = config.elevenlabs.ttsModel;
   else if (

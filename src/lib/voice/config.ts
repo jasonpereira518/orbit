@@ -54,10 +54,17 @@ export const DEEPGRAM_VOICES = [
   "aura-2-zeus-en",
 ] as const;
 export const DEEPGRAM_THINK_MODELS = ["gpt-4o-mini", "gpt-4o"] as const;
+/**
+ * ElevenLabs only accepts the English v2 models for an English agent ("English Agents must use
+ * turbo or flash v2"); the _v2_5 models are its multilingual line and fail agent creation.
+ */
 export const ELEVEN_TTS_MODELS = [
-  "eleven_flash_v2_5",
-  "eleven_turbo_v2_5",
+  "eleven_flash_v2",
+  "eleven_turbo_v2",
 ] as const;
+/** Configs saved before the switch said `_v2_5`; read them as the matching English v2 model. */
+const englishTtsModel = (v: unknown) =>
+  typeof v === "string" ? v.replace(/_v2_5$/, "_v2") : v;
 export const voiceConfigSchema = z
   .object({
     provider: z.enum(VOICE_PROVIDERS).default("deepgram"),
@@ -80,9 +87,9 @@ export const voiceConfigSchema = z
           .max(64)
           .regex(/^[a-zA-Z0-9_-]*$/)
           .default(""),
-        ttsModel: z.enum(ELEVEN_TTS_MODELS).default("eleven_flash_v2_5"),
+        ttsModel: z.preprocess(englishTtsModel, z.enum(ELEVEN_TTS_MODELS).default("eleven_flash_v2")),
       })
-      .default({ voiceId: "", ttsModel: "eleven_flash_v2_5" }),
+      .default({ voiceId: "", ttsModel: "eleven_flash_v2" }),
   })
   .strict();
 export type VoiceConfig = z.infer<typeof voiceConfigSchema>;
