@@ -332,6 +332,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-shared-avatar-writes": "pglite",
   "smoke-shared-avatar-upkeep": "pglite",
   "smoke-shared-avatar-takedown": "pglite",
+  "smoke-email-avatars": "pglite",
   "smoke-legal-pages": "pure",
   "smoke-landing-anchors": "pure",
   "smoke-landing-cards": "pure",

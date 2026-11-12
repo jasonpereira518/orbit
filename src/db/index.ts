@@ -1732,6 +1732,14 @@ CREATE TABLE IF NOT EXISTS linkedin_avatars (
   blocked_by text
 );
 CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at);
+CREATE TABLE IF NOT EXISTS email_avatars (
+  email_hash text PRIMARY KEY,
+  image_url text,
+  source text NOT NULL,
+  resolved_at timestamptz NOT NULL DEFAULT now(),
+  blocked_at timestamptz,
+  blocked_by text
+);
 CREATE TABLE IF NOT EXISTS public_work_history (
   slug text PRIMARY KEY,
   answer jsonb,
@@ -3180,7 +3188,10 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // person's own off switch for the email Radar sends when a Today item won't keep (PR 9b).
 // Scanned remote refs on Nov 12 2026: custom constellations (youthful-herschel) holds 232 and
 // the Orbit Card / planet PR (#635) will need 233, so this takes 234.
-export const SCHEMA_VERSION = 234;
+// 236 = the email photo pool (admin refresh plan, PR 2): email_avatars (global, keyed by sha256 of
+// the lowercased trimmed address; public Gravatar lookups only) and contacts_email_lower_idx.
+// Scanned remote refs and local worktrees on Nov 12 2026: #655 (outreach) holds 235.
+export const SCHEMA_VERSION = 236;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3601,6 +3612,8 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS contacts_user_last_touch_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
+  // Schema v236: contacts by address across accounts (the email photo pool, the admin People list).
+  `CREATE INDEX IF NOT EXISTS contacts_email_lower_idx ON contacts(lower(email)) WHERE email IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
   // Both of these back a foreign key that had no index: deleting a company or a tag was a
   // full scan of the referencing table.

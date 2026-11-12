@@ -59,13 +59,13 @@ import {
   AVATAR_BACKFILL_BATCH_SIZE,
   AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
-  fetchGravatarPhotoUrl,
   isLinkedInProfilePhoto,
   isUnusableAvatarUrl,
   AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
 import {
   adoptPhotoIntoSharedPool,
+  resolveGravatarCached,
   resolveLinkedInPhotoCached,
   sharedPhotoSlug,
   type ProfileImageSource,
@@ -757,7 +757,7 @@ export async function createContactDetailed(input: ContactInput) {
       await resolveAvatarNow(db, userId, contactId, {
         persistRemote: downloadAndPersistAvatar,
         resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
-        resolveGravatar: fetchGravatarPhotoUrl,
+        resolveGravatar: resolveGravatarCached,
         deadline: Date.now() + 2500,
       });
     } catch {
@@ -1259,7 +1259,7 @@ export async function backfillContactAvatars(
         persistRemote: downloadAndPersistAvatar,
         resolveConnectedAccount,
         resolveLinkedIn: (contactId, url) => resolveLinkedInPhotoCached(contactId, url, userId),
-        resolveGravatar: fetchGravatarPhotoUrl,
+        resolveGravatar: resolveGravatarCached,
         resolveApollo,
         sourcesUnavailable,
         save: async (contactId, photoUrl, source) => {
@@ -1608,13 +1608,12 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         // Gravatar fallback by email
         if (!profileImageUrl && !sharedPhoto && contact.email) {
           try {
-            const gravatarUrl = await fetchGravatarPhotoUrl(contact.id, contact.email);
-            if (gravatarUrl) {
-              const persisted = await downloadAndPersistAvatar(contact.id, gravatarUrl);
-              if (persisted) {
-                profileImageUrl = persisted;
-                profileImageSource = "gravatar";
-              }
+            const gravatar = await resolveGravatarCached(contact.id, contact.email);
+            if (typeof gravatar === "string") {
+              profileImageUrl = gravatar;
+              profileImageSource = "gravatar";
+            } else if (gravatar) {
+              sharedPhoto = true;
             }
           } catch {
             // Gravatar miss is normal
