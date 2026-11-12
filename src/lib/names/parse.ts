@@ -24,7 +24,7 @@ function capWord(w: string): string {
 export function splitName(fullName: string | null | undefined): { firstName: string | null; lastName: string | null } {
   const parts = (fullName ?? "").trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return { firstName: null, lastName: null };
-  return { firstName: parts[0]!, lastName: parts.length > 1 ? parts.slice(1).join(" ") : null };
+  return { firstName: parts[0], lastName: parts.length > 1 ? parts.slice(1).join(" ") : null };
 }
 
 export function formatPersonName(raw: string | null | undefined): PersonName | null {
@@ -45,14 +45,14 @@ export function formatPersonName(raw: string | null | undefined): PersonName | n
     const tail = commas.slice(1).map(bare);
     const trailing = tail.every((t) => t.split(/\s+/).every((w) => GENERATIONAL.has(w) || CREDENTIALS.has(w)));
     if (trailing) n = [commas[0], ...commas.slice(1).filter((t) => GENERATIONAL.has(bare(t)))].join(" ");
-    else if (commas.length === 2 && commas[0]!.split(" ").length <= 2 && commas[1]!.split(" ").length <= 2) {
+    else if (commas.length === 2 && commas[0].split(" ").length <= 2 && commas[1].split(" ").length <= 2) {
       n = `${commas[1]} ${commas[0]}`;
     }
   }
 
   let words = n.split(" ");
-  while (words.length > 1 && HONORIFICS.has(bare(words[0]!))) words.shift();
-  while (words.length > 1 && CREDENTIALS.has(bare(words[words.length - 1]!))) words.pop();
+  while (words.length > 1 && HONORIFICS.has(bare(words[0]))) words.shift();
+  while (words.length > 1 && CREDENTIALS.has(bare(words[words.length - 1]))) words.pop();
 
   // Recase only a name typed all one case; "McKinsey" and "DeShawn" are kept as written.
   const letters = words.join("").replace(/[^\p{L}]/gu, "");
@@ -61,7 +61,7 @@ export function formatPersonName(raw: string | null | undefined): PersonName | n
     words = words.map((w, i) => {
       const b = bare(w);
       if (i > 0 && PARTICLES.has(b)) return b;
-      if (GENERATIONAL.has(b)) return b === "jr" || b === "sr" ? `${b[0]!.toUpperCase()}${b[1]}.` : b.toUpperCase();
+      if (GENERATIONAL.has(b)) return b === "jr" || b === "sr" ? `${b[0].toUpperCase()}${b[1]}.` : b.toUpperCase();
       return capWord(w);
     });
   }

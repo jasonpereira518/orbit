@@ -31,7 +31,7 @@ export const ROUND_TRIP_HOSTS: ReadonlySet<string> = new Set([
 /** A Host header (or bare host) reduced to the form `referrerHost()` produces: no port, no `www.`. */
 export function bareHost(host: string | null | undefined): string | null {
   if (!host) return null;
-  return host.split(",")[0]!.trim().split(":")[0]!.replace(/^www\./, "").toLowerCase() || null;
+  return host.split(",")[0].trim().split(":")[0].replace(/^www\./, "").toLowerCase() || null;
 }
 
 /** The host a Clerk publishable key encodes (`pk_live_<base64("clerk.example.com$")>`). */

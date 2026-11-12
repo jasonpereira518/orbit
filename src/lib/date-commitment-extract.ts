@@ -12,6 +12,7 @@
 
 import { z } from "zod";
 import { completeJson } from "@/lib/ai";
+import { startOfLocalDay } from "@/lib/dates";
 import { MONTHS, atLocalNoon } from "@/lib/interaction-date";
 import { resolveRelativeDate, type DateBasis } from "@/lib/relative-date";
 import { containsVerbatim, normalizeForMatch } from "@/lib/verbatim";
@@ -273,12 +274,6 @@ export function deriveMonthDay(phrase: string): MonthDay | null {
   return null;
 }
 
-function startOfDay(d: Date) {
-  const out = new Date(d);
-  out.setHours(0, 0, 0, 0);
-  return out;
-}
-
 /**
  * Resolves to a concrete date. When the note stated no year we take the nearest FUTURE
  * occurrence — the opposite of `parseInteractionDateFromNotes`, which assumes a past
@@ -296,7 +291,7 @@ function resolveDate(md: MonthDay, today: Date) {
 
   const d = new Date(today.getFullYear(), md.month, md.day, 12, 0, 0, 0);
   if (Number.isNaN(d.getTime()) || d.getMonth() !== md.month) return null;
-  if (d < startOfDay(today)) {
+  if (d < startOfLocalDay(today)) {
     d.setFullYear(today.getFullYear() + 1);
   }
   return { date: d, yearInferred: true };
@@ -332,7 +327,7 @@ export function validateCommitments(
   const seen = new Set<string>();
 
   const haystack = normalizeForMatch(notes);
-  const todayStart = startOfDay(today);
+  const todayStart = startOfLocalDay(today);
 
   for (const item of rawItems) {
     const phrase = item.raw_date_phrase.trim();

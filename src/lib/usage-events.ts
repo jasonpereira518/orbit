@@ -5,6 +5,7 @@ import { estimateCostMicros } from "@/lib/ai-pricing";
 import { classifyAiError } from "@/lib/errors";
 import { settleManagedUsage } from "@/lib/credits/ledger";
 import type { AiProvider } from "@/lib/ai-providers";
+import { reportError } from "@/lib/report-error";
 
 export type UsageKind =
   | "completion"
@@ -119,6 +120,7 @@ export function usageRow(rec: UsageRecord) {
     outputTokens: rec.outputTokens ?? null,
     cachedInputTokens: rec.cachedInputTokens ?? null,
     estimatedCostMicros: surcharge > 0 ? (base ?? 0) + surcharge : base,
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- keeps the literal union when the row is spread into the insert
     costSource: (reported === null ? "estimated" : "reported") as "estimated" | "reported",
     webSearches: rec.webSearches ?? null,
     success: rec.success ? 1 : 0,
@@ -147,7 +149,13 @@ export function recordUsage(rec: UsageRecord): void {
     try {
       await settleManagedUsage(row);
     } catch (err) {
-      console.error("[credits] settling a managed call did not complete", err);
+      // Fire-and-forget, but a failed settlement leaves the credit ledger out of step with real
+      // spend, so it is an error (not a throttled warning).
+      reportError(err, {
+        where: "lib.usage.settle-managed",
+        userId: rec.userId,
+        extra: { operation: rec.operation, provider: rec.provider },
+      });
     }
   };
 

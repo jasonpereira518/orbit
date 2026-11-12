@@ -59,7 +59,7 @@ const CHAIN_WINDOWS = [
 const CROSSINGS_BY_STAR: Record<string, number[]> = (() => {
   const map: Record<string, number[]> = {};
   DIPPER_CHAINS.forEach((chain, i) => {
-    const [a, b] = CHAIN_WINDOWS[i]!;
+    const [a, b] = CHAIN_WINDOWS[i];
     const segs = Math.max(1, chain.length - 1);
     chain.forEach((id, j) => {
       const t = a + (j / segs) * (b - a);

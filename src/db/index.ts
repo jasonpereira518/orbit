@@ -12,7 +12,8 @@ import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
 import { RELATED_SQL_LOWER } from "@/lib/related-contacts";
 import { AI_DERIVED_SOURCE, EXCHANGE_TOUCH_TYPES, MEETING_TOUCH_TYPES, NOTE_TOUCH_TYPES, sqlList } from "@/lib/touch-kinds";
-import { createHash, randomUUID } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -4090,7 +4091,7 @@ export function schemaFingerprint(): string {
     const statements = [DDL, ...SCALE_DDL, ...alters]
       .map((s) => s.replace(/\s+/g, " ").trim())
       .filter(Boolean);
-    fingerprintMemo = createHash("sha256").update(statements.join("\n")).digest("hex");
+    fingerprintMemo = sha256Hex(statements.join("\n"));
   }
   return fingerprintMemo;
 }
@@ -4730,7 +4731,7 @@ const ADMIN_V2_STATEMENTS = [
  */
 export function rowsOf<T>(result: unknown): T[] {
   if (Array.isArray(result)) return result as T[];
-  return ((result as { rows?: T[] } | null)?.rows ?? []) as T[];
+  return ((result as { rows?: T[] } | null)?.rows ?? []);
 }
 
 export function isPgvectorAvailable() {
@@ -6182,7 +6183,7 @@ export async function runAtomicWrite(
   };
 
   if (typeof batchable.batch === "function") {
-    const statements = build(db as unknown as AtomicWriter);
+    const statements = build(db);
     if (!statements.length) return;
     await batchable.batch(statements);
     return;
@@ -6192,7 +6193,7 @@ export async function runAtomicWrite(
   await local.transaction(async (tx) => {
     // Awaited one at a time on purpose: these are ordered writes (delete-then-insert),
     // and a `Promise.all` would let the driver interleave them.
-    for (const statement of build(tx as unknown as AtomicWriter)) {
+    for (const statement of build(tx)) {
       await (statement as unknown as Promise<unknown>);
     }
   });
@@ -6216,15 +6217,15 @@ export async function runAtomicBatch(
     batch?: (statements: AtomicStatement[]) => Promise<unknown[]>;
   };
   if (typeof batchable.batch === "function") {
-    const statements = build(db as unknown as AtomicWriter);
+    const statements = build(db);
     if (!statements.length) return [];
     return batchable.batch(statements);
   }
   const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
   return local.transaction(async (tx) => {
     const results: unknown[] = [];
-    for (const statement of build(tx as unknown as AtomicWriter)) {
-      results.push(await (statement as unknown as Promise<unknown>));
+    for (const statement of build(tx)) {
+      results.push(await (statement as unknown));
     }
     return results;
   });

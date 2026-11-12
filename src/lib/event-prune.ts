@@ -1,6 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { errorEvents, usageEvents } from "@/db/schema";
+import { type errorEvents, usageEvents } from "@/db/schema";
 import { MANAGED_AI_POOLS, poolWindowStart } from "@/lib/managed-ai-policy";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
 

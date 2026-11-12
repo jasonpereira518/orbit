@@ -77,7 +77,7 @@ export function visibleEntries<T extends PaletteEntry>(entries: T[], hidden: Rea
     if (entry.settingsId && hidden.has(surfaceKeyForSettingsId(entry.settingsId))) return false;
     if (entry.surface && hidden.has(entry.surface)) return false;
     if (!entry.href) return true;
-    const path = entry.href.split(/[?#]/)[0]!;
+    const path = entry.href.split(/[?#]/)[0];
     const surface = surfaceForPathname(path);
     return !surface || !hidden.has(surface.key);
   });
@@ -93,7 +93,7 @@ export function visibleEntries<T extends PaletteEntry>(entries: T[], hidden: Rea
  */
 export function isComingSoonEntry(entry: Pick<PaletteEntry, "href">, soon: ReadonlySet<string>): boolean {
   if (!entry.href) return false;
-  const surface = surfaceForPathname(entry.href.split(/[?#]/)[0]!);
+  const surface = surfaceForPathname(entry.href.split(/[?#]/)[0]);
   return surface !== null && soon.has(surface.key);
 }
 
@@ -128,5 +128,5 @@ export function looksLikeNote(query: string): boolean {
  */
 export function emailVerbTerm(query: string): string | null {
   const m = /^\s*(?:e-?mail|mail)\s+(\S.*?)\s*$/i.exec(query);
-  return m ? m[1]!.replace(/\s+/g, " ") : null;
+  return m ? m[1].replace(/\s+/g, " ") : null;
 }

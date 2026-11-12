@@ -206,7 +206,7 @@ export async function runEventSyncPass(
         error instanceof EventbriteAuthError ||
         error instanceof IcsFeedGoneError
       ) {
-        await markNeedsReauth(conn.id, (error as Error).message).catch(
+        await markNeedsReauth(conn.id, (error).message).catch(
           reportAndContinue({ where: "job.event-sync.mark-reauth", userId: conn.userId }, undefined)
         );
         continue;

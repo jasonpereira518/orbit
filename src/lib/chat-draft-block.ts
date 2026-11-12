@@ -47,16 +47,16 @@ function openOf(line: string): { channel: DraftChannel; contactId: string | null
   const m = OPEN.exec(line);
   if (!m) return null;
   const to = /\bto=([^\s]+)/i.exec(m[2] ?? "")?.[1] ?? null;
-  return { channel: m[1]!.toLowerCase() as DraftChannel, contactId: to && UUID.test(to) ? to.toLowerCase() : null };
+  return { channel: m[1].toLowerCase() as DraftChannel, contactId: to && UUID.test(to) ? to.toLowerCase() : null };
 }
 
 /** The subject line and body of an email block's inner lines; a LinkedIn note is all body. */
 function partsOf(channel: DraftChannel, inner: string[]): { subject: string; body: string } {
   if (channel === "linkedin") return { subject: "", body: inner.join("\n").trim() };
   const first = inner.findIndex((l) => l.trim() !== "");
-  const m = first >= 0 ? /^[ \t]*subject[ \t]*:[ \t]*(.*)$/i.exec(inner[first]!) : null;
+  const m = first >= 0 ? /^[ \t]*subject[ \t]*:[ \t]*(.*)$/i.exec(inner[first]) : null;
   if (!m) return { subject: "", body: inner.join("\n").trim() };
-  return { subject: m[1]!.replace(/\s+/g, " ").trim(), body: inner.slice(first + 1).join("\n").trim() };
+  return { subject: m[1].replace(/\s+/g, " ").trim(), body: inner.slice(first + 1).join("\n").trim() };
 }
 
 export type DraftFence = DraftParts & {
@@ -76,7 +76,7 @@ export function readDraftFence(lines: readonly string[], at: number): DraftFence
   const open = openOf(lines[at] ?? "");
   if (!open) return null;
   let end = at + 1;
-  while (end < lines.length && !CLOSE.test(lines[end]!)) end++;
+  while (end < lines.length && !CLOSE.test(lines[end])) end++;
   const closed = end < lines.length;
   const { subject, body } = partsOf(open.channel, lines.slice(at + 1, end));
   return {
@@ -112,7 +112,7 @@ export function draftBlocksIn(text: string): Array<DraftFence & { index: number;
         continue;
       }
     }
-    if (ANY_FENCE.test(lines[i]!)) fenced = !fenced;
+    if (ANY_FENCE.test(lines[i])) fenced = !fenced;
     i++;
   }
   return out;

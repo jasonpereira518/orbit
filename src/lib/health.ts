@@ -1,10 +1,12 @@
 import { sql } from "drizzle-orm";
+import { reportError } from "@/lib/report-error";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { SCHEMA_VERSION, getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { errorEvents, opsAlertState } from "@/db/schema";
 import { ERROR_SOURCES } from "@/lib/error-events";
 import { getEnvReport } from "@/lib/env";
 import { getCronHealth, getSystemIssues, isSweepQuiet, recentWebhookOutcomes } from "@/lib/admin-system";
+import { TimeoutError, withTimeout } from "@/lib/async";
 
 /**
  * The health probe behind `GET /api/health`.
@@ -62,16 +64,6 @@ export type HealthReport = {
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 
-class TimeoutError extends Error {}
-
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new TimeoutError("timed out")), ms);
-  });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
-}
-
 /** The recorded schema version, via one statement on the real database. */
 async function probeSchemaVersion(): Promise<{ recorded: number | null }> {
   const db = await getDb();
@@ -100,7 +92,8 @@ export async function probeStatementTimeout(): Promise<string | null> {
 async function section<T>(work: () => Promise<T>, ms: number): Promise<T | null> {
   try {
     return await withTimeout(work(), ms);
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.health.section", level: "warning" });
     return null;
   }
 }
@@ -127,6 +120,7 @@ export async function checkHealth(options: {
     if (recorded === null || recorded < SCHEMA_VERSION) reason = "schema_mismatch";
     else if (recorded > SCHEMA_VERSION) ahead = true;
   } catch (err) {
+    reportError(err, { where: "admin.health.db-probe", level: "warning" });
     reason = err instanceof TimeoutError ? "db_timeout" : "db_error";
   }
   const latencyMs = reason === "db_error" || reason === "db_timeout" ? null : Date.now() - started;
@@ -171,7 +165,7 @@ export async function checkHealth(options: {
         );
       return row?.n ?? 0;
     }, timeoutMs),
-    section(async () => Boolean(await isPgvectorAvailable()), timeoutMs),
+    section(async () => isPgvectorAvailable(), timeoutMs),
     section(probeStatementTimeout, timeoutMs),
   ]);
 

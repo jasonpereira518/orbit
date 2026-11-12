@@ -75,7 +75,7 @@ export function localClock(now: Date, tz: string): { weekday: number; hour: numb
 /** The ISO 8601 week of a calendar day, as "2026-W40". */
 export function isoWeekOf(ymd: string): string {
   const [y, m, d] = ymd.split("-").map(Number);
-  const date = new Date(Date.UTC(y!, m! - 1, d!));
+  const date = new Date(Date.UTC(y, m - 1, d));
   // Thursday decides the year a week belongs to.
   date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
   const year = date.getUTCFullYear();
@@ -282,8 +282,8 @@ export async function loadDigestContent(userId: string): Promise<DigestContent |
   const finds = await listOpenOpportunities(userId, new Date(), 20).catch(() => []);
   const events = finds.filter((f) => f.kind === "event");
   return {
-    total: Number(rows[0]!.total),
-    drafts: Number(rows[0]!.drafts),
+    total: Number(rows[0].total),
+    drafts: Number(rows[0].drafts),
     finds: finds.length
       ? {
           events: events.length,

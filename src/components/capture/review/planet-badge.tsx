@@ -57,7 +57,7 @@ function PlanetSphere({ planet }: { planet: PlanetDef }) {
       <picture className="block size-full">
         <source type="image/avif" srcSet={`/landing/planets/${planet.id}.avif`} />
         <source type="image/webp" srcSet={`/landing/planets/${planet.id}.webp`} />
-        {/* eslint-disable-next-line @next/next/no-img-element -- static art in three formats; next/image cannot pick */}
+        { }
         <img
           src={`/landing/planets/${planet.id}.png`}
           alt=""

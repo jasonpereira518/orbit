@@ -618,7 +618,7 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
     await deleteOpportunityForUser(userId, s(input.opportunityId));
   },
   async restore_opportunity_fields(userId, input) {
-    const changed = await updateOpportunityForUser(userId, s(input.opportunityId), (input.patch ?? {}) as Record<string, string | null>);
+    const changed = await updateOpportunityForUser(userId, s(input.opportunityId), (input.patch ?? {}));
     if (!changed) throw new UserFacingError("That opportunity is gone — it may have been deleted");
   },
   async restore_opportunity(userId, input) {
@@ -629,7 +629,7 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
     if (!restored) throw new UserFacingError("Radar has a newer card for that person now");
   },
   async restore_campaign_wording(userId, input) {
-    const changed = await updateCampaignWordingForUser(userId, s(input.campaignId), (input.wording ?? {}) as CampaignWording);
+    const changed = await updateCampaignWordingForUser(userId, s(input.campaignId), (input.wording ?? {}));
     if (!changed) throw new UserFacingError("That campaign is gone — it may have been deleted");
   },
   async restore_outreach_draft(userId, input) {
@@ -644,7 +644,7 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
     await removeMyLinkForUser(userId, s(input.recruiterId));
   },
   async restore_recruiter_link(userId, input) {
-    const changed = await updateMyLinkForUser(userId, s(input.recruiterId), (input.patch ?? {}) as RecruiterLinkPatch);
+    const changed = await updateMyLinkForUser(userId, s(input.recruiterId), (input.patch ?? {}));
     if (!changed) throw new UserFacingError("You no longer have that recruiter logged");
   },
   async restore_meeting_title(userId, input) {

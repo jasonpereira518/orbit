@@ -45,7 +45,38 @@ function answerFor(body) {
     };
   }
   if (rest.includes("You extract dated commitments")) return { commitments: [] };
+  // A chat thread's name: the first words of the question, so two threads read differently.
+  if (rest.includes("You name a conversation")) {
+    const first = user.replace(/^First message:\s*/, "").split(/\s+/).slice(0, 4).join(" ");
+    return { title: first || "Stub chat" };
+  }
   return {};
+}
+
+/** The streamed chat answer: prose in two chunks, quoting the question so turns can be told apart. */
+function chatAnswerFor(body) {
+  const user = userTextOf(body);
+  const asked = user.match(/(?:Question|User question|question):\s*(.+)/)?.[1]?.trim().slice(0, 80) ?? "";
+  return ["Stub answer: your network ", `has people worth a note. (re: ${asked})`];
+}
+
+/** An Anthropic Messages stream (server-sent events) carrying `chunks` as one text block. */
+function streamAnthropic(res, body, chunks) {
+  const send = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  send("message_start", {
+    message: {
+      id: "msg_e2e_stub", type: "message", role: "assistant", content: [], stop_reason: null, stop_sequence: null,
+      model: typeof body?.model === "string" ? body.model : "claude-3-5-haiku-latest",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  });
+  send("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
+  for (const text of chunks) send("content_block_delta", { index: 0, delta: { type: "text_delta", text } });
+  send("content_block_stop", { index: 0 });
+  send("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } });
+  send("message_stop", {});
+  res.end();
 }
 
 function reply(res, status, payload) {
@@ -62,6 +93,7 @@ createServer((req, res) => {
     let body = {};
     try { body = JSON.parse(raw); } catch { /* an unreadable body gets the empty answer */ }
     if (req.method === "POST" && /\/v1\/messages(?:\?|$)/.test(req.url ?? "")) {
+      if (body?.stream === true) return streamAnthropic(res, body, chatAnswerFor(body));
       return reply(res, 200, {
         id: "msg_e2e_stub",
         type: "message",
