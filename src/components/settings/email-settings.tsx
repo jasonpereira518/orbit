@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { saveDefaultSendProviderAction, saveEmailSignatureAction } from "@/actions/settings";
 import { ConnectMailboxButton } from "@/components/email/connect-mailbox-button";
 import { MailboxSelect } from "@/components/email/mailbox-select";
@@ -32,8 +33,8 @@ export function EmailSettings({
   const [saved, setSaved] = useState(initial?.signature ?? "");
   const [text, setText] = useState(initial?.signature ?? "");
   const [capability, setCapability] = useState<SendCapability | null>(initial?.capability ?? null);
-  const [pending, start] = useTransition();
-  const [switching, startSwitch] = useTransition();
+  const [pending, start] = useGuardedTransition();
+  const [switching, startSwitch] = useGuardedTransition();
 
   function chooseDefault(id: MailboxId) {
     startSwitch(async () => {

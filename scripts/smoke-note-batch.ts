@@ -223,26 +223,69 @@ async function main() {
   try { await undoNoteBatchForUser("someone-else", first.batchId); } catch { refused = true; }
   check("undo is user-scoped", refused);
 
-  // 6. A throw mid-loop must not orphan the batch: the first participant's write already
-  // landed with this batch's noteBatchId, so the partial result must be persisted for undo
-  // and the results page to find, even though saveNoteBatch itself rejects.
+  // 6. Honesty under failure (audit H-05). Three properties:
+  //    (a) a participant with no name and no merge target is refused BEFORE anything is
+  //        written — the common failure never leaves a half-saved batch;
+  //    (b) a throw mid-loop (a merge target deleted between parse and save) persists the
+  //        partial result for undo and the results page, and marks the batch `failed`, never
+  //        `saved`;
+  //    (c) the failed batch can be resumed: the people that landed are skipped, the rest are
+  //        written, and the batch row is reused, so one capture is one history entry.
   const priorBatchIds = new Set((await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).map((b) => b.id));
-  const partial = input(miraId);
-  partial.participants[1] = { ...partial.participants[1], parsed: { ...partial.participants[1].parsed, name: null }, mergeContactId: null };
+  const nameless = input(miraId);
+  nameless.participants[1] = { ...nameless.participants[1], parsed: { ...nameless.participants[1].parsed, name: null }, mergeContactId: null };
   let threw = false;
+  try {
+    await saveNoteBatch(USER, nameless);
+  } catch {
+    threw = true;
+  }
+  check("a nameless participant with no merge target is refused", threw);
+  check(
+    "  before any batch row is written",
+    (await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).every((b) => priorBatchIds.has(b.id))
+  );
+
+  const contactsBeforePartial = (await db.query.contacts.findMany({ where: eq(contacts.userId, USER) })).length;
+  const partial = input(miraId);
+  partial.sourceText = "Partial note: Sarah, Dev and Mira.";
+  partial.sourceHash = hashSourceNote(partial.sourceText);
+  // Participant 2 merges into a contact that no longer exists: the write throws mid-loop.
+  partial.participants[1] = { ...partial.participants[1], mergeContactId: "00000000-0000-4000-8000-000000000000" };
+  threw = false;
   try {
     await saveNoteBatch(USER, partial);
   } catch {
     threw = true;
   }
-  check("partial batch: throws when a participant has no name and no merge target", threw);
-  const batchesAfter = await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) });
-  const partialBatch = batchesAfter.find((b) => !priorBatchIds.has(b.id));
+  check("partial batch: throws when a merge target is gone", threw);
+  const partialBatch = (await db.query.noteBatches.findMany({ where: eq(noteBatches.userId, USER) })).find((b) => !priorBatchIds.has(b.id));
+  check("  the batch is marked failed, never saved", partialBatch?.status === "failed", partialBatch?.status);
   check(
-    "  the failed batch persists the partial result (first participant only)",
+    "  and persists the partial result (first participant only)",
     partialBatch !== undefined && partialBatch.result.participants.length === 1,
     JSON.stringify(partialBatch?.result.participants)
   );
+
+  // (c) The person fixes the card (the merge target is dropped) and the save resumes.
+  const fixed = input(miraId);
+  fixed.sourceText = partial.sourceText;
+  fixed.sourceHash = partial.sourceHash;
+  const resumed = await saveNoteBatch(USER, fixed, { resumeBatchId: partialBatch!.id });
+  const resumedRow = await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, partialBatch!.id) });
+  check("resume reuses the failed batch's row", resumed.batchId === partialBatch!.id);
+  check("  and the batch ends up saved", resumedRow?.status === "saved", resumedRow?.status);
+  check("  with every participant in the result", resumed.result.participants.length === fixed.participants.length, String(resumed.result.participants.length));
+  check(
+    "  the person saved by the first attempt is not created twice",
+    (await db.query.contacts.findMany({ where: eq(contacts.userId, USER) })).length === contactsBeforePartial + fixed.participants.length,
+    String((await db.query.contacts.findMany({ where: eq(contacts.userId, USER) })).length)
+  );
+  check(
+    "  and keeps the first attempt's contact id for them",
+    resumed.result.participants[0]?.contactId === partialBatch!.result.participants[0]?.contactId
+  );
+  check("a resume of a batch that is not failed is refused", await saveNoteBatch(USER, fixed, { resumeBatchId: partialBatch!.id }).then(() => false, () => true));
 
   // 7. Collision: an action item whose title collides with a dated commitment for the same
   //    contact (due dates within the collision window) must not also get its own window

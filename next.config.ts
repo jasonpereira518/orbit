@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs/config";
 import { withBotId } from "botid/next/config";
@@ -13,9 +15,48 @@ import {
 import { CAPTURE_BODY_SIZE_LIMIT } from "./src/lib/capture-limits";
 import { adminRedirects } from "./src/lib/admin-redirects";
 
+/**
+ * Cache policy for the images in `public/`. Next serves them `max-age=0` (revalidate on every
+ * load), and they are not fingerprinted, so they cannot be `immutable`. Without this, every
+ * revisit to the landing page spent a conditional request on each of its ten hero images,
+ * and each one is a round trip before the art can paint. A day fresh plus a week of
+ * stale-while-revalidate keeps updates flowing: the first view after a change may show the
+ * old file, the next shows the new one.
+ *
+ * Scoped by directory AND extension on purpose. `/waitlist/<slug>` is a page and `/imports`
+ * is a redirect, so a bare directory match would cache routes; `orbit-sw.js` and the audio
+ * worklet are not listed, because a service worker must always be re-checked.
+ */
+const STATIC_IMAGE_CACHE = "public, max-age=86400, stale-while-revalidate=604800";
+const staticAssetCaching = [
+  "/landing/:file(.+\\.(?:avif|png|webp))",
+  "/guides/:file(.+\\.png)",
+  "/avatars/:file(.+\\.png)",
+  "/integrations/:file(.+\\.png)",
+  "/imports/:file(.+\\.webp)",
+  "/waitlist/:file(.+\\.(?:png|webp|gif))",
+  "/orbit-logo.png",
+].map((source) => ({ source, headers: [{ key: "Cache-Control", value: STATIC_IMAGE_CACHE }] }));
+
+const realNodeModulesDir = (() => {
+  try {
+    const target = fs.realpathSync(path.join(import.meta.dirname, "node_modules"));
+    if (target !== path.join(import.meta.dirname, "node_modules")) {
+      return target;
+    }
+  } catch {}
+  return null;
+})();
+
 const nextConfig: NextConfig = {
   // No `X-Powered-By: Next.js`: the exact framework is no one's business but ours.
   poweredByHeader: false,
+  // On Vercel the type-check is `npm run typecheck:fast` (TypeScript 7, ~4x faster), run
+  // ahead of the build by vercel.json, so a type error fails in seconds instead of after the
+  // compile, and Next's own pass (~90s on the 2-core build machine, serial after the compile)
+  // is skipped. Everywhere else it stays on: CI's required `typecheck · lint · build` job runs
+  // tsc and then a full `next build`. Its package is scripts/ts7 (why it is not the root one).
+  typescript: { ignoreBuildErrors: Boolean(process.env.VERCEL) },
   // `*.bench.tsx` routes (the constellation benchmark, src/app/bench) exist only in a build
   // made with ORBIT_BENCH=1, so no deployed build ever contains them.
   pageExtensions: [
@@ -39,7 +80,7 @@ const nextConfig: NextConfig = {
     };
     const appHeaders = buildSecurityHeaders(base);
     const host = waitlistHost();
-    if (!host) return [{ source: "/(.*)", headers: appHeaders }];
+    if (!host) return [{ source: "/(.*)", headers: appHeaders }, ...staticAssetCaching];
     const match = [{ type: "host" as const, value: hostMatchValue(host) }];
     return [
       {
@@ -48,6 +89,7 @@ const nextConfig: NextConfig = {
         headers: buildSecurityHeaders({ ...base, surface: "waitlist" }),
       },
       { source: "/(.*)", missing: match, headers: appHeaders },
+      ...staticAssetCaching,
     ];
   },
   // The waitlist host serves the waitlist and nothing else. Redirects run before the proxy
@@ -158,6 +200,16 @@ const nextConfig: NextConfig = {
     // the 10MB default it silently truncates anything larger and lets the request through
     // with a partial body instead of failing. See src/lib/capture-limits.ts.
     proxyClientMaxBodySize: CAPTURE_BODY_SIZE_LIMIT,
+    ...(realNodeModulesDir
+      ? {
+          turbopackAdditionalRoots: {
+            linkedModules: {
+              path: path.dirname(realNodeModulesDir),
+              ignoreIfMissing: true,
+            },
+          },
+        }
+      : {}),
   },
   // Turbopack can fail to resolve @clerk/shared's wildcard `./*` package exports.
   turbopack: {
@@ -165,7 +217,7 @@ const nextConfig: NextConfig = {
     // walks up past the worktree's own package-lock.json, picks the main checkout's, and
     // makes THAT the project root: every worktree's dev server then covers all the others.
     // Pinned, a cold .next went from 1.6 GB to 280 MB and first compiles got ~20% faster.
-    root: import.meta.dirname,
+    root: process.env.TURBOPACK_ROOT || import.meta.dirname,
     resolveAlias: {
       "@clerk/shared/apiUrlFromPublishableKey":
         "./node_modules/@clerk/shared/dist/apiUrlFromPublishableKey.mjs",

@@ -1,44 +1,38 @@
 "use client";
 
 /**
- * Where events come from, in the order that matches what people actually want.
+ * Where events come from — set-up that should need none.
  *
- * ## Why "auto-add" is first and "host sync" is second
+ * Calendar discovery already turns platform invites in a connected Google, Outlook or iCloud
+ * calendar into events, so the one thing worth saying is whether a calendar is connected, and
+ * if not, where to connect one. Everything else is optional and sits under "More sources":
  *
- * Every platform API is host-scoped: a Luma key is minted per calendar you own and needs a
- * paid Plus plan, Eventbrite's attendees endpoint needs organiser scope, Partiful has no API
- * at all. So the APIs answer "what did I run", while almost everybody's real question is
- * "what did I go to".
- *
- * The calendar feeds answer that one, for free, with a link the platform already offers — so
- * they lead. The host APIs stay, clearly labelled as what they are, because for the people
- * who DO host, a full guest list with emails is worth far more than a list of event names.
- *
- * The limitation is stated in the UI rather than buried in docs: a "Connect Luma" button that
- * implied it would fetch the guest list of a party you attended would generate a support
- * ticket per user.
+ * - the Luma and Partiful personal calendar links, for events that never reach a calendar;
+ * - the host APIs (Luma key, Eventbrite). Every platform API is host-scoped — a Luma key is
+ *   minted per calendar you own and needs Luma Plus, Eventbrite's attendees endpoint needs
+ *   organiser scope, Partiful has no API — so they answer "what did I run", and are labelled
+ *   that way rather than implying they fetch the guest list of a party you went to.
  */
-import { useViewerPlan } from "@/components/viewer-plan";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarPlus, ChevronDown, Loader2, Mail, Plug, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { CalendarPlus, ChevronDown, Loader2, Plug, RefreshCw, Trash2, X } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/lib/toast";
 import {
   connectEventFeed,
+  connectEventbriteKey,
   connectLuma,
   disconnectEventProvider,
-  setGmailEventScan,
   startEventbriteOAuth,
+  triggerProviderSync,
 } from "@/actions/events";
 import type { EventConnectionSummary } from "@/lib/events/connections";
 import type { EventConnectionProvider } from "@/lib/events/types";
-import { describeOAuthReason, friendlyError } from "@/lib/errors";
-import { startGmailOAuth } from "@/actions/gmail";
-import type { GooglePurpose } from "@/lib/google-scopes";
+import { friendlyError } from "@/lib/errors";
 import { readOAuthReturn } from "@/lib/oauth-return";
-import { TOAST_COPY } from "@/lib/toast-copy";
+import { integrationHref } from "@/components/settings/sections";
 
 /** Where each platform hides its personal calendar link, in the fewest words that get there. */
 const FEED_HELP: Record<
@@ -84,20 +78,19 @@ const EVENTBRITE_RETURN = {
 export function EventConnectionsCard({
   connections,
   eventbriteConfigured,
-  googleMailGranted,
-  googleCalendarGranted,
+  calendarConnected,
 }: {
   connections: EventConnectionSummary[];
   eventbriteConfigured: boolean;
-  googleConnected: boolean;
-  googleMailGranted: boolean;
-  googleCalendarGranted: boolean;
+  /** A Google, Outlook or iCloud calendar is syncing, so calendar discovery is running. */
+  calendarConnected: boolean;
 }) {
-  const { planConfig } = useViewerPlan();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [apiKey, setApiKey] = useState("");
   const [showLumaField, setShowLumaField] = useState(false);
+  const [eventbriteKey, setEventbriteKey] = useState("");
+  const [showEventbriteField, setShowEventbriteField] = useState(false);
   const [feedUrl, setFeedUrl] = useState("");
   const [openFeed, setOpenFeed] = useState<"luma_ics" | "partiful_ics" | null>(null);
 
@@ -131,69 +124,7 @@ export function EventConnectionsCard({
     connections.find((c) => c.provider === provider);
   const luma = byProvider("luma");
   const eventbrite = byProvider("eventbrite");
-  const gmail = byProvider("gmail");
 
-  function connectGoogle(purpose: GooglePurpose) {
-    start(async () => {
-      try {
-        const { url } = await startGmailOAuth({ purpose, returnTo: "/events" });
-        window.location.href = url;
-      } catch (err) {
-        toast.error(friendlyError(err, TOAST_COPY.connectFailed));
-      }
-    });
-  }
-
-  function setGmailScan(enabled: boolean) {
-    if (enabled && !googleMailGranted) {
-      connectGoogle("event_mail");
-      return;
-    }
-    start(async () => {
-      const result = await setGmailEventScan(enabled);
-      if (!result.ok) {
-        toast.error(result.error ?? "Couldn’t change that — try again?");
-        return;
-      }
-      toast.success(
-        enabled
-          ? "Scanning confirmation emails — events will appear over the next few syncs"
-          : "Stopped scanning your email"
-      );
-      router.refresh();
-    });
-  }
-
-  // Google sends the person back here after consent. Toast once, then clean the URL. No
-  // server action is fired from this effect, so the replaceState cannot drop one.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const google = params.get("google");
-    if (!google) return;
-    const purpose = params.get("purpose");
-    if (google === "connected") {
-      toast.success(
-        purpose === "calendar"
-          ? "Google Calendar connected — meetings appear after the next sync"
-          : purpose === "event_mail"
-            ? "Mail access allowed — press Turn on to scan confirmation emails"
-            : "Google connected"
-      );
-    } else if (google === "error") {
-      const oauth = describeOAuthReason(params.get("reason"), "Google", purpose, planConfig);
-      if (oauth.cancelled) toast.message(oauth.message);
-      else toast.error(oauth.message);
-    }
-    for (const key of ["google", "gmail", "reason", "purpose", "switched"]) params.delete(key);
-    const next = params.toString();
-    window.history.replaceState(
-      null,
-      "",
-      `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`
-    );
-    // Once, on arrival; the params are stripped above, so a later plan table changes nothing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   function saveFeed(provider: "luma_ics" | "partiful_ics") {
     start(async () => {
       const result = await connectEventFeed(provider, feedUrl);
@@ -224,6 +155,36 @@ export function EventConnectionsCard({
       setApiKey("");
       setShowLumaField(false);
       toast.success("Luma connected — events you host will sync automatically");
+      router.refresh();
+    });
+  }
+
+  function saveEventbriteKey() {
+    start(async () => {
+      const result = await connectEventbriteKey(eventbriteKey);
+      if (!result.ok) {
+        toast.error(result.error ?? "Eventbrite didn’t accept that token");
+        return;
+      }
+      setEventbriteKey("");
+      setShowEventbriteField(false);
+      toast.success("Eventbrite connected — events you host will sync automatically");
+      router.refresh();
+    });
+  }
+
+  function syncNow(provider: EventConnectionProvider) {
+    start(async () => {
+      const result = await triggerProviderSync(provider);
+      if (!result.ok) {
+        toast.error(friendlyError(result.error, "Couldn’t sync events right now"));
+        return;
+      }
+      toast.success(
+        result.value.count > 0
+          ? `Synced — ${result.value.count} event${result.value.count === 1 ? "" : "s"} updated`
+          : "Synced — all events up to date"
+      );
       router.refresh();
     });
   }
@@ -303,105 +264,69 @@ export function EventConnectionsCard({
     );
   }
 
-  // What the collapsed row says. It is the only part most people will ever see, so it has to
-  // carry the one thing worth knowing without opening it: whether anything is broken.
+  // The one line most people will ever read on this card, so it carries whether anything
+  // under More sources is broken without being opened.
   const needsAttention = connections.filter((c) => c.status === "needs_reauth").length;
-  const summary =
-    needsAttention > 0
-      ? `${needsAttention} ${needsAttention === 1 ? "connection needs" : "connections need"} attention`
-      : connections.length > 0
-        ? `${connections.length} connected${googleCalendarGranted ? " · Google Calendar" : ""}`
-        : googleCalendarGranted
-          ? "Google Calendar · connect Luma, Partiful and more"
-          : "Connect Luma, Partiful, Gmail and more";
 
   return (
-    // Collapsed by default and at the foot of the page: this is set-up you do once, and it
-    // used to sit above the events themselves as the largest thing on the page. `<details>`
-    // with the grid-rows height transition is the pattern `network-stats-card.tsx` set.
-    <details className="group rounded-2xl border border-border/70 bg-card">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-4 py-3 transition-colors duration-fast ease-house hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
+    <div className="rounded-2xl border border-border/70 bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Plug className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <h2 className="text-sm font-medium text-ink">Where your events come from</h2>
-          <span
-            className={
-              needsAttention > 0
-                ? "truncate text-xs font-medium text-destructive"
-                : "truncate text-xs text-muted-foreground"
-            }
-          >
-            {summary}
-          </span>
+          <CalendarPlus className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <p className="text-sm text-muted-foreground">
+            {calendarConnected
+              ? "Events on your calendar show up here on their own."
+              : "Connect your calendar and the events on it show up here on their own."}
+          </p>
         </div>
-        <ChevronDown
-          className="size-4 shrink-0 text-muted-foreground transition-transform duration-slow ease-house group-open:rotate-180"
-          aria-hidden
-        />
-      </summary>
-      {/* `<details>` hides collapsed content with `content-visibility`, which would skip the
-          transition, so the panel is force-shown and the grid row does the hiding. */}
-      <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-slow ease-house group-open:grid-rows-[1fr] [content-visibility:visible]">
+        {calendarConnected ? null : (
+          <Link href={integrationHref("overview")} className={buttonVariants({ variant: "outline", size: "sm" })}>
+            Connect your calendar
+          </Link>
+        )}
+      </div>
+
+      {/* Collapsed: optional set-up you do once, if ever. `<details>` with the grid-rows height
+          transition is the pattern `network-stats-card.tsx` set. */}
+      <details className="group border-t border-border/60">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-b-2xl px-4 py-2.5 transition-colors duration-fast ease-house hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset focus-ring-fallback [&::-webkit-details-marker]:hidden">
+          <span className="flex min-w-0 items-center gap-2">
+            <Plug className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="text-sm font-medium text-ink">More sources</span>
+            <span
+              className={
+                needsAttention > 0
+                  ? "truncate text-xs font-medium text-destructive"
+                  : "truncate text-xs text-muted-foreground"
+              }
+            >
+              {needsAttention > 0
+                ? `${needsAttention} ${needsAttention === 1 ? "connection needs" : "connections need"} attention`
+                : connections.length > 0
+                  ? `${connections.length} connected`
+                  : "Luma, Partiful, Eventbrite"}
+            </span>
+          </span>
+          <ChevronDown
+            className="size-4 shrink-0 text-muted-foreground transition-transform duration-slow ease-house group-open:rotate-180"
+            aria-hidden
+          />
+        </summary>
+        {/* `<details>` hides collapsed content with `content-visibility`, which would skip the
+            transition, so the panel is force-shown and the grid row does the hiding. */}
+        <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-slow ease-house group-open:grid-rows-[1fr] [content-visibility:visible]">
       <div className="overflow-hidden">
       <div className="space-y-3 border-t border-border/60 px-4 pb-4 pt-3">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Events you go to
         </p>
         <p className="-mt-2 text-sm text-muted-foreground">
-          Paste your personal calendar link once and every event you&rsquo;re confirmed for shows
-          up here — not the ones you&rsquo;re waitlisted, pending or invited to. A connected
-          Google Calendar already does this for invites that land in it.
+          For events that never reach your calendar: paste your personal calendar link once and
+          every event you&rsquo;re confirmed for shows up here — not the ones you&rsquo;re
+          waitlisted, pending or invited to.
         </p>
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-ink">Google Calendar</p>
-            <p className="text-xs text-muted-foreground">
-              {googleCalendarGranted
-                ? "Connected — meetings with people in your network land on their timelines."
-                : "Read-only access to your calendar, so meetings with people in your network land on their timelines."}
-            </p>
-          </div>
-          {googleCalendarGranted ? null : (
-            <Button variant="outline" size="sm" onClick={() => connectGoogle("calendar")} disabled={pending}>
-              <CalendarPlus className="size-4" aria-hidden />
-              Connect
-            </Button>
-          )}
-        </div>
         {feedRow("luma_ics")}
         {feedRow("partiful_ics")}
-
-        {/* The mailbox scan. Off unless asked for, and it says exactly what it reads —
-            `gmail.readonly` is a restricted scope the user granted for something else, and a
-            toggle that quietly widened its purpose would be a breach of that. */}
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-ink">Confirmation emails</p>
-            <p className="text-xs text-muted-foreground">
-              {gmail
-                ? "On — Orbit reads only mail from Luma, Partiful, Eventbrite, Meetup and Posh, and keeps the subject line, nothing else."
-                : googleMailGranted
-                  ? "Find events from “you’re registered” emails. Orbit opens only mail from those platforms, stores no message content, and never sends any of it to AI."
-                  : "Find events from “you’re registered” emails. Turning this on asks Google for permission to read your mail — Orbit opens only mail from those platforms and stores no message content."}
-            </p>
-          </div>
-          {gmail ? (
-            <Button variant="ghost" size="sm" onClick={() => setGmailScan(false)} disabled={pending}>
-              <Trash2 className="size-4" aria-hidden />
-              Turn off
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setGmailScan(true)}
-              disabled={pending}
-            >
-              <Mail className="size-4" aria-hidden />
-              Turn on
-            </Button>
-          )}
-        </div>
 
         <p className="pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Events you host
@@ -413,7 +338,7 @@ export function EventConnectionsCard({
 
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-ink">Luma API key</p>
+        <p className="text-sm font-medium text-ink">Luma API key</p>
             <p className="text-xs text-muted-foreground">
               {luma
                 ? luma.status === "needs_reauth"
@@ -449,44 +374,106 @@ export function EventConnectionsCard({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-ink">Eventbrite</p>
-            <p className="text-xs text-muted-foreground">
-              {eventbrite
-                ? eventbrite.status === "needs_reauth"
+        {eventbrite ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-ink">Eventbrite</p>
+              <p className="text-xs text-muted-foreground">
+                {eventbrite.status === "needs_reauth"
                   ? "Needs reconnecting — Eventbrite rejected the saved token."
-                  : `Connected${eventbrite.label ? ` · ${eventbrite.label}` : ""}`
-                : eventbriteConfigured
-                  ? "Sign in to sync events your organisation runs."
-                  : "Not configured on this deployment."}
-            </p>
+                  : `Connected${eventbrite.label ? ` · ${eventbrite.label}` : ""}`}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => syncNow("eventbrite")}
+                disabled={pending}
+              >
+                <RefreshCw className={`size-3.5 ${pending ? "animate-spin" : ""}`} aria-hidden />
+                Sync
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => disconnect("eventbrite")}
+                disabled={pending}
+              >
+                <Trash2 className="size-4" aria-hidden />
+                Disconnect
+              </Button>
+            </div>
           </div>
-          {eventbrite ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => disconnect("eventbrite")}
-              disabled={pending}
-            >
-              <Trash2 className="size-4" aria-hidden />
-              Disconnect
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={connectEventbrite}
-              disabled={pending || !eventbriteConfigured}
-            >
-              <Plug className="size-4" aria-hidden />
-              Connect
-            </Button>
-          )}
-        </div>
+        ) : showEventbriteField ? (
+          <div className="space-y-2 rounded-xl border border-border/60 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-ink">Eventbrite Private Token</p>
+              <button
+                type="button"
+                onClick={() => setShowEventbriteField(false)}
+                aria-label="Cancel"
+                className="text-muted-foreground hover:text-ink"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Paste your personal token from Eventbrite &rarr; Account Settings &rarr; Developer Links &rarr; API Keys.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                value={eventbriteKey}
+                onChange={(e) => setEventbriteKey(e.target.value)}
+                placeholder="Eventbrite Private Token"
+                type="password"
+                aria-label="Eventbrite Private Token"
+                className="flex-1 min-w-[200px]"
+              />
+              <Button onClick={saveEventbriteKey} disabled={pending || !eventbriteKey.trim()}>
+                {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                Save &amp; Sync
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/60 p-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-ink">Eventbrite</p>
+              <p className="text-xs text-muted-foreground">
+                {eventbriteConfigured
+                  ? "Sign in with OAuth or connect with a private token to sync events you host."
+                  : "Connect with your Eventbrite private token to sync events you host."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {eventbriteConfigured ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={connectEventbrite}
+                  disabled={pending}
+                >
+                  <Plug className="size-4" aria-hidden />
+                  Sign in with Eventbrite
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowEventbriteField(true)}
+                disabled={pending}
+              >
+                <Plug className="size-4" aria-hidden />
+                {eventbriteConfigured ? "Token" : "Connect"}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
       </div>
       </div>
-    </details>
+      </details>
+    </div>
   );
 }

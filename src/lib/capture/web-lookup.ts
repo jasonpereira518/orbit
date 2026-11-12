@@ -7,7 +7,7 @@
  * what the notes say about them, nothing more.
  */
 import type { BulkNotePersonPreview } from "@/lib/capture/types";
-import { foldName } from "@/lib/capture/person-cleanup";
+import { nameKey } from "@/lib/names/key";
 import { linkedinSlug } from "@/lib/duplicates";
 import { researchPerson, type PersonDossier, type PersonResearcher } from "@/lib/web-research";
 
@@ -52,8 +52,8 @@ export function fillFromDossier(item: BulkNotePersonPreview, dossier: PersonDoss
   // "Priya" → "Priya Raman", never a different person's name: same first name, longer.
   const full = dossier.name?.trim();
   if (full && p.name) {
-    const mine = foldName(p.name).split(" ");
-    const theirs = foldName(full).split(" ");
+    const mine = nameKey(p.name).split(" ");
+    const theirs = nameKey(full).split(" ");
     if (theirs.length > mine.length && theirs[0] === mine[0]) {
       p.name = full;
       filled.push("name");

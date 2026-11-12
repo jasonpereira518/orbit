@@ -57,6 +57,7 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryJevSkippedAt": null,
       "workHistoryMissSlug": null,
       "workHistoryMisses": 0,
       "xHandle": null
@@ -118,6 +119,7 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryJevSkippedAt": null,
       "workHistoryMissSlug": null,
       "workHistoryMisses": 0,
       "xHandle": null
@@ -179,6 +181,7 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryJevSkippedAt": null,
       "workHistoryMissSlug": null,
       "workHistoryMisses": 0,
       "xHandle": null
@@ -240,6 +243,7 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryJevSkippedAt": null,
       "workHistoryMissSlug": null,
       "workHistoryMisses": 0,
       "xHandle": null
@@ -301,6 +305,7 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryJevSkippedAt": null,
       "workHistoryMissSlug": null,
       "workHistoryMisses": 0,
       "xHandle": null
@@ -362,6 +367,7 @@
       "userId": "golden-user",
       "website": null,
       "workHistoryDueAt": null,
+      "workHistoryJevSkippedAt": null,
       "workHistoryMissSlug": null,
       "workHistoryMisses": 0,
       "xHandle": null

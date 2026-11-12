@@ -17,17 +17,42 @@
 import { SECRET_PATTERNS } from "./secret-patterns";
 
 const TOKEN_PATH = /(\/(?:api\/)?(?:calendar|scan|mcp)\/)(?!\[)[^/?#]+/gi;
-// `me` is the interest list's personal ticket link.
-const TOKEN_QUERY = /([?&](?:token|code|state|key|access_token|me)=)[^&#]*/gi;
+// `me` is the interest list's personal ticket link. The rest are the OAuth and API
+// parameters that show up on the callbacks and on pasted curl commands.
+const TOKEN_QUERY =
+  /([?&](?:token|code|state|key|access_token|refresh_token|id_token|api_key|secret|password|client_secret|me)=)[^&#]*/gi;
+// `password=hunter2` in a message or an extra, not a URL parameter. Bounded by a word
+// boundary and requiring a value of some length so prose ("secret: none") stays readable.
+const KEY_VALUE =
+  /\b(password|passwd|secret|client_secret|api_?key|access_?token|refresh_?token|authorization)(\s*[:=]\s*)("[^"]{4,}"|'[^']{4,}'|[^\s,;]{4,})/gi;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 
 export function scrubUrl(url: string): string {
   return url.replace(TOKEN_PATH, "$1[redacted]").replace(TOKEN_QUERY, "$1[redacted]");
 }
 
-/** For free text — messages, exception values, extras: URLs, then addresses and keys. */
+/**
+ * Model and provider text inside an error message (audit L-14). `parseAiJson` throws
+ * "Failed to parse AI JSON: <200 characters of the model's answer>", the chat route reports
+ * "chat answer JSON did not parse: <excerpt>", and a provider SDK's message carries the raw
+ * JSON error body. All three can quote a person's own notes back (the model was answering
+ * about them), so the excerpt is cut at the colon and a JSON body is replaced whole. What is
+ * left — which call, which status — is what a diagnosis needs.
+ */
+const MODEL_EXCERPT = /((?:Failed to parse AI JSON|did not parse|model output)\s*:)\s*[\s\S]*$/i;
+const JSON_BODY = /\{[\s\S]*"[\s\S]*\}/g;
+
+export function scrubModelText(text: string): string {
+  return text.replace(MODEL_EXCERPT, "$1 [model output omitted]").replace(JSON_BODY, "{…}");
+}
+
+/**
+ * For free text — messages, exception values, extras: model excerpts and provider bodies,
+ * URLs, then addresses and keys.
+ */
 export function scrubText(text: string): string {
-  let out = scrubUrl(text).replace(EMAIL, "[email]");
+  let out = scrubUrl(scrubModelText(text)).replace(EMAIL, "[email]");
+  out = out.replace(KEY_VALUE, "$1$2[redacted]");
   for (const [, re] of SECRET_PATTERNS) out = out.replace(re, "[redacted]");
   return out;
 }

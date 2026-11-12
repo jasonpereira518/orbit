@@ -20,6 +20,8 @@
  * and closing that hole also closed the pre-existing one where contact follow-up emails
  * skipped the cap (see `countSendsToday`).
  */
+import { startOfUserDay } from "@/lib/user-clock";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { agentSendRequests, contacts, type AgentSendRequest } from "@/db/schema";
@@ -378,8 +380,8 @@ export async function markAgentSendAmbiguous(id: string): Promise<void> {
 /** Agent sends that went out today, for the shared daily cap. */
 export async function countAgentSendsToday(userId: string): Promise<number> {
   const db = await getDb();
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
+  // The user's midnight, not the server's (UTC): the cap resets when their day does.
+  const start = startOfUserDay(await viewerTimeZone(userId));
   const [row] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(agentSendRequests)

@@ -29,6 +29,9 @@ function publicAssetExtensions(dir = PUBLIC_DIR): Map<string, string> {
   const found = new Map<string, string>();
   const walk = (current: string, prefix: string) => {
     for (const entry of readdirSync(current)) {
+      // Dotfiles are OS/editor junk (.DS_Store, .gitkeep), never assets we ship — and they
+      // are gitignored, so CI never sees them. Treating them as shipped made a local run fail.
+      if (entry.startsWith(".")) continue;
       const full = join(current, entry);
       if (statSync(full).isDirectory()) {
         walk(full, `${prefix}/${entry}`);
@@ -114,7 +117,7 @@ function main() {
     "/api/ops/rollup",
     "/api/sync/run",
     "/api/radar/run",
-    "/api/radar/feeds/sweep",
+    "/api/radar/web",
     "/api/radar/digest",
     // Radar's Monday email's off switch: a mail client (or Gmail's own unsubscribe button)
     // has no session. The signed token in the query is the credential.

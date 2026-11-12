@@ -20,8 +20,6 @@
  * summary row to `admin_audit_log` with the same counts.
  */
 import { config } from "dotenv";
-config({ path: ".env.local" });
-config();
 
 import { and, inArray, isNull } from "drizzle-orm";
 import { getDb } from "../src/db";
@@ -85,6 +83,10 @@ export async function seedAccountKinds(opts: { dryRun?: boolean } = {}): Promise
 }
 
 async function main() {
+  // Only the CLI loads `.env.local`. Doing it at module scope re-added `DATABASE_URL` when
+  // `smoke-account-kind` imported `seedAccountKinds`, which sent a PGlite smoke to Neon.
+  config({ path: ".env.local" });
+  config();
   const dryRun = process.argv.includes("--dry-run");
   const r = await seedAccountKinds({ dryRun });
   console.log(

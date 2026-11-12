@@ -1,23 +1,18 @@
 /**
- * The knowledge base: what it counts, and how far its search reaches.
+ * The Knowledge page's content search: who has this word in their notes, messages or facts.
  *
- * Two things were quietly untrue on this page.
+ * This replaced the Overview feed's search. That one ran in the browser over whichever
+ * entries had been shipped, so a note from two years ago produced "No matches" while sitting
+ * in the table; the people list's own filter has the same ceiling (the few hundred people it
+ * loaded, and only their name, role and summary line). The search here reaches everything,
+ * in SQL, so the page cap applies to the RESULTS rather than to what is searchable.
  *
- * The stats were derived from the same 500-row sample the page rendered, so "Messages"
- * stopped at 500 however many the user had — a number presented as a total. They are now
- * counted in the database.
- *
- * The search ran in the browser over whichever entries had been shipped (300 interactions,
- * plus contact-derived rows). Anything older simply could not be found: the user typed a
- * word they knew was in a note, and the page said "No matches for that search" while the
- * row sat in the table. It now filters in SQL, so the search reaches everything and the
- * page cap applies to the RESULTS rather than to what is searchable.
- *
- * The third thing here is parity. Legacy `interaction_type` values (`meeting_note`,
- * `coffee`, `linkedin`, `sms`) have to bucket the same way in the SQL that counts them as in
- * the TypeScript that labels them, or a stat disagrees with the list under it. The SQL
- * builds its IN-lists by running `knownInteractionTypeValues()` through the same
- * normalizer, and the checks below hold that end to end.
+ * Also pinned:
+ *   - Legacy `interaction_type` values (`meeting_note`, `coffee`, `sms`) label the same way the
+ *     contact page does, because the search reuses its normalizer.
+ *   - The match is a literal substring, not a LIKE pattern, so `50%` and `p_ya` mean exactly
+ *     that. The old search put the raw text into a LIKE and never escaped it.
+ *   - Everything is scoped to the caller.
  *
  * Run: npx tsx scripts/smoke-knowledge.ts
  */
@@ -26,12 +21,11 @@ Object.assign(process.env, { NODE_ENV: "development" });
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 delete process.env.CLERK_SECRET_KEY;
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, userSettings } from "../src/db/schema";
-import { getKnowledgeBase } from "../src/actions/knowledge";
-import { KNOWLEDGE_ENTRY_LIMIT as KNOWLEDGE_PAGE_SIZE } from "../src/lib/knowledge-base";
-import { ensureUserSettings } from "../src/lib/user-settings";
+import { contacts, interactions } from "../src/db/schema";
+import { KNOWLEDGE_SEARCH_LIMIT } from "../src/lib/knowledge-people-types";
+import { searchKnowledgeContent } from "../src/lib/knowledge-search";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -45,138 +39,127 @@ function section(name: string) {
   console.log(`\n${name}`);
 }
 
-const USER = "demo-user";
-/** Comfortably past the page size, so "searchable" and "shipped" cannot be confused. */
-const BULK = KNOWLEDGE_PAGE_SIZE + 40;
-const NEEDLE = "zarquon-partial-index";
+const USER = "smoke-knowledge";
+const OTHER = "smoke-knowledge-other";
+const NEEDLE = "zebracorn";
+/** Comfortably past any page the old feed shipped, so "searchable" and "shipped" differ. */
+const BULK = 450;
 
 async function main() {
   const db = await getDb();
-  await db.delete(contacts).where(eq(contacts.userId, USER));
-  await db.delete(userSettings).where(eq(userSettings.userId, USER));
-  await ensureUserSettings(USER);
-
-  const [contact] = await db
-    .insert(contacts)
-    .values({ userId: USER, fullName: "Hassan Ali", company: "Notion" })
-    .returning();
+  const wipe = async () => {
+    await db.delete(contacts).where(inArray(contacts.userId, [USER, OTHER]));
+  };
+  await wipe();
 
   const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
 
-  // The needle is the OLDEST row, so it falls outside any page the server ships.
+  const [hassan] = await db
+    .insert(contacts)
+    .values({ userId: USER, fullName: "Hassan Ali", company: "Notion" })
+    .returning();
+  const [priya] = await db
+    .insert(contacts)
+    .values({
+      userId: USER,
+      fullName: "Priya Raman",
+      title: "Founder",
+      keyFacts: ["fintech founder", "plays tennis"],
+      notes: "Revenue grew 50% last year and she wants an intro.",
+    })
+    .returning();
+  // "p_ya" would match "Pxya" if the text were treated as a LIKE pattern.
+  await db.insert(contacts).values({ userId: USER, fullName: "Pxya Lee", notes: "Unrelated." });
+  const [stranger] = await db
+    .insert(contacts)
+    .values({ userId: OTHER, fullName: "Someone Else" })
+    .returning();
+
+  // The needle sits in the OLDEST interaction, behind a pile of newer ones.
   await db.insert(interactions).values({
     userId: USER,
-    contactId: contact.id,
+    contactId: hassan.id,
     interactionType: "note",
     interactionDate: daysAgo(BULK + 100),
     rawNotes: `We talked about ${NEEDLE} and how it changes the query plan.`,
   });
-
   await db.insert(interactions).values(
     Array.from({ length: BULK }, (_, i) => ({
       userId: USER,
-      contactId: contact.id,
+      contactId: hassan.id,
       interactionType: "linkedin_message",
       interactionDate: daysAgo(i + 1),
       rawNotes: `message ${i}`,
     }))
   );
-
-  // One of each legacy spelling, to pin SQL/TS bucketing parity.
   await db.insert(interactions).values([
-    { userId: USER, contactId: contact.id, interactionType: "meeting_note", interactionDate: daysAgo(2), rawNotes: "legacy meeting note" },
-    { userId: USER, contactId: contact.id, interactionType: "coffee", interactionDate: daysAgo(3), rawNotes: "legacy coffee" },
-    { userId: USER, contactId: contact.id, interactionType: "sms", interactionDate: daysAgo(4), rawNotes: "legacy sms" },
+    { userId: USER, contactId: hassan.id, interactionType: "meeting_note", interactionDate: daysAgo(2), rawNotes: "legacy meeting note" },
+    { userId: USER, contactId: hassan.id, interactionType: "coffee", interactionDate: daysAgo(3), rawNotes: "legacy coffee" },
+    { userId: USER, contactId: hassan.id, interactionType: "sms", interactionDate: daysAgo(4), rawNotes: "legacy sms" },
+    { userId: OTHER, contactId: stranger.id, interactionType: "note", interactionDate: daysAgo(1), rawNotes: `${NEEDLE} belongs to someone else` },
   ]);
 
-  section("Counts come from the database, not from a sample");
+  section("Search reaches past what a page would ship");
+  const old = await searchKnowledgeContent(USER, NEEDLE);
+  check("finds a note older than 450 newer ones", old.length === 1 && old[0].id === hassan.id, JSON.stringify(old.map((h) => h.fullName)));
+  check("labels it as a note", old[0]?.where === "In a note", String(old[0]?.where));
+  check("and shows the text around the match", Boolean(old[0]?.snippet?.includes(NEEDLE)));
+  check("in a short snippet", (old[0]?.snippet?.length ?? 999) <= 160, String(old[0]?.snippet?.length));
+  check("matching ignores case", (await searchKnowledgeContent(USER, NEEDLE.toUpperCase())).length === 1);
 
-  const base = await getKnowledgeBase();
-  check(
-    "messages are counted past the old 500-row sample",
-    base.stats.messages === BULK + 1,
-    `got ${base.stats.messages}, expected ${BULK + 1} (${BULK} linkedin_message + 1 legacy sms)`
-  );
-  check(
-    "legacy meeting spellings count as meetings",
-    base.stats.meetings === 2,
-    `got ${base.stats.meetings} — meeting_note and coffee both bucket as meetings`
-  );
-  check(
-    "and the rest as notes",
-    base.stats.notes === 1,
-    `got ${base.stats.notes} — the one real note; the contact carries none of its own`
-  );
-  check("people is a real count", base.stats.people === 1);
-  check(
-    "the entries total covers every kind, not just the interaction ones",
-    base.stats.entriesTotal === BULK + 4,
-    `got ${base.stats.entriesTotal}, expected ${BULK + 4} — deriving it from messages+notes+meetings omitted summaries and key facts, which rendered as "Showing 94 of 64 items"`
-  );
-  check(
-    "and it is never smaller than what the page shows",
-    base.stats.entriesTotal >= base.entries.length
-  );
+  section("Legacy spellings label like the contact page");
+  const meeting = await searchKnowledgeContent(USER, "legacy meeting note");
+  check("meeting_note is a meeting", meeting[0]?.where === "In a meeting", String(meeting[0]?.where));
+  const coffee = await searchKnowledgeContent(USER, "legacy coffee");
+  check("coffee is a meeting", coffee[0]?.where === "In a meeting", String(coffee[0]?.where));
+  const sms = await searchKnowledgeContent(USER, "legacy sms");
+  check("sms is a message", sms[0]?.where === "In a message", String(sms[0]?.where));
 
-  section("The page still ships a page");
+  section("Facts, profile notes and names");
+  const fact = await searchKnowledgeContent(USER, "fintech");
+  check("finds a key fact", fact.length === 1 && fact[0].id === priya.id && fact[0].where === "In their key facts", JSON.stringify(fact));
+  check("without the JSON brackets and quotes", !/[\[\]"]/.test(fact[0]?.snippet ?? ""), String(fact[0]?.snippet));
+  const note = await searchKnowledgeContent(USER, "wants an intro");
+  check("finds profile notes", note[0]?.id === priya.id && note[0]?.where === "In your notes", JSON.stringify(note));
+  const byName = await searchKnowledgeContent(USER, "Hassan");
+  check("finds a name, with no snippet", byName.length === 1 && byName[0].snippet === null && byName[0].where === null, JSON.stringify(byName));
 
-  check(
-    "entries are capped",
-    base.entries.length <= KNOWLEDGE_PAGE_SIZE + 10,
-    `got ${base.entries.length}`
+  section("The text is a literal, not a pattern");
+  const percent = await searchKnowledgeContent(USER, "50%");
+  check("50% finds the note that says 50%", percent.length === 1 && percent[0].id === priya.id, JSON.stringify(percent.map((h) => h.fullName)));
+  const wildcards = await searchKnowledgeContent(USER, "%%%");
+  check("%%% matches nothing instead of everything", wildcards.length === 0, `got ${wildcards.length}`);
+  const underscore = await searchKnowledgeContent(USER, "p_ya");
+  check("p_ya does not match Pxya", underscore.length === 0, JSON.stringify(underscore.map((h) => h.fullName)));
+  const backslash = await searchKnowledgeContent(USER, "\\\\\\");
+  check("backslashes are inert", backslash.length === 0);
+
+  section("Bounds and scoping");
+  check("too short a search is empty", (await searchKnowledgeContent(USER, "ab")).length === 0);
+  check("a genuine miss is empty", (await searchKnowledgeContent(USER, "no-such-term-anywhere")).length === 0);
+  const mine = await searchKnowledgeContent(USER, NEEDLE);
+  check("another account's rows are never returned", mine.every((h) => h.id !== stranger.id));
+  const theirs = await searchKnowledgeContent(OTHER, NEEDLE);
+  check("and they find only their own", theirs.length === 1 && theirs[0].id === stranger.id);
+
+  await db.insert(contacts).values(
+    Array.from({ length: KNOWLEDGE_SEARCH_LIMIT + 20 }, (_, i) => ({
+      userId: USER,
+      fullName: `Bulk Person ${i}`,
+      notes: "mentions quokkaterm once",
+    }))
   );
-  check(
-    "newest first",
-    base.entries.length > 1 &&
-      new Date(base.entries[0].date!).getTime() >=
-        new Date(base.entries[base.entries.length - 1].date!).getTime()
-  );
+  const capped = await searchKnowledgeContent(USER, "quokkaterm");
+  check("the result is capped", capped.length === KNOWLEDGE_SEARCH_LIMIT, `got ${capped.length}`);
 
-  section("Search reaches past what the page shipped");
-
-  const shipped = base.entries.some((e) => e.snippet.includes(NEEDLE));
-  check(
-    "the needle is NOT in the default page",
-    !shipped,
-    "if it were shipped anyway, the next check would pass without proving anything"
-  );
-
-  const found = await getKnowledgeBase({ q: NEEDLE });
-  check(
-    "but searching finds it",
-    found.entries.some((e) => e.snippet.includes(NEEDLE)),
-    `got ${found.entries.length} entries — this is the bug: the row existed and the page said "No matches"`
-  );
-  check(
-    "stats still describe the whole base, not the result",
-    found.stats.messages === base.stats.messages,
-    "the header counts answer 'what does Orbit know', which a search does not change"
-  );
-
-  section("Searching by person, and by kind");
-
-  const byName = await getKnowledgeBase({ q: "Hassan" });
-  check("a contact's name matches their knowledge", byName.entries.length > 0);
-
-  const notesOnly = await getKnowledgeBase({ kind: "note" });
-  check(
-    "a kind filter returns only that kind",
-    notesOnly.entries.length > 0 && notesOnly.entries.every((e) => e.kind === "note"),
-    `got kinds ${[...new Set(notesOnly.entries.map((e) => e.kind))].join(",")}`
-  );
-
-  const nothing = await getKnowledgeBase({ q: "no-such-term-anywhere" });
-  check("a genuine miss is empty", nothing.entries.length === 0);
-  check("and says so without lying about the totals", nothing.stats.people === 1);
-
-  await db.delete(contacts).where(eq(contacts.userId, USER));
-  await db.delete(userSettings).where(eq(userSettings.userId, USER));
+  await db.delete(interactions).where(eq(interactions.userId, USER));
+  await wipe();
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);
   }
-  console.log("\nAll knowledge-base checks passed.");
+  console.log("\nAll knowledge search checks passed.");
   process.exit(0);
 }
 

@@ -29,7 +29,8 @@ import { whoToTalkTo } from "@/lib/events/who-to-talk-to";
 import { loadKnowledgeDossier } from "@/lib/knowledge-dossier";
 import { campaignMetricAggregates, metricsFromAggregates } from "@/lib/outreach-metrics-sql";
 import { listPendingRecommendations } from "@/lib/radar/store";
-import { leadReason } from "@/lib/radar/types";
+import { listOpenOpportunities } from "@/lib/radar/opportunity-actions";
+import { LANE_OF_KIND, LANE_TITLES, leadReason } from "@/lib/radar/types";
 import { toolError } from "@/lib/tools/registry";
 import {
   CONTACT_GROUPS,
@@ -353,7 +354,7 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     surfaces: BOTH,
     scope: "read",
     resultLabel: "suggestions",
-    fields: { mcp: ["id", "contactId", "name", "company", "kind", "priority", "why"] },
+    fields: { mcp: ["id", "contactId", "name", "company", "kind", "lane", "priority", "why", "proof"] },
     releasedSurface: "page.radar",
     async run(userId, args: { limit: number }) {
       const cards = await listPendingRecommendations(userId, args.limit);
@@ -364,8 +365,41 @@ export const FEATURE_TOOLS: OrbitTool[] = [
         name: c.contactName,
         company: c.company,
         kind: c.kind,
+        lane: LANE_TITLES[LANE_OF_KIND[c.kind]],
+        // "today" = a moment that won't keep; the rest is this week's plan.
         priority: c.bucket,
         why: c.aiAngle ?? leadReason(c.reasons)?.label ?? null,
+        // What the card rests on, so an answer can cite it: the quote, or the record or link's label.
+        proof: c.evidence.slice(0, 2).map((e) => (e.proof?.type === "quote" ? `“${e.proof.quote}”` : e.label)),
+      }));
+    },
+  },
+
+  {
+    name: "list_radar_finds",
+    title: "Radar finds",
+    description:
+      "What radar's weekly web search found for the user that is not in their network yet: events near them, people to " +
+      "meet (each with someone they know who can introduce them), and programs with deadlines. Every find has a link " +
+      "the search returned. Nothing here is a contact until the user saves it on the radar page.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "finds",
+    fields: { mcp: ["kind", "title", "why", "when", "deadline", "url", "introducer"] },
+    releasedSurface: "page.radar",
+    async run(userId) {
+      const finds = await listOpenOpportunities(userId);
+      return finds.map((f) => ({
+        id: f.id,
+        kind: f.kind,
+        title: f.title,
+        why: f.why,
+        when: f.startsAt,
+        deadline: f.kind === "program" ? f.expiresAt : null,
+        url: f.url,
+        introducer: f.introducer?.name ?? null,
       }));
     },
   },

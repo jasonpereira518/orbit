@@ -17,6 +17,7 @@
  * text is the upgrade if it ever is not.
  */
 import { and, desc, eq, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { getDb, rowsOf } from "@/db";
 import {
   calendarEvents,
@@ -34,6 +35,7 @@ import { brandKey, CURATED_COMPANIES, type CuratedCompany } from "@/lib/brand-co
 import { companyFromEmail } from "@/lib/guest-profiles";
 import { toDomain } from "@/lib/org-brand-learn";
 import { listSummary } from "@/lib/plain-text";
+import { callFromSurface } from "@/lib/call-kind";
 
 export const MEETINGS_PAGE = 20;
 const LISTED: MeetingSessionStatus[] = ["analyzed", "saved"];
@@ -214,7 +216,8 @@ async function listRecorded(
       status: r.status as "analyzed" | "saved",
       attendees: (r.attendees ?? []).map((a) => a.name).filter(Boolean),
       summary: listSummary(r.summary),
-      call: null,
+      // The shared window's app, when the recorder could tell; a calendar invite overrides it.
+      call: callFromSurface(r.captureSurface),
       sharedScreen: Boolean(r.captureSurface),
       companies: [],
       noteBatchId: r.noteBatchId,
@@ -382,7 +385,9 @@ async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<voi
   // to a whole-word one by `meetingCompanies`.
   const hay = [...texts.values()].join(" \n ").toLowerCase().replace(/\s+/g, " ");
 
-  const [events, people, mentioned, selfRows] = await Promise.all([
+  // Granola notes carry no event key: match them to a video-call invite by start time.
+  const granolaAt = page.filter((r) => r.item.source === "granola").map((r) => r.atMs);
+  const [events, people, mentioned, selfRows, granolaEvents] = await Promise.all([
     eventKeys.length
       ? db
           .selectDistinctOn([calendarEvents.providerEventId], {
@@ -399,17 +404,7 @@ async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<voi
           )
           .orderBy(calendarEvents.providerEventId)
       : [],
-    contactIds.length
-      ? db
-          .select({ id: contacts.id, company: contacts.company, email: contacts.email, domain: orgBrandColors.domain })
-          .from(contacts)
-          .leftJoin(companies, and(eq(companies.id, contacts.companyId), eq(companies.userId, userId)))
-          .leftJoin(
-            orgBrandColors,
-            and(eq(orgBrandColors.nameKey, companies.nameNormalized), eq(orgBrandColors.kind, "company"))
-          )
-          .where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)))
-      : [],
+    contactOrgLogos(userId, contactIds),
     db
       .select({ name: companies.name, domain: orgBrandColors.domain })
       .from(companies)
@@ -431,21 +426,24 @@ async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<voi
       UNION SELECT email_address FROM outlook_connections WHERE user_id = ${userId}
       UNION SELECT email_address FROM apple_connections WHERE user_id = ${userId}
     `),
+    granolaAt.length
+      ? db
+          .select({ atMs: sql<number>`(extract(epoch from ${calendarEvents.startAt}) * 1000)::float8`.mapWith(Number), kind: calendarEvents.conferenceKind })
+          .from(calendarEvents)
+          .where(
+            and(
+              eq(calendarEvents.userId, userId),
+              isNotNull(calendarEvents.conferenceKind),
+              sql`${calendarEvents.startAt} between ${new Date(Math.min(...granolaAt) - GRANOLA_EVENT_SLACK_MS).toISOString()}::timestamptz and ${new Date(Math.max(...granolaAt) + GRANOLA_EVENT_SLACK_MS).toISOString()}::timestamptz`
+            )
+          )
+          .limit(500)
+      : [],
   ]);
 
   const selfDomains = new Set(rowsOf<{ email: string | null }>(selfRows).flatMap((r) => toDomain(r.email) ?? []));
   const notSelf = (c: MeetingCompany) => !selfDomains.has(c.domain);
   const callByKey = new Map(events.map((e) => [e.key, e.kind]));
-  const personCompany = new Map<string, MeetingCompany>();
-  for (const p of people) {
-    const company = p.company?.trim();
-    const fromEmail = companyFromEmail(p.email);
-    // Their email names the company only when it is the same one (not last job's address).
-    const emailFits = fromEmail && (!company || brandKey(fromEmail) === brandKey(company));
-    const name = company || fromEmail;
-    const domain = (company ? companyDomain(company, p.domain) : null) ?? (emailFits ? toDomain(p.email) : null);
-    if (name && domain) personCompany.set(p.id, { name, domain });
-  }
   const orgs = mentioned.flatMap((o) => {
     const domain = companyDomain(o.name, o.domain);
     return domain ? [{ name: o.name, domain }] : [];
@@ -453,16 +451,86 @@ async function addCallsAndCompanies(userId: string, page: Ranked[]): Promise<voi
 
   for (const r of page) {
     const fromPeople = [
-      ...r.hints.contactIds.flatMap((id) => personCompany.get(id) ?? []),
+      ...r.hints.contactIds.flatMap((id) => people.get(id) ?? []),
       ...r.hints.emails.flatMap((email) => {
         const name = companyFromEmail(email);
         const domain = name ? toDomain(email) : null;
         return name && domain ? [{ name: curatedCompany(name)?.name ?? name, domain }] : [];
       }),
     ].filter(notSelf);
-    r.item.call = r.hints.eventKey ? (callByKey.get(r.hints.eventKey) ?? null) : null;
+    r.item.call =
+      r.item.source === "granola"
+        ? nearestCall(r.atMs, granolaEvents)
+        : ((r.hints.eventKey ? callByKey.get(r.hints.eventKey) : null) ?? r.item.call);
     r.item.companies = meetingCompanies(fromPeople, texts.get(r.item.id) ?? "", orgs);
   }
+}
+
+/**
+ * Each contact's company — or, with none, their school — with a domain for its logo, in one
+ * read. Shared by the meeting rows and the capture history rows. Contacts with nothing
+ * logo-able are left out of the map.
+ */
+export async function contactOrgLogos(
+  userId: string,
+  contactIds: readonly string[]
+): Promise<Map<string, MeetingCompany>> {
+  const out = new Map<string, MeetingCompany>();
+  if (!contactIds.length) return out;
+  const db = await getDb();
+  const schoolBrand = alias(orgBrandColors, "school_brand");
+  const people = await db
+    .select({
+      id: contacts.id,
+      company: contacts.company,
+      email: contacts.email,
+      school: contacts.school,
+      domain: orgBrandColors.domain,
+      schoolDomain: schoolBrand.domain,
+    })
+    .from(contacts)
+    .leftJoin(companies, and(eq(companies.id, contacts.companyId), eq(companies.userId, userId)))
+    .leftJoin(
+      orgBrandColors,
+      and(eq(orgBrandColors.nameKey, companies.nameNormalized), eq(orgBrandColors.kind, "company"))
+    )
+    // `name_key` is trimmed, lowercased and space-collapsed (see the table), computed here too.
+    .leftJoin(
+      schoolBrand,
+      and(
+        eq(schoolBrand.nameKey, sql`lower(regexp_replace(trim(${contacts.school}), '[[:space:]]+', ' ', 'g'))`),
+        eq(schoolBrand.kind, "school")
+      )
+    )
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, [...contactIds])));
+  for (const p of people) {
+    const company = p.company?.trim();
+    const fromEmail = companyFromEmail(p.email);
+    // Their email names the company only when it is the same one (not last job's address).
+    const emailFits = fromEmail && (!company || brandKey(fromEmail) === brandKey(company));
+    const name = company || fromEmail;
+    const domain = (company ? companyDomain(company, p.domain) : null) ?? (emailFits ? toDomain(p.email) : null);
+    if (name && domain) {
+      out.set(p.id, { name, domain });
+      continue;
+    }
+    const school = p.school?.trim();
+    const schoolDomain = school ? companyDomain(school, p.schoolDomain) : null;
+    if (school && schoolDomain) out.set(p.id, { name: school, domain: schoolDomain });
+  }
+  return out;
+}
+
+const GRANOLA_EVENT_SLACK_MS = 10 * 60_000;
+
+/** The video call of the invite starting closest to `atMs`, within ten minutes; "other" is no call. */
+export function nearestCall(atMs: number, events: readonly { atMs: number; kind: string | null }[]): string | null {
+  let best: { gap: number; kind: string | null } | null = null;
+  for (const e of events) {
+    const gap = Math.abs(e.atMs - atMs);
+    if (gap <= GRANOLA_EVENT_SLACK_MS && (!best || gap < best.gap)) best = { gap, kind: e.kind };
+  }
+  return best?.kind && best.kind !== "other" ? best.kind : null;
 }
 
 /** A company's website for its logo: what `org_brand_colors` learned, else a curated entry's own. */

@@ -12,7 +12,8 @@
  * probed at ten tries per ten minutes per IP. The
  * address itself is never returned.
  */
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { reportError } from "@/lib/report-error";
+import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
 import { getWaitlistPageUrl } from "@/lib/app-url";
@@ -47,10 +48,15 @@ import {
   refMatch,
   ticketForRow,
 } from "@/lib/interest-list-ticket";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { RATE_LIMITS, consumeBucket, consumeIpBucket, isRateLimitedError } from "@/lib/rate-limit";
+import {
+  TOKEN_COLUMNS,
+  sealShareToken,
+  sealUnsubscribeToken,
+  shareTokenMatches,
+  withRevealedTokens,
+} from "@/lib/interest-list-tokens";
 import { asWelcomePlanet, planetForSignupNumber, type WelcomePlanet } from "@/lib/welcome-planets";
-import { ipBucketKey } from "@/lib/client-ip";
-import { reportError } from "@/lib/report-error";
 import { track } from "@/lib/product-events";
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -136,7 +142,7 @@ export async function joinInterestListCore(
   // 3. Rate limit. A limiter that cannot count must not fail open into the write, and must
   //    not break a real person's signup either — so any throw is the fake ticket.
   try {
-    await consumeBucket("interest.join", ipBucketKey(ctx.ip), RATE_LIMITS.interestJoin);
+    await consumeIpBucket("interest.join", ctx.ip, RATE_LIMITS.interestJoin);
   } catch (err) {
     // Past the limit, or a limiter that cannot count. Either way the caller gets the fake
     // ticket — the write must never fail open — but only the first is expected. The
@@ -158,30 +164,32 @@ export async function joinInterestListCore(
   const db = await getDb();
 
   // 5. Who sent them, if anyone.
-  const referrer = ref
+  const referrerRow = ref
     ? (
         await db
           .select({
             id: interestListSignups.id,
             email: interestListSignups.email,
-            unsubscribeToken: interestListSignups.unsubscribeToken,
             unsubscribedAt: interestListSignups.unsubscribedAt,
             welcomePlanet: interestListSignups.welcomePlanet,
-            shareToken: interestListSignups.shareToken,
             referralSlug: interestListSignups.referralSlug,
+            ...TOKEN_COLUMNS,
           })
           .from(interestListSignups)
           .where(refMatch(ref))
           .limit(1)
       )[0] ?? null
     : null;
+  // Tokens are stored hashed and encrypted (audit L-05); the links below need them back.
+  const referrer = referrerRow ? withRevealedTokens(referrerRow) : null;
 
   // 6. Read, then write down one of three branches.
-  const [existing] = await db
+  const [existingRow] = await db
     .select()
     .from(interestListSignups)
     .where(eq(interestListSignups.email, email))
     .limit(1);
+  const existing = existingRow ? withRevealedTokens(existingRow) : existingRow;
 
   let row = existing;
   let welcome = false;
@@ -202,8 +210,8 @@ export async function joinInterestListCore(
         utmCampaign: ctx.attribution?.utmCampaign ?? null,
         landingPath: ctx.attribution?.landingPath ?? null,
         joinSessionId,
-        unsubscribeToken: generateUnsubscribeToken(),
-        shareToken: generateShareToken(),
+        ...sealUnsubscribeToken(generateUnsubscribeToken()),
+        ...sealShareToken(generateShareToken()),
         welcomePlanet: planetForSignupNumber((before?.n ?? 0) + 1),
         // Never yourself: a token whose row owns this address is not a referral.
         referredById: referrer && referrer.email !== email ? referrer.id : null,
@@ -214,17 +222,18 @@ export async function joinInterestListCore(
       .returning();
 
     if (inserted[0]) {
-      row = inserted[0];
+      row = withRevealedTokens(inserted[0]);
       welcome = true;
       credited = Boolean(row.referredById);
       invalidateInterestProof();
     } else {
       // Lost a race with a concurrent submit of the same address: it exists now.
-      [row] = await db
+      const [raced] = await db
         .select()
         .from(interestListSignups)
         .where(eq(interestListSignups.email, email))
         .limit(1);
+      row = raced ? withRevealedTokens(raced) : raced;
     }
   }
 
@@ -233,23 +242,25 @@ export async function joinInterestListCore(
       // Rejoining puts them back in line at their original join time. The planet is
       // theirs — rewriting it would contradict the mail they already have.
       // referred_by_id is untouched: credit is written once, on insert.
-      [row] = await db
+      const [rejoined] = await db
         .update(interestListSignups)
         .set({
           unsubscribedAt: null,
           followUpSentAt: null,
-          shareToken: row.shareToken ?? generateShareToken(),
+          ...(row.shareToken ? {} : sealShareToken(generateShareToken())),
         })
         .where(eq(interestListSignups.id, row.id))
         .returning();
+      row = rejoined ? withRevealedTokens(rejoined) : rejoined;
       welcome = true;
     } else if (!row.shareToken) {
       // A row from before share tokens existed: mint one, send nothing.
-      [row] = await db
+      const [minted] = await db
         .update(interestListSignups)
-        .set({ shareToken: generateShareToken() })
+        .set(sealShareToken(generateShareToken()))
         .where(eq(interestListSignups.id, row.id))
         .returning();
+      row = minted ? withRevealedTokens(minted) : minted;
     }
   }
 
@@ -284,7 +295,7 @@ export async function joinInterestListCore(
       await consumeBucket("interest.welcome", "global", RATE_LIMITS.interestWelcome);
     } catch (err) {
       if (isRateLimitedError(err)) console.warn("[interest-list] welcome cap reached; mail skipped");
-      else reportError(err, { where: "interest.join.welcome-limiter", level: "error" });
+      else reportError(err, { where: "interest.join.welcome-limiter", level: "warning" });
       welcome = false;
     }
   }
@@ -295,7 +306,7 @@ export async function joinInterestListCore(
     // The real sender only ever logs, so a Resend outage never fails the join.
     const sent = await send(
       row.email,
-      buildUnsubscribeUrl(row.unsubscribeToken),
+      buildUnsubscribeUrl(row.unsubscribeToken ?? ""),
       asWelcomePlanet(row.welcomePlanet),
       {
         ticketUrl: buildTicketUrl(pageUrl, row.shareToken),
@@ -311,8 +322,8 @@ export async function joinInterestListCore(
   if (!ticket) throw ticketError;
 
   if (credited && referrer?.shareToken) invalidateProgress(referrer.shareToken);
-  if (credited && referrer && !referrer.unsubscribedAt && referrer.shareToken) {
-    await notifyIfTierUnlocked(referrer as typeof referrer & { shareToken: string }, ctx);
+  if (credited && referrer && !referrer.unsubscribedAt && referrer.shareToken && referrer.unsubscribeToken) {
+    await notifyIfTierUnlocked(referrer as typeof referrer & { shareToken: string; unsubscribeToken: string }, ctx);
   }
 
   return { ok: true, ticket, returning: Boolean(existing) };
@@ -342,10 +353,10 @@ export async function saveInterestListNameCore(
   // Same posture as the join: a limiter that cannot count must not fail open into a write,
   // and must not break a real person's step either — so any throw is a quiet no-op.
   try {
-    await consumeBucket("interest.name", ipBucketKey(ctx.ip), RATE_LIMITS.interestName);
+    await consumeIpBucket("interest.name", ctx.ip, RATE_LIMITS.interestName);
   } catch (err) {
     if (isRateLimitedError(err)) console.warn("[interest-list] name rate-limited", { ipTag: ipLogTag(ctx.ip) });
-    else reportError(err, { where: "interest.name.limiter", level: "error" });
+    else reportError(err, { where: "interest.join.limiter", level: "error" });
     return { ok: true };
   }
 
@@ -355,7 +366,7 @@ export async function saveInterestListNameCore(
     .set({ firstName, lastName })
     .where(
       and(
-        eq(interestListSignups.shareToken, shareToken),
+        shareTokenMatches(shareToken),
         isNull(interestListSignups.unsubscribedAt),
         isNull(interestListSignups.firstName)
       )
@@ -364,10 +375,12 @@ export async function saveInterestListNameCore(
 }
 
 /**
- * The referral that takes someone to exactly a tier's threshold (1, 3, 5 or 10 still-waiting
- * friends) is the moment they unlock it, so that is when they hear about it. Exactly, not
- * at-least: the second friend is not news. A friend who leaves and a new one who joins can
- * cross a line twice — rare, and a second "you unlocked it" is harmless.
+ * The referral that takes someone to a tier's threshold (1, 3, 5 or 10 still-waiting friends)
+ * is the moment they unlock it, so that is when they hear about it. At-least, not exactly:
+ * two friends joining at once can both count past a threshold (2 → 4), and an exact match
+ * then mailed nobody (audit L-20). Each tier is mailed once, claimed through
+ * `referral_tier_mailed` before the send, so the second friend is still not news and a
+ * friend who leaves and rejoins does not re-send it.
  *
  * Never throws: the join it rides on has already succeeded.
  */
@@ -390,8 +403,15 @@ async function notifyIfTierUnlocked(
       .where(
         and(eq(interestListSignups.referredById, referrer.id), isNull(interestListSignups.unsubscribedAt))
       );
-    const tier = REFERRAL_TIERS.find((t) => t.at > 0 && t.at === (count?.n ?? 0));
+    const n = count?.n ?? 0;
+    const tier = [...REFERRAL_TIERS].filter((t) => t.at > 0 && t.at <= n).sort((a, b) => b.at - a.at)[0];
     if (!tier) return;
+    const claimed = await db
+      .update(interestListSignups)
+      .set({ referralTierMailed: tier.at })
+      .where(and(eq(interestListSignups.id, referrer.id), lt(interestListSignups.referralTierMailed, tier.at)))
+      .returning();
+    if (claimed.length === 0) return;
     const pageUrl = getWaitlistPageUrl();
     const send = ctx.sendTier ?? sendTierEmail;
     const sent = await send(
@@ -406,6 +426,6 @@ async function notifyIfTierUnlocked(
     );
     if (sent === true) track("waitlist_email_sent", { kind: "tier" }, { actor: "system" });
   } catch (err) {
-    reportError(err, { where: "interest.join.tier", level: "error" });
+    reportError(err, { where: "interest.join.tier-notice", level: "warning" });
   }
 }

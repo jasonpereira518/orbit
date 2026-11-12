@@ -19,6 +19,9 @@ import "./smoke/_env";
 // Production's key rules: the local-dev key names are ignored on Vercel, so the only managed
 // key is the explicit one set here. Set BEFORE the gate is imported or first called.
 process.env.VERCEL = "1";
+// On Vercel a missing ENCRYPTION_SECRET is refused rather than defaulted (audit L-06). A
+// test value, so the BYOK keys below can be encrypted and read back.
+process.env.ENCRYPTION_SECRET ||= "smoke-ai-access-test-secret-not-a-real-one-000";
 for (const name of ["GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
   delete process.env[name];
   delete process.env[`ORBIT_MANAGED_${name}`];
@@ -47,7 +50,7 @@ import {
   userSettings,
 } from "../src/db/schema";
 import { encrypt } from "../src/lib/crypto";
-import { priceFor } from "../src/lib/ai-pricing";
+import { openAiSearchInputTokens, priceFor, WEB_SEARCH_FEE_MICROS } from "../src/lib/ai-pricing";
 import type { AiOperationId } from "../src/lib/ai-operations";
 import { DEFAULT_MODELS } from "../src/lib/ai-providers";
 import {
@@ -60,6 +63,9 @@ import {
   managedKeysConfigured,
   forgetManagedAiPause,
   managedPoolState,
+  managedPoolsSpent,
+  noteDecisionFailure,
+  ORBIT_PAID_DECISIONS,
   resolveAiAccess,
   runOnGrant,
   typesafeClient,
@@ -75,7 +81,7 @@ import {
   aiDenialFromMessage,
   refusalCopyFor,
 } from "../src/lib/ai-access-copy";
-import { getCreditBalance } from "../src/lib/credits/ledger";
+import { getCreditBalance, settleManagedUsage } from "../src/lib/credits/ledger";
 import { PLAN_CONFIG } from "../src/lib/plans/plan-config";
 import {
   MANAGED_AI_POOLS,
@@ -102,7 +108,9 @@ import {
 import { __clearEmbeddingCacheForTests, defaultResolveScope, getQueryEmbedding } from "../src/lib/embedding-cache";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { friendlyError, isMissingAiApiKeyError } from "../src/lib/errors";
-import { run } from "./smoke/_env";
+import { loadManagedAiOpsFacts } from "../src/lib/managed-ai-ops";
+import { TypeSafeApiError } from "../src/lib/typesafe-api";
+import { PROVIDER_KEY_ENV, run } from "./smoke/_env";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: unknown) {
@@ -374,6 +382,22 @@ function purePolicy() {
   check("Orbit never pays for Gemini: a managed Gemini key alone is not a route",
     pick(facts({ eligibility: "plan", managed: geminiOnly })) === "refused:managed_unavailable" &&
     !(MANAGED_PROVIDER_ORDER as readonly string[]).includes("gemini"));
+  // Web search on Orbit's key goes to the cheaper search first: the per-search fee plus any
+  // per-search token floor on the fast model searches run on. A price change that makes the
+  // second provider cheaper fails here instead of silently costing more (Jason, Nov 7 2026).
+  const searchCostMicros = (p: "anthropic" | "openai") => {
+    const model = managedModel(p, null, "fast");
+    const floorTokens = p === "openai" ? openAiSearchInputTokens(model, 0, 1) ?? 0 : 0;
+    return WEB_SEARCH_FEE_MICROS[p] + floorTokens * (priceFor(model)?.input ?? 0);
+  };
+  const [firstSearch, ...laterSearch] = MANAGED_PROVIDER_ORDER.filter(
+    (p): p is "anthropic" | "openai" => p === "anthropic" || p === "openai"
+  );
+  check(
+    "the first managed provider is the cheapest for a web search",
+    firstSearch !== undefined && laterSearch.every((p) => searchCostMicros(firstSearch) <= searchCostMicros(p)),
+    MANAGED_PROVIDER_ORDER.map((p) => (p === "anthropic" || p === "openai" ? `${p}=${searchCostMicros(p)}` : p)).join(" ")
+  );
   // Web search on Orbit's key never runs on its Gemini key.
   const search = (f: KeyFacts) => {
     const c = chooseCompletionKey(f, { skipManaged: WEB_SEARCH_MANAGED_EXCLUDED });
@@ -519,6 +543,8 @@ const U = {
   shared: "smoke-aia-shared",
   other: "smoke-aia-other",
   openrouterOnly: "smoke-aia-openrouter-only",
+  jevOrbit: "smoke-aia-jev-orbit",
+  jevOwn: "smoke-aia-jev-own",
 };
 
 async function account(userId: string, cols: Partial<typeof userSettings.$inferInsert>) {
@@ -759,6 +785,26 @@ async function realGate() {
     threw = true;
   }
   check("a Gemini grant does not open an OpenAI client", threw);
+
+  // Audit L-15: a web search Anthropic pauses is resumed on the SAME grant, each resume a
+  // billed round. The grant's hold covered only the first; each resume now holds its own.
+  console.log("\nA multi-round call reserves credits per round (L-15)");
+  await db.delete(creditHolds).where(eq(creditHolds.userId, U.proNone));
+  const access = await resolveAiAccess(U.proNone);
+  const metered = await access.completion("research.person");
+  const heldNow = async () => (await db.select().from(creditHolds).where(eq(creditHolds.userId, U.proNone))).length;
+  check("the grant holds its first round", (await heldNow()) === 1, await heldNow());
+  const step = await access.holdStep(metered);
+  check("a resume on a managed grant places its own hold", typeof step === "string" && (await heldNow()) === 2, { step, held: await heldNow() });
+  await access.releaseStepHold(metered, step!);
+  check("…released by id, leaving the grant's own for its settle", (await heldNow()) === 1, await heldNow());
+  await db.delete(creditHolds).where(eq(creditHolds.userId, U.proNone));
+  const ownGrant = await (await resolveAiAccess(U.proOwn)).completion("research.person");
+  check("a call on the account's own key holds nothing per round", (await (await resolveAiAccess(U.proOwn)).holdStep(ownGrant)) === null);
+  const aiSource = readFileSync("src/lib/ai.ts", "utf8");
+  const loop = aiSource.slice(aiSource.indexOf("const stepHolds"), aiSource.indexOf("const stepHolds") + 3_000);
+  check("webSearchJson's resume loop holds per round and releases in finally",
+    /access\.holdStep\(grant\)/.test(loop) && /finally \{\s*for \(const id of stepHolds\) await access\.releaseStepHold\(grant, id\)/.test(loop));
 }
 
 async function transitions() {
@@ -1263,6 +1309,139 @@ async function sharedAccess() {
 }
 
 /**
+ * Orbit's own TypeSafe key (spec 2026-11-10-jev-work-history-design.md): it answers ONLY the
+ * two work-history gates, counts against the Anthropic pool, stops with every managed-AI stop,
+ * and a dry or refused key takes it out for two hours — while an account's own key carries on.
+ */
+async function orbitPaidJev() {
+  console.log("\nOrbit's TypeSafe key: work-history gates only");
+  const db = await getDb();
+  const RECHECK = "contact.work_history.recheck.gate";
+  const typesafeEvents = and(eq(errorEvents.source, "ai.managed"), sql`${errorEvents.context}->>'provider' = 'typesafe'`);
+  const rowsOfTypesafe = async () => (await db.select().from(errorEvents).where(typesafeEvents)).length;
+  process.env.ORBIT_MANAGED_TYPESAFE_API_KEY = "managed-typesafe-key";
+  await account(U.jevOrbit, { ...PRO });
+  await account(U.jevOwn, { ...PRO, typesafeApiKeyEncrypted: encrypt("user-typesafe-key") });
+  const poolRows: string[] = [];
+  try {
+    forgetManagedAiPause();
+    // A real Orbit-paid key left in a developer's env must never reach a smoke run.
+    const gateSource = readFileSync(join(process.cwd(), "src", "lib", "ai-access.ts"), "utf8");
+    const managedNames = [...gateSource.matchAll(/"(ORBIT_MANAGED_[A-Z_]+_API_KEY)"/g)]
+      .map((m) => m[1]!)
+      // Present only to satisfy a Record; never read (ai-access.ts says so).
+      .filter((n) => n !== "ORBIT_MANAGED_OPENROUTER_API_KEY");
+    const unstripped = managedNames.filter((n) => !(PROVIDER_KEY_ENV as readonly string[]).includes(n));
+    check("every Orbit-paid key the gate reads is stripped from smoke runs",
+      managedNames.includes("ORBIT_MANAGED_TYPESAFE_API_KEY") && unstripped.length === 0, unstripped);
+
+    console.log("\nOrbit's TypeSafe calls cost the account no credits");
+    const settleRow = { userId: U.jevOrbit, operation: RECHECK, kind: "completion", keyOwner: "orbit" as const, success: 1 };
+    await json(U.jevOrbit, "chat.answer"); // one real (stubbed) managed call opens this month's allowance
+    await settle();
+    const opened = await remaining(U.jevOrbit);
+    check("the account has an allowance to charge", opened.grants.some((g) => g.kind === "allowance"), opened);
+    await settleManagedUsage({ ...settleRow, provider: "typesafe", estimatedCostMicros: 1_000_000 });
+    const afterTypesafe = await remaining(U.jevOrbit);
+    check("an Orbit-paid TypeSafe call charges nothing",
+      afterTypesafe.allowance === opened.allowance && afterTypesafe.pack === opened.pack, { opened, afterTypesafe });
+    await settleManagedUsage({ ...settleRow, provider: "anthropic", estimatedCostMicros: 1_000_000 });
+    check("control: the same charge on Orbit's Anthropic key does come off the allowance",
+      (await remaining(U.jevOrbit)).allowance < afterTypesafe.allowance);
+
+    check("ORBIT_PAID_DECISIONS is exactly the two work-history gates",
+      ORBIT_PAID_DECISIONS.size === 2 && ORBIT_PAID_DECISIONS.has(RECHECK) && ORBIT_PAID_DECISIONS.has("contact.work_history.verify.gate"));
+    let access = await resolveAiAccess(U.jevOrbit);
+    const orbitGrant = access.decision(RECHECK);
+    check("a Pro account with no TypeSafe key gets Orbit's key for the re-check gate",
+      orbitGrant?.provider === "typesafe" && orbitGrant.keyOwner === "orbit", JSON.stringify(orbitGrant));
+    check("…but not for any other decision", access.decision("chat.rerank.decide") === null);
+    check("…and it has a decision model to open", access.hasDecisionModel());
+    const own = (await resolveAiAccess(U.jevOwn)).decision("chat.rerank.decide");
+    check("an account's own TypeSafe key still answers every decision", own?.keyOwner === "user", JSON.stringify(own));
+
+    process.env.ORBIT_JEV = "off";
+    check("ORBIT_JEV=off stops Orbit's key", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    delete process.env.ORBIT_JEV;
+    process.env.ORBIT_MANAGED_AI = "off";
+    forgetManagedAiPause();
+    check("ORBIT_MANAGED_AI=off stops Orbit's key", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    delete process.env.ORBIT_MANAGED_AI;
+    await db.insert(siteSettings).values({ id: 1, managedAiPaused: true }).onConflictDoUpdate({ target: siteSettings.id, set: { managedAiPaused: true } });
+    forgetManagedAiPause();
+    check("the admin pause stops Orbit's key", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    await db.update(siteSettings).set({ managedAiPaused: false }).where(eq(siteSettings.id, 1));
+
+    console.log("\nOrbit's TypeSafe spend is in the Anthropic pool");
+    forgetManagedAiPause();
+    const before = (await managedPoolsSpent()).anthropic ?? 0;
+    const [ts] = await db.insert(usageEvents).values({
+      userId: U.jevOrbit, operation: RECHECK, provider: "typesafe", model: "jev-1.13.0", kind: "completion",
+      keyOwner: "orbit", estimatedCostMicros: 1_000_000,
+    }).returning();
+    poolRows.push(ts.id);
+    const after = (await managedPoolsSpent()).anthropic ?? 0;
+    check("a 1,000,000-micro TypeSafe row raises the Anthropic pool by exactly that", after - before === 1_000_000, { before, after });
+    const [cap] = await db.insert(usageEvents).values({
+      userId: U.jevOrbit, operation: "smoke.pool", provider: "anthropic", model: "stub", kind: "completion",
+      keyOwner: "orbit", estimatedCostMicros: MANAGED_AI_POOLS.anthropic!.capMicros,
+    }).returning();
+    poolRows.push(cap.id);
+    forgetManagedAiPause();
+    check("a spent Anthropic pool stops Orbit's key", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    await db.delete(usageEvents).where(inArray(usageEvents.id, poolRows));
+    poolRows.length = 0;
+
+    console.log("\nOrbit's TypeSafe key runs dry");
+    forgetManagedAiPause();
+    access = await resolveAiAccess(U.jevOrbit);
+    const live = access.decision(RECHECK)!;
+    const ownGrant = (await resolveAiAccess(U.jevOwn)).decision("chat.rerank.decide")!;
+    await noteDecisionFailure(ownGrant, new TypeSafeApiError(402, "TypeSafe 402: payment required"));
+    check("an account's own key running dry records nothing", (await rowsOfTypesafe()) === 0);
+    delete process.env.VERCEL;
+    await noteDecisionFailure(live, new TypeSafeApiError(402, "TypeSafe 402: payment required"));
+    process.env.VERCEL = "1";
+    check("off Vercel (a dev key) a dry key records nothing in the shared DB", (await rowsOfTypesafe()) === 0);
+    await noteDecisionFailure(live, new TypeSafeApiError(500, "TypeSafe 500: overloaded"));
+    check("a plain server error does not take it out", (await rowsOfTypesafe()) === 0);
+    await noteDecisionFailure(live, new TypeSafeApiError(400, "TypeSafe 400: invalid question key `yes` for this model"));
+    check("a 400 whose text mentions an invalid key is not a refused key", (await rowsOfTypesafe()) === 0);
+    await noteDecisionFailure(live, new TypeSafeApiError(402, "TypeSafe 402: payment required"));
+    check("on Vercel a dry Orbit key records one error event naming typesafe", (await rowsOfTypesafe()) === 1);
+    check("…this instance stops asking at once", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    forgetManagedAiPause();
+    check("…and so does every instance (a fresh pool read)", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    check("…while an account's own key carries on", (await resolveAiAccess(U.jevOwn)).decision("chat.rerank.decide")?.keyOwner === "user");
+    check("…and ops hears about it", (await loadManagedAiOpsFacts(new Date())).failingProviders.includes("typesafe"));
+    check("…without pretending a chat provider is spent", !(await managedPoolState()).spent.has("typesafe" as never));
+    await db.update(errorEvents).set({ createdAt: new Date(Date.now() - 3 * 3_600_000) }).where(typesafeEvents);
+    forgetManagedAiPause();
+    check("after two hours it is tried again", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) !== null);
+
+    await noteDecisionFailure(live, new TypeSafeApiError(401, "TypeSafe 401: invalid api key"));
+    forgetManagedAiPause();
+    check("a refused (401) Orbit key takes it out too", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+    await db.update(errorEvents).set({ createdAt: new Date(Date.now() - 3 * 3_600_000) }).where(typesafeEvents);
+    forgetManagedAiPause();
+    check("(back after the window)", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) !== null);
+    // The event is throttled per instance per hour (the 401 above used it), so this checks the
+    // instance's own cache: a 403 is a refused key too.
+    await noteDecisionFailure(live, new TypeSafeApiError(403, "TypeSafe 403: forbidden"));
+    check("…and so does a 403", (await resolveAiAccess(U.jevOrbit)).decision(RECHECK) === null);
+  } finally {
+    if (poolRows.length) await db.delete(usageEvents).where(inArray(usageEvents.id, poolRows));
+    await db.delete(errorEvents).where(typesafeEvents);
+    await db.update(siteSettings).set({ managedAiPaused: false }).where(eq(siteSettings.id, 1));
+    delete process.env.ORBIT_MANAGED_TYPESAFE_API_KEY;
+    delete process.env.ORBIT_JEV;
+    delete process.env.ORBIT_MANAGED_AI;
+    process.env.VERCEL = "1";
+    forgetManagedAiPause();
+  }
+}
+
+/**
  * `run-smoke` shares one PGlite directory across scripts, and the ops sweep and admin
  * readers scan every account — so the Lifetime accounts, managed usage and managed-failure
  * events this script creates would open alerts in `smoke-ops-sweep` if left behind.
@@ -1287,6 +1466,7 @@ run(async () => {
     await realGate();
     await transitions();
     await localDevAndByok();
+    await orbitPaidJev();
     await sharedAccess();
   } finally {
     await cleanup();

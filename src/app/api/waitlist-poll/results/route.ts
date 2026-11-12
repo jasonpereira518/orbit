@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { clientIpFrom, ipBucketKey } from "@/lib/client-ip";
-import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import { clientIpFrom } from "@/lib/client-ip";
+import { RATE_LIMITS, consumeIpBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { readPollResults } from "@/lib/waitlist-poll-votes";
 import { reportError } from "@/lib/report-error";
 
@@ -14,7 +14,7 @@ const HEADERS = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" };
 
 export async function GET(request: NextRequest) {
   try {
-    await consumeBucket("poll.results", ipBucketKey(clientIpFrom(request.headers)), RATE_LIMITS.pollResults);
+    await consumeIpBucket("poll.results", clientIpFrom(request.headers), RATE_LIMITS.pollResults);
   } catch (err) {
     // A limiter that cannot count is not a reason to run the tally unmetered.
     const limited = isRateLimitedError(err);

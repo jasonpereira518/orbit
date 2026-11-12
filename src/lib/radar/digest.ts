@@ -26,11 +26,10 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { sha256Hex, signToken, verifyToken } from "@/lib/crypto";
+import { hashIdToken, signIdToken, verifyIdToken, type SignedIdTokenSpec } from "@/lib/signed-id-token";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { isValidTimeZone } from "@/lib/reminder-due-bucket";
 import { buildRadarDigestEmail, type DigestContent } from "@/lib/radar/digest-email";
-import { sleep } from "@/lib/async";
 import { digestLineFor } from "@/lib/radar/email-text";
 import type { RadarReason, RecommendationKind } from "@/lib/radar/types";
 
@@ -120,19 +119,19 @@ export async function captureRadarTimeZone(userId: string, raw: string | null | 
 
 // ---- Unsubscribe -------------------------------------------------------------------------
 
-const UNSUBSCRIBE_DEV_SECRET = "orbit-dev-radar-digest";
+const UNSUBSCRIBE_TOKEN: SignedIdTokenSpec = { label: UNSUBSCRIBE_LABEL, devFallback: "orbit-dev-radar-digest" };
 
 export function radarDigestUnsubscribeToken(userId: string): string {
-  return signToken(UNSUBSCRIBE_LABEL, userId, UNSUBSCRIBE_DEV_SECRET);
+  return signIdToken(UNSUBSCRIBE_TOKEN, userId);
 }
 
 /** The account a token was issued for, or null when it is not one this app signed. */
 export function readRadarDigestUnsubscribeToken(token: string | null | undefined): string | null {
-  return verifyToken(UNSUBSCRIBE_LABEL, token, UNSUBSCRIBE_DEV_SECRET);
+  return verifyIdToken(UNSUBSCRIBE_TOKEN, token)?.id ?? null;
 }
 
 export function hashRadarDigestToken(token: string): string {
-  return sha256Hex(token);
+  return hashIdToken(token);
 }
 
 export function radarDigestUnsubscribeUrl(token: string): string {
@@ -144,13 +143,20 @@ export function radarDigestUnsubscribeUrl(token: string): string {
  * verify or was never issued. Idempotent: a second click finds it already off.
  */
 export async function unsubscribeRadarDigest(token: string | null | undefined): Promise<boolean> {
-  const userId = readRadarDigestUnsubscribeToken(token);
-  if (!userId || !token) return false;
+  const verified = verifyIdToken(UNSUBSCRIBE_TOKEN, token);
+  if (!verified || !token) return false;
   const db = await getDb();
+  // A link signed before the HKDF sub-keys (audit L-06) is still in people's inboxes. Its hash
+  // was the one stored then, and the first digest sent since replaced it with the new token's,
+  // so it is accepted while the account has ANY digest hash on file — an account that was
+  // deleted, or never sent a digest, still has none, which is the binding that matters.
+  const bound = verified.legacy
+    ? sql`radar_digest_unsub_token_hash IS NOT NULL`
+    : sql`radar_digest_unsub_token_hash = ${hashRadarDigestToken(token)}`;
   const rows = rowsOf<{ user_id: string }>(
     await db.execute(sql`
       UPDATE user_settings SET radar_digest_enabled = 0
-       WHERE user_id = ${userId} AND radar_digest_unsub_token_hash = ${hashRadarDigestToken(token)}
+       WHERE user_id = ${verified.id} AND ${bound}
       RETURNING user_id
     `)
   );
@@ -273,7 +279,7 @@ async function openZones(now: Date): Promise<Map<string, string[]>> {
     await db.execute(sql`
       SELECT DISTINCT coalesce(radar_digest_tz, 'UTC') AS tz
         FROM user_settings
-       WHERE radar_digest_enabled = 1 AND radar_paused = 0
+       WHERE radar_digest_enabled = 1 AND radar_paused = 0 AND radar_enabled_at IS NOT NULL
     `)
   );
   return openDigestZones(now, rows.map((r) => r.tz));
@@ -293,6 +299,7 @@ async function eligibleBatch(
         FROM user_settings s
        WHERE s.radar_digest_enabled = 1
          AND s.radar_paused = 0
+         AND s.radar_enabled_at IS NOT NULL
          AND s.suspended_at IS NULL
          AND s.email IS NOT NULL AND btrim(s.email) <> ''
          AND coalesce(s.radar_digest_tz, 'UTC') IN (${sql.join(zones.map((z) => sql`${z}`), sql`, `)})
@@ -303,6 +310,13 @@ async function eligibleBatch(
            SELECT 1 FROM recommendations r
             WHERE r.user_id = s.user_id AND r.status = 'pending'
               AND r.bucket IN ('today', 'soon') AND r.expires_at > now()
+         )
+         -- The week's plan exists: the email is about it, so it waits for the Monday build
+         -- (the pass reaches accounts 25 at a time; a plan from last week is not this week's).
+         AND EXISTS (
+           SELECT 1 FROM radar_runs rr
+            WHERE rr.user_id = s.user_id AND rr.status = 'ok' AND rr.stats ->> 'mode' = 'weekly'
+              AND rr.started_at > now() - interval '6 days'
          )
        ORDER BY s.user_id
        LIMIT ${RADAR_DIGEST_BATCH}
@@ -342,6 +356,8 @@ async function releaseRadarDigestWeek(userId: string, week: string, prev: string
      WHERE user_id = ${userId} AND radar_digest_last_week = ${week}
   `);
 }
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * One run: every person whose Monday morning it is, not yet sent this week, up to the budget.
@@ -383,7 +399,7 @@ export async function sendRadarDigests(
         }
         const unsubscribeUrl = radarDigestUnsubscribeUrl(token);
         const message = buildRadarDigestEmail(content, { appUrl, unsubscribeUrl });
-        if (sentAny && gapMs > 0) await sleep(gapMs);
+        if (sentAny && gapMs > 0) await pause(gapMs);
         sentAny = true;
         const result = await deliver({ to: person.email.trim(), ...message, unsubscribeUrl });
         if (result.ok) {

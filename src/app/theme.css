@@ -96,6 +96,8 @@
   --color-night-max: #f2c14e;
   --color-night-lifetime: #c9d1db;
   --color-ink: var(--ink);
+  --color-gold: var(--gold);
+  --color-gold-ink: var(--gold-ink);
   --color-admin-nav-hover: var(--admin-nav-hover);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -238,6 +240,11 @@
      lets `--primary` be an accent in both themes without dragging body content
      with it. Light is unchanged from before the split. */
   --ink: #0f3d3e;
+  /* Onboarding's motif gold (the mark's ring, done stages, icons on a selected teal fill).
+     The body glow's gold, made solid. Decoration, never a control colour: `--gold` is for
+     icons and dots (2.3:1 on a card), `--gold-ink` carries text on a `bg-gold/15` note. */
+  --gold: #c4a35a;
+  --gold-ink: #6e5726;
   /* Admin nav hover wash. Carries its own alpha rather than being tinted at the call
      site, because the hover span uses `opacity` for its fade-in — the two would fight. */
   --admin-nav-hover: rgb(15 61 62 / 0.10);
@@ -360,6 +367,8 @@
   --tier-max: #f2c14e;
   --tier-lifetime: #c5ccd6;
   --ink: #e7ecf1;
+  --gold: #d4b469;
+  --gold-ink: #ecd49a;
   --admin-nav-hover: rgb(124 195 226 / 0.16);
   /* Shadows on a dark ground want to be deeper than the surface, not neutral
      black — a pure-black shadow over a tinted ground reads as a dead hole. */
@@ -399,7 +408,7 @@
  * to go in the block above, and `check:tokens` will not tell you otherwise. */
 :root {
   --orbit-corner-bottom: calc(
-    4.625rem + env(safe-area-inset-bottom) + var(--orbit-corner-lift)
+    var(--orbit-bottom-nav) + var(--orbit-corner-lift)
   );
   --orbit-corner-right: 0.75rem;
 
@@ -420,6 +429,12 @@
   --orbit-corner-shift: 0px;
   --orbit-toast-right: var(--orbit-corner-right);
 
+  /* Width the feedback dock takes from the page (`useDockWidth`). Unlike the shift above,
+     this NARROWS the page's content (not its background): `[data-dock-squeeze]` below gives up the room, and the controls
+     fixed to the right edge add it to their offset. 0px unless the dock is open at `md`+ and
+     wide enough to have room beside it (`dockLayoutFor`). */
+  --orbit-dock-w: 0px;
+
   /* Toasts stack ABOVE the job widget, never on it. */
   --orbit-toast-bottom: calc(
     var(--orbit-corner-bottom) + var(--orbit-job-stack-height)
@@ -437,7 +452,7 @@
      Distinct from `--orbit-corner-bottom` above, which anchors floating widgets in the
      corner; this is the band ordinary page content has to stay out of. 0 at `md`, where
      `md:hidden` takes the nav away. */
-  --orbit-bottom-nav: calc(5.5rem + env(safe-area-inset-bottom));
+  --orbit-bottom-nav: calc(4.625rem + env(safe-area-inset-bottom));
 
   /* Width the contacts A-Z rail occupies on the right.
      ------------------------------------------------------------------------------
@@ -457,6 +472,22 @@
     --orbit-toast-right: calc(var(--orbit-corner-right) + var(--orbit-corner-shift));
     /* The nav is `md:hidden`, so there is no band to avoid. */
     --orbit-bottom-nav: 0px;
+  }
+}
+
+/* The page gives up room for the feedback dock instead of the dock covering it.
+ *
+ * PADDING on the scroll column (`#app-main-scroll`), not a margin on the shell: the column's
+ * own scrollbar then stays at the screen's right edge, to the right of the panel rather than
+ * wedged between the page and it, and the screen's background is never narrowed (a margin
+ * left the backdrop showing as a hard edge). Only what is inside the column re-flows. It
+ * transitions with the same duration and ease as the panel's slide, so the page and the panel
+ * arrive together; the global reduced-motion clamp (below) makes both instant. The bare
+ * onboarding root carries the attribute too; it has no inner scroller. */
+@media (min-width: 48rem) {
+  [data-dock-squeeze] {
+    padding-right: var(--orbit-dock-w);
+    transition: padding-right var(--transition-duration-slow) var(--ease-house);
   }
 }
 
@@ -818,6 +849,26 @@
  * The outer drop shadow is kept (unlike .liquid-glass-pill, which drops it):
  * this surface genuinely floats above scrolling content and needs to read as
  * lifted off the page. */
+/* The Constellation star card (graph/contact-inspect-panel.tsx), light theme only. The
+ * stock light glass is tuned for a pale page: over the always-dark sky its 40-70% white
+ * reads as muddy grey. Denser white keeps it a light card that still blurs the sky behind
+ * it, and the hover lightening is held off (it would thin the glass toward grey again).
+ * `:not(.dark *)` leaves dark mode to the stock `.dark .liquid-glass`. */
+.liquid-glass.liquid-glass-sky:not(.dark *),
+.liquid-glass.liquid-glass-sky:not(.dark *):hover {
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.9) 0%,
+    rgba(255, 255, 255, 0.82) 45%,
+    rgba(247, 248, 246, 0.78) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
+    0 18px 48px -12px rgba(0, 0, 0, 0.55),
+    0 4px 14px -4px rgba(0, 0, 0, 0.3);
+}
+
 .liquid-glass.liquid-glass-panel {
   /* Mirror of `--ease-house` (an ease-OUT, which is right for arriving). Leaving reverses
    * that: the window should let go slowly and accelerate as it reaches the button, so the
@@ -1264,6 +1315,17 @@
   }
 }
 
+/* The stars trail the camera (camera-motion.ts `setSkyDrift`); reduced motion holds them still.
+   JS already stops writing the offset, this also clears one set before the setting changed. */
+@media (prefers-reduced-motion: reduce) {
+  .constellation-starfield-drift {
+    transform: none !important;
+  }
+}
+html[data-motion="reduce"] .constellation-starfield-drift {
+  transform: none !important;
+}
+
 .constellation-comet {
   display: flex;
   align-items: center;
@@ -1668,6 +1730,37 @@
   .tracker-planet-bob {
     animation: none;
   }
+}
+
+/* Chat's loading planet (`orbit-mark.tsx`): one moon lap. It starts at the back of the orbit and
+ * eases in and out, so it drifts behind the planet and is quickest swinging past the front, the
+ * way a real orbit speeds up near its planet. `unlap` is the exact inverse, spun on the moon itself
+ * so the squashed orbit never stretches it. Reduced motion never mounts these: the component
+ * draws a parked moon instead, since the global clamp would freeze it hidden behind the planet. */
+@keyframes orbit-mark-lap {
+  from {
+    transform: rotate(-90deg);
+  }
+  to {
+    transform: rotate(270deg);
+  }
+}
+@keyframes orbit-mark-unlap {
+  from {
+    transform: rotate(90deg);
+  }
+  to {
+    transform: rotate(-270deg);
+  }
+}
+.orbit-mark-lap,
+.orbit-mark-unlap {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  animation: orbit-mark-lap 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+.orbit-mark-unlap {
+  animation-name: orbit-mark-unlap;
 }
 
 @keyframes interest-spin {
@@ -3209,6 +3302,24 @@ html[data-celebration-handoff] [data-app-logo] {
   50% {
     opacity: 0.25;
   }
+}
+
+/* ── Radar "new suggestions" shimmer ──
+ * Colours for the gradient `components/layout/radar-shimmer-icon.tsx` puts on the Radar icon's
+ * stroke while Radar holds suggestions created since /radar was last opened: a green icon
+ * with a pale glint sweeping across it. The sweep itself is SVG (animateTransform), and
+ * reduced motion drops it in the component, leaving the icon green and still. */
+.radar-shimmer-base {
+  stop-color: #059669;
+}
+.radar-shimmer-glint {
+  stop-color: #6ee7b7;
+}
+.dark .radar-shimmer-base {
+  stop-color: #34d399;
+}
+.dark .radar-shimmer-glint {
+  stop-color: #ecfdf5;
 }
 
 /* --- Per-event theming ------------------------------------------------------------------

@@ -1,18 +1,34 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import Link from "next/link";
 import type { CareerProfile } from "@/db/schema";
 import { clearLinkedInYou } from "@/actions/imports";
-import { saveSenderBio, saveSocialLinks } from "@/actions/settings";
+import { saveCity, saveSenderBio, saveSocialLinks } from "@/actions/settings";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsRow, SettingsSection } from "@/components/settings/settings-section";
+import { LinkedInMark } from "@/components/settings/provider-marks";
+import { integrationHref } from "@/components/settings/sections";
+import {
+  Briefcase,
+  Building2,
+  MapPin,
+  Quote,
+  RefreshCw,
+  Sparkles,
+  Target,
+  Trash2,
+  Upload,
+  type LucideIcon,
+} from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SENDER_BIO_MAX_LENGTH } from "@/lib/sender-profile";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
@@ -33,18 +49,51 @@ const profileAvatarAppearance = {
   },
 };
 
-/** The label/value pairs worth showing, skipping anything that was never imported. */
-function careerRows(c: CareerProfile): [string, string][] {
-  const rows: [string, string | undefined][] = [
-    ["Headline", c.profile?.headline],
-    ["Current role", c.role ? `${c.role.title} at ${c.role.company}` : undefined],
-    ["Industry", c.profile?.industry],
-    ["Location", c.profile?.location],
-    ["Skills", c.skills?.length ? `${c.skills.length}: ${c.skills.slice(0, 6).join(", ")}${c.skills.length > 6 ? "…" : ""}` : undefined],
-    ["Job titles", c.roleKeywords?.join(", ")],
-    ["Imported", c.importedAt ? new Date(c.importedAt).toLocaleDateString() : undefined],
+/** LinkedIn's brand blue, the tile tone the LinkedIn integration page uses (linkedin-settings.tsx). */
+const LINKEDIN_BLUE = "#0A66C2";
+const SKILL_CHIPS = 6;
+
+type CareerRow = { icon: LucideIcon; label: string } & (
+  | { value: string; /** Shown on hover/focus: LinkedIn's About summary under the headline. */ hint?: string }
+  | { chips: string[] }
+);
+
+/** The rows worth showing, skipping anything that was never imported. */
+function careerRows(c: CareerProfile): CareerRow[] {
+  const rows: (CareerRow | null)[] = [
+    // Word for word as LinkedIn has it; the About summary rides along on hover.
+    c.profile?.headline
+      ? { icon: Quote, label: "Headline", value: c.profile.headline, hint: c.profile.summary || undefined }
+      : null,
+    c.role ? { icon: Briefcase, label: "Current role", value: `${c.role.title} at ${c.role.company}` } : null,
+    c.profile?.industry ? { icon: Building2, label: "Industry", value: c.profile.industry } : null,
+    c.profile?.location ? { icon: MapPin, label: "Location", value: c.profile.location } : null,
+    c.skills?.length
+      ? {
+          icon: Sparkles,
+          label: "Skills",
+          chips: [
+            ...c.skills.slice(0, SKILL_CHIPS),
+            ...(c.skills.length > SKILL_CHIPS ? [`+${c.skills.length - SKILL_CHIPS} more`] : []),
+          ],
+        }
+      : null,
+    c.roleKeywords?.length ? { icon: Target, label: "Job titles", chips: c.roleKeywords } : null,
   ];
-  return rows.filter((r): r is [string, string] => Boolean(r[1]));
+  return rows.filter((r): r is CareerRow => r !== null);
+}
+
+/** The FeatureRow icon tile (account-page.tsx), washed in LinkedIn blue. */
+function LinkedInTile() {
+  return (
+    <span
+      aria-hidden
+      className="flex size-8 shrink-0 items-center justify-center rounded-lg"
+      style={{ backgroundColor: `color-mix(in srgb, ${LINKEDIN_BLUE} 14%, transparent)` }}
+    >
+      <LinkedInMark className="size-4" />
+    </span>
+  );
 }
 
 type ProfileData = {
@@ -61,37 +110,16 @@ type SocialLinks = {
   website: string;
 };
 
-export function ProfileSettings({
+/** Who is signed in, and the way out. */
+export function AccountSettings({
   profile,
   clerkEnabled,
-  initialSocialLinks,
-  initialSenderBio,
-  initialCareer,
 }: {
   profile: ProfileData | null;
   clerkEnabled: boolean;
-  initialSocialLinks: SocialLinks;
-  initialSenderBio: string;
-  initialCareer: CareerProfile | null;
 }) {
-  const [socials, setSocials] = useState(initialSocialLinks);
-  const [bio, setBio] = useState(initialSenderBio);
-  const [career, setCareer] = useState(initialCareer);
-  const [clearing, startClear] = useTransition();
-  const [pending, start] = useTransition();
-  const [bioPending, startBio] = useTransition();
-  // A failed save stays next to its button until the next attempt; the toast alone could
-  // time out before it was read.
-  const [bioError, setBioError] = useState<string | null>(null);
-  const [clearError, setClearError] = useState<string | null>(null);
-  const [socialsError, setSocialsError] = useState<string | null>(null);
-
   return (
-    <SettingsSection
-      title="Profile and account"
-      description="Your identity and sign-in for Orbit."
-    >
-
+    <SettingsSection title="Account" description="Your identity and sign-in for Orbit.">
       {profile ? (
         <div className="flex flex-wrap items-center gap-4">
           {/* One face, and it is also the account menu. Clerk's UserButton
@@ -141,11 +169,36 @@ export function ProfileSettings({
           )}
         </div>
       )}
+    </SettingsSection>
+  );
+}
 
+/** What Orbit knows about you: the bio you wrote, and what came in from LinkedIn. */
+export function AboutYouSettings({
+  initialSenderBio,
+  initialCareer,
+}: {
+  initialSenderBio: string;
+  initialCareer: CareerProfile | null;
+}) {
+  const [bio, setBio] = useState(initialSenderBio);
+  const [career, setCareer] = useState(initialCareer);
+  const [clearing, startClear] = useGuardedTransition();
+  const [bioPending, startBio] = useGuardedTransition();
+  // A failed save stays next to its button until the next attempt; the toast alone could
+  // time out before it was read.
+  const [bioError, setBioError] = useState<string | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const [city, setCity] = useState(initialCareer?.city ?? initialCareer?.profile?.location ?? "");
+  const [cityPending, startCity] = useGuardedTransition();
+  const [cityError, setCityError] = useState<string | null>(null);
+
+  return (
+    <SettingsSection title="About you">
       <SettingsRow
-        title="About you"
+        title="Bio"
         labelFor="sender-bio"
-        description="One or two sentences: what you do, and what you are looking for. Orbit puts this in every message it drafts for you — without it, drafts have a name to sign off with and nothing to introduce."
+        description="One or two sentences on what you do and what you’re looking for. Orbit adds it to every draft."
       >
         <Textarea
           id="sender-bio"
@@ -189,27 +242,116 @@ export function ProfileSettings({
       </SettingsRow>
 
       <SettingsRow
-        title="From your LinkedIn export"
-        description="Your headline, current role, skills and the job titles you watch. Orbit uses them to pick who is worth reaching out to; it never overwrites what you typed above."
+        title="City"
+        labelFor="your-city"
+        description="Where you are. Radar looks for events near you here."
       >
-        {career ? (
-          <div className="space-y-3">
-            <dl className="space-y-1.5 text-sm">
-              {careerRows(career).map(([label, value]) => (
-                <div key={label} className="flex gap-3">
-                  <dt className="w-28 shrink-0 text-muted-foreground">{label}</dt>
-                  <dd className="min-w-0 break-words">{value}</dd>
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            startCity(async () => {
+              setCityError(null);
+              try {
+                const saved = await saveCity(city);
+                setCity(saved.city);
+                toast.success(saved.city ? "Saved" : "Cleared");
+              } catch (err) {
+                const message = friendlyError(err, "Couldn’t save that — try again?");
+                toast.error(message);
+                setCityError(message);
+              }
+            });
+          }}
+        >
+          <Input
+            id="your-city"
+            aria-describedby="your-city-description"
+            value={city}
+            maxLength={120}
+            autoComplete="address-level2"
+            placeholder="Austin, TX"
+            className="max-w-xs"
+            onChange={(e) => setCity(e.target.value)}
+          />
+          <Button type="submit" size="sm" disabled={cityPending}>
+            {cityPending ? "Saving…" : "Save"}
+          </Button>
+          <FormError className="basis-full">{cityError}</FormError>
+        </form>
+      </SettingsRow>
+
+      <SettingsRow
+        title="From your LinkedIn"
+        description="What Orbit learned about you from LinkedIn. It helps pick who’s worth reaching out to, and never overwrites what you wrote above."
+      >
+        {/* `aim` alone (onboarding's, kept by Remove) is not an import: no rows to show. */}
+        {career && careerRows(career).length ? (
+          <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
+            <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3">
+              <LinkedInTile />
+              <p className="min-w-0 flex-1 text-sm font-medium text-ink">Your LinkedIn profile</p>
+              <p className="shrink-0 text-xs text-muted-foreground">
+                {career.importedAt
+                  ? `Imported ${new Date(career.importedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                  : "From setup"}
+              </p>
+            </div>
+            <dl className="divide-y divide-border/60 text-sm">
+              {careerRows(career).map((row) => (
+                <div key={row.label} className="flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5 sm:flex-nowrap">
+                  <dt className="flex w-32 shrink-0 items-center gap-2 text-muted-foreground">
+                    <row.icon className="size-4 shrink-0" aria-hidden />
+                    {row.label}
+                  </dt>
+                  <dd className="min-w-0 flex-1 break-words text-ink">
+                    {"chips" in row ? (
+                      <span className="flex flex-wrap gap-1.5">
+                        {row.chips.map((chip) => (
+                          <span
+                            key={chip}
+                            className="whitespace-nowrap rounded-full border border-border/70 bg-muted/40 px-2.5 py-0.5 text-xs"
+                          >
+                            {chip}
+                          </span>
+                        ))}
+                      </span>
+                    ) : row.hint ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <span
+                              tabIndex={0}
+                              className="cursor-help rounded-sm underline decoration-border decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+                            />
+                          }
+                        >
+                          {row.value}
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" align="start" className="max-w-sm leading-relaxed">
+                          {row.hint}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      row.value
+                    )}
+                  </dd>
                 </div>
               ))}
             </dl>
-            <div className="flex flex-wrap items-center gap-3">
-              <Link href="/imports" className={buttonVariants({ variant: "outline", size: "sm" })}>
-                Import a newer export
+            <div className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-muted/20 px-4 py-3">
+              <Link
+                href={integrationHref("linkedin")}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                <RefreshCw className="size-3.5" aria-hidden />
+                Update from LinkedIn
               </Link>
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
+                className="text-muted-foreground"
                 disabled={clearing}
                 onClick={() =>
                   startClear(async () => {
@@ -226,26 +368,44 @@ export function ProfileSettings({
                   })
                 }
               >
+                <Trash2 className="size-3.5" aria-hidden />
                 {clearing ? "Removing…" : "Remove imported details"}
               </Button>
               <FormError className="basis-full">{clearError}</FormError>
             </div>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            Nothing imported yet.{" "}
-            <Link href="/imports" className="underline underline-offset-2">
-              Drop your LinkedIn export on Imports
-            </Link>{" "}
-            and Orbit reads Profile, Positions, Skills and Saved Job Alerts from it.
-          </p>
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-border/70 px-4 py-3">
+            <LinkedInTile />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-ink">Nothing from LinkedIn yet</p>
+              <p className="text-sm text-muted-foreground">
+                Your export brings your headline, roles, skills and saved job alerts.
+              </p>
+            </div>
+            <Link
+              href={integrationHref("linkedin")}
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              <Upload className="size-3.5" aria-hidden />
+              Upload your export
+            </Link>
+          </div>
         )}
       </SettingsRow>
+    </SettingsSection>
+  );
+}
 
-      <SettingsRow
-        title="Your socials"
-        description="Shown when you click the sun in Constellation."
-      >
+/** The links on your own star in Constellation. */
+export function SocialLinksSettings({ initialSocialLinks }: { initialSocialLinks: SocialLinks }) {
+  const [socials, setSocials] = useState(initialSocialLinks);
+  const [pending, start] = useGuardedTransition();
+  const [socialsError, setSocialsError] = useState<string | null>(null);
+
+  return (
+    <SettingsSection title="Your socials" description="Shown when you click the sun in Constellation.">
+      <div className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-2">
           {(
             [
@@ -302,7 +462,7 @@ export function ProfileSettings({
           {pending ? "Saving…" : "Save socials"}
         </Button>
         <FormError className="mt-2">{socialsError}</FormError>
-      </SettingsRow>
+      </div>
     </SettingsSection>
   );
 }

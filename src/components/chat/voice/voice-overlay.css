@@ -1,0 +1,36 @@
+.voice-stage {
+  --voice-planet: #0f3d3e;
+  --voice-highlight: #80b8b5;
+  --voice-shadow: #092829;
+}
+.dark .voice-stage {
+  --voice-planet: #7cc3e2;
+  --voice-highlight: #b8e5f5;
+  --voice-shadow: #326b83;
+}
+.voice-orbit { --voice-input: 0; --voice-output: 0; }
+.voice-orbit-user, .voice-orbit-planet, .voice-orbit-moon {
+  transform-origin: 200px 160px;
+}
+.voice-orbit-user {
+  transform: scale(var(--voice-user-scale, 1));
+  opacity: calc(.5 + var(--voice-input) * .5);
+}
+.voice-orbit-echo { opacity: calc(.12 + var(--voice-input) * .65); }
+.voice-orbit-planet { transform: scale(var(--voice-planet-scale, 1), calc(1 + var(--voice-output) * .045)); }
+.voice-orbit-inner { opacity: calc(.22 + var(--voice-output) * .65); }
+.voice-orbit-moon { animation: voice-orbit-travel 24s linear infinite; }
+.voice-orbit[data-mode="thinking"] .voice-orbit-moon { animation-duration: 3s; }
+.voice-orbit[data-mode="connecting"] { animation: voice-orbit-arrive 1.8s ease-in-out infinite alternate; }
+.voice-orbit[data-muted] .voice-orbit-user { opacity: .18; }
+.voice-orbit { max-height: min(40dvh, 280px, 100%); }
+/* Inline on a phone the composer and nav share the height: keep the controls on screen. */
+@media (max-width: 639.98px) { .voice-orbit { max-height: min(24dvh, 200px, 100%); } }
+.voice-stage[data-transcript] .voice-orbit { max-height: min(22dvh, 200px, 100%); }
+.voice-stage[data-compact] .voice-orbit { max-height: 52px; }
+@keyframes voice-orbit-travel { to { transform: rotate(360deg); } }
+@keyframes voice-orbit-arrive { from { opacity: .45; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .voice-orbit, .voice-orbit-moon { animation: none !important; }
+  .voice-orbit-user, .voice-orbit-planet { transform: none; }
+}

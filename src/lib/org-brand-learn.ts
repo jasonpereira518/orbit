@@ -32,6 +32,15 @@ import {
   type LearnedBrand,
 } from "@/lib/brand-colors";
 import { publicEmailDomain } from "@/lib/closeness-evidence";
+import {
+  KIND_DESCRIPTION,
+  NOT_AN_ORG,
+  claimValues,
+  officialDomain,
+  toDomain,
+  wikidataClaims,
+  wikidataSearch,
+} from "@/lib/wikidata";
 
 type Fetch = typeof fetch;
 
@@ -121,23 +130,9 @@ export async function extractBrandHex(image: Buffer): Promise<string | null> {
 // Sources
 // -------------------------------------------------------------------------------------------
 
-const DOMAIN_RE = /^(?=.{3,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+export { toDomain };
 
-/** A bare, lowercase registrable-looking host from a URL, a host or an email, or null. */
-export function toDomain(value: string | null | undefined): string | null {
-  if (!value) return null;
-  let host = value.trim().toLowerCase();
-  if (host.includes("@")) host = host.slice(host.lastIndexOf("@") + 1);
-  else {
-    try {
-      host = new URL(/^[a-z]+:\/\//.test(host) ? host : `https://${host}`).hostname;
-    } catch {
-      return null;
-    }
-  }
-  host = host.replace(/^www\./, "").replace(/\.$/, "");
-  return DOMAIN_RE.test(host) ? host : null;
-}
+const WIKI = { userAgent: USER_AGENT, timeoutMs: FETCH_TIMEOUT_MS };
 
 /**
  * A domain the logo route may hand Google's favicon service: exactly what `toDomain` makes
@@ -150,18 +145,6 @@ export function isLogoDomain(value: string): boolean {
     toDomain(value) === value &&
     !/\.(?:local|localhost|internal|intranet|lan|home|corp|arpa|test|invalid|example)$/.test(value)
   );
-}
-
-async function getJson(url: string, fetchImpl: Fetch): Promise<unknown | null> {
-  try {
-    const res = await fetchImpl(url, {
-      headers: { "user-agent": USER_AGENT, accept: "application/json" },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    return res.ok ? await res.json() : null;
-  } catch {
-    return null;
-  }
 }
 
 /** The dominant color of a domain's icon, via Google's favicon service. */
@@ -179,25 +162,6 @@ export async function iconColorForDomain(domain: string, fetchImpl: Fetch = fetc
   }
 }
 
-/** Descriptions that are plainly the right kind of organization. */
-const KIND_DESCRIPTION: Record<BrandKind, RegExp> = {
-  school: /\b(university|college|school|institute|academy|polytechnic|conservatory|seminary)\b/i,
-  company:
-    /\b(company|corporation|business|firm|enterprise|manufacturer|maker|producer|contractor|bank|retailer|chain|restaurant|airline|startup|developer|provider|brand|conglomerate|group|agency|organi[sz]ation|platform|service|publisher|studio|consultancy|fund|operator|laborator(y|ies)|nonprofit|foundation|software|technology)\b/i,
-};
-
-/** Descriptions that are plainly not an organization at all. */
-const NOT_AN_ORG =
-  /\b(family name|given name|surname|human|person|actor|actress|singer|musician|politician|athlete|player|film|album|song|single|episode|novel|book|painting|character|species|genus|village|town|city|municipality|river|mountain|lake|island|disambiguation|wikimedia|scholarly article|video game)\b/i;
-
-type Claims = Record<string, Array<{ mainsnak?: { datavalue?: { value?: unknown } } }>>;
-
-function claimValues(claims: Claims | undefined, property: string): unknown[] {
-  return (claims?.[property] ?? [])
-    .map((c) => c.mainsnak?.datavalue?.value)
-    .filter((v) => v !== undefined);
-}
-
 /**
  * What Wikidata says about an organization by this exact name: its official color and its
  * official website. The search result must be named exactly this (label or alias), must not
@@ -209,13 +173,10 @@ export async function wikidataOrg(
   kind: BrandKind,
   fetchImpl: Fetch = fetch
 ): Promise<{ hex: string | null; domain: string | null } | null> {
-  const api = "https://www.wikidata.org/w/api.php";
-  const search = (await getJson(
-    `${api}?action=wbsearchentities&format=json&language=en&type=item&limit=7&search=${encodeURIComponent(name)}`,
-    fetchImpl
-  )) as { search?: Array<{ id: string; label?: string; description?: string; match?: { text?: string } }> } | null;
+  const opts = { ...WIKI, fetch: fetchImpl };
+  const search = await wikidataSearch(name, 7, opts);
   const want = brandKey(name);
-  const named = (search?.search ?? []).filter(
+  const named = (search ?? []).filter(
     (r) =>
       (brandKey(r.label) === want || brandKey(r.match?.text) === want) &&
       !NOT_AN_ORG.test(r.description ?? "")
@@ -229,15 +190,11 @@ export async function wikidataOrg(
     .slice(0, 3);
   if (!ids.length) return null;
 
-  const entities = (await getJson(
-    `${api}?action=wbgetentities&format=json&props=claims&ids=${ids.join("|")}`,
-    fetchImpl
-  )) as { entities?: Record<string, { claims?: Claims }> } | null;
+  const entities = await wikidataClaims(ids, opts);
 
   for (const id of ids) {
-    const claims = entities?.entities?.[id]?.claims;
+    const claims = entities?.[id]?.claims;
     if (!claims) continue;
-    const website = claimValues(claims, "P856").find((v): v is string => typeof v === "string");
     const colorIds = claimValues(claims, "P6364")
       .map((v) => (v as { id?: string })?.id)
       .filter((v): v is string => Boolean(v))
@@ -245,18 +202,15 @@ export async function wikidataOrg(
 
     let hex: string | null = null;
     if (colorIds.length) {
-      const colors = (await getJson(
-        `${api}?action=wbgetentities&format=json&props=claims&ids=${colorIds.join("|")}`,
-        fetchImpl
-      )) as { entities?: Record<string, { claims?: Claims }> } | null;
+      const colors = await wikidataClaims(colorIds, opts);
       const hexes = colorIds
-        .map((cid) => claimValues(colors?.entities?.[cid]?.claims, "P465")[0])
+        .map((cid) => claimValues(colors?.[cid]?.claims, "P465")[0])
         .filter((v): v is string => typeof v === "string" && /^#?[0-9a-f]{6}$/i.test(v))
         .map((v) => `#${v.replace("#", "").toLowerCase()}`);
       // School colors are often "cardinal and white": take the first one with a hue.
       hex = hexes.find((h) => hsl(...rgbOf(h)).s >= 0.2 && hsl(...rgbOf(h)).l <= 0.9) ?? null;
     }
-    const domain = toDomain(website);
+    const domain = officialDomain(claims);
     if (hex || domain) return { hex, domain };
   }
   return null;
@@ -302,27 +256,17 @@ type OrgRow = {
   kind: BrandKind;
   name_key: string;
   hex: string | null;
+  domain: string | null;
   resolved_at: string | Date | null;
   has_row: boolean;
 };
-
-/**
- * The viewer's companies and schools, each with what Orbit has learned about its color —
- * one statement. `learned` is what the page registers; `missing` is what is worth learning.
- */
-export async function loadOrgBrandColors(userId: string): Promise<OrgBrandColors> {
-  const hit = brandMemo.get(userId);
-  if (hit && Date.now() - hit.at < BRAND_MEMO_TTL_MS) return hit.value;
-  const value = await readOrgBrandColors(userId);
-  if (brandMemo.size >= BRAND_MEMO_MAX) brandMemo.delete(brandMemo.keys().next().value!);
-  brandMemo.set(userId, { at: Date.now(), value });
-  return value;
-}
 
 type OrgBrandColors = {
   learned: LearnedBrand[];
   missing: Array<{ name: string; kind: BrandKind; nameKey: string }>;
 };
+
+export const EMPTY_ORG_BRAND_COLORS: OrgBrandColors = { learned: [], missing: [] };
 
 /**
  * Per-instance copy per viewer. The (app) layout reads this on every full load and every
@@ -333,6 +277,30 @@ type OrgBrandColors = {
 const BRAND_MEMO_TTL_MS = 5 * 60_000;
 const BRAND_MEMO_MAX = 500;
 const brandMemo = new Map<string, { at: number; value: OrgBrandColors }>();
+
+/**
+ * Sync peek of the brand memo. Caller: `(app)/layout.tsx` — memo hit stays on the critical
+ * path; a miss returns null so first bytes are not blocked on the whole-network scan.
+ * User: "Implement the plan as specified..."
+ */
+export function peekOrgBrandColors(userId: string): OrgBrandColors | null {
+  const hit = brandMemo.get(userId);
+  if (hit && Date.now() - hit.at < BRAND_MEMO_TTL_MS) return hit.value;
+  return null;
+}
+
+/**
+ * The viewer's companies and schools, each with what Orbit has learned about its color —
+ * one statement. `learned` is what the page registers; `missing` is what is worth learning.
+ */
+export async function loadOrgBrandColors(userId: string): Promise<OrgBrandColors> {
+  const hit = peekOrgBrandColors(userId);
+  if (hit) return hit;
+  const value = await readOrgBrandColors(userId);
+  if (brandMemo.size >= BRAND_MEMO_MAX) brandMemo.delete(brandMemo.keys().next().value!);
+  brandMemo.set(userId, { at: Date.now(), value });
+  return value;
+}
 
 /** Drop the cached copy — one viewer's, or everyone's. For writers and tests. */
 export function forgetOrgBrandColors(userId?: string): void {
@@ -355,7 +323,7 @@ async function readOrgBrandColors(userId: string): Promise<OrgBrandColors> {
          WHERE ct.user_id = ${userId} AND btrim(coalesce(ct.school, '')) <> ''
          GROUP BY 3
       )
-      SELECT o.name, o.kind, o.name_key, b.hex, b.resolved_at, (b.name_key IS NOT NULL) AS has_row
+      SELECT o.name, o.kind, o.name_key, b.hex, b.domain, b.resolved_at, (b.name_key IS NOT NULL) AS has_row
         FROM orgs o
         LEFT JOIN org_brand_colors b ON b.name_key = o.name_key AND b.kind = o.kind
     `)
@@ -367,7 +335,8 @@ async function readOrgBrandColors(userId: string): Promise<OrgBrandColors> {
   for (const row of rows) {
     if (row.hex) {
       if (learned.length < MAX_LEARNED_PER_VIEWER) {
-        learned.push({ name: row.name, kind: row.kind, hex: row.hex });
+        const domain = toDomain(row.domain);
+        learned.push({ name: row.name, kind: row.kind, hex: row.hex, ...(domain ? { domain } : {}) });
       }
       continue;
     }

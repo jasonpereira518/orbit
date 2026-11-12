@@ -12,6 +12,8 @@
  * Pure — no React, no DB — so the route, the renderer and the smoke share one parser.
  */
 
+import { readDraftFence, type DraftParts } from "@/lib/chat-draft-block";
+
 export type ChatBlockPerson = { name: string; subtitle: string | null };
 
 export type ChatBlockList = {
@@ -30,7 +32,13 @@ export type ChatBlocks = {
 export type AnswerSegment =
   | { kind: "text"; text: string }
   | { kind: "people"; ids: string[] }
-  | { kind: "list"; key: string };
+  | { kind: "list"; key: string }
+  /**
+   * A drafted email or LinkedIn note, written by the model as a ```draft block
+   * (`@/lib/chat-draft-block`). `index` is its place among the answer's drafts — what an
+   * edit addresses — and `raw` is the block as written, which stored and copied text keep.
+   */
+  | (DraftParts & { kind: "draft"; index: number; closed: boolean; raw: string });
 
 /** At most this many cards in one people block; more is a list, not a shortlist. */
 export const MAX_PEOPLE_PER_BLOCK = 6;
@@ -49,7 +57,10 @@ function idsOf(raw: string): string[] {
 export function settledText(text: string): string {
   let out = text;
   const lastLine = out.slice(out.lastIndexOf("\n") + 1);
-  if (/^[ \t]*:/.test(lastLine)) out = out.slice(0, out.length - lastLine.length);
+  // `::peo…`, or a ```draft opening still being typed (a finished one is read as a block).
+  if (/^[ \t]*:/.test(lastLine) || /^[ \t]*`{1,3}[ \t]*(d(r(a(f(t)?)?)?)?)?$/i.test(lastLine)) {
+    out = out.slice(0, out.length - lastLine.length);
+  }
   return out.replace(/\[(e\d*)?$/, "");
 }
 
@@ -59,12 +70,33 @@ export function splitDirectives(text: string, options: { streaming?: boolean } =
   const segments: AnswerSegment[] = [];
   let buffer: string[] = [];
   let fenced = false;
+  let drafts = 0;
   const flush = () => {
     const joined = buffer.join("\n");
     if (joined.trim()) segments.push({ kind: "text", text: joined });
     buffer = [];
   };
-  for (const line of source.split("\n")) {
+  const lines = source.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!fenced) {
+      const draft = readDraftFence(lines, i);
+      if (draft) {
+        flush();
+        segments.push({
+          kind: "draft",
+          index: drafts++,
+          channel: draft.channel,
+          contactId: draft.contactId,
+          subject: draft.subject,
+          body: draft.body,
+          closed: draft.closed,
+          raw: draft.raw,
+        });
+        i = draft.next - 1;
+        continue;
+      }
+    }
     if (/^[ \t]*```/.test(line)) fenced = !fenced;
     const m = fenced ? null : DIRECTIVE.exec(line);
     if (!m) {
@@ -154,9 +186,11 @@ export function expandLists(text: string, lists: Readonly<Record<string, ChatBlo
         ? segment.text.replace(/^\n+|\n+$/g, "")
         : segment.kind === "people"
           ? `::people[${segment.ids.join(",")}]`
-          : lists[segment.key]
-            ? listToMarkdown(lists[segment.key])
-            : ""
+          : segment.kind === "draft"
+            ? segment.raw
+            : lists[segment.key]
+              ? listToMarkdown(lists[segment.key])
+              : ""
     )
     .filter(Boolean)
     .join("\n\n");
@@ -178,9 +212,11 @@ export function directivesAsText(
               .filter((n): n is string => Boolean(n))
               .map((n) => `- ${n}`)
               .join("\n")
-          : lists[segment.key]
-            ? listToMarkdown(lists[segment.key])
-            : ""
+          : segment.kind === "draft"
+            ? segment.raw
+            : lists[segment.key]
+              ? listToMarkdown(lists[segment.key])
+              : ""
     )
     .filter(Boolean)
     .join("\n\n");

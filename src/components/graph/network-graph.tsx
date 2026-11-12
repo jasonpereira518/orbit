@@ -15,6 +15,8 @@ import {
   getGraphData,
   refreshConstellationBatch,
 } from "@/actions/graph";
+import { decodeGraphPayload } from "@/lib/graph-wire";
+import type { GraphPayload } from "@/components/graph/graph-chart-types";
 import { toast } from "sonner";
 import { useCornerClearance } from "@/lib/corner-clearance";
 import { searchDashboardContacts } from "@/actions/search";
@@ -36,7 +38,8 @@ import {
   ContactInspectPanel,
   type InspectSelection,
 } from "@/components/graph/contact-inspect-panel";
-import type { GraphNodeData } from "@/lib/graph-layout";
+import { contactStarData, type GraphNodeData } from "@/lib/graph-layout";
+import { selectionForContact } from "@/lib/graph/sky-selection";
 import { Starfield } from "@/components/graph/constellation-starfield";
 import { useSmallSky } from "@/components/graph/use-small-sky";
 import { useSkyRenderer } from "@/components/graph/use-sky-renderer";
@@ -81,7 +84,6 @@ import {
   Sparkles,
 } from "lucide-react";
 
-type GraphPayload = Awaited<ReturnType<typeof getGraphData>>;
 /**
  * Module scope, deliberately — not an effect.
  *
@@ -372,7 +374,8 @@ export function NetworkGraph({
       return;
     }
     getGraphData()
-      .then((payload) => {
+      .then((wire) => {
+        const payload = decodeGraphPayload(wire);
         lastFetchAt.current = Date.now();
         scopeCache.current.engaged = payload;
         // The wider set is now stale too, but re-fetching it here would defeat the point of
@@ -421,7 +424,8 @@ export function NetworkGraph({
     }
     setLoadingAll(true);
     getFullGraphData()
-      .then((payload) => {
+      .then((wire) => {
+        const payload = decodeGraphPayload(wire);
         scopeCache.current.all = payload;
         showAllStarsRef.current = true;
         setShowAllStars(true);
@@ -495,9 +499,9 @@ export function NetworkGraph({
   // at mount: most visits never search, and at 10,000 contacts building it
   // was ~10ms of the render that opens the chart.
   const contactHaystackIndex = useMemo(() => {
-    let index: Map<string, string> | null = null;
+    let index: ReturnType<typeof buildContactHaystackIndex> | null = null;
     return () =>
-      (index ??= data ? buildContactHaystackIndex(data.contacts) : new Map<string, string>());
+      (index ??= data ? buildContactHaystackIndex(data.contacts) : new Map());
   }, [data]);
 
   const requestDefaultView = useCallback(() => {
@@ -650,6 +654,60 @@ export function NetworkGraph({
       setZoomToken((t) => t + 1);
     },
     [search]
+  );
+
+  const handleShowAll = useCallback(() => {
+    setScope(true);
+  }, [setScope]);
+
+  const handleSelect = useCallback(
+    (picked: InspectSelection) => {
+      setSelection(picked);
+      if (picked) emitTourEvent("graph.star-selected");
+    },
+    []
+  );
+
+  // The card's network row: the selected star's cluster, and its closest neighbours in
+  // it. Both read data the sky already has, so opening a star costs no request.
+  const contactById = useMemo(
+    () => new Map((data?.contacts ?? []).map((c) => [c.id, c])),
+    [data]
+  );
+  const selectedContact = selection?.type === "contact" ? selection : null;
+  const inspectCluster = useMemo(() => {
+    const d = selectedContact?.data;
+    if (!d?.clusterId || !d.clusterName) return null;
+    return { id: d.clusterId, name: d.clusterName, color: d.clusterColor };
+  }, [selectedContact]);
+  const inspectNearby = useMemo(() => {
+    if (!selectedContact || !inspectCluster || !data) return [];
+    const members = data.clusters.find((c) => c.id === inspectCluster.id)?.contactIds ?? [];
+    return members
+      .filter((id) => id !== selectedContact.id)
+      .map((id) => contactById.get(id))
+      .filter((c): c is NonNullable<typeof c> => Boolean(c))
+      .sort((a, b) => (b.closeness ?? 0) - (a.closeness ?? 0))
+      .slice(0, 5)
+      .map((c) => ({
+        id: c.id,
+        data: {
+          ...contactStarData(c),
+          clusterId: inspectCluster.id,
+          clusterName: inspectCluster.name,
+          clusterColor: inspectCluster.color,
+        },
+      }));
+  }, [selectedContact, inspectCluster, data, contactById]);
+
+  /** A neighbour picked from the card: open it and swing the camera to its star. */
+  const selectNeighbour = useCallback(
+    (id: string, nodeData: GraphNodeData) => {
+      setSelection(selectionForContact(id, nodeData));
+      setPeekPersonId(id);
+      setPeekToken((t) => t + 1);
+    },
+    []
   );
 
   const toggleFullscreen = useCallback(async () => {
@@ -854,7 +912,10 @@ export function NetworkGraph({
       <div
         ref={stageRef}
         className={cn(
-          "relative overflow-hidden border border-white/10 shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
+          // `@container`: the toolbar below keys off the STAGE's width, not the viewport's. The
+          // feedback dock narrows the page without narrowing the screen, and a viewport `lg:` kept
+          // the one-row toolbar on a stage too narrow for it.
+          "@container relative overflow-hidden border border-white/10 shadow-[inset_0_0_120px_rgba(0,0,0,0.65)]",
           // Transparent only while the intro is behind it, and never in the dashboard's
           // preview or in fullscreen — both are cases where there is nothing behind to show
           // and a see-through stage would just be the page bleeding into the sky.
@@ -875,10 +936,10 @@ export function NetworkGraph({
           !compact && "[@media(max-height:500px)]:h-[26rem] [@media(max-height:500px)]:max-h-none",
           fullscreenActive &&
             "rounded-none border-0 !h-dvh !max-h-none",
-          cssFullscreen && "!fixed inset-0 z-[100] w-screen"
+          cssFullscreen && "!fixed inset-0 z-[100] w-screen md:w-auto md:right-(--orbit-dock-w)"
         )}
       >
-        {!smallSky && <Starfield />}
+        <Starfield />
 
         {!compact && (
           <>
@@ -956,7 +1017,7 @@ export function NetworkGraph({
             {/* Second row below md: at 375px the 92vw search box ran straight through the
                 Clusters chip on the left and Re-engage / Refresh on the right, so all
                 three were unreadable and partly untappable. */}
-            <div className="absolute left-1/2 top-14 z-20 flex w-[min(92%,420px)] -translate-x-1/2 items-center gap-2 lg:top-3">
+            <div className="absolute left-1/2 top-14 z-20 flex w-[min(92%,420px)] -translate-x-1/2 items-center gap-2 @3xl:top-3">
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
                 <Input
@@ -1219,7 +1280,7 @@ export function NetworkGraph({
                 )}
                 {/* Icon-only below sm: with the label, this row's three pills were
                     14px wider than a 375px canvas and Re-engage sat on top of Clusters. */}
-                <span className="max-lg:sr-only">Refresh</span>
+                <span className="@max-3xl:sr-only">Refresh</span>
               </Button>
             </div>
 
@@ -1331,7 +1392,7 @@ export function NetworkGraph({
         {renderer && <renderer.Chart
           data={data}
           constellationFilterOn={constellationFilterOn}
-          onShowAll={() => setScope(true)}
+          onShowAll={handleShowAll}
           loadingAll={loadingAll}
           company={company}
           school={school}
@@ -1346,44 +1407,45 @@ export function NetworkGraph({
           peekToken={peekToken}
           selection={selection}
           hoveredId={hoveredId}
-          onSelect={(picked) => {
-            setSelection(picked);
-            if (picked) emitTourEvent("graph.star-selected");
-          }}
+          onSelect={handleSelect}
           onHover={setHoveredId}
           onFocusCluster={focusClusterById}
           compact={compact}
         />}
-      </div>
 
-      {!compact && (
-        <ContactInspectPanel
-          selection={selection}
-          onClose={() => setSelection(null)}
-          onContactPatch={(id, patch) => {
-            if (patch.aiSummary !== undefined) {
-              setData((prev) => {
-                if (!prev) return prev;
+        {!compact && (
+          <ContactInspectPanel
+            selection={selection}
+            onClose={() => setSelection(null)}
+            cluster={inspectCluster}
+            nearby={inspectNearby}
+            onFocusCluster={focusClusterById}
+            onSelectContact={selectNeighbour}
+            onContactPatch={(id, patch) => {
+              if (patch.aiSummary !== undefined) {
+                setData((prev) => {
+                  if (!prev) return prev;
+                  return {
+                    ...prev,
+                    contacts: prev.contacts.map((c) =>
+                      c.id === id ? { ...c, aiSummary: patch.aiSummary ?? null } : c
+                    ),
+                  };
+                });
+              }
+              setSelection((prev) => {
+                if (!prev || prev.type !== "contact" || prev.id !== id) {
+                  return prev;
+                }
                 return {
                   ...prev,
-                  contacts: prev.contacts.map((c) =>
-                    c.id === id ? { ...c, aiSummary: patch.aiSummary ?? null } : c
-                  ),
+                  data: { ...prev.data, ...patch },
                 };
               });
-            }
-            setSelection((prev) => {
-              if (!prev || prev.type !== "contact" || prev.id !== id) {
-                return prev;
-              }
-              return {
-                ...prev,
-                data: { ...prev.data, ...patch },
-              };
-            });
-          }}
-        />
-      )}
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }

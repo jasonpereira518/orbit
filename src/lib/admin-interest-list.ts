@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
-import { reportError } from "@/lib/report-error";
+import { revealShareToken, sealShareToken, sealUnsubscribeToken, withRevealedTokens } from "@/lib/interest-list-tokens";
 import { getDb, rowsOf, runAtomicBatch } from "@/db";
 import { interestListSignups, waitlistPollVotes } from "@/db/schema";
 import { countInt } from "@/lib/admin-metrics";
@@ -669,8 +669,8 @@ export async function addManualInterestListSignup(
         utmMedium: "event",
         utmCampaign: eventLabel,
         landingPath: "/admin/access",
-        unsubscribeToken: generateUnsubscribeToken(),
-        shareToken: generateShareToken(),
+        ...sealUnsubscribeToken(generateUnsubscribeToken()),
+        ...sealShareToken(generateShareToken()),
         welcomePlanet: planetForSignupNumber((before?.n ?? 0) + 1),
         ...(createdAt ? { createdAt } : {}),
       })
@@ -703,7 +703,7 @@ export async function addManualInterestListSignup(
         utmSource: "admin",
         utmMedium: "event",
         utmCampaign: eventLabel,
-        shareToken: row.shareToken ?? generateShareToken(),
+        ...(revealShareToken(row) ? {} : sealShareToken(generateShareToken())),
         // Keep their original join time on rejoin — do not rewrite with the event stamp.
       })
       .where(eq(interestListSignups.id, row.id))
@@ -711,34 +711,37 @@ export async function addManualInterestListSignup(
     invalidateInterestProof();
   }
 
-  if (!row?.shareToken) {
+  // Tokens are stored hashed and encrypted (audit L-05); the email links need them back.
+  const ready = row ? withRevealedTokens(row) : null;
+  if (!ready?.shareToken || !ready.unsubscribeToken) {
     throw new UserFacingError("Couldn’t add that signup — try again");
   }
+  const { shareToken, unsubscribeToken } = ready;
 
   const ticket = await ticketForRow({
-    id: row.id,
+    id: ready.id,
     email: row.email,
-    referralSlug: row.referralSlug,
-    createdAt: row.createdAt,
-    welcomePlanet: row.welcomePlanet,
-    shareToken: row.shareToken,
+    referralSlug: ready.referralSlug,
+    createdAt: ready.createdAt,
+    welcomePlanet: ready.welcomePlanet,
+    shareToken,
   });
 
   const pageUrl = getWaitlistPageUrl();
   const sent = await sendInterestListWelcomeEmail(
-    row.email,
-    buildUnsubscribeUrl(row.unsubscribeToken),
-    asWelcomePlanet(row.welcomePlanet),
+    ready.email,
+    buildUnsubscribeUrl(unsubscribeToken),
+    asWelcomePlanet(ready.welcomePlanet),
     {
-      ticketUrl: buildTicketUrl(pageUrl, row.shareToken),
-      shareUrl: buildShareUrl(pageUrl, { referralSlug: ticket.referralSlug, shareToken: row.shareToken }),
+      ticketUrl: buildTicketUrl(pageUrl, shareToken),
+      shareUrl: buildShareUrl(pageUrl, { referralSlug: ticket.referralSlug, shareToken }),
     },
     ticket.position,
     eventLabel
   );
   if (sent) track("waitlist_email_sent", { kind: "welcome" }, { actor: "system" });
 
-  return { email: row.email, id: row.id };
+  return { email: ready.email, id: ready.id };
 }
 
 export type BulkManualInterestListResult = {
@@ -791,8 +794,6 @@ export async function addManualInterestListSignupsFromPaste(input: {
       });
       added.push(result);
     } catch (err) {
-      // Per-row loop: reportError's warning throttle (1/min per `where`) caps the noise.
-      if (!(err instanceof UserFacingError)) reportError(err, { where: "admin.interest-list.add-signup", level: "warning" });
       const message =
         err instanceof UserFacingError ? err.message : "Couldn’t add that signup";
       skipped.push({ email: row.email, reason: message });

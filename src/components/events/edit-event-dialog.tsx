@@ -21,7 +21,8 @@
  * idempotency keys, not details. `timezone` is derived from the page and is displayed, not
  * typed — a free-text zone field would be a new way to get the arithmetic wrong.
  */
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -75,7 +76,7 @@ export function EditEventDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [form, setForm] = useState({
     title: event.title,

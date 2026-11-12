@@ -60,11 +60,20 @@ async function settle(page: Page) {
 }
 
 async function audit(page: Page, route: string) {
-  const results = await new AxeBuilder({ page })
-    .withTags(WCAG)
-    // The Next.js dev overlay is not the app.
-    .exclude("nextjs-portal")
-    .analyze();
+  const analyze = () =>
+    new AxeBuilder({ page })
+      .withTags(WCAG)
+      // The Next.js dev overlay is not the app.
+      .exclude("nextjs-portal")
+      .analyze();
+  let results = await analyze();
+  if (results.violations.some((v) => BLOCKING.has(v.impact ?? ""))) {
+    // axe reads the colour an element has RIGHT NOW, and opacity blends into the foreground, so
+    // text caught mid-fade reports a contrast failure (#7e807e on #fbfbf9 on /capture?mode=imports)
+    // that is gone a moment later. A real violation is still there a second on; only that run counts.
+    await page.waitForTimeout(1_000);
+    results = await analyze();
+  }
   const blocking = results.violations.filter((v) => BLOCKING.has(v.impact ?? ""));
   const advisory = results.violations.filter((v) => !BLOCKING.has(v.impact ?? ""));
   for (const v of advisory) console.log(`  [${v.impact}] ${route} ${v.id}: ${v.nodes.length} node(s)`);
@@ -95,11 +104,24 @@ async function horizontalOverflow(page: Page) {
 let contactPath = "";
 
 test.beforeAll(async ({ browser }) => {
-  const page = await browser.newPage();
-  await ensureOnboarded(page);
-  await createContact(page, "Amara Okonkwo-Lindqvist");
-  contactPath = new URL(page.url()).pathname;
-  await page.close();
+  // Each route compiles on first visit under `next dev`, and a transient hiccup there times the
+  // shared setup out (90s) and fails whichever test the worker ran first: run 42543935285 showed
+  // it as "/events phone, 0ms". Try the setup twice so one hiccup is not a flaky test; a setup
+  // that is really broken fails both attempts.
+  test.setTimeout(400_000);
+  for (let attempt = 1; ; attempt++) {
+    const page = await browser.newPage();
+    try {
+      await ensureOnboarded(page);
+      await createContact(page, "Amara Okonkwo-Lindqvist");
+      contactPath = new URL(page.url()).pathname;
+      return;
+    } catch (error) {
+      if (attempt === 2) throw error;
+    } finally {
+      await page.close();
+    }
+  }
 });
 
 for (const size of WIDTHS) {

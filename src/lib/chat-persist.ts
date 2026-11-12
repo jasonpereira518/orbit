@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { chatMessages, chatThreads, type ChatRecommendation } from "@/db/schema";
 import type { AnswerOutcome } from "@/lib/chat-abstention";
@@ -84,6 +84,8 @@ export async function persistAssistantTurn(
       threadId,
       userId,
       role: "assistant",
+      // Voice policy must not capture text proposals in a thread that also hosts calls.
+      clientTurnId: turn.proposedActions?.length ? "chat-proposal" : null,
       content: turn.answer,
       recommendations: turn.recommendations,
       activity: turn.activity ?? [],
@@ -181,4 +183,97 @@ export async function discardEmptyThread(userId: string, threadId: string | null
 export function trackChatAnswerFailed(userId: string, threadId: string | null, err: unknown): void {
   if (!threadId) return;
   track("chat_answer_failed", { thread_id: threadId, error_kind: eventErrorKind(err) }, { userId, actor: "system" });
+}
+
+/**
+ * A Stop the person pressed (audit L-25). To the server a Stop and a dropped connection are
+ * the same abort, so the client says which it was: this marks the turn stopped and discards
+ * its question if it is already saved. The route saves the question BEFORE it reads the
+ * mark (`wasTurnStopped`), so whichever of the two requests lands first, the stopped
+ * question ends up gone and a merely dropped one stays.
+ */
+export async function markTurnStopped(userId: string, threadId: string, turnId: string) {
+  const db = await getDb();
+  await db
+    .update(chatThreads)
+    .set({ stoppedTurnId: turnId })
+    .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+  const row = await db.query.chatMessages.findFirst({
+    where: and(
+      eq(chatMessages.threadId, threadId),
+      eq(chatMessages.userId, userId),
+      eq(chatMessages.clientTurnId, turnId),
+      eq(chatMessages.role, "user")
+    ),
+    columns: { id: true },
+  });
+  if (row) await discardUnansweredQuestion(userId, threadId, row.id);
+  await discardEmptyThread(userId, threadId);
+}
+
+/** Whether the person stopped this turn on purpose. See `markTurnStopped`. */
+export async function wasTurnStopped(userId: string, threadId: string | null, turnId: string | null): Promise<boolean> {
+  if (!threadId || !turnId) return false;
+  const db = await getDb();
+  const thread = await db.query.chatThreads.findFirst({
+    where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
+    columns: { stoppedTurnId: true },
+  });
+  return thread?.stoppedTurnId === turnId;
+}
+
+/**
+ * Asking again after a dropped connection: the first copy of the question was kept with no
+ * answer under it, so drop that copy rather than show the question twice. Only the thread's
+ * last row, only a question, and only when the text is the same.
+ */
+export async function supersedeDanglingQuestion(userId: string, threadId: string | null, content: string) {
+  if (!threadId) return;
+  const db = await getDb();
+  const last = await db.query.chatMessages.findFirst({
+    where: and(eq(chatMessages.threadId, threadId), eq(chatMessages.userId, userId)),
+    orderBy: [desc(chatMessages.createdAt)],
+    columns: { id: true, role: true, content: true, isActive: true },
+  });
+  if (!last || last.role !== "user" || !last.isActive || last.content !== content) return;
+  await db.delete(chatMessages).where(and(eq(chatMessages.id, last.id), eq(chatMessages.userId, userId)));
+}
+
+/** How many steers one turn takes. Past it, the client's queue sends the rest as new turns. */
+export const MAX_TURN_STEERS = 3;
+
+export type TurnSteer = { id: string; text: string };
+
+/**
+ * A message the person sent to steer the answer being written.
+ *
+ * The running turn cannot be reached from another request, so the note waits on the thread
+ * row and the turn reads it between lookup rounds (`readTurnSteers`). One statement, so two
+ * steers sent together both land: it appends when the row already holds this turn's notes
+ * and starts over when it holds an older turn's.
+ */
+export async function addTurnSteer(userId: string, threadId: string, turnId: string, note: TurnSteer) {
+  const db = await getDb();
+  const col = chatThreads.pendingSteer;
+  const one = JSON.stringify([note]);
+  await db
+    .update(chatThreads)
+    .set({
+      pendingSteer: sql`CASE
+        WHEN ${col}->>'turnId' = ${turnId} AND jsonb_array_length(${col}->'notes') >= ${MAX_TURN_STEERS} THEN ${col}
+        WHEN ${col}->>'turnId' = ${turnId} THEN jsonb_set(${col}, '{notes}', (${col}->'notes') || ${one}::jsonb)
+        ELSE jsonb_build_object('turnId', ${turnId}::text, 'notes', ${one}::jsonb)
+      END`,
+    })
+    .where(and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)));
+}
+
+/** Every steer sent to this turn so far, oldest first. Never cleared: the turn counts what it took. */
+export async function readTurnSteers(userId: string, threadId: string, turnId: string): Promise<TurnSteer[]> {
+  const db = await getDb();
+  const thread = await db.query.chatThreads.findFirst({
+    where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
+    columns: { pendingSteer: true },
+  });
+  return thread?.pendingSteer?.turnId === turnId ? thread.pendingSteer.notes : [];
 }

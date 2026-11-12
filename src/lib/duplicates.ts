@@ -1,5 +1,7 @@
 import type { Contact } from "@/db/schema";
-import { extractLinkedInSlug } from "@/lib/identity/linkedin";
+import { ROLE_EMAIL_LOCALS } from "@/lib/names/classify";
+import { nameKey, nameSimilarity } from "@/lib/names/key";
+import { sameGivenName } from "@/lib/names/nicknames";
 
 /**
  * The columns duplicate detection actually reads.
@@ -43,45 +45,9 @@ function normalize(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
 }
 
-/** Strip punctuation/accents-ish noise for fuzzy name compares. */
-function normalizeName(s: string | null | undefined) {
-  return normalize(s)
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function levenshtein(a: string, b: string) {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  const prev = new Array(b.length + 1);
-  const curr = new Array(b.length + 1);
-  for (let j = 0; j <= b.length; j++) prev[j] = j;
-  for (let i = 1; i <= a.length; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
-  }
-  return prev[b.length];
-}
-
-/** 0–1 similarity from edit distance; short names need near-exact match. */
-export function nameSimilarity(a: string | null | undefined, b: string | null | undefined) {
-  const left = normalizeName(a);
-  const right = normalizeName(b);
-  if (!left || !right) return 0;
-  if (left === right) return 1;
-  const maxLen = Math.max(left.length, right.length);
-  if (maxLen < 4) return 0;
-  const distance = levenshtein(left, right);
-  return Math.max(0, 1 - distance / maxLen);
-}
+/** Punctuation, accents and case folded away for fuzzy name compares. */
+const normalizeName = nameKey;
+export { nameSimilarity };
 
 /**
  * MUST stay equal to the `linkedin_slug` generated column in `src/db/index.ts`
@@ -95,8 +61,8 @@ export function nameSimilarity(a: string | null | undefined, b: string | null | 
  */
 export function linkedinSlug(url: string | null | undefined) {
   if (!url) return "";
-  const slug = extractLinkedInSlug(url);
-  return slug !== null ? slug.toLowerCase() : "";
+  const match = url.match(/linkedin\.com\/in\/([^/?#]+)/i);
+  return match ? match[1].toLowerCase() : "";
 }
 
 /**
@@ -148,47 +114,7 @@ export function normalizePhone(value: string | null | undefined) {
  * at Acme would collapse all three into one contact, and the unique index on
  * `contact_identities` would make that collapse mandatory rather than merely likely.
  */
-const ROLE_EMAIL_LOCALS = new Set([
-  "info",
-  "hello",
-  "hi",
-  "contact",
-  "contactus",
-  "admin",
-  "support",
-  "help",
-  "sales",
-  "team",
-  "office",
-  "mail",
-  "email",
-  "enquiries",
-  "inquiries",
-  "billing",
-  "accounts",
-  "accounting",
-  "finance",
-  "hr",
-  "jobs",
-  "careers",
-  "recruiting",
-  "press",
-  "media",
-  "marketing",
-  "legal",
-  "privacy",
-  "security",
-  "abuse",
-  "postmaster",
-  "webmaster",
-  "noreply",
-  "no-reply",
-  "donotreply",
-  "do-not-reply",
-  "notifications",
-  "newsletter",
-  "subscriptions",
-]);
+// `ROLE_EMAIL_LOCALS` lives in `@/lib/names/classify`, FROZEN there.
 
 /** True when an address identifies a mailbox rather than a person. */
 export function isRoleEmail(value: string | null | undefined) {
@@ -492,32 +418,6 @@ export function daysAgo(date: Date | string | null | undefined) {
 }
 
 // ── Loose name candidates (review cards) ──────────────────────────────────────────────
-
-/**
- * Common English nickname ↔ given-name pairs. Both directions are looked up.
- * ponytail: a short table, not a nickname database; add pairs as misses show up.
- */
-const NICKNAMES: Record<string, string[]> = {
-  alex: ["alexander", "alexandra", "alexis"], andy: ["andrew"], drew: ["andrew"],
-  ben: ["benjamin"], bill: ["william"], will: ["william"], liam: ["william"],
-  bob: ["robert"], rob: ["robert"], bobby: ["robert"], chris: ["christopher", "christina", "christine"],
-  dan: ["daniel"], danny: ["daniel"], dave: ["david"], ed: ["edward"], eddie: ["edward"],
-  jim: ["james"], jimmy: ["james"], jamie: ["james"], joe: ["joseph"], joey: ["joseph"],
-  jon: ["jonathan"], john: ["jonathan"], kate: ["katherine", "kathryn", "catherine"],
-  katie: ["katherine", "kathryn", "catherine"], liz: ["elizabeth"], beth: ["elizabeth"],
-  matt: ["matthew"], mike: ["michael"], mick: ["michael"], nick: ["nicholas"],
-  pat: ["patrick", "patricia"], pete: ["peter"], rich: ["richard"], rick: ["richard"],
-  sam: ["samuel", "samantha"], steve: ["steven", "stephen"], sue: ["susan"],
-  tom: ["thomas"], tony: ["anthony"], vic: ["victor", "victoria"], zach: ["zachary"],
-  jen: ["jennifer"], jenny: ["jennifer"], meg: ["megan", "margaret"], greg: ["gregory"],
-  jeff: ["jeffrey"], josh: ["joshua"], nate: ["nathan", "nathaniel"], tim: ["timothy"],
-  ken: ["kenneth"], larry: ["lawrence"], abby: ["abigail"], becky: ["rebecca"],
-};
-
-function sameGivenName(a: string, b: string): boolean {
-  if (a === b) return true;
-  return Boolean(NICKNAMES[a]?.includes(b) || NICKNAMES[b]?.includes(a));
-}
 
 export type LooseNameSubject = DuplicateSubject & {
   preferredName?: string | null;

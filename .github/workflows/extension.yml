@@ -13,6 +13,7 @@ on:
       - "extension/**"
       - "src/lib/extension/**"
       - "src/app/globals.css"
+      - "src/app/theme.css" # the file check:tokens actually diffs against
       - ".nvmrc"
       - ".github/workflows/extension.yml"
   workflow_dispatch:

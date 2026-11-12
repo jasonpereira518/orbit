@@ -1130,7 +1130,7 @@ export async function getDashboardData(
   // Ranked and capped by Postgres (`getGoalAlignedContactIds`), then joined to the rows the
   // card renders. Goal relevance is a stored component of the closeness breakdown, so this
   // is an ordered read of a column — never a pass over every contact's summary and facts.
-  const goalAlignedContacts = goalAlignedIds.flatMap(({ id, goalRelevance }) => {
+  const goalAlignedContacts = goalAlignedIds.flatMap(({ id, goalRelevance, reason, companyName }) => {
     const d = detail.get(id);
     const light = lightById.get(id);
     if (!d || !light) return [];
@@ -1140,7 +1140,10 @@ export async function getDashboardData(
       preferredName: d.preferredName,
       company: light.company ?? null,
       title: d.title,
+      profileImageUrl: d.profileImageUrl,
       goalRelevance,
+      reason,
+      companyName,
     }];
   });
 

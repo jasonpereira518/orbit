@@ -50,11 +50,11 @@
 
 import { useViewerPlan } from "@/components/viewer-plan";
 import { availableOn } from "@/lib/plans/plan-config";
-import Link from "next/link";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { longRelativeLabel } from "@/lib/relative-date";
 import {
+  BriefcaseBusiness,
   CalendarClock,
   CalendarDays,
   HardDrive,
@@ -80,6 +80,7 @@ import {
 } from "@/actions/google-settings";
 import { listImports, type ImportHistoryItem } from "@/actions/imports";
 import { setEmailActivitySync } from "@/actions/email-activity";
+import { setEmailIntel } from "@/actions/email-intel";
 import { getSendCapabilityAction } from "@/actions/email-sends";
 import { Button } from "@/components/ui/button";
 import { CalendarPicker, SwitchRow, useSyncNow } from "@/components/settings/account-rows";
@@ -96,7 +97,11 @@ import { AccountPageShell, FeatureRow, syncStatusLine } from "@/components/setti
 import { useContactsImport } from "@/components/settings/use-contacts-import";
 import { useGoogleConnection } from "@/components/settings/use-provider-connection";
 import { useLatestScan, useRecruiterScan } from "@/components/settings/use-recruiter-scan";
-import { focusTargetId, type IntegrationTabId } from "@/components/settings/sections";
+import {
+  focusTargetId,
+  type IntegrationTabId,
+  type SettingsSectionId,
+} from "@/components/settings/sections";
 import { friendlyError } from "@/lib/errors";
 import {
   googleAccountStatus,
@@ -128,6 +133,8 @@ export function GoogleAccountPage({
   aiReady,
   active,
   onOpenPage,
+  onLeaveTo,
+  emailInsights,
 }: {
   returnTo: string;
   /** False when /recruiters is hidden — the inbox row is left out. */
@@ -137,8 +144,12 @@ export function GoogleAccountPage({
   aiReady: boolean;
   /** False from the moment the dialog starts closing: stops the scan poll. */
   active: boolean;
-  /** Opens another page of this dialog — the Reminders row and the "Turn on AI" link. */
+  /** Opens another page of this dialog — the "Turn on AI" link. */
   onOpenPage: (page: IntegrationTabId) => void;
+  /** Closes the dialog on a card of the settings page — the Reminders and signature links. */
+  onLeaveTo: (anchor: SettingsSectionId) => void;
+  /** Email insights, or null while it waits on Radar's release. */
+  emailInsights: { initialEnabled: boolean } | null;
 }) {
   const router = useRouter();
   const connection = useGoogleConnection({ returnTo });
@@ -341,6 +352,16 @@ export function GoogleAccountPage({
         />
       ) : null}
 
+      {emailInsights ? (
+        <EmailInsightsRow
+          initialEnabled={emailInsights.initialEnabled}
+          canRead={status?.canRead ?? false}
+          allowed={canUseRecruiters}
+          busy={connection.busy}
+          onAllow={() => connection.connect(["email_intel"])}
+        />
+      ) : null}
+
       <FeatureRow
         icon={<Send className="size-4" />}
         tone={GOOGLE.red}
@@ -350,9 +371,13 @@ export function GoogleAccountPage({
             Replies you approve go out from your address.
             {status?.canSend && sendCap ? ` ${sendCap.usedToday} of ${sendCap.dailyCap} sent today. ` : " "}
             {status?.canSend ? (
-              <Link href="/settings#settings-email" className="underline underline-offset-2 hover:text-foreground">
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-foreground"
+                onClick={() => onLeaveTo("settings-email")}
+              >
                 Signature and defaults
-              </Link>
+              </button>
             ) : null}
           </>
         }
@@ -379,14 +404,72 @@ export function GoogleAccountPage({
         icon={<CalendarClock className="size-4" />}
         title="Reminders in Google Calendar"
         description="See your follow-ups next to your meetings."
-        // Not a capability of the grant: the reminders page hands out its own private
-        // calendar address, which works whether or not Google is connected at all.
+        // Not a capability of the grant: the feed is a private calendar address of Orbit's own,
+        // which works whether or not Google is connected at all. It lives under Notifications.
         control={{ kind: "action", label: "Add" }}
-        onAction={() => onOpenPage("reminders")}
+        onAction={() => onLeaveTo("settings-calendar")}
       />
 
       <ImportHistoryRow history={history} source="Google" onUndone={loadPanel} />
     </AccountPageShell>
+  );
+}
+
+const EMAIL_INSIGHTS_COPY =
+  "Orbit checks Gmail for job and hiring threads and has your AI provider note the company, role and where things stand. It keeps those notes and one short quote — never the messages themselves.";
+
+/**
+ * Email insights: where each application stands, read from new hiring threads. Beside
+ * "Recruiters in Gmail", its near twin, and asking for mail access the same way Email activity
+ * does — only from this row, never on everyday Connect.
+ */
+function EmailInsightsRow({
+  initialEnabled,
+  canRead,
+  allowed,
+  busy,
+  onAllow,
+}: {
+  initialEnabled: boolean;
+  /** The connected grant already covers mail access. */
+  canRead: boolean;
+  /** The plan includes it (same as the recruiter scan). */
+  allowed: boolean;
+  busy: boolean;
+  onAllow: () => void;
+}) {
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const icon = <BriefcaseBusiness className="size-4" />;
+
+  if (!allowed || !canRead) {
+    return (
+      <FeatureRow
+        icon={icon}
+        tone={GOOGLE.green}
+        title="Email insights"
+        description={allowed ? EMAIL_INSIGHTS_COPY : `${EMAIL_INSIGHTS_COPY} On Orbit Pro and Orbit Max.`}
+        control={allowed ? { kind: "action", label: "Allow" } : { kind: "none" }}
+        disabled={busy}
+        onAction={onAllow}
+      />
+    );
+  }
+  return (
+    <SwitchRow
+      icon={icon}
+      tone={GOOGLE.green}
+      title="Email insights"
+      description={EMAIL_INSIGHTS_COPY}
+      on={enabled}
+      busy={busy}
+      save={async (on) => {
+        const result = await setEmailIntel(on);
+        if (result.ok) setEnabled(on);
+        return result;
+      }}
+      done={(on) => (on ? "Email insights on" : "Email insights off")}
+      onSaved={() => {}}
+    />
   );
 }
 

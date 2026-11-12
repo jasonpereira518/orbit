@@ -90,42 +90,45 @@ export async function saveLinkedinActivity(
 }
 
 /**
- * The run's one read of stored posts: recent `social_post` and `linkedin_activity` rows for
- * the people it is scoring, newest per person.
+ * The run's one read of stored posts and mentions: recent `linkedin_activity` rows (posts saved
+ * with the extension) and `web_mention` rows (what the people check found, on a cited link) for
+ * the people it is scoring, newest of each per person.
  */
 export async function loadPostSignals(
   userId: string,
   candidateIds: ReadonlySet<string>,
   now: Date
-): Promise<Extract<RadarSignal, { kind: "social_post" }>[]> {
+): Promise<Extract<RadarSignal, { kind: "social_post" | "public_mention" }>[]> {
   if (candidateIds.size === 0) return [];
   const db = await getDb();
-  const since = new Date(now.getTime() - RADAR_WINDOWS.postMax * DAY_MS);
+  const since = new Date(now.getTime() - Math.max(RADAR_WINDOWS.postMax, RADAR_WINDOWS.mentionMax) * DAY_MS);
   const rows = await db
-    .select({ contactId: contactSignals.contactId, occurredAt: contactSignals.occurredAt, payload: contactSignals.payload })
+    .select({ id: contactSignals.id, kind: contactSignals.kind, contactId: contactSignals.contactId, occurredAt: contactSignals.occurredAt, payload: contactSignals.payload })
     .from(contactSignals)
     .where(
       and(
         eq(contactSignals.userId, userId),
-        inArray(contactSignals.kind, ["social_post", "linkedin_activity"]),
+        inArray(contactSignals.kind, ["linkedin_activity", "web_mention"]),
         gte(contactSignals.occurredAt, since)
       )
     )
     .orderBy(sql`${contactSignals.occurredAt} desc`)
     .limit(200);
   const seen = new Set<string>();
-  const out: Extract<RadarSignal, { kind: "social_post" }>[] = [];
+  const out: Extract<RadarSignal, { kind: "social_post" | "public_mention" }>[] = [];
   for (const r of rows) {
-    if (seen.has(r.contactId) || !candidateIds.has(r.contactId) || !r.payload.excerpt) continue;
-    seen.add(r.contactId);
-    out.push({
-      kind: "social_post",
-      contactId: r.contactId,
-      at: r.occurredAt,
-      excerpt: r.payload.excerpt,
-      network: r.payload.network ?? "linkedin",
-      url: safeHttpUrl(r.payload.url ?? null),
-    });
+    const key = `${r.kind}:${r.contactId}`;
+    if (seen.has(key) || !candidateIds.has(r.contactId) || !r.payload.excerpt) continue;
+    const url = safeHttpUrl(r.payload.url ?? null);
+    const source = { table: "contact_signals" as const, id: r.id, text: r.payload.excerpt, quote: r.payload.excerpt, urls: url ? [url] : [] };
+    if (r.kind === "web_mention") {
+      // A mention is only ever stored with its cited link; one without is not shown.
+      if (!url) continue;
+      out.push({ kind: "public_mention", contactId: r.contactId, at: r.occurredAt, text: r.payload.excerpt, url, mentionKind: r.payload.mentionKind ?? "post", source });
+    } else {
+      out.push({ kind: "social_post", contactId: r.contactId, at: r.occurredAt, excerpt: r.payload.excerpt, network: "linkedin", url, source });
+    }
+    seen.add(key);
   }
   return out;
 }

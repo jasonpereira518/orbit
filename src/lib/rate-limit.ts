@@ -1,4 +1,6 @@
 import { eq, lt, sql } from "drizzle-orm";
+import { ipBucketKey, legacyIpBucketKey } from "@/lib/client-ip";
+import { UserFacingError } from "@/lib/errors";
 import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 import { getDb } from "@/db";
 import { rateLimitBuckets } from "@/db/schema";
@@ -15,10 +17,39 @@ import { rateLimitBuckets } from "@/db/schema";
  * One statement per check — an upsert whose CASE resets the window when it has expired,
  * the same shape `src/lib/extension/http.ts` already used. Memory would be cheaper but a
  * serverless instance's memory is neither shared nor durable.
+ *
+ * NEW LIMITS AND THE `ORBIT_NEW_LIMITS` SWITCH (audit M-07, L-22, M-18; FIX_PLAN 3.3)
+ *
+ * The buckets and caps listed in `NEW_LIMIT_SCOPES` were added after launch and could, in
+ * principle, refuse a real person doing something real. They are ENFORCED by default.
+ * Setting `ORBIT_NEW_LIMITS=log` makes exactly those scopes log-and-allow instead: the bucket
+ * still counts (so the log shows who would have been refused) but nothing is refused. The
+ * switch never touches the older buckets above them. The numbers, and why:
+ *
+ *   draft            30 / 10 min  one AI draft (outreach, recruiter, follow-up, Radar by hand)
+ *   brief            20 / 10 min  one model-written contact brief (not the hash/gate skips)
+ *   compose          20 / 10 min  "Draft with AI" in the compose window
+ *   prep             20 / 10 min  meeting talking points
+ *   duplicateHints   30 / 10 min  the duplicate-review page asking the model to rank pairs
+ *   dictationToken   12 /  5 min  chat-mic tokens, on top of `speechToken` (M-18)
+ *   chatThreadDaily  200 / day    new chat conversations
+ *   reminderDaily    500 / day    reminders a person or their agent creates
+ *   importDaily      50 / day     import jobs started (files, Gmail/Outlook scans, LinkedIn)
+ *   unsubscribeMiss  20 / hour    bad tokens one IP may send to the unsubscribe links
+ *   API keys         10 active    `MAX_ACTIVE_API_KEYS`, a count rather than a bucket
+ *
+ * The daily caps are sized so nobody using Orbit as intended meets them: they exist to stop
+ * a loop, a script or a hijacked session from filling the database.
  */
 
 /** What a bucket scope means to the person hitting it, for the error message. */
 const BUCKET_LABELS: Record<string, string> = {
+  "voice-health": "Voice provider checks",
+  "voice-requests": "Orbit Voice requests",
+  "voice-start-hour": "Orbit Voice sessions this hour",
+  "voice-start-day": "Orbit Voice sessions today",
+  "voice-start-global": "Orbit Voice sessions across Orbit today",
+  "voice-web": "Orbit Voice web lookups this call",
   chat: "chat",
   emailSend: "email send",
   emailAttachmentUpload: "attachment upload",
@@ -32,6 +63,7 @@ const BUCKET_LABELS: Record<string, string> = {
   avatarResolve: "photo lookup",
   avatarFill: "photo fill",
   feedback: "feedback",
+  feedbackChat: "message",
   survey: "survey",
   radarRefresh: "Radar refresh",
   knowledgeRefresh: "refresh",
@@ -42,6 +74,10 @@ const BUCKET_LABELS: Record<string, string> = {
   apiRead: "API read",
   apiWrite: "API write",
   apiIngest: "event import",
+  importPreview: "import preview",
+  importStart: "import",
+  importAppend: "import upload",
+  importUndo: "import undo",
   mcp: "MCP tool call",
   mcpWrite: "MCP write",
   providerSync: "sync",
@@ -70,6 +106,18 @@ const BUCKET_LABELS: Record<string, string> = {
   "email-intel-extract-daily": "email-insights reading",
   "web-search": "monthly web search",
   "web-search-all": "Orbit-wide web search",
+  draft: "AI draft",
+  brief: "brief refresh",
+  compose: "AI compose",
+  prep: "talking points",
+  duplicateHints: "duplicate suggestions",
+  dictationToken: "dictation",
+  chatThreadDaily: "daily new-conversation",
+  reminderDaily: "daily reminder",
+  importDaily: "daily import",
+  unsubscribeMiss: "unsubscribe",
+  "people-to-meet": "weekly people suggestion",
+  "org-suggest": "company and school suggestion",
 };
 
 function formatRetryAfter(sec: number): string {
@@ -194,6 +242,12 @@ export const RATE_LIMITS = {
    */
   webResearch: { limit: 30, windowSec: 86_400 },
   /**
+   * As-you-type organization suggestions (`/api/orgs/suggest`), per user per hour. Each miss
+   * is two Wikidata calls from Orbit's server; past this the route answers from the person's
+   * own companies and the curated table only.
+   */
+  orgSuggest: { limit: 120, windowSec: 3_600 },
+  /**
    * The hourly sweep's own daily allowance per account (lib/work-history-sweep.ts), keyed
    * per UTC day. Separate from `workHistoryResearch` so background re-checks can never use
    * up the lookups a person clicks for; every sweep search also counts against that one,
@@ -231,6 +285,8 @@ export const RATE_LIMITS = {
    * and nobody has anything to say five times in five minutes.
    */
   feedback: { limit: 5, windowSec: 300 },
+  /** A reply in a feedback conversation: text only, and a chat can be quick back-and-forth. */
+  feedbackChat: { limit: 30, windowSec: 300 },
   /** The micro-survey prompt: a handful of tiny writes per person, once in a long while. */
   survey: { limit: 20, windowSec: 3600 },
   // Each refresh re-scores the whole network and may write up to five AI lines on the
@@ -283,6 +339,27 @@ export const RATE_LIMITS = {
   apiWrite: { limit: 60, windowSec: 60 },
   /** Event ingestion. Fewer, because each request carries a batch of up to 500 events. */
   apiIngest: { limit: 30, windowSec: 60 },
+  /**
+   * Import previews: parse a file, load every contact and build a duplicate index over it.
+   * An unbounded loop here is a CPU and memory amplifier in a server action, not just a
+   * repeated query, so even a legitimate "try a few files" session has a ceiling.
+   */
+  importPreview: { limit: 20, windowSec: 3600 },
+  /**
+   * Starting a server-owned import. Each one snapshots rows and drives a background job, so
+   * the limit is per import rather than per chunk; ten an hour is several re-uploads' worth.
+   */
+  importStart: { limit: 10, windowSec: 3600 },
+  /**
+   * Staged uploads of a chunked import (`begin`/`append` on LinkedIn connections). Fifty
+   * chunks of 2,000 rows is a 100k-row file; 600 leaves ample room for retries inside that.
+   */
+  importAppend: { limit: 600, windowSec: 3600 },
+  /**
+   * Undo re-walks an import's rows and can take two minutes. Six an hour is far above normal
+   * use and bounds a client that retries a slow undo without waiting.
+   */
+  importUndo: { limit: 6, windowSec: 3600 },
   /**
    * MCP tool calls on a paid plan. An agent can loop far faster than a person can click, and
    * a single chat turn now fans out over several tools — search, then a contact, then a
@@ -370,7 +447,129 @@ export const RATE_LIMITS = {
    * and only the mail is skipped, since the welcome is best-effort by design.
    */
   interestWelcome: { limit: 200, windowSec: 3600 },
+
+  // ── Added for audit M-07 / L-22 / M-18. See NEW_LIMIT_SCOPES and `ORBIT_NEW_LIMITS`. ──
+
+  /**
+   * One AI-written draft: an outreach message, a recruiter note, a contact follow-up. Charged
+   * per model call, except a campaign's bulk generation, which is one click and is charged
+   * one unit per ten drafts (`generateOutreachDraftsBatch`).
+   */
+  draft: { limit: 30, windowSec: 600 },
+  /**
+   * A model-written contact brief. Charged only when the model is actually asked: a brief
+   * whose input hash matches, or that the decision gate skips, is free. Past the limit the
+   * brief on file stays (or the plain-language brief is written), the same as a refused key.
+   */
+  brief: { limit: 20, windowSec: 600 },
+  /** Compose's "Draft with AI". A person writing email clicks it a few times per message. */
+  compose: { limit: 20, windowSec: 600 },
+  /** Meeting prep talking points: one per meeting opened, with room for regenerating. */
+  prep: { limit: 20, windowSec: 600 },
+  /**
+   * The duplicate-review page ordering its pairs with the model (cached per pair). Past it the
+   * page still loads, ordered by rule instead.
+   */
+  duplicateHints: { limit: 30, windowSec: 600 },
+  /**
+   * Chat-mic tokens (`/api/speech/token`), on top of the shared `speechToken`. Every mint is
+   * now charged one full session to the monthly allowance until the end beacon lowers it, and
+   * a dictation session reconnects at most a couple of times, so a dozen per five minutes is
+   * several sessions of headroom (M-18).
+   */
+  dictationToken: { limit: 12, windowSec: 300 },
+  /** New chat conversations per user per day (L-22). */
+  chatThreadDaily: { limit: 200, windowSec: 86_400 },
+  /** Reminders created by hand, through chat or by an agent, per user per day (L-22). */
+  reminderDaily: { limit: 500, windowSec: 86_400 },
+  /** Import jobs started per user per day (L-22). Each can carry thousands of rows. */
+  importDaily: { limit: 50, windowSec: 86_400 },
+  /**
+   * Invalid tokens one IP may send to the three unsubscribe POSTs (`unsubscribe-guard.ts`).
+   * Only misses count: RFC 8058 one-click unsubscribes arrive from the mail provider's own
+   * servers, so many real people share an IP, and a valid token is never what gets refused.
+   */
+  unsubscribeMiss: { limit: 20, windowSec: 3600 },
+  /** The dashboard's "People to meet": one Find-people discovery run per account per week. */
+  peopleToMeet: { limit: 1, windowSec: 7 * 86_400 },
 } as const satisfies Record<string, BucketPolicy>;
+
+/** Active (unrevoked) API keys and MCP URLs per account (L-22). Counted, not bucketed. */
+export const MAX_ACTIVE_API_KEYS = 10;
+
+/** The scopes `ORBIT_NEW_LIMITS=log` softens. Never add a pre-existing scope here. */
+export const NEW_LIMIT_SCOPES: ReadonlySet<string> = new Set([
+  "draft",
+  "brief",
+  "compose",
+  "prep",
+  "duplicateHints",
+  "dictationToken",
+  "chatThreadDaily",
+  "reminderDaily",
+  "importDaily",
+  "apiKeyCap",
+  "unsubscribeMiss",
+]);
+
+/**
+ * True when `ORBIT_NEW_LIMITS=log`: the new limits count and log but never refuse. Read per
+ * call, so flipping the variable on the host takes effect without a code change.
+ */
+export function newLimitsLogOnly(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ORBIT_NEW_LIMITS?.trim().toLowerCase() === "log";
+}
+
+/**
+ * Whether a refusal on `scope` should be logged and let through instead. Exported so the
+ * count-based caps (API keys) follow the same switch.
+ */
+export function softenedLimit(scope: string, key: string, detail: string): boolean {
+  if (!NEW_LIMIT_SCOPES.has(scope) || !newLimitsLogOnly()) return false;
+  console.warn(`[orbit:rate-limit] ORBIT_NEW_LIMITS=log allowed scope=${scope} key=${key} ${detail}`);
+  return true;
+}
+
+/**
+ * A per-account cap (L-22): "you've made N of these today". A `UserFacingError`, so server
+ * actions (`asActionResult`, `friendlyError`) show its words; `routeError` answers it 429.
+ */
+export class CapReachedError extends UserFacingError {
+  /** How `routeError` tells it from a plain `UserFacingError` (class names do not survive minifying). */
+  readonly code = "cap_reached" as const;
+  readonly retryAfterSec: number | null;
+  readonly scope: string;
+  constructor(scope: string, message: string, retryAfterSec: number | null = null) {
+    super(message);
+    this.scope = scope;
+    this.retryAfterSec = retryAfterSec;
+  }
+}
+
+export function isCapReachedError(err: unknown): err is CapReachedError {
+  return err instanceof CapReachedError;
+}
+
+/**
+ * Count one creation against a daily cap; throws `CapReachedError` past it. The caps are the
+ * `*Daily` entries of `RATE_LIMITS`, so they share the bucket table, its window and its prune.
+ */
+export async function consumeDailyCap(
+  scope: "chatThreadDaily" | "reminderDaily" | "importDaily",
+  userId: string
+): Promise<void> {
+  try {
+    await consumeBucket(scope, userId, RATE_LIMITS[scope]);
+  } catch (err) {
+    if (!isRateLimitedError(err)) throw err;
+    const label = BUCKET_LABELS[scope] ?? scope;
+    throw new CapReachedError(
+      scope,
+      `You've reached the ${label} limit (${RATE_LIMITS[scope].limit}). Try again tomorrow.`,
+      err.retryAfterSec
+    );
+  }
+}
 
 /**
  * Count one request against `scope:key`; throws `RateLimitedError` past `limit` within the
@@ -405,6 +604,8 @@ export async function consumeBucket(
 
   const count = row?.count ?? units;
   if (count > policy.limit) {
+    // A post-launch limit under `ORBIT_NEW_LIMITS=log`: counted, logged, allowed.
+    if (softenedLimit(scope, key, `count=${count} limit=${policy.limit}`)) return { remaining: 0 };
     const elapsed = row?.windowStartedAt
       ? Math.floor((Date.now() - row.windowStartedAt.getTime()) / 1000)
       : 0;
@@ -435,6 +636,32 @@ export async function bucketCount(scope: string, key: string, policy: BucketPoli
 }
 
 /**
+ * `consumeBucket` keyed by a client IP (`ipBucketKey`). The key derivation moved to an HKDF
+ * sub-key (audit L-06); a bucket an IP filled under the old one is still live for up to a
+ * window, so it is read here and honoured: an IP already over the limit there stays limited.
+ * The legacy bucket is only ever read, never written, so it ages out on its own.
+ */
+export async function consumeIpBucket(scope: string, ip: string, policy: BucketPolicy): Promise<{ remaining: number }> {
+  const legacyKey = legacyIpBucketKey(ip);
+  const currentKey = ipBucketKey(ip);
+  if (legacyKey !== currentKey) {
+    const db = await getDb();
+    const [legacy] = await db
+      .select({ count: rateLimitBuckets.count, windowStartedAt: rateLimitBuckets.windowStartedAt })
+      .from(rateLimitBuckets)
+      .where(eq(rateLimitBuckets.bucket, `${scope}:${legacyKey}`))
+      .limit(1);
+    if (legacy) {
+      const elapsed = Math.floor((Date.now() - legacy.windowStartedAt.getTime()) / 1000);
+      if (elapsed < policy.windowSec && legacy.count >= policy.limit) {
+        throw new RateLimitedError(scope, Math.max(1, policy.windowSec - elapsed));
+      }
+    }
+  }
+  return consumeBucket(scope, currentKey, policy);
+}
+
+/**
  * A bucket idle this long is dead weight: `consumeBucket` resets an expired window on the
  * next hit anyway, so deleting one loses nothing. Twice the longest window in `RATE_LIMITS`
  * (the monthly web-search one, 31 days), which `smoke-housekeeping-sweeps` asserts — at the
@@ -444,9 +671,8 @@ export const RATE_LIMIT_BUCKET_RETENTION_MS = 62 * 24 * 60 * 60 * 1000;
 
 /**
  * Drops long-expired buckets; nothing else ever does, so the table grows by one row per
- * (scope, key) forever. Called by the process-stalled sweep.
- * ponytail: seq scan on an unindexed column, fine while the table is small — index
- * `window_started_at` if it ever reaches the hundreds of thousands.
+ * (scope, key) forever. Called by the process-stalled sweep. A range scan on
+ * `rate_limit_buckets_window_started_idx` (schema 176), not a sequential one.
  */
 export async function pruneRateLimitBuckets(now: Date = new Date()): Promise<void> {
   const db = await getDb();

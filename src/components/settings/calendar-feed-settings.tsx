@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Apple, CalendarDays, Link2, Mail, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -11,8 +12,8 @@ import {
   type CalendarFeedStatus,
 } from "@/actions/calendar-feed";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { AccountHeader, FeatureRow, LoadError, whenLine } from "@/components/settings/account-page";
-import { Skeleton } from "@/components/ui/skeleton";
+import { FeatureRow, LoadError, whenLine } from "@/components/settings/account-page";
+import { SettingsRow } from "@/components/settings/settings-section";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
@@ -44,7 +45,7 @@ export function CalendarFeedSettings() {
   const [loadFailure, setLoadFailure] = useState<"timeout" | "error" | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [confirmingRegen, setConfirmingRegen] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const regenFocus = useConfirmFocus(confirmingRegen ? "regen" : null);
 
   // A failed load must be visible and recoverable. Without this the section sits on
@@ -89,54 +90,74 @@ export function CalendarFeedSettings() {
     });
   }
 
-  const header = (
-    <>
-      <AccountHeader
-        name="Reminders in calendar"
-        mark={<CalendarDays className="text-ink" />}
-        accountLine={null}
-        status={
-          !status
-            ? { state: "off", detail: loadFailure ? "Couldn’t check" : "Checking…", busy: !loadFailure }
-            : !status.enabled
-              ? { state: "off", detail: "Off" }
-              : status.lastFetchedAt
-                ? { state: "on", detail: `Fetched ${whenLine(status.lastFetchedAt)}` }
-                : { state: "partial", detail: "Waiting for your calendar’s first check" }
-        }
-        primaryAction={
-          status && !status.enabled
-            ? { label: "Create feed", disabled: pending, onClick: () => run("Calendar feed created", enableCalendarFeed) }
-            : undefined
-        }
-        menuItems={
-          status?.enabled
-            ? [
-                { label: "Replace link…", onSelect: () => setConfirmingRegen(true) },
-                { label: "Turn off", onSelect: () => run("Calendar feed turned off", disableCalendarFeed) },
-              ]
-            : []
-        }
-      />
-      <div aria-hidden className="h-1 rounded-full bg-muted" />
-    </>
-  );
+  const statusLine = !status
+    ? loadFailure
+      ? "Couldn’t check"
+      : "Checking…"
+    : !status.enabled
+      ? "Off"
+      : status.lastFetchedAt
+        ? `On · fetched ${whenLine(status.lastFetchedAt)}`
+        : "On · waiting for your calendar’s first check";
 
   return (
-    <div className="space-y-4">
-      {header}
+    <SettingsRow
+      id="settings-calendar"
+      title="Reminders in your calendar"
+      description={
+        <>
+          Due reminders in Google, Apple or Outlook ·{" "}
+          <span role="status">{statusLine}</span>
+        </>
+      }
+      action={
+        loadFailure && !status ? null : (
+          <>
+            {status && !status.enabled ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() => run("Calendar feed created", enableCalendarFeed)}
+              >
+                Create feed
+              </Button>
+            ) : null}
+            {status?.enabled ? (
+              <>
+                {confirmingRegen ? null : (
+                  <Button
+                    ref={regenFocus.triggerRef("regen")}
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => setConfirmingRegen(true)}
+                  >
+                    <RefreshCw aria-hidden />
+                    Replace link
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => run("Calendar feed turned off", disableCalendarFeed)}
+                >
+                  Turn off
+                </Button>
+              </>
+            ) : null}
+          </>
+        )
+      }
+    >
       {loadFailure && !status ? (
         <LoadError what="calendar feed settings" onRetry={() => setReloadKey((k) => k + 1)} />
-      ) : !status ? (
-        <div className="space-y-2" aria-busy="true" aria-label="Loading calendar feed">
-          <Skeleton className="h-12 w-full rounded-lg" />
-          <Skeleton className="h-12 w-full rounded-lg" />
-        </div>
-      ) : !status.enabled ? (
-        <p className="text-sm text-muted-foreground">
-          Your reminders with a due date, in Google, Apple or Outlook calendar
-        </p>
-      ) : (
+      ) : null}
+      {status?.enabled ? (
         <>
           {confirmingRegen ? (
             <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-warning-border bg-warning-surface p-3 text-sm">
@@ -205,30 +226,16 @@ export function CalendarFeedSettings() {
               />
             </ul>
           ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Subscribed · Orbit can’t show this link again · replace it to add another calendar
-              </p>
-              {confirmingRegen ? null : (
-                <Button
-                  ref={regenFocus.triggerRef("regen")}
-                  size="sm"
-                  variant="outline"
-                  disabled={pending}
-                  onClick={() => setConfirmingRegen(true)}
-                >
-                  <RefreshCw aria-hidden />
-                  Replace link
-                </Button>
-              )}
-            </div>
+            <p className="text-sm text-muted-foreground">
+              Subscribed · Orbit can’t show this link again · replace it to add another calendar
+            </p>
           )}
 
           <p className="text-xs text-muted-foreground">
             Keep the link private · anyone with it can read your reminders
           </p>
         </>
-      )}
-    </div>
+      ) : null}
+    </SettingsRow>
   );
 }

@@ -85,3 +85,51 @@ export function foldSchoolNames(names: readonly string[]): Map<string, string> {
   }
   return out;
 }
+
+/** Significant words of a name, each flagged for whether it was written as an acronym. */
+function tokens(name: string | null | undefined): { w: string; acro: boolean }[] {
+  if (!name) return [];
+  return name
+    .replace(/[^A-Za-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t && !SKIP_WORDS.has(t.toLowerCase()))
+    .map((t) => ({ w: t.toLowerCase(), acro: looksLikeAcronym(t) }));
+}
+
+/**
+ * True when `a[i]` is an acronym whose letters are the initials of the next words in `b`.
+ * A name that is only an acronym (MIT, USC) never expands; one with a qualifier ("UNC Chapel Hill", "UNC CH") may.
+ */
+function spelledBy(a: { w: string; acro: boolean }, aQualified: boolean, b: { w: string }[], j: number): boolean {
+  const k = a.w.length;
+  return aQualified && a.acro && j + k <= b.length && b.slice(j, j + k).every((t, n) => t.w[0] === a.w[n]);
+}
+
+/**
+ * True when two spellings name the same school. Both sequences must be consumed together:
+ * equal words pair up, and an acronym pairs with the run of words its letters are the
+ * initials of. A prefix never matches, so "UNC" is not "University of North Carolina at
+ * Charlotte" and "Yale" is not "Yale School of Management".
+ */
+export function sameSchool(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = tokens(a);
+  const y = tokens(b);
+  if (!x.length || !y.length) return false;
+  let i = 0;
+  let j = 0;
+  while (i < x.length && j < y.length) {
+    if (x[i].w === y[j].w) {
+      i++;
+      j++;
+    } else if (spelledBy(x[i], x.length > 1, y, j)) {
+      j += x[i].w.length;
+      i++;
+    } else if (spelledBy(y[j], y.length > 1, x, i)) {
+      i += y[j].w.length;
+      j++;
+    } else {
+      return false;
+    }
+  }
+  return i === x.length && j === y.length;
+}

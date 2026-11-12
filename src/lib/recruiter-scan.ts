@@ -4,6 +4,7 @@ import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import type { Decider } from "@/lib/decisions/jev";
 import { rulesOutRecruiter } from "@/lib/decisions/recruiter";
 import { fenceUntrusted } from "@/lib/ai-security";
+import { extractLinkedinFromContent, isRealHumanName } from "@/lib/recruiter-detect";
 
 /**
  * Classification + summarization for one candidate sender found by the Gmail scan.
@@ -22,6 +23,8 @@ export const recruiterScanSchema = z.object({
   confidence: z.number().min(0).max(1).nullish(),
   full_name: z.string().nullish(),
   firm: z.string().nullish(),
+  role_interviewing_for: z.string().nullish(),
+  linkedin_url: z.string().nullish(),
   companies_mentioned: strList,
   roles_discussed: strList,
   summary: z.string().nullish(),
@@ -32,6 +35,8 @@ export type RecruiterScanResult = {
   confidence: number;
   fullName: string | null;
   firm: string | null;
+  roleInterviewingFor: string | null;
+  linkedinUrl: string | null;
   companiesMentioned: string[];
   rolesDiscussed: string[];
   summary: string | null;
@@ -85,12 +90,15 @@ NOT recruiters: job-board blasts and newsletters (LinkedIn Jobs, Indeed, Hired, 
 
 Rules:
 - Judge only from the messages provided. Never invent a firm, role, or event.
+- "full_name" MUST be the recruiter's REAL first and last human name (e.g., "Sarah Jenkins", "Michael Chen"). NEVER an automated system, bot, team, or company name (e.g. "Google Careers", "Talent Team", "Recruiting Coordination", "Greenhouse"). If you cannot identify a real human individual recruiter's name, set full_name to null and is_recruiter to false.
+- "role_interviewing_for" is the specific job title or position the user is interviewing or being recruited for (e.g. "Software Engineer Intern", "Product Manager", "Staff Backend Engineer").
+- "linkedin_url" is the recruiter's LinkedIn profile URL if included in their email signature or body, otherwise null.
 - "summary" is 2-3 sentences, written to the user in second person, covering what the recruiter wanted, what happened, and where it stands. State the outcome plainly, including rejections and silence.
 - "companies_mentioned" are the hiring companies discussed, not the recruiter's agency unless it is also the employer.
 - "roles_discussed" are concrete job titles.
 - If unsure whether they are a recruiter, set is_recruiter false and confidence low.
 
-Return JSON: {"is_recruiter": boolean, "confidence": number between 0 and 1, "full_name": string|null, "firm": string|null, "companies_mentioned": string[], "roles_discussed": string[], "summary": string|null}`;
+Return JSON: {"is_recruiter": boolean, "confidence": number between 0 and 1, "full_name": string|null, "firm": string|null, "role_interviewing_for": string|null, "linkedin_url": string|null, "companies_mentioned": string[], "roles_discussed": string[], "summary": string|null}`;
 
 export function buildRecruiterUserPrompt(input: {
   senderName: string;
@@ -105,13 +113,37 @@ ${fenceUntrusted("EMAILS", renderMessages(input.messages))}`;
 }
 
 /** The model's answer as a verdict. Throws when it is not the shape it promised. */
-export function recruiterResultFromContent(content: string): RecruiterScanResult {
+export function recruiterResultFromContent(
+  content: string,
+  rawMessagesText?: string
+): RecruiterScanResult {
   const parsed = recruiterScanSchema.parse(parseAiJson(content));
+  const rawName = parsed.full_name?.trim() || null;
+  const nameCheck = isRealHumanName(rawName);
+
+  // Enforce real human name check
+  const isHuman = nameCheck.valid;
+  const isRecruiter = isHuman && parsed.is_recruiter;
+  const confidence = isHuman ? (parsed.confidence ?? (parsed.is_recruiter ? 0.7 : 0)) : 0;
+
+  // Extract LinkedIn URL from text/signature if model didn't catch it
+  let linkedin = parsed.linkedin_url?.trim() || null;
+  if (!linkedin && rawMessagesText) {
+    linkedin = extractLinkedinFromContent(rawMessagesText);
+  }
+
+  const role =
+    parsed.role_interviewing_for?.trim() ||
+    parsed.roles_discussed?.[0]?.trim() ||
+    null;
+
   return {
-    isRecruiter: parsed.is_recruiter,
-    confidence: parsed.confidence ?? (parsed.is_recruiter ? 0.7 : 0),
-    fullName: parsed.full_name?.trim() || null,
+    isRecruiter,
+    confidence,
+    fullName: isHuman ? rawName : null,
     firm: parsed.firm?.trim() || null,
+    roleInterviewingFor: role,
+    linkedinUrl: linkedin,
     companiesMentioned: parsed.companies_mentioned,
     rolesDiscussed: parsed.roles_discussed,
     summary: parsed.summary?.trim() || null,
@@ -128,6 +160,8 @@ export const RULED_OUT_VERDICT: RecruiterScanResult = Object.freeze({
   confidence: 0,
   fullName: null,
   firm: null,
+  roleInterviewingFor: null,
+  linkedinUrl: null,
   companiesMentioned: [],
   rolesDiscussed: [],
   summary: null,
@@ -185,5 +219,6 @@ export async function classifyRecruiterSender(
     accept: acceptRecruiterContent,
   });
 
-  return recruiterResultFromContent(content);
+  const allText = input.messages.map((m) => `${m.subject} ${m.body || m.snippet || ""}`).join(" ");
+  return recruiterResultFromContent(content, allText);
 }

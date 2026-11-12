@@ -12,7 +12,6 @@ const AppStarfield = dynamic(
   { ssr: false }
 );
 import { MobileNav } from "@/components/layout/mobile-nav";
-import { useSmallSky } from "@/components/graph/use-small-sky";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
 import { ConnectivityBanner } from "@/components/layout/connectivity-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
@@ -37,7 +36,8 @@ import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { ThemeSync } from "@/components/theme-sync";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { cn } from "@/lib/utils";
-import { useMemo } from "react";
+import { useMediaQuery } from "@/lib/use-media-query";
+import { useEffect, useMemo, useState } from "react";
 import type { Plan } from "@/lib/plan-limits";
 import type { ThemePreference } from "@/lib/theme";
 
@@ -100,6 +100,15 @@ export function AppShell({
   tour: { active: boolean; stop: string | null; hasApiKey: boolean; linkedinRequested: boolean };
 }) {
   const pathname = usePathname();
+  // One nav tree per viewport after hydrate. Until the match is known, keep both (SSR +
+  // first paint) so desktop does not flash an empty rail and phones keep the bottom bar.
+  const mdUp = useMediaQuery("(min-width: 768px)");
+  const [navReady, setNavReady] = useState(false);
+  useEffect(() => {
+    setNavReady(true);
+  }, []);
+  const showDesktopNav = !navReady || mdUp;
+  const showMobileNav = !navReady || !mdUp;
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
   // once here rather than in each consumer on every render.
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
@@ -121,7 +130,6 @@ export function AppShell({
   // that holds still, so it is locked to the viewport as well.
   const isKnowledge = pathname === "/knowledge";
   const isViewportLocked = isChat || isConstellation || isReminders || isKnowledge;
-  const smallSky = useSmallSky();
   // The ask bar is not a link to /chat — it streams answers from `/api/chat` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
   // from every screen, which is the whole thing hiding is supposed to prevent.
@@ -150,7 +158,7 @@ export function AppShell({
   if (isOnboarding) {
     return (
       <MotionPreferenceConfig>
-        <div className="min-h-dvh bg-background">
+        <div data-dock-squeeze className="min-h-dvh bg-background">
           <ThemeSync theme={theme} />
           <ConnectivityBanner />
           {children}
@@ -176,17 +184,8 @@ export function AppShell({
           className="flex min-h-0 flex-1 overflow-hidden bg-background dark:bg-transparent"
         >
           <ThemeSync theme={theme} />
-          {/*
-            Not on the phone-sized constellation. That route already paints a full sky
-            into its own canvas, and a second full-viewport canvas running its own rAF
-            loop — 700 arcs a frame, some with `shadowBlur`, one of the most expensive
-            Canvas2D operations on iOS — is exactly the pressure that was taking the tab
-            down. It costs a flatter background around the stage card on those devices.
-            On a larger constellation it stays, but still: one painted frame, no loop.
-          */}
-          {!(isConstellation && smallSky) && (
-            <AppStarfield still={isConstellation} />
-          )}
+          {/* On the constellation route, AppStarfield is still (one painted frame, no rAF loop) to serve as a deep dark sky backdrop. */}
+          <AppStarfield still={isConstellation} />
           <AvatarBackfill />
           <DueNotificationsWatcher />
           <CloudNotesWatcher />
@@ -201,8 +200,9 @@ export function AppShell({
           <ImportJobWatcher />
           <CaptureJobWatcher />
           <GlobalJobProgressBar />
-          <CommandPalette hidden={hiddenSet} askMode={paletteAskMode} />
+          <CommandPalette hidden={hiddenSet} comingSoon={comingSoonSet} askMode={paletteAskMode} />
           <ComposeHost userId={userId} hidden={hiddenSet} />
+          {showDesktopNav && (
           <div
             data-app-sidebar
             className="hidden h-full shrink-0 p-3 md:block lg:p-4"
@@ -220,10 +220,14 @@ export function AppShell({
               tierTags={tierTags}
             />
           </div>
+          )}
           {/* The scroll column. Not itself the <main> landmark: it also holds the phone
               header and the bottom nav, which are not page content. */}
           <div
             id="app-main-scroll"
+            // The feedback dock's room is padding on THIS column, so its scrollbar stays at the
+            // screen's right edge, beside the panel, and the page (and its bell) narrow inside.
+            data-dock-squeeze
             className={cn(
               "relative flex h-full min-h-0 flex-1 flex-col",
               // A locked page (Chat, the constellation) fits itself to the viewport. Under
@@ -235,7 +239,7 @@ export function AppShell({
               // Focus and scrollIntoView stop clear of the sticky section headers at the top
               // and the bottom nav and ask bar floating over the bottom (WCAG 2.4.11). The
               // bottom value is the content's own reserved padding, below.
-              "scroll-pt-12 scroll-pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:scroll-pb-24",
+              "scroll-pt-12 scroll-pb-[calc(var(--orbit-bottom-nav)+5rem)] md:scroll-pb-24",
             )}
           >
             <header
@@ -282,7 +286,12 @@ export function AppShell({
 
             <div
               className={cn(
-                "fixed right-5 z-30 hidden md:right-8 md:block",
+                // `--orbit-dock-w` is the room the feedback dock is taking (0 unless it is open
+                // and docked): the bell stays at the page's right edge as the page narrows,
+                // and slides with it on the same curve. Once the dock is open it also tucks 1.25rem
+                // closer to the panel (the `min()` is 0 while the dock is closed), which leaves that
+                // much more air between the page's content and the bell.
+                "fixed right-5 z-30 hidden md:block md:right-[calc(2rem+var(--orbit-dock-w)-min(1.25rem,var(--orbit-dock-w)))] md:transition-[right] md:duration-slow md:ease-house",
                 // The preview banner is in the layout flow but this button is fixed to the
                 // viewport, so it has to step down out from under it by hand.
                 viewingAsUser ? "top-12" : "top-5 md:top-6"
@@ -319,10 +328,10 @@ export function AppShell({
                 // rail's gutter if that is larger.
                 "md:pr-[max(5rem,calc(2.5rem+var(--content-rail-gutter,0px)))]",
                 isViewportLocked
-                  ? "min-h-0 flex-1 overflow-hidden pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8 [@media(max-height:500px)]:flex-none [@media(max-height:500px)]:overflow-visible"
+                ? "min-h-0 flex-1 overflow-hidden pb-[var(--orbit-bottom-nav)] md:pb-8 [@media(max-height:500px)]:flex-none [@media(max-height:500px)]:overflow-visible"
                   : isSettings
-                    ? "flex-1 pb-[calc(4.625rem+env(safe-area-inset-bottom))] md:pb-8"
-                    : "flex-1 pb-[calc(9.625rem+env(safe-area-inset-bottom))] md:pb-24",
+                    ? "flex-1 pb-[var(--orbit-bottom-nav)] md:pb-8"
+                    : "flex-1 pb-[calc(var(--orbit-bottom-nav)+5rem)] md:pb-24",
                 isConstellation && "py-4 md:py-5",
               )}
             >
@@ -330,6 +339,7 @@ export function AppShell({
             </main>
 
             {showAskBar && <FloatingAskBar />}
+            {showMobileNav && (
             <MobileNav
               clerkOn={clerkOn}
               demoMode={demoMode}
@@ -338,6 +348,7 @@ export function AppShell({
               navOrder={navOrder}
               tierTags={tierTags}
             />
+            )}
           </div>
         </div>
       </div>

@@ -16,9 +16,9 @@ import { BTN_PRIMARY } from "./demo-ui";
  * classes are copied, and `scripts/smoke-waitlist-demo-fidelity.ts` keeps the rest honest.
  *
  * Only the four screens the preview has are live. The rest look like the real thing and do
- * nothing — except Events and Outreach, which really are coming soon (`comingSoon` in
- * `lib/surfaces.ts`, the "Soon" tag) and are also two of the page's poll options: a click
- * offers to jump to the poll and vote for them.
+ * nothing — except Outreach, which really is coming soon (`comingSoon` in `lib/surfaces.ts`,
+ * the "Soon" tag) and is also one of the page's poll options: a click offers to jump to the
+ * poll and vote for it.
  */
 const SCREEN_OF: Record<string, Exclude<Screen, "profile"> | undefined> = {
   "/dashboard": "dashboard",
@@ -33,7 +33,6 @@ const shown = (items: readonly AppNavItem[]) => items.filter((i) => !HIDDEN.has(
 
 /** The items under the divider that really are coming soon, and the poll option each is. */
 const SOON: Record<string, { label: string }> = {
-  "/events": { label: "Events" },
   "/outreach": { label: "Outreach" },
 };
 

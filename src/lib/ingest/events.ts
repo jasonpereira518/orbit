@@ -59,6 +59,7 @@ import { interactionExternalId } from "@/lib/ingest/external-id";
 import type { InteractionInsert, ReminderInsert } from "@/lib/import-engine";
 import { reportAndContinue } from "@/lib/report-error";
 import { isNonPersonParticipant } from "@/lib/non-person-participant";
+import { displayNameFor } from "@/lib/names/from-identifier";
 
 /** One identifiable person on an event. Every field optional — sources differ in what they know. */
 export type NetworkParticipant = {
@@ -250,7 +251,7 @@ function toContactInput(
   return {
     metContext: extra?.metContext,
     howMet: extra?.howMet ?? undefined,
-    fullName: (p.name || p.email || "").trim(),
+    fullName: displayNameFor({ name: p.name, email: p.email, linkedinUrl: p.linkedinUrl }),
     email: p.email?.trim() || undefined,
     linkedinUrl: p.linkedinUrl?.trim() || undefined,
     xHandle: p.handle?.trim() || undefined,

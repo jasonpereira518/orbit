@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { recordAccountAudit } from "@/lib/account-audit";
 import { auth } from "@clerk/nextjs/server";
 import { isDemoMode } from "@/lib/auth";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
@@ -65,6 +66,7 @@ export async function GET(request: Request) {
       label: organization.name,
       accountRef: organization.id,
     });
+    await recordAccountAudit({ userId: sessionUserId, action: "integration.connect", resourceType: "eventbrite" });
 
     redirect.searchParams.set("eventbrite", "connected");
     return NextResponse.redirect(redirect);

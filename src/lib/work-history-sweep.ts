@@ -29,8 +29,8 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { userCanUseAi } from "@/lib/ai";
-import { bucketCount, consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
-import { WEB_SEARCH_BACKGROUND_SHARE, WEB_SEARCH_SCOPE, webSearchMonthKey } from "@/lib/web-search-budget";
+import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
+import { backgroundSearchRoom } from "@/lib/web-search-budget";
 import { utcDayKey } from "@/lib/timeline-cost";
 import {
   researchContactWorkHistory,
@@ -39,6 +39,7 @@ import {
   type WorkHistoryOutcome,
   type WorkHistoryResearcher,
 } from "@/lib/work-history-research";
+import { openEngines as openDecisionEngines, type Engines } from "@/lib/decisions/engine";
 
 /** Accounts one run looks at. */
 export const SWEEP_USERS_PER_RUN = 8;
@@ -72,6 +73,8 @@ export type WorkHistorySweepDeps = {
   checker?: CurrentRoleChecker;
   canUseAi?: (userId: string) => Promise<boolean>;
   random?: () => number;
+  /** Jev's engines for one account, opened once per account per run (the re-check gate). */
+  openEngines?: (userId: string) => Promise<Engines>;
 };
 
 /**
@@ -203,6 +206,19 @@ export async function runWorkHistorySweep(deps: WorkHistorySweepDeps = {}): Prom
     groups.push({ userId, ids });
   }
 
+  // One account read per account for Jev, not per contact. A failed open is "no engines":
+  // the re-check then searches exactly as before.
+  const openFor = deps.openEngines ?? ((userId: string) => openDecisionEngines(userId));
+  const engines = new Map<string, Promise<Engines>>();
+  const enginesFor = (userId: string) => {
+    let opened = engines.get(userId);
+    if (!opened) {
+      opened = openFor(userId).catch(() => ({ jev: null, llm: null }));
+      engines.set(userId, opened);
+    }
+    return opened;
+  };
+
   const queue = interleave(groups);
   const exhausted = new Set<string>();
   const unstarted = new Map<string, string[]>();
@@ -227,10 +243,10 @@ export async function runWorkHistorySweep(deps: WorkHistorySweepDeps = {}): Prom
         checker: deps.checker,
         now,
         random: deps.random,
+        gates: await enginesFor(userId),
         spend: async () => {
           // Background stops at its share of the account's monthly searches.
-          const used = await bucketCount(WEB_SEARCH_SCOPE, webSearchMonthKey(userId, now), RATE_LIMITS.webSearchMonthly);
-          if (used >= RATE_LIMITS.webSearchMonthly.limit * WEB_SEARCH_BACKGROUND_SHARE) return false;
+          if (!(await backgroundSearchRoom(userId, now))) return false;
           try {
             await consumeBucket(
               "work-history-background",

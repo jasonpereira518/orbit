@@ -53,7 +53,6 @@
 
 import { useViewerPlan } from "@/components/viewer-plan";
 import { availableOn } from "@/lib/plans/plan-config";
-import Link from "next/link";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { longRelativeLabel } from "@/lib/relative-date";
@@ -87,7 +86,7 @@ import { AccountPageShell, FeatureRow, syncStatusLine } from "@/components/setti
 import { useContactsImport } from "@/components/settings/use-contacts-import";
 import { useMicrosoftConnection } from "@/components/settings/use-provider-connection";
 import { useLatestScan, useRecruiterScan } from "@/components/settings/use-recruiter-scan";
-import type { IntegrationTabId } from "@/components/settings/sections";
+import type { IntegrationTabId, SettingsSectionId } from "@/components/settings/sections";
 import { friendlyError } from "@/lib/errors";
 import {
   microsoftAccountStatus,
@@ -111,6 +110,7 @@ export function MicrosoftAccountPage({
   aiReady,
   active,
   onOpenPage,
+  onLeaveTo,
 }: {
   returnTo: string;
   /** False when /recruiters is hidden — the inbox row is left out. */
@@ -120,8 +120,10 @@ export function MicrosoftAccountPage({
   aiReady: boolean;
   /** False from the moment the dialog starts closing: stops the scan poll. */
   active: boolean;
-  /** Opens another page of this dialog — the Reminders row and the "Turn on AI" link. */
+  /** Opens another page of this dialog — the "Turn on AI" link. */
   onOpenPage: (page: IntegrationTabId) => void;
+  /** Closes the dialog on a card of the settings page — the Reminders and signature links. */
+  onLeaveTo: (anchor: SettingsSectionId) => void;
 }) {
   const connection = useMicrosoftConnection({ returnTo, label: "Microsoft" });
   const contacts = useContactsImport("microsoft");
@@ -291,9 +293,13 @@ export function MicrosoftAccountPage({
               Replies you approve go out from your address.
               {status?.canSend ? ` ${sendCap.usedToday} of ${sendCap.dailyCap} sent today across your mailboxes. ` : " "}
               {status?.canSend ? (
-                <Link href="/settings#settings-email" className="underline underline-offset-2 hover:text-foreground">
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-foreground"
+                  onClick={() => onLeaveTo("settings-email")}
+                >
                   Signature and defaults
-                </Link>
+                </button>
               ) : null}
             </>
           }
@@ -317,10 +323,10 @@ export function MicrosoftAccountPage({
         icon={<CalendarClock className="size-4" />}
         title="Reminders in Outlook"
         description="See your follow-ups next to your meetings."
-        // Not a capability of the grant: the reminders page hands out its own private
-        // calendar address, which works whether or not Microsoft is connected at all.
+        // Not a capability of the grant: the feed is a private calendar address of Orbit's own,
+        // which works whether or not Microsoft is connected at all. It lives under Notifications.
         control={{ kind: "action", label: "Add" }}
-        onAction={() => onOpenPage("reminders")}
+        onAction={() => onLeaveTo("settings-calendar")}
       />
 
       <ImportHistoryRow history={history} source="Outlook" onUndone={loadPanel} />

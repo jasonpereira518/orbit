@@ -7,8 +7,12 @@ import {
   Th,
 } from "@/components/admin/primitives";
 import { SharedAvatarActions } from "@/components/admin/shared-avatar-actions";
+import { ContactUpkeepPanel } from "@/components/admin/contact-upkeep-panel";
+import { LinkedInPhotoQueuePanel } from "@/components/admin/linkedin-photo-queue-panel";
 import { requireAdminUserId } from "@/lib/admin";
 import { listSharedAvatars } from "@/lib/admin-avatars";
+import { getGlobalUpkeepMetrics } from "@/lib/admin-contact-upkeep";
+import { getLinkedInPhotoQueueMetrics } from "@/lib/linkedin-photo-queue";
 import { getHiddenSurfaceKeys } from "@/lib/surface-visibility";
 import { ProductHeader } from "../product-header";
 
@@ -31,12 +35,19 @@ export default async function AdminProductPhotosPage({
   await requireAdminUserId();
   const q = (await searchParams).q?.trim().slice(0, 100) || undefined;
   // The header's surface read rides alongside, so it is cached by the time the header asks.
-  const [rows] = await Promise.all([listSharedAvatars({ q }), getHiddenSurfaceKeys()]);
+  const [rows, upkeepMetrics, queueMetrics] = await Promise.all([
+    listSharedAvatars({ q }),
+    getGlobalUpkeepMetrics(),
+    getLinkedInPhotoQueueMetrics(),
+    getHiddenSurfaceKeys(),
+  ]);
   const unseen = q && !rows.some((r) => r.slug === q.toLowerCase()) ? q.toLowerCase() : null;
 
   return (
     <>
       <ProductHeader />
+      <LinkedInPhotoQueuePanel initial={queueMetrics} />
+      <ContactUpkeepPanel initialMetrics={upkeepMetrics} />
       <p className="mb-4 text-sm text-muted-foreground">
         Public LinkedIn photos shared across accounts. Blocked slugs are never fetched.
       </p>

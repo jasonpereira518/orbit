@@ -11,6 +11,7 @@
  */
 import type { ToolCall, ToolDriver, ToolStep } from "../src/lib/ai-tools";
 import { runToolLoop } from "../src/lib/chat-tool-loop";
+import { WEB_LOOKUP_LIMIT } from "../src/lib/chat-agent-loop";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -31,6 +32,8 @@ function scripted(rounds: Array<ToolStep | Error>) {
   let i = 0;
   const sentBack: Array<Array<{ call: ToolCall; content: string }>> = [];
   const asked: ToolCall[][] = [];
+  /** Each steer the driver was handed, with how many rounds had run by then. */
+  const said: Array<{ text: string; afterRound: number }> = [];
   const driver: ToolDriver = {
     async step() {
       const next = rounds[i++] ?? { calls: [], text: "DONE" };
@@ -41,8 +44,11 @@ function scripted(rounds: Array<ToolStep | Error>) {
     addResults(results) {
       sentBack.push(results);
     },
+    addUserText(text) {
+      said.push({ text, afterRound: i });
+    },
   };
-  return { driver, sentBack, asked, stepsTaken: () => i };
+  return { driver, sentBack, asked, said, stepsTaken: () => i };
 }
 
 const okExec = async (c: ToolCall) => ({ ok: true, result: { from: c.name, args: c.args } });
@@ -178,6 +184,80 @@ async function main() {
     const s = scripted([{ calls: [call("search_notes")], text: "" }]);
     const out = await runToolLoop(s.driver, okExec, { ...base, deadline: far(), signal: controller.signal });
     check("a closed tab starts no round", out.stoppedBy === "aborted" && s.stepsTaken() === 0, `${out.stoppedBy}, ${s.stepsTaken()}`);
+  }
+
+  // --- one web lookup per answer ------------------------------------------------------------
+  {
+    const s = scripted([
+      { calls: [call("research_person", { name: "Ada" }), call("research_company", { name: "Acme" })], text: "" },
+      { calls: [call("find_people", { query: "founders" }), call("search_notes", { query: "x" })], text: "" },
+    ]);
+    const ran: string[] = [];
+    const recording = async (c: ToolCall) => {
+      ran.push(c.name);
+      return okExec(c);
+    };
+    await runToolLoop(s.driver, recording, { ...base, deadline: far(), limited: WEB_LOOKUP_LIMIT });
+    check(
+      "one web lookup runs per answer; the rest are told why, other tools still run",
+      ran.join() === "research_person,search_notes" &&
+        s.sentBack.flat().filter((r) => r.content.includes("One web lookup per answer")).length === 2,
+      ran.join(),
+    );
+  }
+
+  // --- the same call twice in one round runs once -------------------------------------------
+  {
+    const twice = { calls: [call("search_notes", { query: "same" }), call("search_notes", { query: "same" })], text: "" };
+    const s = scripted([twice]);
+    let executed = 0;
+    const slowCount = async (c: ToolCall) => {
+      executed++;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return okExec(c);
+    };
+    const out = await runToolLoop(s.driver, slowCount, { ...base, deadline: far() });
+    check(
+      "an identical call in the same round waits on the first instead of running again",
+      executed === 1 && s.sentBack[0]?.length === 2 && out.calls.length === 1,
+      `${executed} run, ${out.calls.length} recorded`,
+    );
+  }
+
+  // --- a steer sent mid-answer reaches the model before the next round -----------------------
+  {
+    const s = scripted([{ calls: [call("search_notes", { query: "a" })], text: "" }]);
+    let asks = 0;
+    const out = await runToolLoop(s.driver, okExec, {
+      ...base,
+      deadline: far(),
+      steer: async () => (asks++ === 0 ? ["only the Boston ones"] : []),
+    });
+    check(
+      "a steer is handed to the driver after the round's results and before the next round",
+      s.said.length === 1 &&
+        s.said[0].afterRound === 1 &&
+        s.said[0].text.includes("only the Boston ones") &&
+        s.sentBack.length === 1 &&
+        out.rounds === 2 &&
+        out.stoppedBy === "done",
+      JSON.stringify({ said: s.said, rounds: out.rounds }),
+    );
+  }
+  {
+    const s = scripted([{ calls: [call("search_notes", { query: "b" })], text: "" }]);
+    const out = await runToolLoop(s.driver, okExec, {
+      ...base,
+      deadline: far(),
+      steer: async () => {
+        throw new Error("database is down");
+      },
+    });
+    check(
+      "a steer source that throws is silence, never the answer failing",
+      s.said.length === 0 && out.stoppedBy === "done" && out.rounds === 2,
+      `${out.stoppedBy} after ${out.rounds}`,
+    );
   }
 
   console.log(failures === 0 ? "\nsmoke-tool-loop: all checks passed" : `\nsmoke-tool-loop: ${failures} FAILED`);

@@ -23,7 +23,8 @@
  * event's interaction stay, and the copy says so — taking someone off a guest list is not a
  * claim that you never met them.
  */
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -62,7 +63,7 @@ export function EditAttendeeDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [form, setForm] = useState({
     fullName: row.fullName ?? "",

@@ -81,6 +81,7 @@ async function seed() {
   await db.insert(schema.contactTags).values({ contactId: contact.id, tagId: tag.id });
 
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
+  await db.insert(schema.chatMemories).values({ userId: USER, text: "raising a seed round" });
 
   const [feedbackRow] = await db
     .insert(schema.feedback)
@@ -100,6 +101,14 @@ async function seed() {
     inlineData: "aGVsbG8=",
     contentType: "image/webp",
     byteSize: 5,
+  });
+
+  // The conversation on it — every row carries the reporter's id, operator replies included.
+  await db.insert(schema.feedbackMessages).values({
+    feedbackId: feedbackRow.id,
+    userId: USER,
+    author: "operator",
+    body: "the operator's reply to them",
   });
 
   await db.insert(schema.gateEvents).values({
@@ -491,13 +500,16 @@ async function seed() {
     action: "never",
   });
   await db.insert(schema.radarRuns).values({ userId: USER, trigger: "manual" });
+  await db.insert(schema.userProjects).values({ userId: USER, title: "Smoke project", detectedFrom: "manual" });
+  await db.insert(schema.radarOpportunities).values({ userId: USER, kind: "event", title: "Smoke meetup", dedupeKey: "smoke-purge-opportunity" });
+  await db.insert(schema.pushSubscriptions).values({ userId: USER, endpoint: "https://push.example.com/smoke-purge", p256dh: "smoke-key", auth: "smoke-auth" });
   await db.insert(schema.contactSignals).values({
     userId: USER,
     contactId: contact.id,
-    kind: "company_news",
+    kind: "linkedin_activity",
     occurredAt: new Date(),
-    source: "manual",
-    payload: { title: "Globex raises a Series B", company: "Globex" },
+    source: "linkedin",
+    payload: { excerpt: "Shipped our new API today", network: "linkedin", url: null },
     dedupeHash: "smoke-purge-signal",
   });
 
@@ -574,6 +586,11 @@ async function seed() {
   // The recruiter scan's watermark, kept separate from `gmail_connections` on purpose but
   // no less user data than anything else here.
   await db.insert(schema.recruiterScanState).values({ userId: USER });
+  await db.insert(schema.recruiterContactUnlocks).values({
+    userId: USER,
+    recruiterId: recruiter.id,
+    costCredits: 1,
+  });
   await db.insert(schema.cloudNoteSources).values({ userId: USER, provider: "google", cursor: "c1" });
   await db.insert(schema.cloudNoteFiles).values({ userId: USER, provider: "google", fileId: "doc-1", name: "1:1 notes" });
 
@@ -726,6 +743,10 @@ async function seed() {
     .insert(schema.chatThreads)
     .values({ userId: USER, title: "thread" })
     .returning();
+  await db.insert(schema.orbitVoiceSessions).values({
+    userId: USER, threadId: thread.id, expiresAt: new Date(Date.now() + 600000),
+    scope: { contacts: [[contact.id, "Ada Lovelace"]] },
+  });
   await db.insert(schema.chatMessages).values({
     threadId: thread.id,
     userId: USER,

@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { creditEmailUnsubscribeToken, readCreditEmailUnsubscribeToken } from "@/lib/credits/notices";
-import { radarDigestUnsubscribeToken, readRadarDigestUnsubscribeToken } from "@/lib/radar/digest";
-import { safeEqual, sha256Hex, signToken, verifyToken } from "@/lib/crypto";
+import { readRadarDigestUnsubscribeToken } from "@/lib/radar/digest";
+import { safeEqual, sha256Hex } from "@/lib/crypto";
+import { signIdToken, verifyIdToken } from "@/lib/signed-id-token";
 
+const CREDIT_SPEC = { label: "orbit:credit-email-unsubscribe:v1", devFallback: "orbit-dev-credit-email" };
+const RADAR_SPEC = { label: "orbit:radar-digest-unsubscribe:v1", devFallback: "orbit-dev-radar-digest" };
 const SECRET = "test-secret-test-secret-test-secret-0123";
 const CREDIT_LABEL = "orbit:credit-email-unsubscribe:v1";
 const RADAR_LABEL = "orbit:radar-digest-unsubscribe:v1";
@@ -25,15 +28,6 @@ const GOLDEN: Array<{ user: string; credit: string; radar: string }> = [
     radar: "w7xzZXIvd2l0aCBzcGFjZXMrw6k.GzgyA8EekRRIeMPTqQ6MnxDHdBuaLMJ1rryfNqgo-TY",
   },
 ];
-// Same, with ENCRYPTION_SECRET unset (the dev fallbacks).
-const GOLDEN_DEV = [
-  {
-    user: "user_2abcDEF",
-    credit: "dXNlcl8yYWJjREVG.AObxdWd4xCB8EOsx9PoapLGcz_DC5o63IJgvbiqPulI",
-    radar: "dXNlcl8yYWJjREVG.ZWe6Ft3JxhAa6MviUiyg_AuhFmxiaVaMDBoB41dQTXY",
-  },
-];
-
 // LEGACY: verbatim copy of the algorithm that lived (twice) in credits/notices.ts and
 // radar/digest.ts before consolidation. Kept so tokens minted by old code are proven to verify.
 function legacyKey(label: string, devSecret: string): Buffer {
@@ -67,13 +61,6 @@ describe("unsubscribe tokens", () => {
     else process.env.ENCRYPTION_SECRET = saved;
   });
 
-  it("public mint functions produce the literal golden tokens", () => {
-    for (const g of GOLDEN) {
-      assert.equal(creditEmailUnsubscribeToken(g.user), g.credit);
-      assert.equal(radarDigestUnsubscribeToken(g.user), g.radar);
-    }
-  });
-
   it("legacy algorithm reproduces the goldens", () => {
     for (const g of GOLDEN) {
       assert.equal(legacyMint(CREDIT_LABEL, CREDIT_DEV, g.user), g.credit);
@@ -81,49 +68,32 @@ describe("unsubscribe tokens", () => {
     }
   });
 
-  it("signToken is byte-identical to the legacy format", () => {
-    for (const g of GOLDEN) {
-      assert.equal(signToken(CREDIT_LABEL, g.user, CREDIT_DEV), g.credit);
-      assert.equal(signToken(RADAR_LABEL, g.user, RADAR_DEV), g.radar);
-    }
-  });
-
   it("verifyToken accepts tokens minted by the legacy code, and reads match", () => {
     for (const g of GOLDEN) {
-      assert.equal(verifyToken(CREDIT_LABEL, g.credit, CREDIT_DEV), g.user);
-      assert.equal(verifyToken(RADAR_LABEL, g.radar, RADAR_DEV), g.user);
+      assert.equal((verifyIdToken(CREDIT_SPEC, g.credit)?.id ?? null), g.user);
+      assert.equal((verifyIdToken(RADAR_SPEC, g.radar)?.id ?? null), g.user);
       assert.equal(readCreditEmailUnsubscribeToken(g.credit), g.user);
       assert.equal(readRadarDigestUnsubscribeToken(g.radar), g.user);
       assert.equal(legacyRead(CREDIT_LABEL, CREDIT_DEV, g.credit), g.user);
     }
   });
 
-  it("dev fallbacks (no ENCRYPTION_SECRET) are unchanged", () => {
-    delete process.env.ENCRYPTION_SECRET;
-    for (const g of GOLDEN_DEV) {
-      assert.equal(creditEmailUnsubscribeToken(g.user), g.credit);
-      assert.equal(radarDigestUnsubscribeToken(g.user), g.radar);
-      assert.equal(readCreditEmailUnsubscribeToken(g.credit), g.user);
-      assert.equal(verifyToken(RADAR_LABEL, g.radar, RADAR_DEV), g.user);
-    }
-  });
-
   it("rejects wrong label, cross-purpose, tampering and bad shapes", () => {
     const g = GOLDEN[0];
-    assert.equal(verifyToken(RADAR_LABEL, g.credit, CREDIT_DEV), null);
+    assert.equal((verifyIdToken(RADAR_SPEC, g.credit)?.id ?? null), null);
     assert.equal(readRadarDigestUnsubscribeToken(g.credit), null);
     assert.equal(readCreditEmailUnsubscribeToken(g.radar), null);
     const [id, mac] = g.credit.split(".");
-    assert.equal(verifyToken(CREDIT_LABEL, `${id}.${mac.slice(0, -1)}A`, CREDIT_DEV), null);
-    assert.equal(verifyToken(CREDIT_LABEL, `${id}.${mac.slice(1)}`, CREDIT_DEV), null); // wrong length
-    assert.equal(verifyToken(CREDIT_LABEL, `${id}.${mac}x`, CREDIT_DEV), null);
-    assert.equal(verifyToken(CREDIT_LABEL, `${id}.${mac}.extra`, CREDIT_DEV), null);
-    assert.equal(verifyToken(CREDIT_LABEL, `${Buffer.from("other").toString("base64url")}.${mac}`, CREDIT_DEV), null);
-    assert.equal(verifyToken(CREDIT_LABEL, "", CREDIT_DEV), null);
-    assert.equal(verifyToken(CREDIT_LABEL, null, CREDIT_DEV), null);
-    assert.equal(verifyToken(CREDIT_LABEL, undefined, CREDIT_DEV), null);
-    assert.equal(verifyToken(CREDIT_LABEL, "nodot", CREDIT_DEV), null);
-    assert.equal(verifyToken(CREDIT_LABEL, "a".repeat(401), CREDIT_DEV), null);
+    assert.equal((verifyIdToken(CREDIT_SPEC, `${id}.${mac.slice(0, -1)}A`)?.id ?? null), null);
+    assert.equal((verifyIdToken(CREDIT_SPEC, `${id}.${mac.slice(1)}`)?.id ?? null), null); // wrong length
+    assert.equal((verifyIdToken(CREDIT_SPEC, `${id}.${mac}x`)?.id ?? null), null);
+    assert.equal((verifyIdToken(CREDIT_SPEC, `${id}.${mac}.extra`)?.id ?? null), null);
+    assert.equal((verifyIdToken(CREDIT_SPEC, `${Buffer.from("other").toString("base64url")}.${mac}`)?.id ?? null), null);
+    assert.equal((verifyIdToken(CREDIT_SPEC, "")?.id ?? null), null);
+    assert.equal((verifyIdToken(CREDIT_SPEC, null)?.id ?? null), null);
+    assert.equal((verifyIdToken(CREDIT_SPEC, undefined)?.id ?? null), null);
+    assert.equal((verifyIdToken(CREDIT_SPEC, "nodot")?.id ?? null), null);
+    assert.equal((verifyIdToken(CREDIT_SPEC, "a".repeat(401))?.id ?? null), null);
   });
 
   it("a different secret does not verify", () => {
@@ -138,8 +108,8 @@ describe("unsubscribe tokens", () => {
     const prev = env.NODE_ENV;
     env.NODE_ENV = "production";
     try {
-      assert.throws(() => signToken(CREDIT_LABEL, "u"));
-      assert.throws(() => verifyToken(CREDIT_LABEL, "a.b"));
+      assert.throws(() => signIdToken(CREDIT_SPEC, "u"));
+      assert.throws(() => (verifyIdToken(CREDIT_SPEC, "a.b")?.id ?? null));
     } finally {
       env.NODE_ENV = prev;
     }

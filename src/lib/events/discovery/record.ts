@@ -24,10 +24,12 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import {
   combineResolutions,
+  dismissEventForUser,
   resolveAliases,
   restoreEventForUser,
   upsertEventAliases,
 } from "@/lib/events/discovery/aliases";
+import { isUnprofessionalParty } from "@/lib/events/professional-filter";
 import { canonicalEventKey, candidateKeys, keyId } from "@/lib/events/discovery/keys";
 import {
   emptyDiscoveryStats,
@@ -297,8 +299,15 @@ export async function recordDiscoveryCandidates(
     if (candidate.url) createdWithUrl++;
     const settled = await claimOrYield(userId, created, keys, candidate);
     if (settled === created) {
-      stats.created++;
-      if (queueEnrichment && candidate.url) stats.enrichQueued++;
+      if (isUnprofessionalParty(candidate)) {
+        // Automatically suppress casual parties so active events stay strictly professional.
+        // Kept in the hidden pool at the bottom so the user can restore it if they wish.
+        await dismissEventForUser(userId, settled);
+        stats.suppressed++;
+      } else {
+        stats.created++;
+        if (queueEnrichment && candidate.url) stats.enrichQueued++;
+      }
     } else {
       stats.attached++;
     }

@@ -1,11 +1,11 @@
-import { safeEqual } from "@/lib/crypto";
+import { timingSafeEqual } from "node:crypto";
 import { getAppBaseUrl } from "@/lib/app-url";
 
 /**
  * Shared-secret gate for Orbit's internal job routes.
  *
  * The routes under it — the process-stalled cron, the import continuation target, and the
- * embedding / timeline backfill kickers — are called by the ops scheduler (GitHub Actions; vercel.json has no crons),
+ * embedding / timeline backfill kickers — are called by Vercel Cron, by the ops scheduler,
  * and by the app's own `fetch`. None of those carry a Clerk session, so `proxy.ts` exempts
  * the paths from `auth.protect()` and THIS is the only thing standing between the public
  * internet and a privileged trigger.
@@ -24,7 +24,11 @@ export function isInternalRequest(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return isLocalDevelopment();
 
-  return safeEqual(request.headers.get("authorization") ?? "", `Bearer ${secret}`);
+  const presented = Buffer.from(request.headers.get("authorization") ?? "");
+  const expected = Buffer.from(`Bearer ${secret}`);
+  // `timingSafeEqual` throws on unequal lengths; a length mismatch is simply a wrong secret.
+  if (presented.length !== expected.length) return false;
+  return timingSafeEqual(presented, expected);
 }
 
 /**
@@ -74,16 +78,33 @@ export function internalFetch(path: string, init: RequestInit = {}): Promise<Res
 }
 
 /**
- * Gate for the deep health view. Accepts `?token=` (so a browser or a monitor can use it)
- * or a bearer, compared in constant time. No token configured → the deep view is off.
+ * A query-string token is a credential in a URL: Vercel's access log, browser history, and
+ * the `Referer` of anything the opened page links to all keep it. The bearer header is the
+ * supported form; `?token=` survives only for local development and for an operator who
+ * explicitly opts in with `HEALTH_TOKEN_ALLOW_QUERY=1`.
  */
-export function isHealthTokenValid(request: Request): boolean {
+function allowsQueryHealthToken(): boolean {
+  return process.env.NODE_ENV !== "production" || process.env.HEALTH_TOKEN_ALLOW_QUERY === "1";
+}
+
+/**
+ * Gate for the deep health view. Accepts a bearer, or `?token=` where that is allowed,
+ * compared in constant time. No token configured → the deep view is off.
+ */
+export function isHealthTokenValid(
+  request: Request,
+  options: { allowQuery?: boolean } = {}
+): boolean {
   const expected = process.env.HEALTH_TOKEN?.trim();
   if (!expected) return false;
   const url = new URL(request.url);
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  const presented = url.searchParams.get("token") ?? bearer;
-  return safeEqual(presented, expected);
+  const query = url.searchParams.get("token") ?? "";
+  const allowQuery = options.allowQuery ?? allowsQueryHealthToken();
+  const presented = bearer || (allowQuery ? query : "");
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export type HealthTokenState = "absent" | "valid" | "invalid";
@@ -95,7 +116,12 @@ export type HealthTokenState = "absent" | "valid" | "invalid";
  * token against a deployment that lost it must go red too. With no parameter a valid bearer
  * still opens the deep view; anything else is `absent`.
  */
-export function healthTokenState(request: Request): HealthTokenState {
-  if (isHealthTokenValid(request)) return "valid";
+export function healthTokenState(
+  request: Request,
+  options: { allowQuery?: boolean } = {}
+): HealthTokenState {
+  if (isHealthTokenValid(request, options)) return "valid";
+  // A presented-but-refused query token is `invalid`, not `absent`: a monitor still
+  // configured with `?token=` must go red rather than read as a healthy shallow 200.
   return new URL(request.url).searchParams.has("token") ? "invalid" : "absent";
 }

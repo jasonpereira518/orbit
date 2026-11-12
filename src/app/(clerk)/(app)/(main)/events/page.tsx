@@ -5,29 +5,29 @@ import { EventCard } from "@/components/events/event-card";
 import { AddEventDialog } from "@/components/events/add-event-dialog";
 import { EventConnectionsCard } from "@/components/events/event-connections-card";
 import { EventsTabs } from "@/components/events/events-tabs";
+import { RecommendedEventsTab } from "@/components/events/recommended-events-tab";
 import { RepeatPeoplePanel } from "@/components/events/repeat-people-panel";
 import { EventsListSkeleton } from "@/components/loading/page-skeletons";
 import type { EventListRow } from "@/lib/events/store";
 import {
   getEventConnections,
+  getRecommendedEvents,
   getRepeatCoAttendees,
   listEventsByTab,
   listHiddenEvents,
 } from "@/actions/events";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { Calendar, CheckCircle2, Sparkles, Users } from "lucide-react";
 
 export const metadata = { title: "Events" };
 
 async function ConnectionsSection() {
-  const { connections, eventbriteConfigured, googleConnected, googleMailGranted, googleCalendarGranted } =
-    await getEventConnections();
+  const { connections, eventbriteConfigured, calendarConnected } = await getEventConnections();
   return (
     <EventConnectionsCard
       connections={connections}
       eventbriteConfigured={eventbriteConfigured}
-      googleConnected={googleConnected}
-      googleMailGranted={googleMailGranted}
-      googleCalendarGranted={googleCalendarGranted}
+      calendarConnected={calendarConnected}
     />
   );
 }
@@ -53,11 +53,11 @@ async function HiddenList() {
 
   return (
     <details className="rounded-xl border border-border/70 bg-card px-4 py-3">
-      <summary className="cursor-pointer text-sm text-muted-foreground">
-        Hidden events ({hidden.length})
+      <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-ink">
+        Hidden &amp; Filtered Events ({hidden.length})
       </summary>
       <p className="mt-2 text-xs text-muted-foreground">
-        Orbit found these and you said they weren’t yours, so no sync will add them back.
+        Non-professional parties and events you’ve hidden are kept here. Click &ldquo;Add back&rdquo; on any card to restore it to your schedule.
       </p>
       <div className="mt-3 grid gap-4 sm:grid-cols-2">
         {hidden.map((event) => (
@@ -68,7 +68,15 @@ async function HiddenList() {
   );
 }
 
-function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.ReactNode }) {
+function EventGrid({
+  events,
+  empty,
+  past = false,
+}: {
+  events: EventListRow[];
+  empty: React.ReactNode;
+  past?: boolean;
+}) {
   if (events.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center">
@@ -79,25 +87,26 @@ function EventGrid({ events, empty }: { events: EventListRow[]; empty: React.Rea
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {events.map((event) => (
-        <EventCard key={event.id} event={event} />
+        <EventCard key={event.id} event={event} past={past} />
       ))}
     </div>
   );
 }
 
 async function EventsList() {
-  const { upcoming, past } = await listEventsByTab();
+  const [{ upcoming, past }, recommended] = await Promise.all([
+    listEventsByTab(),
+    getRecommendedEvents().catch(() => []),
+  ]);
 
-  if (upcoming.length === 0 && past.length === 0) {
+  if (upcoming.length === 0 && past.length === 0 && recommended.length === 0) {
     return (
       <EventGrid
         events={[]}
         empty={
           <>
-            No events yet. Add one by pasting its link — the event page or your ticket, from
-            Luma, Eventbrite, Partiful and the rest — and Orbit will pull in the details. Or
-            connect your Luma or Partiful calendar below and the events you go to will arrive on
-            their own.
+            No events yet. Events on your calendar show up here on their own — or add one by
+            name or link, and log who you met there.
           </>
         }
       />
@@ -108,13 +117,21 @@ async function EventsList() {
     <EventsTabs
       upcomingCount={upcoming.length}
       pastCount={past.length}
+      recommendedCount={recommended.length}
       upcoming={
         <EventGrid
           events={upcoming}
-          empty="Nothing coming up. Events you RSVP to will appear here as soon as you're confirmed."
+          empty={
+            <>
+              Nothing coming up yet. Add an event by link, or check the{" "}
+              <strong>Recommended For You</strong> tab to find upcoming events matching your
+              history.
+            </>
+          }
         />
       }
-      past={<EventGrid events={past} empty="No past events yet." />}
+      past={<EventGrid events={past} empty="No past events yet." past />}
+      recommended={<RecommendedEventsTab recommendations={recommended} />}
     />
   );
 }
@@ -125,12 +142,60 @@ export default async function EventsPage() {
   const gate = await pageVisibilityGate("page.events");
   if (gate) return gate;
 
+  const [{ upcoming, past }] = await Promise.all([
+    listEventsByTab().catch(() => ({ upcoming: [], past: [] })),
+  ]);
+
+  const totalMet = past.reduce((acc, ev) => acc + (ev.attendeeCount ?? 0), 0);
+  const totalConnected = past.reduce((acc, ev) => acc + (ev.connectedCount ?? 0), 0);
+
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6 pb-12">
       <RenderStamp />
-      <div className="flex flex-wrap items-start justify-between gap-2">
+
+      {/* Header & Primary Actions */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <EventsHeader />
-        <AddEventDialog />
+        <div className="flex flex-wrap items-center gap-2">
+          <AddEventDialog />
+        </div>
+      </div>
+
+      {/* Stats Summary Strip */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-border/70 bg-card p-3 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Calendar className="size-3.5 text-primary" aria-hidden />
+            <span>Events Tracked</span>
+          </div>
+          <p className="mt-1 text-xl font-semibold text-ink">
+            {past.length + upcoming.length}
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-border/70 bg-card p-3 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Users className="size-3.5 text-indigo-500" aria-hidden />
+            <span>People In Rooms</span>
+          </div>
+          <p className="mt-1 text-xl font-semibold text-ink">{totalMet}</p>
+        </div>
+
+        <div className="rounded-xl border border-border/70 bg-card p-3 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <CheckCircle2 className="size-3.5 text-emerald-500" aria-hidden />
+            <span>Network Added</span>
+          </div>
+          <p className="mt-1 text-xl font-semibold text-ink">{totalConnected}</p>
+        </div>
+
+        <div className="rounded-xl border border-border/70 bg-card p-3 shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Sparkles className="size-3.5 text-amber-500" aria-hidden />
+            <span>Upcoming RSVPs</span>
+          </div>
+          <p className="mt-1 text-xl font-semibold text-ink">{upcoming.length}</p>
+        </div>
       </div>
 
       {/* Above the list: the point of keeping rosters is the pattern across them, and a
@@ -154,11 +219,9 @@ export default async function EventsPage() {
         <HiddenList />
       </Suspense>
 
-      {/* Last, and collapsed: connecting a source is something you do once, and the page is
-          about the events themselves. It sat above them as the largest card on the page,
-          which put set-up between the user and the thing they came to look at. The collapsed
-          row still says when a connection needs attention. fallback={null} because a
-          skeleton for a one-line row is more noise than the row. */}
+      {/* Last: where events come from is one line (is a calendar connected?) and everything
+          optional is collapsed under More sources, which still says when a connection needs
+          attention. fallback={null} because a skeleton for one line is more noise than it. */}
       <Suspense fallback={null}>
         <ConnectionsSection />
       </Suspense>

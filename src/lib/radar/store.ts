@@ -13,6 +13,8 @@ import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { RADAR_WINDOWS, type RadarPick, type RadarSuppression } from "@/lib/radar/score";
 import type {
   RadarAutopilotAction,
+  RadarCalendarInvite,
+  RadarDiscoveredPerson,
   RadarDraft,
   RadarAiNote,
   RadarEvidence,
@@ -22,7 +24,7 @@ import type {
   RecommendationKind,
   RecommendationStatus,
 } from "@/lib/radar/types";
-import { LIVE_RECOMMENDATION_STATUSES, recommendationKey } from "@/lib/radar/types";
+import { LIVE_RECOMMENDATION_STATUSES, RECOMMENDATION_KINDS, recommendationKey } from "@/lib/radar/types";
 import { RADAR_MODEL_HISTORY_DAYS, RADAR_MODEL_VOTES, type RadarModelTallyRow } from "@/lib/radar/model";
 import { RADAR_IGNORED_MIN_SEEN } from "@/lib/radar/metrics";
 
@@ -38,6 +40,7 @@ export type LiveRecommendation = {
   id: string;
   contactId: string;
   kind: RecommendationKind;
+  bucket: RecommendationBucket | null;
   status: RecommendationStatus;
   snoozedUntil: Date | null;
   inputsHash: string;
@@ -53,6 +56,7 @@ export async function loadLiveRecommendations(userId: string): Promise<LiveRecom
       id: recommendations.id,
       contactId: recommendations.contactId,
       kind: recommendations.kind,
+      bucket: recommendations.bucket,
       status: recommendations.status,
       snoozedUntil: recommendations.snoozedUntil,
       inputsHash: recommendations.inputsHash,
@@ -78,6 +82,7 @@ export async function loadSuppressions(
       contactId: recommendationFeedback.contactId,
       kind: recommendationFeedback.kind,
       action: recommendationFeedback.action,
+      reason: recommendationFeedback.reason,
       at: sql<Date>`max(${recommendationFeedback.createdAt})`.mapWith(recommendationFeedback.createdAt),
     })
     .from(recommendationFeedback)
@@ -87,7 +92,7 @@ export async function loadSuppressions(
         or(eq(recommendationFeedback.action, "never"), gte(recommendationFeedback.createdAt, since))
       )
     )
-    .groupBy(recommendationFeedback.contactId, recommendationFeedback.kind, recommendationFeedback.action);
+    .groupBy(recommendationFeedback.contactId, recommendationFeedback.kind, recommendationFeedback.action, recommendationFeedback.reason);
 
   const out = new Map<string, RadarSuppression>();
   const entry = (contactId: string) => {
@@ -104,7 +109,11 @@ export async function loadSuppressions(
       if (r.kind === null) e.never = "all";
       else if (e.never !== "all") e.never = new Set([...(e.never ?? []), r.kind]);
     } else if (r.kind !== null && r.action === "dismissed") {
-      e.dismissedAt[r.kind] = r.at;
+      // "Wrong person" quiets every kind about them, not only the one dismissed.
+      for (const k of r.reason === "wrong_person" ? RECOMMENDATION_KINDS : [r.kind]) {
+        const prev = e.dismissedAt[k];
+        if (!prev || prev < r.at) e.dismissedAt[k] = r.at;
+      }
     } else if (r.kind !== null && r.action === "accepted") {
       e.acceptedAt[r.kind] = r.at;
     }
@@ -146,6 +155,27 @@ export function planRunResult(live: readonly LiveRecommendation[], next: readonl
   return { inserted, updated, expired };
 }
 
+/** `planRunResult` for a daily pass (`composeDay`): new Today cards, promotions, retirements. */
+export function planDayResult(
+  live: readonly LiveRecommendation[],
+  day: { insert: readonly NewRecommendation[]; supersede: readonly string[]; promote: readonly string[]; keepContacts: ReadonlySet<string> },
+  now: Date
+): WriteCounts {
+  const retired = live.filter(
+    (r) =>
+      (r.status === "pending" || (r.status === "snoozed" && r.snoozedUntil !== null && r.snoozedUntil <= now)) &&
+      !day.keepContacts.has(r.contactId)
+  ).length;
+  const superseded = live.filter((r) => r.status === "pending" && day.supersede.includes(r.contactId)).length;
+  // An insert that lands on a live row of the same key refreshes it rather than adding a card.
+  const liveKeys = new Set(live.map((r) => recommendationKey(r.contactId, r.kind)));
+  const refreshed = day.insert.filter((r) => liveKeys.has(recommendationKey(r.contactId, r.kind))).length;
+  return { inserted: day.insert.length - refreshed, updated: day.promote.length + refreshed, expired: retired + superseded };
+}
+
+/** A daily pass's write: the plan's rows stay, only Today and retirements change. */
+export type DailyWrite = { mode: "daily"; keepContacts: ReadonlySet<string>; promote: readonly string[]; supersede: readonly string[] };
+
 /**
  * Replace this account's live list with the run's result, in one atomic write:
  *
@@ -154,14 +184,20 @@ export function planRunResult(live: readonly LiveRecommendation[], next: readonl
  *   3. upsert the run's rows on the live unique index, keeping a live snooze's status and
  *      keeping the AI note while the inputs it was written from are unchanged,
  *   4. prune history older than `RADAR_HISTORY_DAYS`.
+ *
+ * A daily pass (`daily`) never touches a plan row's content. Step 2 retires only pending cards
+ * whose person has no reason left (`keepContacts`), step 3 inserts new Today cards and leaves
+ * any existing row as it is, and one more statement moves `promote` cards into Today.
  */
 export async function writeRunResult(
   userId: string,
   runId: string,
   next: readonly NewRecommendation[],
-  now: Date
+  now: Date,
+  daily?: DailyWrite
 ): Promise<void> {
   const db = await getDb();
+  const keepIds = daily ? [...daily.keepContacts] : [];
   const keys = next.map((r) => recommendationKey(r.contactId, r.kind));
   const historyCutoff = new Date(now.getTime() - RADAR_HISTORY_DAYS * DAY_MS);
   await runAtomicWrite(db, (tx) => {
@@ -192,7 +228,14 @@ export async function writeRunResult(
             or(
               and(
                 eq(recommendations.status, "pending"),
-                keys.length
+                daily
+                  ? keepIds.length
+                    ? sql`NOT (${recommendations.contactId}::text = ANY(ARRAY[${sql.join(
+                        keepIds.map((k) => sql`${k}`),
+                        sql`, `
+                      )}]::text[]))`
+                    : undefined
+                  : keys.length
                   ? sql`NOT ((${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
                       keys.map((k) => sql`${k}`),
                       sql`, `
@@ -204,6 +247,31 @@ export async function writeRunResult(
           )
         ),
     ];
+    // A card of another kind carries a person's news: their old pending card goes first, so the
+    // new one is the only card they have (and the insert below is not a second row for them).
+    if (daily?.supersede.length) {
+      statements.push(
+        tx
+          .update(recommendations)
+          .set({ status: "expired", resolvedAt: now, updatedAt: now })
+          .where(
+            and(
+              eq(recommendations.userId, userId),
+              eq(recommendations.status, "pending"),
+              sql`${recommendations.contactId}::text = ANY(ARRAY[${sql.join(
+                daily.supersede.map((k) => sql`${k}`),
+                sql`, `
+              )}]::text[])`,
+              keys.length
+                ? sql`NOT ((${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
+                    keys.map((k) => sql`${k}`),
+                    sql`, `
+                  )}]::text[]))`
+                : undefined
+            )
+          )
+      );
+    }
     if (next.length) {
       statements.push(
         tx
@@ -224,10 +292,17 @@ export async function writeRunResult(
               expiresAt: r.expiresAt,
               runId,
               inputsHash: r.inputsHash,
+              aiNote: r.aiNote ?? null,
+              suggestedCalendarInvite: r.suggestedCalendarInvite ?? null,
+              discoveredPerson: r.discoveredPerson ?? null,
               createdAt: now,
               updatedAt: now,
             }))
           )
+          // A daily pass writes only Today cards. One that lands on a live row of the same kind is
+          // news for that person (`composeDay`): it refreshes a still-pending row whose facts
+          // changed, in place (same id), and the row counts as new again (created now, not yet
+          // seen) so "What changed" shows it. Anything else leaves the live row as it is.
           .onConflictDoUpdate({
             target: [recommendations.userId, recommendations.contactId, recommendations.kind],
             // Must imply `recommendations_live_v2_uidx`'s predicate, or Postgres finds no
@@ -243,13 +318,37 @@ export async function writeRunResult(
               evidence: sql`excluded.evidence`,
               expiresAt: sql`excluded.expires_at`,
               runId: sql`excluded.run_id`,
-              // Every SET expression reads the OLD row, so this compares the stored hash
-              // with the new one before the new one is written.
-              aiNote: sql`case when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
+              suggestedCalendarInvite: sql`coalesce(excluded.suggested_calendar_invite, ${recommendations.suggestedCalendarInvite})`,
+              discoveredPerson: sql`coalesce(excluded.discovered_person, ${recommendations.discoveredPerson})`,
+              // The editor's fresh note wins. Otherwise every SET expression reads the OLD row,
+              // so this compares the stored hash with the new one before the new one is written,
+              // and keeps the old note only while the facts it was written from are unchanged.
+              aiNote: sql`case when excluded.ai_note is not null then excluded.ai_note when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
               inputsHash: sql`excluded.inputs_hash`,
               updatedAt: sql`excluded.updated_at`,
+              ...(daily ? { createdAt: sql`excluded.created_at`, firstSeenAt: null } : {}),
             },
+            ...(daily
+              ? { setWhere: sql`${recommendations.status} = 'pending' and excluded.inputs_hash <> ${recommendations.inputsHash}` }
+              : {}),
           })
+      );
+    }
+    if (daily?.promote.length) {
+      statements.push(
+        tx
+          .update(recommendations)
+          .set({ bucket: "today", updatedAt: now })
+          .where(
+            and(
+              eq(recommendations.userId, userId),
+              eq(recommendations.status, "pending"),
+              sql`(${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
+                daily.promote.map((k) => sql`${k}`),
+                sql`, `
+              )}]::text[])`
+            )
+          )
       );
     }
     statements.push(
@@ -297,6 +396,10 @@ export type RecommendationRow = {
   aiAngle: string | null;
   /** A draft written overnight, only while it still matches the card's facts. */
   draft: RadarDraft | null;
+  /** Suggested calendar invite for 1-click execution */
+  suggestedCalendarInvite?: RadarCalendarInvite | null;
+  /** Discovered prospective connection metadata */
+  discoveredPerson?: RadarDiscoveredPerson | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -326,6 +429,8 @@ export async function listPendingRecommendations(userId: string, limit: number):
     ai_note: RadarAiNote | null;
     ai_angle: string | null;
     draft: RadarDraft | null;
+    suggested_calendar_invite: RadarCalendarInvite | null;
+    discovered_person: RadarDiscoveredPerson | null;
     full_name: string;
     preferred_name: string | null;
     title: string | null;
@@ -339,7 +444,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
   }>(
     await db.execute(sql`
       SELECT r.id, r.contact_id, r.kind, r.score, r.bucket, r.reasons, r.evidence, r.ai_note, r.ai_angle, r.updated_at,
-             r.created_at, r.first_seen_at,
+             r.created_at, r.first_seen_at, r.suggested_calendar_invite, r.discovered_person,
              CASE WHEN r.draft ->> 'inputsHash' = r.inputs_hash THEN r.draft END AS draft,
              contacts.full_name, contacts.preferred_name, contacts.title, contacts.company,
              contacts.closeness_tier, contacts.last_interaction_at,
@@ -363,6 +468,8 @@ export async function listPendingRecommendations(userId: string, limit: number):
     aiNote: r.ai_note,
     aiAngle: r.ai_angle,
     draft: r.draft,
+    suggestedCalendarInvite: r.suggested_calendar_invite,
+    discoveredPerson: r.discovered_person,
     contactName: (r.preferred_name ?? "").trim() || r.full_name,
     title: r.title,
     company: r.company,
@@ -444,8 +551,16 @@ export async function loadModelTallies(userId: string, now: Date): Promise<Radar
                  ELSE 0
                END AS a,
                CASE
-                 WHEN status = 'dismissed' THEN ${V.dismissed}::numeric
-                 WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN} THEN ${V.ignored}::numeric
+                 -- "Wrong person" and "already handled" say nothing about the kind or its reasons.
+                 WHEN status = 'dismissed' AND NOT EXISTS (
+                   SELECT 1 FROM recommendation_feedback f
+                    WHERE f.recommendation_id = recommendations.id AND f.action = 'dismissed'
+                      AND f.reason IN ('wrong_person', 'already_handled')
+                 ) THEN ${V.dismissed}::numeric
+                 -- Ignored only when it ran its course. A daily pass retires a card early when its
+                 -- reason is gone (the person already wrote to them): that is not a vote.
+                 WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN}
+                      AND resolved_at >= expires_at THEN ${V.ignored}::numeric
                  ELSE 0
                END AS d
           FROM recommendations
@@ -494,6 +609,29 @@ export async function markRecommendationsSeen(userId: string, ids: readonly stri
         or(sql`${recommendations.lastSeenAt} is null`, lt(recommendations.lastSeenAt, debounceCutoff))
       )
     );
+}
+
+/**
+ * Suggestions created since the person last opened /radar: while there are any, the nav's
+ * Radar icon pulses green. A rebuild that rewrites a card keeps its `created_at`, so only a
+ * genuinely new person counts. Never opened = everything pending counts.
+ */
+export async function countNewRadarSuggestions(userId: string, openedAt: Date | null, now: Date = new Date()): Promise<number> {
+  const db = await getDb();
+  const [row] = rowsOf<{ n: number }>(
+    await db.execute(sql`
+      SELECT count(*)::int AS n FROM recommendations
+       WHERE user_id = ${userId} AND status = 'pending' AND expires_at > ${now.toISOString()}::timestamptz
+         AND created_at > ${openedAt ? openedAt.toISOString() : "-infinity"}::timestamptz
+    `)
+  );
+  return Number(row?.n ?? 0);
+}
+
+/** The person just opened /radar: everything until now is no longer new. */
+export async function stampRadarOpened(userId: string, now: Date = new Date()): Promise<void> {
+  const db = await getDb();
+  await db.execute(sql`UPDATE user_settings SET radar_opened_at = ${now.toISOString()}::timestamptz WHERE user_id = ${userId}`);
 }
 
 /** A conversation this soon after an accept is what the accept was for. */

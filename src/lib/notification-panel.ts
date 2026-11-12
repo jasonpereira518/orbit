@@ -1,3 +1,5 @@
+import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
+import { unreadRepliesFor } from "@/lib/feedback-thread";
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getDb, rowsOf } from "@/db";
@@ -59,6 +61,7 @@ export async function loadNotificationPanel(
     captureRows,
     radarRows,
     cloudNoteRows,
+    feedbackReplies,
   ] = await Promise.all([
     db.query.reminders.findMany({
       // Only what is allowed to alert: the user's own reminders, and generated ones about
@@ -172,13 +175,15 @@ export async function loadNotificationPanel(
           .orderBy(desc(cloudNoteFiles.modifiedAt))
           .limit(50)
       : [],
+    // The operator answered their feedback and they haven't opened it yet.
+    unreadRepliesFor(userId),
   ]);
   const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
 
   type PanelItem = {
     id: string;
-    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review" | "cloud_notes";
+    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review" | "cloud_notes" | "feedback_reply";
     title: string;
     body: string | null;
     url: string;
@@ -188,6 +193,8 @@ export async function loadNotificationPanel(
     suggestionId?: string;
     suggestedReminderId?: string;
     contactId?: string | null;
+    /** Feedback replies only: the reply carried a thank-you that's still wrapped. */
+    gift?: boolean;
     /** Follow-ups only: the contact's role and company, so the UI can tint the company. */
     contactTitle?: string | null;
     company?: string | null;
@@ -343,6 +350,26 @@ export async function loadNotificationPanel(
       url: "/capture?mode=cloud&review=1",
       dueAt: null,
       urgency: "info",
+    });
+  }
+
+  // "Due" so it counts on the badge and, for anyone with desktop notifications on, reaches the
+  // OS once — the id carries the message time, so a LATER reply notifies again rather than
+  // being deduped against the first by `desktop_notified_ids`.
+  for (const reply of feedbackReplies) {
+    const firstLine = reply.latest.split("\n")[0].slice(0, 120);
+    items.push({
+      id: `feedback-reply:${reply.feedbackId}:${reply.at.getTime()}`,
+      kind: "feedback_reply",
+      // A thank-you still waiting to be unwrapped is the headline; the reply comes with it.
+      title: reply.giftWaiting
+        ? `${FEEDBACK_RECIPIENT} sent you a thank-you`
+        : `${FEEDBACK_RECIPIENT} replied to your feedback`,
+      body: reply.giftWaiting ? `+${reply.thanksCredits} AI credits — open to unwrap` : firstLine,
+      gift: reply.giftWaiting,
+      url: `/feedback/${reply.feedbackId}`,
+      dueAt: reply.at.toISOString(),
+      urgency: "due",
     });
   }
 

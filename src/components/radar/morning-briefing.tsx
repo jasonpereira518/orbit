@@ -16,9 +16,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { IntentLink } from "@/components/ui/intent-link";
-import { cardLine, type ChangeLine } from "@/lib/radar/briefing";
+import { briefingHeadline, briefingSubline, cardLine, type ChangeLine } from "@/lib/radar/briefing";
+import { RadarCollapseButton } from "@/components/radar/radar-dock";
 import { KIND_LABELS } from "@/lib/radar/types";
 import { cn } from "@/lib/utils";
+import type { NetworkStats } from "@/lib/network-stats";
 
 export type MorningBriefingProps = {
   items: RecommendationCardData[];
@@ -29,22 +31,27 @@ export type MorningBriefingProps = {
   drafts: number;
   changes: ChangeLine[];
   paused: boolean;
+  networkStats?: NetworkStats | null;
+  activeProjectsCount?: number;
 };
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * The dashboard's hero for viewers who can open Radar: today's first few people with the
  * three actions that settle most of them (draft, schedule, dismiss), how many drafts are
  * waiting, and what changed overnight. Everything else is one click away on `/radar`.
  */
-export function MorningBriefing({ items, total, today, drafts, changes, paused }: MorningBriefingProps) {
-  const headline = today > 0 ? `${plural(today, "person", "people")} worth a message today` : "All clear today";
-  const sub = [
-    drafts > 0 ? `${plural(drafts, "draft", "drafts")} ready to review` : null,
-    total > today ? `${total - today} more this week` : null,
-    paused ? "Radar is paused" : null,
-  ].filter(Boolean);
+export function MorningBriefing({
+  items,
+  total,
+  today,
+  drafts,
+  changes,
+  paused,
+  networkStats,
+  activeProjectsCount,
+}: MorningBriefingProps) {
+  const headline = briefingHeadline(today);
+  const sub = briefingSubline({ drafts, total, today, paused });
 
   return (
     <section aria-labelledby="radar-briefing-title">
@@ -52,19 +59,50 @@ export function MorningBriefing({ items, total, today, drafts, changes, paused }
         <CardContent className="space-y-4 p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              <p className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-primary uppercase">
                 <Radar className="size-3.5 text-primary" aria-hidden />
-                Radar
+                Flagship Radar
               </p>
               <h2 id="radar-briefing-title" className="mt-1 font-[family-name:var(--font-display)] text-xl text-ink sm:text-2xl">
                 {headline}
               </h2>
-              {sub.length > 0 && <p className="mt-0.5 text-sm text-muted-foreground">{sub.join(" · ")}</p>}
+              {sub && <p className="mt-0.5 text-sm text-muted-foreground">{sub}</p>}
             </div>
-            <Link href="/radar" className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0")}>
-              Open Radar <ArrowRight className="ml-1 size-3.5" aria-hidden />
-            </Link>
+            <div className="flex shrink-0 items-center gap-2">
+              <Link href="/radar" className={cn(buttonVariants({ variant: "default", size: "sm" }), "shrink-0 gap-1.5")}>
+                <Radar className="size-3.5" aria-hidden />
+                <span>Open Radar</span>
+                {total > 0 && (
+                  <span className="ml-1 rounded-full bg-primary-foreground/20 px-1.5 py-0.2 text-2xs font-semibold">
+                    {total}
+                  </span>
+                )}
+                <ArrowRight className="size-3.5" aria-hidden />
+              </Link>
+              <RadarCollapseButton />
+            </div>
           </div>
+
+          {/* Network Pulse strip */}
+          {networkStats?.items && networkStats.items.length > 0 && (
+            <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-muted/30 p-2.5 sm:grid-cols-4 sm:gap-3 sm:p-3">
+              {networkStats.items.slice(0, 3).map((stat) => (
+                <div key={stat.label} className="min-w-0">
+                  <p className="truncate text-2xs font-medium text-muted-foreground uppercase">{stat.label}</p>
+                  <p className="mt-0.5 font-[family-name:var(--font-display)] text-base font-semibold text-ink sm:text-lg">
+                    {stat.empty ? "—" : stat.value.toLocaleString()}
+                    {stat.suffix ?? ""}
+                  </p>
+                </div>
+              ))}
+              <div className="min-w-0">
+                <p className="truncate text-2xs font-medium text-muted-foreground uppercase">Active Projects</p>
+                <p className="mt-0.5 font-[family-name:var(--font-display)] text-base font-semibold text-ink sm:text-lg">
+                  {activeProjectsCount ?? 0}
+                </p>
+              </div>
+            </div>
+          )}
 
           {(items.length > 0 || changes.length > 0) && (
             <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -123,6 +161,11 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
               <IntentLink href={`/contacts/${rec.contactId}`} className="truncate text-sm font-medium text-primary hover:underline">
                 {rec.contactName}
               </IntentLink>
+              {rec.discoveredPerson && (
+                <span className="inline-flex items-center rounded-md bg-sky-500/10 px-1.5 py-0.5 text-2xs font-medium text-sky-600 dark:text-sky-400">
+                  Discovered ({rec.discoveredPerson.sourcePlatform})
+                </span>
+              )}
               <span className="hidden shrink-0 text-2xs text-muted-foreground sm:inline">{KIND_LABELS[rec.kind]}</span>
             </div>
             {/* On a phone the kind moves down here, so the name gets the row's width. */}
@@ -134,6 +177,20 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
               {line}
             </p>
           </div>
+          {rec.suggestedCalendarInvite && (
+            <Button
+              type="button"
+              size="sm"
+              variant="default"
+              className="h-8 shrink-0"
+              disabled={actions.pending}
+              onClick={() => actions.confirmInvite()}
+              title={`Send calendar invite for ${new Date(rec.suggestedCalendarInvite.proposedStartTime).toLocaleDateString()}`}
+            >
+              <CalendarPlus className="size-3.5" aria-hidden />
+              <span className="max-sm:sr-only">Invite</span>
+            </Button>
+          )}
           <Button
             type="button"
             size="sm"
@@ -164,7 +221,7 @@ function BriefingRow({ rec }: { rec: RecommendationCardData }) {
             className={iconButton}
             disabled={actions.pending}
             aria-label={`Dismiss the suggestion about ${rec.contactName}`}
-            onClick={actions.dismiss}
+            onClick={() => actions.dismiss()}
           >
             <X className="size-4" aria-hidden />
           </button>

@@ -12,12 +12,14 @@
  * classic way this feature wastes someone's afternoon, so the panel reports the handshake
  * result rather than a hopeful "saved".
  */
-import { useCallback, useEffect, useState, useTransition } from "react";
-import { Copy, Plus, Trash2, Webhook } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
+import { Copy, KeyRound, Plus, Trash2, Webhook } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   createWebhookEndpoint,
   deleteWebhookEndpoint,
+  rotateWebhookEndpointSecret,
   listWebhookEndpoints,
   retryWebhookEndpoint,
   type WebhookEndpointSummary,
@@ -51,7 +53,7 @@ export function WebhookSettings() {
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [pending, startTransition] = useGuardedTransition();
   const deleteFocus = useConfirmFocus(confirmingDelete);
 
   const load = useCallback(() => {
@@ -120,6 +122,19 @@ export function WebhookSettings() {
       setConfirmingDelete(null);
       toast.success("Webhook removed");
       load();
+    });
+  }
+
+  function onRotate(id: string, url: string) {
+    if (!window.confirm(`Replace the signing secret for ${url}? Deliveries are signed with the new one straight away, so update your receiver with it.`)) return;
+    startTransition(async () => {
+      const result = await rotateWebhookEndpointSecret(id);
+      if (result.ok) {
+        setRevealedSecret(result.secret);
+        toast.success("New signing secret — copy it now");
+      } else {
+        toast.error(result.message);
+      }
     });
   }
 
@@ -269,17 +284,30 @@ export function WebhookSettings() {
                   </Button>
                 </div>
               ) : (
-                <Button
-                  ref={deleteFocus.triggerRef(endpoint.id)}
-                  size="sm"
-                  variant="ghost"
-                  className="-ml-2.5 text-muted-foreground"
-                  onClick={() => setConfirmingDelete(endpoint.id)}
-                  aria-label={`Remove ${endpoint.url}`}
-                >
-                  <Trash2 aria-hidden />
-                  Remove
-                </Button>
+                <div className="-ml-2.5 flex flex-wrap items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-muted-foreground"
+                    disabled={pending}
+                    onClick={() => onRotate(endpoint.id, endpoint.url)}
+                    aria-label={`Rotate the signing secret for ${endpoint.url}`}
+                  >
+                    <KeyRound aria-hidden />
+                    Rotate secret
+                  </Button>
+                  <Button
+                    ref={deleteFocus.triggerRef(endpoint.id)}
+                    size="sm"
+                    variant="ghost"
+                    className="text-muted-foreground"
+                    onClick={() => setConfirmingDelete(endpoint.id)}
+                    aria-label={`Remove ${endpoint.url}`}
+                  >
+                    <Trash2 aria-hidden />
+                    Remove
+                  </Button>
+                </div>
               )}
             </FeatureRow>
           ))}

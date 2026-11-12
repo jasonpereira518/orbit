@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,11 +16,12 @@ import {
 } from "@/actions/radar";
 import { friendlyError } from "@/lib/errors";
 import type { RadarSettingsView } from "@/lib/radar/page-data";
-import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS } from "@/lib/radar/types";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 
 /** What autopilot would do for each kind, in the words a person decides on. */
-const AUTOPILOT_HINTS: Record<RecommendationKind, string> = {
+const AUTOPILOT_HINTS: Record<(typeof AUTOPILOT_KINDS)[number], string> = {
   prep: "Sets a reminder the day before the meeting",
   heads_up: "Sets a follow-up three days out",
   follow_up: "Sets a follow-up three days out",
@@ -27,6 +29,58 @@ const AUTOPILOT_HINTS: Record<RecommendationKind, string> = {
   reach_out: "Sets a follow-up three days out",
   reconnect: "Sets a follow-up three days out",
 };
+
+/**
+ * Radar's own on/off, as a switch rather than a checkbox: it turns the whole feature off.
+ * Same markup as the account page's switches (`src/components/settings/account-page.tsx`).
+ */
+function SwitchRow({
+  id,
+  label,
+  hint,
+  on,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  on: boolean;
+  disabled: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg p-2">
+      <span className="min-w-0 flex-1">
+        <span id={`${id}-label`} className="block text-sm font-medium text-ink">
+          {label}
+        </span>
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      </span>
+      <button
+        id={id}
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-labelledby={`${id}-label`}
+        disabled={disabled}
+        onClick={() => onChange(!on)}
+        className={cn(
+          "tap-target relative inline-flex h-5 w-9 shrink-0 items-center rounded-full outline-none transition-colors duration-fast ease-house focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50",
+          on ? "bg-primary" : "bg-muted-foreground/30"
+        )}
+      >
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none size-4 rounded-full bg-background shadow-sm transition-transform duration-fast ease-house",
+            on ? "translate-x-[1.125rem]" : "translate-x-0.5"
+          )}
+        />
+      </button>
+    </div>
+  );
+}
 
 function Toggle({
   id,
@@ -69,7 +123,7 @@ function Toggle({
 export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [state, setState] = useState(settings);
 
   const save = (apply: (s: RadarSettingsView) => RadarSettingsView, run: () => Promise<RadarActionResult>) =>
@@ -106,15 +160,15 @@ export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }
           <div className="space-y-6 px-4 pb-6">
             <section className="space-y-1" aria-labelledby="radar-settings-run">
               <h3 id="radar-settings-run" className="px-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                Nightly check
+                Radar
               </h3>
-              <Toggle
-                id="radar-paused"
-                label="Pause Radar"
-                hint="No overnight updates and no AI use until you resume"
-                checked={state.paused}
+              <SwitchRow
+                id="radar-on"
+                label="Radar on"
+                hint="Turn off to stop overnight updates and AI use. You can turn it back on from the Radar page."
+                on={!state.paused}
                 disabled={pending}
-                onChange={(on) => save((s) => ({ ...s, paused: on }), () => setRadarPaused(on))}
+                onChange={(on) => save((s) => ({ ...s, paused: !on }), () => setRadarPaused(!on))}
               />
             </section>
 
@@ -126,7 +180,7 @@ export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }
                 For the kinds you pick, Radar puts the follow-up on your calendar for up to five of Today’s cards a night.
                 Each one shows under “Autopilot did this” with Undo.
               </p>
-              {RECOMMENDATION_KINDS.map((kind) => (
+              {AUTOPILOT_KINDS.map((kind) => (
                 <Toggle
                   key={kind}
                   id={`radar-autopilot-${kind}`}

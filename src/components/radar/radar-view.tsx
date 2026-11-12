@@ -1,27 +1,30 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { format } from "date-fns";
-import { longRelativeLabel } from "@/lib/relative-date";
-import { ChevronLeft, ChevronRight, Focus, LayoutList, Play, RefreshCw, Wand2 } from "lucide-react";
+import { format, formatDistanceToNow, startOfWeek } from "date-fns";
+import { ChevronLeft, ChevronRight, Circle, CircleCheck, Clock, Focus, LayoutList, Wand2 } from "lucide-react";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { Button } from "@/components/ui/button";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { RecommendationCard, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { RadarSettingsSheet } from "@/components/radar/radar-settings-sheet";
+import { RefreshRadarButton } from "@/components/radar/refresh-radar-button";
+import { useRadarRunProgress } from "@/components/radar/use-radar-run-progress";
 import { useRadarKeys } from "@/components/radar/use-radar-keys";
-import { addInboxPerson, dismissInboxPerson, refreshRadarNow, setRadarPaused, undoAutopilot } from "@/actions/radar";
+import { addInboxPerson, dismissInboxPerson, refreshRadarNow, undoAutopilot } from "@/actions/radar";
 import { InboxPeople, type InboxPersonView } from "@/components/radar/inbox-people";
 import { friendlyError } from "@/lib/errors";
 import type { ChangeLine } from "@/lib/radar/briefing";
 import { RADAR_SHORTCUTS } from "@/lib/radar/focus-keys";
-import type { RadarSettingsView } from "@/lib/radar/page-data";
-import { RADAR_CAPS } from "@/lib/radar/score";
-import { KIND_SECTION_TITLES, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
+import type { RadarColdStart, RadarSettingsView } from "@/lib/radar/page-data";
+import { LANE_OF_KIND, LANE_TITLES, RADAR_LANES } from "@/lib/radar/types";
+import type { OpportunityView } from "@/lib/radar/opportunity-actions";
+import { OpportunityCard } from "@/components/radar/opportunity-card";
 import { toast } from "@/lib/toast";
 import { syncTimeZoneCookie } from "@/lib/tz-cookie";
+import { clearRadarNew } from "@/lib/app-pulse-store";
 import { cn } from "@/lib/utils";
 import { prefersReducedMotion } from "@/lib/motion-preference";
 
@@ -36,7 +39,6 @@ export type RadarViewProps = {
   recommendations: RecommendationCardData[];
   lastRunAt: string | null;
   nextRunAt: string | null;
-  paused: boolean;
   aiAvailable: boolean;
   hasContacts: boolean;
   settings: RadarSettingsView;
@@ -47,6 +49,12 @@ export type RadarViewProps = {
   inboxPeople: InboxPersonView[];
   /** A card to open on, from the Monday email or the dashboard (`/radar?focus=<id>`). */
   focusId: string | null;
+  /** The weekly web pass's open finds, shown in the Opportunities lane. */
+  opportunities: OpportunityView[];
+  /** When this week's plan was built; null before the first weekly run. */
+  weekBuiltAt: string | null;
+  /** What Radar still needs, shown only when the week is thin. */
+  coldStart: RadarColdStart | null;
 };
 
 type Mode = "focus" | "list";
@@ -71,11 +79,23 @@ function arrivalMode(linked: boolean): Mode {
 }
 
 export function RadarView(props: RadarViewProps) {
-  const { recommendations, lastRunAt, nextRunAt, paused, aiAvailable, hasContacts, settings, autopilot, changes, signalsThisWeek, inboxPeople, focusId } =
+  const { lastRunAt, nextRunAt, aiAvailable, hasContacts, settings, autopilot, changes, signalsThisWeek, inboxPeople, focusId, opportunities, weekBuiltAt, coldStart } =
     props;
+  // Today first, then the three lanes: the order both layouts and the focus deck walk.
+  const recommendations = useMemo(() => planOrder(props.recommendations), [props.recommendations]);
   const { aiReason } = useViewerPlan();
   const router = useRouter();
   const [pending, start] = useTransition();
+  // A run something else started (the nightly pass, another tab) finishing while this page is open.
+  const run = useRadarRunProgress((status) => {
+    if (status === "failed") toast.error("Couldn’t update Radar just now — try again in a minute");
+    else toast.success("Radar is up to date");
+    router.refresh();
+  });
+  // The bar holds at 100% for a beat when our own refresh lands, before the page swaps in.
+  const [landing, setLanding] = useState(false);
+  const refreshing = pending || run.watching;
+  const percent = landing ? 100 : (run.snap?.progress ?? 0);
   const linked = focusId ? recommendations.findIndex((r) => r.id === focusId) : -1;
   // The server always draws the list; the browser then opens in focus mode for a linked card,
   // a remembered choice, or a phone. A choice made here wins from then on.
@@ -88,6 +108,8 @@ export function RadarView(props: RadarViewProps) {
 
   // So the Monday email arrives on this person's Monday morning (`captureRadarTimeZone`).
   useEffect(() => syncTimeZoneCookie(), []);
+  // Looking at Radar is what clears the nav's green "new suggestions" pulse.
+  useEffect(() => clearRadarNew(), []);
 
   const chooseMode = (next: Mode) => {
     setChosen(next);
@@ -110,24 +132,26 @@ export function RadarView(props: RadarViewProps) {
 
   const refresh = () =>
     start(async () => {
+      run.watch("own");
+      let attached = false;
       try {
         const result = await refreshRadarNow();
-        if (result.ok) toast.success(result.message ?? "Radar is up to date");
-        else toast.error(result.message);
+        if (result.ok) {
+          toast.success(result.message ?? "Radar is up to date");
+          setLanding(true);
+          await new Promise((resolve) => setTimeout(resolve, prefersReducedMotion() ? 0 : 500));
+        } else if (result.busy) {
+          // Already updating: watch that run instead of refusing; the poll refreshes the page when it ends.
+          attached = true;
+          run.watch("attach");
+          return;
+        } else toast.error(result.message);
         router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t update Radar just now — try again in a minute"));
-      }
-    });
-
-  const resume = () =>
-    start(async () => {
-      try {
-        const result = await setRadarPaused(false);
-        if (result.ok) toast.success(result.message ?? "Radar resumed");
-        router.refresh();
-      } catch (err) {
-        toast.error(friendlyError(err, "Couldn’t change that — try again?"));
+      } finally {
+        setLanding(false);
+        if (!attached) run.stop();
       }
     });
 
@@ -135,12 +159,14 @@ export function RadarView(props: RadarViewProps) {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
         <p suppressHydrationWarning>
-          {paused
-            ? "Paused. Nothing updates overnight until you resume."
-            : lastRunAt
-              ? `Updated ${longRelativeLabel(new Date(lastRunAt))}`
-              : "Your first list is being put together."}
-          {!paused && signalsThisWeek > 0 && (
+          {refreshing
+            ? [run.snap?.label ?? "Starting", run.snap?.detail].filter(Boolean).join(" · ") + "…"
+            : weekBuiltAt
+              ? weekLine(new Date(weekBuiltAt), recommendations.length + opportunities.length)
+              : lastRunAt
+                ? `Updated ${formatDistanceToNow(new Date(lastRunAt), { addSuffix: true })}`
+                : "Building your first plan…"}
+          {!refreshing && !weekBuiltAt && signalsThisWeek > 0 && (
             <span>
               {" · "}
               {signalsThisWeek} new {signalsThisWeek === 1 ? "signal" : "signals"} this week
@@ -154,17 +180,7 @@ export function RadarView(props: RadarViewProps) {
               <ModeButton active={mode === "list"} onClick={() => chooseMode("list")} icon={LayoutList} label="List" />
             </div>
           )}
-          {paused ? (
-            <Button type="button" size="sm" variant="outline" className="h-8" disabled={pending} onClick={resume}>
-              <Play className="size-3.5" aria-hidden />
-              Resume
-            </Button>
-          ) : (
-            <Button type="button" size="sm" variant="outline" className="h-8" disabled={pending} onClick={refresh}>
-              <RefreshCw className={pending ? "size-3.5 animate-spin" : "size-3.5"} aria-hidden />
-              Refresh now
-            </Button>
-          )}
+          <RefreshRadarButton busy={refreshing} percent={percent} onClick={refresh} />
           <RadarSettingsSheet settings={settings} />
         </div>
       </div>
@@ -175,13 +191,19 @@ export function RadarView(props: RadarViewProps) {
 
       {!aiAvailable && recommendations.length > 0 && <AiKeyNotice feature="draft" reason={aiReason ?? "key_required"} compact />}
 
-      {recommendations.length === 0 ? (
-        <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} paused={paused} />
-      ) : mode === "focus" ? (
-        <FocusDeck recommendations={recommendations} index={index} setIndex={setIndex} aiAvailable={aiAvailable} />
+      {recommendations.length === 0 && opportunities.length === 0 && lastRunAt === null && hasContacts ? (
+        <BuildingFirstPlan />
+      ) : recommendations.length === 0 && opportunities.length === 0 ? (
+        <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} />
+      ) : mode === "focus" && recommendations.length > 0 ? (
+        <>
+          <FocusDeck recommendations={recommendations} index={index} setIndex={setIndex} aiAvailable={aiAvailable} />
+          <Finds opportunities={opportunities} heading />
+        </>
       ) : (
-        <ListView recommendations={recommendations} aiAvailable={aiAvailable} />
+        <ListView recommendations={recommendations} opportunities={opportunities} aiAvailable={aiAvailable} />
       )}
+      {coldStart && <HelpRadar coldStart={coldStart} />}
     </div>
   );
 }
@@ -304,7 +326,7 @@ function FocusDeck({
   // A resolved card leaves the list, so the same index is already the next one.
   const at = Math.min(index, count - 1);
   const current = recommendations[at];
-  const inToday = at < RADAR_CAPS.today;
+  const inToday = current.bucket === "today";
   const move = (delta: number) => setIndex(Math.max(0, Math.min(count - 1, at + delta)));
 
   useRadarKeys(true, (command) => {
@@ -316,7 +338,7 @@ function FocusDeck({
     <section aria-labelledby="radar-focus" className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <h2 id="radar-focus" className="text-lg font-medium text-ink">
-          {inToday ? "Today" : KIND_SECTION_TITLES[current.kind]}
+          {inToday ? "Today" : LANE_TITLES[LANE_OF_KIND[current.kind]]}
           <span className="ml-2 text-sm font-normal text-muted-foreground">
             {at + 1} of {count}
           </span>
@@ -349,46 +371,121 @@ function FocusDeck({
   );
 }
 
-function ListView({ recommendations, aiAvailable }: { recommendations: RecommendationCardData[]; aiAvailable: boolean }) {
-  // Best first, as the store returns them. Today is the top of the whole list; the rest
-  // are grouped by kind so a person can work through one sort of thing at a time.
-  const today = recommendations.slice(0, RADAR_CAPS.today);
-  const rest = recommendations.slice(RADAR_CAPS.today);
-  const groups = RECOMMENDATION_KINDS.map((kind) => ({
-    kind,
-    items: rest.filter((r) => r.kind === kind),
-  })).filter((g) => g.items.length > 0);
+/** Today's moments first, then each lane in order; within a group, the store's order (best first). */
+function planOrder(recs: readonly RecommendationCardData[]): RecommendationCardData[] {
+  // The run already caps Today at the plan's size (`composeWeek`), so the bucket is the whole rule.
+  const today = recs.filter((r) => r.bucket === "today");
+  return [...today, ...RADAR_LANES.flatMap((lane) => recs.filter((r) => r.bucket !== "today" && LANE_OF_KIND[r.kind] === lane))];
+}
 
+function weekLine(builtAt: Date, open: number) {
+  const monday = startOfWeek(builtAt, { weekStartsOn: 1 });
+  return `Week of ${format(monday, "MMM d")} · built ${format(builtAt, "EEEE h:mmaaa")} · ${open} open`;
+}
+
+function ListView({
+  recommendations,
+  opportunities,
+  aiAvailable,
+}: {
+  recommendations: RecommendationCardData[];
+  opportunities: OpportunityView[];
+  aiAvailable: boolean;
+}) {
+  const today = recommendations.filter((r) => r.bucket === "today");
+  const rest = recommendations.filter((r) => r.bucket !== "today");
   return (
     <>
-      <section aria-labelledby="radar-today" className="space-y-3">
-        <h2 id="radar-today" className="text-lg font-medium text-ink">
-          Today
-        </h2>
-        <div className="space-y-3">
-          {today.map((rec) => (
-            <RecommendationCard key={rec.id} rec={rec} aiAvailable={aiAvailable} showAiPrompt />
-          ))}
-        </div>
-      </section>
-      {groups.map((group) => (
-        <KindSection key={group.kind} kind={group.kind} items={group.items} aiAvailable={aiAvailable} />
-      ))}
+      {today.length > 0 && (
+        <section
+          aria-labelledby="radar-today"
+          className="space-y-3 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-3 sm:p-4"
+        >
+          <h2 id="radar-today" className="flex items-center gap-1.5 text-sm font-medium text-amber-800 dark:text-amber-300">
+            <Clock className="size-4" aria-hidden />
+            Today · {today.length} {today.length === 1 ? "thing that won’t keep" : "things that won’t keep"}
+          </h2>
+          <div className="space-y-3">
+            {today.map((rec) => (
+              <RecommendationCard key={rec.id} rec={rec} aiAvailable={aiAvailable} showAiPrompt />
+            ))}
+          </div>
+        </section>
+      )}
+      {RADAR_LANES.map((lane) => {
+        const items = rest.filter((r) => LANE_OF_KIND[r.kind] === lane);
+        const finds = lane === "opportunities" ? opportunities : [];
+        if (items.length === 0 && finds.length === 0) return null;
+        return (
+          <section key={lane} aria-labelledby={`radar-lane-${lane}`} className="space-y-3">
+            <h2 id={`radar-lane-${lane}`} className="text-lg font-medium text-ink">
+              {LANE_TITLES[lane]}
+              <span className="ml-2 text-sm font-normal text-muted-foreground">{items.length + finds.length}</span>
+            </h2>
+            <div className="space-y-3">
+              {items.map((rec) => (
+                <RecommendationCard key={rec.id} rec={rec} aiAvailable={aiAvailable} showAiPrompt={false} />
+              ))}
+              <Finds opportunities={finds} />
+            </div>
+          </section>
+        );
+      })}
     </>
   );
 }
 
-function KindSection({ kind, items, aiAvailable }: { kind: RecommendationKind; items: RecommendationCardData[]; aiAvailable: boolean }) {
+/** The web pass's finds. In focus mode they sit below the deck under their own heading. */
+function Finds({ opportunities, heading = false }: { opportunities: OpportunityView[]; heading?: boolean }) {
+  if (opportunities.length === 0) return null;
+  const cards = opportunities.map((find) => <OpportunityCard key={find.id} find={find} />);
+  if (!heading) return <>{cards}</>;
   return (
-    <section aria-labelledby={`radar-${kind}`} className="space-y-3">
-      <h2 id={`radar-${kind}`} className="text-base font-medium text-ink">
-        {KIND_SECTION_TITLES[kind]}
+    <section aria-labelledby="radar-finds" className="space-y-3">
+      <h2 id="radar-finds" className="text-lg font-medium text-ink">
+        {LANE_TITLES.opportunities}
+        <span className="ml-2 text-sm font-normal text-muted-foreground">{opportunities.length}</span>
       </h2>
-      <div className="space-y-3">
-        {items.map((rec) => (
-          <RecommendationCard key={rec.id} rec={rec} aiAvailable={aiAvailable} showAiPrompt={false} />
+      <div className="space-y-3">{cards}</div>
+    </section>
+  );
+}
+
+/**
+ * Shown when the week is thin. Radar only suggests what it can prove, so a quiet week usually
+ * means it is missing something only the person can give it.
+ */
+function HelpRadar({ coldStart }: { coldStart: RadarColdStart }) {
+  const steps = [
+    { done: coldStart.closePeople >= 3, label: "Rate who’s close to you", href: "/contacts", cta: "Contacts" },
+    { done: coldStart.hasCity, label: "Set your city, for events near you", href: "/settings#settings-profile", cta: "Settings" },
+    { done: coldStart.goals > 0, label: "Add a goal, for people and programs to look for", href: "/settings#settings-goals", cta: "Goals" },
+    { done: coldStart.recentNotes, label: "Log notes after you meet someone", href: "/capture", cta: "Capture" },
+  ];
+  if (steps.every((s) => s.done)) return null;
+  return (
+    <section aria-labelledby="radar-help" className="rounded-2xl border border-dashed border-border p-4">
+      <h2 id="radar-help" className="font-medium text-ink">
+        Help Radar find more
+      </h2>
+      <p className="mt-1 text-sm text-muted-foreground">Radar only suggests what it can prove, so it needs a few things from you.</p>
+      <ul className="mt-3 space-y-2 text-sm">
+        {steps.map((step) => (
+          <li key={step.label} className="flex items-center gap-2">
+            {step.done ? (
+              <CircleCheck className="size-4 shrink-0 text-primary" aria-label="Done" />
+            ) : (
+              <Circle className="size-4 shrink-0 text-muted-foreground" aria-label="To do" />
+            )}
+            <span className={cn("min-w-0 flex-1", step.done && "text-muted-foreground line-through")}>{step.label}</span>
+            {!step.done && (
+              <Link href={step.href} className="shrink-0 font-medium text-primary hover:underline">
+                {step.cta}
+              </Link>
+            )}
+          </li>
         ))}
-      </div>
+      </ul>
     </section>
   );
 }
@@ -397,12 +494,10 @@ function EmptyState({
   hasContacts,
   ranOnce,
   nextRunAt,
-  paused,
 }: {
   hasContacts: boolean;
   ranOnce: boolean;
   nextRunAt: string | null;
-  paused: boolean;
 }) {
   if (!hasContacts) {
     return (
@@ -422,12 +517,40 @@ function EmptyState({
     <div className="rounded-2xl border border-dashed border-border p-8 text-center">
       <p className="font-medium text-ink">{ranOnce ? "All clear" : "Nothing yet"}</p>
       <p className="mt-1 text-sm text-muted-foreground" suppressHydrationWarning>
-        {paused
-          ? "Radar is paused. Resume it to hear about new people."
-          : ranOnce
-            ? `Nobody needs you right now. Radar checks again ${next ? longRelativeLabel(next) : "tonight"}, and anything new will show up here.`
+        {ranOnce
+            ? `Nobody needs you right now. Radar checks again ${next ? formatDistanceToNow(next, { addSuffix: true }) : "tonight"}, and anything new will show up here.`
             : "Radar hasn’t found anyone to suggest yet. It checks your network every night."}
       </p>
+    </div>
+  );
+}
+
+const BUILD_STEPS = ["Reading your notes", "Checking who’s moved", "Finding openings", "Picking who matters this week"];
+/** Rechecks this often while the first plan builds, and stops after BUILD_POLL_MAX tries (~60s). */
+const BUILD_POLL_MS = 5_000;
+const BUILD_POLL_MAX = 12;
+
+/**
+ * Right after "Turn on Radar": the first plan is building in the background
+ * (`turnOnRadar`'s `after()`). Rotates honest step copy and re-reads the page until the run lands.
+ */
+function BuildingFirstPlan() {
+  const router = useRouter();
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    let n = 0;
+    const id = window.setInterval(() => {
+      n += 1;
+      setStep((s) => (s + 1) % BUILD_STEPS.length);
+      router.refresh();
+      if (n >= BUILD_POLL_MAX) window.clearInterval(id);
+    }, BUILD_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [router]);
+  return (
+    <div className="rounded-2xl border border-dashed border-border p-8 text-center" role="status">
+      <p className="font-medium text-ink">Building your first plan</p>
+      <p className="mt-1 text-sm text-muted-foreground">{BUILD_STEPS[step]}…</p>
     </div>
   );
 }

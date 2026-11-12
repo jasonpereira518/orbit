@@ -1,5 +1,7 @@
 import { cancelBatchJobsFor } from "@/lib/ai-batch";
 import { forgetDuplicateCount } from "@/lib/duplicate-count-memo";
+import { reportError } from "@/lib/report-error";
+import { retireStripeCustomer } from "@/lib/stripe-customer-retire";
 import { del } from "@/lib/blob-lazy";
 import { revokeGoogleGrant } from "@/lib/oauth-revoke";
 import { OUTLOOK_SCAN_IMPORT_TYPE } from "@/lib/outlook-scan-type";
@@ -34,7 +36,9 @@ import {
   aiBatchJobs,
   aiResultCache,
   chatMessages,
+  chatMemories,
   chatThreads,
+  orbitVoiceSessions,
   closenessCohorts,
   companies,
   connectorConnections,
@@ -62,6 +66,7 @@ import {
   extensionUsage,
   externalLinks,
   feedback,
+  feedbackMessages,
   feedbackScreenshots,
   gateEvents,
   productEvents,
@@ -85,11 +90,15 @@ import {
   pageViews,
   planUpgradeEvents,
   radarRuns,
+  pushSubscriptions,
+  radarOpportunities,
+  userProjects,
   contactSignals,
   emailEvents,
   emailThreads,
   recommendationFeedback,
   recommendations,
+  recruiterContactUnlocks,
   recruiterMessages,
   recruiters,
   recruiterScanState,
@@ -170,8 +179,11 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  * but does not: both of its foreign keys are `on delete set null`, so its rows outlive the
  * reminders and contacts they point at. `outlook_connections` has no parent at all.
  *
- * Deliberate exceptions — two operator ledgers are NOT deleted, and both use a column
+ * Deliberate exceptions — three audit ledgers are NOT deleted, and all use a column
  * named something other than `user_id` to keep them out of the user-scoped sweep:
+ *   - `account_audit_log.subject_user_id`: the account's own security events (keys, exports,
+ *     connections, plan changes), ending with the deletion itself (audit L-23). Ids and
+ *     labels only.
  *   - `admin_audit_log.target_user_id`: the operator's own record of privileged actions he
  *     took, chiefly comping a plan — which outranks every real billing signal and has no
  *     other trace. Purging it would mean deleting an account erases the evidence.
@@ -249,8 +261,8 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(emailThreads), own(emailEvents)],
-    counts: [aiSuggestions, recommendations, contactEmbeddings, memoryChunks, closenessCohorts, emailThreads, emailEvents],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(radarOpportunities), own(userProjects), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(emailThreads), own(emailEvents)],
+    counts: [aiSuggestions, recommendations, radarOpportunities, userProjects, contactEmbeddings, memoryChunks, closenessCohorts, emailThreads, emailEvents],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
       // holding this person's prompts, and deleting our row would only lose the handle to
@@ -282,6 +294,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       await db.delete(recommendations).where(eq(recommendations.userId, userId));
       await db.delete(recommendationFeedback).where(eq(recommendationFeedback.userId, userId));
       await db.delete(radarRuns).where(eq(radarRuns.userId, userId));
+      // Projects Radar inferred from the person's mail, calendar and notes: derived, so insights.
+      await db.delete(userProjects).where(eq(userProjects.userId, userId));
+      // Radar's Opportunities lane: events, people and openings found for this person.
+      await db.delete(radarOpportunities).where(eq(radarOpportunities.userId, userId));
       // Relationship engine output: run history is deleted; per-contact digests have their
       // derived text cleared (the memory_chunks precedent) but the rows stay. A digest row
       // is also the read watermark: deleting it would make every conversation pending again
@@ -303,6 +319,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
           radarNextAt: null,
           radarLeaseUntil: null,
           radarModel: null,
+          radarWebNextAt: null,
+          radarMomentLastDay: null,
           // A later re-enable backfills from scratch. The switch itself is not reset here:
           // turning the feature off is `deleteEmailIntelData`'s job, and a full purge already
           // re-inserts settings at the default of 0.
@@ -484,10 +502,12 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   chat: {
-    exports: [own(chatThreads), own(chatMessages)],
+    exports: [own(chatThreads), own(chatMessages), own(chatMemories), own(orbitVoiceSessions)],
     counts: [chatThreads],
     run: async (db, userId) => {
+      await db.delete(orbitVoiceSessions).where(eq(orbitVoiceSessions.userId, userId));
       await db.delete(chatThreads).where(eq(chatThreads.userId, userId));
+      await db.delete(chatMemories).where(eq(chatMemories.userId, userId));
     },
   },
   recruiters: {
@@ -495,8 +515,9 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       joined("user_recruiter_links", (userId, limit, offset) => sql`SELECT l.*, r.full_name AS recruiter_full_name, r.firm AS recruiter_firm FROM user_recruiter_links l JOIN recruiters r ON r.id = l.recruiter_id WHERE l.user_id = ${userId} ORDER BY l.id LIMIT ${limit} OFFSET ${offset}`),
       own(recruiterMessages),
       own(recruiterScanState),
+      own(recruiterContactUnlocks),
     ],
-    counts: [userRecruiterLinks, recruiterMessages],
+    counts: [userRecruiterLinks, recruiterMessages, recruiterContactUnlocks],
     run: async (db, userId) => {
       // `recruiters.avg_rating` / `rating_count` / `log_count` are denormalized counters over
       // `user_recruiter_links`, and nothing recomputes them on delete. Without the recompute
@@ -517,6 +538,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // `outlook_connections` and `suggested_reminders`. `scripts/smoke-purge.ts` derives its
       // list from `schema.ts` precisely so a new one fails the suite — it did, and the
       // failure was sitting red on main.
+      await db.delete(recruiterContactUnlocks).where(eq(recruiterContactUnlocks.userId, userId));
       await db.delete(recruiterMessages).where(eq(recruiterMessages.userId, userId));
       await db.delete(userRecruiterLinks).where(eq(userRecruiterLinks.userId, userId));
 
@@ -562,6 +584,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(outboundWebhookDeliveries),
       own(apiIdempotencyKeys, "idempotency_key"),
       own(agentSendRequests),
+      own(pushSubscriptions),
     ],
     counts: [
       apiKeys,
@@ -569,8 +592,12 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       outboundWebhookDeliveries,
       apiIdempotencyKeys,
       agentSendRequests,
+      pushSubscriptions,
     ],
     run: async (db, userId) => {
+      // Web push subscriptions: the address of every browser this person allowed Radar to
+      // reach. A subscription that outlives the data would still deliver to that device.
+      await db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
       // `api_keys` matters most: a key that outlives the data it reaches is a live credential
       // with nothing behind it. The deliveries go before the endpoints they reference,
       // because the FK cascades and the other order would rewrite rows on the way to
@@ -624,8 +651,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   feedback: {
-    exports: [own(feedback), withUrl(own(feedbackScreenshots), "/api/feedback/screenshots/")],
-    counts: [feedback, feedbackScreenshots],
+    exports: [own(feedback), withUrl(own(feedbackScreenshots), "/api/feedback/screenshots/"), own(feedbackMessages)],
+    counts: [feedback, feedbackScreenshots, feedbackMessages],
     run: async (db, userId) => {
       // Both are personal — one is literally the user's own words — so erasure means
       // erasure, even though the churn reasons are exactly the feedback that leaves with the
@@ -651,6 +678,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
         }
       }
 
+      // The conversations too, operator replies included: every row carries the reporter's id.
+      await db.delete(feedbackMessages).where(eq(feedbackMessages.userId, userId));
       await db.delete(feedback).where(eq(feedback.userId, userId));
     },
   },
@@ -863,12 +892,19 @@ const PRESERVED_SETTINGS_COLUMNS = {
   // week claim and unsubscribe hash survive too, so a delete neither re-sends this week's
   // email nor breaks the unsubscribe link in the last one.
   radarPaused: true,
+  radarEnabledAt: true,
+  radarOpenedAt: true,
   radarAutopilot: true,
   radarCaptureLinkedinActivity: true,
   radarDigestEnabled: true,
   radarDigestTz: true,
   radarDigestLastWeek: true,
   radarDigestUnsubTokenHash: true,
+  // Same reasoning for the credit email: a delete must not break the link in the last one.
+  creditEmailUnsubTokenHash: true,
+  // Part of the Clerk identity mirror: without it, a replayed older user.updated could revert
+  // the preserved email and name (audit L-07).
+  clerkUserUpdatedAt: true,
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
@@ -904,15 +940,24 @@ export class PurgeIncompleteError extends Error {
 export const PURGE_RESUME_AFTER_MS = 10 * 60 * 1000;
 const PURGE_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Keys a `billing_events.detail` writer could have filled with something personal. */
+const BILLING_DETAIL_PERSONAL_KEYS = ["email", "name", "customerEmail", "customerName", "targetUserId", "userId", "ip"] as const;
+
 async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSettings: boolean) {
   if (key === "billing") {
-    await db.update(billingEvents).set({ userId: null }).where(eq(billingEvents.userId, userId));
+    // Billing rows are the accounting record (finance keeps them), so they are anonymised:
+    // the account id goes, and so does any personal field a writer put in `detail`. Stripe
+    // object ids (charge, invoice, subscription) stay — they are what a refund is traced by.
+    await db
+      .update(billingEvents)
+      .set({ userId: null, detail: sql`${billingEvents.detail} - ${sql.raw(BILLING_DETAIL_PERSONAL_KEYS.map((k) => `'${k}'`).join(" - "))}` })
+      .where(eq(billingEvents.userId, userId));
     // The invitation ledger and the waitlist row are identity, not finance. The invite row is
     // kept so a wave's counts do not change retroactively, but it stops naming the person; the
     // waitlist row (email, name, UTMs) is deleted, which is what the waitlist notice promises
     // once someone has been let in. Runs before `preferences`, so the email is still readable.
     const [owner] = await db
-      .select({ email: userSettings.email })
+      .select({ email: userSettings.email, stripeCustomerId: userSettings.stripeCustomerId })
       .from(userSettings)
       .where(eq(userSettings.userId, userId))
       .limit(1);
@@ -925,6 +970,15 @@ async function runPurgeStep(db: Db, userId: string, key: PurgeStepKey, keepSetti
         ? or(eq(interestListSignups.userId, userId), eq(interestListSignups.email, owner.email.toLowerCase()))
         : eq(interestListSignups.userId, userId)
     );
+    // The Stripe customer is NOT deleted (finance keeps its history); its metadata is marked
+    // deleted so nobody reuses it. Best-effort: a Stripe outage must not block an erasure.
+    if (!keepSettings && owner?.stripeCustomerId) {
+      try {
+        await retireStripeCustomer(owner.stripeCustomerId);
+      } catch (err) {
+        reportError(err, { where: "purge.stripe-customer-retire", userId });
+      }
+    }
     // Credit grants are money for the same reason billing rows are: a pack is cash received
     // and its unused credits are a liability, so the rows are anonymised, never deleted. The
     // account is gone, so whatever it had not spent is closed out as revoked — which is what

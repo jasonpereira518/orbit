@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isInternalRequest } from "@/lib/internal-auth";
+import { resumeLinkedInPhotoQueueIfDue } from "@/lib/linkedin-photo-queue";
 import { runOpsSweep } from "@/lib/ops-sweep";
 import { reportError } from "@/lib/report-error";
 
@@ -23,6 +24,14 @@ export async function POST(request: Request) {
     body?.mainSha && body?.mainCommittedAt && !Number.isNaN(Date.parse(body.mainCommittedAt))
       ? { mainSha: body.mainSha, mainCommittedAt: new Date(body.mainCommittedAt) }
       : null;
+
+  // The LinkedIn photo queue's resume rides this 10-minute schedule too: GitHub drops scheduled
+  // runs, and the hourly process-stalled call alone left paused runs stuck for hours.
+  try {
+    await resumeLinkedInPhotoQueueIfDue();
+  } catch (err) {
+    reportError(err, { where: "job.ops-sweep.linkedin-photo-queue", level: "warning" });
+  }
 
   try {
     const result = await runOpsSweep({ trigger: "schedule", deploy });

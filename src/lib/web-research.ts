@@ -25,23 +25,69 @@
  */
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiResultCache } from "@/db/schema";
+import { aiResultCache, userSettings } from "@/db/schema";
 import { parseAiJson, userCanUseAi, webSearchJson, type WebSource } from "@/lib/ai";
 import { companyResearchSchema, discoveryResearchSchema, personResearchSchema } from "@/lib/ai-reply-schemas";
 import { RESEARCH_CACHE_DAYS, aiResultCacheKey, withAiResultCache } from "@/lib/ai-result-cache";
 import { fenceUntrusted } from "@/lib/ai-security";
+import { linkedinSlug } from "@/lib/duplicates";
 import { saveContactProfile, sanitizeIncomingExperiences, type IncomingExperience } from "@/lib/contact-profile";
 import { resolveOrCreateContact, type ResolveOptions } from "@/lib/contact-resolve";
 import { wikidataOrg } from "@/lib/org-brand-learn";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
 import { readWebPage, type WebPage } from "@/lib/web/read-page";
+import { normalizeCompanyKey } from "@/lib/company-name";
+import { sharedAvatarSlug } from "@/lib/shared-avatars";
 
 const PERSON_OPERATION = "research.person" as const;
 const COMPANY_OPERATION = "research.company" as const;
 const DISCOVER_OPERATION = "research.discover" as const;
 
 /** Every search is billed on its own; the anchor usually finds them in one. */
+/** Total searches for one person: one first, a second only when the first came back unsure. */
 const MAX_SEARCHES_PER_PERSON = 2;
+
+/**
+ * Eval only: `ORBIT_WEB_SEARCH_LEGACY=1` runs the budgets from before round 2 (one call allowed
+ * every search up front, no page fetch, discovery 4, company 3), so `eval-ai --task web-search`
+ * can measure both arms on one commit. Production never sets it.
+ */
+export function legacyWebSearch(): boolean {
+  return process.env.ORBIT_WEB_SEARCH_LEGACY === "1";
+}
+
+/** The model's verdict in a raw answer, or null when the answer does not parse. */
+export function answerMatch(json: string): "confident" | "unsure" | "none" | null {
+  try {
+    const match = parseAiJson<{ match?: unknown }>(json).match;
+    return match === "confident" || match === "unsure" || match === "none" ? match : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Search once; only an UNSURE first answer earns a second search, told what the first found so
+ * it confirms or rules out that candidate instead of starting over. A confident answer and a
+ * "none" both stop at one: a second look rarely turns nobody into somebody. The two calls'
+ * sources are merged, so the answer still cites what the first search read.
+ *
+ * `vetoVerify` (work history only): asked about an unsure first answer before the second
+ * search; true means "clearly someone else" — stop at one, `vetoed`, and the caller writes
+ * nothing. It may only ever SAVE a search, never accept the candidate.
+ */
+export async function searchOnceThenVerify(
+  call: (user: string, maxSearches: number) => Promise<{ json: string; sources: WebSource[] }>,
+  prompt: string,
+  opts: { vetoVerify?: (firstJson: string) => Promise<boolean> } = {},
+): Promise<{ json: string; sources: WebSource[]; vetoed?: true }> {
+  const first = await call(prompt, 1);
+  if (answerMatch(first.json) !== "unsure") return first;
+  if (opts.vetoVerify && (await opts.vetoVerify(first.json).catch(() => false))) return { ...first, vetoed: true };
+  const hint = `A first search found a possible match but was not sure it is this person. Its answer:\n\n${fenceUntrusted("first_answer", first.json.slice(0, 2_000))}\n\nSearch once more to confirm or rule out that candidate.`;
+  const second = await call(`${prompt}\n\n${hint}`, 1);
+  return { json: second.json, sources: [...first.sources, ...second.sources] };
+}
 const MAX_OUTPUT_TOKENS = 1800;
 
 const MAX_NAME = 100;
@@ -127,7 +173,7 @@ Respond with JSON only:
   ]
 }
 
-"name" is their full name as their own profile spells it. "summary" is two or three plain sentences on who they are professionally. "talkingPoints" are at most 3 recent, specific things worth mentioning (a talk, a launch, a post, a move), each with the page it came from. List experiences most recent first — at most 8 roles and 3 schools. No other fields, no commentary.`;
+"name" is their full name as their own profile spells it. "headline" is their LinkedIn headline copied word for word, punctuation and all; never reword, shorten or write one yourself, and use null when no page shows it. "summary" is two or three plain sentences on who they are professionally. "talkingPoints" are at most 3 recent, specific things worth mentioning (a talk, a launch, a post, a move), each with the page it came from. List experiences most recent first — at most 8 roles and 3 schools. No other fields, no commentary.`;
 
 function clean(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -240,7 +286,7 @@ export function toPersonDossier(
 
   const org = clean(raw.current?.organization, 120);
   dossier.name = clean(raw.name, MAX_NAME);
-  dossier.headline = clean(raw.headline, 200);
+  dossier.headline = clean(raw.headline, 220);
   dossier.current = org ? { organization: org, title: clean(raw.current?.title, 120) } : null;
   dossier.location = clean(raw.location, 120);
   dossier.summary = clean(raw.summary, MAX_SUMMARY);
@@ -253,21 +299,54 @@ export function toPersonDossier(
 }
 
 /** The production researcher: one web-grounded call on the account's own provider. */
-export const researchPersonWithWebSearch: PersonResearcher = (userId, subject, signal) =>
-  webSearchJson(userId, {
-    system: SYSTEM,
-    user: subjectPrompt(subject),
-    operation: PERSON_OPERATION,
-    maxSearches: MAX_SEARCHES_PER_PERSON,
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
-    signal,
-  });
+export const researchPersonWithWebSearch: PersonResearcher = (userId, subject, signal) => {
+  const legacy = legacyWebSearch();
+  const call = (user: string, maxSearches: number) =>
+    webSearchJson(userId, {
+      system: SYSTEM,
+      user,
+      operation: PERSON_OPERATION,
+      maxSearches,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      signal,
+      fetchDomains: subject.domain && !legacy ? [subject.domain] : undefined,
+    });
+  return legacy
+    ? call(subjectPrompt(subject), MAX_SEARCHES_PER_PERSON)
+    : searchOnceThenVerify(call, subjectPrompt(subject));
+};
 
 class NoAiError extends Error {}
 
-/** The cache key for a subject: the prompt itself, so a prompt edit is a miss by construction. */
+/**
+ * Research cache keys name WHO was asked about, not the prompt that asked. Chat, Find people,
+ * a meeting guest's Look up and capture each pass different anchors for the same person (or
+ * a homepage excerpt for the same company), and keying on the prompt paid for one search per
+ * caller. The prompt still carries every anchor; only the key is shared.
+ *
+ * Bump RESEARCH_KEY_VERSION when SYSTEM, COMPANY_SYSTEM or DISCOVER_SYSTEM changes in a way
+ * that should not reuse old answers — a prompt edit is no longer a miss by itself.
+ */
+const RESEARCH_KEY_VERSION = 2;
+
+const keyText = (value: string | null | undefined) => (value ? value.toLowerCase().replace(/\s+/g, " ").trim() : null);
+
+/** A LinkedIn profile is the person; without one, name plus whatever pins them down. */
 function personKeyParts(subject: PersonSubject) {
-  return { system: SYSTEM, user: subjectPrompt(subject) };
+  const slug = sharedAvatarSlug(subject.linkedinUrl);
+  if (slug) return { v: RESEARCH_KEY_VERSION, linkedin: slug };
+  return {
+    v: RESEARCH_KEY_VERSION,
+    name: keyText(subject.fullName),
+    company: subject.company ? normalizeCompanyKey(subject.company) : null,
+    domain: subject.domain,
+    context: keyText(subject.context),
+  };
+}
+
+/** The company by name and website; the homepage excerpt /find adds is input, not identity. */
+function companyKeyParts(subject: CompanySubject, website: string | null) {
+  return { v: RESEARCH_KEY_VERSION, company: normalizeCompanyKey(subject.name), website };
 }
 
 /**
@@ -298,9 +377,10 @@ export async function researchPerson(
         const { json, sources } = await research(userId, subject, options.signal);
         return toPersonDossier(subject, json, sources, now());
       },
-      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh },
+      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh, singleFlight: true, signal: options.signal },
     );
-    return { ok: true, key: aiResultCacheKey(PERSON_OPERATION, keyParts), dossier };
+    // A shared answer may have been filed by a caller with other anchors: report this one's.
+    return { ok: true, key: aiResultCacheKey(PERSON_OPERATION, keyParts), dossier: { ...dossier, subject } };
   } catch (err) {
     const expected = expectedFailure(err);
     if (expected) return expected;
@@ -386,12 +466,23 @@ export async function loadResearchedPeople(userId: string, keys: string[]): Prom
   }));
 }
 
-/** The account's recent briefs, people and companies, newest first — the /find "Recent" list. */
+/**
+ * The account's recent briefs, people and companies, newest first — the /find "Recent" list.
+ * The person's own brief (onboarding's self-lookup, anchored on their LinkedIn URL) is left
+ * off: it is not someone they are trying to meet.
+ */
 export async function listRecentResearch(
   userId: string,
   limit = 10,
 ): Promise<{ key: string; dossier: ResearchBrief }[]> {
   const db = await getDb();
+  const settings = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { socialLinks: true },
+  });
+  const ownSlug = linkedinSlug(settings?.socialLinks?.linkedin);
+  const isOwn = (brief: ResearchBrief) =>
+    !!ownSlug && brief.kind === "person" && linkedinSlug(brief.subject.linkedinUrl) === ownSlug;
   const rows = await db
     .select({ key: aiResultCache.inputHash, result: aiResultCache.result })
     .from(aiResultCache)
@@ -403,11 +494,13 @@ export async function listRecentResearch(
       ),
     )
     .orderBy(desc(aiResultCache.createdAt))
-    .limit(limit);
-  return rows.flatMap((r) => {
-    const dossier = asBrief(r.result);
-    return dossier ? [{ key: r.key, dossier }] : [];
-  });
+    .limit(limit + 1);
+  return rows
+    .flatMap((r) => {
+      const dossier = asBrief(r.result);
+      return dossier && !isOwn(dossier) ? [{ key: r.key, dossier }] : [];
+    })
+    .slice(0, limit);
 }
 
 /**
@@ -479,7 +572,9 @@ async function writeDossierProfile(userId: string, contactId: string, dossier: P
 
 /* ------------------------------------------------------------------ companies ----- */
 
-const MAX_SEARCHES_PER_COMPANY = 3;
+/** With a known website the pages are read for free, so one search is plenty; without, two. */
+const MAX_SEARCHES_PER_COMPANY = 2;
+const MAX_SEARCHES_PER_COMPANY_WITH_SITE = 1;
 const MAX_COMPANY_OUTPUT_TOKENS = 2000;
 const MAX_NEWS = 4;
 const MAX_PEOPLE = 8;
@@ -672,11 +767,13 @@ export async function researchCompany(
         system: COMPANY_SYSTEM,
         user: prompt,
         operation: COMPANY_OPERATION,
-        maxSearches: MAX_SEARCHES_PER_COMPANY,
+        maxSearches: legacyWebSearch() ? 3 : website ? MAX_SEARCHES_PER_COMPANY_WITH_SITE : MAX_SEARCHES_PER_COMPANY,
+        // The company's own site is read with the free page fetch rather than searched for.
+        fetchDomains: website && !legacyWebSearch() ? [new URL(website).hostname] : undefined,
         maxOutputTokens: MAX_COMPANY_OUTPUT_TOKENS,
         signal,
       }));
-  const keyParts = { system: COMPANY_SYSTEM, user };
+  const keyParts = companyKeyParts(subject, website);
 
   try {
     const dossier = await withAiResultCache(
@@ -689,9 +786,9 @@ export async function researchCompany(
         const { json, sources } = await research(userId, user, options.signal);
         return toCompanyDossier(subject, website, json, sources, now());
       },
-      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh },
+      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh, singleFlight: true, signal: options.signal },
     );
-    return { ok: true, key: aiResultCacheKey(COMPANY_OPERATION, keyParts), dossier };
+    return { ok: true, key: aiResultCacheKey(COMPANY_OPERATION, keyParts), dossier: { ...dossier, subject } };
   } catch (err) {
     const expected = expectedFailure(err);
     if (expected) return expected;
@@ -701,7 +798,7 @@ export async function researchCompany(
 
 /* ------------------------------------------------------------------ discovery ----- */
 
-const MAX_SEARCHES_PER_DISCOVERY = 4;
+const MAX_SEARCHES_PER_DISCOVERY = 2;
 const MAX_DISCOVERY_OUTPUT_TOKENS = 2000;
 const MAX_CANDIDATES = 10;
 const MIN_QUERY = 3;
@@ -736,7 +833,7 @@ export type DiscoverPeopleResult =
   | { ok: true; key: string; result: DiscoveryResult }
   | { ok: false; reason: "invalid" | "no_ai" | "rate_limited"; message: string };
 
-const DISCOVER_SYSTEM = `You find people who match a description, using web search, for someone looking to reach out to people they do not know yet.
+export const DISCOVER_SYSTEM = `You find people who match a description, using web search, for someone looking to reach out to people they do not know yet.
 
 Use as few searches as possible — every search costs money. Good sources: public LinkedIn profile snippets in search results, company team and leadership pages, conference speaker lists, press releases, university and alumni pages, personal sites.
 
@@ -794,6 +891,48 @@ export function toDiscoveryResult(query: string, json: string, sources: WebSourc
   };
 }
 
+/** Shared by `discoverPeople` and `loadCachedDiscovery`, so a cached run is found again. */
+function discoveryKeyParts(query: string) {
+  return { v: RESEARCH_KEY_VERSION, query: keyText(query) };
+}
+
+/**
+ * The cached `discoverPeople` answer for a description, without running a search; null when
+ * the description would be refused or nothing is cached within `RESEARCH_CACHE_DAYS`.
+ */
+export async function loadCachedDiscovery(userId: string, input: unknown): Promise<DiscoveryResult | null> {
+  const normalized = normalizeDiscoveryQuery(input);
+  if (!normalized.ok) return null;
+  const db = await getDb();
+  const row = await db.query.aiResultCache.findFirst({
+    where: and(
+      eq(aiResultCache.userId, userId),
+      eq(aiResultCache.operation, DISCOVER_OPERATION),
+      eq(aiResultCache.inputHash, aiResultCacheKey(DISCOVER_OPERATION, discoveryKeyParts(normalized.query))),
+      gt(aiResultCache.createdAt, freshSince()),
+    ),
+    columns: { result: true },
+  });
+  const brief = row ? asBrief(row.result) : null;
+  return brief?.kind === "discover" ? brief : null;
+}
+
+/** The account's newest cached discovery run (any query), while still within `RESEARCH_CACHE_DAYS`. */
+export async function loadLatestCachedDiscovery(userId: string): Promise<DiscoveryResult | null> {
+  const db = await getDb();
+  const row = await db.query.aiResultCache.findFirst({
+    where: and(
+      eq(aiResultCache.userId, userId),
+      eq(aiResultCache.operation, DISCOVER_OPERATION),
+      gt(aiResultCache.createdAt, freshSince()),
+    ),
+    orderBy: desc(aiResultCache.createdAt),
+    columns: { result: true },
+  });
+  const brief = row ? asBrief(row.result) : null;
+  return brief?.kind === "discover" ? brief : null;
+}
+
 /**
  * People who match a description ("product managers at Stripe who went to Michigan"),
  * found on the public web. Honest about its limits: a handful of cited candidates, never a
@@ -809,6 +948,7 @@ export async function discoverPeople(
   if (!normalized.ok) return normalized;
   const { query } = normalized;
   const now = options.now ?? (() => new Date());
+  const keyParts = discoveryKeyParts(query);
   const user = `Find people who match this description:\n\n${fenceUntrusted("description", query)}`;
   const research: DiscoveryResearcher =
     options.researcher ??
@@ -817,11 +957,10 @@ export async function discoverPeople(
         system: DISCOVER_SYSTEM,
         user: prompt,
         operation: DISCOVER_OPERATION,
-        maxSearches: MAX_SEARCHES_PER_DISCOVERY,
+        maxSearches: legacyWebSearch() ? 4 : MAX_SEARCHES_PER_DISCOVERY,
         maxOutputTokens: MAX_DISCOVERY_OUTPUT_TOKENS,
         signal,
       }));
-  const keyParts = { system: DISCOVER_SYSTEM, user };
 
   try {
     const result = await withAiResultCache(
@@ -834,7 +973,7 @@ export async function discoverPeople(
         const { json, sources } = await research(userId, user, options.signal);
         return toDiscoveryResult(query, json, sources, now());
       },
-      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh },
+      { ttlDays: RESEARCH_CACHE_DAYS, fresh: options.fresh, singleFlight: true, signal: options.signal },
     );
     return { ok: true, key: aiResultCacheKey(DISCOVER_OPERATION, keyParts), result };
   } catch (err) {

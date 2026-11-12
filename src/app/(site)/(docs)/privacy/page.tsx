@@ -58,7 +58,7 @@ const PROCESSORS = [
   { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed, and BotID, which checks forms for automated traffic." },
   { name: "Neon", badge: "Required", body: "The Postgres database that holds your Orbit data." },
   { name: "Sentry", badge: "Required", body: "Error reports: the error, where in the code it happened, the page and browser. Configured not to attach IP addresses or cookies, and with session replay off." },
-  { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names, error messages with email addresses and keys removed, and a short excerpt of any feedback you send. An error message can occasionally include a value it was processing." },
+  { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names, error messages with email addresses and keys removed, and each piece of feedback you send: its text (up to 1,000 characters), your email address, plan, how long you have had your account, the page you were on, how many screenshots you attached, and the one-line summary described under Feedback below. An error message can occasionally include a value it was processing." },
   { name: "Better Stack", badge: "Required", body: "Uptime heartbeat. Receives a ping, no personal data." },
   { name: "unavatar.io", badge: "Automatic", body: "Looks up a public profile photo for contacts with a LinkedIn URL. Receives the LinkedIn username only." },
   { name: "Microlink", badge: "Automatic", body: "When unavatar.io has no photo, fetches the public preview image of the contact's LinkedIn profile URL." },
@@ -66,9 +66,9 @@ const PROCESSORS = [
   { name: "Wikidata and Google's favicon service", badge: "Automatic", body: "Brand colors for the companies and schools in your network, and company logos on your meetings. Receives an organization's name or website domain only. A domain may come from a contact's or meeting guest's work email address; the address itself is never sent." },
   { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link. Looking up a meeting guest who is not yet a contact, when you press Look up, runs the same search by their name and the company named by their email domain — never the address. When you review the people a capture found, each one who would be added as a new contact is looked up the same way, by their name with the company, role, place you met and city your note gives — never an email address or phone number." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. Also reading feedback you send, for the operator, on Orbit's account (see Feedback below). On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link. Looking up a meeting guest who is not yet a contact, when you press Look up, runs the same search by their name and the company named by their email domain — never the address. When you review the people a capture found, each one who would be added as a new contact is looked up the same way, by their name with the company, role, place you met and city your note gives — never an email address or phone number." },
   { name: "OpenRouter", badge: "Optional", body: "The same AI features, routed through OpenRouter, only if you connect your own OpenRouter account in Settings." },
-  { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
+  { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Those run only if you add your own TypeSafe key in Settings. On every account, Orbit's own TypeSafe account also decides whether keeping a contact's work history current needs another web search: it reads the job history Orbit already has for that contact, when it was last checked, and short summaries of your notes and messages about them since — never the notes themselves, an email address or a phone number — and, when a search was unsure it found the right person, the public answer that search found." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Apple iCloud", badge: "Optional", body: "Your iCloud calendars, if you connect them with an app-specific password, which Orbit stores encrypted. Used to log meetings with people you know and for the meeting features described under Connected accounts." },
   { name: "Bluesky and Mastodon", badge: "Optional", body: "For contacts whose Bluesky or Mastodon handle you added, a nightly read of their public posts for Radar. Each request carries only that public handle, to the server that hosts it." },
@@ -122,8 +122,10 @@ export default function PrivacyPage() {
             <li>
               <strong>Network and CRM content</strong> — contacts and their details (name, company,
               title, location, school, email, phone, LinkedIn URL, website, notes, tags, closeness,
-              follow-up dates), interactions, goals, reminders, chat threads, events, outreach
-              campaigns and messages, recruiter records, and import history. When you capture notes,
+              follow-up dates), interactions, goals, reminders, chat threads (with the text read
+              from any file you attach to a question), the short notes you ask Orbit to remember
+              across chats, events, outreach campaigns and messages, recruiter records, and import
+              history. When you capture notes,
               Orbit keeps the text and any photos you attach so you can look back at the original.
               Photos are resized and stripped of their metadata (including location) before they are
               stored; photos from a capture you never save are deleted after 24 hours.
@@ -134,6 +136,15 @@ export default function PrivacyPage() {
               to any Orbit user who has that person. Photos from Google or Outlook contacts, photos the
               Orbit browser extension captures, and Gravatar and Apollo photos are never shared: they
               stay with your account.
+            </li>
+            <li>
+              <strong>Contact work history</strong> — when a web search finds a contact&rsquo;s work
+              history from their public LinkedIn profile and is confident it is them, that history is
+              kept in a shared set for up to 30 days and reused for any Orbit user who has the same
+              profile, so it is not searched again. Only what a public web search found is shared:
+              never anything you typed or imported, nothing the Orbit browser extension captures, and
+              nothing a search was unsure about. It is deleted within a day once no Orbit account has
+              that person, and after 90 days at most.
             </li>
             <li>
               <strong>Voice and meetings</strong> — audio you record is sent to be transcribed and is
@@ -189,7 +200,11 @@ export default function PrivacyPage() {
               platform&rsquo;s profile links where it shows them — and sends it to Orbit only when you
               press Save. The guests are kept on that event in Orbit, never sent to an AI provider,
               and none becomes a contact unless you add them one by one. Orbit&rsquo;s servers never
-              fetch a guest list themselves.
+              fetch a guest list themselves. On your LinkedIn Connections page, it offers to log the
+              people you connected with at one of your events: it sends Orbit only the names,
+              profile links and headlines of the connections you tick, when you press Log, and they
+              are added to that event&rsquo;s guest list. None becomes a contact until you review
+              and save them in Orbit.
             </li>
             <li>
               <strong>Secrets you provide</strong> — API keys for AI, enrichment, email, SMS and
@@ -288,17 +303,6 @@ export default function PrivacyPage() {
             on Google&rsquo;s side, remove Orbit from your Google Account&rsquo;s third-party access
             page.
           </p>
-          <DocCallout title="Confirmation emails">
-            <p>
-              If you turn on event discovery from confirmation emails, Orbit searches your Gmail for
-              mail from event platforms only — Luma, Partiful, Eventbrite, Meetup and Posh — and
-              opens a message only when Google&rsquo;s signature check confirms it came from one of
-              them. It keeps the event link, the subject line, the sender&rsquo;s domain and the
-              date; it stores no message bodies, reads no other mail, and never sends this mail to
-              an AI provider. Turning it off stops the scanning and removes what it recorded about
-              where each event was found.
-            </p>
-          </DocCallout>
           <DocCallout title="Email insights">
             <p>
               If you turn on Email insights in Settings, Orbit checks your Gmail every fifteen
@@ -426,6 +430,14 @@ export default function PrivacyPage() {
             those calls run on your account, with the provider you chose in Settings, instead.
           </p>
           <p>
+            Chat also sends along two things you control. A file you attach to a question goes as
+            text: a text file is read in your browser, and a photo or PDF is read by the AI
+            provider first, the same way a scanned page is. And the notes you have asked Orbit to
+            remember are included with every chat question until you remove them in the chat&rsquo;s
+            Context panel. Orbit saves one only when you add it yourself or confirm a suggestion
+            it offers; it never saves one on its own.
+          </p>
+          <p>
             Voice notes, the chat microphone and meetings are transcribed by Deepgram instead, on
             Orbit&rsquo;s own key on every plan — see Deepgram under Who else touches your data. If
             Deepgram is unavailable, transcription falls back to the AI provider and key above.
@@ -444,6 +456,16 @@ export default function PrivacyPage() {
             message thread worth sending to your chat model at all; when the answer is a confident
             no, that call is not made. Jev only returns yes-or-no answers and scores; it writes
             nothing.
+          </p>
+          <p>
+            Separately, on every account and on Orbit&rsquo;s own TypeSafe account, Jev decides
+            whether keeping a contact&rsquo;s work history current needs another web search. It
+            reads the job history Orbit already holds for that contact, when it was last checked,
+            and short summaries of your notes and messages about them since then &mdash; never the
+            notes themselves, an email address or a phone number. When a search was unsure it had
+            found the right person, Jev also reads that search&rsquo;s public answer and may decide
+            it is someone else, in which case nothing is saved. Either way it can only skip a
+            search; it never changes a contact.
           </p>
           <p>
             Some AI work runs in the background. Search indexing runs when contacts change, so search
@@ -636,8 +658,9 @@ export default function PrivacyPage() {
             your account.
           </p>
           <p>
-            A shared LinkedIn photo is deleted within a day once no Orbit account has that person.
-            To have one removed sooner, email us through the <Link href="/contact">contact page</Link>.
+            A shared LinkedIn photo or shared work history is deleted within a day once no Orbit
+            account has that person, and a shared work history after 90 days at most. To have one
+            removed sooner, email us through the <Link href="/contact">contact page</Link>.
           </p>
           <p>
             When you delete your account, every table holding your data is cleared, including your
@@ -691,12 +714,16 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Feedback you send</strong> through the in-app feedback button, including any
-              screenshot you attach, is read by the operator.
+              screenshot you attach, is read by the operator. Its text, the area of Orbit it is
+              about and the page you were on are also read by an AI model on Orbit&rsquo;s own
+              account with Google Gemini, OpenAI or Anthropic, which writes a one-line summary,
+              sorts it by kind and urgency, and notes when it repeats an earlier report. This
+              never uses your AI credits or your own key, and screenshots are not sent.
             </li>
           </ul>
           <p>
             The operator can comp or revoke a plan, suspend or delete an account, retry or cancel an
-            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, remove a shared LinkedIn photo, and
+            import, reset onboarding, disconnect an integration, turn a calendar feed on or off, remove a shared LinkedIn photo (which also removes that profile&rsquo;s shared work history), and
             create a one-time link that signs in as your account (for support, and for the demo
             account). Each of these requires a written reason, recorded in an audit log. Opening your
             account is recorded, and so is every individual contact record opened, by its id.

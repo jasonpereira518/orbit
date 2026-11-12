@@ -1,8 +1,9 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { type OutlookConnectionStatus, type OutlookScanStatus } from "@/actions/outlook";
+import { type RecruitingCycle } from "@/lib/recruiter-scan-state";
 import { Button } from "@/components/ui/button";
 import {
   SESSION_EXPIRED_LINE,
@@ -25,6 +26,7 @@ export function OutlookImportPanel({
   returnTo?: string;
 }) {
   const [pending, startTransition] = useTransition();
+  const [cycle, setCycle] = useState<RecruitingCycle>("current");
   const conn = useMicrosoftConnection({ returnTo: returnTo ?? "", enabled: false });
   // One handler for the header link and the button. The recruiter scan asks for mail access;
   // a paused calendar sync is reconnected as "calendar", which was already granted, so
@@ -101,12 +103,23 @@ export function OutlookImportPanel({
                   : "Connect Outlook"}
             </Button>
           ) : (
-            <>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={cycle}
+                onChange={(e) => setCycle(e.target.value as RecruitingCycle)}
+                disabled={busy || running}
+                className="h-9 rounded-lg border border-input bg-card px-2.5 text-xs text-foreground"
+                aria-label="Recruiting cycle window"
+              >
+                <option value="current">Current cycle (Auto)</option>
+                <option value="july">Fall cycle (Since Jul 1)</option>
+                <option value="january">Spring cycle (Since Jan 1)</option>
+              </select>
               <Button
                 disabled={busy || running}
-                onClick={() => startTransition(() => runStart())}
+                onClick={() => startTransition(() => runStart({ cycle }))}
               >
-                {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
+                {running ? "Scanning…" : scan ? "Scan again" : "Scan cycle"}
               </Button>
               <DisconnectAccountDialog
                 provider="outlook"
@@ -117,7 +130,7 @@ export function OutlookImportPanel({
                   });
                 }}
               />
-            </>
+            </div>
           )}
         </div>
       </div>

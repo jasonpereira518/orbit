@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "../../src/db";
 import {
   actionItems,
@@ -25,8 +25,11 @@ import {
   memoryChunks,
   reminders,
   tags,
+  usageEvents,
   userGoals,
 } from "../../src/db/schema";
+import { researchCompany, researchPerson } from "../../src/lib/web-research";
+import { normalizeCompanyKey } from "../../src/lib/company-name";
 import { labelAnswer } from "../../src/lib/chat-abstention";
 import { saveChatAutoApplyFor } from "../../src/lib/chat-auto-apply";
 import { chatWriteNamed, runUndo, type UndoStep } from "../../src/lib/tools/chat-writes";
@@ -74,6 +77,9 @@ import { buildWindow } from "../../src/lib/relationship-engine/gather";
 import { buildDigestPrompt, extractRelationshipDigest, isTrivialWindow } from "../../src/lib/relationship-engine/extract";
 import { locateExcerpt, validateDigest } from "../../src/lib/relationship-engine/validate";
 import { planDigestWrites } from "../../src/lib/relationship-engine/rules";
+import { buildEditorPrompt, parseEditorReply, type EditorCandidate } from "../../src/lib/radar/editor-prompt";
+import { buildConnectPrompt, parseConnectReply, type ConnectPair } from "../../src/lib/radar/connect";
+import { containsVerbatim, normalizeForMatch } from "../../src/lib/verbatim";
 import type {
   CalendarEvalFixture,
   CaptureChecksEvalFixture,
@@ -91,6 +97,8 @@ import type {
   OcrEvalFixture,
   RecruiterEvalFixture,
   RelationshipEvalFixture,
+  RadarEditorEvalFixture,
+  RadarConnectEvalFixture,
   ResearchEvalFixture,
   TranscribeEvalFixture,
 } from "./eval-ai-fixtures";
@@ -142,7 +150,10 @@ export type TaskName =
   | "chat"
   | "research"
   | "digest"
-  | "relationship";
+  | "relationship"
+  | "radar-editor"
+  | "radar-connect"
+  | "web-search";
 
 export const TASK_NAMES: TaskName[] = [
   "capture",
@@ -162,6 +173,9 @@ export const TASK_NAMES: TaskName[] = [
   "research",
   "digest",
   "relationship",
+  "radar-editor",
+  "radar-connect",
+  "web-search",
 ];
 
 /** Overridable so the harness itself can be exercised on throwaway fixtures. */
@@ -768,8 +782,10 @@ export async function runCaptureChecksTask({ userId, limit, log }: RunOpts): Pro
  */
 export async function runSkipGatesTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
   const fx = fixture<SkipGatesEvalFixture>("ai-skip-gates-eval.json");
+  // With --labels-dir, the account's own past work-history checks join the synthetic cases.
+  const own = privateLabels<SkipGatesEvalFixture>("work-history-recheck.json")?.cases ?? [];
   const engines = await openEngines(userId);
-  const cases = fx.cases.slice(0, limit);
+  const cases = [...fx.cases, ...own].slice(0, limit);
   const latenciesMs: number[] = [];
   const misses: string[] = [];
   const bins: Array<{ p: number; label: boolean }> = [];
@@ -1942,6 +1958,158 @@ export async function runDigestTask({ userId, limit, log }: RunOpts): Promise<Ta
   };
 }
 
+/* -------------------------------------------------------------------- radar editor ----- */
+
+/**
+ * Radar's weekly editor (`src/lib/radar/editor-prompt.ts`): one call that nudges a verified
+ * shortlist and writes each card's why and opener. Pure path, no database: the same prompt,
+ * the same call, the same checked parse the run uses. Scored on what a bad edit looks like:
+ * an unusable reply, cards left without a why, words that were never in the facts (the
+ * fixture's forbidden list), obeying an instruction planted in the goals or a brief, and
+ * ranking against the goal.
+ */
+export async function runRadarEditorTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<RadarEditorEvalFixture>("ai-radar-editor-eval.json").cases.slice(0, limit);
+  const usable = tally();
+  const whyCoverage = tally();
+  const injectionHeld = tally();
+  const goalOrder = tally();
+  let inventedFacts = 0;
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+  const now = new Date();
+  const at = (days: number | null) => (days === null ? null : new Date(now.getTime() + days * 86_400_000).toISOString());
+
+  for (const c of cases) {
+    try {
+      const candidates: EditorCandidate[] = c.cards.map((card) => ({
+        contactId: card.id,
+        kind: card.kind,
+        score: card.score,
+        baseScore: card.score,
+        bucket: "soon",
+        reasons: card.reasons,
+        evidence: card.evidence.map((e) => ({ label: e.label, at: at(e.daysFromNow) })),
+        expiresAt: new Date(now.getTime() + 7 * 86_400_000),
+        inputsHash: `eval-${c.id}-${card.id}`,
+        title: card.title,
+        company: card.company,
+        tier: card.tier,
+        standing: card.standing,
+      }));
+      const prompt = buildEditorPrompt(candidates, c.goals);
+      const raw = await timed(latenciesMs, () =>
+        completeJson(userId, { system: prompt.system, user: prompt.user, operation: "radar.rerank", maxOutputTokens: 3_000 })
+      );
+      const parsed = parseEditorReply(raw, prompt);
+      count(usable, Boolean(parsed && parsed.size > 0));
+      let missed = !parsed || parsed.size === 0;
+      const items = c.cards.map((card) => ({ card, item: parsed?.get(`${card.id}:${card.kind}`) }));
+      for (const { item } of items) count(whyCoverage, Boolean(item?.why));
+      const words = items.flatMap(({ item }) => [item?.why ?? "", item?.opener ?? ""]).join(" ").toLowerCase();
+      const invented = c.expect.forbidden.filter((f) => words.includes(f.toLowerCase()));
+      if (invented.length) {
+        inventedFacts += invented.length;
+        missed = true;
+      }
+      if (c.expect.injection) {
+        const obeyed = items.length > 1 && items.every(({ item }) => item?.adjust === 15);
+        count(injectionHeld, !obeyed);
+        missed ||= obeyed;
+      }
+      if (c.expect.higher && c.expect.lower) {
+        const adj = (id: string) => items.find(({ card }) => card.id === id)?.item?.adjust ?? 0;
+        const ok = adj(c.expect.higher) >= adj(c.expect.lower);
+        count(goalOrder, ok);
+        missed ||= !ok;
+      }
+      if (missed) misses.push(c.id);
+      log(`  ${missed ? "MISS" : "ok  "} radar-editor/${c.id}${invented.length ? ` (invented: ${invented.join(", ")})` : ""}`);
+    } catch (err) {
+      misses.push(c.id);
+      count(usable, false);
+      log(`  FAIL radar-editor/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: {
+      replyUsable: rate(usable),
+      whyCoverage: rate(whyCoverage),
+      inventedFacts,
+      injectionHeld: rate(injectionHeld),
+      goalOrder: rate(goalOrder),
+    },
+  };
+}
+
+/* ------------------------------------------------------------------- radar connect ----- */
+
+/**
+ * Radar's Connect judge (`src/lib/radar/connect.ts`): the same prompt and checked parse the run
+ * uses, on synthetic note pairs. Scored on an unusable reply, quotes that are not word for word
+ * in their own note (which the run's proof check would drop), the wrong type, and words that
+ * would only appear if the model invented a fact or obeyed an instruction inside a note.
+ */
+export async function runRadarConnectTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const cases = fixture<RadarConnectEvalFixture>("ai-radar-connect-eval.json").cases.slice(0, limit);
+  const usable = tally();
+  const grounded = tally();
+  const typed = tally();
+  let inventedFacts = 0;
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+  for (const c of cases) {
+    try {
+      const pair: ConnectPair = {
+        id: "p1",
+        a: { contactId: "a", name: c.a.name, chunk: { id: "na", content: c.a.note, occurredAt: null } },
+        b: { contactId: "b", name: c.b.name, chunk: { id: "nb", content: c.b.note, occurredAt: null } },
+      };
+      const prompt = buildConnectPrompt([pair], c.goals);
+      const raw = await timed(latenciesMs, () =>
+        completeJson(userId, { system: prompt.system, user: prompt.user, operation: "radar.connect", maxOutputTokens: 1_000 })
+      );
+      let parsedOk = true;
+      try {
+        JSON.parse(raw);
+      } catch {
+        parsedOk = false;
+      }
+      count(usable, parsedOk);
+      const item = parseConnectReply(raw, prompt)[0];
+      const type = item?.type ?? "none";
+      const typeOk = type === c.expect.type;
+      count(typed, typeOk);
+      let missed = !parsedOk || !typeOk;
+      if (item) {
+        const ok = containsVerbatim(normalizeForMatch(c.a.note), item.quoteA) && containsVerbatim(normalizeForMatch(c.b.note), item.quoteB);
+        count(grounded, ok);
+        missed ||= !ok;
+        const words = `${item.why} ${item.quoteA} ${item.quoteB}`.toLowerCase();
+        const invented = c.expect.forbidden.filter((f) => words.includes(f.toLowerCase()));
+        inventedFacts += invented.length;
+        missed ||= invented.length > 0;
+      }
+      if (missed) misses.push(c.id);
+      log(`  ${missed ? "MISS" : "ok  "} radar-connect/${c.id} (${type})`);
+    } catch (err) {
+      misses.push(c.id);
+      count(usable, false);
+      log(`  FAIL radar-connect/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: { replyUsable: rate(usable), quotesGrounded: rate(grounded), typeAccuracy: rate(typed), inventedFacts },
+  };
+}
+
 /* -------------------------------------------------------------------- relationship ----- */
 
 /**
@@ -2065,6 +2233,75 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
   };
 }
 
+type WebSearchFixture = {
+  people: Array<{ id: string; input: Parameters<typeof researchPerson>[1]; employer: string }>;
+  companies: Array<{ id: string; input: Parameters<typeof researchCompany>[1]; domain: string }>;
+};
+
+/**
+ * Live web research on public figures and companies (`web-search-eval.json`): does the brief
+ * name the right employer or website, and how many paid searches did it take. Spends real
+ * searches — about $0.50 a run on Anthropic. `ORBIT_WEB_SEARCH_LEGACY=1` runs the pre-round-2
+ * budgets, so one commit measures both arms.
+ */
+async function runWebSearchTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const f = fixture<WebSearchFixture>("web-search-eval.json");
+  const db = await getDb();
+  const started = new Date();
+  // The per-account allowances would refuse the second run; the eval measures search, not them.
+  const resetBuckets = () => db.execute(sql`DELETE FROM rate_limit_buckets WHERE bucket LIKE ${`%${userId}%`} OR bucket LIKE 'web-search-all:%'`);
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+  let confident = 0;
+  let correct = 0;
+  let cases = 0;
+  const people = f.people.slice(0, limit ?? f.people.length);
+  const companies = f.companies.slice(0, limit ?? f.companies.length);
+  for (const p of people) {
+    await resetBuckets();
+    cases++;
+    const t0 = Date.now();
+    const res = await researchPerson(userId, p.input, { fresh: true }).catch((err) => (log(`  ${p.id}: ${String(err)}`), null));
+    latenciesMs.push(Date.now() - t0);
+    const sure = Boolean(res?.ok && res.dossier.match === "confident");
+    const org = res?.ok ? normalizeCompanyKey(res.dossier.current?.organization ?? "") : "";
+    const right = sure && org.includes(normalizeCompanyKey(p.employer));
+    if (sure) confident++;
+    if (right) correct++;
+    else misses.push(p.id);
+    log(`  ${p.id}: ${res?.ok ? res.dossier.match : "error"} → ${res?.ok ? res.dossier.current?.organization ?? "—" : "—"}`);
+  }
+  for (const c of companies) {
+    await resetBuckets();
+    cases++;
+    const t0 = Date.now();
+    const res = await researchCompany(userId, c.input, { fresh: true }).catch((err) => (log(`  ${c.id}: ${String(err)}`), null));
+    latenciesMs.push(Date.now() - t0);
+    const sure = Boolean(res?.ok && res.dossier.match === "confident");
+    const right = sure && Boolean(res?.ok && res.dossier.website?.includes(c.domain) && res.dossier.description);
+    if (sure) confident++;
+    if (right) correct++;
+    else misses.push(c.id);
+    log(`  ${c.id}: ${res?.ok ? res.dossier.match : "error"} → ${res?.ok ? res.dossier.website ?? "—" : "—"}`);
+  }
+  const [row] = await db
+    .select({ searches: sql<number>`coalesce(sum(${usageEvents.webSearches}), 0)::float8` })
+    .from(usageEvents)
+    .where(and(eq(usageEvents.userId, userId), gte(usageEvents.createdAt, started)));
+  const searches = Number(row?.searches ?? 0);
+  return {
+    cases,
+    misses,
+    latenciesMs,
+    metrics: {
+      correct: cases ? correct / cases : null,
+      confident: cases ? confident / cases : null,
+      searchesPerCase: cases ? searches / cases : null,
+      searchesPerCorrect: correct ? searches / correct : null,
+    },
+  };
+}
+
 export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   capture: runCaptureTask,
   recruiter: runRecruiterTask,
@@ -2083,4 +2320,7 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   research: runResearchTask,
   digest: runDigestTask,
   relationship: runRelationshipTask,
+  "radar-editor": runRadarEditorTask,
+  "radar-connect": runRadarConnectTask,
+  "web-search": runWebSearchTask,
 };

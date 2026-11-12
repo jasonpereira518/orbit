@@ -166,7 +166,8 @@ async function main() {
   const pageOnStatements = stopQueryCount();
   check("an account that has not opted in is handed nobody", pageOff.inboxPeople.length === 0);
   check("an opted-in account is handed the same people", pageOn.inboxPeople.map((p) => p.key).join(",") === offered.map((p) => p.key).join(","));
-  check("the page stays inside its six statements for an account that has not opted in", pageOffStatements <= 6, String(pageOffStatements));
+  // Seven since Radar PR 9a: the Opportunities lane's finds are one more read.
+  check("the page stays inside its seven statements for an account that has not opted in", pageOffStatements <= 7, String(pageOffStatements));
   check("opting in adds at most the loader's four", pageOnStatements - pageOffStatements <= 4, `${pageOnStatements} vs ${pageOffStatements}`);
 
   console.log("\nAnother account");

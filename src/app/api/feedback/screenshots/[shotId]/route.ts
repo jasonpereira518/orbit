@@ -1,11 +1,14 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { withMediaResourcePolicy } from "@/lib/media-headers";
 import { getDb } from "@/db";
 import { feedbackScreenshots } from "@/db/schema";
 import { isAdminUser } from "@/lib/admin";
 import { requireUserId } from "@/lib/auth";
 
 type Params = { params: Promise<{ shotId: string }> };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Serve one feedback screenshot.
@@ -25,7 +28,7 @@ type Params = { params: Promise<{ shotId: string }> };
  * A shot belonging to someone else 404s rather than 403s: a 403 confirms both that the row
  * exists and that you guessed its id. Same reasoning as `AdminForbiddenError`'s "Not found".
  */
-export async function GET(_req: Request, { params }: Params) {
+async function serve(_req: Request, { params }: Params) {
   let userId: string;
   try {
     userId = await requireUserId();
@@ -34,6 +37,10 @@ export async function GET(_req: Request, { params }: Params) {
   }
 
   const { shotId } = await params;
+  // A malformed id would reach Postgres as a failed uuid cast — a 500 for what is plainly
+  // "no such screenshot". Same guard as `/api/capture/photos/[photoId]`.
+  if (!UUID.test(shotId)) return new NextResponse(null, { status: 404 });
+
   const db = await getDb();
 
   const shot = await db.query.feedbackScreenshots.findFirst({
@@ -65,11 +72,18 @@ export async function GET(_req: Request, { params }: Params) {
 
   if (shot.storage === "blob") {
     if (!shot.blobUrl) return new NextResponse(null, { status: 404 });
-    const upstream = await fetch(shot.blobUrl, { cache: "no-store" });
+    // Bounded so a stalled blob store fails this request instead of holding it open.
+    const upstream = await fetch(shot.blobUrl, { cache: "no-store", signal: AbortSignal.timeout(20_000) }).catch(() => null);
+    if (!upstream) return new NextResponse(null, { status: 504 });
     if (!upstream.ok || !upstream.body) return new NextResponse(null, { status: 404 });
     return new NextResponse(upstream.body, { headers });
   }
 
   if (!shot.inlineData) return new NextResponse(null, { status: 404 });
   return new NextResponse(new Uint8Array(Buffer.from(shot.inlineData, "base64")), { headers });
+}
+
+/** Every response, redirects and misses included, is same-origin only (audit L-09). */
+export async function GET(_req: Request, ctx: Params) {
+  return withMediaResourcePolicy(await serve(_req, ctx));
 }

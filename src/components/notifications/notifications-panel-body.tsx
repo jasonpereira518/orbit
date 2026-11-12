@@ -17,6 +17,8 @@ import {
   Clock,
   FileText,
   Loader2,
+  Gift,
+  MessageSquareText,
   NotebookPen,
   Radar,
   Shield,
@@ -37,8 +39,11 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { companyBrandText } from "@/lib/company-brand";
 import { playDing } from "@/lib/ding";
+import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import { AccountAlerts } from "@/components/notifications/account-alerts";
+import { RowBubble } from "@/components/notifications/row-bubble";
+import { panelDismissals, panelItemKey, radarKey } from "@/lib/panel-dismissals";
 import {
   dismissBackgroundJob,
   useBackgroundJobs,
@@ -72,20 +77,32 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
   const [showAllDue, setShowAllDue] = useState(false);
   const jobs = useBackgroundJobs();
   const kept = useKeptNotifications();
+  // Re-renders when a row is cleared; `isDismissed` itself reads the device's list.
+  const dismissedVersion = panelDismissals.useVersion();
   const dueItems = useMemo(
-    () => data?.items.filter((i) => i.urgency === "due") ?? [],
+    // A feedback reply is "due" for the badge but lives under "Waiting on you": there is
+    // nothing to mark done or snooze, only a conversation to open.
+    () => data?.items.filter((i) => i.urgency === "due" && i.kind !== "feedback_reply") ?? [],
     [data]
   );
   // Captured notes waiting for review (or that failed) are the one "info" item worth a
-  // slot here: the user has to act on them, and nothing else will surface them.
+  // slot here: the user has to act on them, and nothing else will surface them. Until they
+  // clear it, which hides that row (`panel-dismissals.ts`) and nothing else.
   const captureItems = useMemo(
-    () => data?.items.filter((i) => i.kind === "capture_review" || i.kind === "cloud_notes") ?? [],
-    [data]
+    () =>
+      data?.items.filter(
+        (i) =>
+          (i.kind === "feedback_reply" || i.kind === "capture_review" || i.kind === "cloud_notes") &&
+          !panelDismissals.isDismissed(panelItemKey(i))
+      ) ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `dismissedVersion` is the signal that the device's list changed
+    [data, dismissedVersion]
   );
   const alerts = data?.alerts ?? [];
   // Radar's list as one line, never an item: a suggestion is not something due, so it
   // neither counts toward the badge nor lives under "Due now".
-  const radar = data?.radar ?? null;
+  const radar =
+    data?.radar && !panelDismissals.isDismissed(radarKey(data.radar)) ? data.radar : null;
   // Account alerts deliberately do NOT count here. They live in the pinned footer, so an
   // alert-only account should still see the scroll area say there is nothing due rather
   // than render an empty region with no explanation.
@@ -97,6 +114,19 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
     kept.length > 0;
 
   const refresh = () => refreshPanel(true);
+
+  // Everything that is not pressing clears: missed toasts, finished jobs, and the rows that
+  // are only waiting to be looked at (captures, found notes, replies, Radar's line). What
+  // stays is what is being asked of you now: due reminders and follow-ups (clearing one would
+  // mean marking it done), running jobs, and account alerts.
+  const finishedJobs = jobs.filter((j) => j.status !== "running");
+  const clearable = kept.length + finishedJobs.length + captureItems.length + (radar ? 1 : 0) > 0;
+  function clearAll() {
+    clearKeptNotifications();
+    for (const j of finishedJobs) dismissBackgroundJob(j.id);
+    for (const i of captureItems) panelDismissals.dismiss(panelItemKey(i));
+    if (radar) panelDismissals.dismiss(radarKey(radar));
+  }
 
   function markDone(reminderId: string) {
     start(() =>
@@ -145,6 +175,18 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
     <>
     <div className="min-h-[7rem] flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3 [scrollbar-width:thin]">
       {data && <ExtensionPromo />}
+
+      {clearable && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={clearAll}
+          >
+            Clear notifications
+          </button>
+        </div>
+      )}
 
       {loading && !data ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -237,15 +279,6 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
                 }}
               />
             ))}
-            {kept.length > 1 && (
-              <button
-                type="button"
-                className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() => clearKeptNotifications()}
-              >
-                Clear all
-              </button>
-            )}
           </Section>
         </div>
       )}
@@ -355,6 +388,7 @@ function KeptRow({
   onAct: () => void;
 }) {
   const actionable = !!entry.actionLabel && hasLiveAction(entry.id);
+  const detail = `${formatDistanceToNow(entry.at, { addSuffix: true })}${entry.description ? ` · ${entry.description}` : ""}`;
 
   return (
     <div className={ROW}>
@@ -365,15 +399,10 @@ function KeptRow({
           <Clock className="h-4 w-4 text-muted-foreground" />
         )}
       </IconDisc>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-ink" title={entry.title}>
-          {entry.title}
-        </p>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {formatDistanceToNow(entry.at, { addSuffix: true })}
-          {entry.description ? ` · ${entry.description}` : ""}
-        </p>
-      </div>
+      <RowBubble lines={[entry.title, detail]} render={<div className="min-w-0 flex-1" />}>
+        <p className="truncate text-sm font-medium text-ink">{entry.title}</p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</p>
+      </RowBubble>
       {actionable && (
         <Button
           type="button"
@@ -403,6 +432,15 @@ function JobRow({ job }: { job: BackgroundJob }) {
   const determinate = job.total > 0;
   const pct = determinate ? Math.min(100, Math.round((job.done / job.total) * 100)) : null;
   const running = job.status === "running";
+  const headline = running
+    ? job.cancelling
+      ? "Stopping…"
+      : job.label
+    : job.status === "completed"
+      ? job.resultMessage || `${job.label} — done`
+      : job.status === "failed"
+        ? job.error || `${job.label} failed`
+        : job.resultMessage || `${job.label} stopped`;
 
   return (
     <div className={ROW}>
@@ -417,18 +455,8 @@ function JobRow({ job }: { job: BackgroundJob }) {
         <XCircle className="h-4 w-4 text-muted-foreground" />
       )}
       </IconDisc>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-ink">
-          {running
-            ? job.cancelling
-              ? "Stopping…"
-              : job.label
-            : job.status === "completed"
-              ? job.resultMessage || `${job.label} — done`
-              : job.status === "failed"
-                ? job.error || `${job.label} failed`
-                : job.resultMessage || `${job.label} stopped`}
-        </p>
+      <RowBubble lines={[headline]} render={<div className="min-w-0 flex-1" />}>
+        <p className="truncate text-sm font-medium text-ink">{headline}</p>
         {running && (
           <div className="mt-1 flex items-center gap-2">
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-border/80">
@@ -447,7 +475,7 @@ function JobRow({ job }: { job: BackgroundJob }) {
             )}
           </div>
         )}
-      </div>
+      </RowBubble>
       {running && job.onCancel && (
         <Button
           size="sm"
@@ -490,21 +518,20 @@ function RadarRow({
 }) {
   const shown = names.slice(0, 3);
   const rest = count - shown.length;
+  const headline = `${drafts > 0 ? `${drafts} ${drafts === 1 ? "draft" : "drafts"} ready · ` : ""}${count} ${count === 1 ? "person" : "people"} worth a message`;
+  const detail = `${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}`;
   return (
     <div className={cn(ROW, "bg-popover")}>
       <IconDisc>
         <Radar className="h-4 w-4 text-muted-foreground" />
       </IconDisc>
-      <Link href="/radar" onClick={onNavigate} className="min-w-0 flex-1 hover:underline">
-        <span className="block truncate text-sm font-medium text-ink">
-          {drafts > 0 ? `${drafts} ${drafts === 1 ? "draft" : "drafts"} ready · ` : ""}
-          {count} {count === 1 ? "person" : "people"} worth a message
-        </span>
-        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-          {shown.join(", ")}
-          {rest > 0 ? ` and ${rest} more` : ""}
-        </span>
-      </Link>
+      <RowBubble
+        lines={[headline, detail]}
+        render={<Link href="/radar" onClick={onNavigate} className="min-w-0 flex-1 hover:underline" />}
+      >
+        <span className="block truncate text-sm font-medium text-ink">{headline}</span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">{detail}</span>
+      </RowBubble>
     </div>
   );
 }
@@ -522,6 +549,16 @@ function NotificationRow({
   onSnooze?: () => void;
   onNavigate: () => void;
 }) {
+  // A feedback reply opens in the feedback side panel, over the page you're on, rather than
+  // taking you away from it. The href stays for a new tab or a modifier-click.
+  const openItem = (e: React.MouseEvent) => {
+    if (item.kind === "feedback_reply" && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+      e.preventDefault();
+      const id = item.url.split("/").pop();
+      if (id) requestFeedbackOpen(FEEDBACK_ANCHOR_FALLBACK, { view: "thread", id });
+    }
+    onNavigate();
+  };
   const Icon =
     item.kind === "follow_up"
       ? UserRound
@@ -529,22 +566,32 @@ function NotificationRow({
         ? NotebookPen
         : item.kind === "cloud_notes"
           ? FileText
-          : Bell;
+          : item.kind === "feedback_reply"
+            ? item.gift
+              ? Gift
+              : MessageSquareText
+            : Bell;
   const when = item.dueAt
     ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
     : item.kind === "capture_review" || item.kind === "cloud_notes"
       ? "Waiting on you"
       : "No due date";
+  // The subtitle as plain text, for the hover bubble (the on-screen one tints the company).
+  const detail = [
+    when,
+    item.company ? [item.contactTitle, item.company].filter(Boolean).join(" · ") : item.body,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className={cn(ROW, "border-primary/15 bg-popover")}>
       <IconDisc>
         <Icon className="h-4 w-4 text-muted-foreground" />
       </IconDisc>
-      <Link
-        href={item.url}
-        onClick={onNavigate}
-        className="min-w-0 flex-1 hover:underline"
+      <RowBubble
+        lines={[item.title, detail]}
+        render={<Link href={item.url} onClick={(e) => openItem(e)} className="min-w-0 flex-1 hover:underline" />}
       >
         <span className="block truncate text-sm font-medium text-ink">
           {item.title}
@@ -567,7 +614,7 @@ function NotificationRow({
             ""
           )}
         </span>
-      </Link>
+      </RowBubble>
       {item.kind === "reminder" && onSnooze && (
         <Button
           size="icon"

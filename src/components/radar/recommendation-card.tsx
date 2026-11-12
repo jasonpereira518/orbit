@@ -2,8 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { longRelativeLabel } from "@/lib/relative-date";
-import { CalendarPlus, Clock, Copy, MoreHorizontal, PenLine, Sparkles, X } from "lucide-react";
+import { CalendarPlus, Clock, Copy, MoreHorizontal, PenLine, Sparkles } from "lucide-react";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import {
@@ -23,7 +22,6 @@ import { IntentLink } from "@/components/ui/intent-link";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { explainRecommendationAction } from "@/actions/radar";
 import { companyBrandText } from "@/lib/company-brand";
-import { safeHttpUrl } from "@/lib/safe-links";
 import { friendlyError } from "@/lib/errors";
 import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
@@ -33,14 +31,19 @@ import {
   draftIntent,
   leadReason,
   type RadarAiNote,
+  type RadarCalendarInvite,
+  type RadarDiscoveredPerson,
   type RadarDraft,
   type RadarEvidence,
   type RadarReason,
+  type RecommendationBucket,
   type RecommendationKind,
 } from "@/lib/radar/types";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { KIND_STYLES } from "@/components/radar/kind-styles";
+import { DismissMenu } from "@/components/radar/dismiss-menu";
+import { ProofChips } from "@/components/radar/proof-chips";
 import { useRadarKeys } from "@/components/radar/use-radar-keys";
 import { useRecommendationActions } from "@/components/radar/use-recommendation-actions";
 
@@ -53,6 +56,8 @@ export type RecommendationCardData = {
   id: string;
   contactId: string;
   kind: RecommendationKind;
+  /** "today": a moment that won't keep (`week.ts`), shown in the Today strip. */
+  bucket?: RecommendationBucket | null;
   reasons: RadarReason[];
   evidence: RadarEvidence[];
   aiNote: RadarAiNote | null;
@@ -60,6 +65,10 @@ export type RecommendationCardData = {
   aiAngle?: string | null;
   /** A message Radar wrote overnight. The sheet opens with it, no model call. */
   draft?: RadarDraft | null;
+  /** Suggested calendar invite for 1-click execution */
+  suggestedCalendarInvite?: RadarCalendarInvite | null;
+  /** Discovered prospective connection metadata */
+  discoveredPerson?: RadarDiscoveredPerson | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -105,8 +114,8 @@ export function RecommendationCard({
   const context = rec.reasons.filter((r) => CONTEXT_CODES.has(r.code));
   const also = rec.reasons.filter((r) => r.code.startsWith("also:"));
   const lead = facts[0];
-  const evidence = rec.evidence[0];
-  const evidenceUrl = safeHttpUrl(evidence?.url);
+  const congrats = lead?.code === JOB_MOVE_CODE;
+  const draftLabel = rec.draft ? "Review draft" : congrats ? "Congratulate" : rec.kind === "introduce" ? "Draft intro" : "Draft message";
   const companyBrand = companyBrandText(rec.company);
 
   const writeWhy = () =>
@@ -156,6 +165,11 @@ export function RecommendationCard({
                     Draft ready
                   </span>
                 )}
+                {rec.discoveredPerson && (
+                  <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                    Discovered ({rec.discoveredPerson.sourcePlatform})
+                  </span>
+                )}
               </div>
               {(rec.title || rec.company) && (
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -181,40 +195,16 @@ export function RecommendationCard({
                 </p>
               ))}
 
-              {(context.length > 0 || evidence) && (
+              {context.length > 0 && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                   {context.map((r) => (
                     <span key={r.code} className="rounded-full bg-muted px-2 py-0.5">
                       {r.label}
                     </span>
                   ))}
-                  {evidence && (
-                    <span className="inline-flex items-center gap-1">
-                      <Clock className="size-3" aria-hidden />
-                      {evidenceUrl ? (
-                        // A public source (a headline). The domain stays visible in the label, and
-                        // the link is re-checked here rather than trusted from the row.
-                        <a
-                          href={evidenceUrl}
-                          target="_blank"
-                          rel="noopener noreferrer nofollow"
-                          className="underline decoration-border underline-offset-2 hover:text-ink"
-                        >
-                          {evidence.label}
-                        </a>
-                      ) : (
-                        evidence.label
-                      )}
-                      {evidence.at && (
-                        <span suppressHydrationWarning>
-                          {" · "}
-                          {longRelativeLabel(new Date(evidence.at))}
-                        </span>
-                      )}
-                    </span>
-                  )}
                 </div>
               )}
+              <ProofChips evidence={rec.evidence} />
 
               {!(note && (note.why || note.opener)) && rec.aiAngle && (
                 <p className="mt-2 flex gap-1.5 text-sm text-ink/80">
@@ -265,6 +255,33 @@ export function RecommendationCard({
               ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-1.5 pointer-coarse:gap-3">
+                {rec.suggestedCalendarInvite && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="default"
+                    className="h-8 gap-1.5"
+                    disabled={pending}
+                    onClick={() => actions.confirmInvite()}
+                    title={`Send calendar invite for ${new Date(rec.suggestedCalendarInvite.proposedStartTime).toLocaleDateString()}`}
+                  >
+                    <CalendarPlus className="size-3.5" aria-hidden />
+                    1-Click Invite
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={rec.suggestedCalendarInvite ? "outline" : "default"}
+                  className="h-8"
+                  disabled={pending}
+                  onPointerEnter={preloadFollowUpDraftSheet}
+                  onFocus={preloadFollowUpDraftSheet}
+                  onClick={() => setDraftOpen(true)}
+                >
+                  <PenLine className="size-3.5" aria-hidden />
+                  {draftLabel}
+                </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger className={triggerClass} disabled={pending} aria-label={`Schedule a follow-up with ${rec.contactName}`}>
                     <CalendarPlus className="size-3.5" aria-hidden />
@@ -277,19 +294,7 @@ export function RecommendationCard({
                     <DropdownMenuItem onClick={() => schedule(14)}>2 weeks</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8"
-                  disabled={pending}
-                  onPointerEnter={preloadFollowUpDraftSheet}
-                  onFocus={preloadFollowUpDraftSheet}
-                  onClick={() => setDraftOpen(true)}
-                >
-                  <PenLine className="size-3.5" aria-hidden />
-                  {rec.draft ? "Review draft" : "Draft message"}
-                </Button>
+
                 <DropdownMenu>
                   <DropdownMenuTrigger className={triggerClass} disabled={pending} aria-label={`Snooze ${rec.contactName}`}>
                     <Clock className="size-3.5" aria-hidden />
@@ -319,16 +324,11 @@ export function RecommendationCard({
                 </DropdownMenu>
               </div>
             </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label={`Dismiss the suggestion about ${rec.contactName}`}
+            <DismissMenu
+              label={`Dismiss the suggestion about ${rec.contactName}`}
               disabled={pending}
-              className="shrink-0"
-              onClick={actions.dismiss}
-            >
-              <X className="size-4" aria-hidden />
-            </Button>
+              onDismiss={(reason) => actions.dismiss(reason)}
+            />
           </div>
           {draftOpen && <RecommendationDraftSheet rec={rec} actions={actions} />}
         </article>

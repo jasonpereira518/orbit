@@ -1,7 +1,5 @@
 import { z } from "zod";
 import { completeJson, parseAiJson } from "@/lib/ai";
-import { chatTitleReplySchema } from "@/lib/ai-reply-schemas";
-import { withTimeout } from "@/lib/async";
 
 /**
  * A short name for a conversation, written from the first message the user sent.
@@ -81,6 +79,40 @@ export function sanitizeChatTitle(raw: unknown): string | null {
 }
 
 /**
+ * Run `work` with a signal that aborts at `ms` or when `callerSignal` does, whichever comes
+ * first, and reject at that moment. The signal goes INTO the model call, so a timed-out or
+ * abandoned request is cancelled at the provider rather than raced and left to bill on
+ * (audit L-15).
+ */
+async function withTimeout<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  callerSignal?: AbortSignal
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(callerSignal?.reason ?? new Error("title timeout"));
+  if (callerSignal?.aborted) abort();
+  else callerSignal?.addEventListener("abort", abort, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work(controller.signal),
+      new Promise<never>((_, reject) => {
+        const fail = () => reject(controller.signal.reason ?? new Error("title timeout"));
+        if (controller.signal.aborted) return fail();
+        controller.signal.addEventListener("abort", fail, { once: true });
+        timer = setTimeout(() => {
+          controller.abort(new Error("title timeout"));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", abort);
+  }
+}
+
+/**
  * Summarise `question` into a title, or null when that is not possible or not worth it.
  *
  * `completeFn` is injectable so the behaviour can be pinned without a provider key.
@@ -88,28 +120,32 @@ export function sanitizeChatTitle(raw: unknown): string | null {
 export async function generateChatTitle(
   userId: string,
   question: string,
-  completeFn: typeof completeJson = completeJson
+  completeFn: typeof completeJson = completeJson,
+  /** The request's own signal, so a person who leaves cancels the title call too. */
+  callerSignal?: AbortSignal
 ): Promise<string | null> {
   const text = typeof question === "string" ? question.trim() : "";
   if (!text) return null;
   try {
     const content = await withTimeout(
-      completeFn(userId, {
-        operation: "chat.title",
-        schema: { name: "chat_title", zod: z.object({ title: z.string() }) },
-        temperature: 0.2,
-        // Cancels the request itself when the grace period is over, instead of leaving it to bill on.
-        signal: AbortSignal.timeout(TITLE_TIMEOUT_MS),
-        // Headroom for a model that spends a few tokens thinking before it writes six words.
-        maxOutputTokens: 160,
-        system: TITLE_SYSTEM,
-        // The question alone. Nothing about the user's network is needed to name a chat.
-        user: `First message:\n${text.slice(0, 1500)}`,
-      }),
+      (signal) =>
+        completeFn(userId, {
+          operation: "chat.title",
+          schema: { name: "chat_title", zod: z.object({ title: z.string() }) },
+          temperature: 0.2,
+          // Cancels the request itself when the grace period is over or the caller leaves,
+          // instead of leaving it to bill on.
+          signal,
+          // Headroom for a model that spends a few tokens thinking before it writes six words.
+          maxOutputTokens: 160,
+          system: TITLE_SYSTEM,
+          // The question alone. Nothing about the user's network is needed to name a chat.
+          user: `First message:\n${text.slice(0, 1500)}`,
+        }),
       TITLE_TIMEOUT_MS,
-      "title timeout"
+      callerSignal
     );
-    const parsed = parseAiJson(chatTitleReplySchema, content);
+    const parsed = parseAiJson<{ title?: unknown } | null>(content);
     return sanitizeChatTitle(parsed?.title);
   } catch {
     return null;

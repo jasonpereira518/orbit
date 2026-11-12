@@ -1,10 +1,13 @@
+import { normalizeEmail } from "@/lib/identity/email";
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
+import { escapeLike } from "@/lib/contact-search-rank";
 import { cleanSingleLine } from "@/lib/ai-security";
-import { normalizeEmail } from "@/lib/identity/email";
-import { LINKEDIN_WWW_ORIGIN } from "@/lib/identity/linkedin";
+import { linkedinSlug, nameSimilarity } from "@/lib/duplicates";
+import { sameGivenName } from "@/lib/names/nicknames";
 import {
   recruiters,
+  recruiterContactUnlocks,
   userRecruiterLinks,
   userSettings,
   type Recruiter,
@@ -17,15 +20,18 @@ export type PublicRecruiter = {
   id: string;
   fullName: string;
   firm: string | null;
+  role: string | null;
   specialty: string[];
   avgRating: number;
   ratingCount: number;
   logCount: number;
-  /** Resolved per field by `resolveRecruiterPii`: this viewer's own link, else the pool. */
+  /** Resolved per field: this viewer's own link, else unlocked pooled contact info. */
   email: string | null;
   linkedinUrl: string | null;
   phone: string | null;
   piiUnlocked: boolean;
+  hasEmail: boolean;
+  hasLinkedin: boolean;
   myLink: UserRecruiterLink | null;
 };
 
@@ -61,7 +67,7 @@ export function normalizeLinkedinUrl(
   try {
     const u = new URL(t.startsWith("http") ? t : `https://${t}`);
     const path = u.pathname.replace(/\/+$/, "").toLowerCase();
-    return `${LINKEDIN_WWW_ORIGIN}${path}`;
+    return `https://www.linkedin.com${path}`;
   } catch {
     return t.toLowerCase();
   }
@@ -82,20 +88,30 @@ export function normalizeLinkedinUrl(
 export function toPublicRecruiter(
   row: Recruiter,
   link: UserRecruiterLink | null,
-  pooledForViewer = false
+  pooledForViewer = false,
+  unlockedForViewer = false
 ): PublicRecruiter {
-  const pii = resolveRecruiterPii(row, link, pooledForViewer);
+  const piiUnlocked = Boolean(link) || (pooledForViewer && unlockedForViewer);
+  const pii = resolveRecruiterPii(row, link, piiUnlocked);
+  const role =
+    link?.roleInterviewingFor ||
+    link?.rolesDiscussed?.[0] ||
+    row.specialty?.[0] ||
+    null;
+
   return {
     id: row.id,
     fullName: row.fullName,
     firm: row.firm,
+    role,
     specialty: row.specialty || [],
     avgRating: row.avgRating,
     ratingCount: row.ratingCount,
     logCount: row.logCount,
     ...pii,
-    // Unchanged meaning: may this viewer see a contact section at all (their own link, or the pool).
-    piiUnlocked: Boolean(link) || pooledForViewer,
+    piiUnlocked,
+    hasEmail: Boolean(link?.email || (pooledForViewer && row.email)),
+    hasLinkedin: Boolean(link?.linkedinUrl || (pooledForViewer && row.linkedinUrl)),
     myLink: link,
   };
 }
@@ -190,6 +206,37 @@ export function pickPooledPii(
     if (opts.strict || (withdrawn && samePii(key, withdrawn, cur))) out[key] = offered[0] ?? null;
   }
   return out;
+}
+
+export const MIN_RECRUITERS_FOR_SHARING = 5;
+
+/** Number of recruiters this user has logged or scanned. */
+export async function getUserRecruiterCount(userId: string): Promise<number> {
+  const db = await getDb();
+  const res = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(userRecruiterLinks)
+    .where(eq(userRecruiterLinks.userId, userId));
+  return Number(res[0]?.count ?? 0);
+}
+
+/** Which recruiter IDs in this list have been unlocked with credits by this user. */
+export async function unlockedRecruiterIdsForViewer(
+  userId: string,
+  ids: string[]
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const db = await getDb();
+  const rows = await db
+    .select({ recruiterId: recruiterContactUnlocks.recruiterId })
+    .from(recruiterContactUnlocks)
+    .where(
+      and(
+        eq(recruiterContactUnlocks.userId, userId),
+        inArray(recruiterContactUnlocks.recruiterId, ids)
+      )
+    );
+  return new Set(rows.map((r) => r.recruiterId));
 }
 
 export async function pooledIdsForViewer(userId: string, ids: string[]): Promise<Set<string>> {
@@ -321,18 +368,86 @@ export async function pooledRecruiterIds(ids: string[]): Promise<Set<string>> {
   return new Set(rows.map((r) => r.recruiterId));
 }
 
+const CORPORATE_ALIASES: Record<string, string> = {
+  aws: "amazon",
+  "amazon web services": "amazon",
+  facebook: "meta",
+  "meta platforms": "meta",
+  alphabet: "google",
+  "google llc": "google",
+  "microsoft corporation": "microsoft",
+  "apple inc": "apple",
+  "netflix inc": "netflix",
+  "stripe inc": "stripe",
+  "uber technologies": "uber",
+};
+
+export function canonicalFirm(firm: string | null | undefined): string {
+  if (!firm) return "";
+  let cleaned = firm
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (CORPORATE_ALIASES[cleaned]) {
+    return CORPORATE_ALIASES[cleaned];
+  }
+  // Remove common corporate suffixes
+  cleaned = cleaned
+    .replace(
+      /\b(inc|incorporated|llc|l l c|ltd|limited|corp|corporation|technologies|technology|tech|labs|group|holdings|services|solutions|company|co)\b/gi,
+      ""
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  return CORPORATE_ALIASES[cleaned] || cleaned;
+}
+
+export function areNicknames(a: string, b: string): boolean {
+  return sameGivenName(a, b);
+}
+
+export function areNamesEquivalent(nameA: string, nameB: string): boolean {
+  const normA = nameA.toLowerCase().trim();
+  const normB = nameB.toLowerCase().trim();
+  if (normA === normB) return true;
+
+  const sim = nameSimilarity(normA, normB);
+  if (sim >= 0.88) return true;
+
+  const tokensA = normA.split(/\s+/).filter(Boolean);
+  const tokensB = normB.split(/\s+/).filter(Boolean);
+
+  if (tokensA.length >= 2 && tokensB.length >= 2) {
+    const firstA = tokensA[0];
+    const lastA = tokensA[tokensA.length - 1];
+    const firstB = tokensB[0];
+    const lastB = tokensB[tokensB.length - 1];
+
+    const lastSim = nameSimilarity(lastA, lastB);
+    if ((lastA === lastB || lastSim >= 0.85) && areNicknames(firstA, firstB)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export async function findMatchingRecruiter(input: {
   email?: string | null;
   linkedinUrl?: string | null;
-  fullName: string;
+  fullName?: string | null;
   firm?: string | null;
 }): Promise<Recruiter | null> {
   const db = await getDb();
   const emailNorm = normalizeEmail(input.email);
   const linkedin = normalizeLinkedinUrl(input.linkedinUrl);
-  const nameNorm = normalizePersonName(input.fullName);
+  const inSlug = linkedinSlug(input.linkedinUrl);
+  const nameNorm = input.fullName ? normalizePersonName(input.fullName) : null;
   const firmNorm = normalizeFirm(input.firm);
+  const canonFirm = canonicalFirm(input.firm);
 
+  // 1. Direct Email Match
   if (emailNorm) {
     const byEmail = await db.query.recruiters.findFirst({
       where: eq(recruiters.emailNormalized, emailNorm),
@@ -340,14 +455,27 @@ export async function findMatchingRecruiter(input: {
     if (byEmail) return byEmail;
   }
 
+  // 2. Direct or Slug-based LinkedIn Match
   if (linkedin) {
     const byLinkedin = await db.query.recruiters.findFirst({
       where: eq(recruiters.linkedinUrl, linkedin),
     });
     if (byLinkedin) return byLinkedin;
   }
+  if (inSlug) {
+    const candidates = await db.query.recruiters.findMany({
+      where: sql`${recruiters.linkedinUrl} IS NOT NULL`,
+      limit: 100,
+    });
+    for (const c of candidates) {
+      if (linkedinSlug(c.linkedinUrl) === inSlug) {
+        return c;
+      }
+    }
+  }
 
-  if (firmNorm) {
+  // 3. Exact Normalized Name + Firm Match
+  if (nameNorm && firmNorm) {
     const byNameFirm = await db.query.recruiters.findFirst({
       where: and(
         eq(recruiters.nameNormalized, nameNorm),
@@ -355,6 +483,32 @@ export async function findMatchingRecruiter(input: {
       ),
     });
     if (byNameFirm) return byNameFirm;
+  }
+
+  // 4. Fuzzy Name + Canonical Firm Match (even when keywords differ, e.g. "Google" vs "Google LLC")
+  if (nameNorm && input.fullName && canonFirm) {
+    const firstName = input.fullName.split(" ")[0] || "";
+    const candidates = await db.query.recruiters.findMany({
+      where: or(
+        eq(recruiters.nameNormalized, nameNorm),
+        ilike(recruiters.fullName, `%${escapeLike(firstName)}%`),
+        ilike(recruiters.firm, `%${escapeLike(canonFirm)}%`)
+      ),
+      limit: 50,
+    });
+
+    for (const c of candidates) {
+      const cFirm = canonicalFirm(c.firm);
+      const firmMatches =
+        cFirm &&
+        (cFirm === canonFirm ||
+          cFirm.includes(canonFirm) ||
+          canonFirm.includes(cFirm));
+
+      if (firmMatches && areNamesEquivalent(c.fullName, input.fullName)) {
+        return c;
+      }
+    }
   }
 
   return null;
@@ -487,6 +641,7 @@ export async function ensureUserLink(input: {
   email?: string | null;
   phone?: string | null;
   linkedinUrl?: string | null;
+  roleInterviewingFor?: string | null;
   status?: RecruiterLinkStatus;
   notes?: string | null;
   source?: RecruiterLinkSource;
@@ -506,6 +661,10 @@ export async function ensureUserLink(input: {
       .update(userRecruiterLinks)
       .set({
         status: input.status ?? existing.status,
+        roleInterviewingFor:
+          input.roleInterviewingFor !== undefined
+            ? input.roleInterviewingFor
+            : existing.roleInterviewingFor,
         notes:
           input.notes !== undefined ? input.notes : existing.notes,
         personalRating:
@@ -532,6 +691,7 @@ export async function ensureUserLink(input: {
       userId: input.userId,
       recruiterId: input.recruiterId,
       status: input.status || "planned",
+      roleInterviewingFor: input.roleInterviewingFor?.trim() || null,
       notes: input.notes || null,
       source: input.source || "manual",
       personalRating: input.personalRating ?? null,
@@ -547,7 +707,7 @@ export async function ensureUserLink(input: {
 }
 
 function matchesQuery(q: string) {
-  const pattern = `%${q}%`;
+  const pattern = `%${escapeLike(q)}%`;
   return or(
     ilike(recruiters.fullName, pattern),
     ilike(recruiters.firm, pattern),

@@ -17,7 +17,8 @@
  * reason. It costs a second fetch on confirm, because the server re-reads the page rather
  * than trusting a diff that has been round-tripped through a browser.
  */
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Loader2, Pencil, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -38,7 +39,7 @@ type Change = { field: string; label: string; from: string | null; to: string };
 
 export function EventActions({ event }: { event: EditableEvent }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [editing, setEditing] = useState(false);
   const [changes, setChanges] = useState<Change[] | null>(null);
 

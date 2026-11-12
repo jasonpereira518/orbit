@@ -1,4 +1,5 @@
 import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -40,7 +41,9 @@ import { aiDenialFromSettings } from "@/lib/ai-access";
 import { contactUsageForUser } from "@/lib/contact-writes";
 import { countTourExamples, hasOwnInteraction } from "@/lib/onboarding-examples/status";
 import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
+import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { MorningBriefing } from "@/components/radar/morning-briefing";
+import { RadarDrawer, RadarWidget } from "@/components/radar/radar-dock";
 import type { RadarBriefing } from "@/lib/radar/page-data";
 
 /**
@@ -133,12 +136,13 @@ export async function SetupChecklistSection() {
   const settings = await ensureUserSettings(userId);
   if (!settings.onboardingCompletedAt || tourRailVisible(settings)) return null;
 
-  const [gmail, outlook, usage, examples, logged] = await Promise.all([
+  const [gmail, outlook, usage, examples, logged, goals] = await Promise.all([
     getGmailConnectionStatus(),
     getOutlookConnectionStatus(),
     contactUsageForUser(userId),
     countTourExamples(userId),
     hasOwnInteraction(userId),
+    listActiveGoalTextsForUser(userId, { limit: 1 }),
   ]);
 
   const items: SetupChecklistItem[] = [];
@@ -152,6 +156,16 @@ export async function SetupChecklistSection() {
           ? "Capture from notes, Chat and profile briefs run on it."
           : "Orbit’s AI isn’t available right now, so capture, Chat and briefs need a key of your own",
       href: integrationHref("ai"),
+    });
+  }
+  // The About you step was skipped, or finished without a goal. Settings, not /onboarding:
+  // the stage redirects a finished account straight back to the dashboard.
+  if (goals.length === 0 && !settings.careerProfile?.aim) {
+    items.push({
+      id: "about",
+      label: "Tell Orbit what you’re going for",
+      detail: "One goal, and Orbit’s suggestions and drafts start pointing at it.",
+      href: "/settings#settings-goals",
     });
   }
   // What onboarding set up, in its order: the AI key, Google/Microsoft, then the things the
@@ -327,34 +341,73 @@ export async function ChartsSection({ bundle }: { bundle: DashboardBundle }) {
  * Radar's morning briefing, the dashboard's hero for viewers who can open Radar. Renders
  * nothing until their first run: that account keeps the legacy suggestions card below.
  */
-export async function MorningBriefingSection({ briefing }: { briefing: Promise<RadarBriefing> }) {
+export async function MorningBriefingSection({
+  briefing,
+  bundle,
+}: {
+  briefing: Promise<RadarBriefing>;
+  bundle?: DashboardBundle;
+}) {
+  const [b, bundleResult] = await Promise.all([
+    briefing.catch(() => null),
+    bundle ? bundle.catch(() => null) : Promise.resolve(null),
+  ]);
+  if (!b?.hasRun) return null;
+  return (
+    <RadarDrawer>
+      <div className="reveal-mount min-w-0 w-full" style={revealDelay(0)}>
+        <MorningBriefing
+          total={b.total}
+          today={b.today}
+          drafts={b.drafts}
+          changes={b.changes}
+          paused={b.paused}
+          networkStats={b.networkStats ?? bundleResult?.networkStats}
+          activeProjectsCount={b.activeProjectsCount}
+          items={b.top.map((r) => ({
+            id: r.id,
+            contactId: r.contactId,
+            kind: r.kind,
+            reasons: r.reasons,
+            evidence: r.evidence,
+            aiNote: r.aiNote,
+            aiAngle: r.aiAngle,
+            draft: r.draft,
+            contactName: r.contactName,
+            title: r.title,
+            company: r.company,
+            tier: r.tier,
+            avatarUrl: r.avatarUrl,
+            suggestedCalendarInvite: r.suggestedCalendarInvite,
+            discoveredPerson: r.discoveredPerson,
+          }))}
+        />
+      </div>
+    </RadarDrawer>
+  );
+}
+
+/**
+ * The small Radar card beside the dashboard header: the same briefing, collapsed. Awaits the
+ * same promise as {@link MorningBriefingSection}, so it costs no second query, and renders
+ * nothing in the same case (no first run yet), leaving the header as it always was.
+ */
+export async function RadarWidgetSection({ briefing }: { briefing: Promise<RadarBriefing> }) {
   const b = await briefing.catch(() => null);
   if (!b?.hasRun) return null;
   return (
-    <div className="reveal-mount min-w-0 lg:flex-1 lg:basis-0" style={revealDelay(0)}>
-      <MorningBriefing
-        total={b.total}
-        today={b.today}
-        drafts={b.drafts}
-        changes={b.changes}
-        paused={b.paused}
-        items={b.top.map((r) => ({
-          id: r.id,
-          contactId: r.contactId,
-          kind: r.kind,
-          reasons: r.reasons,
-          evidence: r.evidence,
-          aiNote: r.aiNote,
-          aiAngle: r.aiAngle,
-          draft: r.draft,
-          contactName: r.contactName,
-          title: r.title,
-          company: r.company,
-          tier: r.tier,
-          avatarUrl: r.avatarUrl,
-        }))}
-      />
-    </div>
+    <RadarWidget
+      today={b.today}
+      total={b.total}
+      drafts={b.drafts}
+      paused={b.paused}
+      people={b.top.slice(0, 3).map((r) => ({
+        contactId: r.contactId,
+        name: r.contactName,
+        avatarUrl: r.avatarUrl,
+      }))}
+      changes={b.changes}
+    />
   );
 }
 
@@ -445,7 +498,7 @@ export async function RemindersAndFollowUpsSection({
 }: {
   bundle: DashboardBundle;
 }) {
-  const { data } = await bundle;
+  const [{ data }, timeZone] = await Promise.all([bundle, viewerTimeZone()]);
   return (
     <>
       <div className="reveal-mount min-w-0 [&>*]:h-full" style={revealDelay(0)}>
@@ -503,6 +556,7 @@ export async function RemindersAndFollowUpsSection({
                   tier={tierForContact(data, c.id)}
                   nextFollowUpAt={c.nextFollowUpAt}
                   lastInteractionAt={c.lastInteractionAt}
+                  timeZone={timeZone}
                 />
               ))
             )}
@@ -665,7 +719,10 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
           preferredName: c.preferredName,
           company: c.company,
           title: c.title,
+          profileImageUrl: c.profileImageUrl,
           goalRelevance: c.goalRelevance,
+          reason: c.reason,
+          companyName: c.companyName,
         }))}
       />
 

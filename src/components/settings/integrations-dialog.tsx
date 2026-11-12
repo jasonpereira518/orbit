@@ -12,11 +12,10 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AiSettings } from "@/components/settings/ai-settings";
-import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 import { ApiSettings } from "@/components/settings/api-settings";
 import { AssistantsSettings } from "@/components/settings/assistants-settings";
-import { CalendarFeedSettings } from "@/components/settings/calendar-feed-settings";
 import { GranolaSettings } from "@/components/settings/granola-settings";
+import { NotionSettings } from "@/components/settings/notion-settings";
 import { IntegrationIcon, StatusDot, statusText } from "@/components/settings/integration-ui";
 import { IntegrationsOverview } from "@/components/settings/integrations-overview";
 import { OutreachSettings } from "@/components/settings/outreach-settings";
@@ -35,6 +34,7 @@ import {
   type IntegrationFocus,
   type IntegrationTabId,
   type IntegrationView,
+  type SettingsSectionId,
 } from "@/components/settings/sections";
 import { ImportProgress } from "@/components/imports/import-utils";
 import {
@@ -134,12 +134,21 @@ export function IntegrationsDialog({
   tabs,
   statuses,
   inboxVisible,
+  emailInsightsVisible,
   initialSettings,
   canUseRecruiters,
-  speechAllowances,
+  onLeaveTo,
+  finalFocus,
+  onCloseComplete,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** A page's link to a card on the settings page: closes the dialog and lands there. */
+  onLeaveTo: (anchor: SettingsSectionId) => void;
+  /** Where focus goes on close — `false` while a leave target is waiting to take it. */
+  finalFocus: () => boolean;
+  /** After the exit animation, once the page under the dialog can scroll again. */
+  onCloseComplete: () => void;
   view: IntegrationView;
   onViewChange: (view: IntegrationView) => void;
   /**
@@ -157,13 +166,20 @@ export function IntegrationsDialog({
   statuses: IntegrationStatuses | null;
   /** False when /recruiters is hidden: both account pages then leave out their inbox row. */
   inboxVisible: boolean;
+  emailInsightsVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
-  speechAllowances: SpeechAllowances;
 }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={(isOpen) => {
+        if (!isOpen) onCloseComplete();
+      }}
+    >
       <DialogContent
+        finalFocus={finalFocus}
         className={cn(
           "flex h-[min(88dvh,46rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl",
           "md:grid md:grid-cols-[14.5rem_minmax(0,1fr)]"
@@ -179,9 +195,10 @@ export function IntegrationsDialog({
           tabs={tabs}
           statuses={statuses}
           inboxVisible={inboxVisible}
+          emailInsightsVisible={emailInsightsVisible}
           initialSettings={initialSettings}
           canUseRecruiters={canUseRecruiters}
-          speechAllowances={speechAllowances}
+          onLeaveTo={onLeaveTo}
         />
       </DialogContent>
     </Dialog>
@@ -198,9 +215,10 @@ function DialogBody({
   tabs,
   statuses,
   inboxVisible,
+  emailInsightsVisible,
   initialSettings,
   canUseRecruiters,
-  speechAllowances,
+  onLeaveTo,
 }: {
   /**
    * False from the moment the dialog starts closing. Base UI only unmounts the body once
@@ -222,9 +240,10 @@ function DialogBody({
   tabs: IntegrationTabId[];
   statuses: IntegrationStatuses | null;
   inboxVisible: boolean;
+  emailInsightsVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
-  speechAllowances: SpeechAllowances;
+  onLeaveTo: (anchor: SettingsSectionId) => void;
 }) {
   const job = useImportJob();
   // The Overview's "Connect Google" / "Connect Microsoft", which start the consent screen
@@ -584,10 +603,12 @@ function DialogBody({
                       id={id}
                       active={active}
                       inboxVisible={inboxVisible}
+                      emailInsightsVisible={emailInsightsVisible}
                       initialSettings={initialSettings}
                       canUseRecruiters={canUseRecruiters}
                       onOpenPage={openPage}
-                      speechAllowances={speechAllowances}
+                      onLeaveTo={onLeaveTo}
+                      notionLive={tabs.includes("notion")}
                     />
                   </>
                 )}
@@ -604,18 +625,23 @@ function Panel({
   id,
   active,
   inboxVisible,
+  emailInsightsVisible,
   initialSettings,
   canUseRecruiters,
   onOpenPage,
-  speechAllowances,
+  onLeaveTo,
+  notionLive,
 }: {
   id: IntegrationTabId;
   active: boolean;
   inboxVisible: boolean;
+  emailInsightsVisible: boolean;
   initialSettings: Settings;
   canUseRecruiters: boolean;
   onOpenPage: (page: IntegrationTabId) => void;
-  speechAllowances: SpeechAllowances;
+  onLeaveTo: (anchor: SettingsSectionId) => void;
+  /** The Notion page is visible to this viewer, so Notion AI joins the assistants. */
+  notionLive: boolean;
 }) {
   switch (id) {
     // One page per account, not a stack of cards. `returnTo` is the page itself: the page is
@@ -632,6 +658,10 @@ function Panel({
           aiReady={initialSettings.hasApiKey}
           active={active}
           onOpenPage={onOpenPage}
+          onLeaveTo={onLeaveTo}
+          emailInsights={
+            emailInsightsVisible ? { initialEnabled: initialSettings.emailIntelEnabled } : null
+          }
         />
       );
     case "microsoft":
@@ -643,18 +673,19 @@ function Panel({
           aiReady={initialSettings.hasApiKey}
           active={active}
           onOpenPage={onOpenPage}
+          onLeaveTo={onLeaveTo}
         />
       );
     case "linkedin":
       return <LinkedInSettings />;
     case "granola":
       return <GranolaSettings />;
+    case "notion":
+      return <NotionSettings />;
     case "ai":
-      return <AiSettings initialSettings={initialSettings} speech={speechAllowances} />;
+      return <AiSettings initialSettings={initialSettings} onLeaveTo={onLeaveTo} />;
     case "assistants":
-      return <AssistantsSettings />;
-    case "reminders":
-      return <CalendarFeedSettings />;
+      return <AssistantsSettings withNotion={notionLive} />;
     case "api":
       return <ApiSettings />;
     case "webhooks":

@@ -1,11 +1,12 @@
+import { rateLimitGuard } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
-import { hasBlobStorage } from "@/lib/contact-avatar";
+import { hasBlobTokenInEnv } from "@/lib/contact-avatar";
 import { attachmentPrefixFor, isBlockedFilename } from "@/lib/email/attachment-paths";
 import { MAX_ATTACHMENT_BYTES_GMAIL } from "@/lib/email/config";
 import { requireUserForSurface } from "@/lib/plan-guards";
-import { RATE_LIMITS } from "@/lib/rate-limit";
-import { withRateLimit } from "@/lib/route-http";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 
 export const runtime = "nodejs";
@@ -19,7 +20,7 @@ export const dynamic = "force-dynamic";
  * records an attachment — and Blob's callback would arrive without a session.
  */
 export async function POST(request: Request) {
-  if (!hasBlobStorage()) {
+  if (!hasBlobTokenInEnv()) {
     return NextResponse.json({ error: "Attachments aren’t available" }, { status: 503 });
   }
   let userId: string;
@@ -28,6 +29,11 @@ export async function POST(request: Request) {
   } catch {
     return new NextResponse(null, { status: 401 });
   }
+  // The browser's `upload()` posts JSON from the compose dialog. Vercel Blob's own
+  // `blob.upload-completed` callback would come from Vercel's servers, but this route never
+  // registers one (`onUploadCompleted` is unset) and refuses that type below anyway.
+  const refused = sameOriginGuard(request, { json: true });
+  if (refused) return refused;
   let body: HandleUploadBody;
   try {
     body = (await request.json()) as HandleUploadBody;
@@ -37,7 +43,7 @@ export async function POST(request: Request) {
   if (body.type !== "blob.generate-client-token") {
     return NextResponse.json({ error: "Unsupported" }, { status: 400 });
   }
-  const limited = await withRateLimit("emailAttachmentUpload", userId, RATE_LIMITS.emailAttachmentUpload);
+  const limited = await rateLimitGuard(() => consumeBucket("emailAttachmentUpload", userId, RATE_LIMITS.emailAttachmentUpload));
   if (limited) return limited;
   try {
     const json = await handleUpload({
@@ -57,6 +63,10 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(json);
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Upload refused" }, { status: 400 });
+    // `onBeforeGenerateToken`'s refusals are Orbit's words; anything else from the SDK is not
+    // repeated verbatim (FIX_PLAN 3.2).
+    const message = err instanceof Error ? err.message : "";
+    const ours = message === "Invalid upload path" || message === "That file type can’t be sent by email";
+    return NextResponse.json({ error: ours ? message : "Upload refused" }, { status: 400 });
   }
 }

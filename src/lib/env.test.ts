@@ -17,6 +17,7 @@ const LONG = "x".repeat(40);
 /** A production env that passes with zero errors (warnings aside). */
 const GOOD_REQUIRED: Bag = {
   DATABASE_URL: "postgresql://u:p@db.prod.example.net/orbit",
+  PRODUCTION_DB_HOST: "db.prod.example.net",
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_abc",
   CLERK_SECRET_KEY: "sk_live_abc",
   CLERK_WEBHOOK_SIGNING_SECRET: "whsec_abc",
@@ -26,6 +27,7 @@ const GOOD_REQUIRED: Bag = {
   ADMIN_USER_IDS: "user_1",
   RESEND_API_KEY: "re_abc",
   RESEND_FROM_EMAIL: "Orbit <hi@example.com>",
+  ORBIT_MANAGED_OPENAI_API_KEY: "sk-managed",
 };
 const GOOD_EXPECTED: Bag = Object.fromEntries(EXPECTED_IN_PRODUCTION.map((k) => [k, "set-" + k]));
 GOOD_EXPECTED.STRIPE_SECRET_KEY = "sk_live_abc";
@@ -157,15 +159,15 @@ describe("validateEnv: production", () => {
     });
 
     it("managed-AI warning: Stripe on, no managed key, not switched off", () => {
-      const r = run(prod({ ORBIT_MANAGED_GEMINI_API_KEY: undefined }), "production");
+      const r = run(prod({ ORBIT_MANAGED_OPENAI_API_KEY: undefined }), "production");
       assert.deepEqual(r.errors, []);
       assert.equal(r.warnings.length, 1);
       assert.ok(has(r.warnings, "No ORBIT_MANAGED_*_API_KEY is set"));
     });
 
     it("managed-AI warning is silenced by ORBIT_MANAGED_AI=off (any case) or no Stripe key", () => {
-      assert.deepEqual(run(prod({ ORBIT_MANAGED_GEMINI_API_KEY: undefined, ORBIT_MANAGED_AI: " OFF " }), "production").warnings, []);
-      const noStripe = run(prod({ ORBIT_MANAGED_GEMINI_API_KEY: undefined, STRIPE_SECRET_KEY: undefined, STRIPE_WEBHOOK_SECRET: undefined }), "production");
+      assert.deepEqual(run(prod({ ORBIT_MANAGED_OPENAI_API_KEY: undefined, ORBIT_MANAGED_AI: " OFF " }), "production").warnings, []);
+      const noStripe = run(prod({ ORBIT_MANAGED_OPENAI_API_KEY: undefined, STRIPE_SECRET_KEY: undefined, STRIPE_WEBHOOK_SECRET: undefined }), "production");
       assert.ok(!has(noStripe.warnings, "ORBIT_MANAGED"));
     });
   });
@@ -192,8 +194,9 @@ describe("validateEnv: production", () => {
 describe("validateEnv: preview", () => {
   const previewOk: Bag = {
     DATABASE_URL: "x",
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "x",
-    CLERK_SECRET_KEY: "x",
+    PRODUCTION_DB_HOST: "prod.example.net",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x",
+    CLERK_SECRET_KEY: "sk_test_x",
     ENCRYPTION_SECRET: "x",
   };
 
@@ -209,6 +212,7 @@ describe("validateEnv: preview", () => {
     const r = run(
       {
         DATABASE_URL: "mysql://nope",
+        PRODUCTION_DB_HOST: "prod.example.net",
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x",
         CLERK_SECRET_KEY: "sk_test_x",
         ENCRYPTION_SECRET: "short",
@@ -226,7 +230,7 @@ describe("validateEnv: preview", () => {
     const others = REQUIRED_IN_PRODUCTION.filter((n) => !(REQUIRED_IN_PREVIEW as readonly string[]).includes(n));
     assert.deepEqual(
       r.warnings,
-      [...others.map((n) => `${n} is unset (required in production)`), "PRODUCTION_DB_HOST is unset; the preview-migration guard is unarmed"]
+      others.map((n) => `${n} is unset (required in production)`)
     );
     assert.deepEqual(r.missingExpected, []);
   });
@@ -276,9 +280,9 @@ describe("checkMigrationTarget", () => {
       true
     );
   });
-  it("preview without PRODUCTION_DB_HOST -> allowed but unarmed (not fail-closed)", () => {
+  it("preview without PRODUCTION_DB_HOST -> refused, flagged unarmed (fail-closed)", () => {
     const v = checkMigrationTarget({ VERCEL: "1", DATABASE_URL: url }, { vercelEnv: "preview" });
-    assert.equal(v.allowed, true);
+    assert.equal(v.allowed, false);
     assert.equal(v.unarmed, true);
   });
   it("preview pointed at the production host -> refused, host named, no credentials", () => {
@@ -287,11 +291,11 @@ describe("checkMigrationTarget", () => {
     assert.ok(v.reason.includes("prod.db.net"));
     assert.ok(!v.reason.includes("u:p"));
   });
-  it("preview on its own branch, or an unparseable URL -> allowed", () => {
+  it("preview on its own branch -> allowed; an unparseable URL -> refused", () => {
     assert.equal(checkMigrationTarget({ VERCEL: "1", DATABASE_URL: "postgres://a@branch.db.net/x", PRODUCTION_DB_HOST: "prod.db.net" }, { vercelEnv: "preview" }).allowed, true);
     const bad = checkMigrationTarget({ VERCEL: "1", DATABASE_URL: "junk", PRODUCTION_DB_HOST: "prod.db.net" }, { vercelEnv: "preview" });
-    assert.equal(bad.allowed, true);
-    assert.ok(bad.reason.includes("(unparseable)"));
+    assert.equal(bad.allowed, false); // fail-closed: a build that cannot tell its target does not migrate
+    assert.ok(bad.reason.includes("unparseable"));
   });
   it("a development VERCEL_ENV is treated like preview", () => {
     assert.equal(checkMigrationTarget({ VERCEL: "1", DATABASE_URL: url, PRODUCTION_DB_HOST: "prod.db.net" }, { vercelEnv: "development" }).allowed, false);

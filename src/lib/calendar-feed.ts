@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
-import { sha256Hex } from "@/lib/crypto";
+import { isDateOnlyDue } from "@/lib/reminder-due-bucket";
+import { createHash, randomBytes } from "node:crypto";
 import { and, asc, eq, gte, isNotNull, lte } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contacts, reminders, userSettings } from "@/db/schema";
@@ -26,20 +26,16 @@ const TIMED_ALARM = "-PT15M";
  * Two storage conventions both mean "date only" in this codebase, and each must be
  * recognized or the event degrades into a spurious half-hour meeting:
  *   - UTC midnight — `new Date("YYYY-MM-DD")`, e.g. `createReminder`.
- *   - Local noon — `atLocalNoon()`, used by extracted dates and
+ *   - Noon — `atLocalNoon()` on the (UTC) server, used by extracted dates and
  *     `scheduleContactFollowUpAt`. Noon is deliberate: it keeps the calendar day stable
  *     in the UI across timezone offsets, but it is emphatically not a real appointment
  *     time, and treating it as one also risks rendering on the wrong day for viewers
  *     far from the server's timezone.
  */
 export function isDateOnly(due: Date) {
-  const utcMidnight =
-    due.getUTCHours() === 0 &&
-    due.getUTCMinutes() === 0 &&
-    due.getUTCSeconds() === 0;
-  const localNoon =
-    due.getHours() === 12 && due.getMinutes() === 0 && due.getSeconds() === 0;
-  return utcMidnight || localNoon;
+  // The shared rule (UTC midnight or UTC noon), not this runtime's local noon: the server's
+  // zone must not decide whether a reminder is an all-day event.
+  return isDateOnlyDue(due);
 }
 
 export function generateCalendarFeedToken() {
@@ -53,7 +49,7 @@ export function generateCalendarFeedToken() {
  * encode(sha256(convert_to(token, 'UTF8')), 'hex').
  */
 export function hashCalendarFeedToken(token: string): string {
-  return sha256Hex(token);
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 /** Mint a token, store its hash, and return the token — the only time it exists in plaintext. */
@@ -89,6 +85,15 @@ export function buildCalendarFeedWebcalUrl(token: string) {
 }
 
 /**
+ * A feed token is a bearer credential in a URL — the places calendar URLs get copied
+ * (subscription settings, forwarded mail, screenshots, access logs) are exactly the places a
+ * secret leaks. Rotate the link by minting a new one; `regenerateCalendarFeedToken` in
+ * `src/actions/calendar-feed.ts` is the button, and this is the ceiling on a leak that was
+ * never noticed.
+ */
+export const MAX_FEED_TOKEN_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+
+/**
  * Resolves a feed token to its owner. Returns null rather than throwing so the route can
  * answer 404 without revealing whether the token merely expired.
  */
@@ -102,11 +107,20 @@ export async function findUserByFeedToken(rawToken: string) {
     where: eq(userSettings.calendarFeedToken, hashCalendarFeedToken(token)),
     columns: {
       userId: true,
+      calendarFeedTokenCreatedAt: true,
       calendarFeedLastFetchedAt: true,
       suspendedAt: true,
     },
   });
   if (!row) return null;
+
+  // Minting has always written this. A row without it predates the column (or was written
+  // by hand), and a token nobody can date is a token nobody can retire — refuse it so the
+  // account regenerates rather than keeping an immortal credential.
+  if (!row.calendarFeedTokenCreatedAt) return null;
+  if (Date.now() - row.calendarFeedTokenCreatedAt.getTime() > MAX_FEED_TOKEN_AGE_MS) {
+    return null;
+  }
 
   // This route is authenticated by the token alone and never calls `requireUserId()`, so
   // the suspension gate there does not cover it. Returning null makes the route's existing

@@ -381,7 +381,10 @@ export async function asActionResult<T>(
     // A plan denial is already written for the person who hit it, and a thrown one would reach
     // the client as a digest. Returned as data it survives — the same shape webhook-endpoints
     // and api-keys already use for this case.
-    if (isUserFacingError(err) || (err instanceof Error && err.name === "PaywallError")) {
+    if (
+      isUserFacingError(err) ||
+      (err instanceof Error && (err.name === "PaywallError" || err.name === "RateLimitedError"))
+    ) {
       return { ok: false, error: err.message };
     }
     throw err;
@@ -449,6 +452,9 @@ export function friendlyError(err: unknown, fallback: string): string {
   // the one server-thrown message worth showing verbatim. Matched by name, not `instanceof`:
   // a second module instance would break the class check, and this file imports nothing.
   if (err instanceof Error && err.name === "PaywallError" && err.message) return err.message;
+  // The limiter writes its message for the person ("Try again in 40 minutes"), and it is the
+  // same in every environment, so it is worth showing verbatim rather than falling back.
+  if (err instanceof Error && err.name === "RateLimitedError" && err.message) return err.message;
 
   if (raw && OWN_WORDS.has(raw)) return raw;
   if (raw && isMissingAiApiKeyError(raw)) return MISSING_AI_API_KEY_MESSAGE;

@@ -1,11 +1,9 @@
+import { authErrorResponse, rateLimitGuard, routeError } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { NextResponse } from "next/server";
-import { friendlyError } from "@/lib/errors";
-import { reportedFailure } from "@/lib/report-error";
-import { isPaywallError } from "@/lib/entitlements";
 import { recordLiveSegments, validYouClaim, type LiveSegmentInput, type YouClaim } from "@/lib/meeting-sessions";
 import { requireMeetingsUser } from "@/lib/plan-guards";
-import { RATE_LIMITS } from "@/lib/rate-limit";
-import { withRateLimit } from "@/lib/route-http";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -31,21 +29,18 @@ export async function POST(request: Request, ctx: Params) {
   try {
     userId = await requireMeetingsUser();
   } catch (err) {
-    const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: friendlyError(err, "Sign in to record a meeting") }, { status });
+    return authErrorResponse(err, "Sign in to record a meeting");
   }
 
-  const origin = request.headers.get("origin");
-  if (origin && URL.parse(origin)?.host !== new URL(request.url).host) {
-    return NextResponse.json({ error: "Cross-origin upload refused" }, { status: 403 });
-  }
+  const refused = sameOriginGuard(request, { message: "Cross-origin upload refused", json: true });
+  if (refused) return refused;
 
   const recorderId = request.headers.get("x-orbit-recorder");
   if (!recorderId) {
     return NextResponse.json({ error: "Missing recorder id" }, { status: 400 });
   }
 
-  const limited = await withRateLimit("meetingChunk", userId, RATE_LIMITS.meetingChunk);
+  const limited = await rateLimitGuard(() => consumeBucket("meetingChunk", userId, RATE_LIMITS.meetingChunk));
   if (limited) return limited;
 
   let segments: LiveSegmentInput[];
@@ -71,11 +66,13 @@ export async function POST(request: Request, ctx: Params) {
     }
     return NextResponse.json({ written: result.written, durationMs: result.durationMs });
   } catch (err) {
-    const failure = reportedFailure(err, "Couldn’t save that part of the meeting", {
+    // 502 for a fault, as before: the recorder re-queues the batch and retries.
+    return routeError(err, {
+      fallback: "Couldn’t save that part of the meeting",
       where: "route.meeting-segments",
       userId,
       extra: { sessionId: id },
+      faultStatus: 502,
     });
-    return NextResponse.json({ error: failure.error, ref: failure.ref }, { status: 502 });
   }
 }

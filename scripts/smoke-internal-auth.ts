@@ -19,12 +19,13 @@ import { POST as continueImport } from "../src/app/api/imports/[id]/continue/rou
 import { POST as embeddingBackfill } from "../src/app/api/embeddings/backfill/route";
 import { POST as workHistoryResearch } from "../src/app/api/work-history/research/route";
 import { POST as workHistorySweep } from "../src/app/api/work-history/sweep/route";
+import { POST as monthlyUpkeep } from "../src/app/api/contacts/monthly-upkeep/route";
 import { POST as nameSweep } from "../src/app/api/contacts/name-sweep/route";
 import { POST as emailIntelSweep } from "../src/app/api/email-intel/sweep/route";
 import { POST as timelineBackfill } from "../src/app/api/linkedin/timeline-events/backfill/route";
 import { POST as runCaptureJob } from "../src/app/api/capture/jobs/[id]/run/route";
 import { POST as radarRun } from "../src/app/api/radar/run/route";
-import { POST as radarFeeds } from "../src/app/api/radar/feeds/sweep/route";
+import { POST as radarWeb } from "../src/app/api/radar/web/route";
 import { POST as radarDigest } from "../src/app/api/radar/digest/route";
 
 const SECRET = "smoke-internal-auth-secret";
@@ -133,6 +134,8 @@ async function main() {
   check("work-history/research → 401", wh.status === 401, `got ${wh.status}`);
   const whs = await workHistorySweep(req());
   check("work-history/sweep → 401", whs.status === 401, `got ${whs.status}`);
+  const monthly = await monthlyUpkeep(req());
+  check("contacts/monthly-upkeep → 401", monthly.status === 401, `got ${monthly.status}`);
   const names = await nameSweep(req());
   check("contacts/name-sweep → 401", names.status === 401, `got ${names.status}`);
   const emailIntel = await emailIntelSweep(req());
@@ -143,8 +146,8 @@ async function main() {
   check("capture/jobs/[id]/run → 401", cap.status === 401, `got ${cap.status}`);
   const radar = await radarRun(req());
   check("radar/run → 401", radar.status === 401, `got ${radar.status}`);
-  const feeds = await radarFeeds(req());
-  check("radar/feeds/sweep → 401", feeds.status === 401, `got ${feeds.status}`);
+  const web = await radarWeb(req());
+  check("radar/web → 401", web.status === 401, `got ${web.status}`);
   const digest = await radarDigest(req());
   check("radar/digest → 401", digest.status === 401, `got ${digest.status}`);
 
@@ -157,7 +160,7 @@ async function main() {
     timelineBackfill(req("Bearer nope")),
     runCaptureJob(req("Bearer nope"), { params: Promise.resolve({ id: "smoke-capture" }) }),
     radarRun(req("Bearer nope")),
-    radarFeeds(req("Bearer nope")),
+    radarWeb(req("Bearer nope")),
     radarDigest(req("Bearer nope")),
   ]);
   check(

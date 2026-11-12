@@ -40,11 +40,11 @@ export function RefreshContactsButton() {
     const jobId = `linkedin-refresh-${Date.now()}`;
 
     try {
-      const { targets, hasApollo } = await listLinkedInRefreshTargets();
+      const { targets } = await listLinkedInRefreshTargets();
 
       if (targets.length === 0) {
-        toast.message("No LinkedIn profiles to refresh", {
-          description: "Add LinkedIn URLs to your contacts first",
+        toast.message("No contacts to refresh", {
+          description: "All contacts have verified names and profile photos",
         });
         return;
       }
@@ -53,7 +53,7 @@ export function RefreshContactsButton() {
       startBackgroundJob({
         id: jobId,
         kind: "linkedin-refresh",
-        label: "Refreshing contacts from LinkedIn",
+        label: "Refreshing contacts, names, and photos",
         done: 0,
         total: targets.length,
         startedAt: Date.now(),
@@ -62,8 +62,9 @@ export function RefreshContactsButton() {
       let refreshed = 0;
       let unmatched = 0;
       let failed = 0;
-      let avatarOnly = !hasApollo;
       let rateLimited = false;
+      let namesFixed = 0;
+      let avatarsUpdated = 0;
 
       for (let i = 0; i < targets.length; i += LINKEDIN_REFRESH_BATCH_SIZE) {
         const chunk = targets.slice(i, i + LINKEDIN_REFRESH_BATCH_SIZE);
@@ -73,7 +74,8 @@ export function RefreshContactsButton() {
         refreshed += result.refreshed;
         unmatched += result.unmatched;
         failed += result.failed;
-        if (result.avatarOnly) avatarOnly = true;
+        namesFixed += result.namesFixed ?? 0;
+        avatarsUpdated += result.avatarsUpdated ?? 0;
         if (result.rateLimited) rateLimited = true;
         const done = Math.min(i + chunk.length, targets.length);
         setProgress({ done, total: targets.length });
@@ -82,31 +84,28 @@ export function RefreshContactsButton() {
 
       let resultMessage: string;
       if (refreshed > 0) {
-        resultMessage = avatarOnly
-          ? `Updated photos for ${refreshed} contact${refreshed === 1 ? "" : "s"}`
-          : `Refreshed ${refreshed} contact${refreshed === 1 ? "" : "s"} from LinkedIn`;
-        toast.success(
-          resultMessage,
-          avatarOnly
-            ? {
-                description: hasApollo
-                  ? "Photos refreshed — roles and schools need a paid Apollo plan"
-                  : "Photos refreshed — add an Apollo key in Settings to update roles and schools too",
-              }
-            : undefined
-        );
+        if (namesFixed > 0 && avatarsUpdated > 0) {
+          resultMessage = `Refreshed ${refreshed} contact${refreshed === 1 ? "" : "s"} (${namesFixed} real name${namesFixed === 1 ? "" : "s"} resolved, ${avatarsUpdated} photo${avatarsUpdated === 1 ? "" : "s"} added)`;
+        } else if (namesFixed > 0) {
+          resultMessage = `Refreshed ${refreshed} contact${refreshed === 1 ? "" : "s"} (${namesFixed} real name${namesFixed === 1 ? "" : "s"} resolved)`;
+        } else if (avatarsUpdated > 0) {
+          resultMessage = `Updated photos for ${avatarsUpdated} contact${avatarsUpdated === 1 ? "" : "s"}`;
+        } else {
+          resultMessage = `Refreshed ${refreshed} contact${refreshed === 1 ? "" : "s"} from LinkedIn`;
+        }
+        toast.success(resultMessage);
       } else if (rateLimited) {
-        resultMessage = "Photo lookup rate limited";
+        resultMessage = "LinkedIn lookup rate limited";
         toast.message(resultMessage, {
           description:
-            "LinkedIn photos aren’t available right now — try again in a few minutes",
+            "LinkedIn isn’t available right now — try again in a few minutes",
         });
       } else {
         resultMessage = "No profiles updated";
         toast.message(resultMessage, {
           description:
             unmatched > 0
-              ? "Couldn’t find public photos for these profiles — check each is a public linkedin.com/in/… link"
+              ? "Couldn’t find public details for these profiles — check each is a public linkedin.com/in/… link"
               : "Nothing changed",
         });
       }

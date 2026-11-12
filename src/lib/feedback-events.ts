@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 
+import type { FeedbackCategory } from "@/lib/feedback-report";
 import { PANEL_INSET_PX, PANEL_ORIGIN_FALLBACK, type PanelAnchor } from "@/lib/floating-panel";
 
 /**
@@ -33,7 +34,24 @@ import { PANEL_INSET_PX, PANEL_ORIGIN_FALLBACK, type PanelAnchor } from "@/lib/f
 export type FeedbackPanelState = "closed" | "open" | "capturing";
 
 let panelState: FeedbackPanelState = "closed";
+/**
+ * Which part of the panel a request opens on. `thread` opens one conversation straight away —
+ * the bell's "Jason replied" item and the "Your feedback" rows use it.
+ */
+export type FeedbackPanelTarget =
+  | {
+      view: "compose";
+      /**
+       * Words to start the new message with — "Tell Jason" on an error fills in what went
+       * wrong. Only applied to an empty draft: it never overwrites what someone has typed.
+       */
+      prefill?: { subject?: string; text?: string; category?: FeedbackCategory };
+    }
+  | { view: "list" }
+  | { view: "thread"; id: string };
+
 let pendingAnchor: PanelAnchor | null = null;
+let pendingTarget: FeedbackPanelTarget | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -59,8 +77,9 @@ export const FEEDBACK_ANCHOR_FALLBACK: PanelAnchor = {
  * See `anchorBelowTrigger` in `src/lib/floating-panel.ts`. Doors with no trigger on screen
  * pass `FEEDBACK_ANCHOR_FALLBACK`.
  */
-export function requestFeedbackOpen(anchor: PanelAnchor) {
+export function requestFeedbackOpen(anchor: PanelAnchor, target?: FeedbackPanelTarget) {
   pendingAnchor = anchor;
+  pendingTarget = target ?? null;
   emit();
 }
 
@@ -68,9 +87,11 @@ export function requestFeedbackOpen(anchor: PanelAnchor) {
  * Widget only. Reads and clears in one go, so a request is acted on exactly once however
  * many times the subscriber re-runs.
  */
-export function takeFeedbackOpenRequest(): PanelAnchor | null {
-  const next = pendingAnchor;
+export function takeFeedbackOpenRequest(): { anchor: PanelAnchor; target: FeedbackPanelTarget | null } | null {
+  if (!pendingAnchor) return null;
+  const next = { anchor: pendingAnchor, target: pendingTarget };
   pendingAnchor = null;
+  pendingTarget = null;
   return next;
 }
 
@@ -96,4 +117,45 @@ export function useFeedbackPanelState(): FeedbackPanelState {
 /** Widget only. Notified when a door asks to open; read the request with `take…`. */
 export function subscribeFeedbackOpen(callback: () => void) {
   return subscribe(callback);
+}
+
+/**
+ * Whether a feedback widget is on the page to answer an open request. Only the app's layout
+ * mounts one — the admin console, the marketing site and the sign-in pages don't — and a
+ * "Tell Jason" button that opens nothing is worse than none.
+ */
+let widgetMounted = false;
+
+/** Widget only: it is (or is no longer) on the page. */
+export function setFeedbackWidgetMounted(mounted: boolean) {
+  if (widgetMounted === mounted) return;
+  widgetMounted = mounted;
+  emit();
+}
+
+/** For callers outside React (the toast helper). */
+export function isFeedbackAvailable(): boolean {
+  return widgetMounted;
+}
+
+/** For components: re-renders when the widget mounts, so the button appears once it can work. */
+export function useFeedbackAvailable(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => widgetMounted,
+    () => false
+  );
+}
+
+/**
+ * Open a new message about something that just went wrong — the "Tell Jason" on error
+ * toasts and error screens. The page is captured with every report anyway; this fills in the
+ * subject and marks it broken so all that's left is a sentence of what they were doing.
+ */
+export function reportProblem(what: string) {
+  const subject = what.replace(/\s+/g, " ").trim().slice(0, 100) || "Something went wrong";
+  requestFeedbackOpen(FEEDBACK_ANCHOR_FALLBACK, {
+    view: "compose",
+    prefill: { subject, category: "bug" },
+  });
 }

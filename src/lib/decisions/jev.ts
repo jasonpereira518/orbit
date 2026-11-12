@@ -1,5 +1,6 @@
 import {
   resolveAiAccess,
+  noteDecisionFailure,
   typesafeClient,
   type AiAccess,
   type DecisionGrant,
@@ -234,8 +235,10 @@ async function callJev<Q extends QuestionMap>(
     const answers = parseAnswers(request.questions, response);
     if (!answers) return null;
     return { answers, model: typeof response.model === "string" ? response.model : grant.model };
-  } catch {
+  } catch (err) {
     // The failure is already in `usage_events` (withUsage records it). The caller falls back.
+    // A dry or refused ORBIT key also takes Jev out for a while, so callers stop waiting on it.
+    await noteDecisionFailure(grant, err).catch(() => {});
     return null;
   } finally {
     clearTimeout(timer);
@@ -277,8 +280,8 @@ class JevDecider implements Decider {
 export async function openDecider(userId: string, access?: AiAccess): Promise<Decider | null> {
   try {
     const resolved = access ?? (await resolveAiAccess(userId));
-    // Any operation id works for the probe; the real grant is minted per question set.
-    if (!resolved.decision("chat.rerank.decide")) return null;
+    // The real grant is minted per question set: Orbit's key answers only some operations.
+    if (!resolved.hasDecisionModel()) return null;
     return new JevDecider(userId, resolved);
   } catch {
     return null;

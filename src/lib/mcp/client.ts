@@ -23,8 +23,8 @@ import { type MCP_CLIENTS } from "@/lib/product-event-schemas";
 
 export type McpClient = (typeof MCP_CLIENTS)[number];
 
-const CLAUDE = /(^|[^a-z0-9])(claude|anthropic)([^a-z0-9]|$)/i;
-const CHATGPT = /(^|[^a-z0-9])(chatgpt|openai)([^a-z0-9]|$)/i;
+const CLAUDE = /(^|[^a-z0-9])(claude|anthropic|claudebot)([^a-z0-9]|$)/i;
+const CHATGPT = /(^|[^a-z0-9])(chatgpt|openai|gptbot)([^a-z0-9]|$)/i;
 
 /** The assistant a piece of text names, or null when it names neither or both. */
 function classify(text: string | null | undefined): Exclude<McpClient, "other"> | null {

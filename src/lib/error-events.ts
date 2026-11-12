@@ -46,6 +46,7 @@ export const ERROR_SOURCES = {
   eventPageFetch: "event.page_fetch",
   oauthEventbriteCallback: "oauth.eventbrite.callback",
   oauthGranolaCallback: "oauth.granola.callback",
+  oauthNotionCallback: "oauth.notion.callback",
   /**
    * A CalDAV request to iCloud (`src/lib/caldav/client.ts`) exhausted its retries. Kept
    * apart from `eventPageFetch` deliberately — the two share `guardedFetchText`'s retry
@@ -120,12 +121,6 @@ export const ERROR_SOURCES = {
    */
   jobFeedFetch: "jobs.feed_fetch",
   /**
-   * A public news feed could not be read (`src/lib/radar/feeds/sweep.ts`), recorded only when
-   * the fetcher's retry ladder was exhausted. The source row's `consecutive_failures` is the
-   * running count an operator reads.
-   */
-  radarNewsFetch: "radar.news_fetch",
-  /**
    * Security-relevant AI behaviour (`src/lib/ai-security.ts`): a tool call the registry
    * refused, an MCP batch over the cap, a draft flood, an answer the output guard scrubbed,
    * agent-written text shaped like an injection. `kind` is which; context carries ids and
@@ -159,12 +154,40 @@ export type ErrorEventInput = {
 /** Context past this is diagnostics no one reads, and a place for personal data to pile up. */
 const MAX_CONTEXT_CHARS = 4_000;
 
+/**
+ * Context is stored verbatim and read on /admin/health, so it gets the same scrub as
+ * `message`: a fetch failure's context holds the URL it was calling, and a provider error
+ * holds the request body it was sent. Recursive because the shapes here are one or two
+ * levels deep (`{ request: { url, headers } }`), with a depth cap so a pathological object
+ * cannot stall the diagnostics path.
+ */
+function scrubContextValue(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return scrubText(value);
+  if (depth >= 4) return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 50).map((item) => scrubContextValue(item, depth + 1));
+  }
+  if (value !== null && typeof value === "object") {
+    // Leave dates, errors and other class instances to JSON.stringify rather than flattening
+    // them to `{}` on the way into the column.
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return value;
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 50)) {
+      out[key] = scrubContextValue(item, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
 function boundedContext(context: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!context) return {};
   try {
-    const json = JSON.stringify(context);
-    if (json.length <= MAX_CONTEXT_CHARS) return context;
-    return { truncated: true, keys: Object.keys(context).slice(0, 20) };
+    const scrubbed = scrubContextValue(context) as Record<string, unknown>;
+    const json = JSON.stringify(scrubbed);
+    if (json.length <= MAX_CONTEXT_CHARS) return scrubbed;
+    return { truncated: true, keys: Object.keys(scrubbed).slice(0, 20) };
   } catch {
     return { unserializable: true };
   }

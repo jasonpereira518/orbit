@@ -60,6 +60,10 @@ export function buildSecurityHeaders(options: {
       "'self'",
       "'unsafe-inline'",
       options.dev && "'unsafe-eval'",
+      // Orbit Voice: Deepgram's AgentMicrophone and ElevenLabs' client both load their audio
+      // AudioWorklet from a same-origin blob: URL, and worklet loads answer to script-src.
+      // Without this the socket connects, then the mic fails and every call ends at once.
+      "blob:",
       clerk,
       "https://*.clerk.accounts.dev",
       "https://challenges.cloudflare.com",
@@ -77,13 +81,22 @@ export function buildSecurityHeaders(options: {
       "https://*.ingest.us.sentry.io",
       "https://va.vercel-scripts.com",
       "https://vitals.vercel-insights.com",
+      // Clerk's telemetry beacon. Blocking it does not break sign-in, but it is the only
+      // violation real browsers report (6 rows since the policy went report-only), so an
+      // enforced policy would keep reporting a failure that is not one. Allow it and the
+      // report stream is empty.
+      "https://clerk-telemetry.com",
       // Google Picker for Drive imports
       "https://www.googleapis.com",
       // Google Identity Services (host-wide, as Google advises for connect-src)
       "https://accounts.google.com",
       // Live meeting/mic transcription: the browser streams audio straight to Deepgram over a
       // 30-second token our server mints (src/lib/deepgram-live.ts).
-      "wss://api.deepgram.com"
+      "wss://api.deepgram.com",
+      "wss://agent.deepgram.com",
+      // Private Orbit Voice sessions use the ElevenLabs WebSocket transport.
+      "wss://api.elevenlabs.io",
+      "https://api.elevenlabs.io"
     )}`,
     // Avatars redirect to Blob, LinkedIn's CDN, unavatar and Clerk; the set is open by design.
     `img-src 'self' data: blob: https:`,

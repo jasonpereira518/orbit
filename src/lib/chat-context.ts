@@ -1,3 +1,7 @@
+import { listMemories } from "@/lib/chat-memory";
+import { memoriesForPrompt } from "@/lib/chat-memory-text";
+import { attachmentsForPrompt, type ChatAttachment } from "@/lib/chat-attachments";
+import { nowInZone } from "@/lib/user-clock";
 import { loadChatCalendar, type ChatCalendar } from "@/lib/chat-calendar";
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -99,9 +103,15 @@ const ABOUT_USER_MAX_CHARS = 600;
  * — the prompt then says nothing, rather than "unknown".
  */
 export function renderAboutUser(
-  row: { senderBio?: string | null; careerProfile?: CareerProfile | null } | null | undefined
+  row:
+    | { senderBio?: string | null; careerProfile?: CareerProfile | null; firstName?: string | null; lastName?: string | null }
+    | null
+    | undefined
 ): string | null {
   const parts: string[] = [];
+  // Their real name, so an email draft is signed by them rather than "[Your Name]" or nobody.
+  const name = sanitizeProfileLine([row?.firstName, row?.lastName].filter(Boolean).join(" "));
+  if (name) parts.push(`name: ${name} (sign any email draft with this full name)`);
   const bio = normalizeSenderBio(row?.senderBio);
   if (bio) parts.push(`in their own words: ${bio}`);
   const career = row?.careerProfile;
@@ -119,7 +129,12 @@ export function renderAboutUser(
   return parts.length ? `About the user — ${parts.join("; ")}`.slice(0, ABOUT_USER_MAX_CHARS) : null;
 }
 
-type PriorRow = { role: string; content: string; recommendations?: ChatRecommendation[] | null };
+type PriorRow = {
+  role: string;
+  content: string;
+  recommendations?: ChatRecommendation[] | null;
+  attachments?: ChatAttachment[] | null;
+};
 
 /**
  * Oldest first, and an assistant turn carries the names it suggested. The cards are not in
@@ -134,9 +149,16 @@ function rowsToTurns(rows: PriorRow[]): ChatTurn[] {
       // Capped: a stored answer can hold a 200-row list table, and replaying it whole would
       // crowd this question's own context out of the prompt.
       const content = m.content.length > PRIOR_TURN_CHARS ? `${m.content.slice(0, PRIOR_TURN_CHARS)}…` : m.content;
+      // Only the names here: the files' text returns inside the prompt's fenced files block.
+      const files = (m.attachments ?? []).map((a) => a.name);
       return {
         role: m.role as ChatTurn["role"],
-        content: m.role === "assistant" && names.length ? `${content}\n(Suggested, in order: ${names.join(", ")})` : content,
+        content:
+          m.role === "assistant" && names.length
+            ? `${content}\n(Suggested, in order: ${names.join(", ")})`
+            : files.length
+              ? `${content}\n(Attached: ${files.join(", ")})`
+              : content,
       };
     });
 }
@@ -160,6 +182,10 @@ export type ChatContext = {
   scopedQuestion: string;
   /** Freeform context the user typed for this conversation, if any — never extracted into contacts. */
   userContext: string | null;
+  /** What the person asked Orbit to keep in mind across chats, for the prompt's fenced block. */
+  memories: string | null;
+  /** The text of files attached to this question and earlier in the thread, for the prompt's fenced block. */
+  attachedFiles: string | null;
   /** One line to show under the answer when the semantic arm was unavailable. */
   searchNotice: string | null;
   /**
@@ -379,6 +405,10 @@ async function retrieveRankedContacts(
     onParsed: (parsed: ParsedQuery | null) => void;
     /** The account read the question shares; undefined means each call opens its own. */
     access?: Promise<AiAccess | undefined>;
+    /** The request's signal: the parse and the rerank are cancelled when the caller leaves. */
+    signal?: AbortSignal;
+    /** The user's zone, so the parse resolves "tomorrow" on the user's day. */
+    timeZone?: Promise<string>;
   }
 ): Promise<{
   ranked: RankedContact[];
@@ -415,9 +445,13 @@ async function retrieveRankedContacts(
     }),
     // The earlier turns are one indexed read the parser alone waits on (for "she" and "the
     // second one"); the embedding beside it does not.
-    (routing?.priorTurns ?? Promise.resolve([] as PriorTurn[]))
-      .catch(() => [] as PriorTurn[])
-      .then((priorTurns) => understandQuery(userId, q, activeGoals, complete, { priorTurns, userSchools, aboutUser }))
+    Promise.all([
+      (routing?.priorTurns ?? Promise.resolve([] as PriorTurn[])).catch(() => [] as PriorTurn[]),
+      (routing?.timeZone ?? Promise.resolve(undefined)).catch(() => undefined),
+    ])
+      .then(([priorTurns, timeZone]) =>
+        understandQuery(userId, q, activeGoals, complete, { priorTurns, userSchools, aboutUser, timeZone, signal: routing?.signal })
+      )
       .then((parsed) => {
         routing?.onParsed(parsed);
         return parsed;
@@ -490,7 +524,7 @@ async function retrieveRankedContacts(
     );
   }
   const { contacts: ranked, engine: rankEngine } = ranks
-    ? await rerankCandidatesWithEngine(userId, searchQuery, candidates, complete, parsedQuery.semanticQuery, decider)
+    ? await rerankCandidatesWithEngine(userId, searchQuery, candidates, complete, parsedQuery.semanticQuery, decider, routing?.signal)
     : { contacts: candidates.slice(0, FINAL_CONTACT_COUNT), engine: null };
   if (ranks) {
     // Every survivor, not the default handful: the finished summary counts these refs.
@@ -732,24 +766,6 @@ export function renderFocusProfile(profile: Awaited<ReturnType<typeof getContact
   return `${rendered.slice(0, FOCUS_PROFILE_MAX_CHARS)}\n(profile truncated at ${FOCUS_PROFILE_MAX_CHARS} characters)`;
 }
 
-/** "Wednesday 2026-10-28 14:05" on the user's wall clock. */
-function nowInZone(now: Date, tz: string): string {
-  const p = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      hourCycle: "h23",
-      weekday: "long",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-      .formatToParts(now)
-      .map((x) => [x.type, x.value])
-  );
-  return `${p.weekday} ${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
-}
 
 export async function prepareChatContext(
   userId: string,
@@ -778,6 +794,10 @@ export async function prepareChatContext(
     access?: AiAccess;
     /** The browser's zone, sent with the question. Checked; the stored one stands in without it. */
     timeZone?: string | null;
+    /** The request's own signal, passed to the model calls retrieval makes. */
+    signal?: AbortSignal;
+    /** Files attached to this question, already checked (`sanitizeAttachments`). */
+    attachments?: readonly ChatAttachment[];
   }
 ): Promise<ChatContext> {
   const db = await getDb();
@@ -800,6 +820,8 @@ export async function prepareChatContext(
   // ROUTING (decisions/chat-route.ts). Read from the question parse retrieval already makes,
   // so it costs no extra round trip; the branches it gates (attention brief, recruiter list)
   // chain off it while the search runs. A failed parse routes to the one-pass default.
+  // Read beside everything else; an answer never fails because memories could not be read.
+  const memoriesP = listMemories(userId).catch(() => []);
   const priorRowsP = threadId
     ? db.query.chatMessages
         .findMany({
@@ -811,7 +833,7 @@ export async function prepareChatContext(
           ),
           orderBy: [desc(chatMessages.createdAt)],
           limit: PRIOR_TURN_LIMIT,
-          columns: { role: true, content: true, recommendations: true },
+          columns: { role: true, content: true, recommendations: true, attachments: true },
         })
         .then((rows) =>
           // A stopped turn persists its question with no reply. Newest-first, so that is
@@ -872,6 +894,8 @@ export async function prepareChatContext(
         priorTurns: priorRowsP.then(rowsToTurns),
         onParsed: settleParsed,
         access: accessP,
+        signal: options.signal,
+        timeZone: tzP,
       }).finally(() => settleParsed(null)),
       // Exhaustive membership for any organisation the question names — the one thing a
       // relevance-ranked top-K cannot supply. Never fatal.
@@ -1268,6 +1292,11 @@ export async function prepareChatContext(
     snippets,
     scopedQuestion,
     userContext,
+    memories: memoriesForPrompt(await memoriesP),
+    attachedFiles: attachmentsForPrompt(
+      options.attachments ?? [],
+      priorRows.flatMap((row) => (row.role === "user" ? (row.attachments ?? []) : []))
+    ),
     searchNotice: retrieval.searchNotice,
     goals: retrieval.goals,
     userSchools: retrieval.userSchools,

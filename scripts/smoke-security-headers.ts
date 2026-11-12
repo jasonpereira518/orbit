@@ -48,8 +48,8 @@ function main() {
   check("script-src allows self, inline, Clerk and Turnstile",
     /script-src[^;]*'self'/.test(csp ?? "") && /script-src[^;]*'unsafe-inline'/.test(csp ?? "") && /script-src[^;]*https:\/\/clerk\.myorbitnetwork\.com/.test(csp ?? "") && /script-src[^;]*challenges\.cloudflare\.com/.test(csp ?? ""), csp ?? "");
   check("script-src does not allow eval in production", !/script-src[^;]*unsafe-eval/.test(csp ?? ""));
-  check("connect-src allows Clerk, Sentry ingest and Vercel Analytics",
-    /connect-src[^;]*clerk\.myorbitnetwork\.com/.test(csp ?? "") && /connect-src[^;]*\*\.ingest\.(us\.)?sentry\.io/.test(csp ?? "") && /connect-src[^;]*va\.vercel-scripts\.com/.test(csp ?? ""), csp ?? "");
+  check("connect-src allows Clerk, Clerk telemetry, Sentry ingest and Vercel Analytics",
+    /connect-src[^;]*clerk\.myorbitnetwork\.com/.test(csp ?? "") && /connect-src[^;]*https:\/\/clerk-telemetry\.com/.test(csp ?? "") && /connect-src[^;]*\*\.ingest\.(us\.)?sentry\.io/.test(csp ?? "") && /connect-src[^;]*va\.vercel-scripts\.com/.test(csp ?? ""), csp ?? "");
   check("img-src allows https, data and blob (avatars come from anywhere)", /img-src[^;]*https:/.test(csp ?? "") && /img-src[^;]*data:/.test(csp ?? "") && /img-src[^;]*blob:/.test(csp ?? ""));
   check("frame-ancestors none, object-src none, base-uri self", /frame-ancestors 'none'/.test(csp ?? "") && /object-src 'none'/.test(csp ?? "") && /base-uri 'self'/.test(csp ?? ""));
   check("reports go to /api/csp-report", /report-uri \/api\/csp-report/.test(csp ?? ""));
@@ -64,6 +64,10 @@ function main() {
   console.log("\nEnforced...");
   const enforced = buildSecurityHeaders({ dev: false, enforce: true, clerkPublishableKey: pk });
   check("CSP_ENFORCE moves the policy to the enforcing header", Boolean(header(enforced, "Content-Security-Policy")) && header(enforced, "Content-Security-Policy-Report-Only") === null);
+  // Both Orbit Voice SDKs load their microphone AudioWorklet from a blob: URL, and worklet
+  // loads answer to script-src. Without blob: every call dies right after connecting.
+  check("enforced script-src allows blob: (Orbit Voice audio worklets)",
+    /script-src[^;]*blob:/.test(header(enforced, "Content-Security-Policy") ?? ""));
 
   console.log("\nDevelopment...");
   const dev = buildSecurityHeaders({ dev: true, enforce: false, clerkPublishableKey: undefined });

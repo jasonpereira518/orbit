@@ -32,9 +32,7 @@
  * `deps` exists so the smoke tests can inject a fetch and stay in the `pure` tier.
  */
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
-import { assertDeliverable } from "@/lib/net-guard";
-import { sleep } from "@/lib/async";
-import { backoffMs } from "@/lib/http/retry";
+import { pinDeliverable } from "@/lib/net-guard";
 
 /** One page is plenty for `<head>` metadata; anything larger is a document we do not want. */
 export const MAX_HTML_BYTES = 512_000;
@@ -142,6 +140,15 @@ export type GuardedFetchResult = {
   notModified: boolean;
 };
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Same ladder as `apolloFetch` in `src/lib/apollo.ts`, deliberately. */
+function jitteredBackoffMs(attempt: number) {
+  return 300 * 2 ** attempt + Math.floor(Math.random() * 250);
+}
+
 /**
  * Read at most `maxBytes` of the body, then stop.
  *
@@ -216,8 +223,9 @@ async function attemptOnce(
   let last: Response | null = null;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     // Immediately before the request, every time — including on a retry, because DNS can
-    // change between attempts and a cached clearance is exactly the rebinding hole.
-    await assertDeliverable(url);
+    // change between attempts and a cached clearance is exactly the rebinding hole. Pinning
+    // the connection to the vetted addresses also closes the gap the check alone leaves.
+    const pinned = await pinDeliverable(url);
 
     let res: Response;
     try {
@@ -225,6 +233,7 @@ async function attemptOnce(
         method: "GET",
         redirect: "manual",
         signal: AbortSignal.timeout(options.timeoutMs),
+        ...pinned.init,
         headers: {
           // Caller headers first, so neither the agent string nor `accept` can be
           // overwritten by them — those two are this module's promise about itself.
@@ -234,12 +243,16 @@ async function attemptOnce(
         },
       });
     } catch {
+      await pinned.close();
       if (attempt === MAX_ATTEMPTS - 1) {
         throw new EventPageError("unreachable", "That page could not be reached.");
       }
-      await sleep(backoffMs(attempt));
+      await sleep(jitteredBackoffMs(attempt));
       continue;
     }
+    // The body is read inside this function before any return, and `close()` lets the
+    // in-flight stream finish, so releasing the agent now never truncates a response.
+    void pinned.close();
     last = res;
 
     // Answered before the redirect branch: 304 sits in the 3xx range but is not a
@@ -292,7 +305,7 @@ async function attemptOnce(
     const waitMs =
       Number.isFinite(retryAfter) && retryAfter > 0
         ? Math.min(retryAfter * 1000, 8_000)
-        : backoffMs(attempt);
+        : jitteredBackoffMs(attempt);
     await sleep(waitMs);
   }
   throw new EventPageError("http_error", `That page returned ${last?.status ?? "no response"}.`);

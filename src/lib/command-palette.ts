@@ -13,6 +13,12 @@ export type PaletteEntry = {
   href?: string;
   /** Settings anchors are hidden by section, not by page. */
   settingsId?: string;
+  /**
+   * The surface key that hides this entry, when the page it lands on cannot say: an
+   * Integrations page is `/settings`, a feature (Compose, Drive notes) lives inside other
+   * pages, and a dialog-opening verb has no `href` at all. Wins over the landing page's.
+   */
+  surface?: string;
 };
 
 function normalize(s: string) {
@@ -69,11 +75,26 @@ export function rankEntries<T extends PaletteEntry>(entries: T[], query: string)
 export function visibleEntries<T extends PaletteEntry>(entries: T[], hidden: ReadonlySet<string>): T[] {
   return entries.filter((entry) => {
     if (entry.settingsId && hidden.has(surfaceKeyForSettingsId(entry.settingsId))) return false;
+    if (entry.surface && hidden.has(entry.surface)) return false;
     if (!entry.href) return true;
     const path = entry.href.split(/[?#]/)[0];
     const surface = surfaceForPathname(path);
     return !surface || !hidden.has(surface.key);
   });
+}
+
+/**
+ * Whether an entry leads to a page an operator has marked coming soon: it still opens (the
+ * teaser screen), and the sidebar tags such pages "Soon", so the palette says so too rather
+ * than offering a door that looks the same as the others.
+ *
+ * Only the landing page counts, never `surface`: a feature marked coming soon is hidden
+ * outright (`resolveSurfaceVisibility`), so it never reaches this check.
+ */
+export function isComingSoonEntry(entry: Pick<PaletteEntry, "href">, soon: ReadonlySet<string>): boolean {
+  if (!entry.href) return false;
+  const surface = surfaceForPathname(entry.href.split(/[?#]/)[0]);
+  return surface !== null && soon.has(surface.key);
 }
 
 const QUESTION_START =

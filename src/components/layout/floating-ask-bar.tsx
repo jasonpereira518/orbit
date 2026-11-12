@@ -38,6 +38,7 @@ import {
 import type { ChatStep, ChatStreamEvent } from "@/lib/chat-stream-protocol";
 import type { ChatRecommendation } from "@/db/schema";
 import { ChatActivity } from "@/components/chat/chat-activity";
+import { notifyAnswerLanded } from "@/lib/chat-answer-notify";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { CONTACT_PAGE_SUGGESTIONS, type ChatSuggestion } from "@/lib/chat-suggestions";
@@ -182,6 +183,10 @@ export function FloatingAskBar() {
   // Plain state, not a transition: streamed tokens must render as they arrive, and
   // updates inside `startTransition` are deferred until the async work settles.
   const [chatPending, setChatPending] = useState(false);
+  // One follow-up typed while an answer is being written; it goes out when that answer
+  // lands. The chat page keeps a longer queue and can steer (`@/lib/chat-queue`).
+  const [queuedNext, setQueuedNext] = useState<string | null>(null);
+  const landedRef = useRef(false);
   // The "searching" bubble makes sense until the first token; after that the answer
   // itself is the progress indicator.
   const awaitingFirstToken =
@@ -387,6 +392,7 @@ export function FloatingAskBar() {
       const q = raw.trim();
       if (!q || chatPending) return;
 
+      landedRef.current = false;
       // A new question starts clean: a refusal from an earlier one must not sit over this
       // answer. A fresh refusal sets it again in onError.
       setAskDenial(null);
@@ -488,10 +494,12 @@ export function FloatingAskBar() {
               patch((m) => ({ ...m, evidence: items }));
             },
             onDone: (info) => {
+              landedRef.current = true;
               smoother.flush();
               ensurePlaceholder();
               patch((m) => ({ ...m, retrieved: info.retrieved, messageId: info.messageId, streaming: false }));
               if (info.notice) toast.message(info.notice);
+              notifyAnswerLanded({ threadId, messageId: info.messageId, title: info.title });
             },
             onError: (message) => {
               smoother.cancel();
@@ -499,7 +507,8 @@ export function FloatingAskBar() {
               if (d) setAskDenial(d);
               else toast.error(message);
               setMessages((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== assistantId));
-              setQuery(q);
+              // Not over a follow-up typed in the meantime.
+              setQuery((cur) => (cur.trim() ? cur : q));
             },
           }
         );
@@ -512,12 +521,20 @@ export function FloatingAskBar() {
     },
     [activeContactId, chatPending, ensureChatThread, plan]
   );
+  // The queued follow-up goes out once the answer before it has landed; a failed answer
+  // leaves it waiting under the bar.
+  useEffect(() => {
+    if (chatPending || !queuedNext || !landedRef.current) return;
+    setQueuedNext(null);
+    sendQuestion(queuedNext);
+  }, [chatPending, queuedNext, sendQuestion]);
   useEffect(() => {
     sendQuestionRef.current = (q) => sendQuestion(q);
   }, [sendQuestion]);
 
   function clearThread() {
     setMessages([]);
+    setQueuedNext(null);
     setQuery("");
     setHits([]);
     setAskDenial(null);
@@ -575,12 +592,14 @@ export function FloatingAskBar() {
       transition={{ duration: DUR.slow, ease: EASE_HOUSE }}
       className={cn(
         "pointer-events-none fixed inset-x-0 z-50 justify-center px-4",
+        // Centred on the page, not the screen, while the feedback dock has the right edge.
+        "md:right-(--orbit-dock-w) md:transition-[right] md:duration-slow md:ease-house",
         // On mobile the bar is intrusive if left permanently floating above
         // the bottom nav — keep it fully out of the layout there until the
         // "Ask your network" item in the More sheet opens it. Desktop keeps
         // the persistent collapsed pill.
         open ? "flex" : "hidden md:flex",
-        "bottom-[calc(6.875rem+env(safe-area-inset-bottom))] md:bottom-5",
+        "bottom-[calc(var(--orbit-bottom-nav)+2.25rem)] md:bottom-5",
         !visible && "pointer-events-none"
       )}
       // `inert`, not `aria-hidden`: hidden on scroll, the bar's input and buttons stayed in
@@ -879,7 +898,6 @@ export function FloatingAskBar() {
             aria-label="Ask your network"
             value={query}
             placeholder={placeholder}
-            disabled={chatPending}
             maxLength={CHAT_QUESTION_MAX_CHARS}
             autoComplete="off"
             className={cn(
@@ -893,7 +911,8 @@ export function FloatingAskBar() {
             onChange={(e) => {
               const next = e.target.value;
               setQuery(next);
-              runLiveSearch(next);
+              // Mid-answer the box is a follow-up, not a search of the network.
+              if (!chatPending) runLiveSearch(next);
               if (next.trim()) setOpen(true);
             }}
             onKeyDown={(e) => {
@@ -905,6 +924,13 @@ export function FloatingAskBar() {
               }
               if (e.key === "Enter") {
                 e.preventDefault();
+                if (chatPending) {
+                  // Queued for when this answer lands; a second one replaces it.
+                  if (!query.trim()) return;
+                  setQueuedNext(query.trim());
+                  setQuery("");
+                  return;
+                }
                 sendQuestion(query);
               }
             }}
@@ -951,6 +977,25 @@ export function FloatingAskBar() {
             )}
           </Button>
         </motion.div>
+        {queuedNext && (
+          <p
+            // Its own card: this sits under the bar, over whatever page is behind it.
+            className="mx-auto mt-1.5 flex w-fit max-w-full items-center gap-1 rounded-full border border-border/60 bg-card py-0.5 pl-3 pr-1 text-xs text-muted-foreground shadow-sm"
+            aria-live="polite"
+          >
+            <span className="min-w-0 truncate">Next: {queuedNext}</span>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="shrink-0 rounded-full text-muted-foreground"
+              aria-label="Remove queued message"
+              onClick={() => setQueuedNext(null)}
+            >
+              <X className="size-3" />
+            </Button>
+          </p>
+        )}
         {creditsLeft !== null && creditsLeft > 0 && creditsLeft <= FREE_LOW_CREDITS && (
           <p className="px-4 pb-2 text-xs text-muted-foreground">
             {creditsLeft} AI {creditsLeft === 1 ? "credit" : "credits"} left this month

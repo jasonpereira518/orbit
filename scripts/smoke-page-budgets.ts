@@ -35,6 +35,7 @@ import { getEffectivePlanConfig } from "../src/lib/plans/plan-rules";
 import { contacts, interactions } from "../src/db/schema";
 import { getDashboardData } from "../src/lib/reminders";
 import { loadGraphData } from "../src/lib/graph-data";
+import { encodeGraphPayload } from "../src/lib/graph-wire";
 import { loadNotificationPanel } from "../src/lib/notification-panel";
 import { loadSuggestionSignals } from "../src/lib/chat-suggestions-data";
 import {
@@ -46,8 +47,10 @@ import { contactsListSelection } from "../src/lib/contact-avatar-sql";
 import { traced } from "../src/lib/perf-trace";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
 import { scaleContactRows } from "./lib/scale-fixture";
-import { loadKnowledgeBase } from "../src/lib/knowledge-base";
 import { loadKnowledgePeople } from "../src/lib/knowledge-people";
+import { searchKnowledgeContent } from "../src/lib/knowledge-search";
+import { loadKnowledgeTimeline } from "../src/lib/knowledge-timeline";
+import { KNOWLEDGE_TIMELINE_LIMIT } from "../src/lib/knowledge-timeline-types";
 import { KNOWLEDGE_PEOPLE_LIMIT } from "../src/lib/knowledge-people-types";
 import { radarRuns, userSettings } from "../src/db/schema";
 import { claimRadarLease, runRadarForUser } from "../src/lib/radar/run";
@@ -260,6 +263,8 @@ async function main() {
   // ---- Radar -------------------------------------------------------------------------
   console.log("\nRadar (runRadarForUser, loadRadarPage)…");
   await ensureUserSettings(USER);
+  // Radar is off by default and the dashboard briefing hides for an account that never turned it on.
+  await (await getDb()).update(userSettings).set({ radarEnabledAt: new Date() }).where(eq(userSettings.userId, USER));
   await claimRadarLease(USER);
   startQueryCount();
   const radarRun = await runRadarForUser(USER, { trigger: "manual", ai: false });
@@ -281,8 +286,9 @@ async function main() {
   // for an account that has not opted in.
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
   // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`) + the
-  // email-insights opt-in check above = 28.
-  check("radar run issues ≤ 28 statements", radarRunCount <= 28, `got ${radarRunCount}`);
+  // email-insights opt-in check above = 28. Plus Refresh now's progress: one best-effort UPDATE per
+  // stage entered (at most 9) and per draft (at most 5), constant in the size of the network = 42.
+  check("radar run issues ≤ 42 statements", radarRunCount <= 42, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),
@@ -296,8 +302,9 @@ async function main() {
   const radarPageCount = stopQueryCount();
   console.log(`  page statements: ${radarPageCount}`);
   // 5: the list, one settings read (which also answers "anyone in the network?" and "signals
-  // this week"), the AI key check (two), and what autopilot did. The plan's ceiling is 6.
-  check("radar page issues ≤ 6 statements", radarPageCount <= 6, `got ${radarPageCount}`);
+  // this week"), the AI key check (two), and what autopilot did; plus, since Radar PR 9a, the
+  // Opportunities lane's finds (introducer joined in, so one). The ceiling is 7.
+  check("radar page issues ≤ 7 statements", radarPageCount <= 7, `got ${radarPageCount}`);
   const radarJson = JSON.stringify(radarPage);
   check("radar page payload carries no inline base64", !radarJson.includes("data:image/"));
   check("radar page payload under 100 KB", radarJson.length < 100_000, `${(radarJson.length / 1024).toFixed(0)} KB`);
@@ -375,6 +382,23 @@ async function main() {
   );
   check("graph still resolves an inline avatar to the avatar route", graphJson.includes("/api/avatars/"));
 
+  // What actually crosses the server-action boundary is the columnar wire form (lib/graph-wire).
+  // Asserting only the object size above would let the encoding regress to a no-op unnoticed.
+  const graphWire = JSON.stringify(encodeGraphPayload(graphAll));
+  const graphAllJson = JSON.stringify(graphAll);
+  // Printed, not just asserted: the headline number belongs in the run log next to the one it
+  // replaced, so a future regression reads as a delta rather than a bare pass.
+  console.log(
+    `  wire    ${(graphWire.length / 1024).toFixed(0)} KB for ${graphAll.contacts.length} contacts ` +
+      `(${(100 * (1 - graphWire.length / graphAllJson.length)).toFixed(0)}% smaller than the object form)`
+  );
+  check(
+    "graph wire under 1.2 MB",
+    graphWire.length < 1_200_000,
+    `${(graphWire.length / 1024).toFixed(0)} KB for ${graphAll.contacts.length} contacts ` +
+      `(${(100 * (1 - graphWire.length / graphAllJson.length)).toFixed(0)}% smaller)`
+  );
+
   // ---- Notifications panel -----------------------------------------------------------
   console.log("\nNotifications panel (loadNotificationPanel)…");
   startQueryCount();
@@ -404,7 +428,7 @@ async function main() {
     Boolean(dueId) && panel.items.some((i) => i.kind === "follow_up" && i.contactId === dueId)
   );
   // The met-evidence row above is only for the follow-up assertions. Later budgets (the
-  // knowledge base reads interactions, and runs one more statement when any exist) were
+  // knowledge timeline reads interactions, and runs one more statement when any exist) were
   // measured on a network with none.
   if (dueId) await db.delete(interactions).where(eq(interactions.contactId, dueId));
 
@@ -688,40 +712,37 @@ async function main() {
   await traced("fast.thing", async () => 1, { thresholdMs: 10_000, now: clock, record: async (e) => void recorded.push(e) });
   check("a call under the threshold is not recorded", recorded.length === 1);
 
-  // ---- Knowledge -----------------------------------------------------------------------
-  console.log("\nKnowledge base (loadKnowledgeBase)…");
+  // ---- Knowledge content search ------------------------------------------------------
+  console.log("\nKnowledge content search (searchKnowledgeContent)…");
   startQueryCount();
-  const knowledge = await loadKnowledgeBase(USER);
-  const knowledgeCount = stopQueryCount();
-  const knowledgeStatements = capturedQueries();
-  const knowledgeScans = contactScans(knowledgeStatements);
-  console.log(`  statements: ${knowledgeCount}`);
-  check("knowledge issues ≤ 4 statements", knowledgeCount <= 4, `got ${knowledgeCount}`);
+  const searchHits = await searchKnowledgeContent(USER, "coffee");
+  const searchCount = stopQueryCount();
+  const searchStatements = capturedQueries();
+  const searchScans = contactScans(searchStatements);
+  console.log(`  statements: ${searchCount}`);
+  check("knowledge search issues ≤ 3 statements", searchCount <= 3, `got ${searchCount}`);
   check(
-    "every knowledge contacts scan is bounded by LIMIT",
-    knowledgeScans.length >= 1 && knowledgeScans.every((s) => /\blimit\b/i.test(s)),
-    knowledgeScans.find((s) => !/\blimit\b/i.test(s))?.slice(0, 200)
+    "every knowledge-search contacts scan is bounded by LIMIT",
+    searchScans.every((s) => /\blimit\b/i.test(s)),
+    searchScans.find((s) => !/\blimit\b/i.test(s))?.slice(0, 200)
   );
   check(
-    "knowledge never pulls notes as a bare column",
-    knowledgeScans.every((s) => !selectsBare(s, "notes")),
-    knowledgeScans.find((s) => selectsBare(s, "notes"))?.slice(0, 200)
+    "knowledge search never pulls notes as a bare column",
+    searchScans.every((s) => !selectsBare(s, "notes")),
+    searchScans.find((s) => selectsBare(s, "notes"))?.slice(0, 200)
   );
+  // A hit is a name, a role, a flag and a 160-character snippet. A stored avatar (up to 120 KB
+  // of base64) riding along on every hit blows through this.
   check(
-    "knowledge never selects profile_image_url",
-    knowledgeStatements.every((s) => !s.includes('"profile_image_url"'))
+    "knowledge search moves under 900 bytes per hit",
+    JSON.stringify(searchHits).length / Math.max(1, searchHits.length) < 900,
+    `${(JSON.stringify(searchHits).length / Math.max(1, searchHits.length)).toFixed(0)} bytes a hit`
   );
-  check("knowledge returns at most 400 entries", knowledge.entries.length <= 400, `${knowledge.entries.length}`);
-  check("knowledge still counts every contact", knowledge.stats.people === N + SPECIAL_ROWS, `${knowledge.stats.people}`);
-  const knowledgeBytes = JSON.stringify(knowledge).length;
-  const renderedContacts = new Set(knowledge.entries.map((e) => e.contactId)).size || 1;
-  console.log(`  ${(knowledgeBytes / 1024).toFixed(0)} KB, ${(knowledgeBytes / renderedContacts).toFixed(0)} bytes a rendered contact`);
-  // Up to four entries a contact (summary, notes, two key facts), each snippet capped at 420
-  // characters. A regression that ships whole notes or an avatar per entry blows through this.
+  check("knowledge search returns at most 50 people", searchHits.length <= 50, `${searchHits.length}`);
   check(
-    "knowledge moves under 2,500 bytes per contact it renders",
-    knowledgeBytes / renderedContacts < 2500,
-    `${(knowledgeBytes / renderedContacts).toFixed(0)} bytes a contact`
+    "knowledge search snippets are short",
+    searchHits.every((h) => (h.snippet?.length ?? 0) <= 160),
+    `${Math.max(0, ...searchHits.map((h) => h.snippet?.length ?? 0))} chars`
   );
 
   // ---- Knowledge people index --------------------------------------------------------
@@ -755,6 +776,33 @@ async function main() {
     `${(peopleBytes / Math.max(1, people.rows.length)).toFixed(0)} bytes a person`
   );
 
+  // ---- Knowledge timeline ------------------------------------------------------------
+  console.log("\nKnowledge timeline (loadKnowledgeTimeline)…");
+  const timelineContactId = people.rows[0]?.id;
+  if (timelineContactId) {
+    startQueryCount();
+    const timeline = await loadKnowledgeTimeline(USER, timelineContactId);
+    const timelineCount = stopQueryCount();
+    const timelineStatements = capturedQueries();
+    console.log(`  statements: ${timelineCount}`);
+    check("knowledge timeline issues ≤ 3 statements", timelineCount <= 3, `got ${timelineCount}`);
+    check(
+      "knowledge timeline interactions read is bounded by LIMIT",
+      timelineStatements.filter((s) => /from "interactions"/i.test(s)).every((s) => /\blimit\b/i.test(s)),
+      timelineStatements.find((s) => /from "interactions"/i.test(s) && !/\blimit\b/i.test(s))?.slice(0, 200)
+    );
+    check(
+      "knowledge timeline returns at most its limit plus events",
+      timeline.items.length <= KNOWLEDGE_TIMELINE_LIMIT + 20,
+      `${timeline.items.length}`
+    );
+    check(
+      "knowledge timeline text is cut to its cap",
+      timeline.items.every((i) => (i.text?.length ?? 0) <= 600),
+      `${Math.max(0, ...timeline.items.map((i) => i.text?.length ?? 0))} chars`
+    );
+  }
+
   // ---- Payload scaling ---------------------------------------------------------------
   //
   // Everything above runs at ONE account size, so it can prove a payload is narrow but not
@@ -767,13 +815,7 @@ async function main() {
   const smallDashboard = await getDashboardData(SCALE_USER);
   const smallGraph = await loadGraphData(SCALE_USER, { profile: Promise.resolve(null), scope: "all" });
   const smallPanel = await loadNotificationPanel(SCALE_USER, new Date(), { withAlerts: false, radar: true });
-  const smallKnowledge = await loadKnowledgeBase(SCALE_USER);
   const smallPeople = await loadKnowledgePeople(SCALE_USER);
-  check(
-    "knowledge payload does not grow with the account",
-    JSON.stringify(knowledge).length / Math.max(1, JSON.stringify(smallKnowledge).length) < 1.5,
-    `${JSON.stringify(smallKnowledge).length} → ${JSON.stringify(knowledge).length} bytes`
-  );
 
   type Surface = {
     name: string;

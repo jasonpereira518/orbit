@@ -1,5 +1,5 @@
 import { webSearchPaused } from "@/lib/ai-access";
-import { consumeBucket, isRateLimitedError, RATE_LIMITS, RateLimitedError } from "@/lib/rate-limit";
+import { bucketCount, consumeBucket, isRateLimitedError, RATE_LIMITS, RateLimitedError } from "@/lib/rate-limit";
 import { MANAGED_AI_POOLS } from "@/lib/managed-ai-policy";
 import { utcDayKey } from "@/lib/timeline-cost";
 
@@ -37,6 +37,15 @@ export const WEB_SEARCH_ALL_SCOPE = "web-search-all";
 
 export function webSearchMonthKey(userId: string, now: Date): string {
   return `${userId}:${now.toISOString().slice(0, 7)}`;
+}
+
+/**
+ * Whether background work (the work-history sweep, Radar's web pass) may still search for this
+ * account this month: it stops at its share, so a search the person clicks for is never refused.
+ */
+export async function backgroundSearchRoom(userId: string, now = new Date()): Promise<boolean> {
+  const used = await bucketCount(WEB_SEARCH_SCOPE, webSearchMonthKey(userId, now), RATE_LIMITS.webSearchMonthly);
+  return used < RATE_LIMITS.webSearchMonthly.limit * WEB_SEARCH_BACKGROUND_SHARE;
 }
 
 function secondsUntil(at: number, now: Date): number {

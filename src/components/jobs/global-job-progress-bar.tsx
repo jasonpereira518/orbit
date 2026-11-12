@@ -10,7 +10,7 @@ import { toast } from "@/lib/toast";
 import { MeetingNudgeCard, useMeetingNudgeCard } from "@/components/capture/meeting-nudge";
 import { MeetingWidget } from "@/components/capture/meeting-widget";
 import { MeetingPrepCard, useMeetingPrepCard } from "@/components/calendar/meeting-prep-card";
-import { MeetingNoteCard, useMeetingNoteCard } from "@/components/calendar/meeting-note-card";
+import { EventNoteCard, MeetingNoteCard, useEventNoteCard, useMeetingNoteCard } from "@/components/calendar/meeting-note-card";
 import { useMeetingFlow } from "@/components/capture/meeting-session";
 import {
   dismissBackgroundJob,
@@ -23,13 +23,12 @@ import {
  * Persistent, page-independent progress list for large imports/batches/
  * background tasks — mounted once in the app shell so it stays visible
  * across navigation. Mirrors the same jobs shown in the notification panel,
- * except avatar-backfill, which is silent here and shown in Settings instead.
+ * except avatar-backfill, which stays silent.
  */
 export function GlobalJobProgressBar() {
-  // avatar-backfill runs silently on every page load; it gets its own
-  // progress display in Settings instead of a bottom-right toast. Jobs
-  // swiped away stay in the store (and the notification center) but drop
-  // out of this widget.
+  // avatar-backfill runs silently on every page load, unasked, and has no
+  // progress display anywhere: photos simply appear. Jobs swiped away stay in
+  // the store (and the notification center) but drop out of this widget.
   const jobs = useBackgroundJobs().filter(
     (job) => job.kind !== "avatar-backfill" && !job.hiddenFromWidget
   );
@@ -44,7 +43,9 @@ export function GlobalJobProgressBar() {
   const showPrep = prep !== null;
   // After a meeting nobody recorded or wrote up: "How did it go?".
   const note = useMeetingNoteCard();
-  const showNote = note !== null;
+  // The morning after an event nobody has logged yet: "How was it?".
+  const eventNote = useEventNoteCard();
+  const showNote = note !== null || eventNote !== null;
 
   // Publish how much of the corner this widget occupies so the toast stack can
   // sit above it instead of painting over it. On <html>, because the toaster is
@@ -83,6 +84,7 @@ export function GlobalJobProgressBar() {
       role="status"
       aria-live="polite"
     >
+      {eventNote && <EventNoteCard offer={eventNote} />}
       {note && <MeetingNoteCard offer={note} />}
       {prep && <MeetingPrepCard offer={prep} />}
       {nudge && <MeetingNudgeCard snap={nudge} />}

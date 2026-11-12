@@ -1,4 +1,6 @@
-import { NextResponse } from "next/server";
+import { authErrorResponse, rateLimitGuard } from "@/lib/api/route-error";
+import { sameOriginGuard } from "@/lib/api/same-origin";
+import { after, NextResponse } from "next/server";
 import { chatMessages, type ChatRecommendation } from "@/db/schema";
 import { discardCountAfter, NotLastTurnError, resolveVersionTarget, truncateAfter } from "@/lib/chat-versions";
 import { getDb } from "@/db";
@@ -7,11 +9,22 @@ import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
+import { normalizeDraftBlocks } from "@/lib/chat-draft-block";
 import { rollBackApplied } from "@/lib/chat-auto-apply";
-import { answerDeadlineMs, answerWithLookups } from "@/lib/chat-agent-loop";
+import { answerDeadlineMs, answerWithLookups, type ChatMode } from "@/lib/chat-agent-loop";
+import { sanitizeAttachments } from "@/lib/chat-attachments";
 import { isHandle } from "@/lib/meeting-context";
 import { CHAT_QUESTION_TOO_LONG_MESSAGE, isChatQuestionTooLong } from "@/lib/chat-question";
-import { discardEmptyThread, discardUnansweredQuestion, persistAssistantTurn, trackChatAnswerFailed } from "@/lib/chat-persist";
+import {
+  discardEmptyThread,
+  discardUnansweredQuestion,
+  persistAssistantTurn,
+  supersedeDanglingQuestion,
+  trackChatAnswerFailed,
+  readTurnSteers,
+  wasTurnStopped,
+} from "@/lib/chat-persist";
+import { isUuid } from "@/lib/input/ids";
 import { createStepEmitter, deriveFollowUps, plural } from "@/lib/chat-steps";
 import { generateChatTitle, settleWithin, TITLE_GRACE_MS } from "@/lib/chat-title";
 import { formatSse, type ChatStreamEvent } from "@/lib/chat-stream-protocol";
@@ -20,16 +33,17 @@ import { citedIds, stripUnresolvedMarkers } from "@/lib/chat-evidence";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { friendlyError } from "@/lib/errors";
 import { traced } from "@/lib/perf-trace";
-import { isPaywallError } from "@/lib/entitlements";
-import { RATE_LIMITS } from "@/lib/rate-limit";
-import { withRateLimit } from "@/lib/route-http";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { reportedFailure, reportError } from "@/lib/report-error";
 import { createStreamRedactor } from "@/lib/ai-security";
+import { scrubModelText } from "@/lib/sentry-scrub";
 import { requireVisibleSurface } from "@/lib/surface-visibility";
+import { classifyWebNeed, decideWebForTurn, parseWebChoice, webStep } from "@/lib/chat-web-decision";
+import { chatWebAvailability } from "@/lib/chat-web-availability";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /**
  * Streaming chat, the one path every chat answer takes (the page and the ask bar). It streams
@@ -57,11 +71,15 @@ export async function POST(request: Request) {
     ({ userId, settings } = await requireAuthenticatedUser());
     await requireVisibleSurface(userId, "page.chat");
   } catch (err) {
-    const status = isPaywallError(err) ? 403 : 401;
-    return NextResponse.json({ error: friendlyError(err, "Sign in to chat") }, { status });
+    return authErrorResponse(err, "Sign in to chat");
   }
 
-  const limited = await withRateLimit("chat", userId, RATE_LIMITS.chat);
+  // Cookie-authenticated and reads JSON: refuse a cross-site caller before spending a bucket
+  // unit on it (audit L-01 — this was the one cookie route without the check).
+  const refused = sameOriginGuard(request, { json: true });
+  if (refused) return refused;
+
+  const limited = await rateLimitGuard(() => consumeBucket("chat", userId, RATE_LIMITS.chat));
   if (limited) return limited;
 
   const body = (await request.json().catch(() => null)) as
@@ -72,15 +90,30 @@ export async function POST(request: Request) {
         contextContactIds?: unknown;
         versionOf?: unknown;
         timeZone?: unknown;
+        turnId?: unknown;
+        attachments?: unknown;
+        mode?: unknown;
+        web?: unknown;
       }
     | null;
   const threadId = typeof body?.threadId === "string" ? body.threadId : null;
   const contactId = typeof body?.contactId === "string" ? body.contactId : null;
+  // Minted by the client per question, so a Stop can be told apart from a dropped connection.
+  const turnId = isUuid(body?.turnId) ? body.turnId : null;
   // Ids the composer resolved from its `@Name` chips. Bounded and re-checked against the
   // user's own rows in `loadAttachedPeople`, so a forged id reaches nothing.
   const contextContactIds = Array.isArray(body?.contextContactIds)
     ? body.contextContactIds.filter((id): id is string => typeof id === "string").slice(0, 10)
     : [];
+
+  // How hard to work on it, and the person's web-search choice (auto when absent or
+  // unrecognised: the question decides, below). Anything unrecognized for the mode is a quick answer.
+  const mode: ChatMode = body?.mode === "deep" ? "deep" : "quick";
+  const webChoice = parseWebChoice(body?.web);
+
+  // Files attached to the question: names and the text already read from them. Counted,
+  // cut to length and stripped of anything that is not one here, whatever the client sent.
+  const sentAttachments = sanitizeAttachments(body?.attachments);
 
   // Editing or regenerating the last turn. `versionOf` names the answer being replaced; a
   // question means "edit the text", its absence means "regenerate" (same question again).
@@ -131,10 +164,53 @@ export async function POST(request: Request) {
   }
   if (!question) return NextResponse.json({ error: "Question is required" }, { status: 400 });
 
+  // The turn outlives the connection. A new question on a saved thread keeps running when
+  // the person switches tab, navigates away or reloads, and lands on the thread as if they
+  // had stayed; the panel picks it up when the thread is reopened (`@/lib/chat-turn-resume`).
+  // Only a Stop ends it, and the server learns of a Stop from the mark `stopChatTurn` sets,
+  // polled once the connection is gone, since to the server a Stop and a closed tab are the
+  // same abort. Without a thread there is nowhere to save it, and a version turn has no
+  // turn id to mark: both still end with the connection, as every turn used to.
+  const detached = Boolean(threadId && turnId && !versionTarget);
+  const turnAbort = new AbortController();
+  let clientGone = false;
+  let turnFinished = false;
+  let stopPoll: ReturnType<typeof setInterval> | undefined;
+  const onClientGone = () => {
+    if (clientGone || turnFinished) return;
+    clientGone = true;
+    if (!detached) {
+      turnAbort.abort(request.signal.reason ?? new Error("client gone"));
+      return;
+    }
+    stopPoll = setInterval(() => {
+      void wasTurnStopped(userId, threadId, turnId)
+        .catch(() => false)
+        .then((stopped) => {
+          if (stopped) turnAbort.abort(new Error("stopped"));
+        });
+    }, 1000);
+  };
+  if (request.signal.aborted) onClientGone();
+  else request.signal.addEventListener("abort", onClientGone, { once: true });
+  // Holds the function open until the turn is saved, however early the response ends.
+  let finishTurn!: () => void;
+  const turnDone = new Promise<void>((resolve) => (finishTurn = resolve));
+  after(() => turnDone);
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
+    cancel: onClientGone,
     async start(controller) {
-      const send = (event: ChatStreamEvent) => controller.enqueue(encoder.encode(formatSse(event)));
+      // Nobody to tell once the client is gone, and enqueueing then would throw.
+      const send = (event: ChatStreamEvent) => {
+        if (clientGone) return;
+        try {
+          controller.enqueue(encoder.encode(formatSse(event)));
+        } catch {
+          onClientGone();
+        }
+      };
       const steps = createStepEmitter((step) => send({ type: "step", step }));
       // Hoisted out of the try so the failure path can clear a question nothing answered.
       let persistedUserMessageId: string | null = null;
@@ -155,6 +231,9 @@ export async function POST(request: Request) {
         // retrieval failure now arrives as an `error` event rather than a 400, since the
         // status line is already gone — auth, rate limiting and validation stay above,
         // where they can still set a real status code.
+        // A regenerate or an edit keeps the files of the question it replaces.
+        const attachments =
+          sentAttachments.length || !versionTarget ? sentAttachments : versionTarget.priorUserRow.attachments;
         const ctx = await prepareChatContext(userId, question, {
           threadId,
           focusContactId: contactId,
@@ -166,12 +245,15 @@ export async function POST(request: Request) {
               : versionTarget.priorUserRow.attachedContacts.map((p) => p.id),
           steps,
           excludeSlot: versionTarget?.slot ?? null,
+          attachments,
           access,
           // Checked in `prepareChatContext`; anything unrecognized falls back to the stored zone.
           timeZone: typeof body?.timeZone === "string" ? body.timeZone : null,
         });
         if (threadId) {
           const db = await getDb();
+          // A re-ask after a dropped connection replaces the copy that was kept unanswered.
+          if (!versionTarget) await supersedeDanglingQuestion(userId, threadId, ctx.q).catch(() => {});
           const [userRow] = await db
             .insert(chatMessages)
             .values({
@@ -183,6 +265,8 @@ export async function POST(request: Request) {
               // `loadAttachedPeople` actually found and put in front of the model, so the mark
               // on a reloaded thread describes what the answer was really given.
               attachedContacts: ctx.attachedPeople.map((p) => ({ id: p.id, name: p.name })),
+              attachments: attachments.length ? attachments : null,
+              clientTurnId: versionTarget ? null : turnId,
               ...(versionTarget
                 ? { slot: versionTarget.slot, version: versionTarget.nextVersion, isActive: false }
                 : {}),
@@ -196,7 +280,7 @@ export async function POST(request: Request) {
         // model does, and the title is normally waiting by the time it lands. Only for a
         // thread with no title yet: a later turn must never rename the conversation.
         const titlePromise =
-          threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q, completeJsonOn(ctx.access)) : null;
+          threadId && !ctx.thread?.title ? generateChatTitle(userId, ctx.q, completeJsonOn(ctx.access), turnAbort.signal) : null;
 
         // What the answer's `::people` / `::list` blocks may show, before its first word, so
         // a block renders the moment its line arrives. `let`: a lookup mid-answer can find
@@ -206,12 +290,40 @@ export async function POST(request: Request) {
         let blocks = buildChatBlocks(ctx);
         send({ type: "blocks", blocks });
 
-        steps.start("answer", "Writing the answer");
+        // What the person sends while this answer is being written (`steerChatTurn`). Read
+        // between lookup rounds; each note taken is confirmed with a step, which also puts it
+        // in the saved trail. Only a turn with an id can be addressed.
+        let steersTaken = 0;
+        const steer =
+          detached && threadId && turnId
+            ? async () => {
+                const notes = await readTurnSteers(userId, threadId, turnId);
+                const fresh = notes.slice(steersTaken);
+                steersTaken = notes.length;
+                for (const note of fresh) steps.done("steer", { id: `steer:${note.id}`, label: "You added", detail: note.text });
+                return fresh.map((note) => note.text);
+              }
+            : undefined;
+
+        // Web search is off unless the person said on or the question needs the web
+        // (`@/lib/chat-web-decision`). The pause/provider check runs only when a search is
+        // wanted, so an ordinary question pays nothing for it.
+        const webWanted =
+          webChoice === "on" || (webChoice === "auto" && classifyWebNeed(ctx.q).needs);
+        const webTurn = decideWebForTurn({
+          choice: webChoice,
+          question: ctx.q,
+          availability: webWanted ? await chatWebAvailability(ctx.access ?? access) : { ok: true },
+        });
+        const webLine = webStep(webTurn);
+        if (webLine) steps.done("web", webLine);
+
+        steps.start("answer", mode === "deep" ? "Researching in depth" : "Writing the answer");
         // Secrets and fence markers are scrubbed from the LIVE stream, not only from what is
         // stored afterwards — see `createStreamRedactor`. (A scrub is recorded once the
         // stored copy is guarded, by `guardChatAnswer`; nothing is recorded here twice.)
         const redactor = createStreamRedactor();
-        const deadlineSignal = AbortSignal.timeout(answerDeadlineMs(requestStartedAt));
+        const deadlineSignal = AbortSignal.timeout(answerDeadlineMs(requestStartedAt, Date.now(), mode));
         const onDelta = (delta: string) => {
           const safe = redactor.push(delta);
           if (safe) send({ type: "answer", delta: safe });
@@ -222,7 +334,7 @@ export async function POST(request: Request) {
             answerWithLookups(userId, ctx, {
               onDelta,
               requestStartedAt,
-              signal: request.signal,
+              signal: turnAbort.signal,
               deadlineSignal,
               steps,
               notePassages: ctx.notePassages ?? [],
@@ -235,6 +347,18 @@ export async function POST(request: Request) {
               },
               // Cards appear as the loop drafts them, not only once the answer is done.
               onProposed: (items) => send({ type: "actions", items }),
+              steer,
+              mode,
+              web: webTurn.on,
+              webNote: webTurn.blocked
+                ? webTurn.blocked
+                : webTurn.on
+                  ? webTurn.source === "auto"
+                    ? "auto-on"
+                    : undefined
+                  : webTurn.source === "auto"
+                    ? "auto-off"
+                    : undefined,
             }),
           { userId }
         );
@@ -250,10 +374,14 @@ export async function POST(request: Request) {
         const { text: unblocked, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
         // The same for blocks: an id the server never offered, or a roster that was not
         // there, is dropped before anything is stored.
-        const { text: cleanAnswer, removed: strayBlockIds } = stripInvalidDirectives(unblocked, {
-          people: new Set(Object.keys(blocks.people)),
-          lists: new Set(Object.keys(blocks.lists)),
-        });
+        // A draft block keeps a recipient only if the server offered that person (`to=`).
+        const { text: cleanAnswer, removed: strayBlockIds } = stripInvalidDirectives(
+          normalizeDraftBlocks(unblocked, new Set(Object.keys(blocks.people))),
+          {
+            people: new Set(Object.keys(blocks.people)),
+            lists: new Set(Object.keys(blocks.lists)),
+          }
+        );
         const cited = citedIds(cleanAnswer);
         const citedEvidence = Object.fromEntries(cited.map((id) => [id, result.evidence[id]]));
 
@@ -295,7 +423,7 @@ export async function POST(request: Request) {
         // A JSON tail (recruiter recommendations) that did not parse used to mean zero cards
         // with no trace anywhere. The answer still stands; this only makes the loss visible.
         if (result.parseError) {
-          reportError(new Error(`chat answer JSON did not parse: ${result.parseError}`), {
+          reportError(new Error(scrubModelText(`chat answer JSON did not parse: ${result.parseError}`)), {
             where: "chat.stream.recommendations",
             userId,
             level: "warning",
@@ -323,6 +451,12 @@ export async function POST(request: Request) {
             ? null
             : ([ctx.retrieved[0]?.preferredName || ctx.retrieved[0]?.fullName].find((n) => n && !isHandle(n)) ?? null),
         });
+        // A Stop that landed since the last poll: its question is already gone, so nothing may
+        // be saved under it.
+        if (clientGone && detached && (await wasTurnStopped(userId, threadId, turnId).catch(() => false))) {
+          turnAbort.abort(new Error("stopped"));
+        }
+        turnAbort.signal.throwIfAborted();
         // Persisted before `done` so the client learns the real message id and title. The
         // CLEANED text, not what streamed live — an invented citation was already visible
         // for that turn, but a reload should never show a dead `[e99]` nobody can resolve.
@@ -376,15 +510,28 @@ export async function POST(request: Request) {
         });
       } catch (err) {
         // The question was written before the model ran (it carries the attached people and,
-        // on a regenerate, the slot). Nothing answered it — a failure or a Stop alike — so it
-        // does not stay. Before the client-gone return: a Stop is exactly when it is gone.
-        await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
-        // A first message that never got an answer leaves the thread empty: remove it too
-        // (a no-op when the thread has any message).
-        await discardEmptyThread(userId, threadId).catch(() => {});
-        // The client is gone: there is nobody to tell, and enqueueing now would throw. Not
-        // an error of ours either — the provider call was aborted on purpose.
-        if (request.signal.aborted) return;
+        // on a regenerate, the slot). A failure or a Stop discards it: nothing answered it.
+        // A dropped connection (a closed tab, a network blip) keeps it, so what the person
+        // typed is still in the thread when they come back (audit L-25) — including a turn
+        // that kept running without them and then failed: nobody is there to be handed the
+        // question back. The server cannot tell a drop from a Stop by the abort alone, so a
+        // Stop is marked by the client (`markTurnStopped`), which also covers a mark that
+        // lands after this runs. A version turn always goes: its row is inactive and means
+        // nothing on its own.
+        const keep =
+          (clientGone || turnAbort.signal.aborted) &&
+          !versionTarget &&
+          !(await wasTurnStopped(userId, threadId, turnId).catch(() => false));
+        if (!keep) {
+          await discardUnansweredQuestion(userId, threadId, persistedUserMessageId).catch(() => {});
+          // A first message that never got an answer leaves the thread empty: remove it too
+          // (a no-op when the thread has any message).
+          await discardEmptyThread(userId, threadId).catch(() => {});
+        }
+        // Aborted on purpose (a Stop, or a turn that ends with its connection): not an error
+        // of ours. A turn that failed with nobody watching is still counted and reported;
+        // `send` drops the event.
+        if (turnAbort.signal.aborted) return;
         // Counted for the failure rate: the thread and a machine code, never the message. Not
         // for a Stop (returned above) and not without a thread (nothing to key it to).
         trackChatAnswerFailed(userId, threadId, err);
@@ -392,6 +539,9 @@ export async function POST(request: Request) {
         // a mid-stream failure used to leave no trace outside the person's screen.
         send({ type: "error", message: reportedFailure(err, TOAST_COPY.chatFailed, { where: "route.chat.stream", userId }).error });
       } finally {
+        turnFinished = true;
+        clearInterval(stopPoll);
+        finishTurn();
         try {
           controller.close();
         } catch {

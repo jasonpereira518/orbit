@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { getAppBaseUrl } from "@/lib/app-url";
-import { signToken, verifyToken } from "@/lib/crypto";
+import { hashIdToken, signIdToken, verifyIdToken, type SignedIdTokenSpec } from "@/lib/signed-id-token";
 import { getCreditBalance } from "@/lib/credits/ledger";
 import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
 import { getEntitlements } from "@/lib/entitlements";
@@ -11,7 +11,6 @@ import { PLAN_CONFIG, PLAN_LABELS, type Plan, type PlanConfig } from "@/lib/plan
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { nextPlanFor } from "@/lib/ai-access-copy";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS } from "@/lib/stripe-config";
-import { sleep } from "@/lib/async";
 
 /**
  * The emails at 80% and 100% of an account's monthly AI credits (pricing v2). The in-app
@@ -25,7 +24,8 @@ import { sleep } from "@/lib/async";
  *    refuses puts the claim back, and the next run tries again.
  *  - Crossing both levels between two runs sends only the 100% email.
  *  - One-click unsubscribe (RFC 8058) through `/api/credits/email/unsubscribe`, with a token
- *    that is an HMAC of the account id; the Settings switch turns it back on.
+ *    that is an HMAC of the account id, bound to the account by its stored hash; the Settings
+ *    switch turns it back on.
  *
  * No `next/server`: the route and the smoke both drive this.
  */
@@ -43,31 +43,45 @@ export function noticeLevelFor(grantedMicros: number, remainingMicros: number): 
 
 // ---- Unsubscribe -------------------------------------------------------------------------
 
-const UNSUBSCRIBE_LABEL = "orbit:credit-email-unsubscribe:v1";
-
-const UNSUBSCRIBE_DEV_SECRET = "orbit-dev-credit-email";
+/**
+ * Hash-bound, like Radar's digest (audit L-05): every send stores the SHA-256 of the token it
+ * put in the email (`user_settings.credit_email_unsub_token_hash`), and a token unsubscribes
+ * only while that hash is on the account. Deleting the account or its settings row therefore
+ * revokes every link already sent.
+ *
+ * Links mailed before this change were signed with the raw secret and never recorded; they
+ * still verify (`legacy`) and still work, without the hash check, because they are already in
+ * inboxes and an unsubscribe link must never stop working.
+ */
+const UNSUBSCRIBE_TOKEN: SignedIdTokenSpec = {
+  label: "orbit:credit-email-unsubscribe:v1",
+  devFallback: "orbit-dev-credit-email",
+};
 
 export function creditEmailUnsubscribeToken(userId: string): string {
-  return signToken(UNSUBSCRIBE_LABEL, userId, UNSUBSCRIBE_DEV_SECRET);
+  return signIdToken(UNSUBSCRIBE_TOKEN, userId);
 }
 
 /** The account a token was issued for, or null when this app did not sign it. */
 export function readCreditEmailUnsubscribeToken(token: string | null | undefined): string | null {
-  return verifyToken(UNSUBSCRIBE_LABEL, token, UNSUBSCRIBE_DEV_SECRET);
+  return verifyIdToken(UNSUBSCRIBE_TOKEN, token)?.id ?? null;
 }
 
-export function creditEmailUnsubscribeUrl(userId: string): string {
-  return `${getAppBaseUrl()}/api/credits/email/unsubscribe?token=${encodeURIComponent(creditEmailUnsubscribeToken(userId))}`;
+export function creditEmailUnsubscribeUrl(token: string): string {
+  return `${getAppBaseUrl()}/api/credits/email/unsubscribe?token=${encodeURIComponent(token)}`;
 }
 
 /** Turn the emails off for the account a token names. Idempotent; false for a bad token. */
 export async function unsubscribeCreditEmail(token: string | null | undefined): Promise<boolean> {
-  const userId = readCreditEmailUnsubscribeToken(token);
-  if (!userId) return false;
+  const verified = verifyIdToken(UNSUBSCRIBE_TOKEN, token);
+  if (!verified || !token) return false;
   const db = await getDb();
+  const bound = verified.legacy
+    ? sql``
+    : sql` AND credit_email_unsub_token_hash = ${hashIdToken(token)}`;
   const rows = rowsOf<{ user_id: string }>(
     await db.execute(sql`
-      UPDATE user_settings SET credit_email_enabled = 0 WHERE user_id = ${userId} RETURNING user_id
+      UPDATE user_settings SET credit_email_enabled = 0 WHERE user_id = ${verified.id}${bound} RETURNING user_id
     `)
   );
   return rows.length > 0;
@@ -133,7 +147,7 @@ export function buildCreditEmail(
     ];
   }
 
-  const cta = `${getAppBaseUrl()}/settings?integration=ai`;
+  const cta = `${getAppBaseUrl()}/settings#settings-plan`;
   const footer = "You get this email when your Orbit AI credits run low.";
   const text = [...lines, "", `See your credits: ${cta}`, "", `${footer} Turn it off: ${unsubscribeUrl}`].join("\n");
   const html = `<!doctype html>
@@ -213,12 +227,13 @@ type Candidate = {
  * Claim this cycle's level for one account: one statement, so of two overlapping runs only
  * one gets a row back. Returns what it replaced, for the release.
  */
-async function claim(userId: string, periodStart: Date, level: NoticeLevel) {
+async function claim(userId: string, periodStart: Date, level: NoticeLevel, tokenHash: string) {
   const db = await getDb();
   const [row] = rowsOf<{ prev_period: Date | string | null; prev_level: number }>(
     await db.execute(sql`
       UPDATE user_settings u
-         SET credit_notice_period_start = ${periodStart}, credit_notice_level = ${level}
+         SET credit_notice_period_start = ${periodStart}, credit_notice_level = ${level},
+             credit_email_unsub_token_hash = ${tokenHash}
         FROM (SELECT credit_notice_period_start AS prev_period, credit_notice_level AS prev_level
                 FROM user_settings WHERE user_id = ${userId}) p
        WHERE u.user_id = ${userId}
@@ -286,7 +301,8 @@ export async function sendCreditNotices(
       stats.skipped++;
       continue;
     }
-    const prev = await claim(c.user_id, periodStart, level);
+    const token = creditEmailUnsubscribeToken(c.user_id);
+    const prev = await claim(c.user_id, periodStart, level, hashIdToken(token));
     if (!prev) {
       stats.skipped++;
       continue;
@@ -296,7 +312,7 @@ export async function sendCreditNotices(
       getEffectivePlanConfig(),
     ]);
     const packCredits = balance.packsFrozen ? 0 : Math.floor(balance.packRemaining / MICROS_PER_CREDIT);
-    const unsubscribeUrl = creditEmailUnsubscribeUrl(c.user_id);
+    const unsubscribeUrl = creditEmailUnsubscribeUrl(token);
     const email = buildCreditEmail(
       {
         level,
@@ -324,7 +340,7 @@ export async function sendCreditNotices(
       });
     }
     // Under Resend's default of two requests a second.
-    if (opts.pauseMs !== 0) await sleep(opts.pauseMs ?? 600);
+    if (opts.pauseMs !== 0) await new Promise((r) => setTimeout(r, opts.pauseMs ?? 600));
   }
   return stats;
 }

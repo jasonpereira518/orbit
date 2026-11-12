@@ -1,5 +1,6 @@
 "use client";
 
+import { Check } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { PERK_STAGGER_MS } from "@/lib/celebration/choreography";
 import type { CelebrationPhase } from "@/lib/celebration/choreography";
@@ -136,12 +137,13 @@ export function CelebrationContent({
                   >
                     <motion.span
                       aria-hidden
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: theme.ink }}
+                      className="flex shrink-0"
                       initial={skipped ? false : { scale: 0 }}
                       animate={{ scale: 1 }}
                       transition={{ ...PERK_SPRING, delay }}
-                    />
+                    >
+                      <Check className="size-4" strokeWidth={3} style={{ color: theme.ink }} />
+                    </motion.span>
                     <span style={{ fontSize: layout.perkPx, lineHeight: 1.375 }}>
                       {perk}
                     </span>
@@ -181,10 +183,10 @@ export function CelebrationContent({
             initial={skipped ? false : { opacity: 0, y: 16, scale: 0.92 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ ...PERK_SPRING, opacity: { duration: 0.12 } }}
-            // A dark slab with a hard offset, not a bright pill with a glow:
-            // on a bright field a light chip vanishes, and a blurred shadow
-            // is the wrong register. The offset also buys a real press.
-            className="pointer-events-auto rounded-[8px] font-semibold uppercase outline-none transition-[transform,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-offset-2 active:translate-y-[3px]"
+            // A dark pill with a hard offset, not a glow: on a bright field a
+            // light chip vanishes, and a blurred shadow is the wrong register.
+            // The offset also buys a real press.
+            className="pointer-events-auto rounded-full font-semibold uppercase outline-none transition-[transform,box-shadow] duration-100 focus-visible:ring-2 focus-visible:ring-offset-2 active:translate-y-[3px]"
             style={{
               paddingInline: layout.narrow ? 32 : 36,
               paddingBlock: layout.narrow ? 12 : 14,

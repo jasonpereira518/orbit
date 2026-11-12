@@ -9,58 +9,55 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
+import { format, parseISO } from "date-fns";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
-  AudioLines,
   BellPlus,
-  CalendarClock,
   CornerDownLeft,
   Loader2,
-  Mic,
   Moon,
   PenLine,
-  NotebookPen,
   Search,
-  Settings,
   Sparkles,
   Sun,
-  Upload,
-  UserPlus,
-  Users,
   type LucideIcon,
 } from "lucide-react";
 import { searchContactsForPicker } from "@/actions/contacts";
 import { openCompose } from "@/lib/compose-events";
+import { createReminder, deleteReminderAction } from "@/actions/reminders";
 import { saveThemePreference } from "@/actions/settings";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { useFullPrefetch } from "@/lib/intent-prefetch";
-import { APP_NAV } from "@/components/layout/app-nav";
-import { SETTINGS_SECTIONS } from "@/components/settings/sections";
+import {
+  ACTIONS,
+  INTEGRATIONS,
+  PAGES,
+  SETTINGS,
+  type Command,
+} from "@/components/layout/command-palette-entries";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { requestAskBar } from "@/lib/ask-bar-events";
 import { handOffToCapture } from "@/lib/capture-handoff";
 import {
   emailVerbTerm,
+  isComingSoonEntry,
   looksLikeNote,
   looksLikeQuestion,
   rankEntries,
+  scoreEntry,
   visibleEntries,
-  type PaletteEntry,
 } from "@/lib/command-palette";
+import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen, useFeedbackAvailable } from "@/lib/feedback-events";
+import { parseReminderPhrase } from "@/lib/reminder-phrase";
+import { runToastAction } from "@/lib/toast";
+import { TOAST_COPY } from "@/lib/toast-copy";
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 import type { ContactPickerOption } from "@/lib/contacts-page";
 import { cn } from "@/lib/utils";
 
 /** How the palette can hand a question over, decided by the shell — see `CommandPalette`. */
 export type PaletteAskMode = "bar" | "chat" | null;
-
-type Command = PaletteEntry & {
-  icon: LucideIcon;
-  hint?: string;
-  /** Shown on an empty palette. The rest wait for a search, so recent people stay in view. */
-  featured?: boolean;
-};
 
 type Row = {
   id: string;
@@ -71,6 +68,8 @@ type Row = {
   hintAlways?: boolean;
   icon: ReactNode;
   run: () => void;
+  /** Shift+Enter, when a row has a second, more deliberate reading (see the reminder row). */
+  alt?: () => void;
   /** A route worth fetching in full while this row is highlighted — a person's profile. */
   prefetchHref?: string;
 };
@@ -78,106 +77,6 @@ type Row = {
 const RECENT_CONTACTS = 5;
 const SEARCH_CONTACTS = 8;
 const SEARCH_DEBOUNCE_MS = 140;
-
-const ACTIONS: Command[] = [
-  {
-    id: "action:capture",
-    label: "New capture",
-    featured: true,
-    hint: "Paste notes or upload photos",
-    href: "/capture",
-    icon: Sparkles,
-    keywords: "log interaction notes paste photo picture upload extract add",
-  },
-  {
-    id: "action:voice",
-    label: "Record a voice note",
-    featured: true,
-    href: "/capture?mode=voice",
-    icon: Mic,
-    keywords: "dictate audio speak capture microphone",
-  },
-  {
-    id: "action:meeting",
-    label: "Record a meeting",
-    href: "/meetings",
-    icon: AudioLines,
-    keywords: "call zoom meet transcribe transcript summary recorder",
-  },
-  {
-    id: "action:structured",
-    label: "Log an interaction",
-    hint: "Type or paste what happened",
-    href: "/capture",
-    icon: NotebookPen,
-    keywords: "meeting call coffee note structured manual",
-  },
-  {
-    id: "action:add-contact",
-    label: "Add a contact",
-    featured: true,
-    href: "/contacts/new",
-    icon: UserPlus,
-    keywords: "new person create",
-  },
-  {
-    id: "action:import",
-    label: "Import contacts",
-    hint: "LinkedIn, contacts file, Google, Outlook",
-    href: "/imports",
-    icon: Upload,
-    keywords: "linkedin csv vcard vcf google outlook iphone phone address book calendar ics",
-  },
-  {
-    id: "action:new-reminder",
-    label: "New reminder",
-    featured: true,
-    href: "/reminders?new=1",
-    icon: BellPlus,
-    keywords: "add create task follow up remind todo",
-  },
-  {
-    id: "action:upcoming-reminders",
-    label: "Upcoming reminders",
-    hint: "What’s due after today",
-    href: "/reminders?view=upcoming",
-    icon: CalendarClock,
-    keywords: "due soon week schedule next",
-  },
-  {
-    id: "action:duplicates",
-    label: "Review duplicate contacts",
-    href: "/contacts/duplicates",
-    icon: Users,
-    keywords: "merge dedupe same person",
-  },
-];
-
-const PAGES: Command[] = [
-  ...APP_NAV.map((item) => ({
-    id: `page:${item.href}`,
-    label: item.label,
-    href: item.href,
-    icon: item.icon,
-    keywords: "go open page",
-  })),
-  {
-    id: "page:/recruiters",
-    label: "Recruiters",
-    href: "/recruiters",
-    icon: Users,
-    keywords: "go open page recruiting hiring",
-  },
-];
-
-const SETTINGS: Command[] = SETTINGS_SECTIONS.map((section) => ({
-  id: `settings:${section.id}`,
-  label: `Settings › ${section.label}`,
-  href: `/settings#${section.id}`,
-  settingsId: section.id,
-  icon: Settings,
-  keywords: "preferences configure",
-}));
 
 /** A bare glyph in an avatar-sized slot, so icons and faces line up down the list. */
 function CommandIcon({ icon: Icon }: { icon: LucideIcon }) {
@@ -209,11 +108,14 @@ export function CommandPaletteDialog({
   open,
   onOpenChange,
   hidden,
+  comingSoon,
   askMode,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   hidden: ReadonlySet<string>;
+  /** Pages marked coming soon: still listed, and tagged, as the sidebar tags them. */
+  comingSoon: ReadonlySet<string>;
   askMode: PaletteAskMode;
 }) {
   const router = useRouter();
@@ -238,7 +140,12 @@ export function CommandPaletteDialog({
     setActiveIndex(0);
   }
 
+  // Only while the widget is on the page: the verb opens its panel, and there is nothing to
+  // open on a route (or in a shell) that does not mount it.
+  const feedbackAvailable = useFeedbackAvailable();
   const contactsVisible = !hidden.has("page.contacts");
+  // Same test as the Reminders page itself, so "New reminder: …" goes dark along with it.
+  const remindersVisible = !hidden.has("page.reminders");
   // The same test the Capture actions pass, so "Capture this" goes dark along with them.
   const captureVisible = !hidden.has("page.capture");
   // "email maya": people rows open Compose instead of the profile. Null unless Compose is
@@ -290,14 +197,32 @@ export function CommandPaletteDialog({
     const term = query.trim();
     const out: Row[] = [];
 
-    const commandRow = (group: string, c: Command): Row => ({
-      id: c.id,
-      group,
-      label: c.label,
-      hint: c.hint,
-      icon: <CommandIcon icon={c.icon} />,
-      run: () => go(c.href!),
-    });
+    const commandRow = (group: string, c: Command): Row => {
+      const soon = isComingSoonEntry(c, comingSoon);
+      return {
+        id: c.id,
+        group,
+        label: c.label,
+        // A tag, not a refusal: the page still opens, on its teaser. Always shown, so it is
+        // read before Enter rather than after.
+        hint: soon ? "Coming soon" : c.hint,
+        hintAlways: soon || undefined,
+        icon: <CommandIcon icon={c.icon} />,
+        run: () => {
+          if (c.verb === "compose") {
+            close();
+            openCompose({ contactId: null });
+          } else if (c.verb === "feedback") {
+            close();
+            requestFeedbackOpen(FEEDBACK_ANCHOR_FALLBACK);
+          } else go(c.href!);
+        },
+      };
+    };
+    // What this viewer may see: the operator's hidden surfaces, and the feedback verb only
+    // while the widget it opens is mounted.
+    const available = (list: Command[]) =>
+      visibleEntries(list, hidden).filter((c) => c.verb !== "feedback" || feedbackAvailable);
 
     const themeCommand: Command = {
       id: "action:theme",
@@ -353,13 +278,51 @@ export function CommandPaletteDialog({
           }
         : null;
 
+    // "remind me to call Sam friday": the sentence says what it is, so Enter SETS the reminder
+    // (title, and the day when it names one) and says so in a toast with an Undo. Shift+Enter is
+    // the slower reading: the New reminder form, already filled in, for notes or a list first.
+    const reminder = remindersVisible && term ? parseReminderPhrase(term) : null;
+    const dueText = reminder?.due ? format(parseISO(reminder.due), "EEE, MMM d") : null;
+    const reminderRow: Row | null = reminder
+      ? {
+          id: "reminder-this",
+          group: "Reminder",
+          label: (
+            <>
+              Set reminder: <span className="font-medium text-ink">&ldquo;{reminder.title}&rdquo;</span>
+            </>
+          ),
+          hint: `${dueText ?? "No date"} · ⇧↵ to edit first`,
+          hintAlways: true,
+          icon: <CommandIcon icon={BellPlus} />,
+          run: () => {
+            close();
+            void runToastAction({
+              run: () => createReminder({ title: reminder.title, dueDate: reminder.due ?? undefined }),
+              success: `${TOAST_COPY.reminderSet}: \u201c${reminder.title}\u201d${dueText ? ` \u00b7 ${dueText}` : ""}`,
+              failure: "Couldn’t set that reminder — try again?",
+              refresh: () => router.refresh(),
+              // Undo is the reminder list's own delete (a soft dismiss), so it can be brought back.
+              undo: (row) => (row?.id ? () => deleteReminderAction(row.id) : null),
+              undone: "Reminder removed",
+            });
+          },
+          alt: () =>
+            go(
+              `/reminders?new=1&title=${encodeURIComponent(reminder.title)}${reminder.due ? `&due=${reminder.due}` : ""}`
+            ),
+        }
+      : null;
+
     // A question goes to the front: typing "who do I know at Stripe?" and pressing Enter
     // should ask it, not open whichever page happened to contain the word "know".
     const question = askRow && looksLikeQuestion(term);
     if (question) out.push(askRow);
+    if (reminderRow) out.push(reminderRow);
     // A note goes to the front for the same reason: nothing else will match a sentence,
-    // and Enter should do the one thing it can mean.
-    const note = captureRow && looksLikeNote(term);
+    // and Enter should do the one thing it can mean. Not when it is a reminder: that sentence is
+    // also long enough to read as a note, and the reminder is the better reading of it.
+    const note = captureRow && !reminderRow && looksLikeNote(term);
     if (note) out.push(captureRow);
 
     if (emailTerm) {
@@ -412,11 +375,11 @@ export function CommandPaletteDialog({
     // Empty, the palette is mostly a way back to someone, so they lead.
     if (!term) out.push(...personRows);
 
-    const visibleActions = visibleEntries(ACTIONS, hidden);
+    const visibleActions = available(ACTIONS);
     const actions = term ? rankEntries(visibleActions, term) : visibleActions.filter((c) => c.featured);
     const theme = term ? rankEntries([themeCommand], term) : [];
-    out.push(...actions.map((c) => commandRow("Actions", c)));
-    out.push(
+    const actionRows: Row[] = [
+      ...actions.map((c) => commandRow("Actions", c)),
       ...theme.map((c) => ({
         ...commandRow("Actions", c),
         run: () => {
@@ -427,21 +390,49 @@ export function CommandPaletteDialog({
           });
           close();
         },
-      }))
-    );
+      })),
+    ];
 
-    if (term) out.push(...personRows);
+    let pageEntries = available(PAGES).filter((c) => c.href !== pathname);
+    // Empty, pages keep the sidebar's order, which puts the coming-soon ones last.
+    if (!term) {
+      pageEntries = [
+        ...pageEntries.filter((c) => !isComingSoonEntry(c, comingSoon)),
+        ...pageEntries.filter((c) => isComingSoonEntry(c, comingSoon)),
+      ];
+    }
+    const pages = rankEntries(pageEntries, term);
+    const pageRows = pages.map((c) => commandRow("Go to", c));
+    const settingRows = term
+      ? rankEntries([...available(SETTINGS), ...available(INTEGRATIONS)], term).map((c) => commandRow("Settings", c))
+      : // Only once something is typed: sixteen of them would bury the useful rows on an
+        // empty palette, and nobody browses to "Webhooks".
+        [];
 
-    const pages = rankEntries(
-      visibleEntries(PAGES, hidden).filter((c) => c.href !== pathname),
-      term
-    );
-    out.push(...pages.map((c) => commandRow("Go to", c)));
-
-    // Settings sections only once something is typed — thirteen of them would bury the
-    // useful rows on an empty palette, and nobody browses to "Webhooks".
-    if (term) {
-      out.push(...rankEntries(visibleEntries(SETTINGS, hidden), term).map((c) => commandRow("Settings", c)));
+    if (!term) {
+      // People already lead (above); then the featured actions, then the pages.
+      out.push(...actionRows, ...pageRows);
+    } else {
+      // Groups lead by how well their best row matches, not by a fixed order: "google" is the
+      // Integrations page, not the eight people who work there, and "contacts" is the page,
+      // not the first of a dozen "Contacts quiet for…" actions. Ties keep the old order
+      // (pages, actions, people, settings), so an action that merely starts with the same word
+      // never outranks the place that has the name. People are ranked by the server, so they
+      // are scored by their name and company when that matches, and as a weak hit otherwise.
+      const best = (list: Command[]) => Math.max(0, ...list.map((c) => scoreEntry(term, c)));
+      const personScore = personRows.length
+        ? Math.max(
+            3,
+            ...people.map((p) => scoreEntry(term, { label: p.preferredName || p.fullName, keywords: p.company ?? "" }))
+          )
+        : 0;
+      const groups = [
+        { rows: pageRows, score: best(pages), rank: 0 },
+        { rows: actionRows, score: best([...actions, ...theme]), rank: 1 },
+        { rows: personRows, score: personScore, rank: 2 },
+        { rows: settingRows, score: best(rankEntries([...available(SETTINGS), ...available(INTEGRATIONS)], term)), rank: 3 },
+      ].sort((x, y) => y.score - x.score || x.rank - y.rank);
+      for (const g of groups) out.push(...g.rows);
     }
 
     if (captureRow && !note) out.push(captureRow);
@@ -449,7 +440,7 @@ export function CommandPaletteDialog({
     return out;
     // `go`/`close` only close over stable setters and the router.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, people, hidden, askMode, pathname, isDark, contactsVisible, captureVisible, emailTerm]);
+  }, [query, people, hidden, comingSoon, askMode, pathname, isDark, contactsVisible, captureVisible, remindersVisible, emailTerm, feedbackAvailable]);
 
   const active = rows[Math.min(activeIndex, Math.max(rows.length - 1, 0))];
 
@@ -486,7 +477,8 @@ export function CommandPaletteDialog({
       setActiveIndex(rows.length - 1);
     } else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      active?.run();
+      if (e.shiftKey && active?.alt) active.alt();
+      else active?.run();
     }
   }
 

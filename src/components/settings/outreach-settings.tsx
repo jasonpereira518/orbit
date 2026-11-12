@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { toast } from "@/lib/toast";
 import { saveOutreachSettings } from "@/actions/settings";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ export function OutreachSettings({
   const [twilioSid, setTwilioSid] = useState("");
   const [twilioToken, setTwilioToken] = useState("");
   const [twilioFrom, setTwilioFrom] = useState(initial.twilioFromNumber || "");
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   return (
     <SettingsSection

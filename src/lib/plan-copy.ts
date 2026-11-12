@@ -28,7 +28,7 @@ import type { DemoAccountReason } from "@/lib/demo-account";
  * actually charged is the Stripe price with the matching lookup key.
  *
  * TWO RULES THIS COPY KEEPS:
- *  - Only shipped features. Outreach and Events are behind their coming-soon gates, and the
+ *  - Only shipped features. Outreach is behind its coming-soon gate, and the
  *    Chrome extension stays out of plan copy until `EXTENSION_PUBLISHED`; none appear until they ship.
  *    (The coming-soon screen and nav tooltip may say which plan a surface WILL unlock on —
  *    `COMING_SOON_UNLOCK_PLAN` — but pricing and plan cards still never list it.)
@@ -211,6 +211,11 @@ const TEMPLATE_COVERS: Record<Plan, FeatureKey[]> = {
   max: ["meetings", "api"],
   lifetime: ["recruiters", "extraConnections", "meetings", "api"],
 };
+
+/** The plan a template builds on ("Everything in …"), if any. */
+export function planBase(plan: Plan): Plan | undefined {
+  return TEMPLATES[plan].base;
+}
 
 /**
  * `plan`'s bullets under `config`. A listed feature appears on a plan iff the plan has it; the

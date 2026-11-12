@@ -69,16 +69,22 @@ export async function seedSharedAvatar(slug: string, url: string, dryRun = false
   return (await adoptSharedPhoto(slug, row, stored, "unavatar")) ? "promoted" : "blocked";
 }
 
-/** Lookups left today in an app-wide source allowance (`consumeBucket`'s window rule). */
-async function sharedAllowanceLeft(source: "unavatar" | "microlink"): Promise<number> {
+/** What is left in a `consumeBucket(scope, key)` bucket's current window, without spending any. */
+async function bucketLeft(bucket: string, policy: { limit: number; windowSec: number }): Promise<number> {
   const db = await getDb();
-  const policy = RATE_LIMITS.avatarSourceShared;
-  const [b] = await db
-    .select()
-    .from(rateLimitBuckets)
-    .where(sql`${rateLimitBuckets.bucket} = ${"avatarSource.shared:" + source}`);
+  const [b] = await db.select().from(rateLimitBuckets).where(sql`${rateLimitBuckets.bucket} = ${bucket}`);
   if (!b || Date.now() - b.windowStartedAt.getTime() > policy.windowSec * 1000) return policy.limit;
   return policy.limit - b.count;
+}
+
+/** Lookups left today in an app-wide source allowance (`consumeBucket`'s window rule). */
+export function sharedAllowanceLeft(source: "unavatar" | "microlink"): Promise<number> {
+  return bucketLeft(`avatarSource.shared:${source}`, RATE_LIMITS.avatarSourceShared);
+}
+
+/** Lookups left today under the background fill's own daily cap (`avatarFill`). */
+export function avatarFillLeft(): Promise<number> {
+  return bucketLeft("avatarFill:daily", RATE_LIMITS.avatarFill);
 }
 
 /**

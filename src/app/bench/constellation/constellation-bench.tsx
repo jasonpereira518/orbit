@@ -1,6 +1,6 @@
 "use client";
 
-import { Profiler, useEffect, useState, type ProfilerOnRenderCallback } from "react";
+import { Profiler, useEffect, useMemo, useState, type ProfilerOnRenderCallback } from "react";
 import { ConstellationIntro } from "@/components/graph/constellation-intro";
 import { NetworkGraphLazy } from "@/components/graph/network-graph-lazy";
 import {
@@ -8,6 +8,7 @@ import {
   CONSTELLATION_STAGE_HEIGHT,
 } from "@/components/graph/constellation-loading";
 import { buildSyntheticGraphPayload } from "@/lib/graph/synthetic-network";
+import { encodeGraphPayload } from "@/lib/graph-wire";
 import { STAGE_GROUND } from "@/lib/graph/stage-layers";
 import { markOpenStage } from "@/lib/graph/open-marks";
 
@@ -60,6 +61,8 @@ const onRender: ProfilerOnRenderCallback = (_id, phase, actual, base, _start, co
 
 export function ConstellationBench() {
   const [payload, setPayload] = useState<Payload | null>(null);
+  // Sent into the chart the way the real page sends it: as the action's wire form.
+  const wire = useMemo(() => (payload ? encodeGraphPayload(payload) : null), [payload]);
 
   // After hydration, not during render: the page is server-rendered and the size lives in the
   // URL. The real page's payload also only reaches the chart after its own boundary resolves.
@@ -101,7 +104,7 @@ export function ConstellationBench() {
           <ConstellationIntro />
           {payload ? (
             <Profiler id="constellation" onRender={onRender}>
-              <NetworkGraphLazy initialData={payload} />
+              <NetworkGraphLazy initialData={wire} />
             </Profiler>
           ) : (
             <ConstellationLoading className={CONSTELLATION_STAGE_HEIGHT} />

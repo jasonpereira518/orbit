@@ -79,9 +79,11 @@ export const PLAN_SHORT_LABELS: Record<Plan, string> = {
  * - `extraConnections`: a second Google or Microsoft account. Free keeps its first one.
  * - `hostedAi`: AI on Orbit's provider keys, metered in credits (every plan).
  * - `creditPacks`: buying a $5 top-up pack (every plan but Lifetime).
- * - `radar`, `events`, `findPeople`, `compose`, `cloudNotes`: features that ship coming soon.
- *   Each is enforced by its surface's own guards (`SURFACE_FEATURE` in `surfaces.ts`), and
- *   defaults to the paid plans — `COMING_SOON_UNLOCK_PLAN` promises them on Pro.
+ * - `radar`, `events`: on every plan (`radar` caps Free via `RADAR_PLAN_LIMITS`; `events` is the
+ *   "who did I meet" loop).
+ * - `findPeople`, `compose`, `cloudNotes`: features that ship coming soon. Each is enforced by its
+ *   surface's own guards (`SURFACE_FEATURE` in `surfaces.ts`), and defaults to the paid plans —
+ *   `COMING_SOON_UNLOCK_PLAN` promises them on Pro.
  *
  * Every flag here is a CODE DEFAULT: an operator can widen or narrow any of them per plan from
  * /admin/product/plans (`plan-overrides.ts`), so server gates read `getEffectivePlanConfig()`.
@@ -172,8 +174,10 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
       hostedAi: true,
       creditPacks: true,
       extraConnections: false,
-      radar: false,
-      events: false,
+      // Flagship Radar is enabled on Free with limited, cost-effective caps
+      radar: true,
+      // Every plan (Jason, Oct 25 2026): Events is the "who did I meet" loop, not an upsell.
+      events: true,
       findPeople: false,
       compose: false,
       cloudNotes: false,
@@ -315,4 +319,82 @@ export function formatSpeechAllowance(seconds: number): string {
 /** Display money: 899 → "$8.99". */
 export function formatPlanPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+export type RadarPlanLimits = {
+  /** People in the weekly plan. Never padded: a quiet week shows fewer. */
+  planSize: number;
+  /** Today strip: expiring moments shown on top of the plan, at most this many. */
+  todayMax: number;
+  /** Connect-lane cards (introduce, ask, share) per week. */
+  connectPerWeek: number;
+  /** Web checks on people the person knows (role, posts, talks), per month. */
+  pulsePerMonth: number;
+  /** Web searches for events near the person, per month. */
+  eventSearchesPerMonth: number;
+  /** Web searches for new people to meet, per month. */
+  peopleSearchesPerMonth: number;
+  /** Web searches for programs and deadlines, per month. */
+  programSearchesPerMonth: number;
+  /** Drafts written ahead overnight, per week. 0 = drafts on demand only. */
+  draftsPerWeek: number;
+  /** The AI editor's pick and why-lines. Off = the deterministic scorer's order and reasons. */
+  aiExplanations: boolean;
+};
+
+/**
+ * Radar per plan (docs/superpowers/specs/2026-11-10-radar-analyst-design.md). Every plan gets
+ * the web side; Free gets a taste. Lifetime gets Pro's limits: its credit allowance cannot
+ * carry Max's web budget. Searches here are background work, capped again by
+ * `web-search-budget.ts` (300 a month per account, half of it for background).
+ */
+export const RADAR_PLAN_LIMITS: Record<Plan, RadarPlanLimits> = {
+  free: {
+    planSize: 3,
+    todayMax: 2,
+    connectPerWeek: 1,
+    pulsePerMonth: 2,
+    eventSearchesPerMonth: 1,
+    peopleSearchesPerMonth: 0,
+    programSearchesPerMonth: 0,
+    draftsPerWeek: 0,
+    aiExplanations: false,
+  },
+  orbit: {
+    planSize: 7,
+    todayMax: 3,
+    connectPerWeek: 2,
+    pulsePerMonth: 20,
+    eventSearchesPerMonth: 4,
+    peopleSearchesPerMonth: 4,
+    programSearchesPerMonth: 2,
+    draftsPerWeek: 3,
+    aiExplanations: true,
+  },
+  max: {
+    planSize: 10,
+    todayMax: 3,
+    connectPerWeek: 3,
+    pulsePerMonth: 48,
+    eventSearchesPerMonth: 8,
+    peopleSearchesPerMonth: 4,
+    programSearchesPerMonth: 4,
+    draftsPerWeek: 5,
+    aiExplanations: true,
+  },
+  lifetime: {
+    planSize: 7,
+    todayMax: 3,
+    connectPerWeek: 2,
+    pulsePerMonth: 20,
+    eventSearchesPerMonth: 4,
+    peopleSearchesPerMonth: 4,
+    programSearchesPerMonth: 2,
+    draftsPerWeek: 3,
+    aiExplanations: true,
+  },
+};
+
+export function getRadarLimitsForPlan(plan: Plan): RadarPlanLimits {
+  return RADAR_PLAN_LIMITS[plan] ?? RADAR_PLAN_LIMITS.free;
 }

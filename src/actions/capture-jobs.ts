@@ -31,6 +31,7 @@ import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
+import { ACTIVE_CAPTURE_JOB_STATUSES } from "@/lib/capture/types";
 import type {
   CaptureDecision,
   CaptureDecisions,
@@ -42,6 +43,7 @@ import { actionFailure } from "@/lib/action-failure";
 import { parseInput } from "@/lib/action";
 import { discardCaptureJobSchema, queueCaptureJobSchema, recordCaptureChoicesSchema } from "@/lib/capture/job-input";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
+import { assertEventOwnedBy } from "@/lib/events/store";
 
 /**
  * The /capture page's contract with its durable job. Every export is async (one non-async
@@ -72,9 +74,23 @@ function kick(id: string) {
   after(() => runCaptureJobById(id).catch(() => null));
 }
 
-/** What the page hydrates from. `null` means "show the input UI". */
-export async function getActiveCaptureJob(): Promise<CaptureJobView | null> {
+const JOB_ID = /^[0-9a-f-]{36}$/i;
+
+/**
+ * What the page hydrates from. `null` means "show the input UI".
+ *
+ * `preferId` (`/capture?job=`, a Recent captures row) opens that job when it is the caller's
+ * and still open — including one file of a multi-file drop, which the newest-first resume
+ * skips; the flow then shows its drop's queue and folds it into one review.
+ */
+export async function getActiveCaptureJob(preferId?: string | null): Promise<CaptureJobView | null> {
   const userId = await requireUserId();
+  if (typeof preferId === "string" && JOB_ID.test(preferId)) {
+    const picked = await getCaptureJobRow(userId, preferId);
+    if (picked && (ACTIVE_CAPTURE_JOB_STATUSES.includes(picked.status) || picked.status === "failed")) {
+      return toCaptureJobView(picked);
+    }
+  }
   const row = await findActiveCaptureJob(userId);
   return row ? toCaptureJobView(row) : null;
 }
@@ -202,6 +218,8 @@ export async function queueCaptureJob(input: {
   entryPoint?: "capture" | "profile";
   seedContactId?: string | null;
   meetingSessionId?: string | null;
+  /** "Log who you met" opened from an event: the save marks every saved person as met on it. */
+  eventId?: string | null;
   /** Set when this job is one file of a multi-file drop. Suspends the discard rule below. */
   batchGroupId?: string | null;
   sourceLabel?: string | null;
@@ -229,6 +247,8 @@ export async function queueCaptureJob(input: {
     }
 
     await consumeBucket("capture", userId, RATE_LIMITS.capture);
+    const eventId = input.eventId || null;
+    if (eventId) await assertEventOwnedBy(userId, eventId);
 
     let row = input.jobId
       ? await queueCaptureJobRow(userId, input.jobId, {
@@ -244,7 +264,7 @@ export async function queueCaptureJob(input: {
       const db = await getDb();
       await db
         .update(captureJobs)
-        .set({ ingestedBlocks: [] })
+        .set(eventId ? { ingestedBlocks: [], eventId } : { ingestedBlocks: [] })
         .where(and(eq(captureJobs.id, row.id), eq(captureJobs.userId, userId)));
     }
     if (!row) {
@@ -254,8 +274,8 @@ export async function queueCaptureJob(input: {
       //
       // Suspended for a multi-file drop, and ONLY for one. The rule exists because a lone
       // Extract has no way back to the cards it displaced — there is no list of them. A
-      // batch does: `CaptureQueuePanel` renders every job in the group and can open any of
-      // them, so the twelve meeting notes somebody just uploaded are exactly what this
+      // batch does: Recent captures lists the drop with a row per file (`listPendingCapturesFor`)
+      // and opens it, so the twelve meeting notes somebody just uploaded are exactly what this
       // would otherwise delete eleven of.
       if (!input.batchGroupId) {
         const db = await getDb();
@@ -268,9 +288,8 @@ export async function queueCaptureJob(input: {
               inArray(captureJobs.status, ["ready", "reviewing", "failed", "transcribed"]),
               // A row the public API enqueued (`sourceKind: "api"` — set ONLY by
               // src/app/api/v1/notes/route.ts, never client-forgeable; see the type's own
-              // comment in src/lib/capture/types.ts) is exempt from this in-app rule. It has
-              // no way back through `CaptureQueuePanel` — that only renders for a group of
-              // more than one job — so discarding it here would be silent data loss with no
+              // comment in src/lib/capture/types.ts) is exempt from this in-app rule. It is
+              // not part of any drop, so discarding it here would be silent data loss with no
               // recourse, unlike the ordinary single card this rule is written for, which the
               // person just displaced themselves and can re-extract if they want it back.
               ne(captureJobs.sourceKind, "api")
@@ -295,6 +314,7 @@ export async function queueCaptureJob(input: {
         entryPoint: input.entryPoint,
         seedContactId: input.seedContactId,
         meetingSessionId: input.meetingSessionId,
+        eventId,
         batchGroupId: input.batchGroupId ?? null,
         sourceLabel: input.sourceLabel ?? null,
         mentionPicks: input.mentionPicks ?? null,

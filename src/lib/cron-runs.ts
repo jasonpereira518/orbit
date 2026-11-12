@@ -16,9 +16,11 @@ import { reportError } from "@/lib/report-error";
 
 /** `ops.sweep` is the ten-minute known-condition sweep (`src/lib/ops-sweep.ts`). */
 export type CronJobName =
+  | "avatars.linkedin-queue"
   | "billing.reconcile"
   | "cloud-notes.run"
   | "connectors.outbox"
+  | "contacts.monthly-upkeep"
   | "contacts.name-sweep"
   | "credits.notices"
   | "email-intel.sweep"
@@ -29,8 +31,8 @@ export type CronJobName =
   | "ops.sweep"
   | "product.digest"
   | "radar.digest"
-  | "radar.feeds"
   | "radar.run"
+  | "radar.web"
   | "sync.run"
   | "webhooks.drain"
   | "work-history.sweep";

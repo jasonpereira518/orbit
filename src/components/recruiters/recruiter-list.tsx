@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { Search } from "lucide-react";
+import { Lock, Mail, ExternalLink, Search } from "lucide-react";
 import type { PublicRecruiter } from "@/lib/recruiters";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -82,22 +82,43 @@ export function RecruiterList({
               <p className="font-medium text-ink">{r.fullName}</p>
               <p className="mt-0.5 text-sm text-muted-foreground">
                 {r.firm || "Unknown firm"}
-                {r.specialty.length
+                {r.role ? ` · ${r.role}` : ""}
+                {r.specialty.length && !r.role
                   ? ` · ${r.specialty.slice(0, 3).join(", ")}`
                   : ""}
               </p>
-              {r.myLink && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <Badge variant="secondary" className="text-3xs">
-                    {r.myLink.status}
-                  </Badge>
-                  {r.myLink.sharedToPool === 0 && (
-                    <Badge variant="outline" className="text-3xs">
-                      Kept private
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {r.myLink && (
+                  <>
+                    <Badge variant="secondary" className="text-3xs">
+                      {r.myLink.status}
                     </Badge>
-                  )}
-                </div>
-              )}
+                    {r.myLink.sharedToPool === 0 && (
+                      <Badge variant="outline" className="text-3xs">
+                        Kept private
+                      </Badge>
+                    )}
+                  </>
+                )}
+                {!r.piiUnlocked && (
+                  <Badge variant="outline" className="text-3xs text-muted-foreground">
+                    <Lock className="mr-1 h-2.5 w-2.5" />
+                    Contact locked (1 credit)
+                  </Badge>
+                )}
+                {r.piiUnlocked && r.email && (
+                  <span className="flex items-center gap-1 text-3xs text-muted-foreground">
+                    <Mail className="h-2.5 w-2.5" />
+                    {r.email}
+                  </span>
+                )}
+                {r.piiUnlocked && r.linkedinUrl && (
+                  <span className="flex items-center gap-1 text-3xs text-primary">
+                    <ExternalLink className="h-2.5 w-2.5" />
+                    LinkedIn
+                  </span>
+                )}
+              </div>
             </div>
             <div className="shrink-0 text-right text-xs text-muted-foreground">
               {/* Aggregates count pool-visible links only, so a recruiter only you have

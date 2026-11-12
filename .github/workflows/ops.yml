@@ -47,8 +47,8 @@ on:
     # The contact name sweep: its own minute, so it never shares a run (and the 8-minute
     # job ceiling) with the work-history sweep.
     - cron: "43 * * * *"
-    # Radar's news sweep: public feeds into the global news tables. :53, clear of every
-    # other hourly job above.
+    # Radar's weekly web pass (events, people to meet, programs): each account about once a
+    # week, the most overdue first. :53, clear of every other hourly job above.
     - cron: "53 * * * *"
     # Radar's Monday email: every hour of Sunday AND Monday UTC, because Auckland's Monday
     # morning is Sunday evening in UTC. The route sends only to people whose own Monday
@@ -57,9 +57,9 @@ on:
     # Once a day: the Deepgram usage reconciliation. An arbitrary quiet hour, offset from
     # the hourly jobs above so it never runs alongside them.
     - cron: "41 5 * * *"
-    # Once a day: Radar's nightly pass. Accounts aim at 04:00 UTC (radar_next_at), and :17
-    # sits clear of the hourly :07 and :23 jobs and of the Deepgram reconciliation above.
-    - cron: "17 4 * * *"
+    # Radar's daily pass (hourly check for accounts due at local 5:00 AM). :17
+    # sits clear of the hourly :07 and :23 jobs and of the Deepgram reconciliation.
+    - cron: "17 * * * *"
     # Cloud notes: every 30 minutes at :29 and :59, clear of every */10, */15 and hourly line above.
     - cron: "29,59 * * * *"
     # Once a day: Stripe's live subscriptions against user_settings (the independent check the
@@ -70,6 +70,9 @@ on:
     # Once a day: the metrics rollup (metrics_daily) for today and the two days before it.
     # 00:31 UTC, just after the day closes, clear of every hourly minute above.
     - cron: "31 0 * * *"
+    # Monthly on the 1st: contact upkeep (audits avatars, replaces generic/stale photos from LinkedIn, fixes handles).
+    # 03:19 UTC, clear of all daily and hourly cron marks.
+    - cron: "19 3 1 * *"
   workflow_dispatch:
 
 # One group PER SCHEDULE, never one for the whole workflow. GitHub keeps at most one
@@ -142,9 +145,11 @@ jobs:
         id: health
         continue-on-error: true
         run: |
-          code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
+          # Status code only: this repository is public, so its Actions logs are too, and the
+          # body names the deployed sha, deployment id and schema versions (audit L-13).
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$APP_URL/api/health" || echo "000")
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "health: HTTP $code"; cat /tmp/health.json 2>/dev/null; echo
+          echo "health: HTTP $code"
           # Surfaced as an annotation because `continue-on-error: true` makes this step's own
           # conclusion always `success`. A red probe is otherwise invisible in the run
           # summary, and every gated step below skips with nothing on screen to explain why.
@@ -326,8 +331,8 @@ jobs:
       # the job feed: model calls on people's own keys must never make the alerting path's
       # cadence hostage to a provider being slow. 300s to match the route's own ceiling; the
       # route self-continues when more accounts are waiting.
-      - name: Run the Radar nightly pass (daily)
-        if: github.event.schedule == '17 4 * * *' && steps.health.outcome == 'success'
+      - name: Run the Radar daily pass (hourly check for local 5am)
+        if: github.event.schedule == '17 * * * *' && steps.health.outcome == 'success'
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
@@ -349,15 +354,14 @@ jobs:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
 
-      # Radar's news sweep (hourly). Reads whole public feeds into the global news tables;
-      # no account is read here. Its own line for the job feed's reason. 300s matches the
-      # route; the sweep stops starting sources at 120s.
-      - name: Run the Radar news sweep (hourly)
+      # Radar's weekly web pass (hourly). Takes the most overdue accounts until 200s; the next
+      # hour picks up the rest. Its own line, for the job feed's reason. 300s matches the route.
+      - name: Run the Radar web pass (hourly)
         if: github.event.schedule == '53 * * * *' && steps.health.outcome == 'success'
         run: |
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
-            "$APP_URL/api/radar/feeds/sweep"
+            "$APP_URL/api/radar/web"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -421,6 +425,18 @@ jobs:
           curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 55 -X POST \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$APP_URL/api/ops/speech-usage"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+      # Contact monthly upkeep (1st of the month). Audits avatars for broken/generic/stale photos,
+      # scrapes authentic LinkedIn photos into shared pool, and repairs handle names.
+      - name: Run contact monthly upkeep (monthly)
+        if: (github.event.schedule == '19 3 1 * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
+        run: |
+          curl -sS --fail -o /dev/null -w 'HTTP %{http_code}\n' --max-time 300 -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/contacts/monthly-upkeep"
         env:
           APP_URL: ${{ secrets.APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

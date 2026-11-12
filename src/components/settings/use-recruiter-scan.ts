@@ -61,6 +61,7 @@ import {
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import type { ActionResult } from "@/lib/errors";
+import type { RecruitingCycle } from "@/lib/recruiter-scan-state";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -92,7 +93,7 @@ export type RecruiterScanState<S> = {
   running: boolean;
   phaseLabel: string;
   percent: number | null;
-  start: () => Promise<void>;
+  start: (opts?: { cycle?: RecruitingCycle }) => Promise<void>;
   cancel: () => Promise<void>;
   /** Sets `scan` back to null — see the doc comment above. Used after a successful
    *  disconnect. */
@@ -103,7 +104,7 @@ type ScanConfig<S extends Scan> = {
   backgroundJobId: (importId: string) => string;
   backgroundJobKind: string;
   backgroundJobLabel: string;
-  startScan: () => Promise<ActionResult<{ importId: string }>>;
+  startScan: (opts?: { cycle?: RecruitingCycle }) => Promise<ActionResult<{ importId: string }>>;
   getScanStatus: (importId: string) => Promise<S | null>;
   cancelScan: (importId: string) => Promise<unknown>;
 };
@@ -285,9 +286,9 @@ export function useRecruiterScan(
     };
   }, [running, scan, mirror, router, config]);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (opts?: { cycle?: RecruitingCycle }) => {
     try {
-      const started = await config.startScan();
+      const started = await config.startScan(opts);
       if (!started.ok) {
         toast.error(started.error);
         return;

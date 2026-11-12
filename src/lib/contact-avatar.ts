@@ -1,4 +1,5 @@
-import { sha256Hex } from "@/lib/crypto";
+import { createHash } from "node:crypto";
+import { getVercelOidcTokenSync } from "@vercel/oidc";
 import { putAvatarBlob, putSharedAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
@@ -6,6 +7,11 @@ import { internalFetch } from "@/lib/internal-auth";
 import { guardedFetch, readBodyCapped } from "@/lib/net-guard";
 import { reportError } from "@/lib/report-error";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
+import {
+  fetchLinkedInOgImageDirect,
+  isLinkedInDirectRateLimited,
+  LinkedInDirectRateLimitError,
+} from "@/lib/linkedin-scraper";
 import {
   isDurableAvatarUrl,
   isUnfetchableImageUrl,
@@ -52,8 +58,33 @@ export class AvatarStorageError extends Error {
   }
 }
 
-/** True when Vercel Blob has credentials to talk to a store. */
+/**
+ * True when Vercel Blob has credentials to talk to a store: a read-write token, or a store
+ * connected through OIDC (`BLOB_STORE_ID`) plus an OIDC token to sign in with.
+ *
+ * On Vercel the OIDC token is NOT an env var at runtime: it arrives on each request as the
+ * `x-vercel-oidc-token` header. `getVercelOidcTokenSync` reads that header (then the env var,
+ * which is what `vercel env pull` gives local dev), the same lookup the Blob SDK makes. Reading
+ * only `process.env.VERCEL_OIDC_TOKEN` made production report "no storage" for an OIDC store,
+ * so every photo went inline and the shared photo pool never filled.
+ */
 export function hasBlobStorage(): boolean {
+  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) return true;
+  if (!process.env.BLOB_STORE_ID?.trim()) return false;
+  try {
+    return Boolean(getVercelOidcTokenSync().trim());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The pre-OIDC check, env vars only. Email attachments are written `access: "private"`, and
+ * Orbit's one store is public, where private writes fail; they stay off in production (as
+ * before) until a private store is connected. Use {@link hasBlobStorage} everywhere else.
+ * ponytail: drop this once a private store exists and attachments get their own credentials.
+ */
+export function hasBlobTokenInEnv(): boolean {
   return Boolean(
     process.env.BLOB_READ_WRITE_TOKEN?.trim() ||
       (process.env.VERCEL_OIDC_TOKEN?.trim() && process.env.BLOB_STORE_ID?.trim())
@@ -101,19 +132,19 @@ export class MicrolinkRateLimitError extends AvatarSourceRateLimitError {
   }
 }
 
-export type AvatarQuotaSource = "unavatar" | "microlink";
+export type AvatarQuotaSource = "linkedin_direct" | "unavatar" | "microlink" | "extension";
 
 /**
  * Takes one lookup from the user's daily slice and from the app-wide allowance for this
  * source. Returns the deferral to throw when either is spent, or null to go ahead.
- * `userId: null` is for tests and scripts only. A limiter that cannot count defers too:
- * spending quota we cannot see is exactly what this exists to stop.
+ * `userId: null` is for tests and scripts only. Direct scraping and extension captures
+ * are free and unmetered (concurrency-managed, not vendor-capped).
  */
 export async function claimAvatarSourceLookup(
   source: AvatarQuotaSource,
   userId: string | null
 ): Promise<AvatarSourceRateLimitError | null> {
-  if (userId === null) return null;
+  if (userId === null || source === "linkedin_direct" || source === "extension") return null;
   const label = source === "unavatar" ? "unavatar.io" : "microlink";
   try {
     await consumeBucket("avatarSource.user", `${source}:${userId}`, RATE_LIMITS.avatarSourceUser);
@@ -238,14 +269,14 @@ export async function fetchLinkedInPhotoUrl(
   return (await fetchLinkedInPhoto(linkedinUrl, userId, { contactId }))?.url ?? null;
 }
 
-/** An https `media.licdn.com` URL with a `/profile-displayphoto…` path segment: a LinkedIn profile photo. */
+/** An https `media.licdn.com` URL with a `/profile-displayphoto…` or `/profile-framedphoto…` path segment: a LinkedIn profile photo. */
 export function isLinkedInProfilePhoto(url: string): boolean {
   try {
     const parsed = new URL(url);
     return (
       parsed.protocol === "https:" &&
       parsed.hostname === "media.licdn.com" &&
-      parsed.pathname.split("/").some((seg) => seg.startsWith("profile-displayphoto"))
+      parsed.pathname.split("/").some((seg) => seg.startsWith("profile-displayphoto") || seg.startsWith("profile-framedphoto"))
     );
   } catch {
     return false;
@@ -259,16 +290,35 @@ export type AvatarTarget = { contactId: string } | { sharedSlug: string };
 export async function fetchLinkedInPhoto(
   linkedinUrl: string,
   userId: string | null,
-  target: AvatarTarget
+  target: AvatarTarget,
+  /** `skipDirect`: the caller already asked LinkedIn directly (the photo queue); go straight to the quota'd tiers. */
+  opts?: { skipDirect?: boolean }
 ): Promise<{ url: string; source: AvatarQuotaSource } | null> {
   // A shared-pool photo is stored under `sharedSlug`, so it must be looked up by exactly that
   // slug too. Re-deriving it from the URL can name a different person (`/IN/a/in/b`).
   const slug = "sharedSlug" in target ? target.sharedSlug : linkedinSlug(linkedinUrl);
   if (!slug) return null;
 
-  // Free tier, but quota'd: 25 anonymous lookups a day. Nothing stores this URL —
-  // `persistAvatar` returns inline/Blob bytes.
   let deferred: AvatarSourceRateLimitError | null = null;
+
+  // Tier 1: Direct LinkedIn public profile scrape (100% free, zero third-party quota)
+  if (!opts?.skipDirect && !isLinkedInDirectRateLimited()) {
+    try {
+      const directImageUrl = await fetchLinkedInOgImageDirect(slug);
+      if (directImageUrl && ("contactId" in target || isLinkedInProfilePhoto(directImageUrl))) {
+        const photoUrl = await downloadAndPersist(target, directImageUrl);
+        if (photoUrl) return { url: photoUrl, source: "linkedin_direct" };
+      }
+    } catch (err) {
+      if (err instanceof LinkedInDirectRateLimitError) {
+        deferred = new AvatarSourceRateLimitError(err.resetAt, "linkedin_direct");
+      } else if (err instanceof AvatarStorageError) {
+        throw err;
+      }
+    }
+  }
+
+  // Tier 2: Free tier Unavatar (25 anonymous lookups a day)
   if (Date.now() < unavatarCooldownUntil) {
     deferred = new AvatarSourceRateLimitError(unavatarCooldownUntil, "unavatar.io");
   } else {
@@ -288,7 +338,7 @@ export async function fetchLinkedInPhoto(
     }
   }
 
-  // Metered tier. Report exhaustion rather than silently returning "no photo".
+  // Tier 3: Microlink fallback (metered tier)
   if (isMicrolinkRateLimited()) {
     throw new MicrolinkRateLimitError(getMicrolinkCooldownUntil());
   }
@@ -314,7 +364,7 @@ export async function fetchLinkedInPhoto(
     if (err instanceof AvatarSourceRateLimitError) throw err;
   }
 
-  // Microlink found nothing, but Unavatar never got a real look: defer, don't fail.
+  // If higher tiers hit a rate limit and subsequent tiers found nothing, defer rather than failing.
   if (deferred) throw deferred;
   return null;
 }
@@ -333,7 +383,7 @@ export async function fetchGravatarPhotoUrl(
 ): Promise<string | null> {
   const normalized = email.trim().toLowerCase();
   if (!normalized.includes("@")) return null;
-  const hash = sha256Hex(normalized);
+  const hash = createHash("sha256").update(normalized, "utf8").digest("hex");
   return downloadAndPersistAvatar(
     contactId,
     `https://gravatar.com/avatar/${hash}?s=256&d=404`
@@ -370,9 +420,14 @@ async function downloadAndPersist(
   if (isDurableAvatarUrl(imageUrl)) return "contactId" in target ? imageUrl : null;
   if (isUnfetchableImageUrl(imageUrl)) return null;
 
-  const downloaded = await downloadImageBytes(imageUrl, deps);
+  // The bigger LinkedIn size first, the URL we were given if that is refused (the signed
+  // query string may not allow a size it was not issued for). A quota error from the first
+  // try is not swallowed: the second would only repeat it.
+  const larger = largerLinkedInPhotoUrl(imageUrl);
+  const downloaded =
+    (larger && (await downloadImageBytes(larger, deps))) || (await downloadImageBytes(imageUrl, deps));
   if (!downloaded) return null;
-  return persistAvatar(target, downloaded.buf, downloaded.contentType);
+  return persistAvatar(target, downloaded.buf, downloaded.contentType, imageUrl);
 }
 
 /**
@@ -400,6 +455,30 @@ function isVectorContentType(contentType: string): boolean {
 function looksLikeSvg(buf: Buffer): boolean {
   const head = buf.subarray(0, 1024).toString("utf8").trimStart().toLowerCase();
   return head.startsWith("<") || head.includes("<svg");
+}
+
+/**
+ * A JPEG starts FFD8 and ends FFD9. One with the first and not the last was cut short. Looks
+ * at the final few bytes rather than the very last two: some encoders pad after the marker.
+ */
+export function isTruncatedJpeg(buf: Buffer): boolean {
+  if (buf.byteLength < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return false;
+  return !buf.subarray(-16).includes(Buffer.from([0xff, 0xd9]));
+}
+
+/**
+ * LinkedIn serves each photo at the size named in its URL (`profile-displayphoto-shrink_100_100`
+ * is a 100px thumbnail). A capture from a feed or list holds the small one, which is what made
+ * some photos so soft. Ask for the 800px one instead; null when the URL is not a LinkedIn photo
+ * or is already big enough. The caller falls back to the original if LinkedIn refuses.
+ */
+export function largerLinkedInPhotoUrl(url: string): string | null {
+  if (!isLinkedInProfilePhoto(url)) return null;
+  const bigger = url.replace(
+    /(profile-(?:display|framed)photo-shrink_)(\d+)_(\d+)/g,
+    (m, prefix: string, w: string) => (Number(w) >= 800 ? m : `${prefix}800_800`)
+  );
+  return bigger === url ? null : bigger;
 }
 
 /**
@@ -538,6 +617,12 @@ async function encodeAvatar(
     ) {
       return null;
     }
+    // A JPEG cut off mid-download is the one image the encoder is RIGHT to refuse. Stored
+    // raw, browsers still draw it: sharp where the data ran out, a coarse blocky band
+    // across the face where the last scan was half-sent, and it stays that way forever
+    // because a stored photo is never looked at again. Refuse it, so the caller tries the
+    // next source instead.
+    if (isTruncatedJpeg(buf)) return null;
     return { buf, contentType };
   }
 }
@@ -555,17 +640,25 @@ async function encodeAvatar(
 async function persistAvatar(
   target: AvatarTarget,
   buf: Buffer,
-  contentType: string
+  contentType: string,
+  rawImageUrl?: string
 ): Promise<string | null> {
   const encoded = await encodeAvatar(buf, contentType);
   if (!encoded) return null;
 
   if (!hasBlobStorage()) {
-    // The shared pool only ever holds https URLs; an inline photo has nowhere to go.
-    if ("sharedSlug" in target) return null;
-    warnMissingBlobOnce();
-    if (encoded.buf.byteLength > MAX_INLINE_BYTES) return null;
-    return `data:${encoded.contentType};base64,${encoded.buf.toString("base64")}`;
+    // When no Blob store is configured, the contact stores inline data URL.
+    if ("contactId" in target) {
+      warnMissingBlobOnce();
+      if (encoded.buf.byteLength > MAX_INLINE_BYTES) return null;
+      return `data:${encoded.contentType};base64,${encoded.buf.toString("base64")}`;
+    }
+    // For sharedSlug, if Blob is unconfigured but we have a valid https media.licdn.com image,
+    // return it so linkedin_avatars can store the https URL for other accounts to share.
+    if (rawImageUrl && rawImageUrl.startsWith("https://") && isLinkedInProfilePhoto(rawImageUrl)) {
+      return rawImageUrl;
+    }
+    return null;
   }
 
   try {

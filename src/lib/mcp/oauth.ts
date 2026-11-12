@@ -19,15 +19,17 @@
  *
  *   - `orbit:write` (or the umbrella `orbit:mcp`) → read and write;
  *   - `orbit:read` → read only — the assistant sees the network and can change nothing;
- *   - no Orbit scope at all → depends on `MCP_OAUTH_REQUIRE_SCOPES`.
+ *   - no Orbit scope at all → READ ONLY, or refused when `MCP_OAUTH_REQUIRE_SCOPES=1`.
  *
- * That last case is the one the security audit flagged: a dynamically registered client that
- * asked only for `openid email` used to get full CRM read AND write. With
- * `MCP_OAUTH_REQUIRE_SCOPES=1` such a token is refused outright. Unset, it keeps the old
- * coarse read+write grant — because until the Clerk instance publishes the `orbit:*` scopes
- * no client CAN ask for them, and flipping this first would disconnect every assistant.
- * The order is: define `orbit:read` and `orbit:write` in Clerk (Configure → OAuth
- * applications → Scopes), confirm new connections carry them, then set the flag.
+ * That last case is the one two security audits flagged: a dynamically registered client that
+ * asked only for `openid email` used to get full CRM read AND write, and the September fix
+ * left that as the default until the Clerk instance published the `orbit:*` scopes. Three
+ * weeks later it was still the default (audit M-17), so a scope-less token now gets the
+ * read-only grant: the assistant can still see the network — which is what every existing
+ * connection was built for — and a client that wants to write asks for `orbit:write`. With
+ * `MCP_OAUTH_REQUIRE_SCOPES=1` a scope-less token is refused outright. The order is: define
+ * `orbit:read` and `orbit:write` in Clerk (Configure → OAuth applications → Scopes), confirm
+ * new connections carry them, then set the flag.
  *
  * What no scope grants is sending — that is not a scope at all. An agent can only queue a
  * message, and the human approves it inside Orbit (see `server.ts`).
@@ -48,8 +50,11 @@ import type { ApiKeyScope } from "@/lib/api/keys";
 /** Orbit's own OAuth scopes, as published in the protected-resource metadata. */
 export const ORBIT_OAUTH_SCOPES = ["orbit:read", "orbit:write"] as const;
 
-/** The legacy coarse grant, for tokens without Orbit scopes while enforcement is off. */
-export const OAUTH_CALLER_SCOPES: ApiKeyScope[] = ["read", "write"];
+/**
+ * The grant for a token that carries no Orbit scope while enforcement is off. Read only: the
+ * coarse read+write grant it replaced handed CRM writes to any client that never asked.
+ */
+export const OAUTH_CALLER_SCOPES: ApiKeyScope[] = ["read"];
 
 /**
  * What a token's scopes allow. Null means refuse: the token carries no Orbit scope and

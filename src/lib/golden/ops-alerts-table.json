@@ -94,13 +94,6 @@
   {
     "conditions": [
       {
-        "detail": "Last started 2026-09-15T00:00:00.000Z; headlines about people's companies are not arriving.",
-        "href": "/admin/health",
-        "id": "radarfeeds.schedule_missed",
-        "severity": "warning",
-        "title": "Radar's news sweep has stopped running"
-      },
-      {
         "detail": "Last started 2026-09-13T20:00:00.000Z; contacts' job moves are not being noticed.",
         "href": "/admin/health",
         "id": "workhistory.schedule_missed",

@@ -18,7 +18,8 @@
  */
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { eventAttendees, events, type EventRecord } from "@/db/schema";
+import { contacts, eventAttendees, events, type EventRecord } from "@/db/schema";
+import { del } from "@/lib/blob-lazy";
 import { attendeeIdentityKey } from "@/lib/events/identity";
 import { personKeyOf } from "@/lib/events/people";
 import { UserFacingError } from "@/lib/errors";
@@ -38,6 +39,7 @@ export type EventListRow = Pick<
   | "title"
   | "startsAt"
   | "endsAt"
+  | "timezone"
   | "venue"
   | "city"
   | "url"
@@ -117,7 +119,7 @@ export async function listEventsForUser(
       ? sql`e.starts_at ASC NULLS LAST, e.id ASC`
       : sql`e.starts_at DESC NULLS LAST, e.id DESC`;
   const rows = await db.execute(sql`
-    SELECT e.id, e.title, e.starts_at, e.ends_at, e.venue, e.city, e.url, e.role, e.source,
+    SELECT e.id, e.title, e.starts_at, e.ends_at, e.timezone, e.venue, e.city, e.url, e.role, e.source,
            e.cover_image_url, e.theme_color, e.discovered_via, e.rsvp_status,
            COALESCE(a.total, 0)     AS attendee_count,
            COALESCE(a.connected, 0) AS connected_count
@@ -141,6 +143,7 @@ export async function listEventsForUser(
     title: string;
     starts_at: string | Date | null;
     ends_at: string | Date | null;
+    timezone: string | null;
     venue: string | null;
     city: string | null;
     url: string | null;
@@ -160,6 +163,7 @@ export async function listEventsForUser(
     title: r.title,
     startsAt: r.starts_at ? new Date(r.starts_at) : null,
     endsAt: r.ends_at ? new Date(r.ends_at) : null,
+    timezone: r.timezone,
     venue: r.venue,
     city: r.city,
     url: r.url,
@@ -222,10 +226,29 @@ export async function listRosterForUser(
   eventId: string
 ): Promise<RosterRow[]> {
   const db = await getDb();
-  const rows = await db.query.eventAttendees.findMany({
-    where: and(eq(eventAttendees.eventId, eventId), eq(eventAttendees.userId, userId)),
-    orderBy: [desc(eventAttendees.spokeTo), eventAttendees.fullName],
-  });
+  const rows = await db
+    .select({
+      id: eventAttendees.id,
+      fullName: eventAttendees.fullName,
+      email: eventAttendees.email,
+      company: eventAttendees.company,
+      title: eventAttendees.title,
+      linkedinUrl: eventAttendees.linkedinUrl,
+      xHandle: eventAttendees.xHandle,
+      attendeeRole: eventAttendees.attendeeRole,
+      source: eventAttendees.source,
+      spokeTo: eventAttendees.spokeTo,
+      contactId: eventAttendees.contactId,
+      profileImageUrl: contacts.profileImageUrl,
+    })
+    .from(eventAttendees)
+    .leftJoin(
+      contacts,
+      and(eq(contacts.id, eventAttendees.contactId), eq(contacts.userId, userId))
+    )
+    .where(and(eq(eventAttendees.eventId, eventId), eq(eventAttendees.userId, userId)))
+    .orderBy(desc(eventAttendees.spokeTo), eventAttendees.fullName);
+
   return rows.map((r) => ({
     id: r.id,
     fullName: r.fullName,
@@ -238,6 +261,7 @@ export async function listRosterForUser(
     source: r.source,
     spokeTo: r.spokeTo === 1,
     contactId: r.contactId,
+    profileImageUrl: r.profileImageUrl ?? null,
   }));
 }
 
@@ -263,7 +287,18 @@ export type CreateEventInput = {
   themeSource?: EventRecord["themeSource"];
   attendeeCount?: number | null;
   notes?: string | null;
+  rsvpStatus?: EventRecord["rsvpStatus"];
 };
+
+/**
+ * The last line before the driver: an Invalid Date reaching `.values()` throws `RangeError`
+ * from inside drizzle as a 500 (audit M-04). Callers validate at the boundary
+ * (`optionalClientDate`); this keeps a caller that forgot — a sync adapter, a script — from
+ * failing a whole write over one unreadable time. Unreadable means "no time stated".
+ */
+function validDateOrNull(value: Date | null | undefined): Date | null {
+  return value instanceof Date && !Number.isNaN(value.getTime()) ? value : null;
+}
 
 export async function createEventForUser(
   userId: string,
@@ -275,8 +310,8 @@ export async function createEventForUser(
     .values({
       userId,
       title: input.title.trim(),
-      startsAt: input.startsAt ?? null,
-      endsAt: input.endsAt ?? null,
+      startsAt: validDateOrNull(input.startsAt),
+      endsAt: validDateOrNull(input.endsAt),
       timezone: input.timezone ?? null,
       venue: input.venue ?? null,
       city: input.city ?? null,
@@ -295,6 +330,7 @@ export async function createEventForUser(
       themeSource: input.themeSource ?? null,
       attendeeCount: input.attendeeCount ?? null,
       notes: input.notes ?? null,
+      rsvpStatus: input.rsvpStatus ?? null,
     })
     .returning();
   return row;
@@ -318,14 +354,42 @@ export async function updateEventForUser(
   };
   await db
     .update(events)
-    .set({ ...safe, updatedAt: new Date() })
+    .set({
+      ...safe,
+      ...("startsAt" in safe ? { startsAt: validDateOrNull(safe.startsAt) } : {}),
+      ...("endsAt" in safe ? { endsAt: validDateOrNull(safe.endsAt) } : {}),
+      updatedAt: new Date(),
+    })
     .where(and(eq(events.id, eventId), eq(events.userId, userId)));
 }
 
-export async function deleteEventForUser(userId: string, eventId: string): Promise<void> {
+/** A cover Orbit stored itself (`src/lib/events/cover.ts`), as opposed to a remote image URL. */
+export function isStoredEventCover(url: string | null | undefined): url is string {
+  return Boolean(url && /^https:\/\/[^/]+\.blob\.vercel-storage\.com\/event-covers\//.test(url));
+}
+
+export async function deleteEventForUser(
+  userId: string,
+  eventId: string,
+  deleteBlob: (url: string) => Promise<unknown> = (url) => del(url)
+): Promise<void> {
   const db = await getDb();
   // Attendees cascade; the contacts they were connected to are deliberately left alone.
-  await db.delete(events).where(and(eq(events.id, eventId), eq(events.userId, userId)));
+  const [gone] = await db
+    .delete(events)
+    .where(and(eq(events.id, eventId), eq(events.userId, userId)))
+    .returning();
+  // The cover sits at a public, guessable path (`event-covers/<eventId>`) with nothing else
+  // pointing at it, so it goes with its event (audit L-08). Best-effort: the event is gone
+  // either way, and an orphaned object is a cost problem, not a reason to fail the delete.
+  const cover = gone?.coverImageUrl;
+  if (isStoredEventCover(cover)) {
+    try {
+      await deleteBlob(cover);
+    } catch {
+      // See above.
+    }
+  }
 }
 
 /**
@@ -457,6 +521,99 @@ export async function linkAttendeesToContacts(
       FROM (VALUES ${sql.join(values, sql`, `)}) AS v(attendee_id, contact_id)
      WHERE a.id = v.attendee_id AND a.user_id = ${userId}
   `);
+}
+
+/** The rows `upsertEventAttendees` wrote, by the identity keys it was given (it returns a count). */
+async function attendeeRowsByIdentityKey(userId: string, eventId: string, keys: string[]) {
+  if (keys.length === 0) return [];
+  const db = await getDb();
+  return db
+    .select({ id: eventAttendees.id, identityKey: eventAttendees.identityKey })
+    .from(eventAttendees)
+    .where(
+      and(eq(eventAttendees.userId, userId), eq(eventAttendees.eventId, eventId), inArray(eventAttendees.identityKey, keys))
+    );
+}
+
+export async function attendeeIdsByIdentityKey(userId: string, eventId: string, keys: string[]): Promise<string[]> {
+  return (await attendeeRowsByIdentityKey(userId, eventId, keys)).map((r) => r.id);
+}
+
+/**
+ * "Log who you met": mark the contacts a capture just saved as met at this event.
+ *
+ * A contact already on the roster — linked to it, or sharing its LinkedIn URL, email or exact
+ * name with an unlinked row — is linked to that row, so a ticked guest never becomes a second
+ * line. Everyone else is added (source `capture`) and linked. Either way the row ends with
+ * `contact_id` set and `spoke_to = 1`, which is what "People you met", events-together and
+ * repeat people all read.
+ */
+export async function recordMetAtEvent(userId: string, eventId: string, contactIds: string[]): Promise<number> {
+  if (contactIds.length === 0) return 0;
+  await assertEventOwnedBy(userId, eventId);
+  const db = await getDb();
+  const people = await db
+    .select({
+      id: contacts.id,
+      fullName: contacts.fullName,
+      email: contacts.email,
+      linkedinUrl: contacts.linkedinUrl,
+      xHandle: contacts.xHandle,
+      company: contacts.company,
+      title: contacts.title,
+    })
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, contactIds)));
+  const roster = await db
+    .select({
+      id: eventAttendees.id,
+      contactId: eventAttendees.contactId,
+      fullName: eventAttendees.fullName,
+      email: eventAttendees.email,
+      linkedinUrl: eventAttendees.linkedinUrl,
+    })
+    .from(eventAttendees)
+    .where(and(eq(eventAttendees.userId, userId), eq(eventAttendees.eventId, eventId)));
+
+  const norm = (v: string | null | undefined) => v?.trim().toLowerCase().replace(/\s+/g, " ") || null;
+  const taken = new Set<string>();
+  const links: Array<{ attendeeId: string; contactId: string }> = [];
+  const missing: typeof people = [];
+  for (const person of people) {
+    const row =
+      roster.find((r) => r.contactId === person.id) ??
+      roster.find(
+        (r) =>
+          !r.contactId &&
+          !taken.has(r.id) &&
+          ((norm(r.linkedinUrl) && norm(r.linkedinUrl) === norm(person.linkedinUrl)) ||
+            (norm(r.email) && norm(r.email) === norm(person.email)) ||
+            (norm(r.fullName) && norm(r.fullName) === norm(person.fullName)))
+      );
+    if (row) {
+      taken.add(row.id);
+      links.push({ attendeeId: row.id, contactId: person.id });
+    } else {
+      missing.push(person);
+    }
+  }
+
+  const added: ParsedAttendee[] = [];
+  const keyToContact = new Map<string, string>();
+  for (const person of missing) {
+    const identityKey = attendeeIdentityKey(person);
+    if (!identityKey) continue;
+    keyToContact.set(identityKey, person.id);
+    added.push({ ...person, identityKey });
+  }
+  if (added.length) {
+    await upsertEventAttendees(userId, eventId, added, "capture");
+    for (const row of await attendeeRowsByIdentityKey(userId, eventId, [...keyToContact.keys()])) {
+      links.push({ attendeeId: row.id, contactId: keyToContact.get(row.identityKey)! });
+    }
+  }
+  await linkAttendeesToContacts(userId, links);
+  return links.length;
 }
 
 /**

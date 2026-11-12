@@ -212,3 +212,13 @@ export function GranolaMark({ className }: MarkProps) {
     <img src="/integrations/granola.png" alt="" aria-hidden className={`rounded-[22%] ${className ?? ""}`} />
   );
 }
+
+/** Notion's mark: the black-outlined white tile with its serif N. */
+export function NotionMark({ className }: MarkProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className={className}>
+      <rect x="2.5" y="2.5" width="19" height="19" rx="3.5" fill="#fff" stroke="#191919" strokeWidth="1.6" />
+      <path d="M8 7.2h2.1l4.4 6.6V7.2H16v9.6h-2l-4.5-6.7v6.7H8z" fill="#191919" />
+    </svg>
+  );
+}

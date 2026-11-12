@@ -25,11 +25,15 @@ import { PLAN_CONFIG, type Plan, type PlanConfig } from "@/lib/plans/plan-config
 
 export type AiKeySource = "personal" | "managed";
 
-/*
- * Managed AI is on for every plan (pricing v2); there is no code flag for it. Two switches
- * stop it without a deploy: the `ORBIT_MANAGED_AI=off` env kill switch and the admin
- * console's runtime pause (`site_settings.managed_ai_paused`).
+/**
+ * MANAGED AI IS ON (pricing v2). A code constant rather than an env var, so no deployment
+ * flips the model by accident. Two switches still stop it without a deploy: the
+ * `ORBIT_MANAGED_AI=off` env kill switch and the admin console's runtime pause
+ * (`site_settings.managed_ai_paused`; never set reads as running, now that the legal text
+ * describing included AI has shipped).
  */
+export const MANAGED_AI_ENABLED: boolean = true;
+
 /**
  * The budgets Orbit's included AI draws on, one per provider that funds it: Orbit-paid spend
  * on that provider (`usage_events`, `key_owner = 'orbit'`) since the pool's window opened. A
@@ -49,6 +53,15 @@ export type ManagedPool = { capMicros: number; since: string; monthlyResetDay?: 
 export const MANAGED_AI_POOLS: Partial<Record<AiProvider, ManagedPool>> = {
   anthropic: { capMicros: 190_000_000, since: "2026-09-15T00:00:00Z", monthlyResetDay: 15 },
   openai: { capMicros: 950_000_000, since: "2026-10-11T00:00:00Z" },
+};
+
+/**
+ * Orbit-paid spend on providers that have no pool of their own, counted inside one that does.
+ * TypeSafe (Jev) is in the Anthropic pool: Jason, Oct 19 2026 — the $190 covers everything
+ * Orbit pays for AI.
+ */
+export const POOL_ALSO_COUNTS: Partial<Record<AiProvider, readonly string[]>> = {
+  anthropic: ["typesafe"],
 };
 
 /**
@@ -100,7 +113,7 @@ export function managedEligibility(
   config: Record<Plan, PlanConfig> = PLAN_CONFIG
 ): ManagedEligibility {
   if (isDemo) return "demo";
-  if (config[plan].features.hostedAi) return "plan";
+  if (MANAGED_AI_ENABLED && config[plan].features.hostedAi) return "plan";
   return null;
 }
 
@@ -157,7 +170,9 @@ export const MANAGED_FAST_MODELS: Partial<Record<AiProvider, string>> = {
  * work. `requested` is honoured only when it is already on the allowlist (a tier's own pick).
  */
 export function managedModel(provider: AiProvider, requested: string | null | undefined, tier?: string): string {
-  // The allowlist protects Orbit's money.
+  // The allowlist protects Orbit's money. With managed AI off the only key behind this path
+  // is the developer's own, so `next dev` keeps running whatever model Settings asks for.
+  if (!MANAGED_AI_ENABLED) return requested || MANAGED_DEFAULT_MODELS[provider];
   if (tier === "fast" && MANAGED_FAST_MODELS[provider]) return MANAGED_FAST_MODELS[provider];
   if (requested && MANAGED_MODELS[provider].includes(requested)) return requested;
   return MANAGED_DEFAULT_MODELS[provider];
@@ -223,6 +238,14 @@ export const MANAGED_AI_ALERTS = {
   /** Below this 30-day spend the margin figure is noise, not a trend. */
   runwayMinSpendMicros: 1_000_000,
 } as const;
+
+/** A calendar month in UTC — the window the ops sweep reports managed spend over. */
+export function managedWindow(now: Date): { start: Date; resetsAt: Date } {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const resetsAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return { start, resetsAt };
+}
+
 /* ------------------------------------------------------------------ key selection ------ */
 
 /**
@@ -334,4 +357,12 @@ export function chooseEmbeddingKey(facts: KeyFacts): KeyChoice<EmbeddingBackend>
   // Orbit never pays for Gemini, so OpenAI is the only managed embedding backend.
   if (facts.managed.openai) return { ok: true, provider: "openai", source: "managed", model: "" };
   return denied(facts);
+}
+
+/**
+ * Whether AI would run at all, before any allowance is consulted — the question every
+ * "add your key" notice asks. Presence only; never needs a decrypted key.
+ */
+export function aiReadyFromFacts(facts: KeyFacts): boolean {
+  return chooseCompletionKey(facts).ok;
 }

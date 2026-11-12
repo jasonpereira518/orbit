@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Check, LoaderCircle } from "lucide-react";
 import { motion, useReducedMotionConfig } from "motion/react";
 import { startInAppTour } from "@/actions/tour";
-import { OrbitLogo } from "@/components/orbit-logo";
+import { OnboardingMark } from "@/components/onboarding/onboarding-mark";
 import { Button } from "@/components/ui/button";
 import { Stagger, StaggerItem, StepHeading } from "@/components/onboarding/onboarding-ui";
 import { friendlyError } from "@/lib/errors";
@@ -69,32 +69,26 @@ export function LaunchStep() {
 
   return (
     <Stagger className="mx-auto flex max-w-lg flex-col items-center text-center">
-      <StaggerItem className="relative mb-7 flex size-28 items-center justify-center">
-        <span aria-hidden className="absolute inset-0 rounded-full border border-primary/20" />
-        <span
-          aria-hidden
-          className="absolute inset-0 animate-[interest-orbit_6s_linear_infinite] rounded-full"
-        >
-          <span className="absolute -top-1 left-1/2 size-2 -translate-x-1/2 rounded-full bg-primary" />
-        </span>
-        <OrbitLogo size="xl" />
+      <StaggerItem className="mb-5">
+        <OnboardingMark size={96} />
       </StaggerItem>
-      <StepHeading eyebrow="Almost there" title="Setting the stage" className="text-center">
+      <StepHeading eyebrow="Almost there" title="Setting the stage" center>
         Orbit is adding six example people so every page has something to show. They’re clearly
         marked and disappear when the tour ends.
       </StepHeading>
       {state.phase === "failed" && (
         <StaggerItem className="mt-6 space-y-3">
-          <p className="text-sm text-warning" role="status">
+          <p className="text-[0.8125rem] text-warning" role="status">
             {state.error}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <Button type="button" onClick={launch}>
+            <Button type="button" className="h-10 px-4" onClick={launch}>
               Try again
             </Button>
             <Button
               type="button"
               variant="ghost"
+              className="h-10 px-4"
               onClick={() => window.location.replace("/dashboard")}
             >
               Start the tour anyway
@@ -106,7 +100,12 @@ export function LaunchStep() {
       {state.phase !== "failed" && (
         <StaggerItem className="mt-7 w-full max-w-md space-y-3">
           <LaunchProgress key={attemptKey} done={state.phase === "done"} />
-          <p className="text-sm text-muted-foreground" aria-live="polite">
+          <p className="flex items-center justify-center gap-2 text-[0.8125rem] text-muted-foreground" aria-live="polite">
+            {state.phase === "done" ? (
+              <Check className="size-4 shrink-0 text-gold" aria-hidden />
+            ) : (
+              <LoaderCircle className="size-4 shrink-0 animate-spin text-primary" aria-hidden />
+            )}
             {state.phase === "done" ? "Ready. Opening your dashboard…" : "Adding the example people…"}
           </p>
         </StaggerItem>

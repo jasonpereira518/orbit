@@ -51,6 +51,29 @@ import {
 } from "@/lib/site-invites";
 import { UserFacingError } from "@/lib/errors";
 import { blockSharedAvatar, unblockSharedAvatar } from "@/lib/admin-avatars";
+import { getAppBaseUrl } from "@/lib/app-url";
+import { MAX_THANKS_CREDITS, MAX_THREAD_MESSAGE, isFeedbackSource } from "@/lib/feedback-report";
+import { logDirectFeedback } from "@/lib/feedback-submission";
+import { triageFeedback } from "@/lib/feedback-triage";
+import {
+  buildFeedbackReplyEmail,
+  grantFeedbackThanks,
+  loadThread,
+  postThreadMessage,
+  reporterEmail,
+  reporterOf,
+  setTyping,
+  type FeedbackThread,
+} from "@/lib/feedback-thread";
+import { sendSiteInviteEmail } from "@/lib/site-invite-email";
+import {
+  getGlobalUpkeepMetrics,
+  triggerAdminContactUpkeepJob,
+  type GlobalUpkeepMetrics,
+  type GlobalUpkeepStats,
+} from "@/lib/admin-contact-upkeep";
+import { hasBlobStorage } from "@/lib/contact-avatar";
+import { startLinkedInPhotoQueue, stopLinkedInPhotoQueue } from "@/lib/linkedin-photo-queue";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -550,16 +573,14 @@ export async function setPreviewUnreleasedAction(input: {
   const adminUserId = await requireAdminUserId();
   const store = await cookies();
 
-  if (input.on) {
-    store.set(PREVIEW_UNRELEASED_COOKIE, "1", {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      secure: process.env.NODE_ENV === "production",
-    });
-  } else {
-    store.delete(PREVIEW_UNRELEASED_COOKIE);
-  }
+  // "0" rather than a delete: a local dev server previews by default, so off must be explicit.
+  // Deployed builds only ever treat "1" as on, so "0" reads as off there too.
+  store.set(PREVIEW_UNRELEASED_COOKIE, input.on ? "1" : "0", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: process.env.NODE_ENV === "production",
+  });
 
   await recordAdminAction({
     adminUserId,
@@ -1015,6 +1036,172 @@ export async function setFeedbackStatusAction(input: {
 }
 
 /**
+ * Log feedback someone gave you by text, in person, on a call or by email, under their
+ * account. It is triaged like an in-app report, but no Slack DM — you're the one who wrote it.
+ */
+export async function logFeedbackAction(input: {
+  email: string;
+  text: string;
+  subject?: string | null;
+  source: string;
+  area: string | null;
+}): Promise<{ ok: true; id: string }> {
+  const adminUserId = await requireAdminUserId();
+  if (!isFeedbackSource(input.source)) throw new UserFacingError("Pick where it came from");
+  const area = input.area && adminFeedback.isFeedbackArea(input.area) ? input.area : null;
+
+  const logged = await logDirectFeedback({
+    email: input.email,
+    text: input.text,
+    subject: input.subject,
+    source: input.source,
+    area,
+    loggedBy: adminUserId,
+  });
+  if (!logged.ok) throw new UserFacingError(logged.message);
+
+  after(() => triageFeedback(logged.id));
+  await recordAdminAction({
+    adminUserId,
+    action: "feedback.log",
+    resourceType: "feedback",
+    resourceId: logged.id,
+    detail: { source: input.source },
+    reason: "Logged feedback given outside the app",
+  });
+  revalidateFeedback();
+  return { ok: true, id: logged.id };
+}
+
+/** The operator is typing a reply — for the dots on the reporter's side. */
+export async function markFeedbackTypingAdminAction(id: string): Promise<void> {
+  await requireAdminUserId();
+  await setTyping(id, "operator");
+}
+
+/**
+ * Reply to a feedback report — which opens the conversation on the reporter's side — with
+ * the optional extras that make a reply worth getting: resolve it, thank them with bonus
+ * credits (once per report), and email them a copy.
+ *
+ * Throws on failure like every action here. The extras never fail the reply: the message is
+ * the contract, and an email or a credit grant that didn't land is reported back instead.
+ */
+export async function replyToFeedbackAction(input: {
+  id: string;
+  body: string;
+  resolve: boolean;
+  thankCredits: number | null;
+  email: boolean;
+  /**
+   * Also send this reply to the other open reports about the same thing (see
+   * `relatedReports`) — "fixed for everyone who reported it". They get the reply, the same
+   * resolve and the same email choice; credits stay with this report.
+   */
+  includeRelated?: boolean;
+}): Promise<{ ok: true; thread: FeedbackThread; emailed: boolean; credited: boolean; alsoSent: number }> {
+  const adminUserId = await requireAdminUserId();
+  const body = input.body.trim();
+  if (!body) throw new UserFacingError("Write a reply first");
+  if (body.length > MAX_THREAD_MESSAGE) {
+    throw new UserFacingError(`Keep it under ${MAX_THREAD_MESSAGE} characters`);
+  }
+  const credits =
+    input.thankCredits == null
+      ? null
+      : Number.isInteger(input.thankCredits) && input.thankCredits >= 1 && input.thankCredits <= MAX_THANKS_CREDITS
+        ? input.thankCredits
+        : (() => {
+            throw new UserFacingError(`Thank with 1 to ${MAX_THANKS_CREDITS} credits`);
+          })();
+
+  // Check it can be replied to before granting anything: credits on a report nobody can see
+  // the reply to would be a gift with no card.
+  const thread = await loadThread(input.id, "operator");
+  if (!thread) throw new UserFacingError("Only feedback sent from the app can be replied to");
+
+  // Grant FIRST, so the message carries the gift only when the credits really landed.
+  const reporterId = await reporterOf(input.id);
+  const credited =
+    credits && reporterId
+      ? await grantFeedbackThanks({ feedbackId: input.id, userId: reporterId, credits })
+      : false;
+
+  const posted = await postThreadMessage({
+    feedbackId: input.id,
+    author: "operator",
+    body,
+    credits: credited ? credits : null,
+  });
+  if (!posted) throw new UserFacingError("Only feedback sent from the app can be replied to");
+
+  if (input.resolve) {
+    // Already resolved is fine here — replying to a resolved report is just a reply.
+    await adminFeedback.setFeedbackStatus({ id: input.id, status: "resolved", adminUserId });
+  }
+
+  let emailed = false;
+  if (input.email) {
+    const to = await reporterEmail(posted.reporterId);
+    if (to) {
+      emailed = await sendSiteInviteEmail(
+        buildFeedbackReplyEmail({
+          reply: body,
+          report: posted.report,
+          subject: thread.report.subject,
+          credits: credited ? credits : null,
+          threadUrl: `${getAppBaseUrl()}/feedback/${input.id}`,
+        }),
+        to,
+        "feedback.reply"
+      );
+    }
+  }
+
+  // The same answer to everyone else who reported it. Found BEFORE this report's own status
+  // matters (it is excluded by id), and each one is checked open at the time of asking.
+  let alsoSent = 0;
+  if (input.includeRelated) {
+    const related = await adminFeedback.relatedReports(input.id);
+    for (const other of related) {
+      const sent = await postThreadMessage({ feedbackId: other.id, author: "operator", body });
+      if (!sent) continue;
+      alsoSent += 1;
+      if (input.resolve) {
+        await adminFeedback.setFeedbackStatus({ id: other.id, status: "resolved", adminUserId });
+      }
+      if (input.email && other.email) {
+        await sendSiteInviteEmail(
+          buildFeedbackReplyEmail({
+            reply: body,
+            report: sent.report,
+            subject: other.subject,
+            credits: null,
+            threadUrl: `${getAppBaseUrl()}/feedback/${other.id}`,
+          }),
+          other.email,
+          "feedback.reply"
+        );
+      }
+    }
+  }
+
+  await recordAdminAction({
+    adminUserId,
+    action: "feedback.reply",
+    resourceType: "feedback",
+    resourceId: input.id,
+    detail: { resolved: input.resolve, credits: credited ? credits : null, emailed, alsoSent },
+    reason: "Replied to feedback",
+  });
+
+  revalidateFeedback();
+  const latest = await loadThread(input.id, "operator");
+  if (!latest) throw new UserFacingError("That feedback entry no longer exists");
+  return { ok: true, thread: latest, emailed, credited, alsoSent };
+}
+
+/**
  * Delete one screenshot, and then its blob object.
  *
  * The row is the contract and the blob is cleanup: a Blob outage must not stop an operator
@@ -1197,4 +1384,51 @@ export async function unblockSharedAvatarAction(input: { slug: string; reason: s
   await unblockSharedAvatar(adminUserId, input);
   revalidateAvatars();
   return { ok: true };
+}
+
+/* ------------------------------------------------- Global contact upkeep & queue ------- */
+
+/** Fetch candidate counts and status for global contact upkeep. */
+export async function getGlobalContactUpkeepMetricsAction(): Promise<GlobalUpkeepMetrics> {
+  await requireAdminUserId();
+  return getGlobalUpkeepMetrics();
+}
+
+/**
+ * Trigger global network upkeep: name repair and photos from the shared pool, address books
+ * and Gravatar. Never calls LinkedIn (the LinkedIn photo queue does). Audited.
+ */
+export async function triggerGlobalContactUpkeepAction(options?: {
+  batchSize?: number;
+}): Promise<{ ok: boolean; stats: GlobalUpkeepStats }> {
+  const adminUserId = await requireAdminUserId();
+  await recordAdminAction({
+    adminUserId,
+    action: "contacts.global_upkeep",
+    detail: options ?? {},
+  });
+  const res = await triggerAdminContactUpkeepJob(options);
+  revalidatePath("/admin/product/photos");
+  return res;
+}
+
+/**
+ * Start the LinkedIn photo queue, or resume the running one now (clearing a LinkedIn pause).
+ * Refused without a Blob store: the shared pool would keep media.licdn.com URLs, which expire.
+ */
+export async function startLinkedInPhotoQueueAction(): Promise<{ ok: true; runId: string } | { ok: false; error: string }> {
+  const adminUserId = await requireAdminUserId();
+  // Returned, not thrown: production strips a thrown action's message, and this one is the fix.
+  if (!hasBlobStorage()) {
+    return { ok: false, error: "Photo storage isn’t connected (no Blob token or OIDC store), so the queue can’t save photos" };
+  }
+  await recordAdminAction({ adminUserId, action: "avatars.linkedin_queue.start", detail: {} });
+  return { ok: true, runId: await startLinkedInPhotoQueue() };
+}
+
+/** Stop the LinkedIn photo queue; the tick in flight finishes its current person and exits. */
+export async function stopLinkedInPhotoQueueAction(): Promise<void> {
+  const adminUserId = await requireAdminUserId();
+  await recordAdminAction({ adminUserId, action: "avatars.linkedin_queue.stop", detail: {} });
+  await stopLinkedInPhotoQueue();
 }

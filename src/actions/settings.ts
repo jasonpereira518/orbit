@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { normalizeSenderBio } from "@/lib/sender-profile";
+import { setCity } from "@/lib/career-profile-server";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
@@ -210,6 +211,17 @@ export async function saveSenderBio(bio: string) {
 
   revalidatePath("/settings");
   return { senderBio: senderBio ?? "" };
+}
+
+/**
+ * The city Radar looks for events in. Stored as `career_profile.city`, apart from the
+ * `profile.location` an import writes, so removing imported details never clears it.
+ */
+export async function saveCity(input: string) {
+  const userId = await requireUserId();
+  const city = await setCity(userId, input);
+  revalidatePath("/settings");
+  return { city: city ?? "" };
 }
 
 export async function saveThemePreference(theme: ThemePreference) {

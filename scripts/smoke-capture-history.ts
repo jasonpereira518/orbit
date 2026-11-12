@@ -136,6 +136,15 @@ function pureChecks() {
       captureMethod({ meeting: false, granola: false, jobSource: null, kinds: [] }),
     ].join() === "meeting,granola,phone,scan,calendar,notes"
   );
+  check(
+    "a Drive / OneDrive doc is named by its drive, after Granola",
+    [
+      captureMethod({ meeting: false, granola: false, jobSource: "messy", jobTags: ["cloud:google"], kinds: ["text"] }),
+      captureMethod({ meeting: false, granola: false, jobSource: "messy", jobTags: ["cloud:microsoft"], kinds: ["text"] }),
+      captureMethod({ meeting: false, granola: true, jobSource: "messy", jobTags: ["cloud:google"], kinds: ["text"] }),
+      captureMethod({ meeting: false, granola: false, jobSource: "messy", jobTags: ["cloud:notion"], kinds: ["text"] }),
+    ].join() === "drive,onedrive,granola,notion"
+  );
 
   check("summary prefers the meeting's, as plain text", captureSummary("**Big** call", ["person"]) === "Big call.");
   check("  else the first person summary that has words", captureSummary(null, [null, "  ", "- Talked _roadmap_"]) === "Talked roadmap.");
@@ -310,6 +319,79 @@ async function main() {
   const ph = details.items.find((i) => i.id === phoneBatch!.id)!;
   check("a batch saved by a phone job reads as phone", ph.method === "phone", ph.method);
   check("  titled by who it was with", ph.title === "Chat with Ana Ruiz", String(ph.title));
+  check("a job that saved a batch is not also pending", !details.pending.length, JSON.stringify(details.pending));
+
+  console.log("\nUnsaved extractions");
+  // What a drive-scan pass leaves: its docs in one drop, read and waiting for review — one
+  // of them unreadable. Plus a lone Notion page still being read. None has a note batch yet.
+  const drop = crypto.randomUUID();
+  const dropAt = Date.now();
+  let nth = 0;
+  const driveFile = (label: string, status: "ready" | "failed" | "ingesting", people = 0) => ({
+    userId: USER,
+    // A second apart, in the order they were dropped.
+    createdAt: new Date(dropAt + 1000 * nth++),
+    sourceKind: "messy" as const,
+    status,
+    sources: ["cloud:google"],
+    batchGroupId: drop,
+    sourceLabel: label,
+    error: status === "failed" ? "That file is gone or can’t be opened" : null,
+    // Only `items` is read for the count.
+    result: people ? ({ items: Array.from({ length: people }, () => ({})) } as never) : null,
+  });
+  const [syncFile, standupFile, goneFile, notionJob] = await db
+    .insert(captureJobs)
+    .values([
+      driveFile("Weekly sync notes", "ready", 2),
+      driveFile("Standup", "ready", 1),
+      driveFile("Gone doc", "failed"),
+      { userId: USER, sourceKind: "messy", status: "queued", sources: ["cloud:notion"], sourceLabel: "Coffee chats" },
+      // A lone draft still being typed, and a finished one: neither is waiting on anyone.
+      { userId: USER, sourceKind: "messy", status: "ingesting", inputText: "half a thought" },
+      { userId: USER, sourceKind: "messy", status: "saved", sources: ["cloud:google"], sourceLabel: "Done doc" },
+    ])
+    .returning();
+  const withPending = await listCaptureHistoryFor(USER, { limit: 2 });
+  check("the first page lists the drop and the lone job, nothing else", withPending.pending.length === 2, JSON.stringify(withPending.pending));
+  const dropEntry = withPending.pending.find((p) => p.kind === "drop");
+  check("  the drop is one entry, read as Drive", dropEntry?.kind === "drop" && dropEntry.id === drop && dropEntry.method === "drive", JSON.stringify(dropEntry));
+  if (dropEntry?.kind !== "drop") throw new Error("no drop");
+  check(
+    "  with a row per file, in the order they came, each with its status",
+    dropEntry.files.map((f) => `${f.title}:${f.status}:${f.peopleCount}`).join() === "Weekly sync notes:ready:2,Standup:ready:1,Gone doc:failed:0",
+    dropEntry.files.map((f) => `${f.title}:${f.status}:${f.peopleCount}`).join()
+  );
+  check("  the failed file carries its error and opens itself", dropEntry.files[2]!.error === "That file is gone or can’t be opened" && dropEntry.files[2]!.href === `/capture?job=${goneFile!.id}`);
+  check("  the drop opens on a file that was read", dropEntry.href === `/capture?job=${syncFile!.id}` && standupFile!.id !== syncFile!.id);
+  const lone = withPending.pending.find((p) => p.kind === "job");
+  check("the Notion page reads as Notion, still extracting", lone?.kind === "job" && lone.id === notionJob!.id && lone.method === "notion" && lone.status === "extracting", JSON.stringify(lone));
+  // The same kind of drop once folded into one review: still one card, still file by file.
+  const [folded] = await db
+    .insert(captureJobs)
+    .values({
+      userId: USER,
+      sourceKind: "messy",
+      status: "ready",
+      sources: ["cloud:microsoft"],
+      sourceLabel: "2 notes",
+      result: {
+        items: [{ noteLabel: "Coffee.docx" }, { noteLabel: "Intro.docx" }, { noteLabel: "Intro.docx" }],
+        parts: [crypto.randomUUID(), crypto.randomUUID()],
+      } as never,
+    })
+    .returning();
+  const foldedEntry = (await listCaptureHistoryFor(USER, { limit: 2 })).pending.find((p) => p.id === folded!.id);
+  check(
+    "a folded drop is still one card listing its files",
+    foldedEntry?.kind === "drop" && foldedEntry.jobId === folded!.id && foldedEntry.method === "onedrive" &&
+      foldedEntry.files.map((f) => `${f.title}:${f.peopleCount}`).join() === "Coffee.docx:1,Intro.docx:2" &&
+      foldedEntry.href === `/capture?job=${folded!.id}`,
+    JSON.stringify(foldedEntry)
+  );
+  await db.delete(captureJobs).where(eq(captureJobs.id, folded!.id));
+  check("later pages carry no pending rows", (await listCaptureHistoryFor(USER, { cursor: withPending.nextCursor, limit: 2 })).pending.length === 0);
+  check("another user sees none of them", (await listCaptureHistoryFor(OTHER)).pending.length === 0);
   check("  no summary to show, so none", ph.summary === null);
   check("  a person listed twice counts once", ph.peopleCount === 1, String(ph.peopleCount));
   check(

@@ -31,6 +31,8 @@ import {
   scheduleContactFollowUpAt,
 } from "../src/actions/reminders";
 import { markContactReachedOutForUser } from "../src/lib/radar/actions-core";
+import { draftContactFollowUp } from "../src/actions/contacts";
+import { encrypt } from "../src/lib/crypto";
 
 const USER = "demo-user";
 const HANDWRITTEN = "Send Priya the deck";
@@ -287,6 +289,32 @@ async function main() {
   check("marking a LinkedIn message sent closes their Radar card", answered?.status === "accepted" && answered.actedAt !== null, answered?.status);
   const retired = await db.query.aiSuggestions.findFirst({ where: eq(aiSuggestions.id, nudge!.id) });
   check("…and retires the congratulations nudge", retired?.status === "dismissed", retired?.status);
+
+  // The draft action returns the purpose: Orbit's pick, or the person's edit verbatim.
+  process.env.ORBIT_AI_RESULT_CACHE = "off";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (!/generativelanguage/.test(url)) return realFetch(input, init);
+    const reply = JSON.stringify({ purpose: "Ask about the seed round", body: "Hi Ada, how did the round go?" });
+    return Response.json({
+      candidates: [{ content: { role: "model", parts: [{ text: reply }] }, finishReason: "STOP" }],
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+    });
+  }) as typeof fetch;
+  await db.update(userSettings).set({
+    aiProvider: "gemini",
+    aiModel: "gemini-3.5-flash",
+    geminiApiKeyEncrypted: encrypt("fake-gemini"),
+  }).where(eq(userSettings.userId, USER));
+  const drafted = await seedContact("Ada Lovelace", 0);
+  const picked = await draftContactFollowUp(drafted.id, { channel: "email" });
+  check("a draft without a purpose returns the one Orbit picked",
+    picked.ok && picked.purpose === "Ask about the seed round", JSON.stringify(picked));
+  const edited = await draftContactFollowUp(drafted.id, { channel: "email", purpose: "Ask for intro" });
+  check("an edited purpose comes back verbatim",
+    edited.ok && edited.purpose === "Ask for intro", JSON.stringify(edited));
+  globalThis.fetch = realFetch;
 
   await cleanup();
   console.log("Follow-up actions: all checks passed");

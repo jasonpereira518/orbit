@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition, type ReactElement, type ReactNode } from "react";
+import { useEffect, useState, type ReactElement, type ReactNode } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
@@ -18,6 +19,13 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   OUTREACH_CHANNELS,
   OUTREACH_TONES,
   type OutreachChannel,
@@ -31,6 +39,15 @@ const CAMPAIGN_STATUSES = [
   { value: "completed", label: "Completed" },
   { value: "archived", label: "Archived" },
 ] as const;
+
+const STATUS_OPTIONS = CAMPAIGN_STATUSES.map((s) => ({ value: s.value, label: s.label }));
+
+const TONE_OPTIONS = OUTREACH_TONES.map((t) => ({ value: t, label: t }));
+
+const CHANNEL_OPTIONS: { value: OutreachChannel; label: string }[] = OUTREACH_CHANNELS.map((c) => ({
+  value: c,
+  label: c === "email" ? "Email" : c === "linkedin" ? "LinkedIn" : "SMS",
+}));
 
 export type CampaignEditorInitial = {
   id: string;
@@ -51,7 +68,7 @@ export function CampaignEditor({
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   const [name, setName] = useState(campaign.name);
   const [audienceQuery, setAudienceQuery] = useState(campaign.audienceQuery || "");
@@ -99,7 +116,7 @@ export function CampaignEditor({
           trigger
             ? () => trigger as ReactElement
             : () => (
-                <Button variant="outline" size="sm">
+                <Button variant="outline" size="sm" className="rounded-full">
                   <Pencil className="mr-1 h-3.5 w-3.5" />
                   Edit campaign
                 </Button>
@@ -126,19 +143,25 @@ export function CampaignEditor({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="edit-status">Status</Label>
-            <select
-              id="edit-status"
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+            <Label id="edit-status-label">Status</Label>
+            <Select
               value={status}
-              onChange={(e) => setStatus(e.target.value)}
+              onValueChange={(v) => {
+                if (v) setStatus(v);
+              }}
+              items={STATUS_OPTIONS}
             >
-              {CAMPAIGN_STATUSES.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger aria-labelledby="edit-status-label" className="h-9 w-full rounded-xl">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                {STATUS_OPTIONS.map((s) => (
+                  <SelectItem key={s.value} value={s.value} className="py-1.5 pl-2 rounded-lg text-sm">
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-1.5">
@@ -168,34 +191,46 @@ export function CampaignEditor({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="edit-tone">Tone</Label>
-              <select
-                id="edit-tone"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+              <Label id="edit-tone-label">Tone</Label>
+              <Select
                 value={tone}
-                onChange={(e) => setTone(e.target.value)}
+                onValueChange={(v) => {
+                  if (v) setTone(v);
+                }}
+                items={TONE_OPTIONS}
               >
-                {OUTREACH_TONES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger aria-labelledby="edit-tone-label" className="h-9 w-full rounded-xl capitalize">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                  {TONE_OPTIONS.map((t) => (
+                    <SelectItem key={t.value} value={t.value} className="py-1.5 pl-2 rounded-lg text-sm capitalize">
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="edit-channel">Default channel</Label>
-              <select
-                id="edit-channel"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+              <Label id="edit-channel-label">Default channel</Label>
+              <Select
                 value={channel}
-                onChange={(e) => setChannel(e.target.value as OutreachChannel)}
+                onValueChange={(v) => {
+                  if (v) setChannel(v);
+                }}
+                items={CHANNEL_OPTIONS}
               >
-                {OUTREACH_CHANNELS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger aria-labelledby="edit-channel-label" className="h-9 w-full rounded-xl">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false} className="p-1 rounded-xl">
+                  {CHANNEL_OPTIONS.map((c) => (
+                    <SelectItem key={c.value} value={c.value} className="py-1.5 pl-2 rounded-lg text-sm">
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

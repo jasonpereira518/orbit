@@ -1,6 +1,8 @@
 "use server";
 
 import { startJobInOwnInvocation } from "@/lib/import-stall";
+import { recordAccountAudit } from "@/lib/account-audit";
+import { consumeDailyCap } from "@/lib/rate-limit";
 import { canConnect, refusedConnectUrl } from "@/lib/connection-limits";
 import { and, desc, eq } from "drizzle-orm";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -26,6 +28,7 @@ import {
   OUTLOOK_SCAN_IMPORT_TYPE,
   runOutlookRecruiterScanJob,
 } from "@/lib/outlook-scan-processor";
+import { type RecruitingCycle } from "@/lib/recruiter-scan-state";
 import {
   buildMicrosoftAuthUrl,
   getOutlookOAuthConfigSummary,
@@ -261,6 +264,7 @@ export async function disconnectOutlook(opts: { alsoDelete?: boolean } = {}) {
   if (await isDemoWorkspace(userId)) return;
   const db = await getDb();
   await db.delete(outlookConnections).where(eq(outlookConnections.userId, userId));
+  await recordAccountAudit({ userId, action: "integration.disconnect", resourceType: "outlook" });
   // Explicit, not a cascade: calendar_sources has no FK to any connection table (they are
   // deliberately separate — see provider-connections.ts), so a reconnect's fresh connection
   // id would otherwise never dedupe against the orphaned row and seedCalendarSources would
@@ -331,9 +335,12 @@ function toScanStatus(row: typeof imports.$inferSelect): OutlookScanStatus {
  * only polls. Mirrors `startGmailRecruiterScan`, including returning the messages written
  * for a person as data — a thrown message reaches the browser as a digest in production.
  */
-export async function startOutlookRecruiterScan(): Promise<ActionResult<{ importId: string }>> {
+export async function startOutlookRecruiterScan(opts?: {
+  cycle?: RecruitingCycle;
+}): Promise<ActionResult<{ importId: string }>> {
   return asActionResult(async () => {
     const userId = await requireRecruitersUser();
+    await consumeDailyCap("importDaily", userId);
     const demoEmail = await demoWorkspaceEmail(userId);
     if (demoEmail) {
       return { importId: await recordDemoRecruiterScan(userId, OUTLOOK_SCAN_IMPORT_TYPE, demoEmail) };
@@ -383,7 +390,11 @@ export async function startOutlookRecruiterScan(): Promise<ActionResult<{ import
         status: "processing",
         totalRows: null,
         rowsProcessed: 0,
-        stats: { discoveryComplete: false, messagesScanned: 0 },
+        stats: {
+          discoveryComplete: false,
+          messagesScanned: 0,
+          cycle: opts?.cycle ?? "current",
+        },
       })
       .returning();
 

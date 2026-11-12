@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
-import { longRelativeLabel } from "@/lib/relative-date";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
+import { formatDistanceToNow } from "date-fns";
 import { CalendarSync, Check, Copy, ExternalLink } from "lucide-react";
 import {
   enableCalendarFeed,
@@ -11,7 +12,6 @@ import {
 } from "@/actions/calendar-feed";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { integrationHref } from "@/components/settings/sections";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
@@ -35,7 +35,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
   const [fresh, setFresh] = useState<CalendarFeedStatus | null>(null);
   const [confirmingNew, setConfirmingNew] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   // A refreshed page is newer than what this row last knew.
   const [syncedFrom, setSyncedFrom] = useState(initial);
@@ -48,7 +48,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
   const statusText = !summary.enabled
     ? "Off"
     : lastFetched
-      ? `Updated ${longRelativeLabel(lastFetched)}`
+      ? `Updated ${formatDistanceToNow(lastFetched, { addSuffix: true })}`
       : "Waiting for your calendar";
 
   function mint(fn: () => Promise<CalendarFeedStatus>, success: string) {
@@ -179,7 +179,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">
               {lastFetched
-                ? `Your calendar last checked ${longRelativeLabel(lastFetched)}.`
+                ? `Your calendar last checked ${formatDistanceToNow(lastFetched, { addSuffix: true })}.`
                 : "The link exists, but no calendar has checked it yet."}
             </p>
             <Button size="sm" variant="outline" className="w-full" onClick={() => setConfirmingNew(true)}>
@@ -189,7 +189,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
         )}
 
         <Link
-          href={integrationHref("reminders")}
+          href="/settings#settings-calendar"
           className="block text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           Manage or turn off in Settings →

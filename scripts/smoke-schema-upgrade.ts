@@ -60,6 +60,19 @@ async function main() {
   const again = await reconcileSchema();
   check("a current database is a no-op", again.applied === false && again.failed.length === 0, JSON.stringify(again));
 
+  console.log("\nA database stamped NEWER by a sibling branch, missing a column...");
+  await db.execute(sql`ALTER TABLE contacts DROP COLUMN x_handle`);
+  await db.execute(sql`UPDATE schema_migrations SET version = ${SCHEMA_VERSION + 1} WHERE id = 1`);
+  const skipped = await reconcileSchema();
+  check("a plain reconcile trusts the newer stamp and skips", skipped.applied === false, JSON.stringify(skipped));
+  cov = await schemaCoverage();
+  check("fixture: the column is still missing", cov.missingColumns.length > 0);
+  const forced = await reconcileSchema({ force: true });
+  check("force sweeps anyway", forced.applied === true && forced.failed.length === 0, JSON.stringify(forced));
+  cov = await schemaCoverage();
+  check("the column is back", cov.missingColumns.length === 0, cov.missingColumns.join(", "));
+  check("the newer stamp is not lowered", (await recordedVersion()) === SCHEMA_VERSION + 1);
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed.`);
     process.exit(1);

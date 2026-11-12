@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { confirmCheckoutSession, startPlanSwitch } from "@/actions/billing";
@@ -16,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StatTile } from "@/components/settings/account-rows";
+import { TileDetails, UsageTile } from "@/components/settings/usage-tile";
 import { formatAllowanceReset, allowancePercentUsed, FREE_LOW_CREDITS } from "@/lib/ai-access-copy";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_LABEL } from "@/lib/stripe-config";
@@ -40,12 +39,11 @@ function equivalentsLine(items: CreditsOverview["equivalents"]): string | null {
 }
 
 /**
- * The credits on the AI settings page, read once and shown in three places: a tile in the
- * stat row, a notice under it when they have run out, and the detail inside Advanced. The
- * hook owns the load, the pack-checkout confirm on the way back from Stripe, and the one-time
- * Max nudge. Nothing here — or anywhere — charges automatically.
+ * The credits, read once for the Plan and usage card. The hook owns the load, the
+ * pack-checkout confirm on the way back from Stripe, and the one-time Max nudge. Nothing here
+ * — or anywhere — charges automatically.
  */
-export function useCreditsOverview() {
+function useCreditsOverview() {
   const [overview, setOverview] = useState<CreditsOverview | null | undefined>(undefined);
   const [nudgeOpen, setNudgeOpen] = useState(false);
   const params = useSearchParams();
@@ -74,7 +72,7 @@ export function useCreditsOverview() {
       if (result?.status === "granted") toast.success(`${CREDIT_PACK_CREDITS} credits added`);
       else if (result?.status === "processing") toast.info("Your payment is still clearing — the credits arrive the moment it does");
       await load();
-      if (confirm) router.replace("/settings?integration=ai", { scroll: false });
+      if (confirm) router.replace("/settings#settings-plan", { scroll: false });
     })();
     return () => {
       live = false;
@@ -104,45 +102,43 @@ function facts(overview: CreditsOverview, planConfig: ReturnType<typeof useViewe
   };
 }
 
-/** Credits left, the month's bar, and the one action that adds more. */
-export function CreditsTile({ overview }: { overview: CreditsOverview | null | undefined }) {
+/**
+ * The AI credits meter on the Plan and usage card: credits left, the month's bar in the plan's
+ * colour, a notice when something needs doing, the one action that adds more, and the detail
+ * folded away. Renders nothing when the overview can't be read — the card's other meters
+ * don't depend on it.
+ */
+export function CreditsUsage({ meterClassName }: { meterClassName: string }) {
   const { planConfig } = useViewerPlan();
-  if (!overview) return <StatTile label="Credits" value={overview} />;
-  const f = facts(overview, planConfig);
+  const { overview, nudge } = useCreditsOverview();
+  if (overview === null) return null;
+  const f = overview ? facts(overview, planConfig) : null;
   return (
-    <StatTile
-      label="Credits"
-      value={fmt(f.spendableLeft)}
-      sub="left this month"
-      title={f.allowance ? `Monthly credits reset ${f.resets}` : undefined}
+    <UsageTile
+      label="AI credits"
+      value={f ? `${fmt(f.spendableLeft)} left` : "…"}
+      segments={f?.allowance ? [{ percent: f.used, className: meterClassName }] : undefined}
+      // Not "of N": what's left can include starter and pack credits on top of the month's.
+      foot={f?.allowance ? `${fmt(f.monthlyCredits)} a month · resets ${f.resets}` : null}
+      action={
+        f && f.plan !== "free" && f.monthlyCredits > 0 && f.packsSold && !f.out ? (
+          <BuyPackButton variant="link" size="xs" label="Add credits" />
+        ) : null
+      }
     >
-      {f.allowance ? (
-        <div
-          className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
-          role="meter"
-          aria-label="Monthly credits used"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={f.used}
-        >
-          <div className="h-full rounded-full bg-primary" style={{ width: `${f.used}%` }} />
-        </div>
+      {overview ? <CreditsNotice overview={overview} /> : null}
+      {overview ? (
+        <TileDetails>
+          <CreditsDetails overview={overview} />
+        </TileDetails>
       ) : null}
-      {f.plan === "free" ? (
-        <Link href="/pricing" className="mt-2 inline-block text-xs font-medium text-primary underline-offset-2 hover:underline">
-          Compare plans
-        </Link>
-      ) : f.monthlyCredits > 0 && f.packsSold && !f.out ? (
-        <div className="mt-2">
-          <BuyPackButton variant="outline" label="Add credits" />
-        </div>
-      ) : null}
-    </StatTile>
+      {nudge}
+    </UsageTile>
   );
 }
 
 /** Only when something needs doing: out of credits, or a Free account nearly out. */
-export function CreditsNotice({ overview }: { overview: CreditsOverview | null | undefined }) {
+function CreditsNotice({ overview }: { overview: CreditsOverview | null | undefined }) {
   const { planConfig } = useViewerPlan();
   if (!overview) return null;
   const f = facts(overview, planConfig);
@@ -173,13 +169,13 @@ export function CreditsNotice({ overview }: { overview: CreditsOverview | null |
   return null;
 }
 
-/** The rest, for Advanced: where the credits come from, what they buy, and the emails. */
-export function CreditsDetails({ overview }: { overview: CreditsOverview }) {
+/** The rest, folded away: where the credits come from, what they buy, and the emails. */
+function CreditsDetails({ overview }: { overview: CreditsOverview }) {
   const { planConfig } = useViewerPlan();
   const f = facts(overview, planConfig);
   const line = equivalentsLine(overview.equivalents);
   return (
-    <div className="space-y-2 text-sm text-muted-foreground">
+    <div className="space-y-1.5 text-xs text-muted-foreground">
       {f.monthlyCredits > 0 && f.allowance ? (
         <p>
           {fmt(credits(f.allowance.remaining))} of {fmt(f.monthlyCredits)} monthly · resets {f.resets}
@@ -210,7 +206,7 @@ function CreditEmailToggle({ initial }: { initial: boolean }) {
   const [enabled, setEnabled] = useState(initial);
   const [pending, start] = useTransition();
   return (
-    <label className="flex items-start gap-2 pt-1 text-sm text-muted-foreground">
+    <label className="flex items-start gap-2 pt-1 text-xs text-muted-foreground">
       <input
         type="checkbox"
         className="mt-0.5 size-4 shrink-0 accent-tier-accent"

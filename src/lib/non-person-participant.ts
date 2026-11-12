@@ -7,57 +7,32 @@
  * `contacts` row, for the People list and `scripts/cleanup-non-person-contacts.ts`. Kept in step
  * by `scripts/smoke-non-person-participant.ts`. Both read `contacts.email` (the denormalised
  * primary) only: calendar sync writes the attendee address there, and it keeps the list cheap.
+ * The lists and patterns themselves live in `@/lib/names/classify`.
  *
  * Wrong in one direction only, on purpose: hiding a real person loses a relationship, while a
- * missed room costs one junk row.
+ * missed room costs one junk row. That is also why role inboxes (hello@, team@, sales@) are
+ * not here: on a founder's own domain they are often one person.
  */
 import { sql } from "drizzle-orm";
 import { contacts } from "@/db/schema";
-import { AUTOMATED_LOCAL_PARTS } from "@/lib/email-activity";
-
-/**
- * Mailboxes only a machine sends from: `isAutomatedAddress`'s list plus calendar and invite
- * senders. Deliberately not the wider role list (`isRoleEmail`): hello@, team@ and sales@ on
- * a founder's own domain are often one person.
- */
-const MACHINE_LOCAL_PARTS = [
-  ...new Set([
-    ...AUTOMATED_LOCAL_PARTS,
-    ...["noreply", "no-reply", "donotreply", "do-not-reply", "calendar", "invite", "invites", "event", "events"],
-    ...["notification", "notifications", "mailer", "mailer-daemon", "bounce", "bounces", "postmaster", "updates"],
-  ]),
-];
-const MACHINE_SET = new Set(MACHINE_LOCAL_PARTS);
-
-/** group.calendar.google.com, resource.calendar.google.com, import.calendar.google.com. */
-const CALENDAR_DOMAIN = "@(.+\\.)?calendar\\.google\\.com$";
-/**
- * "Calendar" as a whole word, only with a digit or three+ words around it, so "Ann Calendar"
- * (a surname) passes while "Team Offsite Calendar" and "Interview Calendar 2" do not. Written
- * without `\b` (Postgres spells it `\y`) so one pattern serves JS and SQL.
- * ponytail: name heuristic for addresses that are NOT on a calendar domain (rooms on Outlook,
- * renamed resources); extend the phrase list when a new junk name shows up.
- */
-const CALENDAR_WORD = "(^|[^a-z0-9])calendar($|[^a-z0-9])";
-const CALENDAR_CONTEXT = "[0-9]|^[[:space:]]*[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]";
-const ROOM_PHRASE = "(^|[^a-z0-9])(conference|meeting) room($|[^a-z0-9])";
-
-const jsRe = (pattern: string) => new RegExp(pattern.replaceAll("[:space:]", "\\s"), "i");
+import {
+  CALENDAR_CONTEXT,
+  CALENDAR_DOMAIN,
+  CALENDAR_WORD,
+  classifyMailbox,
+  isRoomName,
+  MACHINE_LOCAL_PARTS,
+  ROOM_PHRASE,
+} from "@/lib/names/classify";
 
 /** Whether a participant (as calendar sync sees it) is a calendar, room or mailbox, not a person. */
 export function isNonPersonParticipant(name: string | null | undefined, email: string | null | undefined): boolean {
-  if (isNonPersonEmail(email)) return true;
-  const n = (name ?? "").trim();
-  if (jsRe(ROOM_PHRASE).test(n)) return true;
-  return jsRe(CALENDAR_WORD).test(n) && jsRe(CALENDAR_CONTEXT).test(n);
+  return isNonPersonEmail(email) || isRoomName(name);
 }
 
 /** The address alone says calendar or machine mailbox; a match on the name alone could be a person. */
 export function isNonPersonEmail(email: string | null | undefined): boolean {
-  const e = (email ?? "").trim().toLowerCase();
-  // `ada+github@x.com` is still Ada, so the tag is dropped before the lookup.
-  const base = e.split("@")[0].split("+")[0];
-  return !!e && (jsRe(CALENDAR_DOMAIN).test(e) || MACHINE_SET.has(base));
+  return classifyMailbox(email) === "machine";
 }
 
 /** SQL twin of `isNonPersonParticipant` over `contacts`. */

@@ -34,6 +34,7 @@ import { releaseCheckFor } from "@/lib/tools/released";
 import { resourceMetadataUrl, verifyOAuthCaller } from "@/lib/mcp/oauth";
 import { RATE_LIMITS, RateLimitedError, consumeBucket } from "@/lib/rate-limit";
 import { recordAiSecurityEvent } from "@/lib/ai-security";
+import { readBodyCapped } from "@/lib/net-guard";
 import { initializeClientName, mcpClientFrom } from "@/lib/mcp/client";
 import { trackMcpConnected } from "@/lib/mcp/events";
 
@@ -65,14 +66,47 @@ export function countToolCalls(body: unknown): { messages: number; toolCalls: nu
   return { messages: list.length, toolCalls };
 }
 
-/** Read the body without consuming it for the transport. Null when there is none or it is not JSON. */
-async function peekJson(request: Request): Promise<unknown> {
-  if (request.method !== "POST") return null;
-  try {
-    return await request.clone().json();
-  } catch {
-    return null;
+/**
+ * Read the body once, counting bytes as they arrive: a chunked request has no Content-Length to
+ * check up front, and `request.clone().json()` buffered all of it. Not a clone and a capped read
+ * either: cancelling one branch of a teed stream never settles while the other is still open, so
+ * an oversized request would hang. The transport gets a rebuilt request over the same bytes.
+ * `tooLarge` once it passes MAX_MCP_BODY_BYTES; `json` is null when there is none or it is not JSON.
+ */
+async function readMcpBody(request: Request): Promise<{ tooLarge: boolean; json: unknown; request: Request }> {
+  const headers = new Headers(request.headers);
+  // The MCP SDK transport strictly checks for both application/json and text/event-stream in Accept.
+  // Standardize the header so clients that send Accept: application/json, */*, or omit it do not get rejected with 406.
+  const accept = headers.get("accept") ?? "";
+  if (!accept.includes("application/json") || !accept.includes("text/event-stream")) {
+    headers.set("accept", "application/json, text/event-stream");
   }
+
+  if (request.method !== "POST" || !request.body) {
+    const replay = new Request(request.url, {
+      method: request.method,
+      headers,
+      signal: request.signal,
+    });
+    return { tooLarge: false, json: null, request: replay };
+  }
+  const raw = await readBodyCapped(new Response(request.body), MAX_MCP_BODY_BYTES);
+  if (!raw) return { tooLarge: true, json: null, request };
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  const replay = new Request(request.url, {
+    method: request.method,
+    headers,
+    body: new Uint8Array(raw),
+    signal: request.signal,
+  });
+  let json: unknown = null;
+  try {
+    json = JSON.parse(raw.toString("utf8"));
+  } catch {
+    // Not JSON: the transport answers that with its own parse error.
+  }
+  return { tooLarge: false, json, request: replay };
 }
 
 function jsonRpcError(
@@ -174,8 +208,12 @@ export async function handleMcpRequest(
   if (declaredLength > MAX_MCP_BODY_BYTES) {
     return jsonRpcError(-32600, "Request body too large.", 413);
   }
-  const body = await peekJson(request);
-  const { messages, toolCalls } = countToolCalls(body);
+  const peeked = await readMcpBody(request);
+  if (peeked.tooLarge) {
+    return jsonRpcError(-32600, "Request body too large.", 413);
+  }
+  request = peeked.request;
+  const { messages, toolCalls } = countToolCalls(peeked.json);
   if (messages > MAX_MCP_BATCH) {
     void recordAiSecurityEvent({
       kind: "batch_rejected",
@@ -208,7 +246,7 @@ export async function handleMcpRequest(
   // as a closed enum. The first request per (user, client) is the connection.
   const client = mcpClientFrom({
     clientId: caller.clientId,
-    clientName: initializeClientName(body),
+    clientName: initializeClientName(peeked.json),
     userAgent: request.headers.get("user-agent"),
   });
   trackMcpConnected({ userId: caller.userId, client, via: caller.via });
@@ -228,10 +266,40 @@ export async function handleMcpRequest(
     isReleased: await releaseCheckFor(caller.userId),
   });
   await server.connect(transport);
+  const options = peeked.json ? { parsedBody: peeked.json } : undefined;
+  let response: Response;
   try {
-    return await transport.handleRequest(request);
-  } finally {
-    // One server per request, so nothing survives to leak between users.
+    response = await transport.handleRequest(request, options);
+  } catch (err) {
     await server.close().catch(() => null);
+    throw err;
   }
+
+  const isStream = response.headers.get("content-type")?.includes("text/event-stream");
+  if (!isStream || !response.body) {
+    // One server per request for JSON responses, so nothing survives to leak between users.
+    await server.close().catch(() => null);
+    return response;
+  }
+
+  // Keep server alive while stream is active, closing on completion or disconnect.
+  const [stream1, stream2] = response.body.tee();
+  void (async () => {
+    try {
+      const reader = stream2.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch {
+      // client aborted or error
+    } finally {
+      await server.close().catch(() => null);
+    }
+  })();
+  return new Response(stream1, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }

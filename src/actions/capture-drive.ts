@@ -7,7 +7,7 @@
  * old notes, wrong for the capture page, whose whole point is the review cards. So this
  * shares the reading (`exportDriveFileText` on the stored grant, the same readiness check
  * and the same browser-only `drive.file` Picker token) and hands the text to a capture job
- * instead, under the batch id the browser minted for this pick. The queue panel then shows
+ * instead, under the batch id the browser minted for this pick. Recent captures then shows
  * the docs like any other multi-file drop.
  *
  * One file per call, on purpose. The browser runs a few at a time, the way the notes
@@ -67,6 +67,7 @@ export async function queueDriveCapture(input: {
       text,
       label: file.name,
       batchGroupId: input.batchGroupId,
+      provider: "google",
       force: input.force,
     });
     if (outcome.status === "queued") after(() => runCaptureJobById(outcome.jobId).catch(() => null));

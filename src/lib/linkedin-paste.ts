@@ -11,7 +11,9 @@
  * this path all agree on one spelling of a profile rather than three.
  */
 import type { ParsedNote } from "@/lib/ai";
-import { canonicalLinkedInProfileUrl } from "@/lib/identity/linkedin";
+import { personNameFromSlug } from "@/lib/names/from-identifier";
+
+export { personNameFromSlug };
 
 /** One profile URL found in pasted text. */
 export type LinkedInProfileRef = {
@@ -74,7 +76,7 @@ const PROFILE_URL_RE =
   /(?:https?:\/\/)?(?:[a-z0-9-]+\.)?linkedin\.com\/in\/([^\s/?#"'<>,;)\]}]+)/gi;
 
 export function canonicalLinkedInUrl(slug: string) {
-  return canonicalLinkedInProfileUrl(slug);
+  return `https://www.linkedin.com/in/${slug}`;
 }
 
 /**
@@ -131,55 +133,6 @@ export function isLinkedInOnlyPaste(text: string): boolean {
   return !/[^\s,;•\-–—*·|\d.)\]]/u.test(remainder);
 }
 
-/**
- * A token that disambiguates a slug rather than naming anyone: LinkedIn's trailing hash
- * (`8b1a2b34`), or a year someone added to claim a taken handle.
- */
-function isDisambiguator(token: string) {
-  // Any trailing run of digits, however short: LinkedIn hands out `john-smith-3` as
-  // readily as `john-smith-1986`, and no name ends in a number.
-  if (/^\d+$/.test(token)) return true;
-  if (token.length < 4) return false;
-  if (/^[0-9a-f]{6,}$/i.test(token)) return true;
-  // Mixed letters and digits with no vowel pattern to speak of — `a1b2c3`, `x7f2ab9`.
-  return /^(?=.*[a-z])(?=.*\d)[a-z0-9]+$/i.test(token);
-}
-
-/**
- * Best guess at a person's name from their profile slug, for when no profile lookup is
- * available. `sarah-chen-8b1a2b34` → `Sarah Chen`.
- *
- * This is a guess and is labelled as one everywhere it surfaces: slugs drop apostrophes and
- * capitals (`patrick-obrien`), and a vanity handle carries no name at all (`sfounder`). The
- * review card puts it in an editable field with a low-confidence marker, so the cost of a
- * wrong guess is one correction rather than a wrong contact.
- */
-export function personNameFromSlug(slug: string): string | null {
-  const tokens = slug
-    .split(/[-_.]+/)
-    .map((t) => t.trim())
-    .filter(Boolean);
-  if (!tokens.length) return null;
-
-  // Only trailing disambiguators go — a leading digit run is part of however they spell
-  // their name, and dropping from the middle would reorder a name we cannot read anyway.
-  while (tokens.length > 1 && isDisambiguator(tokens[tokens.length - 1])) {
-    tokens.pop();
-  }
-
-  const name = tokens
-    .map((token) =>
-      // A slug that already carries capitals was typed that way; leave it alone rather
-      // than flattening `McKinsey` into `Mckinsey`.
-      /[A-Z]/.test(token)
-        ? token
-        : token.charAt(0).toUpperCase() + token.slice(1)
-    )
-    .join(" ")
-    .trim();
-
-  return name || null;
-}
 
 /** The lines a resolved profile contributes, as the person would read them. */
 export function linkedInPersonFactLines(person: PastedLinkedInPerson): string[] {

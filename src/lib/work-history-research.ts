@@ -27,7 +27,12 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactProfiles, contacts } from "@/db/schema";
 import { userCanUseAi, webSearchJson, parseAiJson, type WebSource } from "@/lib/ai";
-import { currentRoleAnswerSchema, workHistoryAnswerSchema } from "@/lib/ai-reply-schemas";
+import { legacyWebSearch, searchOnceThenVerify } from "@/lib/web-research";
+import {
+  PUBLIC_WORK_HISTORY_DAYS,
+  readPublicWorkHistory,
+  writePublicWorkHistory,
+} from "@/lib/public-work-history";
 import { auditUntrustedWrite, cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import {
   sanitizeIncomingExperiences,
@@ -41,9 +46,14 @@ import {
   isStoredCurrentRole,
   loadJobBaseline,
   recordJobChanges,
+  type SnapshotRole,
 } from "@/lib/job-changes";
+import { gateSkips } from "@/lib/decisions/gates";
+import { openEngines, type Engines } from "@/lib/decisions/engine";
+import { recheckGateState, verifyGateState } from "@/lib/work-history-gates";
 import { updateContactForUser } from "@/lib/contact-writes";
 import { reportError } from "@/lib/report-error";
+import { keepCitedMentions, radarPulseAllowed, storeMentions, MENTIONS_PER_CHECK, type Mention } from "@/lib/radar/pulse";
 
 /** A web-found history is re-researched at most this often on its own. */
 export const WORK_HISTORY_REFRESH_DAYS = 30;
@@ -80,7 +90,22 @@ export type WorkHistoryOutcome =
   | "no_anchor"
   | "rate_limited"
   | "missing"
-  | "error";
+  | "error"
+  /** Jev judged a sweep re-check unneeded: no search, checked again next cycle. */
+  | "jev_skipped"
+  /** Jev judged the first search's unsure candidate someone else: no verify search, nothing written. */
+  | "jev_vetoed";
+
+/**
+ * The Jev marker (`contacts.work_history_jev_skipped_at`) after a run: set by a skip or a veto,
+ * cleared by any run that really searched, left alone (`undefined`) when nothing was searched.
+ * Set means the next run asks neither gate — Jev never skips the same contact twice in a row.
+ */
+export function jevMarkerUpdate(outcome: WorkHistoryOutcome, now: Date): Date | null | undefined {
+  if (outcome === "jev_skipped" || outcome === "jev_vetoed") return now;
+  if (outcome === "saved" || outcome === "unchanged" || outcome === "not_found" || outcome === "unsure") return null;
+  return undefined;
+}
 
 export type WorkHistorySubject = {
   fullName: string;
@@ -96,24 +121,32 @@ export type WorkHistoryAnswer = {
   headline: string | null;
   confident: boolean;
   sources: WebSource[];
+  /** Jev vetoed the verify search: the first search's candidate is someone else. Nothing is written. */
+  vetoed?: true;
 };
 
 /** What the cheap re-check found: where they work now, if a source says so. */
 export type CurrentRoleAnswer = {
   confident: boolean;
   current: { organization: string; title: string | null } | null;
+  /** Radar's people check: recent public mentions, each on a link the search cited. */
+  mentions?: Mention[];
 };
 
 /** The cheap re-check call, injectable like the researcher. */
 export type CurrentRoleChecker = (
   userId: string,
   subject: WorkHistorySubject,
+  /** `mentions`: also ask for recent posts, talks and news (Radar's people check). Same one search. */
+  opts?: { mentions?: boolean; now?: Date },
 ) => Promise<CurrentRoleAnswer>;
 
 /** The web-research call, injectable so the smoke can run with no key and no network. */
 export type WorkHistoryResearcher = (
   userId: string,
   subject: WorkHistorySubject,
+  /** `vetoVerify`: Jev's veto of the second (verify) search; absent when this run may not ask it. */
+  opts?: { vetoVerify?: (firstJson: string) => Promise<boolean> },
 ) => Promise<WorkHistoryAnswer>;
 
 const SYSTEM = `You research the professional background of one specific person using web search.
@@ -161,6 +194,7 @@ function subjectPrompt(subject: WorkHistorySubject): string {
   return `Find the work history and education of this person:\n\n${fenceUntrusted("contact", lines.join("\n"))}`;
 }
 
+type RawAnswer = { match?: unknown; headline?: unknown; experiences?: unknown };
 
 /**
  * The re-check prompt. Asks ONE thing — where they work now — so it needs one search and a
@@ -174,39 +208,71 @@ Report their CURRENT job as the sources show it — do not assume the title or c
 Respond with JSON only:
 { "match": "confident" | "unsure" | "none", "current": { "organization": string, "title": string | null } | null }`;
 
+/**
+ * Radar's people check rides the same search: up to three recent public posts, talks or news
+ * items about the person. Code keeps only those whose url the search provider cited.
+ */
+const CURRENT_ROLE_MENTIONS = `
+
+Also list up to ${MENTIONS_PER_CHECK} public posts, talks or news items about THIS person from the last 90 days, newest first, only from the sources you found. Each "url" must be the exact address of one of those sources. Add them to the same JSON object as "recent": [{ "kind": "post" | "talk" | "news", "text": string, "url": string, "date": string | null }], empty if there are none.`;
+
 /** Output cap for the re-check: one small object. */
 const CURRENT_ROLE_OUTPUT_TOKENS = 200;
+/** With mentions: three short items more. */
+const CURRENT_ROLE_MENTIONS_OUTPUT_TOKENS = 600;
 
+type RawCurrentRole = {
+  match?: unknown;
+  current?: { organization?: unknown; title?: unknown } | null;
+  recent?: unknown;
+};
 
 /** The production re-check: one search, one short answer. */
-export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, subject) => {
-  const { json } = await webSearchJson(userId, {
-    system: CURRENT_ROLE_SYSTEM,
+export const checkCurrentRoleWithWebSearch: CurrentRoleChecker = async (userId, subject, opts) => {
+  const { json, sources } = await webSearchJson(userId, {
+    system: opts?.mentions ? CURRENT_ROLE_SYSTEM + CURRENT_ROLE_MENTIONS : CURRENT_ROLE_SYSTEM,
     user: subjectPrompt(subject).replace("Find the work history and education of this person:", "Where does this person work now?"),
     operation: "contact.work_history",
     maxSearches: 1,
-    maxOutputTokens: CURRENT_ROLE_OUTPUT_TOKENS,
+    maxOutputTokens: opts?.mentions ? CURRENT_ROLE_MENTIONS_OUTPUT_TOKENS : CURRENT_ROLE_OUTPUT_TOKENS,
   });
-  const raw = parseAiJson(currentRoleAnswerSchema, json);
+  const raw = parseAiJson<RawCurrentRole>(json);
   auditUntrustedWrite(userId, "work_history.recheck", "answer", json);
   const org = cleanSingleLine(typeof raw.current?.organization === "string" ? raw.current.organization : null, 200) ?? "";
   const title = cleanSingleLine(typeof raw.current?.title === "string" ? raw.current.title : null, 200);
   return {
     confident: raw.match === "confident",
     current: org ? { organization: org, title } : null,
+    mentions: opts?.mentions && Array.isArray(raw.recent)
+      ? keepCitedMentions(
+          raw.recent.map((r: { kind?: unknown; text?: unknown; url?: unknown; date?: unknown }) => ({ ...r, dateIso: r?.date })),
+          sources,
+          opts.now ?? new Date()
+        )
+      : undefined,
   };
 };
 
-/** The production researcher: one web-grounded call on the account's own provider. */
-export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subject) => {
-  const { json, sources } = await webSearchJson(userId, {
-    system: SYSTEM,
-    user: subjectPrompt(subject),
-    operation: "contact.work_history",
-    maxSearches: MAX_SEARCHES_PER_PERSON,
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
-  });
-  const raw = parseAiJson(workHistoryAnswerSchema, json);
+/**
+ * The production researcher, on the account's own provider: one search, and a second only
+ * when the first is unsure (`searchOnceThenVerify`) — most profiles resolve on the LinkedIn
+ * URL alone.
+ */
+export const researchWithWebSearch: WorkHistoryResearcher = async (userId, subject, opts) => {
+  const call = (user: string, maxSearches: number) =>
+    webSearchJson(userId, {
+      system: SYSTEM,
+      user,
+      operation: "contact.work_history",
+      maxSearches,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+    });
+  const { json, sources, vetoed }: { json: string; sources: WebSource[]; vetoed?: true } = legacyWebSearch()
+    ? await call(subjectPrompt(subject), MAX_SEARCHES_PER_PERSON)
+    : await searchOnceThenVerify(call, subjectPrompt(subject), { vetoVerify: opts?.vetoVerify });
+  // Jev ruled the unsure candidate someone else: nothing to read, nothing to write.
+  if (vetoed) return { confident: false, headline: null, experiences: [], sources, vetoed };
+  const raw = parseAiJson<RawAnswer>(json);
   // Tripwire, never a block: the answer was read off pages anyone can publish.
   auditUntrustedWrite(userId, "work_history.research", "answer", json);
   return {
@@ -305,6 +371,12 @@ export async function researchContactWorkHistory(
      * really run, so a fresh or extension-owned contact costs nothing from it.
      */
     spend?: () => Promise<boolean>;
+    /**
+     * The sweep's decision engines, opened once per account. Present means Jev may skip a
+     * periodic re-check (the re-check gate); only the sweep passes them, so a refresh someone
+     * asked for is never gated.
+     */
+    gates?: Engines;
   } = {},
 ): Promise<WorkHistoryOutcome> {
   const now = options.now ?? new Date();
@@ -336,6 +408,7 @@ export async function researchContactWorkHistory(
       if (cadence) {
         const missed = outcome === "not_found" || outcome === "unsure";
         const found = outcome === "saved" || outcome === "unchanged";
+        const marker = jevMarkerUpdate(outcome, now);
         await db
           .update(contacts)
           .set({
@@ -352,6 +425,9 @@ export async function researchContactWorkHistory(
               : found
                 ? { workHistoryMisses: 0, workHistoryMissSlug: null }
                 : {}),
+            // A skip or veto is never a miss: two misses stop research for good, and Jev may
+            // only ever make a contact one cycle late.
+            ...(marker !== undefined ? { workHistoryJevSkippedAt: marker } : {}),
           })
           .where(and(eq(contacts.userId, userId), eq(contacts.id, contactId)));
       }
@@ -371,6 +447,7 @@ async function researchOnce(
     checker?: CurrentRoleChecker;
     now: Date;
     spend?: () => Promise<boolean>;
+    gates?: Engines;
   },
 ): Promise<{ outcome: WorkHistoryOutcome; cadence: WorkHistoryCadenceSubject | null; freshFrom?: Date }> {
   const research = options.researcher ?? researchWithWebSearch;
@@ -385,13 +462,17 @@ async function researchOnce(
       location: true,
       school: true,
       linkedinUrl: true,
+      linkedinSlug: true,
       closenessTier: true,
       lastInteractionAt: true,
       statedCloseness: true,
       priorityLevel: true,
+      workHistoryJevSkippedAt: true,
     },
   });
   if (!contact) return { outcome: "missing", cadence: null };
+  // Jev skipped or vetoed last time: this run asks neither gate (never two in a row).
+  const jevMayGate = !options.force && !contact.workHistoryJevSkippedAt;
   const cadence: WorkHistoryCadenceSubject = contact;
   // A LinkedIn URL is what makes this a lookup rather than a guess about a name.
   if (!contact.linkedinUrl?.trim()) return { outcome: "no_anchor", cadence };
@@ -410,56 +491,112 @@ async function researchOnce(
     return { outcome: "fresh", cadence, freshFrom: stored.capturedAt };
   }
 
-  if (!options.researcher && !(await userCanUseAi(userId))) return { outcome: "no_ai", cadence };
-  if (options.spend && !(await options.spend())) return { outcome: "rate_limited", cadence };
+  // Another account's confident search of the same public profile, recent enough: reused with
+  // no search, no allowance spent and no miss counted (public-work-history.ts). The profile's
+  // own button always searches — it is how someone asks for a fresher answer, and its search
+  // refreshes the shared one.
+  const shared = options.force ? null : await readPublicWorkHistory(contact.linkedinSlug, PUBLIC_WORK_HISTORY_DAYS, now);
+  let answer: WorkHistoryAnswer;
+  if (shared) {
+    answer = { confident: true, ...shared };
+  } else {
+    if (!options.researcher && !(await userCanUseAi(userId))) return { outcome: "no_ai", cadence };
 
-  try {
-    await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
-  } catch (err) {
-    if (isRateLimitedError(err)) return { outcome: "rate_limited", cadence };
-    throw err;
-  }
-
-  const subject: WorkHistorySubject = {
-    fullName: contact.fullName,
-    title: contact.title,
-    company: contact.company,
-    location: contact.location,
-    school: contact.school,
-    linkedinUrl: contact.linkedinUrl,
-  };
-
-  // A re-check of a history Orbit already found: ask the cheap question first. Most people
-  // have not moved since the last look, and confirming that costs one search and a few
-  // dozen tokens — the full history (two searches and a list) runs only when the answer
-  // differs. A forced search (the profile's button) always does the full history.
-  if (!options.force && stored?.source === "web") {
-    const storedRoles = (await loadJobBaseline(userId, contactId, now)).roles;
-    if (storedRoles.some((r) => r.isCurrent)) {
-      const check = await (options.checker ?? checkCurrentRoleWithWebSearch)(userId, subject);
-      // Nothing clear enough to act on. Not worth the full search to find out: the next
-      // scheduled check asks again.
-      if (!check.confident || !check.current) return { outcome: "not_found", cadence };
-      if (isStoredCurrentRole(check.current, storedRoles)) {
-        // Still true. Record that it was checked — the provenance line reads this date.
-        await db
-          .update(contactProfiles)
-          .set({ capturedAt: now, updatedAt: now })
-          .where(and(eq(contactProfiles.userId, userId), eq(contactProfiles.contactId, contactId)));
-        return { outcome: "unchanged", cadence };
-      }
-      // Something moved: the full history is worth its cost now. It is a second search, so
-      // it spends a second lookup from the account's allowance.
-      try {
-        await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
-      } catch (err) {
-        if (isRateLimitedError(err)) return { outcome: "rate_limited", cadence };
-        throw err;
+    // The re-check gate (sweep only): before any allowance is spent, Jev may judge that
+    // nothing suggests a move since the last check. A confident "no" skips this cycle's
+    // search; every other answer, and no answer, searches exactly as before.
+    let storedRoles: SnapshotRole[] | null = null;
+    if (options.gates && jevMayGate && stored?.source === "web") {
+      storedRoles = (await loadJobBaseline(userId, contactId, now)).roles;
+      if (storedRoles.some((r) => r.isCurrent)) {
+        const state = await recheckGateState(userId, contactId, {
+          roles: storedRoles,
+          title: contact.title,
+          company: contact.company,
+          closenessTier: contact.closenessTier,
+          lastCheckedAt: stored.capturedAt,
+          now,
+        });
+        if (await gateSkips(options.gates, "workHistoryRecheck", state)) return { outcome: "jev_skipped", cadence };
       }
     }
-  }
 
-  const answer = await research(userId, subject);
+    if (options.spend && !(await options.spend())) return { outcome: "rate_limited", cadence };
+
+    try {
+      await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
+    } catch (err) {
+      if (isRateLimitedError(err)) return { outcome: "rate_limited", cadence };
+      throw err;
+    }
+
+    const subject: WorkHistorySubject = {
+      fullName: contact.fullName,
+      title: contact.title,
+      company: contact.company,
+      location: contact.location,
+      school: contact.school,
+      linkedinUrl: contact.linkedinUrl,
+    };
+
+    // A re-check of a history Orbit already found: ask the cheap question first. Most people
+    // have not moved since the last look, and confirming that costs one search and a few
+    // dozen tokens — the full history (two searches and a list) runs only when the answer
+    // differs. A forced search (the profile's button) always does the full history.
+    let movedTo: { organization: string; title: string | null } | null = null;
+    if (!options.force && stored?.source === "web") {
+      storedRoles ??= (await loadJobBaseline(userId, contactId, now)).roles;
+      if (storedRoles.some((r) => r.isCurrent)) {
+        // Radar's people check widens this same search for a met contact, within the plan's
+        // monthly allowance (src/lib/radar/pulse.ts). Past it, the question is only the role.
+        const mentions = await radarPulseAllowed(userId, contactId, now);
+        const check = await (options.checker ?? checkCurrentRoleWithWebSearch)(userId, subject, { mentions, now });
+        // Nothing clear enough to act on. Not worth the full search to find out: the next
+        // scheduled check asks again.
+        if (!check.confident || !check.current) return { outcome: "not_found", cadence };
+        // Only a confident match: a namesake's talk is not this person's news.
+        if (mentions && check.mentions?.length) {
+          await storeMentions(userId, contactId, check.mentions, now).catch((err) =>
+            reportError(err, { where: "job.work-history.mentions", userId, level: "warning" })
+          );
+        }
+        if (isStoredCurrentRole(check.current, storedRoles)) {
+          // Still true. Record that it was checked — the provenance line reads this date.
+          await db
+            .update(contactProfiles)
+            .set({ capturedAt: now, updatedAt: now })
+            .where(and(eq(contactProfiles.userId, userId), eq(contactProfiles.contactId, contactId)));
+          return { outcome: "unchanged", cadence };
+        }
+        // Something moved: the full history is worth its cost now. It is a second search, so
+        // it spends a second lookup from the account's allowance.
+        movedTo = check.current;
+        try {
+          await consumeBucket("work-history", userId, RATE_LIMITS.workHistoryResearch);
+        } catch (err) {
+          if (isRateLimitedError(err)) return { outcome: "rate_limited", cadence };
+          throw err;
+        }
+      }
+    }
+
+    // Jev's veto of the verify search, on any search nobody forced — opened on demand outside
+    // the sweep, so it is asked only when a first search really was unsure.
+    const vetoVerify = jevMayGate
+      ? async (firstJson: string) =>
+          gateSkips(
+            options.gates ?? (await openEngines(userId)),
+            "workHistoryVerify",
+            verifyGateState(subject, firstJson, movedTo),
+          )
+      : undefined;
+    answer = await research(userId, subject, { vetoVerify });
+    if (answer.vetoed) return { outcome: "jev_vetoed", cadence };
+    // Only a confident answer from the public web is shared; the next account reuses it.
+    if (answer.confident && answer.experiences.length) {
+      await writePublicWorkHistory(contact.linkedinSlug, answer, now);
+    }
+  }
   if (!answer.confident) {
     return { outcome: answer.experiences.length ? "unsure" : "not_found", cadence };
   }
