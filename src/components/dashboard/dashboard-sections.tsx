@@ -359,6 +359,7 @@ export async function MorningBriefingSection({
         <MorningBriefing
           total={b.total}
           today={b.today}
+          lanes={b.lanes}
           drafts={b.drafts}
           changes={b.changes}
           paused={b.paused}

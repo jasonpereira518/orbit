@@ -19,7 +19,7 @@ import {
   markKeptNotificationsRead,
   useKeptNotifications,
 } from "@/lib/kept-notifications";
-import { panelDismissals, panelItemKey } from "@/lib/panel-dismissals";
+import { panelDismissals, panelItemKey, radarKey } from "@/lib/panel-dismissals";
 import { useCornerShift } from "@/lib/corner-clearance";
 import {
   PANEL_CORNER_SHIFT_PX,
@@ -108,7 +108,9 @@ export function NotificationsPanelButton({
   // Unread missed notifications count toward the badge — that is the whole
   // point of keeping them; a failure nobody saw should say so on the bell.
   // They stop counting once the panel has been opened, but stay in the list.
-  const badgeCount = dueCount + activeJobCount + unreadKeptCount;
+  // Radar's Today moments (things that won't keep) count until the row is cleared from the panel.
+  const radarToday = data?.radar && !panelDismissals.isDismissed(radarKey(data.radar)) ? (data.radar.today ?? 0) : 0;
+  const badgeCount = dueCount + radarToday + activeJobCount + unreadKeptCount;
   const [lastCount, setLastCount] = useState(badgeCount);
   if (badgeCount > 0 && badgeCount !== lastCount) setLastCount(badgeCount);
   const shownCount = badgeCount > 0 ? badgeCount : lastCount;
@@ -136,6 +138,7 @@ export function NotificationsPanelButton({
           dueCount + activeJobCount > 0
             ? `${dueCount + activeJobCount} due or in progress`
             : null,
+          radarToday > 0 ? `${radarToday} on Radar that won’t keep` : null,
           // Counted separately from the phrase above: a missed failure is not
           // "due", and rolling it into that number would misdescribe it to a
           // screen reader even though the badge shows the two added together.

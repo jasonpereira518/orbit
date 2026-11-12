@@ -312,8 +312,9 @@ async function main() {
   const briefing = await loadRadarBriefing(USER);
   const briefingCount = stopQueryCount();
   // The dashboard's morning briefing is its own load, started beside the dashboard bundle,
-  // so the dashboard's own budget above does not move. The plan's ceiling is 3.
-  check("dashboard's morning briefing issues ≤ 3 statements", briefingCount <= 3, `got ${briefingCount}`);
+  // so the dashboard's own budget above does not move. 4 since Radar PR 9b: the run state, the
+  // list, active projects, and the web finds counted into the Opportunities lane.
+  check("dashboard's morning briefing issues ≤ 4 statements", briefingCount <= 4, `got ${briefingCount}`);
   check("and shows at most three people", briefing.hasRun && briefing.top.length <= 3);
 
   // ---- Graph -------------------------------------------------------------------------

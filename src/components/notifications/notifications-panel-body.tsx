@@ -253,7 +253,14 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
 
           <Section title="Radar" count={radar ? 1 : 0}>
             {radar && (
-              <RadarRow count={radar.count} drafts={radar.drafts} names={radar.names} onNavigate={onClose} />
+              <RadarRow
+                count={radar.count}
+                drafts={radar.drafts}
+                names={radar.names}
+                today={radar.today ?? 0}
+                todayNames={radar.todayNames ?? []}
+                onNavigate={onClose}
+              />
             )}
           </Section>
 
@@ -508,18 +515,29 @@ function RadarRow({
   count,
   drafts,
   names,
+  today,
+  todayNames,
   onNavigate,
 }: {
   count: number;
   /** Today's cards with a message already written. Leads the line when there are any. */
   drafts: number;
   names: string[];
+  /** Today's moments, the ones that won't keep: they lead the row and count on the badge. */
+  today: number;
+  todayNames: string[];
   onNavigate: () => void;
 }) {
   const shown = names.slice(0, 3);
   const rest = count - shown.length;
-  const headline = `${drafts > 0 ? `${drafts} ${drafts === 1 ? "draft" : "drafts"} ready · ` : ""}${count} ${count === 1 ? "person" : "people"} worth a message`;
-  const detail = `${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}`;
+  const headline =
+    today > 0
+      ? `Won’t keep: ${todayNames.join(", ")}${today > todayNames.length ? ` and ${today - todayNames.length} more` : ""}`
+      : `${drafts > 0 ? `${drafts} ${drafts === 1 ? "draft" : "drafts"} ready · ` : ""}${count} ${count === 1 ? "person" : "people"} worth a message`;
+  const detail =
+    today > 0
+      ? `${count > today ? `Plus ${count - today} more on this week’s plan` : "On Radar today"}${drafts > 0 ? ` · ${drafts} ${drafts === 1 ? "draft" : "drafts"} ready` : ""}`
+      : `${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}`;
   return (
     <div className={cn(ROW, "bg-popover")}>
       <IconDisc>
