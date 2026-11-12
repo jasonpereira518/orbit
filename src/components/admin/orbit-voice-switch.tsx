@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Loader2, Play, Square } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
@@ -7,7 +7,10 @@ import {
   saveOrbitVoiceConfig,
   checkOrbitVoiceProvider,
   previewOrbitVoice,
+  previewOrbitElevenVoice,
+  listOrbitElevenVoices,
 } from "@/actions/voice-admin";
+import type { ElevenVoice } from "@/lib/voice/providers/elevenlabs";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -43,7 +46,8 @@ export function OrbitVoiceSwitch({
   // Voice preview: one sample at a time; picking another stops the last.
   const [preview, setPreview] = useState<{ voice: string; state: "loading" | "playing" } | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
-  async function togglePreview(voice: string) {
+  /** `voice` is the preview's key; `load` fetches its audio as a playable URL. */
+  async function togglePreview(voice: string, load: () => Promise<string> = () => previewOrbitVoice(voice)) {
     audio.current?.pause();
     audio.current = null;
     if (preview?.voice === voice) {
@@ -52,7 +56,7 @@ export function OrbitVoiceSwitch({
     }
     setPreview({ voice, state: "loading" });
     try {
-      const player = new Audio(await previewOrbitVoice(voice));
+      const player = new Audio(await load());
       audio.current = player;
       player.onended = () => setPreview((p) => (p?.voice === voice ? null : p));
       await player.play();
@@ -62,6 +66,19 @@ export function OrbitVoiceSwitch({
       toast.error(friendlyError(err, "Couldn’t play that voice — try again?"));
     }
   }
+  // ElevenLabs voices, read from the workspace once that provider is open. Null = not read yet;
+  // "error" falls back to typing a voice id, as before.
+  const [elevenVoices, setElevenVoices] = useState<ElevenVoice[] | "error" | null>(null);
+  const elevenOpen = draft.provider === "elevenlabs" && providers.elevenlabs;
+  useEffect(() => {
+    if (!elevenOpen || elevenVoices !== null) return;
+    let live = true;
+    listOrbitElevenVoices().then(
+      (voices) => { if (live) setElevenVoices(voices); },
+      () => { if (live) setElevenVoices("error"); },
+    );
+    return () => { live = false; };
+  }, [elevenOpen, elevenVoices]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(config);
   function run(task: () => Promise<void>, success: string) {
     start(async () => {
@@ -281,23 +298,59 @@ export function OrbitVoiceSwitch({
                 </select>
               </label>
               <label className="text-sm font-medium">
-                Voice ID
-                <input
-                  aria-label="ElevenLabs voice ID"
-                  className={field}
-                  value={draft.elevenlabs.voiceId}
-                  maxLength={64}
-                  placeholder="Use the agent’s default voice"
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      elevenlabs: {
-                        ...draft.elevenlabs,
-                        voiceId: e.target.value,
-                      },
-                    })
-                  }
-                />
+                Voice
+                {Array.isArray(elevenVoices) ? (
+                  <span className="mt-1 flex items-center gap-2">
+                    <select
+                      aria-label="ElevenLabs voice"
+                      className={cn(field, "mt-0")}
+                      value={draft.elevenlabs.voiceId}
+                      onChange={(e) =>
+                        setDraft({ ...draft, elevenlabs: { ...draft.elevenlabs, voiceId: e.target.value } })
+                      }
+                    >
+                      <option value="">The agent’s default voice</option>
+                      {draft.elevenlabs.voiceId && !elevenVoices.some((v) => v.id === draft.elevenlabs.voiceId) && (
+                        <option value={draft.elevenlabs.voiceId}>Saved voice ({draft.elevenlabs.voiceId})</option>
+                      )}
+                      {elevenVoices.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.detail ? `${v.name} — ${v.detail}` : v.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-9 shrink-0"
+                      disabled={!draft.elevenlabs.voiceId || preview?.state === "loading"}
+                      aria-label={preview?.voice === `eleven:${draft.elevenlabs.voiceId}` && preview.state === "playing" ? "Stop preview" : "Preview voice"}
+                      title={draft.elevenlabs.voiceId ? "Preview this voice" : "Pick a voice to preview it"}
+                      onClick={() => {
+                        const id = draft.elevenlabs.voiceId;
+                        void togglePreview(`eleven:${id}`, () => previewOrbitElevenVoice(id));
+                      }}
+                    >
+                      {preview?.voice === `eleven:${draft.elevenlabs.voiceId}` ? (
+                        preview.state === "loading" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Square className="size-3.5" aria-hidden />
+                      ) : (
+                        <Play className="size-4" aria-hidden />
+                      )}
+                    </Button>
+                  </span>
+                ) : (
+                  <input
+                    aria-label="ElevenLabs voice ID"
+                    className={field}
+                    value={draft.elevenlabs.voiceId}
+                    maxLength={64}
+                    placeholder={elevenVoices === null && elevenOpen ? "Loading voices…" : "Use the agent’s default voice"}
+                    onChange={(e) =>
+                      setDraft({ ...draft, elevenlabs: { ...draft.elevenlabs, voiceId: e.target.value } })
+                    }
+                  />
+                )}
               </label>
             </>
           )}
