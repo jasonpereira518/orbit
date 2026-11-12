@@ -275,6 +275,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-no-db-transaction": "pure",
   "smoke-env": "pure",
   "smoke-env-documented": "pure",
+  "smoke-vercelignore-reach": "pure",
   "smoke-embedding-rate-limit-backoff": "pure",
   "smoke-provider-keys-stripped": "pure",
   "smoke-fast-model": "pure",

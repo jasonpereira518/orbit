@@ -525,6 +525,11 @@
     "src/app/page.tsx",
     "src/lib/x.ts"
   ],
+  "smoke-vercelignore-reach.ts": [
+    "extension/package.json",
+    "extension/src/background/index.ts",
+    "src/lib/extension/auth.ts"
+  ],
   "smoke-waitlist-analytics.ts": [
     "src/components/interest/interest-hero.tsx",
     "src/lib/pageview-session.ts"
