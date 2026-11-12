@@ -11,7 +11,7 @@
  *     with candidates until the deadline.
  */
 import { NextResponse, after } from "next/server";
-import { finishCronRun, startCronRun } from "@/lib/cron-runs";
+import { cronTrigger, finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { isInternalRequest } from "@/lib/internal-auth";
 import {
   kickMonthlyUpkeep,
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
 
   const started = Date.now();
   const deadline = started + START_DEADLINE_MS;
-  const handle = await startCronRun("contacts.monthly-upkeep");
+  const handle = await startCronRun("contacts.monthly-upkeep", cronTrigger(request));
 
   try {
     const users = await usersWithMonthlyUpkeepCandidates(USERS_PER_RUN);

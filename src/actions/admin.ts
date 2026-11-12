@@ -74,6 +74,8 @@ import {
 } from "@/lib/admin-contact-upkeep";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { startLinkedInPhotoQueue, stopLinkedInPhotoQueue } from "@/lib/linkedin-photo-queue";
+import { findRefreshJob, resolveRefreshTarget, runRefreshJobForAll } from "@/lib/admin-refresh-jobs";
+import { reportError } from "@/lib/report-error";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -1442,6 +1444,53 @@ export async function triggerGlobalContactUpkeepAction(options?: {
   const res = await triggerAdminContactUpkeepJob(options);
   revalidatePath("/admin/product/photos");
   return res;
+}
+
+/**
+ * Run one job from the admin Refresh page, for every account or for one.
+ *
+ * All-users runs call the job's scheduled route in `after()`, so the click returns at once
+ * and the route's own `cron_runs` row (trigger `manual`) is the record of how it went.
+ * One-user runs are kicks: the route answers at once and works that account's backlog.
+ */
+export async function runRefreshJobAction(input: {
+  key: string;
+  scope: "all" | "user";
+  target?: string;
+  reason: string;
+}): Promise<void> {
+  const adminUserId = await requireAdminUserId();
+  const reason = ops.requireReason(input.reason);
+  const job = findRefreshJob(input.key);
+  if (!job) throw new UserFacingError("That job no longer exists");
+
+  if (input.scope === "user") {
+    if (!job.runOne) throw new UserFacingError(`${job.label} can only run for all accounts`);
+    const userId = await resolveRefreshTarget(input.target ?? "");
+    if (!userId) throw new UserFacingError("No account matches that user id or email");
+    await recordAdminAction({
+      adminUserId,
+      action: `refresh.${job.key}`,
+      targetUserId: userId,
+      detail: { scope: "user" },
+      reason,
+    });
+    await job.runOne(userId);
+  } else {
+    if (!job.allRoute) throw new UserFacingError(`${job.label} can only run for one account`);
+    await recordAdminAction({
+      adminUserId,
+      action: `refresh.${job.key}`,
+      detail: { scope: "all" },
+      reason,
+    });
+    after(() =>
+      runRefreshJobForAll(job).catch((err) =>
+        reportError(err, { where: `admin.refresh.${job.key}`, level: "warning" })
+      )
+    );
+  }
+  revalidatePath("/admin/health/refresh");
 }
 
 /**
