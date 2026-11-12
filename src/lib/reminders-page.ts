@@ -3,7 +3,12 @@
  * "use server" file may only export async functions — a plain const there is a build error
  * (same split as `contacts-page.ts`). Safe for client components: no database imports.
  */
-import type { ReminderActionKind, ReminderOrigin } from "@/db/schema";
+import type {
+  ReminderActionKind,
+  ReminderOrigin,
+  ReminderPriority,
+  ReminderCategory,
+} from "@/db/schema";
 
 export const REMINDERS_PAGE_SIZE = 50;
 
@@ -46,6 +51,7 @@ export type RemindersPageFilters = {
   q?: string;
   kinds?: ReminderActionKind[];
   sources?: ReminderSource[];
+  priority?: ReminderPriority;
   contactId?: string | null;
   cursor?: string;
   limit?: number;
@@ -68,6 +74,10 @@ export type ReminderRow = {
   actionKind: ReminderActionKind;
   origin: ReminderOrigin;
   confidenceScore: number | null;
+  priority: ReminderPriority;
+  category: ReminderCategory;
+  timingRationale: string | null;
+  importanceReason: string | null;
   listId: string | null;
   contactId: string | null;
   contactName: string | null;

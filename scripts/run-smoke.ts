@@ -46,6 +46,7 @@ const MANIFEST: Record<string, Tier> = {
   // pure ------------------------------------------------------------------------------
   "smoke-test-harness": "pure", // the fixtures, fetch mock and known-bug exit codes themselves
   "smoke-friendly-error": "pure",
+  "smoke-smart-reminders-engine": "pure",
   "smoke-scroll-restore": "pure",
   "smoke-plain-text": "pure",
   "smoke-markdown-shortcuts": "pure",
@@ -761,6 +762,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-plan-enforcement": "pglite",
   "smoke-admin-lifetime": "pglite",
   "smoke-admin-credits": "pglite",
+  "smoke-admin-usage": "pglite",
   "smoke-credit-notices": "pglite",
   "smoke-tier-contrast": "pure",
   "smoke-billing-portal": "pglite",
