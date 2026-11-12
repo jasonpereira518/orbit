@@ -82,12 +82,9 @@ export async function getEffectiveBrightDataConfig(userId?: string): Promise<Bri
     }
   }
 
-  if (!apiKey) {
-    apiKey = process.env.BRIGHTDATA_API_KEY?.trim() || null;
-  }
-  if (zone === "web_unlocker1" && process.env.BRIGHTDATA_ZONE?.trim()) {
-    zone = process.env.BRIGHTDATA_ZONE.trim();
-  }
+  const env = brightDataEnv();
+  if (!apiKey) apiKey = env.apiKey;
+  if (zone === "web_unlocker1" && env.zone) zone = env.zone;
 
   return {
     apiKey,
@@ -97,10 +94,19 @@ export async function getEffectiveBrightDataConfig(userId?: string): Promise<Bri
   };
 }
 
+/** The one place BrightData's environment variables are read; everything else asks this module. */
+function brightDataEnv() {
+  return {
+    apiKey: process.env.BRIGHTDATA_API_KEY?.trim() || null,
+    zone: process.env.BRIGHTDATA_ZONE?.trim() || null,
+  };
+}
+
 /** Synchronous config check for env-only contexts */
 export function getBrightDataConfig(): BrightDataConfig {
-  const apiKey = process.env.BRIGHTDATA_API_KEY?.trim() || null;
-  const zone = process.env.BRIGHTDATA_ZONE?.trim() || "web_unlocker1";
+  const env = brightDataEnv();
+  const apiKey = env.apiKey;
+  const zone = env.zone || "web_unlocker1";
   return {
     apiKey,
     zone,
