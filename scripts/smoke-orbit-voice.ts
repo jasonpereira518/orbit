@@ -46,7 +46,7 @@ import {
 } from "../src/lib/voice/providers";
 import { voiceUsageSummary } from "../src/lib/voice/admin";
 import { VOICE_PROMPT_BUDGET, voiceReadTools } from "../src/lib/voice/tools";
-import { VOICE_MAX_TOOL_CALLS } from "../src/lib/voice/policy";
+import { VOICE_MAX_TOOL_CALLS, voicePagePath } from "../src/lib/voice/policy";
 import { commitProposedAction } from "../src/actions/chat-actions";
 
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -59,6 +59,15 @@ process.env.ELEVENLABS_AGENT_ID = "fake-private-agent";
 const USER = "demo-user";
 const OTHER = "voice-other-user";
 async function main() {
+  // open_page runs in the browser: only allowlisted pages, record pages only with a UUID.
+  const uuid = "0f536784-23b9-40d6-87da-072b79aa47a3";
+  assert.equal(voicePagePath("contacts"), "/contacts");
+  assert.equal(voicePagePath("contact", uuid), `/contacts/${uuid}`);
+  assert.equal(voicePagePath("contact", "../admin"), null, "no path injection through id");
+  assert.equal(voicePagePath("contact"), null, "record pages need an id");
+  assert.equal(voicePagePath("admin"), null, "unknown pages are refused");
+  assert.equal(voicePagePath("toString"), null, "prototype keys are not pages");
+  console.log("ok open_page allowlist");
   const db = await getDb();
   await bootstrapAuthenticatedUser(USER);
   await db
@@ -184,6 +193,9 @@ async function main() {
         for (const name of ["get_dossier(", "query_interactions(", "list_events(", "search_notes("])
           assert.ok(agent.think?.prompt?.includes(name), `voice catalog offers ${name}`);
         assert.ok(!agent.think?.prompt?.includes("research_person("), "no web lookups in voice");
+        for (const name of ["delete_contact(", "create_event(", "mark_spoke_to(", "open_page("])
+          assert.ok(agent.think?.prompt?.includes(name), `voice can propose or drive ${name}`);
+        assert.ok(agent.think?.prompt?.includes("Never\nuse markdown") || agent.think?.prompt?.includes("Never use markdown"), "speech-only formatting rule");
         assert.ok((agent.think?.prompt?.length ?? 0) <= VOICE_PROMPT_BUDGET, "prompt fits Deepgram's limit");
         assert.ok(
           agent.think?.functions?.every(
