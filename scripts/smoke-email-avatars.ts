@@ -20,6 +20,7 @@ import { fillSharedAvatars, sweepOrphanedSharedAvatars } from "../src/lib/shared
 import {
   getSharedEmailAvatar,
   resolveGravatarCached,
+  type ProfileImageSource,
   sharedEmailKey,
   upsertSharedEmailAvatar,
 } from "../src/lib/shared-avatars";
@@ -107,6 +108,7 @@ run(async () => {
     const saved: Array<{ id: string; url: string; source?: string }> = [];
     gravatarAsked.length = 0;
     const res = await runAvatarBackfillBatch([{ id: mb.id, linkedinUrl: null, email: mailboxEmail, remoteUrl: null }], {
+      deadline: Date.now() + 60_000,
       persistRemote: async () => null,
       resolveConnectedAccount: async () => ({ url: GOOGLE_PHOTO, source: "google" }),
       resolveLinkedIn: async () => null,
@@ -129,10 +131,11 @@ run(async () => {
     saved.length = 0;
     const marked: string[] = [];
     const deps = {
+      deadline: Date.now() + 60_000,
       persistRemote: async () => null,
       resolveLinkedIn: async () => null,
       resolveGravatar: resolveGravatarCached,
-      save: async (id: string, url: string, source?: string) => void saved.push({ id, url, source }),
+      save: async (id: string, url: string, source?: ProfileImageSource) => void saved.push({ id, url, source }),
       markChecked: async (id: string) => void marked.push(id),
     };
     gravatarAsked.length = 0;
