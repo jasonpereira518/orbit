@@ -17,6 +17,17 @@ import {
   type ConstellationMatch,
   type ConstellationSearch,
 } from "@/lib/constellation-match";
+import {
+  STREAK_LAG_MS,
+  WARP_DEPTH_MAX,
+  WARP_DEPTH_MIN,
+  WARP_MS,
+  landingWarpStart,
+  skyAlpha,
+  warpK,
+  warpPoint,
+  warpProgress,
+} from "@/lib/landing-intro";
 
 // Opaque fills with the alpha on `globalAlpha`: an `rgba(…, alpha)` string per star per
 // frame was ~1,400 strings a frame for the canvas to allocate and parse, all session long.
@@ -49,6 +60,11 @@ type Star = {
    */
   wx: number;
   wy: number;
+  /**
+   * First-visit landing intro only: the fraction of its rest distance from the warp origin this
+   * star starts at (`lib/landing-intro.ts`). Zero, and never read, on every other sky.
+   */
+  d0: number;
 };
 
 type ShootingStar = {
@@ -182,8 +198,19 @@ const THREAD_RING_R = 3.5;
  * landing, pricing and docs skies are shared with the warp stages and must not
  * drift. Under reduced motion the prop is ignored entirely: the single static
  * frame stays static.
+ *
+ * `intro` (the landing page only) plays the first-visit warp: for WARP_MS the real stars
+ * streak out of the solar system's centre and land on their rest positions, then the loop is
+ * exactly the plain sky. It only plays when `lib/landing-intro.ts` says this load is a first
+ * visit; it is ignored on interactive skies.
  */
-export function Starfield({ interactive = false }: { interactive?: boolean }) {
+export function Starfield({
+  interactive = false,
+  intro = false,
+}: {
+  interactive?: boolean;
+  intro?: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const reduced = usePrefersReducedMotion();
 
@@ -213,6 +240,15 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     // fills. Rebuilding those every frame was the most expensive op in the
     // loop, so they are rendered once per resize and blitted thereafter.
     let bg: HTMLCanvasElement | null = null;
+
+    // The first-visit warp. `warpEnd` is -Infinity on every sky that does not play it, so the
+    // per-frame `now < warpEnd` check is the only cost there.
+    const warpFrom =
+      intro && !interactive && !reduced ? landingWarpStart(performance.now()) : null;
+    let warpEnd = warpFrom === null ? -Infinity : warpFrom + WARP_MS;
+    let warpOx = 0;
+    let warpOy = 0;
+    let drawnOnce = false;
 
     // Interactive state. `settled` is what keeps the idle cost equal to a plain
     // sky: once the pointer has left and every offset has decayed to nothing, the
@@ -275,6 +311,10 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     function resize() {
       // Resizing the canvas clears it, so the next frame must draw, calm or not.
       lastPaint = 0;
+      // A resize or rotation mid-warp ends it: the stars are rebuilt below, and streaks joined
+      // to the old layout would cross the whole screen.
+      if (drawnOnce) warpEnd = -Infinity;
+      const warping = performance.now() < warpEnd;
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       width = window.innerWidth;
       height = window.innerHeight;
@@ -304,8 +344,16 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
           glow: 0,
           wx: 0,
           wy: 0,
+          d0: warping ? WARP_DEPTH_MIN + Math.random() * (WARP_DEPTH_MAX - WARP_DEPTH_MIN) : 0,
         };
       });
+      if (warping) {
+        // The vanishing point is the solar system's centre, so the sky comes out of the place
+        // the system then grows into. The canvas is fixed at inset 0, so viewport = canvas px.
+        const r = document.querySelector("[data-sky-warp-origin]")?.getBoundingClientRect();
+        warpOx = r && r.width > 0 ? r.left + r.width / 2 : width / 2;
+        warpOy = r && r.height > 0 ? r.top + r.height / 2 : height / 2;
+      }
 
       // `stars` has just been rebuilt, so a figure still holding the old
       // objects would draw lines to stars that are no longer in the sky.
@@ -664,7 +712,11 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     }
 
     function draw(now: number) {
+      drawnOnce = true;
+      const warping = now < warpEnd;
+      const warpE = warping ? now - (warpEnd - WARP_MS) : 0;
       if (
+        !warping &&
         interactive &&
         !reduced &&
         now - lastPaint < CALM_FRAME_MS &&
@@ -688,9 +740,15 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
       // A zero-size viewport at mount (hidden tab being restored, prerender) produces a
       // zero-size bg canvas, and drawImage throws InvalidStateError on those — which
       // would take down the whole page tree, not just the backdrop.
+      // During the warp the whole sky fades up rather than popping in.
+      const warpFade = warping ? skyAlpha(warpE) : 1;
       if (bg && bg.width > 0 && bg.height > 0) {
+        if (warping) ctx!.globalAlpha = warpFade;
         ctx!.drawImage(bg, 0, 0, width, height);
+        ctx!.globalAlpha = 1;
       }
+      const warpP = warping ? warpProgress(warpE) : 1;
+      const warpPrevP = warping ? warpProgress(warpE - STREAK_LAG_MS) : 1;
 
       // Read scroll once per frame rather than binding a scroll listener —
       // the value is only ever consumed here.
@@ -724,7 +782,29 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
           ? s.a
           : s.a * (0.65 + 0.35 * Math.sin(now * s.twinkle + s.phase));
 
-        if (!active) {
+        if (warping) {
+          // The first-visit warp (never on an interactive sky, so `active` is false here). The
+          // star is drawn `k` of the way from the origin to its rest position, and its streak
+          // joins where it was STREAK_LAG_MS ago. Culled on the drawn position: a star whose
+          // rest is off-screen still crosses the screen on its way out.
+          const p = warpPoint(x, y, warpOx, warpOy, warpK(s.d0, warpP));
+          if (p.y < -8 || p.y > height + 8 || p.x < -8 || p.x > width + 8) continue;
+          const q = warpPoint(x, y, warpOx, warpOy, warpK(s.d0, warpPrevP));
+          alpha *= warpFade;
+          x = p.x;
+          y = p.y;
+          if (Math.abs(p.x - q.x) + Math.abs(p.y - q.y) >= 0.5) {
+            ctx!.strokeStyle = s.gold ? GOLD_FILL : WHITE_FILL;
+            ctx!.globalAlpha = alpha;
+            ctx!.lineWidth = r * 2;
+            ctx!.lineCap = "round";
+            ctx!.beginPath();
+            ctx!.moveTo(q.x, q.y);
+            ctx!.lineTo(p.x, p.y);
+            ctx!.stroke();
+            continue;
+          }
+        } else if (!active) {
           // The plain sky: exactly the work a non-interactive starfield does.
           if (y < -8 || y > height + 8) continue;
           // A figure fading out after the pointer left still has stars to put
@@ -987,7 +1067,8 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
     }
 
     resize();
-    nextShot = performance.now() + 800;
+    // No shooting star until the warp has landed (warpEnd is -Infinity on every other sky).
+    nextShot = Math.max(performance.now(), warpEnd) + 800;
     draw(performance.now());
     return () => {
       window.removeEventListener("resize", onResize);
@@ -1009,7 +1090,7 @@ export function Starfield({ interactive = false }: { interactive?: boolean }) {
         bg.height = 0;
       }
     };
-  }, [reduced, interactive]);
+  }, [reduced, interactive, intro]);
 
   return (
     <canvas

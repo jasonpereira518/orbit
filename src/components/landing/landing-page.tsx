@@ -35,7 +35,7 @@ export function LandingPage({
     <div className="landing-root relative overflow-clip bg-[#03050c] text-[#e8f3f1]">
       {/* First, so it runs before the hero copy is parsed and painted. */}
       <LandingIntroGate />
-      <LandingStarfield />
+      <LandingStarfield intro />
 
       <LandingPageShell
         {...authProps}

@@ -15,6 +15,7 @@ import {
   SKY_FADE_MS,
   STREAK_LAG_MS,
   WARP_MS,
+  landingWarpStart,
   skyAlpha,
   warpK,
   warpPoint,
@@ -37,6 +38,22 @@ const tail = warpPoint(300, 200, 100, 100, warpK(0.2, warpProgress(END - STREAK_
 const restPoint = warpPoint(300, 200, 100, 100, 1);
 const s = LANDING_INTRO_PREPAINT_SCRIPT;
 
+// The shared start. React's development double-run mounts the sky, tears it down and mounts it
+// again within a frame; the second mount must continue the same warp, not lose it or restart it.
+const noAttr = landingWarpStart(1000);
+let attrOn = true;
+(globalThis as { document?: unknown }).document = {
+  documentElement: {
+    hasAttribute: () => attrOn,
+    getAttribute: () => null,
+  },
+};
+const firstMount = landingWarpStart(1000);
+const remount = landingWarpStart(1016);
+const lateMount = landingWarpStart(1000 + WARP_MS + 1);
+attrOn = false;
+const clientNavBack = landingWarpStart(1020);
+
 const CASES: Array<[label: string, got: unknown, expected: unknown]> = [
   ["progress starts at 0", warpProgress(0), 0],
   ["negative elapsed clamps to 0", warpProgress(-50), 0],
@@ -51,6 +68,11 @@ const CASES: Array<[label: string, got: unknown, expected: unknown]> = [
   ["sky alpha starts at 0", skyAlpha(0), 0],
   ["sky alpha is full after the fade", skyAlpha(SKY_FADE_MS), 1],
   ["sky alpha stays full", skyAlpha(1e6), 1],
+  ["no document (server) -> no warp", noAttr, null],
+  ["first mount starts the warp now", firstMount, 1000],
+  ["a remount mid-warp continues the same warp", remount, 1000],
+  ["a mount after the warp has ended gets the plain sky", lateMount, null],
+  ["attribute gone (client-side return to /) -> no warp", clientNavBack, null],
   ["gate uses sessionStorage", s.includes("sessionStorage"), true],
   ["gate skips hash links", s.includes("location.hash"), true],
   ["gate honours Orbit's Reduce motion", s.includes("data-motion"), true],

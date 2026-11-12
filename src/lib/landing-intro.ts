@@ -64,16 +64,20 @@ export function skyAlpha(elapsedMs: number): number {
   return Math.min(1, elapsedMs / SKY_FADE_MS);
 }
 
-let taken = false;
+let warpStartedAt: number | null = null;
 
 /**
- * Whether this mount of the landing sky should play the warp. True at most once per page load:
- * a remount (the effect re-running, a client-side return to `/`) gets the plain sky.
+ * When this page load's warp started (`performance.now()` time), or null for the plain sky.
+ *
+ * Shared rather than one-shot: React's development double-run mounts the sky, tears it down and
+ * mounts it again, and a one-shot flag gave the second (real) mount nothing. A remount during
+ * the warp continues it from the same start; one after it has ended gets the plain sky. The
+ * attribute is gone after a client-side return to `/` (`LandingIntroGate`), so that is plain too.
  */
-export function takeLandingIntro(): boolean {
-  if (taken || typeof document === "undefined") return false;
-  if (!document.documentElement.hasAttribute(LANDING_INTRO_ATTR)) return false;
-  if (prefersReducedMotion()) return false;
-  taken = true;
-  return true;
+export function landingWarpStart(now: number): number | null {
+  if (typeof document === "undefined") return null;
+  if (!document.documentElement.hasAttribute(LANDING_INTRO_ATTR)) return null;
+  if (prefersReducedMotion()) return null;
+  warpStartedAt ??= now;
+  return now - warpStartedAt < WARP_MS ? warpStartedAt : null;
 }
