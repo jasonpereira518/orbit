@@ -1,9 +1,10 @@
 /**
  * Radar's nightly pass: rebuild every due account's list of people to reach out to.
  *
- * Driven by GitHub Actions (.github/workflows/ops.yml) hourly at :17; each account is due at
- * its own local 5am. Self-continuation posts back to this same route when a claim came back
- * full or the budget ran out, the same shape as `/api/sync/run`.
+ * Driven by QStash (scripts/qstash-schedules.ts) hourly at :17; each account is due at its own
+ * local 5am, and same-day alerts go out after the pass in each person's waking hours.
+ * Self-continuation posts back to this same route when a claim came back full or the budget
+ * ran out, the same shape as `/api/sync/run`.
  *
  * While `page.radar` is hidden or coming soon the whole pass stands down, so nobody's AI key
  * is spent on a page they cannot see.

@@ -1,7 +1,7 @@
 /**
  * The credit emails at 80% and 100% of the monthly AI credits (`src/lib/credits/notices.ts`).
  *
- * Driven by GitHub Actions (.github/workflows/ops.yml) on the ten-minute schedule, so a
+ * Driven by QStash (scripts/qstash-schedules.ts) on the ten-minute schedule, so a
  * notice goes out within about ten minutes of an account crossing a level. Each send is
  * claimed first, so a run that overlaps the last one sends nothing twice.
  *

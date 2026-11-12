@@ -1,6 +1,7 @@
 /**
- * One scheduler per job. process-stalled ran hourly from GitHub AND daily from Vercel while
- * its own comment said daily. GitHub Actions is the one scheduler until Vercel Pro crons.
+ * One scheduler per job. process-stalled once ran hourly from GitHub AND daily from Vercel
+ * while its own comment said daily. QStash (`scripts/qstash-schedules.ts`) is the one
+ * scheduler; `ops.yml` only posts the drift sweep and probes health.
  *
  * Pure: reads files. Run: npx tsx scripts/smoke-schedules.ts
  */
@@ -21,26 +22,45 @@ const route = readFileSync("src/app/api/imports/process-stalled/route.ts", "utf8
 const runbook = readFileSync("docs/RUNBOOK.md", "utf8");
 
 check("vercel.json schedules nothing", !vercel.crons || vercel.crons.length === 0, JSON.stringify(vercel.crons));
-check("ops.yml keeps the hourly schedule", ops.includes(`- cron: "7 * * * *"`));
-// A single workflow-wide group lets GitHub cancel one schedule's pending run in favour of
-// another's, so a long sync used to drop the ten-minute alerting sweep.
-check("ops.yml queues each schedule in its own concurrency group", /group: ops-\$\{\{ github\.event\.schedule/.test(ops) && !/group: ops\s*$/m.test(ops));
-check("process-stalled is called from exactly one step",
-  (ops.match(/\/api\/imports\/process-stalled/g) ?? []).length === 1);
-check("that step is gated on the hourly schedule",
-  /if: github\.event\.schedule == '7 \* \* \* \*'[\s\S]{0,400}\/api\/imports\/process-stalled/.test(ops));
+const qstash = readFileSync("scripts/qstash-schedules.ts", "utf8");
+const publicRoutes = readFileSync("src/lib/public-routes.ts", "utf8");
+const table = [...qstash.matchAll(/\{ id: "([^"]+)", cron: "([^"]+)", method: "(GET|POST)", path: "([^"]+)" \}/g)]
+  .map(([, id, cron, method, path]) => ({ id, cron, method, path }));
+const scheduled = (path: string) => table.filter((s) => s.path === path);
+
+check("the QStash table parses", table.length >= 14, `parsed ${table.length} rows`);
+check("every QStash id is unique", new Set(table.map((s) => s.id)).size === table.length);
+for (const s of table) {
+  check(`${s.path} is scheduled exactly once`, scheduled(s.path).length === 1);
+  // proxy.ts exempts PUBLIC_ROUTES from Clerk; a scheduled path missing there gets a sign-in
+  // redirect instead of the route, and QStash records a "success".
+  check(`${s.path} is a public route`, publicRoutes.includes(`"${s.path}"`));
+}
+check("the ops sweep runs every ten minutes", scheduled("/api/ops/sweep")[0]?.cron === "*/10 * * * *");
+check("process-stalled is a GET at :07", scheduled("/api/imports/process-stalled")[0]?.cron === "7 * * * *" &&
+  scheduled("/api/imports/process-stalled")[0]?.method === "GET");
 // The work-history sweep spends people's own AI keys: exactly one caller, on its own line.
-check("the work-history sweep is called from exactly one step",
-  (ops.match(/\/api\/work-history\/sweep/g) ?? []).length === 1);
-check("that step is gated on its own :37 schedule",
-  ops.includes(`- cron: "37 * * * *"`) &&
-    /if: github\.event\.schedule == '37 \* \* \* \*'[\s\S]{0,400}\/api\/work-history\/sweep/.test(ops));
-// The email-insights sweep reads people's mail metadata: exactly one caller, on its own line.
-check("the email-intel sweep is called from exactly one step",
-  (ops.match(/\/api\/email-intel\/sweep/g) ?? []).length === 1);
-check("that step is gated on its own quarter-hour schedule",
-  ops.includes(`- cron: "5,20,35,50 * * * *"`) &&
-    /if: github\.event\.schedule == '5,20,35,50 \* \* \* \*'[\s\S]{0,400}\/api\/email-intel\/sweep/.test(ops));
+check("the work-history sweep runs at :37", scheduled("/api/work-history/sweep")[0]?.cron === "37 * * * *");
+check("QStash never retries (the next tick is the retry)", qstash.includes(`"Upstash-Retries": "0"`));
+check("QStash forwards the cron bearer", qstash.includes("Upstash-Forward-Authorization") && qstash.includes("Bearer ${cronSecret}"));
+
+check("ops.yml has one schedule", (ops.match(/- cron: /g) ?? []).length === 1 && ops.includes(`- cron: "*/30 * * * *"`));
+const opsRoutes = [...new Set(ops.match(/\$APP_URL(\/api\/[\w/-]+)/g) ?? [])].sort();
+check("ops.yml calls only the health probe and the drift sweep",
+  JSON.stringify(opsRoutes) === JSON.stringify(["$APP_URL/api/health", "$APP_URL/api/ops/sweep"]), opsRoutes.join(", "));
+check("the drift sweep posts where main is", ops.includes("mainSha") && ops.includes("git rev-parse HEAD"));
+// The other jobs with their own cadence, and every job GitHub ran before this move (Nov 12 2026).
+check("the email-intel sweep runs on its own quarter-hours", scheduled("/api/email-intel/sweep")[0]?.cron === "5,20,35,50 * * * *");
+check("Radar's pass runs hourly at :17 (each account is due at its own local 5am)", scheduled("/api/radar/run")[0]?.cron === "17 * * * *");
+const MOVED_FROM_GITHUB = [
+  "/api/ops/sweep", "/api/imports/process-stalled", "/api/webhooks/outbound/drain", "/api/connectors/outbox/drain",
+  "/api/email/drain", "/api/credits/notices", "/api/sync/run", "/api/jobs/feed/sweep", "/api/work-history/sweep",
+  "/api/contacts/name-sweep", "/api/email-intel/sweep", "/api/radar/run", "/api/cloud-notes/run", "/api/radar/web",
+  "/api/radar/digest", "/api/ops/billing-reconcile", "/api/ops/weekly-digest", "/api/ops/rollup",
+  "/api/ops/speech-usage", "/api/contacts/monthly-upkeep",
+];
+const unscheduled = MOVED_FROM_GITHUB.filter((path) => scheduled(path).length === 0);
+check("every job GitHub used to run has a QStash schedule", unscheduled.length === 0, unscheduled.join(", "));
 // A step that curls $APP_URL / $CRON_SECRET with no env block hits an empty host and a
 // blank bearer, so the sweep silently never runs. Every such step declares what it uses.
 for (const chunk of ops.split(/^ {6}- name: /m).slice(1)) {

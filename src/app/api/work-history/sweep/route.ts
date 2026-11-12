@@ -1,6 +1,6 @@
 /**
  * The work-history sweep's entry point: re-checks contacts whose LinkedIn work history is
- * due, logs any job moves it finds. Hourly from `.github/workflows/ops.yml` at :37.
+ * due, logs any job moves it finds. Hourly from QStash (`scripts/qstash-schedules.ts`) at :37.
  *
  * Its own route, schedule and `cron_runs` job name for the same reasons the job-feed sweep
  * has them (see src/app/api/jobs/feed/sweep/route.ts): the ten-minute ops sweep is the
