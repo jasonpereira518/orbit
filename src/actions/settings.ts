@@ -1,5 +1,6 @@
 "use server";
 
+import { getBrightDataConfig } from "@/lib/brightdata";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -148,12 +149,8 @@ export async function getSettings() {
         Boolean(settings?.apolloApiKeyEncrypted) ||
         (hostedEnrichment && Boolean(process.env.APOLLO_API_KEY)),
       brightdata:
-        Boolean(settings?.brightDataApiKeyEncrypted) ||
-        Boolean(process.env.BRIGHTDATA_API_KEY),
-      brightDataZone:
-        settings?.brightDataZone ||
-        process.env.BRIGHTDATA_ZONE ||
-        "web_unlocker1",
+        Boolean(settings?.brightDataApiKeyEncrypted) || getBrightDataConfig().isConfigured,
+      brightDataZone: settings?.brightDataZone || getBrightDataConfig().zone,
       resend:
         Boolean(settings?.resendApiKeyEncrypted) ||
         (hostedSending && Boolean(process.env.RESEND_API_KEY)),
