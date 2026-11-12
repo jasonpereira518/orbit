@@ -1,13 +1,8 @@
 import type { OutreachChannel } from "@/lib/outreach-types";
 
-/** Prospects Orbit invented because no Apollo key was available (`enrichment.demo`). */
-export function isDemoProspect(enrichment: unknown): boolean {
-  return Boolean(
-    enrichment &&
-      typeof enrichment === "object" &&
-      (enrichment as Record<string, unknown>).demo === true
-  );
-}
+// One definition (lib/outreach-channels.ts): a `demo-` externalId OR `enrichment.demo`.
+// Takes the prospect, not just its enrichment. Re-exported so quality callers keep their import.
+export { isDemoProspect } from "@/lib/outreach-channels";
 
 /**
  * Domains reserved so that nobody can receive mail there (RFC 2606, RFC 6761). Sample

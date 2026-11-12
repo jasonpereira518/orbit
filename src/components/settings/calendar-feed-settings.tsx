@@ -17,6 +17,7 @@ import { SettingsRow } from "@/components/settings/settings-section";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
+import { withTimeout } from "@/lib/async";
 
 /**
  * How long to wait for the status action before giving up on it.
@@ -30,22 +31,6 @@ import { friendlyError, TIMEOUT_MESSAGE } from "@/lib/errors";
 const LOAD_TIMEOUT_MS = 12_000;
 
 const TIMED_OUT = "orbit:timed-out";
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(TIMED_OUT)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
 
 /** Shows enough of the token to identify the link without exposing it on screen. */
 function maskUrl(url: string) {
@@ -70,7 +55,7 @@ export function CalendarFeedSettings() {
   useEffect(() => {
     let cancelled = false;
     setLoadFailure(null);
-    withTimeout(getCalendarFeedStatus(), LOAD_TIMEOUT_MS)
+    withTimeout(getCalendarFeedStatus(), LOAD_TIMEOUT_MS, TIMED_OUT)
       .then((s) => {
         if (!cancelled) setStatus(s);
       })
@@ -90,7 +75,7 @@ export function CalendarFeedSettings() {
   function run(label: string, fn: () => Promise<CalendarFeedStatus>) {
     start(async () => {
       try {
-        const next = await withTimeout(fn(), LOAD_TIMEOUT_MS);
+        const next = await withTimeout(fn(), LOAD_TIMEOUT_MS, TIMED_OUT);
         setStatus(next);
         setConfirmingRegen(false);
         toast.success(label);

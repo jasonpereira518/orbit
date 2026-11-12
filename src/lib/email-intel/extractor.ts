@@ -139,7 +139,7 @@ async function extractForAccount(userId: string, d: Resolved, now: Date, stats: 
   stats.claimed += claims.length;
 
   for (let i = 0; i < claims.length; i++) {
-    const claim = claims[i]!;
+    const claim = claims[i];
     const handBack = async (from: number, notBefore: Date | null) => {
       for (const rest of claims.slice(from)) {
         await releaseThread(rest, { notBefore, countStall: false });
@@ -176,7 +176,7 @@ async function extractForAccount(userId: string, d: Resolved, now: Date, stats: 
       continue;
     }
     const messages = toIntelMessages(list);
-    const newest = list[list.length - 1]!;
+    const newest = list[list.length - 1];
 
     try {
       const result = await d.extract(userId, {

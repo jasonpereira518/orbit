@@ -225,14 +225,14 @@ export type CuratedCompany = {
 /** The curated companies that have a domain, for finding them named in free text. */
 export const CURATED_COMPANIES: readonly CuratedCompany[] = ENTRIES.flatMap(([kind, , names, domain]) =>
   kind === "company" && domain
-    ? [{ name: names[0]!, aliases: names, domain, capitalisedOnly: names.filter((n) => COMMON_WORD_COMPANIES.has(n)) }]
+    ? [{ name: names[0], aliases: names, domain, capitalisedOnly: names.filter((n) => COMMON_WORD_COMPANIES.has(n)) }]
     : []
 );
 
 /** Every alias key → the brands it names (one per kind at most in practice). */
 const INDEX = new Map<string, Brand[]>();
 for (const [kind, hex, names, domain] of ENTRIES) {
-  const brand: Brand = { name: names[0]!, kind, hex, ...(domain ? { domain } : {}) };
+  const brand: Brand = { name: names[0], kind, hex, ...(domain ? { domain } : {}) };
   for (const alias of names) {
     const key = brandKey(alias);
     const list = INDEX.get(key) ?? [];
@@ -315,7 +315,7 @@ function lookupCuratedBrand(key: string, prefer?: BrandKind): Brand | null {
   let hit: Brand | null = null;
   const exact = INDEX.get(key);
   if (exact) {
-    hit = exact.find((b) => b.kind === prefer) ?? exact[0]!;
+    hit = exact.find((b) => b.kind === prefer) ?? exact[0];
   } else {
     const padded = ` ${key} `;
     for (const alias of KEYS_BY_LENGTH) {
@@ -392,5 +392,5 @@ export function registerLearnedBrands(entries: readonly LearnedBrand[]): void {
 function lookupLearnedBrand(key: string, prefer?: BrandKind): Brand | null {
   const list = LEARNED.get(key);
   if (!list?.length) return null;
-  return list.find((b) => b.kind === prefer) ?? list[0]!;
+  return list.find((b) => b.kind === prefer) ?? list[0];
 }

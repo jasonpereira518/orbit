@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   const startedAt = Date.now();
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!secret) {
-    console.error("STRIPE_WEBHOOK_SECRET is not set; refusing webhook.");
+    reportError(new Error("STRIPE_WEBHOOK_SECRET is not set; refusing webhook."), { where: "webhook.stripe.no-secret" });
     return new Response("Stripe webhook is not configured", { status: 500 });
   }
 
@@ -38,7 +38,8 @@ export async function POST(req: NextRequest) {
     event = getStripe().webhooks.constructEvent(payload, signature, secret);
   } catch (err) {
     // Includes replay attempts and stale secrets after a roll — both should be rejected.
-    console.error("Stripe webhook verification failed:", err);
+    // Unauthenticated callers can trigger this, so a warning (throttled), not an error per POST.
+    reportError(err, { where: "webhook.stripe.verify", level: "warning" });
     // Recorded (once per hour, since this precedes authentication) so a rolled secret shows
     // up in the ledger the ops sweep reads. Stores nothing from the body.
     if (shouldRecordThrottled("webhook.stripe.invalid")) {
@@ -71,9 +72,10 @@ export async function POST(req: NextRequest) {
     const { decision } = processed;
 
     if (decision.outcome === "ignored" && decision.reason === "missing_user_id") {
-      console.error(
-        `Stripe ${event.type} (${event.id}) could not be attributed to a user.`
-      );
+      reportError(new Error(`Stripe ${event.type} could not be attributed to a user.`), {
+        where: "webhook.stripe.unattributed",
+        extra: { eventId: event.id, eventType: event.type, resourceId: decision.resourceId },
+      });
       // Logs expire in an hour; this row is what the ops sweep reads. Ids only — no amounts,
       // emails or names from the payload. Not throttled: each one is a real incident.
       await recordErrorEvent({

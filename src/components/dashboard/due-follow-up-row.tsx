@@ -1,5 +1,5 @@
 import { IntentLink } from "@/components/ui/intent-link";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { EasyFollowUp } from "@/components/follow-up/easy-follow-up";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import { companyBrandText } from "@/lib/company-brand";
@@ -17,7 +17,7 @@ function followUpDueLabel(nextFollowUpAt: Date | string | null | undefined, time
   if (days > 0) return { text: `Overdue ${days} day${days === 1 ? "" : "s"}`, overdue: true };
   if (days === 0) return { text: "Due today", overdue: false };
   return {
-    text: `Due ${formatDistanceToNow(d, { addSuffix: true })}`,
+    text: `Due ${longRelativeLabel(d)}`,
     overdue: false,
   };
 }

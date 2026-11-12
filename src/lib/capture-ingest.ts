@@ -51,7 +51,7 @@ function decodedBytes(base64: string) {
 
 function stripDataUrl(base64OrDataUrl: string) {
   const m = base64OrDataUrl.match(/^data:[^;]+;base64,(.+)$/i);
-  return m ? m[1]! : base64OrDataUrl;
+  return m ? m[1] : base64OrDataUrl;
 }
 
 function isImage(file: CaptureMediaFile) {
@@ -148,7 +148,7 @@ export function normalizeIcsToCapture(icsText: string): NormalizedCaptureInput {
       if (!p.email && !p.name) continue;
       if (seen.has(key)) continue;
       seen.add(key);
-      seedPeople!.push({ name: p.name || null, email: p.email || null });
+      seedPeople.push({ name: p.name || null, email: p.email || null });
     }
 
     const lines = [
@@ -203,9 +203,9 @@ export function normalizeEmailToCapture(raw: string): NormalizedCaptureInput {
 
   // Drop common reply/forward quoted tails.
   body = body
-    .split(/\nOn .+ wrote:\n/)[0]!
-    .split(/\n-{2,} Original Message -{2,}\n/i)[0]!
-    .split(/\nFrom: .+\nSent: /)[0]!
+    .split(/\nOn .+ wrote:\n/)[0]
+    .split(/\n-{2,} Original Message -{2,}\n/i)[0]
+    .split(/\nFrom: .+\nSent: /)[0]
     .trim();
 
   const seedPeople: Array<{ name: string | null; email: string | null }> = [];

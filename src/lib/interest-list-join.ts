@@ -12,6 +12,7 @@
  * probed at ten tries per ten minutes per IP. The
  * address itself is never returned.
  */
+import { reportError } from "@/lib/report-error";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
@@ -148,7 +149,7 @@ export async function joinInterestListCore(
     // response stays indistinguishable from a real join, so this log is the only signal
     // that a real person was dropped.
     if (isRateLimitedError(err)) console.warn("[interest-list] join rate-limited", { ipTag: ipLogTag(ctx.ip) });
-    else console.error("[interest-list] limiter failed", err);
+    else reportError(err, { where: "interest.join.limiter", level: "error" });
     // Count the human the limiter just dropped. Nothing about them is stored: no address, no
     // IP, no session. "How many people did the limiter turn away" was unanswerable, because the
     // fake ticket leaves no row (audit D6).
@@ -294,7 +295,7 @@ export async function joinInterestListCore(
       await consumeBucket("interest.welcome", "global", RATE_LIMITS.interestWelcome);
     } catch (err) {
       if (isRateLimitedError(err)) console.warn("[interest-list] welcome cap reached; mail skipped");
-      else console.error("[interest-list] welcome limiter failed; mail skipped", err);
+      else reportError(err, { where: "interest.join.welcome-limiter", level: "warning" });
       welcome = false;
     }
   }
@@ -355,7 +356,7 @@ export async function saveInterestListNameCore(
     await consumeIpBucket("interest.name", ctx.ip, RATE_LIMITS.interestName);
   } catch (err) {
     if (isRateLimitedError(err)) console.warn("[interest-list] name rate-limited", { ipTag: ipLogTag(ctx.ip) });
-    else console.error("[interest-list] limiter failed", err);
+    else reportError(err, { where: "interest.join.limiter", level: "error" });
     return { ok: true };
   }
 
@@ -425,6 +426,6 @@ async function notifyIfTierUnlocked(
     );
     if (sent === true) track("waitlist_email_sent", { kind: "tier" }, { actor: "system" });
   } catch (err) {
-    console.error("[interest-list] tier notice failed", err);
+    reportError(err, { where: "interest.join.tier-notice", level: "warning" });
   }
 }

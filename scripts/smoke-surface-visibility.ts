@@ -38,6 +38,7 @@ import {
   CHAT_IMPORTS_SURFACE_KEY,
   COMPOSE_SURFACE_KEY,
   OUTLOOK_SEND_SURFACE_KEY,
+  REPLY_INBOX_SURFACE_KEY,
   DEFAULT_COMING_SOON_KEYS,
   FEEDBACK_SURFACE_KEY,
   SURFACES,
@@ -204,10 +205,15 @@ function registryChecks() {
   const features = surfacesOfKind("feature");
   check("compose is registered as a feature surface", features.some((s) => s.key === COMPOSE_SURFACE_KEY));
   check("a feature surface declares no href", features.every((s) => s.href === undefined));
-  check("compose ships coming-soon", DEFAULT_COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
+  check("compose is released (not coming-soon by default)", !DEFAULT_COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
   check(
     "outlook send ships coming-soon",
     DEFAULT_COMING_SOON_KEYS.has(OUTLOOK_SEND_SURFACE_KEY) && getSurface(OUTLOOK_SEND_SURFACE_KEY)?.kind === "feature"
+  );
+  // Reply-to-inbox reads mail (gmail.readonly, restricted): it stays dark until CASA passes.
+  check(
+    "reply-to-inbox ships coming-soon",
+    DEFAULT_COMING_SOON_KEYS.has(REPLY_INBOX_SURFACE_KEY) && getSurface(REPLY_INBOX_SURFACE_KEY)?.kind === "feature"
   );
 
   const widgets = surfacesOfKind("widget");
@@ -373,13 +379,14 @@ async function main() {
       }
       check("requireOutreachUser requires a released surface",
         callsIn("src/lib/plan-guards.ts", "requireOutreachUser").has("requireReleasedSurface"));
-      // Compose is a FEATURE: coming soon puts it in `hidden`, so even the visibility-only guard
-      // refuses it; the AI-spending draft action states the intent with the released-surface guard.
-      check("feature.compose is coming soon by default", DEFAULT_COMING_SOON_KEYS.has(COMPOSE_SURFACE_KEY));
+      // A coming-soon FEATURE goes in `hidden`, so even the visibility-only guard refuses it; the
+      // AI-spending draft action states the intent with the released-surface guard. Compose itself
+      // is released, so Outlook send (still dark) is the exemplar here.
+      check("feature.outlook-send is coming soon by default", DEFAULT_COMING_SOON_KEYS.has(OUTLOOK_SEND_SURFACE_KEY));
       for (const [guard, label] of [[requireVisibleSurface, "requireVisibleSurface"], [requireReleasedSurface, "requireReleasedSurface"]] as const) {
-        let refusedCompose: unknown = null;
-        try { await guard(USER, COMPOSE_SURFACE_KEY); } catch (err) { refusedCompose = err; }
-        check(`${label} refuses Compose while it is coming soon`, isSurfaceHiddenError(refusedCompose));
+        let refusedFeature: unknown = null;
+        try { await guard(USER, OUTLOOK_SEND_SURFACE_KEY); } catch (err) { refusedFeature = err; }
+        check(`${label} refuses a feature while it is coming soon`, isSurfaceHiddenError(refusedFeature));
       }
       const draftCalls = callsIn("src/actions/email-compose.ts", "draftComposeWithAi");
       check("draftComposeWithAi requires Compose to be released",
@@ -429,9 +436,12 @@ async function main() {
       );
       check(
         "a coming-soon feature is hidden outright for an ordinary user and a default admin",
-        forUser.hidden.has(COMPOSE_SURFACE_KEY) && forAdmin.hidden.has(COMPOSE_SURFACE_KEY)
+        forUser.hidden.has(OUTLOOK_SEND_SURFACE_KEY) && forAdmin.hidden.has(OUTLOOK_SEND_SURFACE_KEY)
       );
-      check("compose's settings section is hidden with it", forUser.hidden.has("settings.email"));
+      check(
+        "a released compose and its settings section are not hidden by default",
+        !forUser.hidden.has(COMPOSE_SURFACE_KEY) && !forUser.hidden.has("settings.email")
+      );
       const companions = Object.values(COMING_SOON_COMPANIONS).flat();
       check(
         "a coming-soon page hides its companion surfaces for both a user and a default admin",
@@ -469,7 +479,7 @@ async function main() {
         );
         check(
           "the demo workspace still has unreleased features hidden",
-          forDemo.hidden.has(COMPOSE_SURFACE_KEY) && forDemo.hidden.has(CHAT_IMPORTS_SURFACE_KEY)
+          forDemo.hidden.has(OUTLOOK_SEND_SURFACE_KEY) && forDemo.hidden.has(CHAT_IMPORTS_SURFACE_KEY)
         );
         check(
           "the demo workspace sees companions of unreleased pages",

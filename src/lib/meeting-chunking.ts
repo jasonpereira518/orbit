@@ -177,7 +177,7 @@ export class MeetingChunker {
     let floor = 1;
     let peak = 0;
     for (let i = 0; i < this.recent.length; i++) {
-      const r = this.recent[i]!;
+      const r = this.recent[i];
       if (r < floor) floor = r;
       if (r > peak && r < 1) peak = r;
     }

@@ -2,6 +2,7 @@ import { after } from "next/server";
 import "@/lib/email/origin-registrations";
 import { dispatchEmailSend } from "@/lib/email/outbox";
 import { reportError } from "@/lib/report-error";
+import { sleep } from "@/lib/async";
 
 /**
  * Sends a queued email once its undo window has passed, after the response has gone out.
@@ -13,7 +14,7 @@ import { reportError } from "@/lib/report-error";
 export function scheduleDispatch(id: string, sendAt: Date): void {
   const task = async () => {
     const wait = Math.max(0, sendAt.getTime() - Date.now()) + 250;
-    await new Promise((resolve) => setTimeout(resolve, wait));
+    await sleep(wait);
     await dispatchEmailSend(id).catch((err) => reportError(err, { where: "email.after-dispatch" }));
   };
   try {

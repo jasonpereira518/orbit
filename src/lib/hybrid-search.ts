@@ -329,7 +329,7 @@ export async function listContactsMatching(
     total: number | string;
     last_at: Date | string | null;
   }>(result);
-  const total = rows.length ? Number(rows[0]!.total) : 0;
+  const total = rows.length ? Number(rows[0].total) : 0;
   return {
     total,
     people: rows.map((r) => ({
@@ -939,7 +939,7 @@ export async function queryContacts(userId: string, q: ContactQuery): Promise<Co
   }>(rowsResult);
   const day = (v: Date | string | null) => (v ? new Date(v).toISOString().slice(0, 10) : null);
   // A row limit of 0 is a count: one row still runs, for the exact total, and is not returned.
-  const total = rows.length ? Number(rows[0]!.total) : 0;
+  const total = rows.length ? Number(rows[0].total) : 0;
   return {
     total,
     ...(groupsResult

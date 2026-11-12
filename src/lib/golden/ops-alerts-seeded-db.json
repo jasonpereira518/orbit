@@ -1,0 +1,48 @@
+{
+  "afterSeeding": [
+    {
+      "detail": "Last run 2026-09-15T11:30:00.000Z ended failed.",
+      "id": "cron.failed",
+      "severity": "warning",
+      "title": "Nightly job failed"
+    },
+    {
+      "detail": "No run has ever been recorded; nobody is being told when a role opens at a company they know somebody at.",
+      "id": "jobfeed.schedule_missed",
+      "severity": "warning",
+      "title": "Job feed sweep has stopped running"
+    },
+    {
+      "detail": "No run has ever been recorded; contacts' job moves are not being noticed.",
+      "id": "workhistory.schedule_missed",
+      "severity": "warning",
+      "title": "Work-history sweep has stopped running"
+    }
+  ],
+  "emptyDatabase": [
+    {
+      "detail": "No run has ever been recorded; stalled imports and housekeeping are not being picked up.",
+      "id": "cron.missed",
+      "severity": "warning",
+      "title": "Nightly job has not run"
+    },
+    {
+      "detail": "No run has ever been recorded; nobody is being told when a role opens at a company they know somebody at.",
+      "id": "jobfeed.schedule_missed",
+      "severity": "warning",
+      "title": "Job feed sweep has stopped running"
+    },
+    {
+      "detail": "No run has ever been recorded; mailboxes and calendars are not being synced.",
+      "id": "sync.schedule_missed",
+      "severity": "warning",
+      "title": "Connector sync has stopped running"
+    },
+    {
+      "detail": "No run has ever been recorded; contacts' job moves are not being noticed.",
+      "id": "workhistory.schedule_missed",
+      "severity": "warning",
+      "title": "Work-history sweep has stopped running"
+    }
+  ]
+}

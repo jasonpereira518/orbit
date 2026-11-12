@@ -284,8 +284,8 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
             signal.throwIfAborted();
             if (read.usage) {
               report({
-                ...tokensFromOpenAi({ usage: read.usage } as never),
-                reportedCostMicros: reportedCostMicros({ usage: read.usage } as OpenAiUsageWithCost),
+                ...tokensFromOpenAi({ usage: read.usage }),
+                reportedCostMicros: reportedCostMicros({ usage: read.usage }),
               });
             }
             return read;

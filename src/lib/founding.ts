@@ -10,6 +10,7 @@ import {
   planForLookupKey,
 } from "@/lib/stripe-config";
 import type { PurchasablePlan } from "@/lib/plans/plan-config";
+import { reportError } from "@/lib/report-error";
 
 /**
  * Founding pricing for beta invitees (pricing v2).
@@ -145,7 +146,7 @@ export async function reconcileFoundingDiscount(
     if (plan.update) await update(sub.id, plan.update);
     return plan.result;
   } catch (err) {
-    console.error(`Founding discount reconcile for ${sub.id} did not complete:`, err);
+    reportError(err, { where: "founding.reconcile", level: "error", extra: { subscriptionId: sub.id } });
     return { action: "none", reason: "error" };
   }
 }

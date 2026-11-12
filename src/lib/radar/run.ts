@@ -350,7 +350,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
       "radar.run",
       async () => {
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
-        runId = run!.id;
+        runId = run.id;
         await mark("read");
 
         const [signals, emailSignals, goals, targetKeys, live, outcomes, tallies, settingsRow, initialProjects] = await Promise.all([

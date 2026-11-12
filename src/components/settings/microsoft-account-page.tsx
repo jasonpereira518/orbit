@@ -55,7 +55,7 @@ import { useViewerPlan } from "@/components/viewer-plan";
 import { availableOn } from "@/lib/plans/plan-config";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { CalendarClock, CalendarDays, Cloud, Loader2, Mail, RefreshCw, Send, Users } from "lucide-react";
 import {
   getOutlookScanStatus,
@@ -220,7 +220,7 @@ export function MicrosoftAccountPage({
         provider: "outlook",
         hasDeletableData,
         onConfirm: (opts) =>
-          connection.disconnect(opts).then(
+          void connection.disconnect(opts).then(
             () => contacts.reset(),
             (err) => toast.error(friendlyError(err, "Couldn’t disconnect that account — try again?"))
           ),
@@ -243,7 +243,7 @@ export function MicrosoftAccountPage({
             status.contactsSyncEnabled
               ? `New and changed Outlook contacts come in on their own.${
                   panel?.contactsSyncedAt
-                    ? ` Synced ${formatDistanceToNow(new Date(panel.contactsSyncedAt), { addSuffix: true })}.`
+                    ? ` Synced ${longRelativeLabel(new Date(panel.contactsSyncedAt))}.`
                     : ""
                 }`
               : "Off — only the contacts you import yourself come in."
@@ -342,7 +342,7 @@ function oneDriveLine(canRead: boolean, drive: MicrosoftPanel["oneDrive"]): stri
   if (drive.lastError) return "OneDrive stopped answering — sign in again if this lasts.";
   const found = drive.notesFound ? ` ${drive.notesFound.toLocaleString()} waiting for you.` : "";
   const checked = drive.lastScanAt
-    ? ` Checked ${formatDistanceToNow(new Date(drive.lastScanAt), { addSuffix: true })}.`
+    ? ` Checked ${longRelativeLabel(new Date(drive.lastScanAt))}.`
     : "";
   return `Watching OneDrive for meeting notes.${found}${checked}`;
 }
@@ -506,7 +506,7 @@ function meetingsLine(
   if (capability?.state !== "on") return base;
   const logged = meetingsLogged ? ` ${meetingsLogged.toLocaleString()} logged.` : "";
   const checked = lastCheckedAt
-    ? ` Checked ${formatDistanceToNow(new Date(lastCheckedAt), { addSuffix: true })}.`
+    ? ` Checked ${longRelativeLabel(new Date(lastCheckedAt))}.`
     : "";
   return `${base}${logged}${checked}`;
 }

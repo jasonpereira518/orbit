@@ -68,7 +68,7 @@ export async function deleteContactsForUser(
     ...snapshots
       .filter((s) => owned.has(s.contactId))
       .map((s) => {
-        const url = (s.snapshot as Record<string, unknown>).profile_image_url;
+        const url = (s.snapshot).profile_image_url;
         return typeof url === "string" ? url : null;
       }),
   ];

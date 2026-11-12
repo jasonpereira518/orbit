@@ -48,12 +48,6 @@ export async function resolvePriceIds(stripe: Stripe = getStripe()): Promise<Pri
   cached = ids as PriceIds;
   return cached;
 }
-
-/** For tests: forget the cached ids. */
-export function resetPriceIdCache() {
-  cached = null;
-}
-
 /**
  * The customer-portal configuration `scripts/stripe-pricing-v2.ts` creates (tagged
  * `orbit_config=pricing_v2`): Pro ↔ Max and monthly ↔ annual switching, downgrades at

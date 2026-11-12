@@ -1,4 +1,5 @@
 import { eq, sql } from "drizzle-orm";
+import { reportError } from "@/lib/report-error";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getCreditBalance } from "@/lib/credits/ledger";
 import type { Plan } from "@/lib/plans/plan-config";
@@ -38,6 +39,7 @@ import {
 } from "@/lib/outlook";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { ensureUserSettings } from "@/lib/user-settings";
+import { num } from "@/lib/admin-metrics";
 import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-import-types";
 
 /**
@@ -69,12 +71,6 @@ function bool(value: unknown): boolean {
   return value === true || value === 1 || value === "t" || value === "true";
 }
 
-/** `count(*)::int` is not guaranteed to arrive as a JS number on both drivers. */
-function num(value: unknown): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
 /** timestamptz can come back as a string. */
 function toDate(value: unknown): Date | null {
@@ -431,7 +427,8 @@ async function pausedApiItems(userId: string): Promise<number> {
         + (SELECT count(*) FROM webhook_endpoints WHERE user_id = ${userId} AND status <> 'disabled')::int AS n
     `);
     return rowsOf<{ n: number }>(result)[0]?.n ?? 0;
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.account-health.integration-count", userId, level: "warning" });
     return 0;
   }
 }
@@ -470,7 +467,8 @@ async function creditFacts(
       spendable: balance.spendable,
       resetsAt: balance.allowance?.periodEnd ?? null,
     };
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.account-health.credit-balance", userId, level: "warning" });
     return null;
   }
 }
@@ -504,7 +502,8 @@ export async function getAccountAlerts(
     );
 
     return visible.slice(0, MAX_ACCOUNT_ALERTS);
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.account-health.account-alerts", userId, level: "warning" });
     return [];
   }
 }

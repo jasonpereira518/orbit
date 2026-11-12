@@ -33,7 +33,7 @@ const HEADING_LINE = /^\s{0,3}(?:#{1,6}\s|\*\*[^*]+\*\*:?\s*$|__[^_]+__:?\s*$)/;
 export function listSummary(text: string | null | undefined, max = 300): string | null {
   if (!text) return null;
   const lines = text.replace(/```[\s\S]*?```/g, "\n").split("\n");
-  while (lines.length && (!lines[0]!.trim() || META_LINE.test(lines[0]!))) lines.shift();
+  while (lines.length && (!lines[0].trim() || META_LINE.test(lines[0]))) lines.shift();
   const flat = lines
     .filter((l) => !HEADING_LINE.test(l))
     .map(stripMarkdown)

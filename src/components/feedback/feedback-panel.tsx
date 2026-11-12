@@ -710,7 +710,7 @@ export function FeedbackPanel({
           <div className="flex items-center justify-between gap-2">
             <Select
               value={effectiveArea}
-              onValueChange={(v) => onAreaChange((v || "other") as FeedbackArea)}
+              onValueChange={(v) => onAreaChange((v || "other"))}
               // Without `items`, `SelectValue` renders the raw stored value — the trigger
               // would read "dashboard" rather than "Dashboard".
               items={AREA_OPTIONS}

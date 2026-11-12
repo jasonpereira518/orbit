@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { normalizeEmail } from "@/lib/identity/email";
 import { getDb } from "@/db";
 import { gmailConnections, outlookConnections } from "@/db/schema";
 import {
@@ -27,10 +28,6 @@ import type { ProviderNameIndex } from "@/lib/contact-name-guess";
 const GOOGLE_PHOTO_INDEX_FIELDS = "names,emailAddresses,photos";
 const OUTLOOK_CONTACT_INDEX_SELECT = "displayName,givenName,surname,emailAddresses";
 
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
 /** Email -> Google Contacts photo URL, for the user's connected account. Empty when Google
  * isn't connected, lacks the contacts scope, or the lookup fails — this is a best-effort
  * source, not a required one, so failures are swallowed rather than thrown. */
@@ -51,6 +48,7 @@ export async function buildGooglePhotoIndex(userId: string): Promise<Map<string,
       const email = person.email?.trim();
       if (!email || !person.photoUrl) continue;
       const key = normalizeEmail(email);
+      if (!key) continue;
       if (!index.has(key)) index.set(key, person.photoUrl);
     }
     return index;
@@ -79,6 +77,7 @@ export async function buildOutlookContactIndex(userId: string): Promise<Map<stri
       const email = contact.email?.trim();
       if (!email) continue;
       const key = normalizeEmail(email);
+      if (!key) continue;
       if (!index.has(key)) index.set(key, contact.id);
     }
     return index;
@@ -116,9 +115,10 @@ export async function buildProviderNameIndex(userId: string): Promise<ProviderNa
     const full = person.fullName?.trim();
     if (!email || !full) continue;
     const key = normalizeEmail(email);
+    if (!key) continue;
     if (!index.has(key)) {
       index.set(key, {
-        first: person.firstName?.trim() || full.split(/\s+/)[0]!,
+        first: person.firstName?.trim() || full.split(/\s+/)[0],
         last: person.lastName?.trim() || full.split(/\s+/).slice(1).join(" "),
         full,
       });

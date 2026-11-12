@@ -162,7 +162,7 @@ export async function attributionPending(userId: string): Promise<boolean> {
       .from(userSettings)
       .where(eq(userSettings.userId, userId))
       .limit(1);
-    return Boolean(row) && row!.at === null;
+    return Boolean(row) && row.at === null;
   } catch {
     return false;
   }

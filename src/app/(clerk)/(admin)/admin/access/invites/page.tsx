@@ -1,3 +1,4 @@
+import { reportError } from "@/lib/report-error";
 import {
   AdminPanel,
   AdminTable,
@@ -36,7 +37,7 @@ export default async function AdminAccessPage() {
   const [mode, invites] = await Promise.all([
     getSiteMode({ fresh: true }),
     listSiteInvites().catch((err: unknown) => {
-      console.error("[admin] invitation list failed", err);
+      reportError(err, { where: "admin.access.invites", level: "warning" });
       return null;
     }),
   ]);
