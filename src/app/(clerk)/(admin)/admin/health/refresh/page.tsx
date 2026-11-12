@@ -35,7 +35,7 @@ async function recentRefreshes() {
 export default async function AdminOpsRefreshPage() {
   const [health, recent] = await Promise.all([
     Promise.all(
-      REFRESH_JOBS.map((j) => (j.cronJob ? getCronHealth(j.cronJob).catch(() => null) : null))
+      REFRESH_JOBS.map(async (j) => (j.cronJob ? getCronHealth(j.cronJob).catch(() => null) : null))
     ),
     recentRefreshes().catch(() => null),
   ]);

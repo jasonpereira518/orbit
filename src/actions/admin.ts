@@ -75,6 +75,8 @@ import {
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { startLinkedInPhotoQueue, stopLinkedInPhotoQueue } from "@/lib/linkedin-photo-queue";
 import { findRefreshJob, resolveRefreshTarget, runRefreshJobForAll } from "@/lib/admin-refresh-jobs";
+import { parseInput } from "@/lib/action";
+import { z } from "zod";
 import { reportError } from "@/lib/report-error";
 
 /**
@@ -1414,6 +1416,13 @@ export async function triggerGlobalContactUpkeepAction(options?: {
   return res;
 }
 
+const refreshJobInputSchema = z.object({
+  key: z.string().max(64),
+  scope: z.enum(["all", "user"]),
+  target: z.string().max(320).optional(),
+  reason: z.string().max(2000),
+});
+
 /**
  * Run one job from the admin Refresh page, for every account or for one.
  *
@@ -1428,6 +1437,9 @@ export async function runRefreshJobAction(input: {
   reason: string;
 }): Promise<void> {
   const adminUserId = await requireAdminUserId();
+  const parsed = parseInput(refreshJobInputSchema, input, "admin.run-refresh-job");
+  if (!parsed.ok) throw new UserFacingError(parsed.error);
+  input = parsed.value;
   const reason = ops.requireReason(input.reason);
   const job = findRefreshJob(input.key);
   if (!job) throw new UserFacingError("That job no longer exists");
