@@ -32,16 +32,18 @@ test("the constellation renders, a star opens the inspect panel, and search narr
   // Selecting a star opens the inspect panel for that person.
   await expect(async () => {
     await star(PEOPLE[0]).click();
-    await expect(page.getByRole("dialog").getByRole("link", { name: "Open full profile" })).toBeVisible({ timeout: 3_000 });
+    await expect(page.getByRole("dialog").getByRole("link", { name: "Open profile" })).toBeVisible({ timeout: 3_000 });
   }).toPass({ timeout: 30_000 });
   const panel = page.getByRole("dialog");
   await expect(panel).toContainText(PEOPLE[0]);
-  await expect(panel.getByRole("link", { name: "Open full profile" })).toHaveAttribute("href", /^\/contacts\/[0-9a-f-]+$/);
+  await expect(panel.getByRole("link", { name: "Open profile" })).toHaveAttribute("href", /^\/contacts\/[0-9a-f-]+$/);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toBeHidden();
 
-  // Search keeps the match and drops the other star.
+  // Search keeps the match at full strength and dims the other star (it stays in the sky).
+  const opacityOf = async (name: string) => Number(await star(name).evaluate((el) => getComputedStyle(el).opacity));
   await page.getByPlaceholder("Search name, role, school, keywords…").fill("Lyra");
-  await expect(star(PEOPLE[0])).toHaveCount(0);
+  await expect.poll(() => opacityOf(PEOPLE[0]), { timeout: 30_000 }).toBeLessThan(0.9);
   await expect(star(PEOPLE[1])).toBeVisible();
+  await expect.poll(() => opacityOf(PEOPLE[1]), { timeout: 30_000 }).toBeGreaterThan(0.9);
 });
