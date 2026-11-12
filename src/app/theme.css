@@ -1631,6 +1631,31 @@ html[data-motion="reduce"] .constellation-starfield-drift {
   html[data-landing-intro] [data-intro-step="3"] {
     animation-delay: 300ms;
   }
+
+  /* The solar system comes out of the sky's warp: small and faint, a little left of its spot,
+   * growing into place. Desktop keeps the shift inside its own column so it never reaches the
+   * text; on phones it sits under the text, so it can travel in from the left edge. */
+  html[data-landing-intro] .landing-solar-enter {
+    --solar-warp-x: -20%;
+    animation-name: landing-solar-warp;
+    animation-duration: 1.1s;
+  }
+  @media (max-width: 767px) {
+    html[data-landing-intro] .landing-solar-enter {
+      --solar-warp-x: -60%;
+    }
+  }
+}
+
+@keyframes landing-solar-warp {
+  from {
+    opacity: 0;
+    transform: translateX(var(--solar-warp-x)) scale(0.3);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ── Coming soon (`components/coming-soon`) ──
