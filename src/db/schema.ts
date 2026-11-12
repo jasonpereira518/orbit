@@ -5649,6 +5649,22 @@ export const linkedinAvatars = pgTable(
 );
 
 /**
+ * Cross-user photo cache for people found by email (`src/lib/shared-avatars.ts`), the email
+ * twin of `linkedinAvatars`: keyed by sha256 of the lowercased, trimmed address, never the
+ * address itself. Public lookups (Gravatar) only; never a Google/Outlook mailbox photo, an
+ * extension capture or an upload. `imageUrl` null = looked and found nothing. Deleted once no
+ * contact in any account has the address; `blockedAt` rows stay (admin takedown).
+ */
+export const emailAvatars = pgTable("email_avatars", {
+  emailHash: text("email_hash").primaryKey(),
+  imageUrl: text("image_url"),
+  source: text("source").$type<"gravatar">().notNull(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
+  blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  blockedBy: text("blocked_by"),
+});
+
+/**
  * Work history found by a public web search (`src/lib/public-work-history.ts`), shared across
  * accounts by LinkedIn profile slug like `linkedinAvatars`: only confident web answers, never
  * an extension capture, a typed field or an import. A blocked row (admin takedown) has no answer

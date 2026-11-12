@@ -10,7 +10,7 @@
  * `POST` because it mutates.
  */
 import { NextResponse } from "next/server";
-import { finishCronRun, startCronRun } from "@/lib/cron-runs";
+import { cronTrigger, finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { isInternalRequest } from "@/lib/internal-auth";
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const started = Date.now();
-  const handle = await startCronRun("work-history.sweep");
+  const handle = await startCronRun("work-history.sweep", cronTrigger(request));
   try {
     const stats = await runWorkHistorySweep({ deadline: started + START_DEADLINE_MS });
 

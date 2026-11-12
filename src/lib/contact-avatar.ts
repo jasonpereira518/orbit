@@ -384,10 +384,12 @@ export async function fetchGravatarPhotoUrl(
   const normalized = email.trim().toLowerCase();
   if (!normalized.includes("@")) return null;
   const hash = createHash("sha256").update(normalized, "utf8").digest("hex");
-  return downloadAndPersistAvatar(
-    contactId,
-    `https://gravatar.com/avatar/${hash}?s=256&d=404`
-  );
+  return downloadAndPersistAvatar(contactId, gravatarAvatarUrl(hash));
+}
+
+/** Gravatar's image URL for an address's sha256 (lowercased, trimmed); `d=404`, see above. */
+export function gravatarAvatarUrl(sha256Hex: string): string {
+  return `https://gravatar.com/avatar/${sha256Hex}?s=256&d=404`;
 }
 
 /**
