@@ -148,7 +148,8 @@ export async function openDeepgramLive(opts: {
       // byte meanwhile (32KB a second). A minute of backlog is a line that is not coming
       // back: drop frames rather than grow without bound until the close finally arrives.
       if (socket.bufferedAmount > MAX_BUFFERED_BYTES) return;
-      socket.send(pcm.buffer);
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- TS7 (Vercel's typecheck:fast) types .buffer as ArrayBufferLike, which send() rejects
+      socket.send(pcm.buffer as ArrayBuffer);
     },
     finish() {
       if (!finishPromise) {
