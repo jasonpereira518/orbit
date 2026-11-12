@@ -36,18 +36,21 @@ import {
   loadModelTallies,
   loadLiveRecommendations,
   loadSuppressions,
+  planDayResult,
   planRunResult,
   writeRunResult,
   type NewRecommendation,
+  type WriteCounts,
 } from "@/lib/radar/store";
 import type { RadarModel, RadarRunTrigger, RadarSignal } from "@/lib/radar/types";
 import { buildRadarModel } from "@/lib/radar/model";
-import { RADAR_RERANK_TIMEOUT_MS, rerankPicks, rerankUnchanged } from "@/lib/radar/rerank";
+import { RADAR_EDITOR_TIMEOUT_MS, editPicks, editorUnchanged } from "@/lib/radar/editor";
 import { applyAutopilot, loadRadarAutopilot } from "@/lib/radar/autopilot";
 import { draftTodayForRun } from "@/lib/radar/drafts";
+import { detailFor, progressAt, stageLabel, type RunStageKey } from "@/lib/radar/run-progress";
 import { loadPostSignals } from "@/lib/radar/signals/activity";
 import { produceEmailSignals } from "@/lib/radar/signals/email";
-import { explainTopForRun, openRadarAi } from "@/lib/radar/explain";
+import { openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
 import { runSettledPool } from "@/lib/sync-scheduler";
@@ -57,11 +60,14 @@ import { focusFromCareerProfile } from "@/lib/career-profile-server";
 import { resolvePlan } from "@/lib/entitlements";
 import { getRadarLimitsForPlan } from "@/lib/plans/plan-config";
 import { focusFitComponent, type UserFocus } from "@/lib/focus-fit";
-import { localClock } from "@/lib/radar/digest";
 import { listActiveProjectsForUser, scoreProjectMatch, type UserProject } from "@/lib/projects/store";
 import { extractActiveProjectsForUser } from "@/lib/projects/extract";
 import { prepareSuggestedCalendarInvite } from "@/lib/radar/invites";
-import { leadReason } from "@/lib/radar/types";
+import { LANE_OF_KIND, leadReason } from "@/lib/radar/types";
+import { connectSignals, judgeConnectPairs, loadConnectPairs } from "@/lib/radar/connect";
+import { metContactIds } from "@/lib/met-contact";
+import { buildProofIndex, verifyPicks } from "@/lib/radar/verify";
+import { composeDay, composeWeek, nextLocal5am, nextRadarRunAt, radarRunMode, type RadarRunMode } from "@/lib/radar/week";
 
 const HOUR_MS = 3_600_000;
 
@@ -69,22 +75,22 @@ const HOUR_MS = 3_600_000;
 export const RADAR_LEASE_MS = 10 * 60 * 1000;
 /** The UTC hour the nightly pass aims every account at. `ops.yml` runs it at 04:17. */
 export const RADAR_NIGHTLY_HOUR_UTC = 4;
-/** A run never schedules the next one sooner than this, so a 02:00 page view skips 04:00. */
-const MIN_GAP_MS = 6 * HOUR_MS;
 /** A failed run retries after this, rather than waiting for the next night. */
 const RETRY_AFTER_MS = 6 * HOUR_MS;
 /** A page view older than this since the last run refreshes in the background. */
 export const RADAR_STALE_MS = 24 * HOUR_MS;
 /**
- * The most a run spends on AI, shared in order: the rerank (at most
- * `RADAR_RERANK_TIMEOUT_MS`), then Today's drafts, then the why-lines with whatever is left.
+ * The most a weekly build spends on AI, shared in order: the editor (at most
+ * `RADAR_EDITOR_TIMEOUT_MS`), which orders the plan and writes each card's why and opener in
+ * one call, then the plan-gated drafts with whatever is left. A daily pass spends none.
  */
 export const RADAR_AI_BUDGET_MS = 25_000;
 /**
- * The AI rerank's off switch. If `/admin/analytics/radar` shows cards it moved up are not
- * accepted more often than cards it moved down, it is noise: turn it off here.
+ * The editor's off switch. If `/admin/analytics/radar` shows cards it moved up are not
+ * accepted more often than cards it moved down, it is noise: turn it off here, and the plan
+ * keeps the scorer's order and reasons (a card's why can still be asked for on demand).
  */
-export const RADAR_RERANK_ENABLED = true;
+export const RADAR_EDITOR_ENABLED = true;
 
 export type RadarRunOptions = {
   trigger: RadarRunTrigger;
@@ -93,6 +99,8 @@ export type RadarRunOptions = {
   ai?: boolean;
   /** Wall-clock budget for the parts that can be skipped (the AI lines). */
   budgetMs?: number;
+  /** Force weekly or daily. Unset: weekly when no weekly build ran this local week (`week.ts`). */
+  mode?: RadarRunMode;
 };
 
 export type RadarRunStats = {
@@ -118,28 +126,15 @@ export type RadarRunStats = {
   posts: number;
   /** Signals read from the user's mail this run (accounts that opted in to email insights). */
   emailSignals: number;
+  /** Cards dropped because their lead reason had no proof that held (`verify.ts`). */
+  unproven: number;
+  /** Weekly: the plan was built. Daily: the plan kept, only Today and retirements changed. */
+  mode?: RadarRunMode;
   durationMs: number;
 };
 
-/**
- * Computes the next 5:00 AM local time for a given timezone, at least MIN_GAP_MS away.
- */
-export function nextLocal5am(now: Date, tz: string = "UTC"): Date {
-  const { hour, ymd } = localClock(now, tz);
-  const [y, m, d] = ymd.split("-").map(Number);
-  const targetDay = new Date(Date.UTC(y!, m! - 1, d! + (hour < 4 ? 0 : 1)));
-  const ymdTarget = targetDay.toISOString().slice(0, 10);
-  const guess = new Date(`${ymdTarget}T05:00:00Z`);
-  const check = localClock(guess, tz);
-  let hourDiff = 5 - check.hour;
-  if (hourDiff > 12) hourDiff -= 24;
-  if (hourDiff < -12) hourDiff += 24;
-  let target = new Date(guess.getTime() + hourDiff * HOUR_MS);
-  while (target.getTime() - now.getTime() < MIN_GAP_MS) {
-    target = new Date(target.getTime() + 24 * HOUR_MS);
-  }
-  return target;
-}
+/** Moved to `week.ts` with the rest of Radar's rhythm; re-exported for older callers. */
+export { nextLocal5am };
 
 /** The next daily 5:00 AM local run slot at least `MIN_GAP_MS` away. */
 export function nextNightlyRunAt(now: Date, tz: string = "UTC"): Date {
@@ -326,6 +321,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
     autopilot: 0,
     posts: 0,
     emailSignals: 0,
+    unproven: 0,
     durationMs: 0,
   };
   const db = await getDb();
@@ -333,13 +329,29 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
   let error: unknown = null;
   let learned: RadarModel | null = null;
   let userTz = "UTC";
+  let dailyEnabled = true;
 
+  // Where the run is, for "Refresh now". Best-effort: a failed progress write never costs the run
+  // anything. `GREATEST` keeps the bar from ever moving backward, whatever order writes land in.
+  const mark = async (stage: RunStageKey, done?: number, total?: number) => {
+    if (!runId) return;
+    await db
+      .update(radarRuns)
+      .set({
+        stage: stageLabel(stage),
+        progress: sql`GREATEST(${radarRuns.progress}, ${progressAt(stage, done, total)})`,
+        detail: detailFor(done, total),
+      })
+      .where(eq(radarRuns.id, runId))
+      .catch(() => undefined);
+  };
   try {
     await traced(
       "radar.run",
       async () => {
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
         runId = run!.id;
+        await mark("read");
 
         const [signals, emailSignals, goals, targetKeys, live, outcomes, tallies, settingsRow, initialProjects] = await Promise.all([
           produceInternalSignals(userId, now),
@@ -368,6 +380,8 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
               tz: userSettings.radarDigestTz,
               lastRunAt: userSettings.radarLastRunAt,
               dailyEnabled: userSettings.radarDailyEnabled,
+              // The last weekly build, on the same statement: the run's mode depends on it.
+              lastWeeklyAt: sql<string | Date | null>`(SELECT max(started_at) FROM radar_runs WHERE user_id = ${userId} AND status = 'ok' AND stats ->> 'mode' = 'weekly')`,
               autoProjects: userSettings.radarAutoProjects,
               careerProfile: userSettings.careerProfile,
               compedPlan: userSettings.compedPlan,
@@ -385,6 +399,10 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         ]);
         stats.outcomes = outcomes;
         userTz = resolveTimeZone(settingsRow?.tz);
+        dailyEnabled = settingsRow?.dailyEnabled !== 0;
+        const lastWeeklyAt = settingsRow?.lastWeeklyAt ? new Date(settingsRow.lastWeeklyAt) : null;
+        const mode: RadarRunMode = opts.mode ?? radarRunMode(lastWeeklyAt, now, userTz);
+        stats.mode = mode;
         const focus = focusFromCareerProfile(settingsRow?.careerProfile);
         const model = tallies ? buildRadarModel(tallies, now) : null;
         learned = model;
@@ -397,14 +415,17 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         const { plan: userPlan } = resolvePlan(settingsRow, now);
         const radarLimits = getRadarLimitsForPlan(userPlan);
 
-        // Active projects: extract/refresh only when AI is available (or seed from goals once)
+        // Active projects: refreshed on the weekly build only. The model reads recent notes and
+        // mail only on plans with AI explanations; otherwise projects are seeded from goals, no AI.
         let activeProjects: UserProject[] = initialProjects;
+        const projectAi = radarLimits.aiExplanations ? access : null;
         if (
           settingsRow?.autoProjects !== 0 &&
-          (opts.trigger === "schedule" || opts.trigger === "manual") &&
-          (access || (activeProjects.length === 0 && goals.length > 0))
+          mode === "weekly" &&
+          (projectAi || (activeProjects.length === 0 && goals.length > 0))
         ) {
-          activeProjects = await extractActiveProjectsForUser(userId, access ?? undefined, {
+          await mark("projects");
+          activeProjects = await extractActiveProjectsForUser(userId, projectAi ?? undefined, {
             since: settingsRow?.lastRunAt ?? undefined,
             goals,
             existingProjects: activeProjects,
@@ -413,12 +434,28 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
 
         // No outbound people discovery here: Radar never writes to `contacts`. New people are
         // shown as opportunities the user chooses to save (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
+        // Connect (weekly, plan-gated): links between the person's notes and the people they
+        // know, judged in one call. Only people they have met can be paired.
+        let connect: RadarSignal[] = [];
+        if (mode === "weekly" && access && radarLimits.connectPerWeek > 0 && !deadlineReached(aiDeadline)) {
+          await mark("connect");
+          connect = await metContactIds(userId)
+            .then((met) => loadConnectPairs(userId, met, now))
+            .then(async (pairs) => connectSignals(pairs, await judgeConnectPairs(userId, access, pairs, goals, { timeoutMs: Math.max(1_000, Math.min(10_000, aiDeadline - Date.now())) })))
+            .catch((err) => {
+              reportUnlessQuiet(err, { where: "job.radar.connect", userId, level: "warning" });
+              return [];
+            });
+        }
+
+        await mark("people");
         const [candidates, suppressions] = await Promise.all([
-          loadCandidates(userId, [...emailSignals, ...signals].map((s) => s.contactId)),
+          loadCandidates(userId, [...emailSignals, ...signals, ...connect].map((s) => s.contactId)),
           loadSuppressions(userId, live, now),
         ]);
 
-        // Posts the person saved from LinkedIn with the extension. The news sweep and the
+        // Posts the person saved from LinkedIn with the extension, and what the people check
+        // found on the web (src/lib/radar/pulse.ts). The news sweep and the
         // Bluesky/Mastodon polling are gone (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
         const posts = await loadPostSignals(userId, new Set(candidates.map((c) => c.id)), now).catch((err) => {
           reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });
@@ -427,9 +464,11 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         stats.posts = posts.length;
         // Email signals first: a card keeps at most two pieces of evidence, and the one from
         // mail is the one an accept needs to find its email again.
-        const picks = scorePicks(
+        await mark("score");
+        const allSignals = [...emailSignals, ...signals, ...posts, ...connect];
+        const scored = scorePicks(
           candidates,
-          [...emailSignals, ...signals, ...posts],
+          allSignals,
           targetKeys,
           goals,
           suppressions,
@@ -440,52 +479,88 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           activeProjects
         );
 
+        // No proof, no card: the index is only what this run read (its signals' source rows and
+        // its candidates), each tied to the person it was read for, so a card can only cite
+        // something real about its own person, never a namesake's row. Before the rerank, so no AI
+        // is spent on a card that would be dropped.
+        const proofIndex = buildProofIndex([
+          ...allSignals.flatMap((s) => (s.source ? [{ ...s.source, contactId: s.contactId }] : [])),
+          // The other side of a Connect link is read for the other person.
+          ...allSignals.flatMap((s) => (s.kind === "connect" ? [{ ...s.other.source, contactId: s.other.contactId }] : [])),
+          ...candidates.map((c) => ({ table: "contacts" as const, id: c.id, contactId: c.id })),
+        ]);
+        const verified = verifyPicks(scored, proofIndex);
+        const picks = verified.kept;
+        stats.unproven = verified.dropped;
+
         let ranked: NewRecommendation[] = picks;
-        if (access && RADAR_RERANK_ENABLED && radarLimits.aiExplanations) {
+        // The editor: once a week, it orders the verified picks and writes each card's why and
+        // opener in one call. A daily pass leaves the plan's words as they are.
+        if (mode === "weekly" && access && RADAR_EDITOR_ENABLED && radarLimits.aiExplanations) {
+          await mark("editor");
           const profiles = new Map(candidates.map((c) => [c.id, { title: c.title, company: c.company, tier: c.tier }]));
-          const result = await rerankPicks(userId, access, picks, { goals, profiles }, now, {
-            timeoutMs: Math.min(RADAR_RERANK_TIMEOUT_MS, Math.max(1_000, aiDeadline - Date.now())),
+          const result = await editPicks(userId, access, picks, { goals, profiles }, now, {
+            timeoutMs: Math.min(RADAR_EDITOR_TIMEOUT_MS, Math.max(1_000, aiDeadline - Date.now())),
           }).catch((err) => {
-            reportUnlessQuiet(err, { where: "job.radar.rerank", userId, level: "warning" });
-            return rerankUnchanged(picks, "failed");
+            reportUnlessQuiet(err, { where: "job.radar.editor", userId, level: "warning" });
+            return editorUnchanged(picks, "failed");
           });
           ranked = result.picks;
           stats.reranked = result.adjusted;
           stats.rerankFailed = result.status === "failed";
           stats.rerankCached = result.status === "cached";
+          stats.aiNotes = result.noted;
         }
 
-        const runCaps = {
-          pending: Math.min(RADAR_CAPS.pending, radarLimits.planSize),
-          perKind: Math.min(RADAR_CAPS.perKind, Math.max(1, Math.floor(radarLimits.planSize / 2))),
-        };
-        const next = rankPicks(ranked, runCaps);
-        const counts = planRunResult(live, next, now);
-        await writeRunResult(userId, runId, next, now);
+        // Connect cards per week, by plan: the best few, never more.
+        const connectKeep = new Set(
+          ranked
+            .filter((p) => LANE_OF_KIND[p.kind] === "connect")
+            .sort((a, b) => b.score - a.score)
+            .slice(0, radarLimits.connectPerWeek)
+            .map((p) => `${p.contactId}:${p.kind}`)
+        );
+        ranked = ranked.filter((p) => LANE_OF_KIND[p.kind] !== "connect" || connectKeep.has(`${p.contactId}:${p.kind}`));
+
+        // Weekly: build the plan (and Today's moments) from scratch. Daily: keep the plan's rows
+        // as they are, add new moments to Today, retire cards whose person has no reason left.
+        const limits = { planSize: Math.min(RADAR_CAPS.pending, radarLimits.planSize), todayMax: radarLimits.todayMax };
+        let next: NewRecommendation[];
+        let counts: WriteCounts;
+        await mark("save");
+        if (mode === "weekly") {
+          next = composeWeek(ranked, limits, now);
+          counts = planRunResult(live, next, now);
+          await writeRunResult(userId, runId, next, now);
+        } else {
+          const day = composeDay(ranked, live, limits, now);
+          next = day.insert;
+          counts = planDayResult(live, day, now);
+          await writeRunResult(userId, runId, next, now, { mode: "daily", keepContacts: day.keepContacts, promote: day.promote, supersede: day.supersede });
+        }
 
         // Autopilot, for the kinds this person opted into: schedules, never sends. Only on
         // the nightly pass and an explicit refresh, never while someone is opening the page.
         if (opts.trigger === "schedule" || opts.trigger === "manual") {
+          await mark("autopilot");
           const autopilot = await loadRadarAutopilot(userId).catch(() => ({}));
           stats.autopilot = await applyAutopilot(userId, autopilot, now);
         }
 
-        // Drafts for Today's cards, then the why-lines with whatever budget is left.
-        if (access && !deadlineReached(aiDeadline)) {
-          stats.drafts = await draftTodayForRun(userId, access, { deadline: aiDeadline }).catch((err) => {
+        // Drafts written ahead, on the weekly build only and only as many as the plan allows
+        // (Free none: a draft is written when the person asks for one).
+        if (mode === "weekly" && access && radarLimits.draftsPerWeek > 0 && !deadlineReached(aiDeadline)) {
+          stats.drafts = await draftTodayForRun(userId, access, {
+            deadline: aiDeadline,
+            limit: radarLimits.draftsPerWeek,
+            onItem: (done, total) => mark("drafts", done, total),
+          }).catch((err) => {
             reportUnlessQuiet(err, { where: "job.radar.draft", userId, level: "warning" });
             return 0;
           });
         }
-        if (access && !deadlineReached(aiDeadline) && radarLimits.aiExplanations) {
-          stats.aiNotes = await explainTopForRun(userId, access, {
-            budgetMs: Math.max(1_000, aiDeadline - Date.now()),
-          }).catch((err) => {
-            reportUnlessQuiet(err, { where: "job.radar.why", userId, level: "warning" });
-            return 0;
-          });
-        }
 
+        await mark("wrap");
         stats.candidates = candidates.length;
         stats.signals = signals.length;
         stats.emailSignals = emailSignals.length;
@@ -503,7 +578,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
   }
 
   stats.durationMs = Date.now() - startedMs;
-  await finishRun(userId, runId, stats, error, now, learned, userTz).catch((err) =>
+  await finishRun(userId, runId, stats, error, now, learned, userTz, dailyEnabled).catch((err) =>
     reportError(err, { where: "job.radar.finish", userId, level: "warning" })
   );
   return stats;
@@ -516,7 +591,8 @@ async function finishRun(
   error: unknown,
   now: Date,
   model: RadarModel | null,
-  tz: string = "UTC"
+  tz: string = "UTC",
+  dailyEnabled = true
 ) {
   const db = await getDb();
   const { ok, ...counts } = stats;
@@ -528,6 +604,8 @@ async function finishRun(
           .update(radarRuns)
           .set({
             status: ok ? "ok" : "failed",
+            // A finished run reads 100%; a failed one keeps where it got to.
+            ...(ok ? { progress: 100, stage: null, detail: null } : {}),
             finishedAt: new Date(),
             durationMs: stats.durationMs,
             stats: counts,
@@ -543,7 +621,7 @@ async function finishRun(
           ok
             ? {
                 radarLastRunAt: now,
-                radarNextAt: nextNightlyRunAt(now, tz),
+                radarNextAt: nextRadarRunAt(now, tz, dailyEnabled),
                 radarLeaseUntil: null,
                 // Saved for the admin view and the next reader; the run itself always
                 // rebuilds from rows, so a stale copy here can never steer a ranking.
@@ -642,7 +720,8 @@ export async function claimRadarUsers(limit: number, now: Date, opts: { includeU
          SELECT id FROM user_settings
           WHERE radar_paused = 0
             AND radar_enabled_at IS NOT NULL
-            AND radar_daily_enabled = 1
+            -- No daily-pass filter: an account with it off still gets its weekly plan, and
+            -- its next_at already points at Monday (nextRadarRunAt).
             AND (radar_next_at IS NULL OR radar_next_at <= ${now})
             AND (radar_lease_until IS NULL OR radar_lease_until < ${now})
             AND last_active_at > ${activeSince}

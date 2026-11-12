@@ -24,6 +24,7 @@ import {
 } from "@/lib/org-brand-learn";
 import { OfflineSync } from "@/components/layout/offline-sync";
 import { MeetingSessionProvider } from "@/components/capture/meeting-session";
+import { VoiceDock } from "@/components/chat/voice/voice-dock";
 import { captureAttribution } from "@/lib/attribution-capture";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE, isValidTimeZone } from "@/lib/reminder-due-bucket";
@@ -240,6 +241,9 @@ export default async function AppLayout({
       {children}
       </AppShell>
       </MeetingSessionProvider>
+      {/* Above any page, like the meeting recorder: an Orbit Voice call keeps going when you
+          leave Chat, and docks at the middle right until you come back. */}
+      <VoiceDock />
 
       {/* Deliberately a SIBLING of AppShell, not a child. AppShell early-returns a bare
           shell for `/onboarding`, so mounting inside it would need the widget in two

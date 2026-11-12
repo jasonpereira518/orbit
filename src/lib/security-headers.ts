@@ -60,6 +60,10 @@ export function buildSecurityHeaders(options: {
       "'self'",
       "'unsafe-inline'",
       options.dev && "'unsafe-eval'",
+      // Orbit Voice: Deepgram's AgentMicrophone and ElevenLabs' client both load their audio
+      // AudioWorklet from a same-origin blob: URL, and worklet loads answer to script-src.
+      // Without this the socket connects, then the mic fails and every call ends at once.
+      "blob:",
       clerk,
       "https://*.clerk.accounts.dev",
       "https://challenges.cloudflare.com",

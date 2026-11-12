@@ -40,6 +40,7 @@ export type LiveRecommendation = {
   id: string;
   contactId: string;
   kind: RecommendationKind;
+  bucket: RecommendationBucket | null;
   status: RecommendationStatus;
   snoozedUntil: Date | null;
   inputsHash: string;
@@ -55,6 +56,7 @@ export async function loadLiveRecommendations(userId: string): Promise<LiveRecom
       id: recommendations.id,
       contactId: recommendations.contactId,
       kind: recommendations.kind,
+      bucket: recommendations.bucket,
       status: recommendations.status,
       snoozedUntil: recommendations.snoozedUntil,
       inputsHash: recommendations.inputsHash,
@@ -148,6 +150,27 @@ export function planRunResult(live: readonly LiveRecommendation[], next: readonl
   return { inserted, updated, expired };
 }
 
+/** `planRunResult` for a daily pass (`composeDay`): new Today cards, promotions, retirements. */
+export function planDayResult(
+  live: readonly LiveRecommendation[],
+  day: { insert: readonly NewRecommendation[]; supersede: readonly string[]; promote: readonly string[]; keepContacts: ReadonlySet<string> },
+  now: Date
+): WriteCounts {
+  const retired = live.filter(
+    (r) =>
+      (r.status === "pending" || (r.status === "snoozed" && r.snoozedUntil !== null && r.snoozedUntil <= now)) &&
+      !day.keepContacts.has(r.contactId)
+  ).length;
+  const superseded = live.filter((r) => r.status === "pending" && day.supersede.includes(r.contactId)).length;
+  // An insert that lands on a live row of the same key refreshes it rather than adding a card.
+  const liveKeys = new Set(live.map((r) => recommendationKey(r.contactId, r.kind)));
+  const refreshed = day.insert.filter((r) => liveKeys.has(recommendationKey(r.contactId, r.kind))).length;
+  return { inserted: day.insert.length - refreshed, updated: day.promote.length + refreshed, expired: retired + superseded };
+}
+
+/** A daily pass's write: the plan's rows stay, only Today and retirements change. */
+export type DailyWrite = { mode: "daily"; keepContacts: ReadonlySet<string>; promote: readonly string[]; supersede: readonly string[] };
+
 /**
  * Replace this account's live list with the run's result, in one atomic write:
  *
@@ -156,14 +179,20 @@ export function planRunResult(live: readonly LiveRecommendation[], next: readonl
  *   3. upsert the run's rows on the live unique index, keeping a live snooze's status and
  *      keeping the AI note while the inputs it was written from are unchanged,
  *   4. prune history older than `RADAR_HISTORY_DAYS`.
+ *
+ * A daily pass (`daily`) never touches a plan row's content. Step 2 retires only pending cards
+ * whose person has no reason left (`keepContacts`), step 3 inserts new Today cards and leaves
+ * any existing row as it is, and one more statement moves `promote` cards into Today.
  */
 export async function writeRunResult(
   userId: string,
   runId: string,
   next: readonly NewRecommendation[],
-  now: Date
+  now: Date,
+  daily?: DailyWrite
 ): Promise<void> {
   const db = await getDb();
+  const keepIds = daily ? [...daily.keepContacts] : [];
   const keys = next.map((r) => recommendationKey(r.contactId, r.kind));
   const historyCutoff = new Date(now.getTime() - RADAR_HISTORY_DAYS * DAY_MS);
   await runAtomicWrite(db, (tx) => {
@@ -194,7 +223,14 @@ export async function writeRunResult(
             or(
               and(
                 eq(recommendations.status, "pending"),
-                keys.length
+                daily
+                  ? keepIds.length
+                    ? sql`NOT (${recommendations.contactId}::text = ANY(ARRAY[${sql.join(
+                        keepIds.map((k) => sql`${k}`),
+                        sql`, `
+                      )}]::text[]))`
+                    : undefined
+                  : keys.length
                   ? sql`NOT ((${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
                       keys.map((k) => sql`${k}`),
                       sql`, `
@@ -206,6 +242,31 @@ export async function writeRunResult(
           )
         ),
     ];
+    // A card of another kind carries a person's news: their old pending card goes first, so the
+    // new one is the only card they have (and the insert below is not a second row for them).
+    if (daily?.supersede.length) {
+      statements.push(
+        tx
+          .update(recommendations)
+          .set({ status: "expired", resolvedAt: now, updatedAt: now })
+          .where(
+            and(
+              eq(recommendations.userId, userId),
+              eq(recommendations.status, "pending"),
+              sql`${recommendations.contactId}::text = ANY(ARRAY[${sql.join(
+                daily.supersede.map((k) => sql`${k}`),
+                sql`, `
+              )}]::text[])`,
+              keys.length
+                ? sql`NOT ((${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
+                    keys.map((k) => sql`${k}`),
+                    sql`, `
+                  )}]::text[]))`
+                : undefined
+            )
+          )
+      );
+    }
     if (next.length) {
       statements.push(
         tx
@@ -226,12 +287,17 @@ export async function writeRunResult(
               expiresAt: r.expiresAt,
               runId,
               inputsHash: r.inputsHash,
+              aiNote: r.aiNote ?? null,
               suggestedCalendarInvite: r.suggestedCalendarInvite ?? null,
               discoveredPerson: r.discoveredPerson ?? null,
               createdAt: now,
               updatedAt: now,
             }))
           )
+          // A daily pass writes only Today cards. One that lands on a live row of the same kind is
+          // news for that person (`composeDay`): it refreshes a still-pending row whose facts
+          // changed, in place (same id), and the row counts as new again (created now, not yet
+          // seen) so "What changed" shows it. Anything else leaves the live row as it is.
           .onConflictDoUpdate({
             target: [recommendations.userId, recommendations.contactId, recommendations.kind],
             // Must imply `recommendations_live_v2_uidx`'s predicate, or Postgres finds no
@@ -249,13 +315,35 @@ export async function writeRunResult(
               runId: sql`excluded.run_id`,
               suggestedCalendarInvite: sql`coalesce(excluded.suggested_calendar_invite, ${recommendations.suggestedCalendarInvite})`,
               discoveredPerson: sql`coalesce(excluded.discovered_person, ${recommendations.discoveredPerson})`,
-              // Every SET expression reads the OLD row, so this compares the stored hash
-              // with the new one before the new one is written.
-              aiNote: sql`case when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
+              // The editor's fresh note wins. Otherwise every SET expression reads the OLD row,
+              // so this compares the stored hash with the new one before the new one is written,
+              // and keeps the old note only while the facts it was written from are unchanged.
+              aiNote: sql`case when excluded.ai_note is not null then excluded.ai_note when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
               inputsHash: sql`excluded.inputs_hash`,
               updatedAt: sql`excluded.updated_at`,
+              ...(daily ? { createdAt: sql`excluded.created_at`, firstSeenAt: null } : {}),
             },
+            ...(daily
+              ? { setWhere: sql`${recommendations.status} = 'pending' and excluded.inputs_hash <> ${recommendations.inputsHash}` }
+              : {}),
           })
+      );
+    }
+    if (daily?.promote.length) {
+      statements.push(
+        tx
+          .update(recommendations)
+          .set({ bucket: "today", updatedAt: now })
+          .where(
+            and(
+              eq(recommendations.userId, userId),
+              eq(recommendations.status, "pending"),
+              sql`(${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
+                daily.promote.map((k) => sql`${k}`),
+                sql`, `
+              )}]::text[])`
+            )
+          )
       );
     }
     statements.push(
@@ -459,7 +547,10 @@ export async function loadModelTallies(userId: string, now: Date): Promise<Radar
                END AS a,
                CASE
                  WHEN status = 'dismissed' THEN ${V.dismissed}::numeric
-                 WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN} THEN ${V.ignored}::numeric
+                 -- Ignored only when it ran its course. A daily pass retires a card early when its
+                 -- reason is gone (the person already wrote to them): that is not a vote.
+                 WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN}
+                      AND resolved_at >= expires_at THEN ${V.ignored}::numeric
                  ELSE 0
                END AS d
           FROM recommendations

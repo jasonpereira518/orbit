@@ -30,11 +30,14 @@ export type ScrapedLinkedInPhoto = {
 export class LinkedInDirectRateLimitError extends Error {
   readonly resetAt: number;
   readonly source = "linkedin_direct";
+  /** Why LinkedIn said no: its HTTP status (429, 999), 1 for an authwall redirect, 0 for our own cooldown. */
+  readonly status: number;
 
-  constructor(resetAt: number, message = "LinkedIn direct scrape rate limited") {
+  constructor(resetAt: number, message = "LinkedIn direct scrape rate limited", status = 0) {
     super(message);
     this.name = "LinkedInDirectRateLimitError";
     this.resetAt = resetAt;
+    this.status = status;
   }
 }
 
@@ -451,7 +454,7 @@ export async function fetchLinkedInFullProfileDirect(
     if (res.status === 429 || res.status === 999) {
       const resetAt = Date.now() + 60_000;
       noteLinkedInDirectRateLimit(resetAt);
-      throw new LinkedInDirectRateLimitError(resetAt);
+      throw new LinkedInDirectRateLimitError(resetAt, undefined, res.status);
     }
 
     if (!res.ok) {
@@ -462,7 +465,7 @@ export async function fetchLinkedInFullProfileDirect(
     if (finalUrl.includes("/authwall") || finalUrl.includes("/checkpoint/")) {
       const resetAt = Date.now() + 30_000;
       noteLinkedInDirectRateLimit(resetAt);
-      throw new LinkedInDirectRateLimitError(resetAt, "LinkedIn authwall challenge");
+      throw new LinkedInDirectRateLimitError(resetAt, "LinkedIn authwall challenge", 1);
     }
 
     const html = await res.text();

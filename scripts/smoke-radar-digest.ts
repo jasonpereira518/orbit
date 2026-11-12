@@ -27,7 +27,7 @@ import { run } from "./smoke/_env";
 import { and, eq, gte, inArray } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { getDb } from "../src/db";
-import { contacts, cronRuns, recommendations, userSettings } from "../src/db/schema";
+import { contacts, cronRuns, radarRuns, recommendations, userSettings } from "../src/db/schema";
 import { buildRadarDigestEmail, radarDigestSubject } from "../src/lib/radar/digest-email";
 import {
   captureRadarTimeZone,
@@ -57,6 +57,8 @@ const U = {
   flaky: `${PREFIX}flaky`,
   /** Never turned Radar on (schema v225): no email, even with a card. */
   neverOn: `${PREFIX}never-on`,
+  /** Radar on, a card, but this week's plan was never built (Radar revision PR 4). */
+  noPlan: `${PREFIX}no-plan`,
 };
 const USERS = Object.values(U);
 /** Monday 3 March 2031, ISO week 10. */
@@ -74,12 +76,13 @@ async function reset() {
   const db = await getDb();
   // Contacts cascade to recommendations.
   await db.delete(contacts).where(inArray(contacts.userId, USERS));
+  await db.delete(radarRuns).where(inArray(radarRuns.userId, USERS));
   await db.delete(userSettings).where(inArray(userSettings.userId, USERS));
 }
 
 async function account(
   userId: string,
-  opts: { tz?: string | null; enabled?: boolean; paused?: boolean; off?: boolean; activeDaysAgo?: number; email?: string } = {}
+  opts: { tz?: string | null; enabled?: boolean; paused?: boolean; off?: boolean; activeDaysAgo?: number; email?: string; noPlan?: boolean } = {}
 ) {
   const db = await getDb();
   await ensureUserSettings(userId);
@@ -96,6 +99,11 @@ async function account(
       lastActiveAt: new Date(MONDAY_7_UTC.getTime() - (opts.activeDaysAgo ?? 1) * DAY),
     })
     .where(eq(userSettings.userId, userId));
+  // The email is about this week's plan, so it waits for the weekly build. Real time, not the
+  // smoke's clock: the query compares against the database's now().
+  if (!opts.noPlan) {
+    await db.insert(radarRuns).values({ userId, trigger: "schedule", status: "ok", startedAt: new Date(Date.now() - 60 * 60 * 1000), stats: { mode: "weekly" } });
+  }
 }
 
 async function card(
@@ -194,6 +202,7 @@ async function main() {
   await account(U.paused, { tz: "UTC", paused: true });
   await account(U.flaky, { tz: "UTC", enabled: false });
   await account(U.neverOn, { tz: "UTC", off: true });
+  await account(U.noPlan, { tz: "UTC", noPlan: true });
   const utcCard = await card(U.utc, "Ada Lovelace", {
     aiNote: { why: "She asked about your launch", opener: "o", inputsHash: "h1", generatedAt: "2031-03-01T00:00:00Z" },
     draft: { body: "Hi Ada", channel: "email", inputsHash: "h1", generatedAt: "2031-03-01T00:00:00Z" },
@@ -206,6 +215,7 @@ async function main() {
   await card(U.later, "Later Lee", { bucket: "later" });
   await card(U.paused, "Paused Pat");
   await card(U.neverOn, "Never Nia");
+  await card(U.noPlan, "Planless Pia");
 
   const sent: DigestMessage[] = [];
   const deliver = async (m: DigestMessage) => {
@@ -221,6 +231,7 @@ async function main() {
   const first = await sendRadarDigests(MONDAY_7_UTC, { deliver, report, gapMs: 0 });
   const mine = sent.filter((m) => m.to.startsWith(PREFIX));
   check("Monday 07:00 UTC: only the UTC account with the email on, active, and a card today", mine.length === 1 && mine[0]!.to === `${U.utc}@example.com`, mine.map((m) => m.to).join(","));
+  check("an account whose week's plan was never built gets no email", !mine.some((m) => m.to === `${U.noPlan}@example.com`));
   check("the run's stats agree", first.sent >= 1 && first.failed === 0, JSON.stringify(first));
   const msg = mine[0]!;
   check("its subject counts the draft and both live cards", msg.subject === "1 draft ready · 2 people worth a message this week", msg.subject);

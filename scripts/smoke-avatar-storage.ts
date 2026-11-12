@@ -11,6 +11,8 @@ import {
   AvatarStorageError,
   downloadAndPersistAvatar,
   downloadImageBytes,
+  hasBlobStorage,
+  hasBlobTokenInEnv,
   isDurableAvatarUrl,
   parseImageDataUrl,
 } from "../src/lib/contact-avatar";
@@ -142,6 +144,41 @@ async function main() {
       }
     );
 
+    // --- Is there a store? An OIDC-connected one counts ----------------------------------
+    // On Vercel the OIDC token is a per-request header, never an env var at runtime. Checking
+    // only the env var made production (BLOB_STORE_ID, no token) report "no storage": every
+    // photo went inline and the shared photo pool never filled.
+    const CTX = Symbol.for("@vercel/request-context");
+    const g = globalThis as unknown as Record<symbol, unknown>;
+    const withRequestHeader = (token: string | null, fn: () => void) => {
+      const previous = g[CTX];
+      g[CTX] = { get: () => ({ headers: token ? { "x-vercel-oidc-token": token } : {} }) };
+      try {
+        fn();
+      } finally {
+        g[CTX] = previous;
+      }
+    };
+    const none = { BLOB_READ_WRITE_TOKEN: undefined, BLOB_STORE_ID: undefined, VERCEL_OIDC_TOKEN: undefined };
+    const expectStorage = (label: string, want: boolean, wantEnvOnly: boolean) => {
+      if (hasBlobStorage() !== want) throw new Error(`hasBlobStorage: expected ${want} for ${label}`);
+      if (hasBlobTokenInEnv() !== wantEnvOnly) throw new Error(`hasBlobTokenInEnv: expected ${wantEnvOnly} for ${label}`);
+    };
+    await withEnv(none, async () => {
+      withRequestHeader(null, () => expectStorage("no credentials", false, false));
+      withRequestHeader("oidc-header", () => expectStorage("an OIDC header but no store", false, false));
+    });
+    await withEnv({ ...none, BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_x" }, async () => {
+      withRequestHeader(null, () => expectStorage("a read-write token", true, true));
+    });
+    await withEnv({ ...none, BLOB_STORE_ID: "store_x" }, async () => {
+      withRequestHeader(null, () => expectStorage("a store id with no OIDC token anywhere", false, false));
+      // The production case. Email attachments (private) deliberately stay off: the store is public.
+      withRequestHeader("oidc-header", () => expectStorage("a store id + the request's OIDC header", true, false));
+    });
+    await withEnv({ ...none, BLOB_STORE_ID: "store_x", VERCEL_OIDC_TOKEN: "oidc-env" }, async () => {
+      withRequestHeader(null, () => expectStorage("a store id + a pulled OIDC env token (local dev)", true, true));
+    });
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

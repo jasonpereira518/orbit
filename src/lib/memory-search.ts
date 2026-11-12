@@ -46,6 +46,11 @@ export type MemorySearchOptions = {
   embedding?: number[] | null;
   /** Only passages naming at least one of these people. */
   contactIds?: string[] | null;
+  /**
+   * Leave out passages that name only these people (and nobody else): Radar's Connect pass
+   * looks for notes about OTHER people. A passage naming one of them and someone new still counts.
+   */
+  excludeOnlyContactIds?: string[] | null;
   /** Date scoping — this is what answers "in March" without any AI at all. */
   after?: Date | null;
   before?: Date | null;
@@ -70,6 +75,15 @@ function scope(userId: string, options: MemorySearchOptions): SQL {
         ids.map((id) => sql`${id}::uuid`),
         sql`, `
       )}]::uuid[]`
+    );
+  }
+  const excluded = (options.excludeOnlyContactIds ?? []).filter(Boolean);
+  if (excluded.length) {
+    parts.push(
+      sql`NOT (memory_chunks.contact_ids <@ array[${sql.join(
+        excluded.map((id) => sql`${id}::uuid`),
+        sql`, `
+      )}]::uuid[])`
     );
   }
   if (options.after) parts.push(sql`memory_chunks.occurred_at >= ${options.after.toISOString()}`);

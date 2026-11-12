@@ -5,9 +5,9 @@
  * Rate-Limit Pacing:
  * - Batches candidate contacts across accounts in micro-chunks.
  * - Paces direct network requests with configurable delay (e.g. 200ms) to avoid triggering burst limits.
- * - Dynamically monitors LinkedIn rate limits / challenges. If rate limited, automatically
- *   backs off and routes to non-LinkedIn sources (Gravatar, connected Google/Outlook accounts,
- *   shared pool cache) without dropping jobs or blocking queue execution.
+ * - Never calls LinkedIn: the LinkedIn photo queue (`linkedin-photo-queue.ts`) is the one
+ *   bulk caller, so the two cannot stack LinkedIn's rate limits. Photos come from the shared
+ *   pool (read only), connected Google/Outlook accounts and Gravatar.
  */
 
 import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
@@ -16,20 +16,12 @@ import { contacts, cronRuns } from "@/db/schema";
 import {
   downloadAndPersistAvatar,
   fetchGravatarPhotoUrl,
-  isLinkedInProfilePhoto,
   isUnusableAvatarUrl,
 } from "@/lib/contact-avatar";
+import { isLikelyPersonName } from "@/lib/linkedin-scraper";
 import {
-  fetchLinkedInMetadataDirect,
-  getLinkedInDirectCooldownUntil,
-  isLinkedInDirectRateLimited,
-  isLikelyPersonName,
-  LinkedInDirectRateLimitError,
-  noteLinkedInDirectRateLimit,
-} from "@/lib/linkedin-scraper";
-import {
-  adoptPhotoIntoSharedPool,
-  resolveLinkedInPhotoCached,
+  getSharedAvatar,
+  isSharedFresh,
   sharedPhotoSlug,
   type ProfileImageSource,
 } from "@/lib/shared-avatars";
@@ -60,7 +52,6 @@ export type GlobalUpkeepStats = {
   namesFixed: number;
   avatarsUpdated: number;
   profilesEnriched: number;
-  rateLimitsEncountered: number;
   more: boolean;
 };
 
@@ -68,8 +59,6 @@ export type GlobalUpkeepMetrics = {
   totalCandidates: number;
   namesToFix: number;
   avatarsNeeded: number;
-  rateLimited: boolean;
-  cooldownRemainingSeconds: number;
   activeRun: {
     id: string;
     status: string;
@@ -162,9 +151,6 @@ export function globalUpkeepCandidatePredicate() {
 export async function getGlobalUpkeepMetrics(): Promise<GlobalUpkeepMetrics> {
   const db = await getDb();
   const now = Date.now();
-  const cooldownUntil = getLinkedInDirectCooldownUntil();
-  const cooldownRemainingSeconds = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
-  const rateLimited = isLinkedInDirectRateLimited(now);
 
   const [candidateTotals, recentRuns] = await Promise.all([
     db
@@ -201,8 +187,6 @@ export async function getGlobalUpkeepMetrics(): Promise<GlobalUpkeepMetrics> {
     totalCandidates: candidateTotals[0]?.total ?? 0,
     namesToFix: candidateTotals[0]?.namesToFix ?? 0,
     avatarsNeeded: candidateTotals[0]?.avatarsNeeded ?? 0,
-    rateLimited,
-    cooldownRemainingSeconds,
     activeRun: activeRunRow
       ? {
           id: activeRunRow.id,
@@ -226,7 +210,6 @@ export async function getGlobalUpkeepMetrics(): Promise<GlobalUpkeepMetrics> {
 export type GlobalUpkeepOptions = {
   deadline?: number;
   batchSize?: number;
-  pacingDelayMs?: number;
   handle?: CronRunHandle;
 };
 
@@ -239,7 +222,6 @@ export async function runGlobalContactUpkeepBatch(
   const db = await getDb();
   const deadline = options?.deadline ?? Date.now() + 180_000;
   const batchSize = Math.min(options?.batchSize ?? 50, 200);
-  const pacingDelayMs = options?.pacingDelayMs ?? 200;
 
   const rows = await db
     .select({
@@ -265,7 +247,6 @@ export async function runGlobalContactUpkeepBatch(
     namesFixed: 0,
     avatarsUpdated: 0,
     profilesEnriched: 0,
-    rateLimitsEncountered: 0,
     more: rows.length === batchSize,
   };
 
@@ -289,34 +270,7 @@ export async function runGlobalContactUpkeepBatch(
     let photoSource: ProfileImageSource = "public";
     let sharedPhoto = false;
 
-    // 1. Direct LinkedIn metadata fetch if not rate-limited
-    if (slug) {
-      if (isLinkedInDirectRateLimited()) {
-        stats.rateLimitsEncountered++;
-      } else {
-        try {
-          const meta = await fetchLinkedInMetadataDirect(slug);
-          if (pacingDelayMs > 0) {
-            await new Promise((r) => setTimeout(r, pacingDelayMs));
-          }
-          if (meta?.fullName && isLikelyPersonName(meta.fullName) && !isUsernameOrGenericName(meta.fullName)) {
-            resolvedName = meta.fullName;
-          }
-          if (meta?.imageUrl && isLinkedInProfilePhoto(meta.imageUrl)) {
-            resolvedPhoto = meta.imageUrl;
-            const adopted = await adoptPhotoIntoSharedPool(slug, meta.imageUrl, "linkedin_direct").catch(() => null);
-            if (adopted?.sharedUrl) sharedPhoto = true;
-          }
-        } catch (err) {
-          if (err instanceof LinkedInDirectRateLimitError) {
-            stats.rateLimitsEncountered++;
-            noteLinkedInDirectRateLimit(Date.now() + 60_000);
-          }
-        }
-      }
-    }
-
-    // 2. Name Resolution if name is a username, handle, or generic
+    // 1. Name Resolution if name is a username, handle, or generic
     const currentNameWeak = isUsernameOrGenericName(c.fullName, c.email, c.linkedinUrl);
     let nameFixed = false;
     let newFirstName: string | null = null;
@@ -357,25 +311,14 @@ export async function runGlobalContactUpkeepBatch(
       }
     }
 
-    // 3. Avatar Resolution if missing or generic
+    // 2. Avatar Resolution if missing or generic
     const currentAvatarUnusable = isUnusableAvatarUrl(c.profileImageUrl);
 
     if (currentAvatarUnusable) {
-      // Shared pool fallback
-      if (!resolvedPhoto && !sharedPhoto && c.linkedinUrl) {
-        try {
-          const cached = await resolveLinkedInPhotoCached(c.id, c.linkedinUrl, c.userId);
-          if (typeof cached === "string") {
-            resolvedPhoto = cached;
-            photoSource = "public";
-          } else if (cached) {
-            sharedPhoto = true;
-          }
-        } catch (err) {
-          if (err instanceof LinkedInDirectRateLimitError) {
-            stats.rateLimitsEncountered++;
-          }
-        }
+      // The shared pool, read only: the LinkedIn photo queue is what fills it.
+      if (slug) {
+        const pooled = await getSharedAvatar(slug).catch(() => null);
+        if (pooled?.imageUrl && !pooled.blockedAt && isSharedFresh(pooled)) sharedPhoto = true;
       }
 
       // Connected account photos (Google / Outlook)
@@ -425,7 +368,7 @@ export async function runGlobalContactUpkeepBatch(
       }
     }
 
-    // 4. Persist contact updates
+    // 3. Persist contact updates
     const patch: Record<string, unknown> = {};
 
     if (nameFixed && resolvedName) {
@@ -469,7 +412,6 @@ export async function runGlobalContactUpkeepBatch(
           checked: stats.checked,
           namesFixed: stats.namesFixed,
           avatarsUpdated: stats.avatarsUpdated,
-          rateLimitsEncountered: stats.rateLimitsEncountered,
           more: stats.more,
         },
       })
@@ -485,14 +427,13 @@ export async function runGlobalContactUpkeepBatch(
  * Starts a ledger run in `cron_runs` and executes batch passes.
  */
 export async function triggerAdminContactUpkeepJob(
-  options?: { batchSize?: number; pacingDelayMs?: number }
+  options?: { batchSize?: number }
 ): Promise<{ ok: boolean; stats: GlobalUpkeepStats }> {
   const handle = await startCronRun(UPKEEP_JOB_NAME, "manual");
   try {
     const stats = await runGlobalContactUpkeepBatch({
       handle,
       batchSize: options?.batchSize ?? 100,
-      pacingDelayMs: options?.pacingDelayMs ?? 200,
     });
 
     await finishCronRun(handle, {
@@ -501,7 +442,6 @@ export async function triggerAdminContactUpkeepJob(
         checked: stats.checked,
         namesFixed: stats.namesFixed,
         avatarsUpdated: stats.avatarsUpdated,
-        rateLimitsEncountered: stats.rateLimitsEncountered,
         more: stats.more,
       },
     });

@@ -1,4 +1,5 @@
 import type { VoiceConfig, VoiceProvider } from "../config";
+import { reportError } from "@/lib/report-error";
 import { voiceConfigured, recordVoiceHealth } from "../settings";
 import { deepgramCredentials } from "./deepgram";
 import { elevenCredentials } from "./elevenlabs";
@@ -30,6 +31,9 @@ export async function voiceCredentials(
   } catch (err) {
     // Never record a provider's raw response, credential, or CRM context.
     if (err instanceof Error && err.name === "VoiceUnavailableError") throw err;
+    // The person only sees the generic line below, so this log is the one place the real
+    // cause (a refused key, an agent setting, a timeout) is recorded. reportError scrubs it.
+    reportError(err, { where: "voice.credentials", extra: { provider } });
     await recordVoiceHealth(
       provider,
       false,

@@ -85,6 +85,7 @@ import {
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
 import { OrbitVoiceEntry } from "@/components/chat/voice-entry";
+import { onVoiceEnded, setVoiceSlot, useVoiceDock } from "@/lib/voice/dock-store";
 import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
 import { chatAsMarkdown, chatExportFileName, downloadMarkdown } from "@/lib/chat-export";
 import { CHAT_ATTACH_ACCEPT, readAttachment } from "@/lib/chat-attach-client";
@@ -402,16 +403,6 @@ export function ChatPanel({
     });
   }, []);
   const [loadingThread, setLoadingThread] = useState(false);
-  // Focus asked for while the composer is disabled (a thread still loading) is a no-op, so
-  // it waits here and lands on the commit that re-enables the field. A one-frame rAF raced
-  // that commit and dropped focus after Orbit Voice ended.
-  const focusComposerWhenReady = useRef(false);
-  const [focusComposerTick, setFocusComposerTick] = useState(0);
-  useEffect(() => {
-    if (!focusComposerWhenReady.current || loadingThread) return;
-    focusComposerWhenReady.current = false;
-    textareaRef.current?.focus();
-  }, [focusComposerTick, loadingThread]);
   const [lastUserQuery, setLastUserQuery] = useState("");
   /**
    * People attached with `+` or `@` — a registry of what has been picked, never the live
@@ -482,7 +473,9 @@ export function ChatPanel({
   const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const voiceSurfaceRef = useRef<HTMLDivElement>(null);
+  // A live Orbit Voice call (held by VoiceDock in the layout) takes the message list's place.
+  const voiceCall = useVoiceDock().call;
+  const voiceThreadOnMount = useRef(voiceCall?.threadId ?? null);
   /** The `+` menu is outside the field, so it reaches the splice through here. */
   const composerRef = useRef<MentionComposerHandle | null>(null);
   const stickToBottomRef = useRef(true);
@@ -1014,6 +1007,35 @@ export function ChatPanel({
       if (seq === loadSeqRef.current) setLoadingThread(false);
     }
   }, [applyThread, threadPrefetch]);
+
+  // Back on Chat mid-call: open the call's thread so the call docks beside its own history.
+  useEffect(() => {
+    const id = voiceThreadOnMount.current;
+    voiceThreadOnMount.current = null;
+    if (id) queueMicrotask(() => void loadThread(id));
+  }, [loadThread]);
+  // The call ended (here or on another page): show what it saved, then hand back the keyboard.
+  // The focus waits for an effect that sees the composer enabled: the field is disabled while a
+  // thread loads, and a `requestAnimationFrame` right after the load can run before React has
+  // committed "loaded", when `focus()` on a disabled field does nothing and is never retried.
+  const wantComposerFocusRef = useRef(false);
+  const [composerFocusTick, setComposerFocusTick] = useState(0);
+  useEffect(
+    () =>
+      onVoiceEnded(async (id) => {
+        threadPrefetch.forget(id);
+        // The call's thread is now named (nameVoiceThread), so Recents shows it under that name.
+        await Promise.all([loadThread(id), refreshThreads()]);
+        wantComposerFocusRef.current = true;
+        setComposerFocusTick((n) => n + 1);
+      }),
+    [loadThread, refreshThreads, threadPrefetch],
+  );
+  useEffect(() => {
+    if (!wantComposerFocusRef.current || loadingThread || voiceCall) return;
+    wantComposerFocusRef.current = false;
+    textareaRef.current?.focus();
+  }, [composerFocusTick, loadingThread, voiceCall]);
 
   const saveContext = useCallback(async () => {
     setContextSaving(true);
@@ -1838,7 +1860,7 @@ export function ChatPanel({
           the suggestion chips. The whole ancestor chain is bounded (app-shell `h-dvh` →
           `min-h-0 flex-1` → page `flex min-h-0 flex-1`), and ChatPanelSkeleton already sized
           itself this way — so this also removes the height jump when the panel swaps in. */}
-      <div ref={voiceSurfaceRef} className="flex min-h-0 w-full flex-1 flex-row overflow-hidden rounded-2xl border border-border/70 bg-card">
+      <div className="flex min-h-0 w-full flex-1 flex-row overflow-hidden rounded-2xl border border-border/70 bg-card">
         {/* From md up the history is a rail beside the conversation. Below that the header
             keeps its dropdown (`md:hidden` on both of its controls), because on a phone the
             conversation should have the full width. */}
@@ -2020,7 +2042,8 @@ export function ChatPanel({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {/* `relative` so the jump button can sit on the scroller's bottom edge — above the
               composer, but not inside the scrolling content, where it would scroll away. */}
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          {voiceCall && <div ref={setVoiceSlot} className="flex min-h-0 flex-1 flex-col" />}
+          <div className={cn("relative flex min-h-0 flex-1 flex-col", voiceCall && "hidden")}>
           <div
             ref={listRef}
             onScroll={onListScroll}
@@ -2352,7 +2375,6 @@ export function ChatPanel({
                   }}
                 />
                 <OrbitVoiceEntry
-                  surfaceRef={voiceSurfaceRef}
                   hasText={Boolean(question.trim())}
                   busy={busy}
                   disabled={
@@ -2364,12 +2386,6 @@ export function ChatPanel({
                   prepare={async () => {
                     dictation.stop();
                     return ensureThread();
-                  }}
-                  onEnd={async (id) => {
-                    threadPrefetch.forget(id);
-                    await loadThread(id);
-                    focusComposerWhenReady.current = true;
-                    setFocusComposerTick((n) => n + 1);
                   }}
                 />
               </div>

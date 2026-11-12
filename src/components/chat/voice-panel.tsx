@@ -1,11 +1,12 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
-import { Mic, MicOff, PhoneOff, Captions } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { Mic, MicOff, X, Captions, Loader2, MessageSquare } from "lucide-react";
 import { VoiceOrbit } from "./voice/voice-orbit";
+import { cn } from "@/lib/utils";
 import "./voice/voice-overlay.css";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { VoiceTransportBoundary } from "./voice/transport-boundary";
 import { ProposedActionsCard } from "./proposed-actions";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
@@ -55,35 +56,14 @@ async function command(body: Record<string, unknown>) {
   return data;
 }
 type TranscriptTurn = { id: string; source: "user" | "ai"; text: string; interrupted: boolean; revision: number };
-export function VoicePanel({ state, threadId, onClose, surfaceRef }: {
-  surfaceRef: RefObject<HTMLDivElement | null>;
-  state: VoicePublicState; threadId: string; onClose(): Promise<void>;
+/**
+ * The live call. Inline in Chat's conversation column (`compact` false); a small card at the
+ * middle right of every other page (`compact` true). `VoiceDock` owns where it sits.
+ */
+export function VoicePanel({ state, threadId, onClose, compact = false }: {
+  state: VoicePublicState; threadId: string; onClose(): Promise<void>; compact?: boolean;
 }) {
   const [active, setActive] = useState<VoiceSessionStart | null>(null);
-  const [placement, setPlacement] = useState<CSSProperties>({});
-  useEffect(() => {
-    const surface = surfaceRef.current;
-    if (!surface) return;
-    const measure = () => {
-      const box = surface.getBoundingClientRect();
-      setPlacement({
-        "--voice-left": `${box.x + box.width / 2}px`,
-        "--voice-top": `${box.y + box.height / 2}px`,
-        "--voice-width": `${Math.max(280, box.width - 24)}px`,
-        "--voice-height": `${Math.max(280, box.height - 24)}px`,
-      } as CSSProperties);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(surface);
-    window.addEventListener("resize", measure);
-    window.addEventListener("scroll", measure, true);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", measure);
-      window.removeEventListener("scroll", measure, true);
-    };
-  }, [surfaceRef]);
   const [mode, setMode] = useState<VoiceMode>("disconnected");
   const [busy, setBusy] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -372,16 +352,34 @@ export function VoicePanel({ state, threadId, onClose, surfaceRef }: {
     const timer = setTimeout(() => void startRef.current(), 0);
     return () => clearTimeout(timer);
   }, []);
+  const root = useRef<HTMLElement | null>(null);
+  // The old dialog ended the call on Escape. Keep that, but only when focus is in the panel
+  // or nowhere (a button that just unmounted drops it to <body>), never from another menu.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const focus = document.activeElement;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const nowhere = focus === document.body || focus === null;
+      // Floating over another page, a stray Escape there must not hang up.
+      if ((nowhere && !compact) || root.current?.contains(focus)) void close();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [close, compact]);
   const connected = active && mode !== "connecting" && mode !== "disconnected";
+  const waiting = cards.some((card) => card.action.status === "proposed");
   return (
-    <Dialog open disablePointerDismissal onOpenChange={(open) => { if (!open) void close(); }}>
-    <DialogContent showCloseButton={false} finalFocus={false}
-      style={placement}
-      data-transcript={showTranscript || undefined}
-      className="voice-stage flex max-h-[calc(100dvh-2rem)] flex-col gap-0 bg-background p-0 text-foreground sm:w-[min(44rem,calc(100vw-4rem))] sm:max-w-none max-sm:top-0 max-sm:left-0 max-sm:h-dvh max-sm:max-h-dvh max-sm:max-w-none max-sm:translate-x-0 max-sm:rounded-none">
     <section
       aria-label="Orbit Voice"
-      className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-y-auto px-6 pt-7 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-10 sm:pt-9"
+      data-transcript={showTranscript || undefined}
+      data-compact={compact || undefined}
+      ref={root}
+      className={cn(
+        "voice-stage flex min-h-0 min-w-0 flex-col text-foreground",
+        compact
+          ? "w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-border/70 bg-card p-4 shadow-lg"
+          : "w-full flex-1 overflow-y-auto px-6 py-4 sm:px-10",
+      )}
     >
       {active && (
         <VoiceTransportBoundary
@@ -404,28 +402,33 @@ export function VoicePanel({ state, threadId, onClose, surfaceRef }: {
           )}
         </VoiceTransportBoundary>
       )}
-      <div className="flex flex-1 flex-col items-center text-center">
+      {/* One centred column: `m-auto` centres it in Chat's space, and unlike justify-center
+          it still scrolls from the top when the transcript makes it taller than the page. */}
+      <div className={cn("flex w-full flex-col", !compact && "m-auto max-h-full min-h-0 max-w-2xl")}>
+      <div className="flex min-h-0 flex-col items-center text-center">
         <div>
-          <DialogTitle className="text-lg">Orbit Voice</DialogTitle>
-          <DialogDescription className="mt-2">In this conversation · {PROVIDER_LABELS[provider]}</DialogDescription>
+          <h2 className={compact ? "text-sm font-medium" : "text-lg font-medium"}>Orbit Voice</h2>
+          {!compact && (
+            <p className="mt-2 text-sm text-muted-foreground">In this conversation · {PROVIDER_LABELS[provider]}</p>
+          )}
         </div>
-        <div className="flex min-h-0 w-full flex-1 items-center justify-center py-5 sm:py-7">
+        <div className={cn("flex min-h-0 w-full items-center justify-center", compact ? "py-2" : "py-4 sm:py-6")}>
           <VoiceOrbit controls={controls} mode={mode} muted={muted} />
         </div>
-          <p role="status" className="min-h-6 text-sm text-muted-foreground">
-            {busy
-              ? "Connecting…"
-              : mode === "speaking"
-                ? "Orbit is speaking · interrupt anytime"
-                : mode === "thinking"
-                  ? "Looking that up…"
-                  : connected
-                    ? muted
-                      ? "Microphone muted"
-                      : "Listening…"
-                    : "Ready when you are"}
-          </p>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
+        <p role="status" className="min-h-6 text-sm text-muted-foreground">
+          {busy
+            ? "Connecting…"
+            : mode === "speaking"
+              ? "Orbit is speaking · interrupt anytime"
+              : mode === "thinking"
+                ? "Looking that up…"
+                : connected
+                  ? muted
+                    ? "Microphone muted"
+                    : "Listening…"
+                  : "Ready when you are"}
+        </p>
+        <div className={cn("flex flex-wrap items-center justify-center gap-3", compact ? "mt-3" : "mt-5")}>
           {connected && (
             <Button
               size="sm"
@@ -445,20 +448,39 @@ export function VoicePanel({ state, threadId, onClose, surfaceRef }: {
               {muted ? "Unmute" : "Mute"}
             </Button>
           )}
-            <Button size="sm" className="h-11 rounded-full bg-destructive px-5 text-white hover:bg-destructive/90" disabled={closing} onClick={() => void close()}>
-              <PhoneOff className="size-4" aria-hidden />
-              {closing ? "Saving…" : "End conversation"}
-            </Button>
           {!busy && !active && (
-            <Button size="sm" onClick={() => void start()}>
+            <Button size="sm" className="h-11 rounded-full px-5" onClick={() => void start()}>
               <Mic className="size-4" aria-hidden />
               {error
                 ? `Retry ${PROVIDER_LABELS[state.provider]}`
                 : "Start conversation"}
             </Button>
           )}
-          <Button variant="secondary" className="h-11 rounded-full px-5" aria-expanded={showTranscript} aria-controls="voice-transcript" onClick={() => setShowTranscript(value => !value)}>
-            <Captions className="size-4" aria-hidden /> Transcript
+          {compact ? (
+            <Link
+              href="/chat"
+              aria-label="Open chat"
+              title="Open chat"
+              className={cn(buttonVariants({ variant: "secondary", size: "icon" }), "size-11 rounded-full")}
+            >
+              <MessageSquare className="size-4" aria-hidden />
+            </Link>
+          ) : (
+            <Button variant="secondary" className="h-11 rounded-full px-5" aria-expanded={showTranscript} aria-controls="voice-transcript" onClick={() => setShowTranscript(value => !value)}>
+              <Captions className="size-4" aria-hidden /> Transcript
+            </Button>
+          )}
+          {/* Ending a call is calm, not alarming: a quiet gray X, never a red phone. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="End conversation"
+            title="End conversation"
+            className="size-11 rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+            disabled={closing}
+            onClick={() => void close()}
+          >
+            {closing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <X className="size-5" aria-hidden />}
           </Button>
         </div>
       </div>
@@ -470,15 +492,15 @@ export function VoicePanel({ state, threadId, onClose, surfaceRef }: {
           setSaveError(pending.current.size > 0);
         }}>Retry saving</Button>
       </div>}
-      {!active && (
-        <p className="mt-2 text-xs text-muted-foreground">
+      {!active && !compact && (
+        <p className="mt-2 text-center text-xs text-muted-foreground">
           Your audio and relevant CRM context are processed by{" "}
           {PROVIDER_LABELS[state.provider]}. App sessions end after{" "}
           {VOICE_DURATION_SECONDS / 60} minutes.
         </p>
       )}
       {error && (
-        <div className="mt-3 space-y-2">
+        <div className="mt-3 space-y-2 text-center">
           <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
@@ -496,7 +518,12 @@ export function VoicePanel({ state, threadId, onClose, surfaceRef }: {
             )}
         </div>
       )}
-      {showTranscript && (
+      {compact && waiting && (
+        <p className="mt-3 text-center text-xs text-muted-foreground">
+          Orbit has a change for you to confirm in Chat.
+        </p>
+      )}
+      {showTranscript && !compact && (
         <div
           id="voice-transcript"
           ref={panel}
@@ -506,7 +533,7 @@ export function VoicePanel({ state, threadId, onClose, surfaceRef }: {
           }}
           role="log"
           aria-label="Live voice transcript"
-          className="mt-6 max-h-44 shrink-0 space-y-3 overflow-y-auto rounded-xl bg-muted p-4 text-sm"
+          className="mx-auto mt-6 max-h-44 w-full max-w-2xl shrink-0 space-y-3 overflow-y-auto rounded-xl bg-muted p-4 text-sm"
         >
           {lines.length === 0 && <p className="text-muted-foreground">Your conversation will appear here.</p>}
           {lines.map((line, i) => (
@@ -522,28 +549,31 @@ export function VoicePanel({ state, threadId, onClose, surfaceRef }: {
           ))}
         </div>
       )}
-      {cards.map((card) => (
-        <ProposedActionsCard
-          key={card.action.id}
-          {...card}
-          onSettled={(next) => {
-            setCards((old) =>
-              old.map((c) =>
-                c.action.id === next.id ? { ...c, action: next } : c,
-              ),
-            );
-            try {
-              controls.current?.sendContext(
-                `The user ${next.status === "done" ? "confirmed and saved" : next.status} the proposal: ${next.preview}`,
-              );
-            } catch {
-              /* The call may have ended while the card saved. */
-            }
-          }}
-        />
-      ))}
+      {!compact && (
+        <div className="mx-auto w-full max-w-2xl">
+          {cards.map((card) => (
+            <ProposedActionsCard
+              key={card.action.id}
+              {...card}
+              onSettled={(next) => {
+                setCards((old) =>
+                  old.map((c) =>
+                    c.action.id === next.id ? { ...c, action: next } : c,
+                  ),
+                );
+                try {
+                  controls.current?.sendContext(
+                    `The user ${next.status === "done" ? "confirmed and saved" : next.status} the proposal: ${next.preview}`,
+                  );
+                } catch {
+                  /* The call may have ended while the card saved. */
+                }
+              }}
+            />
+          ))}
+        </div>
+      )}
+      </div>
     </section>
-    </DialogContent>
-    </Dialog>
   );
 }

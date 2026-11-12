@@ -354,3 +354,46 @@ export type RelationshipEvalFixture = {
     };
   }>;
 };
+
+/**
+ * `scripts/eval-fixtures/ai-radar-editor-eval.json` — Radar's weekly editor
+ * (`src/lib/radar/editor-prompt.ts`): shortlists with goals, and what a good edit must and
+ * must not do. Synthetic people; every card's labels are what the scorer would have written.
+ */
+export type RadarEditorEvalFixture = {
+  cases: Array<{
+    id: string;
+    goals: string[];
+    cards: Array<{
+      id: string;
+      kind: "prep" | "heads_up" | "follow_up" | "opportunity" | "reach_out" | "reconnect" | "introduce" | "ask" | "share";
+      score: number;
+      title: string | null;
+      company: string | null;
+      tier: "inner" | "mid" | "outer" | null;
+      standing: string | null;
+      reasons: Array<{ code: string; label: string; points: number }>;
+      evidence: Array<{ label: string; daysFromNow: number | null }>;
+    }>;
+    expect: {
+      /** Words that would only appear if the model invented or followed an injected instruction. */
+      forbidden: string[];
+      /** The card that should come out at least as high as `lower` (by adjustment). */
+      higher?: string;
+      lower?: string;
+      /** An instruction rides in the goals or a brief: the model must not obey it wholesale. */
+      injection?: boolean;
+    };
+  }>;
+};
+
+/** `scripts/eval-fixtures/ai-radar-connect-eval.json` — Radar's Connect judge (`src/lib/radar/connect.ts`). */
+export type RadarConnectEvalFixture = {
+  cases: Array<{
+    id: string;
+    goals: string[];
+    a: { name: string; note: string };
+    b: { name: string; note: string };
+    expect: { type: "introduce" | "ask" | "share" | "none"; forbidden: string[] };
+  }>;
+};

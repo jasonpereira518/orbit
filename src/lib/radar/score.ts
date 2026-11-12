@@ -32,10 +32,13 @@ import {
   JOB_LEFT_CODE,
   JOB_MOVE_CODE,
   KIND_PRIORITY,
+  leadReason,
+  type RadarAiNote,
   type RadarCalendarInvite,
   type RadarDiscoveredPerson,
   type RadarEvidence,
   type RadarModel,
+  type RadarProof,
   type RadarReason,
   type RadarSignal,
   type RecommendationBucket,
@@ -65,20 +68,24 @@ export const RADAR_WEIGHTS = {
   opportunityOverdue: 30,
   actionItemOpen: 20,
   actionItemStale: 6,
-  briefNextStep: 10,
+  // follow_up: a loop in their messages the person owes a reply on.
+  openThread: 30,
   // opportunity
   jobPosting: 28,
   // heads_up: a job move. A new employer is news; a new title at the same one, less so.
   jobChange: { joined: 32, left: 24, title_change: 18 },
+  // Connect: a link between two of the person's notes.
+  connect: { introduce: 30, ask: 26, share: 22 },
   // heads_up: a LinkedIn post the person chose to save with the extension.
   savedPost: 16,
+  publicMention: 18,
   // An event read from the user's own mail, scaled by how well the ranker matched the person
   // (60% to 100% of the base). An interview coming up outranks a reply you owe; both outrank
   // a colleague's opening, which is a chance rather than a debt.
   email: { prep: 34, followUp: 30, jobOnThread: 26, jobNetwork: 20, processNetwork: 18, news: 16, event: 14 },
   // reach_out
   inboundUnanswered: 34,
-  recentIntro: 30,
+  metRecently: 24,
   postEvent: 26,
   linkedinThreadQuiet: 22,
   // reconnect
@@ -102,7 +109,7 @@ export const RADAR_WEIGHTS = {
 } as const;
 
 /** Half-lives for facts whose value fades. Everything else holds until it stops being true. */
-export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10, socialPost: 4, emailJob: 14, emailProcess: 21, emailNews: 5, emailEvent: 7 } as const;
+export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10, socialPost: 4, publicMention: 7, emailJob: 14, emailProcess: 21, emailNews: 5, emailEvent: 7 } as const;
 
 export const RADAR_BUCKETS = { today: 50, soon: 32, later: 18 } as const;
 
@@ -118,8 +125,11 @@ export const RADAR_CAPS = {
 /** Windows, in days. */
 export const RADAR_WINDOWS = {
   touchedRecently: 7,
-  recentIntroMin: 7,
-  recentIntroMax: 21,
+  /** After a real encounter: too soon before this, gone cold after that. */
+  metRecentlyMin: 7,
+  metRecentlyMax: 21,
+  /** An open thread older than this is history (the relationship engine's own RECENT_DAYS). */
+  openThreadMax: 45,
   dismissExclude: 14,
   dismissPenalty: 30,
   acceptExclude: 7,
@@ -136,6 +146,7 @@ export const RADAR_WINDOWS = {
   jobChangeMax: 30,
   /** A post older than this is not a reason to write. */
   postMax: 7,
+  mentionMax: 14,
   /** How long an event read from mail still makes someone worth a message. */
   emailJobMax: 21,
   emailProcessMax: 21,
@@ -219,6 +230,8 @@ export type RadarPick = {
   /** What the AI rerank moved the score by, and its one-line angle. Unset without it. */
   aiDelta?: number | null;
   aiAngle?: string | null;
+  /** The editor's why and opener, tied to this card's facts. Unset without the editor. */
+  aiNote?: RadarAiNote | null;
   bucket: RecommendationBucket;
   reasons: RadarReason[];
   evidence: RadarEvidence[];
@@ -259,16 +272,6 @@ export function bucketFor(score: number): RecommendationBucket | null {
   if (score >= RADAR_BUCKETS.soon) return "soon";
   if (score >= RADAR_BUCKETS.later) return "later";
   return null;
-}
-
-/** High enough value that silence is worth a nudge on its own. */
-function isHighValue(c: RadarContact): boolean {
-  return (
-    c.priorityLevel >= 2 ||
-    c.relationshipScore >= 4 ||
-    (c.statedCloseness ?? 0) >= 4 ||
-    (c.hasEvidence && (c.tier === "inner" || c.tier === "mid"))
-  );
 }
 
 type EmailEventSignal = Extract<RadarSignal, { kind: "email_event" }>;
@@ -350,8 +353,16 @@ function add(
     drafts.set(kind, draft);
   }
   draft.reasons.push(reason);
-  if (evidence) draft.evidence.push(evidence);
+  // Evidence names the reason it backs, so the proof check can find the lead's.
+  if (evidence) draft.evidence.push({ ...evidence, code: reason.code });
   if (anchorAt && (!draft.anchorAt || anchorAt < draft.anchorAt)) draft.anchorAt = anchorAt;
+}
+
+/** A signal's source as proof: a quote when the card quotes the row, else the record itself. */
+function proofFor(s: RadarSignal): RadarProof | undefined {
+  const src = s.source;
+  if (!src) return undefined;
+  return src.quote ? { type: "quote", table: src.table, id: src.id, quote: src.quote } : { type: "record", table: src.table, id: src.id };
 }
 
 /**
@@ -375,12 +386,18 @@ export function scoreContactKinds(
   const drafts = new Map<RecommendationKind, Draft>();
   const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
+  // A brief's next step is never a card on its own (it carries no proof): it rides along as an
+  // "also" line on whatever card this person gets.
+  let briefNextStep: string | null = null;
+
   for (const s of signals) {
+    const proof = proofFor(s);
+    const put = (kind: RecommendationKind, reason: RadarReason, evidence?: RadarEvidence, anchorAt?: Date | null) =>
+      add(drafts, kind, reason, evidence && { ...evidence, proof }, anchorAt);
     switch (s.kind) {
       case "upcoming_meeting": {
         const within48h = s.at.getTime() - now.getTime() <= RADAR_WINDOWS.within48h * DAY_MS;
-        add(
-          drafts,
+        put(
           "prep",
           {
             code: "upcoming_meeting",
@@ -393,8 +410,7 @@ export function scoreContactKinds(
         break;
       }
       case "event_upcoming":
-        add(
-          drafts,
+        put(
           "prep",
           { code: "event_upcoming", label: `You’ll both be at ${s.title} ${dayLabel(s.at, now, timeZone)}`, points: W.eventUpcoming },
           { label: `Event: ${s.title}`, at: iso(s.at) },
@@ -407,8 +423,7 @@ export function scoreContactKinds(
           contact.lastInteractionAt !== null &&
           contact.lastInteractionAt.getTime() > s.at.getTime() + RADAR_WINDOWS.postEventGrace * DAY_MS;
         if (followedUp) break;
-        add(
-          drafts,
+        put(
           "reach_out",
           { code: "post_event", label: `You were both at ${s.title} ${plural(days, "day")} ago`, points: W.postEvent },
           { label: `Event: ${s.title}`, at: iso(s.at) }
@@ -418,8 +433,7 @@ export function scoreContactKinds(
       case "action_item_open": {
         const age = daysSince(s.at, now) ?? 0;
         const more = s.count > 1 ? ` (and ${plural(s.count - 1, "more")})` : "";
-        add(
-          drafts,
+        put(
           "follow_up",
           {
             code: "action_item_open",
@@ -432,8 +446,7 @@ export function scoreContactKinds(
       }
       case "opportunity_due": {
         const overdue = s.at.getTime() < now.getTime();
-        add(
-          drafts,
+        put(
           "follow_up",
           {
             code: overdue ? "opportunity_overdue" : "opportunity_due",
@@ -445,51 +458,79 @@ export function scoreContactKinds(
         break;
       }
       case "brief_next_step":
-        add(drafts, "follow_up", { code: "brief_next_step", label: `Next step: ${s.text}`, points: W.briefNextStep });
+        briefNextStep = s.text;
         break;
       case "job_posting": {
         const age = daysSince(s.at, now) ?? 0;
-        add(
-          drafts,
+        put(
           "opportunity",
           { code: "job_posting", label: s.text, points: decayed(W.jobPosting, age, RADAR_HALF_LIFE_DAYS.jobPosting) },
           { label: "New roles at their company", at: iso(s.at) }
         );
         break;
       }
-      case "discovery": {
-        add(
-          drafts,
-          "opportunity",
-          {
-            code: "discovery",
-            label: `Discovered on ${s.platform}: ${s.title}${s.matchingProjectTitle ? ` · Matches ${s.matchingProjectTitle}` : ""}`.slice(0, 200),
-            points: 32,
-          },
-          {
-            label: s.platform === "research" ? "Research Paper" : s.platform === "github" ? "GitHub" : "Web Discovery",
-            at: iso(s.at),
-            url: s.url,
-          }
+      case "connect": {
+        const code = `connect_${s.connectType}`;
+        const verb = s.connectType === "introduce" ? `Introduce to ${s.other.name}` : s.connectType === "ask" ? `Ask, with ${s.other.name} in mind` : `Share what ${s.other.name} told you`;
+        put(s.connectType, { code, label: `${verb}${s.why ? `: ${s.why}` : ""}`.slice(0, 200), points: W.connect[s.connectType] }, { label: "From your note on them", at: iso(s.at) });
+        // The other side's note, proven against the other person.
+        const otherProof: RadarProof | undefined = s.other.source.quote
+          ? { type: "quote", table: s.other.source.table, id: s.other.source.id, quote: s.other.source.quote }
+          : undefined;
+        drafts.get(s.connectType)?.evidence.push({ label: `From your note on ${s.other.name}`, at: null, code, proof: otherProof, aboutContactId: s.other.contactId });
+        break;
+      }
+      case "open_thread": {
+        const age = daysSince(s.at, now) ?? 0;
+        if (age > RADAR_WINDOWS.openThreadMax) break;
+        put(
+          "follow_up",
+          { code: "open_thread", label: `You owe them: ${s.text}`.slice(0, 200), points: W.openThread },
+          { label: "From your messages", at: iso(s.at) }
+        );
+        break;
+      }
+      case "met_recently": {
+        const days = daysSince(s.at, now) ?? 0;
+        if (days < RADAR_WINDOWS.metRecentlyMin || days > RADAR_WINDOWS.metRecentlyMax) break;
+        // Already followed up: anything on record after the encounter (a grace day for the
+        // thank-you sent that evening) means the loop is closed.
+        const followedUp =
+          contact.lastInteractionAt !== null &&
+          contact.lastInteractionAt.getTime() > s.at.getTime() + RADAR_WINDOWS.postEventGrace * DAY_MS;
+        if (followedUp) break;
+        put(
+          "reach_out",
+          { code: "met_recently", label: `You met ${plural(days, "day")} ago and haven’t followed up`, points: W.metRecently },
+          { label: "When you met", at: iso(s.at) }
         );
         break;
       }
       case "social_post": {
         const age = daysSince(s.at, now) ?? 0;
         if (age > RADAR_WINDOWS.postMax) break;
-        add(
-          drafts,
+        put(
           "heads_up",
           { code: "social_post", label: `Posted on LinkedIn: “${s.excerpt.slice(0, 140)}${s.excerpt.length > 140 ? "…" : ""}”`, points: decayed(W.savedPost, age, RADAR_HALF_LIFE_DAYS.socialPost) },
           { label: "LinkedIn", at: iso(s.at), url: s.url }
         );
         break;
       }
+      case "public_mention": {
+        const age = daysSince(s.at, now) ?? 0;
+        if (age > RADAR_WINDOWS.mentionMax) break;
+        const what = s.mentionKind === "talk" ? "Gave a talk" : s.mentionKind === "news" ? "In the news" : "Posted";
+        put(
+          "heads_up",
+          { code: "public_mention", label: `${what}: “${s.text.slice(0, 140)}${s.text.length > 140 ? "…" : ""}”`, points: decayed(W.publicMention, age, RADAR_HALF_LIFE_DAYS.publicMention) },
+          { label: "From the web", at: iso(s.at), url: s.url }
+        );
+        break;
+      }
       case "job_change": {
         const age = daysSince(s.at, now) ?? 0;
         if (age > RADAR_WINDOWS.jobChangeMax) break;
-        add(
-          drafts,
+        put(
           "heads_up",
           { code: s.move === "left" ? JOB_LEFT_CODE : JOB_MOVE_CODE, label: s.text, points: decayed(W.jobChange[s.move], age, RADAR_HALF_LIFE_DAYS.jobChange) },
           { label: "Job move", at: iso(s.at) }
@@ -504,8 +545,7 @@ export function scoreContactKinds(
         const scaled = Math.round(card.base * (0.6 + 0.4 * Math.min(1, Math.max(0, s.fit))));
         const soon = card.kind === "prep" && s.at.getTime() - now.getTime() <= RADAR_WINDOWS.within48h * DAY_MS;
         const points = (card.halfLifeDays ? decayed(scaled, age, card.halfLifeDays) : scaled) + (soon ? W.upcomingMeetingWithin48h : 0);
-        add(
-          drafts,
+        put(
           card.kind,
           { code: card.code, label: `${s.text}${s.why ? ` — ${s.why}` : ""}`.slice(0, 200), points },
           // The label is fixed on purpose: evidence labels reach the AI prompts, and nothing
@@ -518,8 +558,7 @@ export function scoreContactKinds(
       case "inbound_unanswered": {
         const days = daysSince(s.at, now) ?? 0;
         if (days < RADAR_WINDOWS.inboundMin || days > RADAR_WINDOWS.inboundMax) break;
-        add(
-          drafts,
+        put(
           "reach_out",
           { code: "inbound_unanswered", label: `They messaged you ${plural(days, "day")} ago and haven’t heard back`, points: W.inboundUnanswered },
           { label: "LinkedIn message", at: iso(s.at) }
@@ -531,8 +570,7 @@ export function scoreContactKinds(
         // Only the lower bound bends to a stated rhythm; see `outreach-thresholds.ts`.
         if (days < idleThresholdFor(contact.cadenceDays, LINKEDIN_QUIET_MIN_DAYS) || days > LINKEDIN_QUIET_MAX_DAYS) break;
         if (s.count < 2) break;
-        add(
-          drafts,
+        put(
           "reach_out",
           { code: "linkedin_thread_quiet", label: `Your LinkedIn thread went quiet ${plural(days, "day")} ago`, points: W.linkedinThreadQuiet },
           { label: `${plural(s.count, "message")} on LinkedIn`, at: iso(s.at) }
@@ -545,10 +583,12 @@ export function scoreContactKinds(
   // No "recent intro" reason any more: first and last interaction both equal the import time for
   // any contact an importer created, so it read "you met N days ago" about people never met.
 
-  // Dormancy, against the rhythm the person stated or the default window. Unknown recency
-  // is not dormancy: a contact with no touch on record is skipped rather than nagged about.
+  // Dormancy, against the rhythm the person stated or the default window. Going quiet is only a
+  // reason for someone with a stated rhythm or an inner-circle tie with real evidence: everyone
+  // else's silence is normal. Unknown recency is not dormancy either.
   const idle = daysSince(contact.lastInteractionAt, now);
-  if (idle !== null && isHighValue(contact)) {
+  const silenceMatters = contact.cadenceDays !== null || (contact.tier === "inner" && contact.hasEvidence);
+  if (idle !== null && silenceMatters) {
     const window = idleThresholdFor(contact.cadenceDays, DORMANT_DAYS);
     if (idle >= window) {
       const overdue = Math.min(W.dormantOverdueCap, Math.round(W.dormantOverdueStep * (idle / window - 1)));
@@ -562,7 +602,7 @@ export function scoreContactKinds(
             : `${plural(idle, "day")} since you last spoke`,
           points: W.dormantBase + overdue,
         },
-        { label: "Last touch", at: iso(contact.lastInteractionAt) }
+        { label: "Last touch", at: iso(contact.lastInteractionAt), proof: { type: "record", table: "contacts", id: contact.id } }
       );
     }
   }
@@ -617,6 +657,7 @@ export function scoreContactKinds(
     if (dismissedDays !== null && dismissedDays < RADAR_WINDOWS.dismissPenalty) {
       reasons.push({ code: "dismissed_recently", label: "You dismissed this recently", points: W.dismissedPenalty });
     }
+    if (briefNextStep) reasons.push({ code: "also:brief_next_step", label: `Next step: ${briefNextStep}`, points: 0 });
     if (scheduled) reasons.push({ code: "already_scheduled", label: "A follow-up is already set", points: W.scheduledPenalty });
 
     const baseScore = clampScore(reasons.reduce((sum, r) => sum + r.points, 0));
@@ -685,9 +726,14 @@ export function pickWinner(contactId: string, kinds: readonly KindScore[], now: 
     baseScore: winner.baseScore,
     bucket,
     reasons,
-    evidence: winner.evidence.slice(0, 2),
+    // The lead reason's evidence first, so the two kept always include the one that proves it.
+    evidence: leadFirst(winner.evidence, leadReason(reasons)?.code).slice(0, 2),
     expiresAt: expiryFor(winner.kind, winner.anchorAt, now),
   };
+}
+
+function leadFirst(evidence: readonly RadarEvidence[], code: string | undefined): RadarEvidence[] {
+  return [...evidence].sort((a, b) => Number(b.code === code) - Number(a.code === code));
 }
 
 /**

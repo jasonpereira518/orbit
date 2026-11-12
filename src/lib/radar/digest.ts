@@ -311,6 +311,13 @@ async function eligibleBatch(
             WHERE r.user_id = s.user_id AND r.status = 'pending'
               AND r.bucket IN ('today', 'soon') AND r.expires_at > now()
          )
+         -- The week's plan exists: the email is about it, so it waits for the Monday build
+         -- (the pass reaches accounts 25 at a time; a plan from last week is not this week's).
+         AND EXISTS (
+           SELECT 1 FROM radar_runs rr
+            WHERE rr.user_id = s.user_id AND rr.status = 'ok' AND rr.stats ->> 'mode' = 'weekly'
+              AND rr.started_at > now() - interval '6 days'
+         )
        ORDER BY s.user_id
        LIMIT ${RADAR_DIGEST_BATCH}
     `)

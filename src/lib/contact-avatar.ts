@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { getVercelOidcTokenSync } from "@vercel/oidc";
 import { putAvatarBlob, putSharedAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
@@ -57,8 +58,33 @@ export class AvatarStorageError extends Error {
   }
 }
 
-/** True when Vercel Blob has credentials to talk to a store. */
+/**
+ * True when Vercel Blob has credentials to talk to a store: a read-write token, or a store
+ * connected through OIDC (`BLOB_STORE_ID`) plus an OIDC token to sign in with.
+ *
+ * On Vercel the OIDC token is NOT an env var at runtime: it arrives on each request as the
+ * `x-vercel-oidc-token` header. `getVercelOidcTokenSync` reads that header (then the env var,
+ * which is what `vercel env pull` gives local dev), the same lookup the Blob SDK makes. Reading
+ * only `process.env.VERCEL_OIDC_TOKEN` made production report "no storage" for an OIDC store,
+ * so every photo went inline and the shared photo pool never filled.
+ */
 export function hasBlobStorage(): boolean {
+  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) return true;
+  if (!process.env.BLOB_STORE_ID?.trim()) return false;
+  try {
+    return Boolean(getVercelOidcTokenSync().trim());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The pre-OIDC check, env vars only. Email attachments are written `access: "private"`, and
+ * Orbit's one store is public, where private writes fail; they stay off in production (as
+ * before) until a private store is connected. Use {@link hasBlobStorage} everywhere else.
+ * ponytail: drop this once a private store exists and attachments get their own credentials.
+ */
+export function hasBlobTokenInEnv(): boolean {
   return Boolean(
     process.env.BLOB_READ_WRITE_TOKEN?.trim() ||
       (process.env.VERCEL_OIDC_TOKEN?.trim() && process.env.BLOB_STORE_ID?.trim())
@@ -264,7 +290,9 @@ export type AvatarTarget = { contactId: string } | { sharedSlug: string };
 export async function fetchLinkedInPhoto(
   linkedinUrl: string,
   userId: string | null,
-  target: AvatarTarget
+  target: AvatarTarget,
+  /** `skipDirect`: the caller already asked LinkedIn directly (the photo queue); go straight to the quota'd tiers. */
+  opts?: { skipDirect?: boolean }
 ): Promise<{ url: string; source: AvatarQuotaSource } | null> {
   // A shared-pool photo is stored under `sharedSlug`, so it must be looked up by exactly that
   // slug too. Re-deriving it from the URL can name a different person (`/IN/a/in/b`).
@@ -274,7 +302,7 @@ export async function fetchLinkedInPhoto(
   let deferred: AvatarSourceRateLimitError | null = null;
 
   // Tier 1: Direct LinkedIn public profile scrape (100% free, zero third-party quota)
-  if (!isLinkedInDirectRateLimited()) {
+  if (!opts?.skipDirect && !isLinkedInDirectRateLimited()) {
     try {
       const directImageUrl = await fetchLinkedInOgImageDirect(slug);
       if (directImageUrl && ("contactId" in target || isLinkedInProfilePhoto(directImageUrl))) {

@@ -647,7 +647,10 @@ CREATE TABLE IF NOT EXISTS radar_runs (
   finished_at timestamptz,
   duration_ms integer,
   stats jsonb NOT NULL DEFAULT '{}',
-  error text
+  error text,
+  stage text,
+  progress integer NOT NULL DEFAULT 0,
+  detail text
 );
 CREATE INDEX IF NOT EXISTS radar_runs_user_started_idx ON radar_runs(user_id, started_at DESC);
 CREATE TABLE IF NOT EXISTS recommendation_feedback (
@@ -3191,11 +3194,15 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 228 = Radar's "new suggestions" pulse: user_settings.radar_opened_at — when the person last
 // opened /radar; pending cards created after it make the nav icon pulse. Scanned every remote
 // ref and local worktree on Nov 11 2026: contact sharing holds 226 and 227.
-// 229 = custom constellations (new tables custom_constellations + custom_constellation_members:
+// 231 = Radar run progress: radar_runs.stage / progress / detail, written as a run moves through
+// its stages so "Refresh now" can show how much is done. Scanned every remote ref on Nov 12 2026:
+// custom constellations holds 229 and the Orbit Card / planet PR (#635) holds 230.
+// 232 = custom constellations (new tables custom_constellations + custom_constellation_members:
 // a person's own prompt-built groupings of their contacts). New tables only, so DDL + this bump
-// and no alters entry. Built as 220; renumbered to 223, then to 229 on Nov 11 2026 when main
-// reached 228 (contact sharing holds 226, also-here 227; 228 was the highest claimed).
-export const SCHEMA_VERSION = 229;
+// and no alters entry. Built as 220; renumbered 223, then 229 (reserved, but main reached 231
+// first, and the gate only runs DDL on a version increase), then 232 on Nov 12 2026. Scanned
+// every remote ref and worktree: 231 was the highest claimed.
+export const SCHEMA_VERSION = 232;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -5675,6 +5682,10 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_enabled_at timestamptz`,
   // Schema v228: when the person last opened /radar (the nav pulse's "new since").
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_opened_at timestamptz`,
+  // Schema v231: how far a Radar run is (Refresh now's progress bar).
+  `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS stage text`,
+  `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS progress integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS detail text`,
 ];
 
 /**

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -47,7 +48,8 @@ import type {
   GraphChartProps,
   GraphPayload,
 } from "@/components/graph/graph-chart-types";
-import { setCameraMoving } from "@/components/graph/camera-motion";
+import { setCameraMoving, setSkyDrift } from "@/components/graph/camera-motion";
+import { WindowStarCanvas } from "@/components/graph/window-star-canvas";
 import { useGraphLayout } from "@/components/graph/use-graph-layout";
 import {
   buildHybridGraphLayout,
@@ -74,7 +76,7 @@ import {
   selectionForContact,
   selectionForUser,
 } from "@/lib/graph/sky-selection";
-import { starSubtitle, starVisual, zoomRelief } from "@/lib/graph/star-style";
+import { STAR_HIT_PAD, starSize, starSubtitle, starVisual, zoomRelief } from "@/lib/graph/star-style";
 import { markGraphViewportReady } from "@/lib/graph/intro-signal";
 import { markOpenStage } from "@/lib/graph/open-marks";
 import { markFirstPaintThenInteractive } from "@/lib/graph/open-marks-paint";
@@ -280,6 +282,13 @@ const SUMMARY_MOUNT_HITS_MAX = 60;
  */
 const STAR_MOUNT_BATCH = 32;
 const STAR_MOUNT_BATCH_MOVING = 16;
+/**
+ * Below CANVAS_STARS_BELOW_ZOOM the stars arriving are named ones, and a name is the costly part
+ * of a star (its text's layout). A pan re-places the window every few frames and each placement
+ * names a few dozen stars; 16 of those in one frame was most of what a pan still dropped there.
+ * The canvas shows them, unnamed, until they arrive.
+ */
+const STAR_MOUNT_BATCH_MOVING_NAMED = 4;
 
 /**
  * Large skies hand React Flow only the stars in and around the view: the viewport grown by this
@@ -294,6 +303,18 @@ const STAR_WINDOW_SLACK = 0.25;
 const STAR_WINDOW_MAX = 450;
 /** Stars removed per frame when the window lets go of them, e.g. on the way back to the whole sky. */
 const STAR_UNMOUNT_BATCH = 48;
+/**
+ * Below this zoom, a window star is a DOM node only when it is named or someone asked for it
+ * (hovered, selected, a search hit, a peek); the rest are drawn on `WindowStarCanvas`.
+ *
+ * Here the window holds more stars than STAR_WINDOW_MAX and a drag-pan sends dozens of them
+ * across the screen edge a second, each a React commit, a mount, a measure and a relayer as
+ * React Flow culls it in or out: at zoom 0.3 that skipped frames at 120Hz however it was tuned
+ * (see docs/superpowers/plans/2026-11-11-constellation-pan-frames.md). From here in a pan
+ * already holds 120fps with every window star in the DOM, and a star's glow and relief read
+ * best as DOM, so the close-up keeps them.
+ */
+const CANVAS_STARS_BELOW_ZOOM = 0.4;
 
 
 /**
@@ -1072,6 +1093,7 @@ function GraphCanvasInner({
     () => () => {
       if (stopTimerRef.current !== undefined) window.clearTimeout(stopTimerRef.current);
       setCameraMoving(false);
+      setSkyDrift(0, 0);
     },
     []
   );
@@ -1195,54 +1217,6 @@ function GraphCanvasInner({
     [wanted]
   );
 
-  const [mounted, setMounted] = useState<ReadonlySet<string>>(NO_IDS);
-  let adding = false;
-  if (wanted !== null) {
-    const limit = Math.min(wanted.length, STAR_WINDOW_MAX);
-    for (let i = 0; i < limit; i++) {
-      if (!mounted.has(wanted[i])) {
-        adding = true;
-        break;
-      }
-    }
-  }
-  let removing = false;
-  if (mounted.size > 0) {
-    for (const id of mounted) {
-      if (!target.has(id)) {
-        removing = true;
-        break;
-      }
-    }
-  }
-  useEffect(() => {
-    if (!adding && !removing) return;
-    const raf = requestAnimationFrame(() => {
-      setMounted((prev) => {
-        const next = new Set<string>();
-        let removed = 0;
-        for (const id of prev) {
-          if (target.has(id) || removed >= STAR_UNMOUNT_BATCH) next.add(id);
-          else removed++;
-        }
-        let added = 0;
-        const batch = movingRef.current
-          ? STAR_MOUNT_BATCH_MOVING
-          : STAR_MOUNT_BATCH;
-        for (const id of wanted ?? []) {
-          if (added >= batch || !target.has(id)) break;
-          if (next.has(id)) continue;
-          next.add(id);
-          added++;
-        }
-        return next;
-      });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [wanted, target, mounted, adding, removing]);
-  /** Stars in the window that are not real stars (yet, or at all): the dots must cover them. */
-  const windowHasDots =
-    wanted !== null && (wanted.length > mounted.size || adding);
 
   const focusCompany = useMemo(() => {
     if (focusCluster) {
@@ -1461,6 +1435,100 @@ function GraphCanvasInner({
   }, [contactById, labelZoom, searchDimActive, searchHitIds, summary, wanted, target]);
 
   /**
+   * What the window mounts as DOM stars: its nearest STAR_WINDOW_MAX, or below
+   * CANVAS_STARS_BELOW_ZOOM only those of them that are named (and comets). The rest are on
+   * `WindowStarCanvas`, as is any star until its batch arrives.
+   */
+  // By the window's zoom, not the camera's: the window holds still through a zoom (see
+  // `movingRef`), so a wheel or pinch across the threshold does not mount and drop hundreds of
+  // stars mid-gesture; the switch lands with the window, when the camera stops.
+  const canvasZoom =
+    activeWindow !== null && activeWindow.zoom < CANVAS_STARS_BELOW_ZOOM;
+  /**
+   * Which of them are named, for mounting: chosen at the window's zoom too. The names drawn follow
+   * the camera (`labelled`), but choosing the DOM set by them re-chose it at every zoom step, and a
+   * few mouse-wheel notches mounted and dropped stars on every one (2.8 → 7.4 React commits a notch
+   * at 10,000 contacts). Mid-zoom a mounted star may briefly show no name, or a name wait for its
+   * star, until the camera stops and the window is placed at the new zoom.
+   */
+  const windowLabelZoom = activeWindow ? zoomStep(activeWindow.zoom) : labelZoom;
+  const mountTarget = useMemo(() => {
+    if (!canvasZoom) return target;
+    let named = labelled;
+    if (windowLabelZoom !== labelZoom) {
+      const list: LayoutNodes[number][] = [];
+      for (const id of target) {
+        const n = contactById.get(id);
+        if (n) list.push(n);
+      }
+      named = labelWinners(list, windowLabelZoom, (id) => searchDimActive && searchHitIds.has(id));
+    }
+    const out = new Set<string>();
+    for (const id of target) {
+      // Comets too: a few a cluster, and their head and trail are CSS the canvas does not draw.
+      if (named.has(id) || (contactById.get(id)?.data as GraphNodeData | undefined)?.comet) {
+        out.add(id);
+      }
+    }
+    return out;
+  }, [
+    canvasZoom,
+    target,
+    labelled,
+    labelZoom,
+    windowLabelZoom,
+    contactById,
+    searchDimActive,
+    searchHitIds,
+  ]);
+
+  const [mounted, setMounted] = useState<ReadonlySet<string>>(NO_IDS);
+  let adding = false;
+  for (const id of mountTarget) {
+    if (!mounted.has(id)) {
+      adding = true;
+      break;
+    }
+  }
+  let removing = false;
+  if (mounted.size > 0) {
+    for (const id of mounted) {
+      if (!mountTarget.has(id)) {
+        removing = true;
+        break;
+      }
+    }
+  }
+  useEffect(() => {
+    if (!adding && !removing) return;
+    const raf = requestAnimationFrame(() => {
+      setMounted((prev) => {
+        const next = new Set<string>();
+        let removed = 0;
+        for (const id of prev) {
+          if (mountTarget.has(id) || removed >= STAR_UNMOUNT_BATCH) next.add(id);
+          else removed++;
+        }
+        let added = 0;
+        const batch = !movingRef.current
+          ? STAR_MOUNT_BATCH
+          : canvasZoom
+            ? STAR_MOUNT_BATCH_MOVING_NAMED
+            : STAR_MOUNT_BATCH_MOVING;
+        // Nearest the middle first.
+        for (const id of wanted ?? []) {
+          if (added >= batch) break;
+          if (!mountTarget.has(id) || next.has(id)) continue;
+          next.add(id);
+          added++;
+        }
+        return next;
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [wanted, mountTarget, mounted, adding, removing, canvasZoom]);
+
+  /**
    * Every contact, as the dots the summary view draws in place of stars. Built only while the
    * summary is on, and rebuilt only when the sky or the emphasis changes — never per frame.
    */
@@ -1471,16 +1539,32 @@ function GraphCanvasInner({
    */
   const windowOutrun =
     activeWindow !== null && labelZoom < activeWindow.zoom * STAR_WINDOW_OUTRUN;
-  const rampActive = windowHasDots || windowOutrun;
+  // Window stars not (yet) in the DOM are on `WindowStarCanvas`; the dots are only for a view
+  // that has outrun the window it drew.
+  const rampActive = windowOutrun;
   // Search, but not hover or selection: the dots dim for a search, and a pointer moving over
   // the sky must not redraw every dot on the canvas.
   const dustFocus: SkyFocusState = useMemo(
     () => ({ hoveredId: null, selectedContactId: null, searchHitIds, searchDimActive }),
     [searchHitIds, searchDimActive]
   );
+  const dustShown = summary || rampActive;
+  /**
+   * The search the dots are built for. Hidden, they keep the last one: a search typed in the
+   * close-up must not rebuild every contact's dot per keystroke for a canvas nobody sees. The
+   * render that shows them again catches up before it commits, so they never show stale.
+   */
+  const [dustBuiltFor, setDustBuiltFor] = useState(dustFocus);
+  if (dustShown && dustBuiltFor !== dustFocus) setDustBuiltFor(dustFocus);
+  /**
+   * Built once per sky (and search) for every large sky, not only while the dots show. They
+   * show in the summary and while the star window fills, and a pan re-places the window every
+   * ~6% of the view: rebuilding them each time walked every contact, and the node's remount drew
+   * them all on a main-thread canvas before the worker's image took over — a stall per window
+   * move. Now the node stays mounted and `starDustNode` only hides it.
+   */
   const starDust = useMemo((): StarDustData | null => {
-    // Kept while the window fills: stars land on top of their own dots.
-    if (!summary && !rampActive) return null;
+    if (!summaryAllowed) return null;
     const points: StarDustPoint[] = [];
     let minX = Infinity;
     let minY = Infinity;
@@ -1490,7 +1574,7 @@ function GraphCanvasInner({
       if (n.type !== "contact") continue;
       const d = n.data as GraphNodeData;
       const { disc, fill, alphaScale } = starVisual(d, false);
-      const { opacity, spotlight } = starEmphasis(n.id, dustFocus);
+      const { opacity, spotlight } = starEmphasis(n.id, dustBuiltFor);
       points.push({
         id: n.id,
         x: n.position.x,
@@ -1516,7 +1600,7 @@ function GraphCanvasInner({
       width: maxX - minX + pad * 2,
       height: maxY - minY + pad * 2,
     };
-  }, [summary, rampActive, skyLayoutNodes, dustFocus]);
+  }, [summaryAllowed, skyLayoutNodes, dustBuiltFor]);
 
   /**
    * The nodes React Flow draws: each structural node with this moment's emphasis applied.
@@ -1545,15 +1629,18 @@ function GraphCanvasInner({
       width: starDust.width,
       height: starDust.height,
       measured: { width: starDust.width, height: starDust.height },
-      data: starDust,
+      data: { ...starDust, shown: dustShown },
       draggable: false,
       selectable: false,
       focusable: false,
       // Above the rings (-2), beneath the clusters' haze (0) and every real star.
       zIndex: -1,
-      style: { pointerEvents: "none" },
+      // Hidden rather than removed (see `starDust`): the canvas keeps its drawing.
+      style: dustShown
+        ? { pointerEvents: "none" }
+        : { pointerEvents: "none", visibility: "hidden" },
     };
-  }, [starDust]);
+  }, [starDust, dustShown]);
 
   /**
    * Every cluster's wash, as one canvas payload: where each cloud is, how big, and how dimmed.
@@ -1852,6 +1939,49 @@ function GraphCanvasInner({
     for (const n of nodes) if (n.type === "contact") ids.add(n.id);
     return ids;
   }, [nodes]);
+
+  /**
+   * The canvas star under a point on screen (see `WindowStarCanvas`), or null. A DOM star
+   * catches its own pointer; one on the canvas is found here, within the same reach as the
+   * DOM star's hit disc (`STAR_HIT_PAD`), so hovering it mounts it under the pointer and
+   * leaving that DOM star leaves this reach too, rather than flapping between the two.
+   *
+   * Reads the DOM set and emphasis through a ref: they change on every hover, keystroke and
+   * mount batch, and a new pane handler each time is a React Flow store write that re-runs
+   * every drawn node's selectors.
+   */
+  const canvasHitRef = useRef({ drawnIds, focusState });
+  useLayoutEffect(() => {
+    canvasHitRef.current = { drawnIds, focusState };
+  }, [drawnIds, focusState]);
+  const canvasStarAt = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!windowing) return null;
+      const { drawnIds, focusState } = canvasHitRef.current;
+      const { x, y } = screenToFlowPosition({ x: clientX, y: clientY });
+      const { cellSize, cells } = contactSpatialGrid;
+      // The widest hit disc: a lone search hit's 1.3× disc of the top score, plus the pad.
+      const reach = (starSize(5) * 1.3 + STAR_HIT_PAD) / 2;
+      let best: string | null = null;
+      let bestD = Infinity;
+      for (let gx = Math.floor((x - reach) / cellSize); gx <= Math.floor((x + reach) / cellSize); gx++) {
+        for (let gy = Math.floor((y - reach) / cellSize); gy <= Math.floor((y + reach) / cellSize); gy++) {
+          for (const n of cells.get(`${gx},${gy}`) ?? []) {
+            if (drawnIds.has(n.id)) continue;
+            const d2 = (n.position.x - x) ** 2 + (n.position.y - y) ** 2;
+            if (d2 >= bestD) continue;
+            const spotlight = focusState.searchDimActive && focusState.searchHitIds.has(n.id);
+            const r = (starVisual(n.data as GraphNodeData, false, spotlight).disc + STAR_HIT_PAD) / 2;
+            if (d2 > r * r) continue;
+            best = n.id;
+            bestD = d2;
+          }
+        }
+      }
+      return best;
+    },
+    [windowing, screenToFlowPosition, contactSpatialGrid]
+  );
 
   const eligibleEdges = useMemo(() => {
     return layout.edges.filter((e) => {
@@ -2160,12 +2290,32 @@ function GraphCanvasInner({
    * Which cluster is under the pointer changes as it travels, and the washes are wide enough
    * that a pointer can cross a whole cluster without ever entering or leaving a node.
    */
+  const canvasHoverRef = useRef<string | null>(null);
   const onClusterPointerMove = useCallback(
     (event: { clientX: number; clientY: number }) => {
+      // A star drawn on the canvas, under the pointer: hover it, which makes it a DOM star.
+      const star = movingRef.current ? null : canvasStarAt(event.clientX, event.clientY);
+      if (star) {
+        setHoveredCluster(null);
+        if (canvasHoverRef.current !== star) {
+          canvasHoverRef.current = star;
+          onHover(star);
+        }
+        return;
+      }
+      if (canvasHoverRef.current) {
+        canvasHoverRef.current = null;
+        onHover(null);
+      }
       hoverClusterAt(event.clientX, event.clientY);
     },
-    [hoverClusterAt]
+    [hoverClusterAt, canvasStarAt, onHover]
   );
+  const onPaneMouseLeave = useCallback(() => {
+    if (!canvasHoverRef.current) return;
+    canvasHoverRef.current = null;
+    onHover(null);
+  }, [onHover]);
 
   const onNodeMouseMove: NodeMouseHandler = useCallback(
     (event, node) => {
@@ -2178,6 +2328,7 @@ function GraphCanvasInner({
 
   const onNodeMouseLeave = useCallback(() => {
     setHoveredCluster(null);
+    canvasHoverRef.current = null;
     onHover(null);
   }, [onHover]);
 
@@ -2195,6 +2346,14 @@ function GraphCanvasInner({
    */
   const onPaneClick = useCallback(
     (event: ReactMouseEvent) => {
+      // A star on the canvas (usually already a DOM star by the time it is clicked, via hover;
+      // not on touch, which has no hover).
+      const star = canvasStarAt(event.clientX, event.clientY);
+      const starNode = star ? contactById.get(star) : undefined;
+      if (star && starNode) {
+        onSelect(selectionForContact(star, starNode.data as GraphNodeData));
+        return;
+      }
       const hit = clusterAt(event.clientX, event.clientY);
       if (hit) {
         // Compact ignored a tap on the haze before, and still does — including the deselect,
@@ -2204,7 +2363,7 @@ function GraphCanvasInner({
       }
       onSelect(null);
     },
-    [clusterAt, compact, onFocusCluster, onSelect]
+    [clusterAt, canvasStarAt, contactById, compact, onFocusCluster, onSelect]
   );
 
   const onNodesChange: OnNodesChange = useCallback(
@@ -2230,6 +2389,14 @@ function GraphCanvasInner({
   // ReactFlow calls these with (event, viewport); both are ignored, as before.
   const onMoveStart = useCallback(() => setMoving(true), [setMoving]);
   const onMoveEnd = useCallback(() => setMoving(false), [setMoving]);
+  // The starfield trails the camera (camera-motion.ts); written outside React, like the flag above.
+  const onMove = useCallback(
+    (_: unknown, vp: { x: number; y: number }) => {
+      const { width, height } = storeApi.getState();
+      setSkyDrift(vp.x - width / 2, vp.y - height / 2);
+    },
+    [storeApi]
+  );
 
   const isEmpty = filteredContacts.length === 0;
   const flowNodes = useHiddenBeforeRemoved(useSameArrayIfUnchanged(nodes));
@@ -2272,6 +2439,7 @@ function GraphCanvasInner({
         onNodeMouseEnter={onNodeMouseEnter}
         onNodeMouseMove={onNodeMouseMove}
         onPaneMouseMove={onClusterPointerMove}
+        onPaneMouseLeave={onPaneMouseLeave}
         onNodeMouseLeave={onNodeMouseLeave}
         onPaneClick={onPaneClick}
         proOptions={PRO_OPTIONS}
@@ -2283,6 +2451,7 @@ function GraphCanvasInner({
         ref={stageRef}
         onMoveStart={onMoveStart}
         onMoveEnd={onMoveEnd}
+        onMove={onMove}
         className={cn(
           "constellation-stage select-none [-webkit-tap-highlight-color:transparent] [-webkit-touch-callout:none]",
           compact ? "touch-pan-y" : "touch-none overscroll-none"
@@ -2295,6 +2464,17 @@ function GraphCanvasInner({
           layoutNodes={layout.nodes}
           onSettled={() => setViewportReady(true)}
         />
+        {windowing && (
+          <WindowStarCanvas
+            window={activeWindow}
+            ids={wanted}
+            contactById={contactById}
+            skip={drawnIds}
+            focus={focusState}
+            edges={eligibleEdges}
+            focusCluster={focusCluster}
+          />
+        )}
         {/*
           No <Background>. Its dot grid (3% white, radius zoom/2 on a 48·zoom grid) was invisible at
           every zoom, but it re-rendered on every camera frame and repainted a full-pane SVG pattern

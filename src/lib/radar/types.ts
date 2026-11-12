@@ -151,6 +151,13 @@ export const JOB_MOVE_CODE = "job_change";
 /** A departure with no new role yet: a check-in, never a congratulation. */
 export const JOB_LEFT_CODE = "job_change_left";
 
+/** The intent a Connect card's draft is written to. Fixed: never the other person's name or note. */
+const CONNECT_DRAFT_INTENTS: Partial<Record<RecommendationKind, string>> = {
+  introduce: "Offer an introduction to someone you know who could help with what they are working on. Name no one, and share nothing anyone else told you.",
+  ask: "Ask whether they could help with something you are working on, briefly and with an easy way to say no.",
+  share: "Pass on something you came across that is relevant to what they are working on.",
+};
+
 /** The intent a draft is written to, per email reason: fixed words, never third-party text. */
 export const EMAIL_DRAFT_INTENTS: Readonly<Record<string, string>> = {
   email_prep: "an interview or call coming up",
@@ -168,6 +175,10 @@ export const EMAIL_DRAFT_INTENTS: Readonly<Record<string, string>> = {
  * drafts and the card's on-demand draft sheet call this, so one rule covers both.
  */
 export function draftIntent(target: { kind: RecommendationKind; reasons: readonly RadarReason[] }): string {
+  // A Connect card names someone else and quotes notes about them: its draft gets fixed words,
+  // so a message to one person never carries what the person wrote about another.
+  const connect = CONNECT_DRAFT_INTENTS[target.kind];
+  if (connect) return connect;
   const lead = leadReason(target.reasons);
   const fixed = lead ? EMAIL_DRAFT_INTENTS[lead.code] : undefined;
   if (fixed) return `${KIND_LABELS[target.kind]}: ${fixed}`;
@@ -175,6 +186,44 @@ export function draftIntent(target: { kind: RecommendationKind; reasons: readonl
   if (lead?.code === JOB_LEFT_CODE) return `Check in after their move: ${lead.label}. Don't congratulate them.`;
   return lead ? `${KIND_LABELS[target.kind]}: ${lead.label}` : KIND_LABELS[target.kind];
 }
+
+/**
+ * The tables a proof may point at: rows Radar's run read. A quote proof must appear in the
+ * text the run read from that row; a record proof says the row exists for this account.
+ */
+export type RadarProofTable =
+  | "contacts"
+  | "interactions"
+  | "events"
+  | "action_items"
+  | "contact_opportunities"
+  | "relationship_digests"
+  | "contact_career_moves"
+  | "email_events"
+  | "contact_signals"
+  | "ai_suggestions"
+  | "memory_chunks";
+
+/**
+ * Why a piece of evidence can be trusted (`src/lib/radar/verify.ts`). Built by code from rows
+ * the run read, never by a model: a model may only cite a source, and the check confirms it.
+ */
+export type RadarProof =
+  | { type: "record"; table: RadarProofTable; id: string }
+  | { type: "quote"; table: RadarProofTable; id: string; quote: string }
+  | { type: "url"; url: string };
+
+/** Where a signal came from: the row, and the text the run read from it, if any. */
+export type RadarSignalSource = {
+  table: RadarProofTable;
+  id: string;
+  /** The row's text as read. A quote proof is checked against it. */
+  text?: string | null;
+  /** The part of `text` the card quotes. Absent: the proof is the record itself. */
+  quote?: string | null;
+  /** Links this row handed over (a saved post's URL). */
+  urls?: readonly string[];
+};
 
 /**
  * The most specific fact behind a card, shown under the reasons ("Meeting · Thu 3 Oct").
@@ -185,6 +234,14 @@ export type RadarEvidence = {
   label: string;
   at: string | null;
   url?: string | null;
+  /** The reason code this evidence backs. The lead reason must have one whose proof holds. */
+  code?: string;
+  proof?: RadarProof;
+  /**
+   * The person this evidence is about, when it is not the card's own (the other side of a
+   * Connect card). Its proof is checked against that person's rows, never the card's.
+   */
+  aboutContactId?: string;
   /**
    * Set on evidence that comes from the user's mail: which `email_events` row, and whether
    * this person is on the email. Accepting the card reads it to create the email's own task.
@@ -268,6 +325,8 @@ export type RadarAutopilot = Partial<Record<RecommendationKind, boolean>>;
 export const CONTACT_SIGNAL_KINDS = [
   "social_post",
   "linkedin_activity",
+  /** A recent public post, talk or news item the people check found, on a link the search cited. */
+  "web_mention",
 ] as const;
 export type ContactSignalKind = (typeof CONTACT_SIGNAL_KINDS)[number];
 
@@ -283,7 +342,12 @@ export type ContactSignalPayload = {
   url?: string | null;
   /** Human label for where it came from ("Hacker News", "SEC EDGAR", "Extension"). */
   sourceLabel?: string;
+  /** web_mention: what kind of mention it is. */
+  mentionKind?: MentionKind;
 };
+
+/** What the people check reports about someone (`src/lib/radar/pulse.ts`). */
+export type MentionKind = "post" | "talk" | "news";
 
 /** The retired global news tables' source kinds (`external_sources.kind`); the tables drop in Radar PR 12. */
 export type ExternalSourceKind = "rss" | "atom" | "hn" | "edgar";
@@ -304,11 +368,14 @@ export type RadarRunTrigger = "schedule" | "page" | "manual" | "first_visit";
 export type RadarRunStatus = "running" | "ok" | "partial" | "failed";
 
 /**
- * A dated fact about one contact that the scorer turns into points. Internal facts only in
- * phase one: every one of these is read from a table Orbit already keeps. Dormancy and a
- * fresh intro are not signals; the scorer derives them from the contact's own dates.
+ * A dated fact about one contact that the scorer turns into points, read from a table Orbit
+ * already keeps. Dormancy is not a signal; the scorer derives it from the contact's own dates.
+ * `source` is the row it came from and the text read from it: the scorer turns it into the
+ * evidence's proof, and `verify.ts` checks that proof before a card is written.
  */
-export type RadarSignal =
+export type RadarSignal = RadarSignalFact & { source?: RadarSignalSource };
+
+type RadarSignalFact =
   | { kind: "upcoming_meeting"; contactId: string; at: Date; title: string | null }
   | { kind: "event_upcoming"; contactId: string; at: Date; title: string }
   | { kind: "post_event"; contactId: string; at: Date; title: string }
@@ -318,6 +385,23 @@ export type RadarSignal =
   | { kind: "inbound_unanswered"; contactId: string; at: Date }
   | { kind: "linkedin_thread_quiet"; contactId: string; at: Date; count: number }
   | { kind: "job_posting"; contactId: string; at: Date; text: string }
+  /** An unresolved loop in their messages that the person owes (`relationship_digests.open_threads`). */
+  | { kind: "open_thread"; contactId: string; at: Date; text: string }
+  /** The person's latest real encounter with them (a meeting, call, coffee, event). */
+  | { kind: "met_recently"; contactId: string; at: Date }
+  /**
+   * A link between two of the person's notes (`src/lib/radar/connect.ts`): one about this contact,
+   * one about `other`. `quote` and `otherQuote` are each from its own note; `other.source` is
+   * the other note, checked against the other person.
+   */
+  | {
+      kind: "connect";
+      contactId: string;
+      at: Date;
+      connectType: "introduce" | "ask" | "share";
+      why: string;
+      other: { contactId: string; name: string; source: RadarSignalSource };
+    }
   /** A LinkedIn post of theirs the person saved with the extension. */
   | {
       kind: "social_post";
@@ -327,6 +411,8 @@ export type RadarSignal =
       network: "linkedin";
       url: string | null;
     }
+  /** A public post, talk or news item the people check found (`web_mention`); `url` is a cited link. */
+  | { kind: "public_mention"; contactId: string; at: Date; text: string; url: string; mentionKind: MentionKind }
   /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */
   | { kind: "job_change"; contactId: string; at: Date; move: "joined" | "left" | "title_change"; text: string }
   /**
@@ -352,17 +438,6 @@ export type RadarSignal =
       hasAsk: boolean;
       /** 0..1: how relevant the ranker found this person. */
       fit: number;
-    }
-  /** A prospective connection discovered outside the network (papers, GitHub, web, Twitter). */
-  | {
-      kind: "discovery";
-      contactId: string;
-      at: Date;
-      platform: "research" | "github" | "twitter" | "linkedin" | "web";
-      title: string;
-      summary: string;
-      url?: string | null;
-      matchingProjectTitle?: string;
     };
 
 export type RadarSignalKind = RadarSignal["kind"];
