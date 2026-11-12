@@ -10,7 +10,7 @@ import {
 } from "@/db/schema";
 import { DRAFT_MAX_CHARS, sanitizeDraft } from "@/lib/chat-draft";
 import { SEND_SUBJECT_MAX } from "@/lib/chat-send";
-import { hasBlobStorage } from "@/lib/contact-avatar";
+import { hasBlobTokenInEnv } from "@/lib/contact-avatar";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { contactSearchCondition } from "@/lib/contact-search-rank";
 import { verifyAttachmentRefs, type AttachmentFailure, type AttachmentInput } from "@/lib/email/attachments";
@@ -61,7 +61,7 @@ export type ComposeContext = {
 export async function getComposeContext(userId: string, contactId: string | null): Promise<ComposeContext | null> {
   const db = await getDb();
   const [capability, { signature }] = await Promise.all([getSendCapability(userId), loadEmailSettings(userId)]);
-  const attachmentsAvailable = hasBlobStorage();
+  const attachmentsAvailable = hasBlobTokenInEnv();
   if (!contactId) return { capability, signature, attachmentsAvailable, replyTargets: [], contact: null };
   const [row] = await db
     .select({

@@ -59,7 +59,11 @@ export function LinkedInPhotoQueuePanel({ initial }: { initial: LinkedInPhotoQue
   const act = (fn: () => Promise<unknown>, ok: string, fail: string) =>
     startTransition(async () => {
       try {
-        await fn();
+        const res = await fn();
+        if (res && typeof res === "object" && "ok" in res && res.ok === false && "error" in res) {
+          toast.error(String(res.error));
+          return;
+        }
         toast.success(ok);
       } catch (err) {
         toast.error(friendlyError(err, fail));

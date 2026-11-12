@@ -1448,13 +1448,14 @@ export async function triggerGlobalContactUpkeepAction(options?: {
  * Start the LinkedIn photo queue, or resume the running one now (clearing a LinkedIn pause).
  * Refused without a Blob store: the shared pool would keep media.licdn.com URLs, which expire.
  */
-export async function startLinkedInPhotoQueueAction(): Promise<{ runId: string }> {
+export async function startLinkedInPhotoQueueAction(): Promise<{ ok: true; runId: string } | { ok: false; error: string }> {
   const adminUserId = await requireAdminUserId();
+  // Returned, not thrown: production strips a thrown action's message, and this one is the fix.
   if (!hasBlobStorage()) {
-    throw new UserFacingError("Photo storage isn’t set up yet (BLOB_READ_WRITE_TOKEN), so the queue can’t save photos");
+    return { ok: false, error: "Photo storage isn’t connected (no Blob token or OIDC store), so the queue can’t save photos" };
   }
   await recordAdminAction({ adminUserId, action: "avatars.linkedin_queue.start", detail: {} });
-  return { runId: await startLinkedInPhotoQueue() };
+  return { ok: true, runId: await startLinkedInPhotoQueue() };
 }
 
 /** Stop the LinkedIn photo queue; the tick in flight finishes its current person and exits. */
