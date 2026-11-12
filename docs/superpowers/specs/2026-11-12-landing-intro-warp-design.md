@@ -26,8 +26,8 @@ Why: a memorable first impression for the landing page.
 0.00s  first paint        "Orbit" fades up
 0.15s                     tagline and paragraph fade up
 0.30s                     hero button fades up (md and wider; phones use the header's)
-sky loads (after idle,    background and nebulae fade up over ~0.4s;
- as today, ~0.5–2s)       every star streaks outward from the sun's spot
+sky loads (after idle,    background and nebulae fade up over ~0.4s; the
+ as today, ~0.5–2s)       whole screen is already covered with streaking stars
  +0.5s                    full speed
  +1.1s                    streaks shorten as the stars slow
  +1.6s                    each star stops exactly where it rests today
@@ -88,12 +88,13 @@ landing page. When on, and the attribute is present, and motion is allowed, the 
 - Vanishing point `V`: the centre of the solar system's box, found once by a
   `data-sky-warp-origin` attribute on the stage wrapper in `hero-pin.tsx`. Fallback:
   the viewport centre.
-- Each star is drawn at `V + (rest − V) × k`, where `k` runs from the star's own
-  starting depth (a fixed random value below 1) up to exactly 1 on an ease-out. The
-  per-star depth is what makes it a warp instead of a uniform zoom.
-- The streak is a line from where the star was a fixed time ago to where it is now,
-  computed from the same formula. Its length is the star's speed, it shrinks to a
-  point at rest, and it does not depend on frame rate. No second canvas.
+- Revised Nov 12 after the first build (Jason: "Instead of all the stars coming from one
+  place the whole screen should always be covered with stars"): each star is drawn at
+  `V + (rest − V) × k`, where `k` starts at a random 0.82–0.97 (already near its own
+  place, so the screen is full from the first frame) and eases to exactly 1.
+- Each streak trails from the star back toward `V`, starting at half the star's distance
+  from `V` and shrinking to a point as the warp slows: dropping out of lightspeed rather
+  than pouring out of one point. No second canvas.
 - The background blit and the stars' alpha ramp up over the first ~0.4s, so the sky
   does not pop in.
 - Shooting stars wait until the warp is over.

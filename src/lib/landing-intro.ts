@@ -26,13 +26,19 @@ export const LANDING_INTRO_PREPAINT_SCRIPT = `try{var d=document.documentElement
 export const WARP_MS = 1600;
 /** The sky's background and stars fade up over this, so the canvas does not pop in. */
 export const SKY_FADE_MS = 400;
-/** A streak runs from where its star was this long ago to where it is now. Time, not frames,
- *  so a slow machine draws the same streak length as a fast one. */
-export const STREAK_LAG_MS = 60;
-/** Each star starts at a random fraction of its rest distance from the origin, in this range.
- *  Different starting depths are what make it a warp rather than a uniform zoom. */
-export const WARP_DEPTH_MIN = 0.02;
-export const WARP_DEPTH_MAX = 0.35;
+/** At the start, a star's streak reaches this fraction of the way back toward the origin; it
+ *  shrinks to nothing as the warp slows. Stars far from the sun get long streaks, near ones
+ *  short — the perspective of dropping out of lightspeed. */
+export const STREAK_MAX = 0.5;
+/**
+ * Each star starts at a random fraction of its rest distance from the origin, in this range.
+ *
+ * High on purpose (Jason, Nov 12: "the whole screen should always be covered with stars"): every
+ * star is already near its own place on the first frame, so the screen is full from the start
+ * and nothing pours out of one point. The spread is what keeps it from reading as a uniform zoom.
+ */
+export const WARP_DEPTH_MIN = 0.82;
+export const WARP_DEPTH_MAX = 0.97;
 
 /** Eased 0→1 over WARP_MS (ease-out cubic: fast out of the warp, settling into place). */
 export function warpProgress(elapsedMs: number): number {
@@ -45,6 +51,17 @@ export function warpProgress(elapsedMs: number): number {
 /** How far along its line a star is: its starting depth at p=0, exactly 1 at p=1. */
 export function warpK(depth0: number, p: number): number {
   return p >= 1 ? 1 : depth0 + (1 - depth0) * p;
+}
+
+/**
+ * Where a star's streak ends, as a `k` on the same line as its head: STREAK_MAX of the way
+ * back toward the origin at the start, shrinking (quadratically in what is left of the warp)
+ * to the head itself at p=1.
+ */
+export function warpTailK(headK: number, p: number): number {
+  if (p >= 1) return headK;
+  const left = 1 - p;
+  return headK * (1 - STREAK_MAX * left * left);
 }
 
 /** Where a star is drawn: on the line from the origin to its rest position, `k` of the way. */

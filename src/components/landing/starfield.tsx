@@ -18,7 +18,6 @@ import {
   type ConstellationSearch,
 } from "@/lib/constellation-match";
 import {
-  STREAK_LAG_MS,
   WARP_DEPTH_MAX,
   WARP_DEPTH_MIN,
   WARP_MS,
@@ -28,6 +27,7 @@ import {
   warpK,
   warpPoint,
   warpProgress,
+  warpTailK,
 } from "@/lib/landing-intro";
 
 // Opaque fills with the alpha on `globalAlpha`: an `rgba(…, alpha)` string per star per
@@ -758,7 +758,6 @@ export function Starfield({
         ctx!.globalAlpha = 1;
       }
       const warpP = warping ? warpProgress(warpE) : 1;
-      const warpPrevP = warping ? warpProgress(warpE - STREAK_LAG_MS) : 1;
 
       // Read scroll once per frame rather than binding a scroll listener —
       // the value is only ever consumed here.
@@ -794,12 +793,13 @@ export function Starfield({
 
         if (warping) {
           // The first-visit warp (never on an interactive sky, so `active` is false here). The
-          // star is drawn `k` of the way from the origin to its rest position, and its streak
-          // joins where it was STREAK_LAG_MS ago. Culled on the drawn position: a star whose
-          // rest is off-screen still crosses the screen on its way out.
-          const p = warpPoint(x, y, warpOx, warpOy, warpK(s.d0, warpP));
+          // star is drawn `k` of the way from the origin to its rest position (most of the way
+          // already, so the screen is full from the first frame), with a streak trailing back
+          // toward the origin that shrinks to a point. Culled on the drawn position.
+          const k = warpK(s.d0, warpP);
+          const p = warpPoint(x, y, warpOx, warpOy, k);
           if (p.y < -8 || p.y > height + 8 || p.x < -8 || p.x > width + 8) continue;
-          const q = warpPoint(x, y, warpOx, warpOy, warpK(s.d0, warpPrevP));
+          const q = warpPoint(x, y, warpOx, warpOy, warpTailK(k, warpP));
           alpha *= warpFade;
           x = p.x;
           y = p.y;

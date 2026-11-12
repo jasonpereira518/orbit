@@ -13,7 +13,8 @@ import {
   LANDING_INTRO_KEY,
   LANDING_INTRO_PREPAINT_SCRIPT,
   SKY_FADE_MS,
-  STREAK_LAG_MS,
+  STREAK_MAX,
+  WARP_DEPTH_MIN,
   WARP_MS,
   introOrigin,
   landingWarpStart,
@@ -21,6 +22,7 @@ import {
   warpK,
   warpPoint,
   warpProgress,
+  warpTailK,
 } from "../src/lib/landing-intro";
 
 function monotonicWithinOne() {
@@ -33,9 +35,20 @@ function monotonicWithinOne() {
   return true;
 }
 
-const END = WARP_MS + STREAK_LAG_MS;
-const head = warpPoint(300, 200, 100, 100, warpK(0.2, warpProgress(END)));
-const tail = warpPoint(300, 200, 100, 100, warpK(0.2, warpProgress(END - STREAK_LAG_MS)));
+// The streak trails from each star back toward the origin and collapses to a point at the end.
+const endK = warpK(0.9, warpProgress(WARP_MS));
+const head = warpPoint(300, 200, 100, 100, endK);
+const tail = warpPoint(300, 200, 100, 100, warpTailK(endK, warpProgress(WARP_MS)));
+function tailShrinks() {
+  let prev = Infinity;
+  for (let t = 0; t <= WARP_MS; t += 16) {
+    const p = warpProgress(t);
+    const len = warpK(0.9, p) - warpTailK(warpK(0.9, p), p);
+    if (len > prev + 1e-12 || len < 0) return false;
+    prev = len;
+  }
+  return true;
+}
 const restPoint = warpPoint(300, 200, 100, 100, 1);
 const s = LANDING_INTRO_PREPAINT_SCRIPT;
 
@@ -80,6 +93,11 @@ const CASES: Array<[label: string, got: unknown, expected: unknown]> = [
   ["k=1 lands on the rest pixel (x)", restPoint.x, 300],
   ["k=1 lands on the rest pixel (y)", restPoint.y, 200],
   ["streak has no length once the warp is over", head.x === tail.x && head.y === tail.y, true],
+  ["streak only ever shrinks", tailShrinks(), true],
+  ["streak starts STREAK_MAX of the way back to the origin", warpTailK(1, 0), 1 - STREAK_MAX],
+  // Jason, Nov 12: the whole screen is covered with stars from the first frame, not poured out
+  // of one point. Every star starts most of the way to its rest position.
+  ["every star starts at least 80% of the way to its rest", WARP_DEPTH_MIN >= 0.8, true],
   ["sky alpha starts at 0", skyAlpha(0), 0],
   ["sky alpha is full after the fade", skyAlpha(SKY_FADE_MS), 1],
   ["sky alpha stays full", skyAlpha(1e6), 1],
