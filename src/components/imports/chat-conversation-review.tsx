@@ -137,7 +137,7 @@ function MemberPicker({
     <Select
       value={member.choice}
       onValueChange={(v) => {
-        if (v) onChange(v as MemberChoice);
+        if (v) onChange(v);
       }}
       items={items}
       disabled={disabled}

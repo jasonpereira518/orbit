@@ -1,3 +1,4 @@
+import { rerankReplySchema } from "@/lib/ai-reply-schemas";
 import { promptNow } from "@/lib/user-clock";
 import { completeJson, parseAiJson } from "@/lib/ai";
 import { fenceUntrusted } from "@/lib/ai-security";
@@ -526,7 +527,7 @@ export async function rerankCandidatesWithEngine(
       remaining,
       callerSignal
     );
-    const parsed = parseAiJson<{ scores?: Array<{ id?: unknown; relevance?: unknown }> }>(content);
+    const parsed = parseAiJson(rerankReplySchema, content);
     // Each id is checked against the candidates that were offered; an id nobody was offered
     // (invented, or out of range) is dropped, and a candidate scored twice counts once.
     const seen = new Set<string>();

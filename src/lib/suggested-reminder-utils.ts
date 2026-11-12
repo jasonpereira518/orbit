@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 
 /**
  * Provenance marker on `reminders.reminderType` for rows that came from a date the
@@ -13,13 +13,9 @@ export const EXTRACTED_DATE_REMINDER_TYPE = "extracted_date";
  */
 export { isoDay, isoDayToLocalNoon } from "@/lib/dates";
 
-function sha256(value: string) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
 /** Aggressive normalization so trivial whitespace edits don't defeat re-parse dedupe. */
 export function hashSourceNote(text: string) {
-  return sha256(text.replace(/\s+/g, " ").trim().toLowerCase());
+  return sha256Hex(text.replace(/\s+/g, " ").trim().toLowerCase());
 }
 
 /** The per-item dedupe key backing the unique (userId, itemHash) index. */
@@ -28,5 +24,5 @@ export function buildSuggestionItemHash(
   dueDateIso: string,
   title: string
 ) {
-  return sha256(`${sourceHash}|${dueDateIso}|${title.trim().toLowerCase()}`);
+  return sha256Hex(`${sourceHash}|${dueDateIso}|${title.trim().toLowerCase()}`);
 }

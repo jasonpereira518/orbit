@@ -13,6 +13,7 @@ import { useSyncExternalStore } from "react";
 import type { getCaptureJob } from "@/actions/capture-jobs";
 import type { CaptureJobView } from "@/lib/capture-jobs";
 import type { CaptureJobStatus } from "@/lib/capture/types";
+import { createExternalStore, listen } from "@/lib/create-external-store";
 import {
   isOffline,
   onReconnect,
@@ -34,8 +35,8 @@ export type CaptureJobSnapshot = {
 const EMPTY: CaptureJobSnapshot = { job: null, error: null };
 
 let snapshot: CaptureJobSnapshot = EMPTY;
-const listeners = new Set<() => void>();
 let timer: number | null = null;
+let stopVisible: (() => void) | null = null;
 let inFlight: Promise<void> | null = null;
 let sequence = 0;
 let stopReconnect: (() => void) | null = null;
@@ -46,12 +47,12 @@ function set(next: Partial<CaptureJobSnapshot>) {
     // Inspectable from the console while developing: `window.__captureJob`.
     (window as Window & { __captureJob?: CaptureJobSnapshot }).__captureJob = snapshot;
   }
-  for (const l of listeners) l();
+  store.emit();
   syncTimer();
 }
 
 function shouldPoll() {
-  return listeners.size > 0 && snapshot.job !== null && POLLING_STATUSES.includes(snapshot.job.status);
+  return store.size() > 0 && snapshot.job !== null && POLLING_STATUSES.includes(snapshot.job.status);
 }
 
 function syncTimer() {
@@ -62,12 +63,13 @@ function syncTimer() {
       // listener below catches up the moment the connection is back.
       if (document.visibilityState === "visible" && !isOffline()) void refreshCaptureJob();
     }, CAPTURE_POLL_MS);
-    document.addEventListener("visibilitychange", onVisible);
+    stopVisible = listen(document, "visibilitychange", onVisible);
     stopReconnect = onReconnect(() => void refreshCaptureJob());
   } else if (!shouldPoll() && timer !== null) {
     window.clearInterval(timer);
     timer = null;
-    document.removeEventListener("visibilitychange", onVisible);
+    stopVisible?.();
+    stopVisible = null;
     stopReconnect?.();
     stopReconnect = null;
   }
@@ -136,18 +138,14 @@ export function refreshCaptureJob(): Promise<void> {
   return run;
 }
 
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  syncTimer();
-  return () => {
-    listeners.delete(listener);
-    syncTimer();
-  };
-}
-
-const getSnapshot = () => snapshot;
-const getServerSnapshot = () => EMPTY;
+const store = createExternalStore<CaptureJobSnapshot>({
+  getSnapshot: () => snapshot,
+  getServerSnapshot: () => EMPTY,
+  // The poll follows the subscriber count: re-evaluated on every subscribe and unsubscribe.
+  onSubscribe: syncTimer,
+  onUnsubscribe: syncTimer,
+});
 
 export function useCaptureJob(): CaptureJobSnapshot {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
 }

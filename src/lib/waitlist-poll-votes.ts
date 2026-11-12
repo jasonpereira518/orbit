@@ -22,6 +22,7 @@
  * and returns a fresh read, so the voter always sees their own stars; another instance lags by
  * up to 30 s, which no visitor can act on. The live-results poll reads the same memo.
  */
+import { reportError } from "@/lib/report-error";
 import { shareTokenMatches } from "@/lib/interest-list-tokens";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -159,7 +160,7 @@ export async function setStarsCore(input: StarsInput, ctx: VoteContext): Promise
     await consumeIpBucket("poll.vote", ctx.ip, RATE_LIMITS.pollVote);
   } catch (err) {
     if (isRateLimitedError(err)) return { ok: false, message: POLL_RATE_LIMITED };
-    console.error("[waitlist-poll] limiter failed", err);
+    reportError(err, { where: "waitlist-poll.limiter", level: "warning" });
     return { ok: false, message: POLL_ERROR };
   }
 
@@ -191,7 +192,7 @@ export async function setStarsCore(input: StarsInput, ctx: VoteContext): Promise
         .values({ optionId: pick, voterKey, signupId, stars: allocation as Record<string, number> })
         .onConflictDoUpdate({
           target: waitlistPollVotes.voterKey,
-          set: { optionId: pick, signupId, stars: allocation as Record<string, number>, updatedAt: new Date() },
+          set: { optionId: pick, signupId, stars: allocation, updatedAt: new Date() },
         });
     }
 
@@ -203,7 +204,7 @@ export async function setStarsCore(input: StarsInput, ctx: VoteContext): Promise
     invalidatePollResults();
     return { ok: true, allocation, budget, results: await readPollResults(), newVoterId };
   } catch (err) {
-    console.error("[waitlist-poll] stars failed", err);
+    reportError(err, { where: "waitlist-poll.stars", level: "warning" });
     return { ok: false, message: POLL_ERROR };
   }
 }

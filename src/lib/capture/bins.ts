@@ -314,7 +314,7 @@ export function combineAll(
   seed: (file: StagedFile) => { name: string; anchorIso: string | null }
 ): SorterState {
   if (!state.files.length) return state;
-  const first = state.files.find((f) => isIncluded(state, f.id)) ?? state.files[0]!;
+  const first = state.files.find((f) => isIncluded(state, f.id)) ?? state.files[0];
   const { name, anchorIso } = seed(first);
   return {
     ...state,
@@ -385,7 +385,7 @@ export function planUploads(
     return [
       {
         binId: b.id,
-        label: b.name.trim() || files[0]!.name || "Untitled note",
+        label: b.name.trim() || files[0].name || "Untitled note",
         fileIds: files.map((f) => f.id),
         anchorIso: b.anchorIso,
         bytes: files.reduce((n, f) => n + f.size, 0),

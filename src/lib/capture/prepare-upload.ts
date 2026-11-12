@@ -220,7 +220,7 @@ export function prepareNotice(prepared: PreparedUpload): string | null {
       `only the first ${MAX_SCAN_PAGES} pages were read — put the rest in their own note`
     );
   }
-  if (prepared.failures.length === 1) parts.push(prepared.failures[0]!.message);
+  if (prepared.failures.length === 1) parts.push(prepared.failures[0].message);
   else if (prepared.failures.length > 1) {
     parts.push(`${prepared.failures.length} files couldn’t be read`);
   }

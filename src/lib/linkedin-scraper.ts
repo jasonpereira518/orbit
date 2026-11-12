@@ -342,7 +342,7 @@ export function extractLinkedInFullProfileFromHtml(html: string): LinkedInFullPr
         } else if (parts.length === 2) {
           if (isLikelyPersonName(parts[0])) {
             ogName = parts[0]!;
-            const headlineParsed = splitHeadline(parts[1]!);
+            const headlineParsed = splitHeadline(parts[1]);
             ogTitle = headlineParsed.title;
             ogCompany = headlineParsed.company;
             break;

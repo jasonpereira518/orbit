@@ -42,7 +42,7 @@ export type ChatFeedbackSummary = {
 
 /** Counts for the tiles. */
 export async function getChatFeedbackSummary(): Promise<ChatFeedbackSummary> {
-  assertRevealable(SELECTED_COLUMNS as unknown as string[]);
+  assertRevealable(SELECTED_COLUMNS);
   const db = await getDb();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -79,7 +79,7 @@ export type ChatOutcomeSummary = {
  * to read `content`, and the column list is checked like the ratings query above.
  */
 export async function getChatOutcomeSummary(): Promise<ChatOutcomeSummary> {
-  assertRevealable(OUTCOME_COLUMNS as unknown as string[]);
+  assertRevealable(OUTCOME_COLUMNS);
   const db = await getDb();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const [row] = await db
@@ -106,7 +106,7 @@ export async function getChatOutcomeSummary(): Promise<ChatOutcomeSummary> {
 export async function loadChatFeedbackList(options: {
   page: number;
 }): Promise<{ rows: ChatFeedbackRow[]; total: number; page: number; pageCount: number }> {
-  assertRevealable(SELECTED_COLUMNS as unknown as string[]);
+  assertRevealable(SELECTED_COLUMNS);
   const db = await getDb();
   const where = and(sql`${chatMessages.feedback} is not null`);
 

@@ -33,6 +33,6 @@ export function movePage<T>(pages: readonly T[], from: number, to: number): T[] 
   if (target === from) return [...pages];
   const next = [...pages];
   const [page] = next.splice(from, 1);
-  next.splice(target, 0, page!);
+  next.splice(target, 0, page);
   return next;
 }

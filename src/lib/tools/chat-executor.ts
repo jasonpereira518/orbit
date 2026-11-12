@@ -27,7 +27,7 @@ export function describeOutcome(out: { ok: boolean; result: unknown }): string {
   const r = out.result as Record<string, unknown> | unknown[] | null;
   // One record (a contact, a meeting) came back: it was found. Counting the first list inside
   // it — an empty timeline — used to report a contact that was read as "nothing found".
-  if (r && !Array.isArray(r) && typeof r === "object" && typeof (r as Record<string, unknown>).id === "string") {
+  if (r && !Array.isArray(r) && typeof r === "object" && typeof (r).id === "string") {
     return "found";
   }
   const rows = Array.isArray(r)
@@ -43,7 +43,7 @@ export function describeOutcome(out: { ok: boolean; result: unknown }): string {
 export function describeCall(call: ToolCall, ctx: ChatContext): string {
   const args = (call.args && typeof call.args === "object" ? call.args : {}) as Record<string, unknown>;
   const text = (key: string) =>
-    typeof args[key] === "string" ? sanitizeProfileLine(args[key] as string).slice(0, 60) : "";
+    typeof args[key] === "string" ? sanitizeProfileLine(args[key]).slice(0, 60) : "";
   const nameOf = (id: string) =>
     ctx.retrieved.find((c) => c.id === id)?.fullName ??
     ctx.attachedPeople.find((p) => p.id === id)?.name ??

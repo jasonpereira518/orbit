@@ -110,7 +110,7 @@ import { eventProviderConnections } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { decryptOrNull } from "@/lib/crypto";
 import type { EventRecord } from "@/db/schema";
-import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { GOOGLE_SCOPES, hasScope } from "@/lib/google-scopes";
 import { actionFailure } from "@/lib/action-failure";
 import { optionalClientDate } from "@/lib/input/dates";
@@ -228,7 +228,7 @@ export async function createEvent(input: {
     // the host is down, the link needs a login — and the pasted URL would otherwise persist
     // with the user's own Luma guest token in it, rendered back as a link on the event page.
     const outcome = input.url ? canonicalizeEventUrl(input.url) : null;
-    const url = outcome?.kind === "ok" ? outcome.candidates[0]! : input.url ?? null;
+    const url = outcome?.kind === "ok" ? outcome.candidates[0] : input.url ?? null;
 
     // Already here? Discovery may have added this event days ago, and a user pasting its link
     // means "show me this", not "make me a second one". Taking them to the row they already
@@ -367,7 +367,7 @@ export async function updateEvent(
     value === undefined ? undefined : optionalClientDate(value, "event time");
 
   await updateEventForUser(userId, eventId, {
-    ...pickEventEdits(patch as Record<string, unknown>),
+    ...pickEventEdits(patch),
     ...(url === undefined ? {} : { url: url || null }),
     startsAt: asDate(patch.startsAt),
     endsAt: asDate(patch.endsAt),

@@ -1022,6 +1022,7 @@ export function ChatPanel({
   const [composerFocusTick, setComposerFocusTick] = useState(0);
   useEffect(
     () =>
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the callback is async by design; failures are handled inside it
       onVoiceEnded(async (id) => {
         threadPrefetch.forget(id);
         // The call's thread is now named (nameVoiceThread), so Recents shows it under that name.
@@ -1683,7 +1684,7 @@ export function ChatPanel({
   // What auto did on the latest answer (the step trail's own line), so the web button can show it.
   const lastWebStep = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i]!;
+      const m = messages[i];
       if (m.role === "assistant") return m.steps?.find((step) => step.kind === "web") ?? null;
     }
     return null;
@@ -2837,12 +2838,12 @@ function VersionSwitcher({
 }) {
   const index = versions.findIndex((v) => v.assistantMessageId === currentId);
   if (index === -1) return null;
-  const current = versions[index]!;
+  const current = versions[index];
   return (
     <div className="flex items-center gap-0.5 text-xs text-muted-foreground" role="group" aria-label="Answer version">
       <button
         type="button"
-        onClick={() => onSwitch?.(versions[index - 1]!.version)}
+        onClick={() => onSwitch?.(versions[index - 1].version)}
         disabled={index === 0}
         aria-label="Previous version"
         className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
@@ -2854,7 +2855,7 @@ function VersionSwitcher({
       </span>
       <button
         type="button"
-        onClick={() => onSwitch?.(versions[index + 1]!.version)}
+        onClick={() => onSwitch?.(versions[index + 1].version)}
         disabled={index === versions.length - 1}
         aria-label="Next version"
         className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"

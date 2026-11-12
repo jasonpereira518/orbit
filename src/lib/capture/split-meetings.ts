@@ -46,12 +46,12 @@ const PATTERNS: Array<{ re: RegExp; read: (m: RegExpExecArray) => [number | null
   // Nov 3, November 3rd, Nov 3, 2026
   {
     re: new RegExp(`${LEAD}${MONTH}\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s+(\\d{4}))?`, "i"),
-    read: (m) => [m[3] ? Number(m[3]) : null, MONTHS.indexOf(m[1]!.slice(0, 3).toLowerCase()) + 1, Number(m[2])],
+    read: (m) => [m[3] ? Number(m[3]) : null, MONTHS.indexOf(m[1].slice(0, 3).toLowerCase()) + 1, Number(m[2])],
   },
   // 3 Nov, 3rd November 2026
   {
     re: new RegExp(`${LEAD}(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH}\\b(?:,?\\s+(\\d{4}))?`, "i"),
-    read: (m) => [m[3] ? Number(m[3]) : null, MONTHS.indexOf(m[2]!.slice(0, 3).toLowerCase()) + 1, Number(m[1])],
+    read: (m) => [m[3] ? Number(m[3]) : null, MONTHS.indexOf(m[2].slice(0, 3).toLowerCase()) + 1, Number(m[1])],
   },
 ];
 
@@ -86,7 +86,7 @@ export function splitMeetings(corpus: string, now: Date = new Date()): MeetingSe
   const lines = corpus.split(/\r?\n/);
   const starts: Array<{ at: number; dateIso: string }> = [];
   lines.forEach((line, i) => {
-    const prevBlank = i === 0 || !lines[i - 1]!.trim() || /^\s*(---+|\*\*\*+|___+)\s*$/.test(lines[i - 1]!);
+    const prevBlank = i === 0 || !lines[i - 1].trim() || /^\s*(---+|\*\*\*+|___+)\s*$/.test(lines[i - 1]);
     if (!prevBlank) return;
     const dateIso = headerDate(line, now);
     if (dateIso) starts.push({ at: i, dateIso });
@@ -104,7 +104,7 @@ export function splitMeetings(corpus: string, now: Date = new Date()): MeetingSe
       .join("\n")
       .replace(/\n\s*(---+|\*\*\*+|___+)\s*$/, "")
       .trim();
-    segments.push({ label: cleanLabel(lines[s.at]!), text, dateIso: s.dateIso });
+    segments.push({ label: cleanLabel(lines[s.at]), text, dateIso: s.dateIso });
   });
   if (segments.some((s) => s.text.length - s.label.length < MIN_SEGMENT_CHARS)) return [];
   return segments;

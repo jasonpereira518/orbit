@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { createEmbedding, resolveEmbeddingBackend } from "@/lib/ai";
 import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 
@@ -47,9 +47,7 @@ export async function defaultResolveScope(userId: string, access?: AiAccess): Pr
 }
 
 function cacheKey(userId: string, scope: string, query: string): string {
-  return createHash("sha256")
-    .update(`${userId}\n${scope}\n${normalizeQuery(query)}`)
-    .digest("hex");
+  return sha256Hex(`${userId}\n${scope}\n${normalizeQuery(query)}`);
 }
 
 /**

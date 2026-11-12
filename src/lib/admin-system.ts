@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, isNotNull, lt, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
+import { reportError } from "@/lib/report-error";
 import {
   cronRuns,
   errorEvents,
@@ -363,7 +364,8 @@ export async function getSystemIssues(now = new Date()): Promise<SystemIssues> {
       syncWedged: num(row.sync_wedged),
       syncFailing: num(row.sync_failing),
     };
-  } catch {
+  } catch (err) {
+    reportError(err, { where: "admin.system.connection-health", level: "warning" });
     // The Overview must render even if this one extra query fails.
     return empty;
   }

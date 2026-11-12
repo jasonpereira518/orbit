@@ -18,6 +18,7 @@
  * Openings are not searched here: the job feed already pairs a role with the person to ask
  * (`job_posting` cards from `src/lib/radar/signals/internal.ts`).
  */
+import { eventsListReplySchema, programsListReplySchema } from "@/lib/ai-reply-schemas";
 import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { radarOpportunities, userSettings } from "@/db/schema";
@@ -121,20 +122,26 @@ function items(raw: unknown): Record<string, unknown>[] {
   return (Array.isArray(raw) ? raw : []).filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object").slice(0, MAX_PER_KIND);
 }
 
+/** "Topics they post about", fenced: the person's own hashtags are still text from outside the prompt. */
+function topicsBlock(topics: readonly string[]): string {
+  return topics.length ? `\n\nTopics they post about:\n${fenceUntrusted("topics", topics.join(", "))}` : "";
+}
+
 async function findEvents(
   userId: string,
   city: string,
   goals: string[],
   now: Date,
   search: RadarWebSearch,
-  fetchPage: (url: string) => Promise<EventPageDetails>
+  fetchPage: (url: string) => Promise<EventPageDetails>,
+  topics: string[] = []
 ): Promise<NewOpportunity[]> {
-  const user = `Today is ${now.toISOString().slice(0, 10)}.\n\nCity:\n${fenceUntrusted("city", city)}${goals.length ? `\n\nTheir goals:\n${fenceUntrusted("goals", goals.join("\n"))}` : ""}`;
+  const user = `Today is ${now.toISOString().slice(0, 10)}.\n\nCity:\n${fenceUntrusted("city", city)}${goals.length ? `\n\nTheir goals:\n${fenceUntrusted("goals", goals.join("\n"))}` : ""}${topicsBlock(topics)}`;
   const { json, sources } = await search(userId, { kind: "event", system: EVENT_SYSTEM, user });
   const cited = citedSet(sources);
   const horizon = now.getTime() + EVENT_HORIZON_DAYS * DAY_MS;
   const out: NewOpportunity[] = [];
-  for (const e of items(parseAiJson<{ events?: unknown }>(json).events)) {
+  for (const e of items(parseAiJson(eventsListReplySchema, json).events)) {
     const url = safeHttpUrl(typeof e.url === "string" ? e.url : null);
     const title = text(e.title, 200);
     let startsAt = dateOf(e.startsAt);
@@ -164,8 +171,8 @@ async function findEvents(
   return out;
 }
 
-async function findPeople(userId: string, city: string | null, goals: string[], now: Date, search: RadarWebSearch): Promise<NewOpportunity[]> {
-  const description = `People who could help with: ${goals.join("; ")}${city ? `. Ideally in or near ${city}.` : ""}`;
+async function findPeople(userId: string, city: string | null, goals: string[], now: Date, search: RadarWebSearch, topics: string[] = []): Promise<NewOpportunity[]> {
+  const description = `People who could help with: ${goals.join("; ")}${city ? `. Ideally in or near ${city}.` : ""}${topics.length ? ` Topics they post about: ${topics.join(", ")}.` : ""}`;
   const user = `Find people who match this description:\n\n${fenceUntrusted("description", description)}`;
   const { json, sources } = await search(userId, { kind: "person", system: DISCOVER_SYSTEM, user });
   const cited = citedSet(sources);
@@ -211,7 +218,7 @@ async function findPrograms(userId: string, goals: string[], now: Date, search: 
   const { json, sources } = await search(userId, { kind: "program", system: PROGRAM_SYSTEM, user });
   const cited = citedSet(sources);
   const out: NewOpportunity[] = [];
-  for (const p of items(parseAiJson<{ programs?: unknown }>(json).programs)) {
+  for (const p of items(parseAiJson(programsListReplySchema, json).programs)) {
     const url = safeHttpUrl(typeof p.url === "string" ? p.url : null);
     const title = text(p.title, 200);
     const deadline = dateOf(p.deadline);
@@ -279,9 +286,11 @@ export async function runRadarWebForUser(userId: string, deps: RadarWebDeps = {}
   const limits = getRadarLimitsForPlan(resolvePlan(s, now).plan);
   const goals = await listActiveGoalTextsForUser(userId, { limit: 5 });
   const city = text(s.career?.city ?? s.career?.profile?.location, 120);
+  // The hashtags from their own LinkedIn posts (`linkedin-shares.ts`): extra context, never a search on their own.
+  const topics = (s.career?.postTopics ?? []).map((t) => text(t, 40)).filter((t): t is string => Boolean(t)).slice(0, 8);
   const kinds: [RadarWebKind, boolean, () => Promise<NewOpportunity[]>][] = [
-    ["event", Boolean(city), () => findEvents(userId, city!, goals, now, search, deps.fetchPage ?? defaultFetchPage)],
-    ["person", goals.length > 0, () => findPeople(userId, city, goals, now, search)],
+    ["event", Boolean(city), () => findEvents(userId, city!, goals, now, search, deps.fetchPage ?? defaultFetchPage, topics)],
+    ["person", goals.length > 0, () => findPeople(userId, city, goals, now, search, topics)],
     ["program", goals.length > 0, () => findPrograms(userId, goals, now, search)],
   ];
   const found: NewOpportunity[] = [];

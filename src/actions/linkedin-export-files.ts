@@ -13,6 +13,8 @@ import { requireUserId } from "@/lib/auth";
 import { actionFailure } from "@/lib/action-failure";
 import { isUserFacingError } from "@/lib/errors";
 import { isImportId } from "@/lib/imports/import-ids";
+import { applyShareTopics } from "@/lib/linkedin-shares";
+import { reportError } from "@/lib/report-error";
 import {
   appendExportFiles,
   beginExport,
@@ -66,6 +68,8 @@ export async function startLinkedInExport(
   if (!isImportId(importId)) return refusal(TRY_AGAIN);
   try {
     const stats = await finishExportUpload(userId, importId, counts);
+    // Radar's topics from your own posts (Shares.csv). A failure costs the topics, never the upload.
+    await applyShareTopics(userId, importId).catch((err) => reportError(err, { where: "linkedin-export-files.share-topics", level: "warning" }));
     const db = await getDb();
     await db
       .update(imports)

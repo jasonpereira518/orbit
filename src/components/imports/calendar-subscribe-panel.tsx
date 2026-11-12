@@ -106,7 +106,7 @@ export function CalendarSubscribePanel({
                   return;
                 }
                 const res = result.value;
-                setSubs((prev) => [res.subscription as Sub, ...prev]);
+                setSubs((prev) => [res.subscription, ...prev]);
                 setUrl("");
                 if (res.syncError) {
                   toast.error(

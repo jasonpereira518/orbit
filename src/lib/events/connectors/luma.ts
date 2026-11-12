@@ -22,6 +22,8 @@
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import type { ProviderAttendee, ProviderEvent, ProviderPage } from "@/lib/events/types";
 import { canonicalLinkedInUrl, extractLinkedInProfileRefs } from "@/lib/linkedin-paste";
+import { sleep } from "@/lib/async";
+import { backoffMs } from "@/lib/http/retry";
 
 const BASE = "https://public-api.luma.com/v1";
 const TIMEOUT_MS = 10_000;
@@ -30,15 +32,6 @@ const MAX_ATTEMPTS = 3;
 export type LumaDeps = { fetch: typeof fetch };
 
 export class LumaAuthError extends Error {}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Same ladder as `apolloFetch` in `src/lib/apollo.ts`. */
-function jitteredBackoffMs(attempt: number) {
-  return 300 * 2 ** attempt + Math.floor(Math.random() * 250);
-}
 
 async function lumaFetch(
   path: string,
@@ -82,7 +75,7 @@ async function lumaFetch(
     await sleep(
       Number.isFinite(retryAfter) && retryAfter > 0
         ? Math.min(retryAfter * 1000, 8_000)
-        : jitteredBackoffMs(attempt)
+        : backoffMs(attempt)
     );
   }
   throw new Error("Luma request failed");
@@ -125,7 +118,7 @@ export function lumaEventUrl(value: unknown): string | null {
  * single-event endpoint, so both shapes are accepted rather than assuming one.
  */
 export function toProviderEvent(entry: LumaEntry): ProviderEvent | null {
-  const raw = (entry.event ?? entry) as Record<string, unknown>;
+  const raw = (entry.event ?? entry);
   const id = str(raw.api_id) ?? str(raw.event_api_id);
   const title = str(raw.name);
   if (!id || !title) return null;

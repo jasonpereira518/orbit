@@ -95,6 +95,7 @@ export function DeepgramAdapter({
         Math.ceil(player.getRemainingPlaybackTime() * 1000),
       );
     });
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the callback is async by design; failures are handled inside it
     agent.on("function-call-request", async (message) => {
       // Deliberately serialize: every proposal uses only the IDs previous lookups actually returned.
       for (const fn of message.functions) {

@@ -3178,6 +3178,8 @@
     ],
     "outreach": {
       "apollo": false,
+      "brightdata": false,
+      "brightDataZone": "web_unlocker1",
       "resend": false,
       "twilio": false,
       "twilioFromNumber": null

@@ -43,7 +43,7 @@ import { deleteEventConnection } from "@/lib/events/connections";
 import { purgeUserData } from "@/lib/user-data";
 import { deleteEmailIntelData } from "@/lib/email-intel/store";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
-import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoGmailConnectionStatus } from "@/lib/demo-workspace-connections";
 import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";
@@ -178,12 +178,6 @@ export async function startGmailOAuth(input: {
       `Gmail is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.${hint}`,
     );
   }
-
-  // Safe diagnostic — redirect URI only, never secret/tokens
-  console.info("[gmail-oauth] starting auth", {
-    redirectUri: summary.redirectUri,
-    hasClientId: summary.hasClientId,
-  });
 
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo = safeReturnPath(input.returnTo) ?? "";

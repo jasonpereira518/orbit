@@ -19,7 +19,7 @@ const cap = (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
 
 function named(parts: string[]): GuessedName {
   const words = parts.map(cap);
-  return { first: words[0]!, last: words[words.length - 1]!, full: words.join(" ") };
+  return { first: words[0], last: words[words.length - 1], full: words.join(" ") };
 }
 
 /**
@@ -28,13 +28,13 @@ function named(parts: string[]): GuessedName {
  */
 export function nameFromHandle(handle: string | null | undefined): IdentifierName | null {
   const parts = (handle ?? "")
-    .split("@")[0]!
+    .split("@")[0]
     .split(/[._\-+\s]+/)
     .map((p) => p.replace(/[^\p{L}]/gu, "").toLowerCase())
     .filter((p) => p && !NOT_NAME.has(p));
-  if (parts.length === 3 && parts[1]!.length === 1) parts.splice(1, 1);
+  if (parts.length === 3 && parts[1].length === 1) parts.splice(1, 1);
   if (parts.length < 2) return null;
-  const weak = parts.length !== 2 || parts[0]!.length < 2 || parts[1]!.length < 2;
+  const weak = parts.length !== 2 || parts[0].length < 2 || parts[1].length < 2;
   return { ...named(parts), weak };
 }
 
@@ -65,7 +65,7 @@ export function displayNameFor(r: { name?: string | null; email?: string | null;
   if (shown && isPersonName(shown.fullName, { email: r.email })) return shown.fullName;
   const read = [nameFromEmail(r.email, r.name), nameFromSlug(r.linkedinUrl)].find((n) => n && !n.weak);
   if (read) return read.full;
-  return r.name?.trim() || (r.email ? r.email.trim().split("@")[0]! : "");
+  return r.name?.trim() || (r.email ? r.email.trim().split("@")[0] : "");
 }
 
 /**
@@ -100,7 +100,7 @@ export function personNameFromSlug(slug: string): string | null {
 
   // Only trailing disambiguators go — a leading digit run is part of however they spell
   // their name, and dropping from the middle would reorder a name we cannot read anyway.
-  while (tokens.length > 1 && isDisambiguator(tokens[tokens.length - 1]!)) {
+  while (tokens.length > 1 && isDisambiguator(tokens[tokens.length - 1])) {
     tokens.pop();
   }
 
@@ -137,5 +137,5 @@ export function nameFromSlug(urlOrSlug: string | null | undefined): IdentifierNa
   const words = full.split(" ");
   const weak = words.length < 2 || !words.every((w) => /^\p{L}+$/u.test(w));
   if (!weak) return { ...named(words), weak };
-  return { first: words[0]!, last: words.length > 1 ? words[words.length - 1]! : "", full, weak };
+  return { first: words[0], last: words.length > 1 ? words[words.length - 1] : "", full, weak };
 }

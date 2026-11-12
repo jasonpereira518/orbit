@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, scryptSync } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import {
   DEV_ENCRYPTION_FALLBACK,
   KEY_PURPOSES,
@@ -138,4 +138,20 @@ export function decryptOrNull(encrypted?: string | null): string | null {
 export function isCurrentCiphertext(payload: string): boolean {
   const [version, kid] = payload.split(":");
   return version === "v2" && kid === keyIdFor(currentSecret());
+}
+
+/**
+ * Timing-safe string comparison. `timingSafeEqual` throws on unequal lengths, so the lengths
+ * are compared first (a wrong-length value is simply unequal). Compares the UTF-8 bytes.
+ */
+export function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+/** Lowercase hex SHA-256 of a UTF-8 string. */
+export function sha256Hex(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
 }

@@ -49,7 +49,7 @@ export function DraftPreviewDialog({
   const [subject, setSubject] = useState(message?.subject || "");
   const [body, setBody] = useState(message?.body || "");
 
-  const enrichment = (prospect.enrichment || {}) as Record<string, unknown>;
+  const enrichment = (prospect.enrichment || {});
   const newsHook = (enrichment.newsContext as string) || (enrichment.recentNews as string);
   const signals = Array.isArray(enrichment.signals) ? (enrichment.signals as string[]) : [];
   const matchReason = enrichment.matchReason as string | undefined;
