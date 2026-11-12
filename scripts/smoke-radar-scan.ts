@@ -24,8 +24,17 @@ import { resolveOrCreateContact } from "../src/lib/contact-resolve";
 import { applyShareTopics, shareTopics } from "../src/lib/linkedin-shares";
 import { matchScannedAuthors, saveScannedPosts } from "../src/lib/radar/signals/activity";
 import { ensureUserSettings } from "../src/lib/user-settings";
-import { isScanPath, scanLinkedinPosts, SCAN_MAX_POSTS } from "../extension/src/inject/adapters/linkedin-scan";
 import { checker } from "./smoke/check";
+
+// extension/ never reaches a Vercel build (.vercelignore), and that build typechecks scripts/,
+// so the content-script adapter is loaded at run time against this copy of its surface.
+type ScannedPost = { authorProfileUrl: string; authorName: string | null; excerpt: string; url: string | null };
+type ScanAdapter = {
+  isScanPath(pathname: string): boolean;
+  scanLinkedinPosts(root: ParentNode, pageUrl: URL): ScannedPost[];
+  SCAN_MAX_POSTS: number;
+};
+const SCAN_ADAPTER = "../extension/src/inject/adapters/linkedin-scan";
 import { fakeUserId, purgeUsers } from "./smoke/factories";
 
 const t = checker();
@@ -38,6 +47,7 @@ function post(urn: string, actorHref: string | null, name: string, body: string,
 }
 
 run(async () => {
+  const { isScanPath, scanLinkedinPosts, SCAN_MAX_POSTS } = (await import(SCAN_ADAPTER)) as ScanAdapter;
   console.log("the scanner");
   const comment = `<div class="comments-comments-list"><a href="https://www.linkedin.com/in/commenter-bo/">Bo</a> Great post</div>`;
   const feed = parseHTML(
