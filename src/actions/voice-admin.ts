@@ -7,7 +7,8 @@ import {
   getVoiceSettings,
 } from "@/lib/voice/settings";
 import { voiceCredentials } from "@/lib/voice/providers";
-import { VOICE_PROVIDERS } from "@/lib/voice/config";
+import { DEEPGRAM_VOICES, VOICE_PROVIDERS } from "@/lib/voice/config";
+import { deepgramConfigured, speakSample } from "@/lib/deepgram";
 import { consumeBucket } from "@/lib/rate-limit";
 import { recordAdminAction } from "@/lib/admin-audit";
 function refresh() {
@@ -24,6 +25,18 @@ export async function saveOrbitVoiceConfig(input: unknown) {
   const adminUserId = await requireAdminUserId();
   await setVoiceConfig(adminUserId, input);
   refresh();
+}
+/** The line every preview speaks: the greeting a real call opens with. Fixed, never user text. */
+const PREVIEW_LINE = "Hi, I’m Orbit. Who would you like to catch up with?";
+/** An Aura voice saying the greeting, as a data URL the admin panel can play. Admins only. */
+export async function previewOrbitVoice(voice: unknown): Promise<string> {
+  const adminUserId = await requireAdminUserId();
+  if (!DEEPGRAM_VOICES.includes(voice as (typeof DEEPGRAM_VOICES)[number]))
+    throw new Error("Choose a Deepgram voice");
+  if (!deepgramConfigured()) throw new Error("Deepgram isn’t configured on this deployment");
+  await consumeBucket("voice-preview", adminUserId, { limit: 20, windowSec: 60 });
+  const audio = await speakSample(voice as string, PREVIEW_LINE);
+  return `data:audio/mpeg;base64,${Buffer.from(audio).toString("base64")}`;
 }
 export async function checkOrbitVoiceProvider(input: unknown) {
   const adminUserId = await requireAdminUserId();

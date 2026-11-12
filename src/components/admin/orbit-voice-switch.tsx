@@ -1,10 +1,12 @@
 "use client";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import { Loader2, Play, Square } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
   setOrbitVoiceEnabled,
   saveOrbitVoiceConfig,
   checkOrbitVoiceProvider,
+  previewOrbitVoice,
 } from "@/actions/voice-admin";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
@@ -38,6 +40,28 @@ export function OrbitVoiceSwitch({
   const [draft, setDraft] = useState(config);
   const [pending, start] = useTransition();
   const router = useRouter();
+  // Voice preview: one sample at a time; picking another stops the last.
+  const [preview, setPreview] = useState<{ voice: string; state: "loading" | "playing" } | null>(null);
+  const audio = useRef<HTMLAudioElement | null>(null);
+  async function togglePreview(voice: string) {
+    audio.current?.pause();
+    audio.current = null;
+    if (preview?.voice === voice) {
+      setPreview(null);
+      return;
+    }
+    setPreview({ voice, state: "loading" });
+    try {
+      const player = new Audio(await previewOrbitVoice(voice));
+      audio.current = player;
+      player.onended = () => setPreview((p) => (p?.voice === voice ? null : p));
+      await player.play();
+      setPreview((p) => (p?.voice === voice ? { voice, state: "playing" } : p));
+    } catch (err) {
+      setPreview(null);
+      toast.error(friendlyError(err, "Couldn’t play that voice — try again?"));
+    }
+  }
   const dirty = JSON.stringify(draft) !== JSON.stringify(config);
   function run(task: () => Promise<void>, success: string) {
     start(async () => {
@@ -188,9 +212,10 @@ export function OrbitVoiceSwitch({
               </label>
               <label className="text-sm font-medium sm:col-span-2">
                 Voice
+                <span className="mt-1 flex items-center gap-2">
                 <select
                   aria-label="Deepgram voice"
-                  className={field}
+                  className={cn(field, "mt-0")}
                   value={draft.deepgram.voice}
                   onChange={(e) =>
                     setDraft({
@@ -212,6 +237,23 @@ export function OrbitVoiceSwitch({
                     );
                   })}
                 </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-9 shrink-0"
+                  disabled={!providers.deepgram || preview?.state === "loading"}
+                  aria-label={preview?.voice === draft.deepgram.voice && preview.state === "playing" ? "Stop preview" : "Preview voice"}
+                  title={providers.deepgram ? "Preview this voice" : "Deepgram isn’t configured"}
+                  onClick={() => void togglePreview(draft.deepgram.voice)}
+                >
+                  {preview?.voice === draft.deepgram.voice ? (
+                    preview.state === "loading" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Square className="size-3.5" aria-hidden />
+                  ) : (
+                    <Play className="size-4" aria-hidden />
+                  )}
+                </Button>
+                </span>
               </label>
             </>
           ) : (
