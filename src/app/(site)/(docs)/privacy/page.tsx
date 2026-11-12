@@ -171,7 +171,8 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Your calendar</strong> — from a Google, Outlook or iCloud calendar you
-              connect, Orbit keeps the meetings from two days ago to two weeks ahead (title, time,
+              connect (on Google, the calendars you tick, your primary calendar by default), Orbit
+              keeps the meetings from two days ago to two weeks ahead (title, time,
               call link, agenda, and the guests&rsquo; names and addresses), refreshes them while
               you use Orbit, and deletes a meeting once it leaves that window or your calendar. It
               uses them to suggest recording a call, remind you to prepare and follow up, show a
@@ -179,8 +180,10 @@ export default function PrivacyPage() {
               schedule in Chat. Guests&rsquo; addresses are used only to recognise people you
               already know; they are never sent to an AI provider. Disconnecting a calendar
               deletes these meetings and the prep reminders made for meetings still to come. A
-              past meeting with people you know is also logged to their history, with the
-              meeting&rsquo;s title, location and the first 500 characters of its description.
+              meeting from 90 days ago to 60 days ahead with people you know is also matched to
+              them: a past one is logged to their history, with the meeting&rsquo;s title, location
+              and the first 500 characters of its description, and a follow-up reminder may be
+              suggested.
               When an invite is for a Luma, Partiful or Eventbrite event Orbit already holds, the
               prep card and Chat also show that event&rsquo;s hosts, guest count and the guests
               worth finding — by name and role, never their addresses.
