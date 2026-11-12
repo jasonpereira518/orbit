@@ -192,7 +192,7 @@ async function main() {
         // Voice reads what Chat reads (minus paid web lookups), inside Deepgram's prompt limit.
         for (const name of ["get_dossier(", "query_interactions(", "list_events(", "search_notes("])
           assert.ok(agent.think?.prompt?.includes(name), `voice catalog offers ${name}`);
-        assert.ok(!agent.think?.prompt?.includes("research_person("), "no web lookups in voice");
+        assert.ok(!agent.think?.prompt?.includes("research_person("), "no web lookups when web search is unavailable (no AI provider here)");
         for (const name of ["delete_contact(", "create_event(", "mark_spoke_to(", "open_page("])
           assert.ok(agent.think?.prompt?.includes(name), `voice can propose or drive ${name}`);
         assert.ok(agent.think?.prompt?.includes("Never\nuse markdown") || agent.think?.prompt?.includes("Never use markdown"), "speech-only formatting rule");
