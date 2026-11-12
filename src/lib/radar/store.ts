@@ -153,19 +153,23 @@ export function planRunResult(live: readonly LiveRecommendation[], next: readonl
 /** `planRunResult` for a daily pass (`composeDay`): new Today cards, promotions, retirements. */
 export function planDayResult(
   live: readonly LiveRecommendation[],
-  day: { insert: readonly NewRecommendation[]; promote: readonly string[]; keepContacts: ReadonlySet<string> },
+  day: { insert: readonly NewRecommendation[]; supersede: readonly string[]; promote: readonly string[]; keepContacts: ReadonlySet<string> },
   now: Date
 ): WriteCounts {
-  const expired = live.filter(
+  const retired = live.filter(
     (r) =>
       (r.status === "pending" || (r.status === "snoozed" && r.snoozedUntil !== null && r.snoozedUntil <= now)) &&
       !day.keepContacts.has(r.contactId)
   ).length;
-  return { inserted: day.insert.length, updated: day.promote.length, expired };
+  const superseded = live.filter((r) => r.status === "pending" && day.supersede.includes(r.contactId)).length;
+  // An insert that lands on a live row of the same key refreshes it rather than adding a card.
+  const liveKeys = new Set(live.map((r) => recommendationKey(r.contactId, r.kind)));
+  const refreshed = day.insert.filter((r) => liveKeys.has(recommendationKey(r.contactId, r.kind))).length;
+  return { inserted: day.insert.length - refreshed, updated: day.promote.length + refreshed, expired: retired + superseded };
 }
 
 /** A daily pass's write: the plan's rows stay, only Today and retirements change. */
-export type DailyWrite = { mode: "daily"; keepContacts: ReadonlySet<string>; promote: readonly string[] };
+export type DailyWrite = { mode: "daily"; keepContacts: ReadonlySet<string>; promote: readonly string[]; supersede: readonly string[] };
 
 /**
  * Replace this account's live list with the run's result, in one atomic write:
@@ -238,6 +242,31 @@ export async function writeRunResult(
           )
         ),
     ];
+    // A card of another kind carries a person's news: their old pending card goes first, so the
+    // new one is the only card they have (and the insert below is not a second row for them).
+    if (daily?.supersede.length) {
+      statements.push(
+        tx
+          .update(recommendations)
+          .set({ status: "expired", resolvedAt: now, updatedAt: now })
+          .where(
+            and(
+              eq(recommendations.userId, userId),
+              eq(recommendations.status, "pending"),
+              sql`${recommendations.contactId}::text = ANY(ARRAY[${sql.join(
+                daily.supersede.map((k) => sql`${k}`),
+                sql`, `
+              )}]::text[])`,
+              keys.length
+                ? sql`NOT ((${recommendations.contactId}::text || ':' || ${recommendations.kind}) = ANY(ARRAY[${sql.join(
+                    keys.map((k) => sql`${k}`),
+                    sql`, `
+                  )}]::text[]))`
+                : undefined
+            )
+          )
+      );
+    }
     if (next.length) {
       statements.push(
         tx
@@ -265,8 +294,10 @@ export async function writeRunResult(
               updatedAt: now,
             }))
           )
-          // A daily pass inserts only Today cards for people with no live card; should one race
-          // a live row, the live row wins (`setWhere` false), so the plan is never rewritten.
+          // A daily pass writes only Today cards. One that lands on a live row of the same kind is
+          // news for that person (`composeDay`): it refreshes a still-pending row whose facts
+          // changed, in place (same id), and the row counts as new again (created now, not yet
+          // seen) so "What changed" shows it. Anything else leaves the live row as it is.
           .onConflictDoUpdate({
             target: [recommendations.userId, recommendations.contactId, recommendations.kind],
             // Must imply `recommendations_live_v2_uidx`'s predicate, or Postgres finds no
@@ -290,8 +321,11 @@ export async function writeRunResult(
               aiNote: sql`case when excluded.ai_note is not null then excluded.ai_note when ${recommendations.inputsHash} = excluded.inputs_hash then ${recommendations.aiNote} else null end`,
               inputsHash: sql`excluded.inputs_hash`,
               updatedAt: sql`excluded.updated_at`,
+              ...(daily ? { createdAt: sql`excluded.created_at`, firstSeenAt: null } : {}),
             },
-            ...(daily ? { setWhere: sql`false` } : {}),
+            ...(daily
+              ? { setWhere: sql`${recommendations.status} = 'pending' and excluded.inputs_hash <> ${recommendations.inputsHash}` }
+              : {}),
           })
       );
     }

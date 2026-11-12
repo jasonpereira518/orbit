@@ -97,7 +97,8 @@ export async function fetchRadarBriefing(): Promise<RadarBriefing> {
   return briefing;
 }
 
-export type RadarActionResult = { ok: true; message?: string } | { ok: false; message: string };
+/** `busy`: a run is already under way, so the page shows its progress instead of an error. */
+export type RadarActionResult = { ok: true; message?: string } | { ok: false; message: string; busy?: true };
 
 export async function scheduleFromRecommendation(id: string, days: ScheduleDays): Promise<RadarActionResult> {
   const userId = await requireUserForReleasedSurface(SURFACE);
@@ -181,7 +182,7 @@ export async function refreshRadarNow(): Promise<RadarActionResult> {
   const state = await loadRadarState(userId);
   if (!state || state.paused) return { ok: false, message: "Turn on Radar first" };
   if (!(await claimRadarLease(userId))) {
-    return { ok: false, message: "Radar is already updating — give it a moment" };
+    return { ok: false, message: "Radar is already updating", busy: true };
   }
   const stats = await runRadarForUser(userId, { trigger: "manual", ai: true, budgetMs: 20_000 });
   revalidateRadar();

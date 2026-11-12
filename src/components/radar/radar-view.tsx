@@ -4,12 +4,14 @@ import { useEffect, useState, useSyncExternalStore, useTransition } from "react"
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { format, formatDistanceToNow } from "date-fns";
-import { ChevronLeft, ChevronRight, Focus, LayoutList, RefreshCw, Wand2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Focus, LayoutList, Wand2 } from "lucide-react";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { Button } from "@/components/ui/button";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { RecommendationCard, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { RadarSettingsSheet } from "@/components/radar/radar-settings-sheet";
+import { RefreshRadarButton } from "@/components/radar/refresh-radar-button";
+import { useRadarRunProgress } from "@/components/radar/use-radar-run-progress";
 import { useRadarKeys } from "@/components/radar/use-radar-keys";
 import { addInboxPerson, dismissInboxPerson, refreshRadarNow, undoAutopilot } from "@/actions/radar";
 import { InboxPeople, type InboxPersonView } from "@/components/radar/inbox-people";
@@ -75,6 +77,16 @@ export function RadarView(props: RadarViewProps) {
   const { aiReason } = useViewerPlan();
   const router = useRouter();
   const [pending, start] = useTransition();
+  // A run something else started (the nightly pass, another tab) finishing while this page is open.
+  const run = useRadarRunProgress((status) => {
+    if (status === "failed") toast.error("Couldn’t update Radar just now — try again in a minute");
+    else toast.success("Radar is up to date");
+    router.refresh();
+  });
+  // The bar holds at 100% for a beat when our own refresh lands, before the page swaps in.
+  const [landing, setLanding] = useState(false);
+  const refreshing = pending || run.watching;
+  const percent = landing ? 100 : (run.snap?.progress ?? 0);
   const linked = focusId ? recommendations.findIndex((r) => r.id === focusId) : -1;
   // The server always draws the list; the browser then opens in focus mode for a linked card,
   // a remembered choice, or a phone. A choice made here wins from then on.
@@ -111,13 +123,26 @@ export function RadarView(props: RadarViewProps) {
 
   const refresh = () =>
     start(async () => {
+      run.watch("own");
+      let attached = false;
       try {
         const result = await refreshRadarNow();
-        if (result.ok) toast.success(result.message ?? "Radar is up to date");
-        else toast.error(result.message);
+        if (result.ok) {
+          toast.success(result.message ?? "Radar is up to date");
+          setLanding(true);
+          await new Promise((resolve) => setTimeout(resolve, prefersReducedMotion() ? 0 : 500));
+        } else if (result.busy) {
+          // Already updating: watch that run instead of refusing; the poll refreshes the page when it ends.
+          attached = true;
+          run.watch("attach");
+          return;
+        } else toast.error(result.message);
         router.refresh();
       } catch (err) {
         toast.error(friendlyError(err, "Couldn’t update Radar just now — try again in a minute"));
+      } finally {
+        setLanding(false);
+        if (!attached) run.stop();
       }
     });
 
@@ -125,8 +150,12 @@ export function RadarView(props: RadarViewProps) {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
         <p suppressHydrationWarning>
-          {lastRunAt ? `Updated ${formatDistanceToNow(new Date(lastRunAt), { addSuffix: true })}` : "Building your first plan…"}
-          {signalsThisWeek > 0 && (
+          {refreshing
+            ? [run.snap?.label ?? "Starting", run.snap?.detail].filter(Boolean).join(" · ") + "…"
+            : lastRunAt
+              ? `Updated ${formatDistanceToNow(new Date(lastRunAt), { addSuffix: true })}`
+              : "Building your first plan…"}
+          {!refreshing && signalsThisWeek > 0 && (
             <span>
               {" · "}
               {signalsThisWeek} new {signalsThisWeek === 1 ? "signal" : "signals"} this week
@@ -140,10 +169,7 @@ export function RadarView(props: RadarViewProps) {
               <ModeButton active={mode === "list"} onClick={() => chooseMode("list")} icon={LayoutList} label="List" />
             </div>
           )}
-          <Button type="button" size="sm" variant="outline" className="h-8" disabled={pending} onClick={refresh}>
-            <RefreshCw className={pending ? "size-3.5 animate-spin" : "size-3.5"} aria-hidden />
-            Refresh now
-          </Button>
+          <RefreshRadarButton busy={refreshing} percent={percent} onClick={refresh} />
           <RadarSettingsSheet settings={settings} />
         </div>
       </div>

@@ -2881,6 +2881,10 @@ export const radarRuns = pgTable(
     durationMs: integer("duration_ms"),
     stats: jsonb("stats").$type<Record<string, number | boolean | string>>().default({}).notNull(),
     error: text("error"),
+    /** Where a running run is: the stage's label, 0-100 (monotonic), and "3 of 5" when the stage counts. */
+    stage: text("stage"),
+    progress: integer("progress").default(0).notNull(),
+    detail: text("detail"),
   },
   (t) => [index("radar_runs_user_started_idx").on(t.userId, t.startedAt.desc())]
 );
