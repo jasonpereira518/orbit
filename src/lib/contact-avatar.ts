@@ -264,7 +264,9 @@ export type AvatarTarget = { contactId: string } | { sharedSlug: string };
 export async function fetchLinkedInPhoto(
   linkedinUrl: string,
   userId: string | null,
-  target: AvatarTarget
+  target: AvatarTarget,
+  /** `skipDirect`: the caller already asked LinkedIn directly (the photo queue); go straight to the quota'd tiers. */
+  opts?: { skipDirect?: boolean }
 ): Promise<{ url: string; source: AvatarQuotaSource } | null> {
   // A shared-pool photo is stored under `sharedSlug`, so it must be looked up by exactly that
   // slug too. Re-deriving it from the URL can name a different person (`/IN/a/in/b`).
@@ -274,7 +276,7 @@ export async function fetchLinkedInPhoto(
   let deferred: AvatarSourceRateLimitError | null = null;
 
   // Tier 1: Direct LinkedIn public profile scrape (100% free, zero third-party quota)
-  if (!isLinkedInDirectRateLimited()) {
+  if (!opts?.skipDirect && !isLinkedInDirectRateLimited()) {
     try {
       const directImageUrl = await fetchLinkedInOgImageDirect(slug);
       if (directImageUrl && ("contactId" in target || isLinkedInProfilePhoto(directImageUrl))) {

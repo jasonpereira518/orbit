@@ -156,10 +156,7 @@ async function main() {
     const metricsBefore = await getGlobalUpkeepMetrics();
     t.check("Backlog metrics identify candidates across accounts", metricsBefore.totalCandidates >= 2);
 
-    const batchStats = await runGlobalContactUpkeepBatch({
-      batchSize: 10,
-      pacingDelayMs: 20,
-    });
+    const batchStats = await runGlobalContactUpkeepBatch({ batchSize: 10 });
 
     t.check("runGlobalContactUpkeepBatch checked candidates", batchStats.checked > 0);
     t.check("runGlobalContactUpkeepBatch repaired names", batchStats.namesFixed >= 1);
