@@ -14,9 +14,8 @@ import { aiResultCache, userSettings } from "@/db/schema";
 import { and, eq, gt } from "drizzle-orm";
 import crypto from "node:crypto";
 import { decrypt } from "@/lib/crypto";
-import { extractLinkedInProfilePhotoFromHtml, isLikelyPersonName } from "@/lib/linkedin-scraper";
+import { isLikelyPersonName } from "@/lib/linkedin-scraper";
 import { discoverPeople } from "@/lib/web-research";
-import { nameFromSlug as nameFromSlugLib } from "@/lib/names/from-identifier";
 
 export type PeopleSearchCriteria = {
   titles?: string[];
@@ -312,7 +311,7 @@ function parseDuckDuckGoCandidates(
 
     // Determine Job Title & Company
     let title = criteria.titles?.[0] || "Executive Leader";
-    let company = criteria.company || "Target Company";
+    const company = criteria.company || "Target Company";
 
     if (rawSnippet) {
       // Look for title patterns in snippet
@@ -369,43 +368,6 @@ function parseDuckDuckGoCandidates(
   }
 
   return candidates;
-}
-
-/**
- * Enriches candidate avatar from LinkedIn public metadata if available
- */
-async function enrichCandidateAvatar(
-  candidate: BrightDataCandidate,
-  config: BrightDataConfig
-): Promise<BrightDataCandidate> {
-  if (!config.apiKey || !candidate.linkedinUrl) return candidate;
-
-  try {
-    const res = await fetch(`${config.endpoint}/request`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        zone: config.zone,
-        url: candidate.linkedinUrl,
-        format: "raw",
-      }),
-      signal: AbortSignal.timeout(6_000),
-    });
-
-    if (res.ok) {
-      const html = await res.text();
-      const photo = extractLinkedInProfilePhotoFromHtml(html);
-      if (photo) {
-        return { ...candidate, avatarUrl: photo };
-      }
-    }
-  } catch {
-    // Non-blocking enrichment failure
-  }
-  return candidate;
 }
 
 /**
