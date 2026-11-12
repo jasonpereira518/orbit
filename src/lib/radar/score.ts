@@ -78,6 +78,7 @@ export const RADAR_WEIGHTS = {
   connect: { introduce: 30, ask: 26, share: 22 },
   // heads_up: a LinkedIn post the person chose to save with the extension.
   savedPost: 16,
+  publicMention: 18,
   // An event read from the user's own mail, scaled by how well the ranker matched the person
   // (60% to 100% of the base). An interview coming up outranks a reply you owe; both outrank
   // a colleague's opening, which is a chance rather than a debt.
@@ -108,7 +109,7 @@ export const RADAR_WEIGHTS = {
 } as const;
 
 /** Half-lives for facts whose value fades. Everything else holds until it stops being true. */
-export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10, socialPost: 4, emailJob: 14, emailProcess: 21, emailNews: 5, emailEvent: 7 } as const;
+export const RADAR_HALF_LIFE_DAYS = { jobPosting: 21, jobChange: 10, socialPost: 4, publicMention: 7, emailJob: 14, emailProcess: 21, emailNews: 5, emailEvent: 7 } as const;
 
 export const RADAR_BUCKETS = { today: 50, soon: 32, later: 18 } as const;
 
@@ -145,6 +146,7 @@ export const RADAR_WINDOWS = {
   jobChangeMax: 30,
   /** A post older than this is not a reason to write. */
   postMax: 7,
+  mentionMax: 14,
   /** How long an event read from mail still makes someone worth a message. */
   emailJobMax: 21,
   emailProcessMax: 21,
@@ -511,6 +513,17 @@ export function scoreContactKinds(
           "heads_up",
           { code: "social_post", label: `Posted on LinkedIn: “${s.excerpt.slice(0, 140)}${s.excerpt.length > 140 ? "…" : ""}”`, points: decayed(W.savedPost, age, RADAR_HALF_LIFE_DAYS.socialPost) },
           { label: "LinkedIn", at: iso(s.at), url: s.url }
+        );
+        break;
+      }
+      case "public_mention": {
+        const age = daysSince(s.at, now) ?? 0;
+        if (age > RADAR_WINDOWS.mentionMax) break;
+        const what = s.mentionKind === "talk" ? "Gave a talk" : s.mentionKind === "news" ? "In the news" : "Posted";
+        put(
+          "heads_up",
+          { code: "public_mention", label: `${what}: “${s.text.slice(0, 140)}${s.text.length > 140 ? "…" : ""}”`, points: decayed(W.publicMention, age, RADAR_HALF_LIFE_DAYS.publicMention) },
+          { label: "From the web", at: iso(s.at), url: s.url }
         );
         break;
       }
