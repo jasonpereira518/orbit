@@ -59,6 +59,26 @@ export function warpPoint(
   return { x: ox + (restX - ox) * k, y: oy + (restY - oy) * k };
 }
 
+/**
+ * Where the warp streams from, or null to skip the warp.
+ *
+ * The solar system's box centre when it is on screen. The sky mounts after load + idle, which
+ * can be seconds on a slow connection; a visitor who has scrolled the hero away by then would
+ * get long parallel streaks from an off-screen sun behind what they are reading, so that gets no
+ * warp at all (the same rule as a hash link). No box, or one not laid out yet: viewport centre.
+ */
+export function introOrigin(
+  box: { left: number; top: number; width: number; height: number } | null | undefined,
+  viewportW: number,
+  viewportH: number
+): { x: number; y: number } | null {
+  if (!box || box.width <= 0 || box.height <= 0) return { x: viewportW / 2, y: viewportH / 2 };
+  const x = box.left + box.width / 2;
+  const y = box.top + box.height / 2;
+  if (x < 0 || x > viewportW || y < 0 || y > viewportH) return null;
+  return { x, y };
+}
+
 export function skyAlpha(elapsedMs: number): number {
   if (elapsedMs <= 0) return 0;
   return Math.min(1, elapsedMs / SKY_FADE_MS);

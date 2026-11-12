@@ -15,6 +15,7 @@ import {
   SKY_FADE_MS,
   STREAK_LAG_MS,
   WARP_MS,
+  introOrigin,
   landingWarpStart,
   skyAlpha,
   warpK,
@@ -54,7 +55,21 @@ const lateMount = landingWarpStart(1000 + WARP_MS + 1);
 attrOn = false;
 const clientNavBack = landingWarpStart(1020);
 
+// The origin. The sky can mount seconds after load; a visitor who has scrolled past the hero by
+// then must not get 1.6s of parallel streaks from a sun that is off the top of the screen.
+const rect = (top: number, h = 400, left = 800, w = 400) => ({ left, top, width: w, height: h });
+const inView = introOrigin(rect(200), 1440, 900);
+const scrolledPast = introOrigin(rect(-1200), 1440, 900);
+const partlyAbove = introOrigin(rect(-300), 1440, 900);
+const noBox = introOrigin(null, 1440, 900);
+const zeroBox = introOrigin(rect(200, 0, 800, 0), 1440, 900);
+
 const CASES: Array<[label: string, got: unknown, expected: unknown]> = [
+  ["origin is the box centre when it is on screen", inView && `${inView.x},${inView.y}`, "1000,400"],
+  ["box scrolled off the top -> no warp", scrolledPast, null],
+  ["box centre above the viewport -> no warp", partlyAbove, null],
+  ["no box -> viewport centre", noBox && `${noBox.x},${noBox.y}`, "720,450"],
+  ["zero-size box -> viewport centre", zeroBox && `${zeroBox.x},${zeroBox.y}`, "720,450"],
   ["progress starts at 0", warpProgress(0), 0],
   ["negative elapsed clamps to 0", warpProgress(-50), 0],
   ["progress ends at exactly 1", warpProgress(WARP_MS), 1],

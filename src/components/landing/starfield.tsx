@@ -22,6 +22,7 @@ import {
   WARP_DEPTH_MAX,
   WARP_DEPTH_MIN,
   WARP_MS,
+  introOrigin,
   landingWarpStart,
   skyAlpha,
   warpK,
@@ -350,9 +351,18 @@ export function Starfield({
       if (warping) {
         // The vanishing point is the solar system's centre, so the sky comes out of the place
         // the system then grows into. The canvas is fixed at inset 0, so viewport = canvas px.
-        const r = document.querySelector("[data-sky-warp-origin]")?.getBoundingClientRect();
-        warpOx = r && r.width > 0 ? r.left + r.width / 2 : width / 2;
-        warpOy = r && r.height > 0 ? r.top + r.height / 2 : height / 2;
+        const origin = introOrigin(
+          document.querySelector("[data-sky-warp-origin]")?.getBoundingClientRect(),
+          width,
+          height
+        );
+        if (origin) {
+          warpOx = origin.x;
+          warpOy = origin.y;
+        } else {
+          // Scrolled past the hero before the sky loaded: plain sky (lib/landing-intro.ts).
+          warpEnd = -Infinity;
+        }
       }
 
       // `stars` has just been rebuilt, so a figure still holding the old
