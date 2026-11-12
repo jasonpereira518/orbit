@@ -69,6 +69,11 @@ export const EXPECTED_IN_PRODUCTION = [
   // Unset, the nightly Deepgram usage reconciliation (/api/ops/speech-usage) cannot call
   // Deepgram's project-scoped usage API and logs it rather than checking for under-reporting.
   "DEEPGRAM_PROJECT_ID",
+  // Web push (src/lib/push.ts). Unset, Radar's same-day alerts reach people by email only and
+  // "Push on this device" says push isn't set up. Generate with `npx web-push generate-vapid-keys`.
+  "NEXT_PUBLIC_VAPID_PUBLIC_KEY",
+  "VAPID_PRIVATE_KEY",
+  "VAPID_SUBJECT",
 ] as const;
 
 export const REQUIRED_IN_PREVIEW = [

@@ -209,7 +209,7 @@ export function RadarWidget({ today, total, drafts, paused, people, changes }: R
             </span>
           </span>
           <span className="font-[family-name:var(--font-display)] text-lg leading-snug text-ink">
-            {briefingHeadline(today)}
+            {briefingHeadline(today, total)}
           </span>
           {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
           {shown.length > 0 && (

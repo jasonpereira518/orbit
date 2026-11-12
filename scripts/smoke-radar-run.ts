@@ -479,13 +479,15 @@ run(async () => {
     check("the bell summarises Radar in one line", panel.radar?.count === live.length && (panel.radar?.names.length ?? 0) <= 3, JSON.stringify(panel.radar));
     check("and never as a due item", !panel.items.some((i) => i.url === "/radar"));
     const briefing = await loadRadarBriefing(USER);
+    // Today's moments lead when there are any (Radar PR 9b); otherwise the week's best three.
     check(
-      "the dashboard's briefing leads with the top three",
+      "the dashboard's briefing leads with Today, else the top three",
       briefing.hasRun &&
-        briefing.top.length === Math.min(3, live.length) &&
+        briefing.top.length === Math.min(3, briefing.today || live.length) &&
+        (briefing.today === 0 || briefing.top.every((r) => r.bucket === "today")) &&
         briefing.top.every((r, i, all) => i === 0 || all[i - 1]!.score >= r.score) &&
-        briefing.total === live.length,
-      briefing.top.map((r) => `${r.contactName}:${r.score}`).join(", ")
+        briefing.total >= live.length,
+      briefing.top.map((r) => `${r.contactName}:${r.score}:${r.bucket}`).join(", ")
     );
     check("and never counts more drafts than cards", briefing.drafts >= 0 && briefing.drafts <= live.length);
     const radarIds = new Set(live.map((r) => r.contactId));

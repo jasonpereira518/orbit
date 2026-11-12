@@ -32,6 +32,7 @@ import { isValidTimeZone } from "@/lib/reminder-due-bucket";
 import { buildRadarDigestEmail, type DigestContent } from "@/lib/radar/digest-email";
 import { digestLineFor } from "@/lib/radar/email-text";
 import type { RadarReason, RecommendationKind } from "@/lib/radar/types";
+import { listOpenOpportunities } from "@/lib/radar/opportunity-actions";
 
 /** People shown in the email; the rest are counted. */
 export const RADAR_DIGEST_TOP = 5;
@@ -163,6 +164,32 @@ export async function unsubscribeRadarDigest(token: string | null | undefined): 
   return rows.length > 0;
 }
 
+// The same-day email's own link (`moments.ts`): a different key, so a Monday-email link can
+// never turn the same-day email off or the other way round. Honoured only for an account that
+// has been sent one (`radar_moment_last_day` set), the binding the Monday link gets from its
+// stored hash.
+const MOMENT_UNSUBSCRIBE_TOKEN: SignedIdTokenSpec = { label: "orbit:radar-moment-unsubscribe:v1", devFallback: "orbit-dev-radar-moment" };
+
+export function radarMomentUnsubscribeUrl(userId: string): string {
+  const token = signIdToken(MOMENT_UNSUBSCRIBE_TOKEN, userId);
+  return `${getAppBaseUrl()}/api/radar/digest/unsubscribe?kind=moment&token=${encodeURIComponent(token)}`;
+}
+
+/** Turn the same-day email off for the account a token names. False for a token this app did not sign. */
+export async function unsubscribeRadarMoments(token: string | null | undefined): Promise<boolean> {
+  const verified = verifyIdToken(MOMENT_UNSUBSCRIBE_TOKEN, token);
+  if (!verified) return false;
+  const db = await getDb();
+  const rows = rowsOf<{ user_id: string }>(
+    await db.execute(sql`
+      UPDATE user_settings SET radar_moment_email_enabled = 0
+       WHERE user_id = ${verified.id} AND radar_moment_last_day IS NOT NULL
+      RETURNING user_id
+    `)
+  );
+  return rows.length > 0;
+}
+
 // ---- Sending -----------------------------------------------------------------------------
 
 export type DigestMessage = { to: string; subject: string; html: string; text: string; unsubscribeUrl: string };
@@ -170,7 +197,7 @@ export type DigestDeliver = (message: DigestMessage) => Promise<{ ok: boolean; e
 /** Where a refused send is recorded: the error log, which the ops sweep alerts on. */
 export type DigestReport = (failure: { userId: string; error: string }) => Promise<void>;
 
-const reportRefusal: DigestReport = ({ userId, error }) =>
+export const reportRefusal: DigestReport = ({ userId, error }) =>
   recordErrorEvent({
     source: ERROR_SOURCES.resendRejected,
     kind: "radar.digest",
@@ -190,7 +217,7 @@ export function radarDigestConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY?.trim() && radarDigestSender());
 }
 
-const resendDeliver: DigestDeliver = async (message) => {
+export const resendDeliver: DigestDeliver = async (message) => {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = radarDigestSender();
   if (!apiKey || !from) return { ok: false, error: "Resend is not configured." };
@@ -220,6 +247,7 @@ export async function loadDigestContent(userId: string): Promise<DigestContent |
   const rows = rowsOf<{
     id: string;
     kind: RecommendationKind;
+    bucket: string | null;
     reasons: RadarReason[] | null;
     why: string | null;
     has_draft: boolean | null;
@@ -230,7 +258,7 @@ export async function loadDigestContent(userId: string): Promise<DigestContent |
     drafts: number | string;
   }>(
     await db.execute(sql`
-      SELECT r.id, r.kind, r.reasons,
+      SELECT r.id, r.kind, r.bucket, r.reasons,
              CASE WHEN r.ai_note ->> 'inputsHash' = r.inputs_hash THEN r.ai_note ->> 'why' END AS why,
              (r.draft ->> 'inputsHash' = r.inputs_hash) AS has_draft,
              c.full_name, c.preferred_name, c.company,
@@ -247,9 +275,20 @@ export async function loadDigestContent(userId: string): Promise<DigestContent |
     `)
   );
   if (rows.length === 0) return null;
+  // The Opportunities lane's finds, counted. A failure here costs the email its one line, never the email.
+  const finds = await listOpenOpportunities(userId, new Date(), 20).catch(() => []);
+  const events = finds.filter((f) => f.kind === "event");
   return {
     total: Number(rows[0]!.total),
     drafts: Number(rows[0]!.drafts),
+    finds: finds.length
+      ? {
+          events: events.length,
+          people: finds.filter((f) => f.kind === "person").length,
+          programs: finds.filter((f) => f.kind === "program").length,
+          nextEvent: events[0]?.startsAt ? { title: events[0].title, startsAt: events[0].startsAt } : null,
+        }
+      : null,
     people: rows.map((r) => ({
       id: r.id,
       name: (r.preferred_name ?? "").trim() || r.full_name,
@@ -257,6 +296,7 @@ export async function loadDigestContent(userId: string): Promise<DigestContent |
       company: r.company?.trim() || null,
       line: digestLineFor(r.why, r.reasons ?? []),
       hasDraft: r.has_draft === true,
+      today: r.bucket === "today",
     })),
   };
 }

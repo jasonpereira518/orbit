@@ -5,7 +5,8 @@
  * the surface first (`requireUserForReleasedSurface`), then calls the request-free functions in
  * `src/lib/radar/actions-core.ts`, so the smoke drives the same code.
  */
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { parsePushSubscription, removePushSubscription, savePushSubscription } from "@/lib/push";
 import { after } from "next/server";
 import { addInboxPersonForUser, dismissInboxPersonForUser } from "@/lib/email-intel/inbox-actions";
 import { reconcileEmailChunkContacts } from "@/lib/email-intel/search-index";
@@ -289,6 +290,32 @@ export async function setRadarDigest(on: boolean): Promise<RadarActionResult> {
   revalidateRadar();
   revalidatePathIfRequestScoped("/settings");
   return { ok: true, message: on ? "Monday email on" : "Monday email off" };
+}
+
+/** The same-day email Radar sends when a Today item won't keep (at most one a day). */
+export async function setRadarMomentEmail(on: boolean): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const db = await getDb();
+  await db.update(userSettings).set({ radarMomentEmailEnabled: on ? 1 : 0 }).where(eq(userSettings.userId, userId));
+  revalidateRadar();
+  return { ok: true, message: on ? "Same-day email on" : "Same-day email off" };
+}
+
+/** "Turn on" push for this browser: the subscription the browser just made, saved for the account. */
+export async function saveRadarPushSubscription(raw: unknown): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const target = parsePushSubscription(raw);
+  if (!target) return { ok: false, message: "This browser gave Orbit a subscription it can’t use — try again?" };
+  const ua = (await headers()).get("user-agent");
+  await savePushSubscription(userId, target, ua);
+  return { ok: true, message: "Push on for this device" };
+}
+
+export async function removeRadarPushSubscription(endpoint: string): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  if (typeof endpoint !== "string" || endpoint.length > 1000) return { ok: false, message: "Couldn’t turn that off — try again?" };
+  await removePushSubscription(userId, endpoint);
+  return { ok: true, message: "Push off for this device" };
 }
 
 /** Whether the extension may save LinkedIn posts by known contacts as Radar activity. */
