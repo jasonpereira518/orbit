@@ -11,7 +11,19 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { VoiceTransportBoundary } from "./voice/transport-boundary";
 import { ProposedActionsCard } from "./proposed-actions";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
-import { OPEN_PAGE_TOOL, VOICE_DURATION_SECONDS, voicePagePath } from "@/lib/voice/policy";
+import {
+  ASK_CHAT_TOOL,
+  OPEN_PAGE_TOOL,
+  SET_THEME_TOOL,
+  START_RECORDING_TOOL,
+  VOICE_DURATION_SECONDS,
+  VOICE_THEMES,
+  voicePagePath,
+} from "@/lib/voice/policy";
+import { useTheme } from "next-themes";
+import { saveThemePreference } from "@/actions/settings";
+import { streamChat } from "@/lib/chat-stream-client";
+import { useMeetingSession } from "@/components/capture/meeting-session";
 import {
   PROVIDER_LABELS,
   type VoiceProvider,
@@ -76,6 +88,8 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
   state: VoicePublicState; threadId: string; onClose(): Promise<void>; compact?: boolean;
 }) {
   const router = useRouter();
+  const { setTheme } = useTheme();
+  const meeting = useMeetingSession();
   const [active, setActive] = useState<VoiceSessionStart | null>(null);
   const [mode, setMode] = useState<VoiceMode>("disconnected");
   const [busy, setBusy] = useState(false);
@@ -211,6 +225,35 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
       clearInterval(heartbeat);
     };
   }, [active, stop]);
+  /**
+   * ask_chat: the question goes to Orbit Chat in this call's own thread, exactly as if typed.
+   * A spoken answer can't wait minutes, so after 20 seconds the agent is told Chat is still
+   * working; the turn finishes server-side regardless and shows in the thread.
+   */
+  const askChat = useCallback(async (question: unknown) => {
+    if (typeof question !== "string" || !question.trim())
+      return JSON.stringify({ error: "Give ask_chat a question." });
+    let answer = "";
+    const finished = new Promise<string | null>((resolve) => {
+      void streamChat(
+        { question: question.trim().slice(0, 2000), threadId, turnId: crypto.randomUUID() },
+        {
+          onAnswer: (delta) => { answer += delta; },
+          onRecommendations: () => {},
+          onDone: () => resolve(null),
+          onError: (message) => resolve(message),
+        },
+      );
+    });
+    const outcome = await Promise.race([
+      finished,
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 20_000)),
+    ]);
+    if (outcome === "pending")
+      return JSON.stringify({ status: "still_working", note: "Chat is still answering. The full answer will appear in this conversation." });
+    if (outcome) return JSON.stringify({ error: outcome });
+    return JSON.stringify({ untrusted_chat_answer: plainSpeech(answer).slice(0, 3000) });
+  }, [threadId]);
   const events = useMemo<VoiceAgentEvents>(() => {
     const id = active?.sessionId;
     const current = () =>
@@ -285,9 +328,24 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
             return JSON.stringify({ error: "Voice session ended" });
           // App control runs here, not on the server: the call lives in the layout, so it keeps
           // going on the page it opens. Only allowlisted pages; record pages need a real id.
+          const args = JSON.parse(input || "{}") as Record<string, unknown>;
+          if (tool === ASK_CHAT_TOOL) return await askChat(args.question);
+          if (tool === START_RECORDING_TOOL) {
+            if (!meeting?.ready)
+              return JSON.stringify({ error: "The meeting recorder isn't ready on this page yet. Try again in a moment." });
+            meeting.startRecording(null, "mic");
+            router.push("/meetings");
+            return JSON.stringify({ started: true, note: "Recording on the microphone. The user can pause or finish it on Meetings." });
+          }
+          if (tool === SET_THEME_TOOL) {
+            const theme = VOICE_THEMES.find((t) => t === args.theme);
+            if (!theme) return JSON.stringify({ error: "Theme must be light, dark or system." });
+            setTheme(theme);
+            void saveThemePreference(theme).catch(() => {});
+            return JSON.stringify({ theme });
+          }
           if (tool === OPEN_PAGE_TOOL) {
-            const args = JSON.parse(input) as { page?: unknown; id?: unknown };
-            const path = voicePagePath(args.page, args.id);
+            const path = voicePagePath(args.page, args.id, args.filters);
             if (!path)
               return JSON.stringify({ error: "Unknown page, or that page needs a valid id from a lookup." });
             router.push(path);
@@ -311,7 +369,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
         }
       },
     };
-  }, [active, stop, persist, router]);
+  }, [active, stop, persist, router, meeting, setTheme, askChat]);
   async function start(fallback = false) {
     if (starting.current || session.current) return;
     starting.current = true;

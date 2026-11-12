@@ -240,10 +240,11 @@ export default async function AppLayout({
       {showTermsNotice && <TermsUpdateNotice />}
       {children}
       </AppShell>
-      </MeetingSessionProvider>
       {/* Above any page, like the meeting recorder: an Orbit Voice call keeps going when you
-          leave Chat, and docks at the middle right until you come back. */}
+          leave Chat, and docks at the middle right until you come back. Inside the meeting
+          provider so a call can start the recorder ("record this meeting"). */}
       <VoiceDock />
+      </MeetingSessionProvider>
 
       {/* Deliberately a SIBLING of AppShell, not a child. AppShell early-returns a bare
           shell for `/onboarding`, so mounting inside it would need the widget in two
