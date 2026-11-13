@@ -32,6 +32,8 @@ export type VoiceSessionStart = {
   threadId: string;
   expiresAt: string;
   credentials: VoiceCredentials;
+  /** Cosmo: the call ends at expiresAt because the minutes run out, not at the call cap. */
+  endsEarly?: boolean;
 };
 export type VoicePublicState = {
   enabled: boolean;

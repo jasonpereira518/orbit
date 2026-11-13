@@ -14,6 +14,7 @@ import {
   POINT_AT_TOOL,
   SET_CAPTIONS_TOOL,
   SET_THEME_TOOL,
+  VOICE_IDLE_SLEEP_MS,
   START_RECORDING_TOOL,
   VOICE_THEMES,
   voicePagePath,
@@ -115,6 +116,8 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
     (ConfirmWindow & { messageId: string; actionId: string; line: string; heard: boolean; createdAt: number }) | null
   >(null);
   const lastUserStart = useRef(0);
+  /** Anything happening in the call (speech either way, a tool, a mode change): for auto-sleep. */
+  const lastActivity = useRef(0);
   /** The last email a spoken "send it" queued, while "undo" can still stop it. */
   const lastSend = useRef<{ sendId: string; until: number } | null>(null);
   const session = useRef<string | null>(null);
@@ -231,6 +234,17 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
     return () => window.clearInterval(tick);
   }, [cosmo]);
 
+  // Cosmo goes back to sleep after a quiet minute: nobody spoke, it said nothing, nothing pending.
+  useEffect(() => {
+    if (!cosmo) return;
+    const tick = window.setInterval(() => {
+      const now = Date.now();
+      if (!session.current || !lastActivity.current || modeRef.current !== "listening" || confirmRef.current) return;
+      if (now - lastActivity.current >= VOICE_IDLE_SLEEP_MS) void close();
+    }, 5_000);
+    return () => window.clearInterval(tick);
+  }, [cosmo, close]);
+
   useEffect(() => {
     alive.current = true;
     const unsaved = pending.current;
@@ -258,7 +272,11 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
     const deadline = setTimeout(
       () => {
         if (session.current === id) {
-          setVoiceCall({ error: "This voice session has reached its time limit. Start a new conversation." });
+          setVoiceCall({
+            error: active.endsEarly
+              ? "That's all the time with Cosmo there is for now."
+              : "This voice session has reached its time limit. Start a new conversation.",
+          });
           void stop();
         }
       },
@@ -420,6 +438,7 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
       },
       onUserStarted: () => {
         lastUserStart.current = Date.now();
+        lastActivity.current = Date.now();
       },
       onConnected: () => {
         if (current())
@@ -436,10 +455,12 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
           w.expiresAt = w.opensAt + CONFIRM_WINDOW_MS;
         }
         modeRef.current = next;
+        lastActivity.current = Date.now();
         setVoiceCall(next !== "connecting" ? { mode: next, busy: false } : { mode: next });
       },
       onMessage: (source, text) => {
         if (!current() || !text.trim()) return;
+        lastActivity.current = Date.now();
         // Providers emit finalized turns here; recognition drafts never enter Chat history.
         const turn = { id: crypto.randomUUID(), source, text: text.slice(0, 4000), interrupted: false, revision: 1 };
         setLines([...transcript.current, turn]);
@@ -506,6 +527,7 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
         void stop("failed");
       },
       onTool: async (tool, input) => {
+        lastActivity.current = Date.now();
         const result = await runTool(tool, input);
         // The screen as it is now, told once whenever it has changed since the agent last heard.
         const screen = describeScreen(readScreen());
@@ -577,12 +599,18 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
       }
       session.current = response.sessionId;
       started.current = true;
+      lastActivity.current = Date.now();
       // The minute before the first interjection counts from here: the opener has the floor.
       if (!interject.current.lastAt) interject.current.lastAt = Date.now();
       thread.current = response.threadId;
       setCallThread(response.threadId);
       setActive(response);
-      setVoiceCall({ active: true, provider: response.credentials.provider });
+      setVoiceCall({
+        active: true,
+        provider: response.credentials.provider,
+        endsAt: Date.parse(response.expiresAt),
+        endsEarly: Boolean(response.endsEarly),
+      });
     } catch (err) {
       if (alive.current) {
         const denied = err instanceof Error && err.name === "NotAllowedError";

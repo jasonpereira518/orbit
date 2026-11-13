@@ -135,7 +135,9 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
         json: {
           sessionId,
           threadId,
-          expiresAt: new Date(Date.now() + 600000).toISOString(),
+          // The second call has under a minute of the month's Cosmo time left.
+          expiresAt: new Date(Date.now() + (starts.length === 2 ? 45_000 : 600000)).toISOString(),
+          endsEarly: starts.length === 2,
           credentials: {
             provider: "deepgram",
             accessToken: "short-lived-test-token",
@@ -225,6 +227,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   const cosmo = page.getByRole("region", { name: "Cosmo", exact: true });
   await expect(cosmo.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
   await expect.poll(() => connected).toBe(1);
+  await expect(cosmo.getByText("Under a minute of Cosmo left for now")).toHaveCount(0);
   expect(starts[0]).toEqual({ threadId: undefined, freshIfMissing: true });
   if (nudgeAtClick) expect(startNudges[0]).toMatch(/^(meeting:|due$|debrief:|radar$)/);
   else expect(startNudges[0]).toBeUndefined();
@@ -392,6 +395,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await orb.click();
   await expect.poll(() => starts.length).toBe(2);
   expect(starts[1]).toEqual({ threadId, freshIfMissing: true });
+  await expect(cosmo.getByText("Under a minute of Cosmo left for now")).toBeVisible();
   await cosmo.getByRole("button", { name: "End conversation" }).click();
   await expect.poll(() => ends).toBe(2);
 });

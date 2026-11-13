@@ -3,6 +3,23 @@ export const VOICE_DURATION_SECONDS = 600;
 export const VOICE_MAX_TOOL_CALLS = 60;
 /** Small changes one Cosmo call may apply without a click; the rest wait on a card. */
 export const VOICE_AUTO_APPLY_CAP = 5;
+/** A Cosmo call that hears nobody (and says nothing) for this long goes back to sleep. */
+export const VOICE_IDLE_SLEEP_MS = 60_000;
+/** Less than this left (this month, or in today's shared budget) and a new call isn't worth starting. */
+export const VOICE_MIN_CALL_SECONDS = 20;
+
+/**
+ * How long a new Cosmo call may run: the per-call cap, cut to whatever is left of the person's
+ * month and of today's shared budget. null = refuse, saying which ran out.
+ */
+export function voiceCallLength(input: { monthLeft: number; budgetLeft: number }):
+  | { seconds: number; endsEarly: boolean }
+  | { refused: "allowance" | "budget" } {
+  if (input.monthLeft < VOICE_MIN_CALL_SECONDS) return { refused: "allowance" };
+  if (input.budgetLeft < VOICE_MIN_CALL_SECONDS) return { refused: "budget" };
+  const seconds = Math.floor(Math.min(VOICE_DURATION_SECONDS, input.monthLeft, input.budgetLeft));
+  return { seconds, endsEarly: seconds < VOICE_DURATION_SECONDS };
+}
 export function voiceAvailable(
   enabled: boolean | null | undefined,
   configured: boolean,

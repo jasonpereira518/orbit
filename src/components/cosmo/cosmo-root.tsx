@@ -280,7 +280,7 @@ export function CosmoRoot({ tourActive = false }: { tourActive?: boolean }) {
 }
 
 function CosmoLive({ state }: { state: VoicePublicState }) {
-  const { provider, active, mode, busy, muted, error, failed, cards, saveError, closing } = useVoiceCall();
+  const { provider, active, mode, busy, muted, error, failed, cards, saveError, closing, endsAt, endsEarly } = useVoiceCall();
   const connected = active && mode !== "connecting" && mode !== "disconnected";
   const captions = useCaptions();
   const status = busy
@@ -328,6 +328,7 @@ function CosmoLive({ state }: { state: VoicePublicState }) {
         </div>
       )}
       {captions && active && <CosmoCaption />}
+      {active && endsEarly && endsAt && <MinutesLeft endsAt={endsAt} />}
       <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/70 bg-card py-1 pr-1.5 pl-1 shadow-lg">
         {/* Cosmo's one orb (cosmo-orb.tsx) flies here off Chat. */}
         <div data-cosmo-orb-slot="dock" className="size-11 shrink-0" />
@@ -387,5 +388,20 @@ function CosmoLive({ state }: { state: VoicePublicState }) {
         </Button>
       </div>
     </section>
+  );
+}
+
+/** The last minute of the month's Cosmo time (or today's budget): said once, quietly, above the bar. */
+function MinutesLeft({ endsAt }: { endsAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 5_000);
+    return () => window.clearInterval(id);
+  }, []);
+  if (endsAt - now > 60_000) return null;
+  return (
+    <p className="pointer-events-auto rounded-full border border-border/70 bg-card px-3 py-1 text-xs text-muted-foreground shadow-sm">
+      Under a minute of Cosmo left for now
+    </p>
   );
 }

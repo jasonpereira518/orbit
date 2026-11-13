@@ -393,6 +393,18 @@ async function main() {
         await endVoiceSession(COSMO, taintCall.sessionId);
         await endVoiceSession(COSMO, call.sessionId);
         console.log("ok an injected lookup stops instant changes for the rest of the call");
+
+        // Cosmo's minutes are how long calls ran: connected to ended (or, live, to the last
+        // heartbeat), never past the call's own expiry; a call that never connected is free.
+        const { voiceMinutes } = await import("../src/lib/voice/minutes");
+        const before = (await voiceMinutes(COSMO)).used;
+        const ago = (s: number) => new Date(Date.now() - s * 1000);
+        await db.update(orbitVoiceSessions).set({ connectedAt: ago(90), endedAt: ago(0) }).where(eq(orbitVoiceSessions.id, call.sessionId));
+        await db.update(orbitVoiceSessions).set({ connectedAt: ago(300), lastSeenAt: ago(0), endedAt: null, expiresAt: ago(240) }).where(eq(orbitVoiceSessions.id, taintCall.sessionId));
+        const minutes = await voiceMinutes(COSMO);
+        assert.ok(Math.abs(minutes.used - before - 150) < 5, `90s ended + 60s capped at expiry, got ${minutes.used - before}`);
+        assert.equal(minutes.remaining, Math.max(0, minutes.limit - minutes.used));
+        console.log("ok cosmo minutes count connected time, capped at expiry");
       }
       console.log(
         `ok ${provider}: scoped CRM + AI knowledge, confirmation-only writes, connection usage`,
