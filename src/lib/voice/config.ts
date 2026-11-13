@@ -53,7 +53,12 @@ export const DEEPGRAM_VOICES = [
   "aura-2-vesta-en",
   "aura-2-zeus-en",
 ] as const;
-export const DEEPGRAM_THINK_MODELS = ["gpt-4o-mini", "gpt-4o"] as const;
+/**
+ * Deepgram's managed OpenAI models, as the installed SDK's `OpenAiThinkProvider` lists them
+ * (nano models left out: too weak to drive tools). gpt-4o-mini stays the default until the voice
+ * test set (`npx tsx scripts/eval-voice.ts`) says another is worth its latency and price.
+ */
+export const DEEPGRAM_THINK_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5"] as const;
 /**
  * ElevenLabs only accepts the English v2 models for an English agent ("English Agents must use
  * turbo or flash v2"); the _v2_5 models are its multilingual line and fail agent creation.

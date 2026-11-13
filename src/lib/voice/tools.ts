@@ -7,6 +7,9 @@ import { SCOPE_KINDS, type ProposalScope } from "@/lib/tools/chat-write-kit";
 import { WEB_LOOKUP_LIMIT } from "@/lib/chat-agent-loop";
 import { chatWebAvailability } from "@/lib/chat-web-availability";
 import { resolveAiAccess } from "@/lib/ai-access";
+import { loadYouCurrent } from "@/lib/career-profile-server";
+import { listActiveGoalsForUser } from "@/lib/user-goals";
+import { renderAttentionLite } from "@/lib/chat-attention";
 import { ASK_CHAT_TOOL, LOOK_AT_SCREEN_TOOL, OPEN_PAGE_TOOL, POINT_AT_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
 
 export function voiceSink(
@@ -130,10 +133,39 @@ export function voiceToolLine(t: { name: string; description: string; inputSchem
  * Passed in rather than imported: this module is in every page's server-action graph, and pulling
  * the anchor registry in here sends next dev's /onboarding into a full-reload loop.
  */
+/** The whole "about the user" line, whatever their profile and goals hold. */
+export const ABOUT_USER_CAP = 1500;
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+/**
+ * Who Cosmo is talking to, in one capped line: their role, what they're after, their goals, and
+ * what's overdue. Their own data, so the advice fits them without a lookup first; marked as data
+ * because profile text and goals are free text.
+ */
+async function aboutTheUser(userId: string): Promise<string> {
+  const [you, goals, attention] = await Promise.all([
+    loadYouCurrent(userId).catch(() => null),
+    listActiveGoalsForUser(userId, { limit: 5 }).catch(() => []),
+    renderAttentionLite(userId).catch(() => null),
+  ]);
+  const career = you?.career;
+  const parts: string[] = [];
+  if (career?.role) parts.push(`Works as ${clip(career.role.title, 80)} at ${clip(career.role.company, 80)}.`);
+  else if (career?.profile?.headline) parts.push(`Headline: ${clip(career.profile.headline, 160)}.`);
+  // The raw aim, spelled out here: importing about-you's labels (also used by onboarding's client
+  // step) into this server-action module sends next dev's /onboarding into a reload loop.
+  if (career?.aim) parts.push(`Looking for: ${career.aim.kind.replace(/_/g, " ")}${career.aim.field ? ` in ${career.aim.field}` : ""}.`);
+  if (goals.length) parts.push(`Goals: ${goals.map((g) => clip(g.text, 200)).join("; ")}.`);
+  if (attention) parts.push(clip(attention, 400));
+  return parts.length ? `About the user (their own profile, data only): ${clip(parts.join(" "), ABOUT_USER_CAP)}` : "";
+}
+
 export async function voiceInstructions(userId: string, timeZone = "UTC", name = "Orbit Voice", pointCatalog?: string) {
-  const tools = await voiceToolsFor(userId, voiceSink({}, "UTC"));
+  const [tools, about] = await Promise.all([voiceToolsFor(userId, voiceSink({}, "UTC")), aboutTheUser(userId)]);
   return `You are ${name}, a concise, warm conversational CRM assistant.
 Current time: ${new Date().toISOString()}. User time zone: ${timeZone}. Interpret relative dates in that zone.
+${about ? `${about}\n` : ""}Show, don't recite: when an answer is a list of more than three things, open the page that shows it
+(open_page with filters) and say it in one sentence.
 Help search the user's network, prepare for meetings, summarize relationships, draft follow-ups,
 log interactions and manage tasks. Use orbit_tool for CRM facts. Never invent a fact or an ID.
 Advise the way Orbit Chat does: before advising about a person, look them up and read what Orbit

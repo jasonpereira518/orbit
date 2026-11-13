@@ -4743,6 +4743,45 @@
             }
           },
           {
+            "name": "what_needs_attention",
+            "title": "What needs attention",
+            "description": "What's waiting for the user right now: reminders and follow-ups due, notes to review, replies to their feedback, and account problems (a disconnected mailbox, a missing AI key). The same list as the notification bell.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 8,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 15
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "integration_status",
+            "title": "Integration status",
+            "description": "Which apps the user has connected to Orbit (Notion, Granola and others), whether each is working or needs reconnecting, and when it last synced.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {}
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
             "name": "list_my_recruiters",
             "title": "The user's recruiters",
             "description": "Recruiters the user has logged: name, firm, specialty, the user's status with them and their own rating.",

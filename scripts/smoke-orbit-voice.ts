@@ -11,6 +11,7 @@ import {
   chatMessages,
   orbitVoiceSessions,
   siteSettings,
+  userGoals,
 } from "../src/db/schema";
 import { bootstrapAuthenticatedUser } from "../src/lib/auth";
 import {
@@ -194,6 +195,8 @@ async function main() {
     for (const provider of ["deepgram", "elevenlabs"] as VoiceProvider[]) {
       await setVoiceConfig("test-admin", { ...DEFAULT_VOICE_CONFIG, provider });
       await setVoiceEnabled("test-admin", true);
+      // A goal far longer than any real one: the "about the user" section must stay capped.
+      await db.insert(userGoals).values({ userId: USER, text: `Meet fintech founders ${"and more ".repeat(400)}`, active: 1 }).onConflictDoNothing();
       const start = await startVoiceSession(USER, "America/New_York", false, [
         { source: "user", text: "Prepare for Ada" },
       ], shared.id);
@@ -234,6 +237,14 @@ async function main() {
         assert.ok(agent.think?.prompt?.includes("Never\nuse markdown") || agent.think?.prompt?.includes("Never use markdown"), "speech-only formatting rule");
         assert.ok(agent.think?.prompt?.includes("app_events"), "the agent is told what app_events are");
         assert.ok((agent.think?.prompt?.length ?? 0) <= VOICE_PROMPT_BUDGET, "prompt fits Deepgram's limit");
+        // Knowing: what needs attention and how the integrations are doing, as tools; who the
+        // user is, from their own profile and goals, capped; lists shown rather than recited.
+        for (const name of ["what_needs_attention(", "integration_status("])
+          assert.ok(agent.think?.prompt?.includes(name), `voice can read ${name}`);
+        const about = agent.think?.prompt?.split("About the user")[1]?.split("\n")[0] ?? "";
+        assert.ok(about.includes("Meet fintech founders"), "the user's goals are in the prompt");
+        assert.ok(about.length <= 1600, `the about-the-user section is capped (${about.length})`);
+        assert.ok(agent.think?.prompt?.includes("open the page that shows it"), "show, don't recite");
         assert.ok(
           agent.think?.functions?.every(
             (f) => !f.endpoint && f.defer_until_eot,
