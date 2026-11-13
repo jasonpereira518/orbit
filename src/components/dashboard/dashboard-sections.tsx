@@ -380,7 +380,6 @@ export async function MorningBriefingSection({
             tier: r.tier,
             avatarUrl: r.avatarUrl,
             suggestedCalendarInvite: r.suggestedCalendarInvite,
-            discoveredPerson: r.discoveredPerson,
           }))}
         />
       </div>

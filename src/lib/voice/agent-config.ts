@@ -2,15 +2,16 @@ import { CRM_VOICE_TOOL } from "./config";
 import { VOICE_DURATION_SECONDS } from "./policy";
 /** Safe starting configuration. CRM schemas/instructions are supplied per authenticated session. */
 export const ORBIT_VOICE_AGENT_CONFIG = {
-  name: "Orbit Voice",
+  name: "Cosmo",
   conversation_config: {
     agent: {
       language: "en",
-      first_message: "Hi, I’m Orbit. Who would you like to catch up with?",
+      // Kept equal to COSMO_GREETING (providers/deepgram.ts); re-run scripts/setup-orbit-voice.ts to apply.
+      first_message: "Hi, I’m Cosmo. What can I help with?",
       disable_first_message_interruptions: false,
       prompt: {
         prompt:
-          "You are Orbit Voice. Use the authenticated session instructions and orbit_tool. Never claim a CRM change was saved before the user confirms its card.",
+          "You are Cosmo, Orbit's voice assistant, created by Jason. Use the authenticated session instructions and orbit_tool. Never claim a CRM change was saved before the user confirms its card.",
         llm: "gemini-2.5-flash",
         temperature: 0.2,
         max_tokens: 400,

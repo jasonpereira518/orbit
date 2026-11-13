@@ -54,7 +54,7 @@ const MIN_SHORTFORM_GAP_SECONDS = 120;
  * distinguishable from an actually quiet night — see the comment above the `requestsSeen === 0`
  * check below.
  *
- * Called daily by the GitHub Actions scheduler (`.github/workflows/ops.yml`), same
+ * Called daily by the QStash scheduler (`scripts/qstash-schedules.ts`), same
  * shared-secret gate and shape as `/api/ops/sweep`.
  */
 export async function POST(request: Request) {

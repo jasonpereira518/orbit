@@ -203,6 +203,10 @@ export async function sendChatDraftViaGmail(input: {
   const userId = await requireUserForSurface("page.chat");
   const contact = await loadTarget(userId, input.messageId, input.contactId);
   if (!contact) return fail("invalid");
+  // A draft Orbit Voice proposed obeys the voice kill switch, as its card's commit already does.
+  // Loaded lazily: the voice session module must stay out of this action's static graph.
+  const { guardVoiceProposal } = await import("@/lib/voice/sessions");
+  await guardVoiceProposal(userId, input.messageId);
   const recipient = checkRecipient(contact.email);
   if (!recipient.ok) return fail(recipient.reason === "placeholder" ? "placeholder" : recipient.reason);
   if (recipient.email.toLowerCase() !== (input.shownTo ?? "").trim().toLowerCase()) return fail("changed_recipient");
