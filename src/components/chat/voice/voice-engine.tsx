@@ -11,6 +11,7 @@ import {
   ASK_CHAT_TOOL,
   LOOK_AT_SCREEN_TOOL,
   OPEN_PAGE_TOOL,
+  POINT_AT_TOOL,
   SET_CAPTIONS_TOOL,
   SET_THEME_TOOL,
   START_RECORDING_TOOL,
@@ -21,6 +22,8 @@ import { withAppEvents } from "@/lib/voice/app-events";
 import { plainSpeech } from "@/lib/voice/caption-pace";
 import { setCaptions } from "@/lib/cosmo/captions-pref";
 import { describeScreen, readScreen } from "@/lib/cosmo/screen";
+import { planPointing } from "@/lib/cosmo/pointing";
+import { onPointingEvent, startPointing, stopPointing } from "@/lib/cosmo/pointer-store";
 import {
   getVoiceCall,
   installVoiceActions,
@@ -254,6 +257,18 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
           void saveThemePreference(theme).catch(() => {});
           return JSON.stringify({ theme });
         }
+        if (tool === POINT_AT_TOOL) {
+          // A cursor needs a pointer and room to glide: computers only.
+          if (!window.matchMedia("(min-width: 768px)").matches)
+            return JSON.stringify({ error: "Pointing works on a computer screen. Describe where it is instead." });
+          const plan = planPointing(args.targets, readScreen());
+          if ("error" in plan) return JSON.stringify({ error: plan.error });
+          startPointing(plan.steps);
+          return JSON.stringify({
+            pointing: plan.steps.map((step) => step.label),
+            note: "Your cursor is on screen now. Say what to click; app_events will tell you when they do.",
+          });
+        }
         if (tool === LOOK_AT_SCREEN_TOOL) {
           const screen = describeScreen(readScreen());
           lastScreen.current = screen;
@@ -451,6 +466,18 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
     });
   });
   useEffect(() => () => installVoiceActions(null), []);
+  // Pointing: what the person did with Cosmo's cursor reaches the agent on its next tool result,
+  // and the next step is said aloud where the provider can speak a line (Deepgram).
+  useEffect(() => {
+    const off = onPointingEvent(({ note, next }) => {
+      appEvents.current.push(note);
+      if (next) voiceControls.current?.say?.(`Next, the ${next.label}.`);
+    });
+    return () => {
+      off();
+      stopPointing();
+    };
+  }, []);
   useEffect(() => {
     const timer = setTimeout(() => void startRef.current(), 0);
     return () => clearTimeout(timer);

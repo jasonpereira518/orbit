@@ -7,7 +7,7 @@ import { SCOPE_KINDS, type ProposalScope } from "@/lib/tools/chat-write-kit";
 import { WEB_LOOKUP_LIMIT } from "@/lib/chat-agent-loop";
 import { chatWebAvailability } from "@/lib/chat-web-availability";
 import { resolveAiAccess } from "@/lib/ai-access";
-import { ASK_CHAT_TOOL, LOOK_AT_SCREEN_TOOL, OPEN_PAGE_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
+import { ASK_CHAT_TOOL, LOOK_AT_SCREEN_TOOL, OPEN_PAGE_TOOL, POINT_AT_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
 
 export function voiceSink(
   scope: Record<string, Array<[string, string]>>,
@@ -125,7 +125,12 @@ export function voiceToolLine(t: { name: string; description: string; inputSchem
 }
 
 /** Generated from the same schemas the executor validates; no separate vendor schema to drift. */
-export async function voiceInstructions(userId: string, timeZone = "UTC", name = "Orbit Voice") {
+/**
+ * `pointCatalog`: the pointable controls as text, built by the API route (src/lib/cosmo/pointing.ts).
+ * Passed in rather than imported: this module is in every page's server-action graph, and pulling
+ * the anchor registry in here sends next dev's /onboarding into a full-reload loop.
+ */
+export async function voiceInstructions(userId: string, timeZone = "UTC", name = "Orbit Voice", pointCatalog?: string) {
   const tools = await voiceToolsFor(userId, voiceSink({}, "UTC"));
   return `You are ${name}, a concise, warm conversational CRM assistant.
 Current time: ${new Date().toISOString()}. User time zone: ${timeZone}. Interpret relative dates in that zone.
@@ -176,5 +181,6 @@ ${ASK_CHAT_TOOL}(question: string) — Ask Orbit Chat in this conversation and g
 ${START_RECORDING_TOOL}() — Start the meeting recorder on the microphone.
 ${SET_THEME_TOOL}(theme: ${VOICE_THEMES.map((t) => JSON.stringify(t)).join("|")}) — Switch the app's appearance.
 ${SET_CAPTIONS_TOOL}(on: boolean) — Show or hide captions of what you say, on this device.
-${LOOK_AT_SCREEN_TOOL}() — Which page and record the user has open, and the labelled controls on it.`;
+${LOOK_AT_SCREEN_TOOL}() — Which page and record the user has open, and the labelled controls on it.
+${pointCatalog ? `${POINT_AT_TOOL}(targets: string[]) — Show where to click with your cursor (computers only), up to 4 in order; it walks them to another page first if needed. Use when asked where something is or how to do something; never click for them. Control ids: ${pointCatalog}.` : ""}`;
 }

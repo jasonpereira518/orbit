@@ -46,6 +46,21 @@
   left: 0;
   border-radius: 0 9999px 9999px 0;
 }
+/* The ring around whatever Cosmo is pointing at: a spotlight without the scrim. */
+.cosmo-ring {
+  border-radius: 0.875rem;
+  box-shadow:
+    0 0 0 2px rgb(167 139 250 / 0.95),
+    0 0 0 7px rgb(167 139 250 / 0.22);
+  animation: cosmo-ring 1.8s ease-in-out infinite;
+}
+@keyframes cosmo-ring {
+  50% {
+    box-shadow:
+      0 0 0 2px rgb(34 211 238 / 0.95),
+      0 0 0 10px rgb(34 211 238 / 0.16);
+  }
+}
 @keyframes cosmo-breathe {
   50% {
     filter: brightness(1.12) saturate(1.1);

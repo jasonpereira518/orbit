@@ -15,6 +15,7 @@ import {
   connectVoiceSession,
 } from "@/lib/voice/sessions";
 import { describeScreen } from "@/lib/cosmo/screen";
+import { pointingCatalog } from "@/lib/cosmo/pointing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -123,7 +124,7 @@ export async function POST(request: Request) {
             body.fallback,
             body.history,
             body.threadId,
-            { freshIfMissing: body.freshIfMissing, screen: describeScreen(body.screen) },
+            { freshIfMissing: body.freshIfMissing, screen: describeScreen(body.screen), pointCatalog: pointingCatalog() },
           ),
         );
       case "tool":

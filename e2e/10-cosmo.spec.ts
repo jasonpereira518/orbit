@@ -77,14 +77,19 @@ test("Cosmo can be moved, steps out of the way, stays usable over a dialog and t
   // On a phone it sits above the bottom nav, and tucks into an edge tab while you type.
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(orb).toBeVisible();
-  const phone = (await orb.boundingBox())!;
   // Clear of the bottom nav's pill, whose top is the top of its tallest item (the lifted Capture).
-  const navTop = Math.min(
-    ...(await page.locator('a[href="/capture"]:visible, a[href="/contacts"]:visible').evaluateAll((els) =>
-      els.map((el) => el.closest("nav")?.getBoundingClientRect().top ?? 9999),
-    )),
-  );
-  expect(phone.y + phone.height).toBeLessThanOrEqual(navTop);
+  // Polled: after the resize the orb may still be settling into its new corner.
+  await expect
+    .poll(async () => {
+      const phone = (await orb.boundingBox())!;
+      const navTop = Math.min(
+        ...(await page.locator('a[href="/capture"]:visible, a[href="/contacts"]:visible').evaluateAll((els) =>
+          els.map((el) => el.closest("nav")?.getBoundingClientRect().top ?? 9999),
+        )),
+      );
+      return phone.y + phone.height <= navTop;
+    })
+    .toBe(true);
   await page.getByPlaceholder(/search contacts/i).first().focus();
   await expect(page.getByRole("button", { name: "Show Cosmo" })).toBeVisible();
   await expect(orb).toHaveCount(0);
@@ -247,6 +252,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
       functions: [{ id, name: "orbit_tool", client_side: true, arguments: JSON.stringify({ tool, input: JSON.stringify(input) }) }],
     });
   const reply = (id: string) => frames.find((f) => f.type === "FunctionCallResponse" && f.id === id)?.content as string | undefined;
+  await expect(page.locator('[data-tour="contacts.add"]').first()).toBeVisible();
   ask("look_1", "look_at_screen", {});
   await expect.poll(() => reply("look_1")).toContain("contacts page");
   expect(reply("look_1")).toContain("Add contact button");
@@ -262,6 +268,39 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   expect(reply("cc_off_2")).not.toContain("Screen now");
   await page.locator('a[href="/contacts"]:visible').first().click();
   await expect(page).toHaveURL(/\/contacts/);
+
+  // Pointing: from Contacts to Reminders' "New reminder". The cursor shows the way there first,
+  // follows the person's clicks, and Cosmo hears each one. It never clicks for them.
+  const cursor = page.locator("[data-tour-cursor]");
+  const ring = page.locator(".cosmo-ring");
+  /** The cursor's tip has landed on this control. */
+  const pointingAt = (target: import("@playwright/test").Locator) =>
+    Promise.all([cursor.boundingBox(), target.boundingBox()]).then(([c, t]) =>
+      Boolean(c && t && c.x >= t.x - 4 && c.x <= t.x + t.width + 4 && c.y >= t.y - 4 && c.y <= t.y + t.height + 4),
+    );
+  ask("point_bad", "point_at", { targets: ['button[aria-label="Delete"]'] });
+  await expect.poll(() => reply("point_bad")).toContain("Unknown control");
+  ask("point_1", "point_at", { targets: ["reminders.new"] });
+  await expect.poll(() => reply("point_1")).toContain("New reminder button");
+  await expect(cursor).toContainText("Cosmo");
+  const navLink = page.locator('[data-app-sidebar] a[href="/reminders"]').first();
+  await expect.poll(() => pointingAt(navLink)).toBe(true);
+  await expect(ring).toBeVisible();
+  await navLink.click();
+  await expect(page).toHaveURL(/\/reminders/);
+  const newReminder = page.locator('[data-tour="reminders.new"]').first();
+  await expect.poll(() => pointingAt(newReminder)).toBe(true);
+  // Deepgram speaks the next step as a fixed line.
+  await expect.poll(() => frames.some((f) => f.type === "InjectAgentMessage" && String(f.content ?? f.message).includes("New reminder button"))).toBe(true);
+  const pointShot = test.info().outputPath("cosmo-pointing.png");
+  await page.screenshot({ path: pointShot });
+  await test.info().attach("cosmo pointing", { path: pointShot, contentType: "image/png" });
+  await newReminder.click();
+  await expect(ring).toHaveCount(0);
+  await page.keyboard.press("Escape"); // close the reminder popover it opened
+  ask("after_point", "look_at_screen", {});
+  await expect.poll(() => reply("after_point")).toContain("The user clicked the New reminder button.");
+  expect(reply("after_point")).toContain("The user clicked the Reminders in the menu.");
   const shot = test.info().outputPath("cosmo-docked.png");
   await page.screenshot({ path: shot });
   await test.info().attach("cosmo docked", { path: shot, contentType: "image/png" });
