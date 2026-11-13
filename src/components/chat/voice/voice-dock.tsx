@@ -6,6 +6,7 @@ import { closeVoice, useVoiceDock } from "@/lib/voice/dock-store";
 
 // Both lazy: this dock is in every page's layout, and the call code is only needed on a call.
 const VoiceEngine = dynamic(() => import("./voice-engine").then((m) => m.VoiceEngine), { ssr: false });
+const CosmoPointer = dynamic(() => import("@/components/cosmo/cosmo-pointer").then((m) => m.CosmoPointer), { ssr: false });
 const CosmoOrb = dynamic(() => import("@/components/cosmo/cosmo-orb").then((m) => m.CosmoOrb), { ssr: false });
 const CosmoRoot = dynamic(() => import("@/components/cosmo/cosmo-root").then((m) => m.CosmoRoot), { ssr: false });
 const VoicePanel = dynamic(
@@ -67,6 +68,7 @@ export function VoiceDock({ cosmo = false, tourActive = false }: { cosmo?: boole
       {/* Hidden while the guided tour runs: its rail and cursor use the same corners. */}
       {cosmo && <CosmoRoot tourActive={tourActive} />}
       {cosmo && call && <CosmoOrb />}
+      {cosmo && call && <CosmoPointer />}
     </>
   );
 }
