@@ -28,6 +28,7 @@ import type { NameGuess } from "@/lib/contact-name-guess";
 import { isPersonName } from "@/lib/names/classify";
 import { formatPersonName } from "@/lib/names/parse";
 import {
+  contactChanges,
   contactIdentities,
   contactTags,
   contacts,
@@ -35,6 +36,16 @@ import {
   tags,
   type Interaction,
 } from "@/db/schema";
+import {
+  FIELD_KEYS,
+  decideFieldWrites,
+  stampsFor,
+  userStamps,
+  type FieldChange,
+  type FieldKey,
+  type FieldSource,
+  type FieldSources,
+} from "@/lib/contact-fields";
 import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
 import { PLAN_LABELS, availableOn, salePlansWith } from "@/lib/plans/plan-config";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
@@ -121,7 +132,90 @@ export type ContactWriteOptions = {
    * sweep and `shouldReplaceName` treat as final. Set only from those two places.
    */
   nameBy?: "user";
+  /**
+   * Who is writing the sourced fields (`@/lib/contact-fields`). "user": written as given, and
+   * each field that changed is stamped as the person's. Any other source: only the values
+   * `decideFieldWrites` lets it write land; replacements and suggestions are logged to
+   * `contact_changes`. Absent: no gate and no stamp, for writers that touch no sourced field
+   * (names, photos, tags, ratings).
+   */
+  by?: FieldSource;
+  /** When the incoming facts were true (a job's start month). Defaults to now. */
+  at?: Date;
 };
+
+/** The sourced columns, read before a gated write. */
+const FIELD_SELECT = {
+  id: contacts.id,
+  fieldSources: contacts.fieldSources,
+  company: contacts.company,
+  title: contacts.title,
+  location: contacts.location,
+  school: contacts.school,
+  email: contacts.email,
+  phone: contacts.phone,
+  linkedinUrl: contacts.linkedinUrl,
+  xHandle: contacts.xHandle,
+  website: contacts.website,
+  industry: contacts.industry,
+};
+
+async function readSourcedFields(userId: string, ids: string[]) {
+  if (ids.length === 0) return new Map<string, { fieldSources: FieldSources | null } & Partial<Record<FieldKey, string | null>>>();
+  const db = await getDb();
+  const rows = await db
+    .select(FIELD_SELECT)
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, [...new Set(ids)])));
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
+function sourcedPart(input: Partial<ContactInput>): Partial<Record<FieldKey, string | null | undefined>> {
+  const out: Partial<Record<FieldKey, string | null | undefined>> = {};
+  for (const k of FIELD_KEYS) if (k in input) out[k] = input[k];
+  return out;
+}
+
+/** `input` with its sourced fields replaced by the ones the gate let through. */
+function withGatedFields<T extends Partial<ContactInput>>(input: T, write: Partial<Record<FieldKey, string>>): T {
+  const out = { ...input };
+  for (const k of FIELD_KEYS) delete out[k];
+  return { ...out, ...write };
+}
+
+/**
+ * Log replacements and suggestions. One open suggestion per contact and field: a newer one
+ * replaces the older offer.
+ */
+async function recordFieldChanges(
+  userId: string,
+  rows: Array<{ contactId: string; source: FieldSource; change: FieldChange }>
+) {
+  if (rows.length === 0) return;
+  const db = await getDb();
+  await db
+    .insert(contactChanges)
+    .values(
+      rows.map(({ contactId, source, change }) => ({
+        userId,
+        contactId,
+        kind: "field",
+        field: change.field,
+        before: change.before,
+        after: change.after,
+        source,
+        status: change.status,
+      }))
+    )
+    .onConflictDoUpdate({
+      target: [contactChanges.contactId, contactChanges.field],
+      targetWhere: sql`status = 'suggested'`,
+      set: { after: sql`excluded.after`, source: sql`excluded.source`, createdAt: sql`now()` },
+    });
+}
+
+const stampsSql = (stamps: FieldSources) =>
+  sql`COALESCE(${contacts.fieldSources}, '{}'::jsonb) || ${JSON.stringify(stamps)}::jsonb`;
 
 export type ContactInput = {
   fullName: string;
@@ -397,7 +491,9 @@ function contactInsertValues(
   input: ContactInput,
   companyFields: { company: string | null; companyId: string | null },
   now: Date,
-  nameBy?: "user"
+  nameBy?: "user",
+  by?: FieldSource,
+  at?: Date
 ) {
   const metAt = safeTimestamp(input.dateMet);
   // A person's name as sources hand it over ("DOE, JANE (Acme)") is stored formatted; a
@@ -420,6 +516,9 @@ function contactInsertValues(
       : input.nameGuess !== undefined
         ? { nameGuess: input.nameGuess }
         : {}),
+    ...(by
+      ? { fieldSources: stampsFor({ ...sourcedPart(input), company: companyFields.company }, by, at ?? now) }
+      : {}),
     company: companyFields.company,
     companyId: companyFields.companyId,
     title: input.title,
@@ -551,7 +650,7 @@ export async function createContactForUser(
   const [contact] = await db
     .insert(contacts)
     .values({
-      ...contactInsertValues(userId, input, companyFields, now, options?.nameBy),
+      ...contactInsertValues(userId, input, companyFields, now, options?.nameBy, options?.by, options?.at),
       // Stale from birth: the embedding is built after the response (see deferEmbeddingRebuild).
       embeddingStaleAt: now,
     })
@@ -836,7 +935,7 @@ export async function createContactsBulkForUser(
   );
 
   const values = admitted.map((input, i) => ({
-    ...contactInsertValues(userId, input, companyFieldsList[i], now, options?.nameBy),
+    ...contactInsertValues(userId, input, companyFieldsList[i], now, options?.nameBy, options?.by, options?.at),
     // Flagged, not embedded. `skipEmbedding` used to mean "the caller will embed these in
     // a batch"; it now means "the backfill will" — the same promise with the provider call
     // moved out of the write loop.
@@ -1007,7 +1106,12 @@ export function foldMergesByContact(
 export async function bulkMergeContactsForUser(
   userId: string,
   merges: Array<{ contactId: string; input: Partial<ContactInput> }>,
-  companyResolve: CompanyResolver
+  companyResolve: CompanyResolver,
+  /**
+   * Which source these merges come from (`@/lib/contact-fields`). Defaults to "import": a
+   * file the user exported, which fills blanks and never replaces what Orbit already holds.
+   */
+  opts?: { source?: FieldSource; at?: Date }
 ): Promise<Date | null> {
   if (merges.length === 0) return null;
   // Same cleaning every other write path gets (audit M-05): imported text is the most
@@ -1015,6 +1119,23 @@ export async function bulkMergeContactsForUser(
   merges = foldMergesByContact(merges).map((m) => ({ ...m, input: cleanContactFreeText(m.input) }));
   const db = await getDb();
   const now = new Date();
+
+  // The field-source gate. Losing values become NULL below, which COALESCE then leaves alone.
+  // ponytail: read-then-write without a lock; a writer landing in between is judged against
+  // the older value, and the next write of that field re-judges it.
+  const source = opts?.source ?? "import";
+  const current = await readSourcedFields(userId, merges.map((m) => m.contactId));
+  const stampsById = new Map<string, FieldSources>();
+  const changeRows: Array<{ contactId: string; source: FieldSource; change: FieldChange }> = [];
+  merges = merges.map((m) => {
+    const cur = current.get(m.contactId);
+    const incoming = sourcedPart(m.input);
+    if (!cur || Object.keys(incoming).length === 0) return m;
+    const d = decideFieldWrites(cur, cur.fieldSources, incoming, source, opts?.at ?? now);
+    if (Object.keys(d.stamps).length) stampsById.set(m.contactId, d.stamps);
+    for (const change of d.changes) changeRows.push({ contactId: m.contactId, source, change });
+    return { ...m, input: withGatedFields(m.input, d.write) };
+  });
 
   // See `createContactsBulkForUser` above, and `CompanyResolver.prime` itself.
   await companyResolve.prime(
@@ -1047,18 +1168,31 @@ export async function bulkMergeContactsForUser(
       ${normalizeMetContext(v.metContext)}::text,
       ${safeTimestamp(v.dateMet)}::timestamptz,
       ${safeTimestamp(v.firstInteractionAt)}::timestamptz,
-      ${safeTimestamp(v.lastInteractionAt)}::timestamptz
+      ${safeTimestamp(v.lastInteractionAt)}::timestamptz,
+      ${v.location ?? null}::text,
+      ${v.school ?? null}::text,
+      ${v.xHandle ?? null}::text,
+      ${v.website ?? null}::text,
+      ${v.industry ?? null}::text,
+      ${JSON.stringify(stampsById.get(m.contactId) ?? {})}::jsonb
     )`;
   });
 
   await db.execute(sql`
     UPDATE contacts AS c
+    -- Sourced fields arrive already gated (decideFieldWrites): a value here won.
     SET company           = COALESCE(v.company, c.company),
         company_id        = COALESCE(v.company_id, c.company_id),
         title             = COALESCE(v.title, c.title),
         email             = COALESCE(v.email, c.email),
         phone             = COALESCE(v.phone, c.phone),
         linkedin_url      = COALESCE(v.linkedin_url, c.linkedin_url),
+        location          = COALESCE(v.location, c.location),
+        school            = COALESCE(v.school, c.school),
+        x_handle          = COALESCE(v.x_handle, c.x_handle),
+        website           = COALESCE(v.website, c.website),
+        industry          = COALESCE(v.industry, c.industry),
+        field_sources     = COALESCE(c.field_sources, '{}'::jsonb) || v.field_sources,
         -- FILL-ONLY: the name parts, origin and where-met are what the person (or the first
         -- source) said; a re-import must not turn "Met at AWS Summit" into "LinkedIn connection".
         first_name        = COALESCE(NULLIF(c.first_name, ''), v.first_name),
@@ -1079,10 +1213,11 @@ export async function bulkMergeContactsForUser(
     FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(
       id, company, company_id, title, email, phone, linkedin_url,
       first_name, last_name, profile_image_url, profile_image_source, source, how_met, met_context, date_met,
-      first_interaction_at, last_interaction_at
+      first_interaction_at, last_interaction_at, location, school, x_handle, website, industry, field_sources
     )
     WHERE c.id = v.id AND c.user_id = ${userId}
   `);
+  await recordFieldChanges(userId, changeRows);
 
   return now;
 }
@@ -1145,10 +1280,31 @@ export async function updateContactForUser(
   options?: ContactWriteOptions
 ) {
   // Same contract as create, applied to whichever fields this patch actually carries.
-  const input = parseContactPatch(rawInput);
+  let input = parseContactPatch(rawInput);
 
   const db = await getDb();
   const staleAt = new Date();
+
+  // The field-source gate (`@/lib/contact-fields`). ponytail: read-then-write, so a second
+  // writer landing between the read and the UPDATE is judged against the older value; the
+  // window is one round trip, and the next write of that field re-judges it.
+  let stamps: FieldSources = {};
+  let changes: FieldChange[] = [];
+  const by = options?.by;
+  const incomingSourced = sourcedPart(input);
+  if (by && Object.keys(incomingSourced).length > 0) {
+    const current = (await readSourcedFields(userId, [id])).get(id);
+    if (current) {
+      if (by === "user") {
+        stamps = userStamps(current, incomingSourced, staleAt);
+      } else {
+        const decision = decideFieldWrites(current, current.fieldSources, incomingSourced, by, options?.at ?? staleAt);
+        input = withGatedFields(input, decision.write);
+        stamps = decision.stamps;
+        changes = decision.changes;
+      }
+    }
+  }
 
   const companyPatch =
     input.company !== undefined
@@ -1252,10 +1408,15 @@ export async function updateContactForUser(
       ...(input.nextFollowUpAt !== undefined
         ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
         : {}),
+      ...(Object.keys(stamps).length ? { fieldSources: stampsSql(stamps) } : {}),
       updatedAt: new Date(),
     })
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
     .returning();
+
+  if (contact && by && by !== "user") {
+    await recordFieldChanges(userId, changes.map((change) => ({ contactId: id, source: by, change })));
+  }
 
   // Keep identity rows in step with the columns. An email corrected here must release the
   // old address and claim the new one, or duplicate prevention keeps matching on a value

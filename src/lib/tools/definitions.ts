@@ -1303,7 +1303,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       }
 
       // `skipRevalidate` for the same reason as create_contact: a tool call has no page.
-      await updateContactForUser(userId, contactId, patch, { skipRevalidate: true });
+      // The person's own assistant, acting on their say-so: their edit.
+      await updateContactForUser(userId, contactId, patch, { skipRevalidate: true, by: "user" });
       return { updated: true, contactId, fields: Object.keys(patch) };
     },
   },

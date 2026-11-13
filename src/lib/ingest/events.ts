@@ -149,8 +149,8 @@ export type IngestOptions = {
   /**
    * Written to `contacts.met_context` / `how_met` on contacts this run CREATES.
    *
-   * Only on create: `bulkMergeContactsForUser` COALESCEs, so an existing contact keeps
-   * whatever story it already had rather than having it rewritten by a later source.
+   * Only on create: `bulkMergeContactsForUser` keeps where-met fill-only, so an existing
+   * contact keeps whatever story it already had rather than having it rewritten.
    */
   metContext?: string;
   howMet?: (event: NetworkEvent) => string | null;
@@ -228,8 +228,8 @@ function participantIdentityKey(p: NetworkParticipant): string | null {
  *
  * Windows take the extremes — `bulkMergeContactsForUser` widens with LEAST/GREATEST against
  * what is already stored, but it can only see the single row we hand it, so the batch has to
- * arrive pre-widened. Scalars keep the first non-empty value: enrichment fills blanks, and
- * the merge itself COALESCEs, so nothing a user typed is ever overwritten.
+ * arrive pre-widened. Scalars keep the first non-empty value, and the merge writes them as
+ * "calendar" (`@/lib/contact-fields`): blanks fill, nothing a user typed is overwritten.
  */
 function foldMerge(into: Partial<ContactInput>, pair: { event: NetworkEvent; participant: NetworkParticipant }): Partial<ContactInput> {
   const at = pair.event.timestamp;
@@ -501,6 +501,7 @@ export async function ingestEvents(
       }),
       ctx.companyResolve,
       {
+        by: "calendar",
         skipRevalidate: true,
         skipEmbedding: true,
         skipSummary: true,
@@ -540,7 +541,8 @@ export async function ingestEvents(
     await bulkMergeContactsForUser(
       ctx.userId,
       [...mergeByContactId.entries()].map(([contactId, m]) => ({ contactId, input: m.input })),
-      ctx.companyResolve
+      ctx.companyResolve,
+      { source: "calendar" }
     );
   }
 

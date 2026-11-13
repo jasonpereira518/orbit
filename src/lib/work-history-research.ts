@@ -646,6 +646,7 @@ async function researchOnce(
         skipRevalidate: true,
         skipEmbedding: true,
         skipSummary: true,
+        by: "web",
       });
     }
   } catch (err) {

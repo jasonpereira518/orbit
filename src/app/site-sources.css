@@ -168,6 +168,7 @@
 @source "../lib/contact-avatar-url.ts";
 @source "../lib/contact-avatar.ts";
 @source "../lib/contact-brief.ts";
+@source "../lib/contact-fields.ts";
 @source "../lib/contact-identity.ts";
 @source "../lib/contact-input.ts";
 @source "../lib/contact-merge.ts";

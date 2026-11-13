@@ -49,6 +49,7 @@ import {
   memoryChunks,
   contactExperiences,
   contactCareerMoves,
+  contactChanges,
   contactIdentities,
   contactMerges,
   contactProfiles,
@@ -701,6 +702,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(contactMerges),
       own(contactIdentities),
       own(duplicateSuggestions),
+      own(contactChanges),
       own(targetCompanies),
       own(contactBriefs, "contact_id"),
       own(relationshipDigests, "contact_id"),
@@ -739,6 +741,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // field of a person the user knew, surviving the deletion of the contact it came from.
       await db.delete(contactIdentities).where(eq(contactIdentities.userId, userId));
       await db.delete(duplicateSuggestions).where(eq(duplicateSuggestions.userId, userId));
+      // Same reason: its own `user_id`, and old and new field values of people the user knew.
+      await db.delete(contactChanges).where(eq(contactChanges.userId, userId));
       forgetDuplicateCount(userId);
       await db.delete(contactMerges).where(eq(contactMerges.userId, userId));
       // `contact_tags` has no `user_id` of its own, so it is deleted through its contacts.

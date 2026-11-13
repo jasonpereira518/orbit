@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   last_name text,
   preferred_name text,
   name_guess jsonb,
+  field_sources jsonb,
   company text,
   company_id uuid REFERENCES companies(id) ON DELETE SET NULL,
   title text,
@@ -2089,6 +2090,22 @@ CREATE TABLE IF NOT EXISTS contact_merges (
   confidence real,
   merged_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS contact_changes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL DEFAULT 'field',
+  field text,
+  before jsonb,
+  after jsonb,
+  source text,
+  status text NOT NULL DEFAULT 'applied',
+  reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS contact_changes_user_idx ON contact_changes(user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS contact_changes_open_suggestion_uidx ON contact_changes(contact_id, field) WHERE status = 'suggested';
 CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3214,7 +3231,12 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 242 = Cosmo instant changes (Cosmo PR 9): orbit_voice_sessions.cosmo / tainted_by /
 // auto_applied. Scanned every remote ref on Nov 12 2026: main 238, radar-pr12b-drop 239, four
 // contact branches 240, recruiter-board-v2 241, so this takes 242.
-export const SCHEMA_VERSION = 242;
+// 243 = field sources (contact-info accuracy plan, PR 1): contacts.field_sources (where each
+// sourced field's value came from, `@/lib/contact-fields`) and contact_changes ("Changed by
+// Orbit" + field suggestions; the names plan's PR3 adds its kinds to the same table). Scanned
+// every remote ref and local worktree on Nov 12 2026: claude/radar-pr12b-drop holds 239. Built as
+// 240; renumbered to 243 on Nov 13 2026 when main reached 242 (Cosmo).
+export const SCHEMA_VERSION = 243;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4687,6 +4709,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "bluesky_handle", "text");
   await ensureColumn(client, "contacts", "mastodon_acct", "text");
   await ensureColumn(client, "contacts", "name_guess", "jsonb");
+  await ensureColumn(client, "contacts", "field_sources", "jsonb");
   await ensureColumn(client, "meeting_sessions", "user_notes", "text");
   // v187: standard tracking — web vitals, last-touch attribution, Resend engagement.
   await ensureColumn(client, "page_views", "lcp_ms", "integer");
@@ -5606,6 +5629,8 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
   // Schema v185: a name read from a handle, and whether it is a weak guess (`@/lib/contact-name-guess`).
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS name_guess jsonb`,
+  // Schema v240: where each sourced contact field came from (`@/lib/contact-fields`).
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS field_sources jsonb`,
   // Schema v186: what the person typed during a recorded meeting, kept with it (/meetings).
   `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS user_notes text`,
   // Schema v187: web vitals on the first view, last-touch attribution, Resend engagement.

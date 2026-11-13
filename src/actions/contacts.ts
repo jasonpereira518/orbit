@@ -745,7 +745,7 @@ export async function createContactDetailed(input: ContactInput, opts?: { typedN
   const { contactId, outcome, reason } = await resolveOrCreateContact(
     userId,
     clientContactInput(input),
-    opts?.typedName ? { nameBy: "user" } : {}
+    opts?.typedName ? { nameBy: "user", by: "user" } : {}
   );
   const db = await getDb();
 
@@ -780,7 +780,7 @@ export async function createContactDetailed(input: ContactInput, opts?: { typedN
 
 /** A name in the patch is one the person typed (only the contact form sends one): final. */
 export async function updateContact(id: string, input: Partial<ContactInput>) {
-  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input), { nameBy: "user" });
+  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input), { nameBy: "user", by: "user" });
 }
 
 /**
@@ -1666,7 +1666,8 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       }
 
       if (Object.keys(patch).length > 0) {
-        await updateContactForUser(userId, contact.id, patch, { skipRevalidate: true });
+        // The person's own profile, read now: replaces guesses, offers to replace what was typed.
+        await updateContactForUser(userId, contact.id, patch, { skipRevalidate: true, by: "linkedin_refresh" });
         if (profileImageUrl) {
           await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
         }

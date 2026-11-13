@@ -6,6 +6,9 @@ import { parseConnectedOn } from "@/lib/linkedin-connections";
 export { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
 
 export const linkedinConnectionsAdapter: ImportAdapter<LinkedInImportRowPayload> = {
+  // The person's own LinkedIn record, current as of the export: it may update a company or
+  // title Orbit only guessed, never one the user typed (`@/lib/contact-fields`).
+  fieldSource: "linkedin_export",
   identity(payload) {
     const fullName = `${payload.firstName} ${payload.lastName}`.trim();
     if (!fullName) return null;
