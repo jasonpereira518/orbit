@@ -4,7 +4,7 @@ import { after } from "next/server";
 import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { requirePageUser } from "@/lib/plan-guards";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
-import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { listSchools } from "@/lib/events/target-companies";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
 import { deleteReplacedAvatar } from "@/lib/avatar-blob";
@@ -78,6 +78,9 @@ import {
   splitHeadline,
 } from "@/lib/linkedin-scraper";
 import { readPublicWorkHistory, PUBLIC_WORK_HISTORY_DAYS } from "@/lib/public-work-history";
+import { AI_FILL_BATCH_SIZE, aiFillFields, type AiFillCurrent, type AiFillFields } from "@/lib/contact-ai-fill";
+import { notTourExample } from "@/lib/onboarding-examples/sql";
+import { researchPerson } from "@/lib/web-research";
 import { guessName, isUsernameOrGenericName } from "@/lib/contact-name-guess";
 import { contactRefreshCandidatePredicate } from "@/lib/admin-contact-upkeep";
 import { clientAvatarUrlSql, sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
@@ -1326,6 +1329,118 @@ export async function lookupLinkedInProfile(input: {
     },
   ]);
   return profile;
+}
+
+export type AiFillResult = { ok: true; fields: AiFillFields } | { ok: false; message: string };
+
+/**
+ * The form's "Autofill with AI": web-research this person (cached and budgeted like Find
+ * people) and return which of the form's EMPTY fields a confident match can fill. Writes
+ * nothing; the person reviews the form and saves.
+ */
+export async function autofillContactWithAi(input: {
+  fullName: string;
+  company?: string;
+  linkedinUrl?: string;
+  context?: string;
+  current: AiFillCurrent;
+}): Promise<AiFillResult> {
+  const userId = await requirePageUser("page.contacts");
+  const result = await researchPerson(userId, {
+    fullName: input.fullName,
+    company: input.company || null,
+    linkedinUrl: input.linkedinUrl || null,
+    context: input.context || null,
+  });
+  if (!result.ok) return { ok: false, message: result.message };
+  return { ok: true, fields: aiFillFields(input.current, result.dossier) };
+}
+
+/** One click must not spend a month's searches on a big network. */
+const AI_FILL_RUN_LIMIT = 24;
+
+/**
+ * Saved contacts the bulk AI fill can help: a name, something to anchor the search on
+ * (company or LinkedIn), and at least one of company, role, location or school still empty.
+ * Closest relationships first, capped at `AI_FILL_RUN_LIMIT`.
+ */
+export async function listAiFillTargets(): Promise<string[]> {
+  const userId = await requirePageUser("page.contacts");
+  const db = await getDb();
+  const blank = (column: AnyColumn | SQL) => sql`(${column} IS NULL OR btrim(${column}) = '')`;
+  const rows = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(
+      and(
+        eq(contacts.userId, userId),
+        notTourExample(contacts.source),
+        sql`btrim(${contacts.fullName}) <> ''`,
+        sql`(NOT ${blank(contacts.company)} OR NOT ${blank(contacts.linkedinUrl)})`,
+        sql`(${blank(contacts.company)} OR ${blank(contacts.title)} OR ${blank(contacts.location)} OR ${blank(contacts.school)})`,
+      ),
+    )
+    .orderBy(desc(contacts.relationshipScore))
+    .limit(AI_FILL_RUN_LIMIT);
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Research each contact and write only the fields it has empty, from a confident match.
+ * Reports `stopped` once the AI is unavailable or today's lookups are used up.
+ */
+export async function autofillContactsWithAi(ids: string[]): Promise<{
+  checked: number;
+  filled: number;
+  stopped: "no_ai" | "rate_limited" | null;
+}> {
+  const userId = await requirePageUser("page.contacts");
+  // Three at once, as in the capture lookup: web search is slow and each one is paid for.
+  if (ids.length > AI_FILL_BATCH_SIZE) throw new Error(`Fill at most ${AI_FILL_BATCH_SIZE} contacts at a time`);
+  if (ids.length === 0) return { checked: 0, filled: 0, stopped: null };
+
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: contacts.id,
+      fullName: contacts.fullName,
+      company: contacts.company,
+      title: contacts.title,
+      location: contacts.location,
+      school: contacts.school,
+      linkedinUrl: contacts.linkedinUrl,
+    })
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, ids)));
+
+  const signal = AbortSignal.timeout(45_000);
+  let checked = 0;
+  let filled = 0;
+  let stopped = null as "no_ai" | "rate_limited" | null;
+  await Promise.all(
+    rows.map(async (row) => {
+      const result = await researchPerson(
+        userId,
+        { fullName: row.fullName, company: row.company, linkedinUrl: row.linkedinUrl },
+        { signal },
+      ).catch(() => null);
+      checked++;
+      if (!result) return;
+      if (!result.ok) {
+        if (result.reason === "no_ai" || result.reason === "rate_limited") stopped = result.reason;
+        return;
+      }
+      const fields = aiFillFields(row, result.dossier);
+      if (!Object.keys(fields).length) return;
+      // ponytail: patches the row as read above; a concurrent edit to the same empty field
+      // is overwritten. Add a compare-and-set if bulk fills ever overlap with live editing.
+      await updateContactForUser(userId, row.id, fields).then(
+        () => void filled++,
+        () => undefined,
+      );
+    }),
+  );
+  return { checked, filled, stopped };
 }
 
 /**
