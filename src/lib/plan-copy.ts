@@ -348,6 +348,7 @@ export function comparisonRows(
       ),
     },
     { label: "Voice notes and chat mic", cells: each((plan) => hours(plan, config[plan].speech.shortformSeconds)) },
+    { label: "Talking with Cosmo, the voice assistant", cells: each((plan) => hours(plan, config[plan].speech.assistantSeconds)) },
     { label: "REST API and webhooks", cells: feature("api") },
   ];
 }
