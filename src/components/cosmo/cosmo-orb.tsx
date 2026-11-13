@@ -1,12 +1,14 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { animate, motion, useMotionValue } from "motion/react";
 import { VoiceOrbit } from "@/components/chat/voice/voice-orbit";
 import { useSelectorRect } from "@/lib/tour/use-anchor-rect";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { SPRING_SOFT } from "@/lib/motion";
 import { useVoiceCall, voiceControls } from "@/lib/voice/call-store";
+import { useVoiceHandoff } from "@/lib/voice/dock-store";
 import "@/components/chat/voice/voice-overlay.css";
+import { pointerIn } from "@/lib/cosmo/placement";
 
 /** Where the orb may sit: Chat's big stage, or Cosmo's docked bar. The stage comes first in the DOM, so it wins. */
 export const ORB_SLOT = "[data-cosmo-orb-slot]";
@@ -20,7 +22,9 @@ export const ORB_SLOT = "[data-cosmo-orb-slot]";
 export function CosmoOrb() {
   const { mode, muted } = useVoiceCall();
   const reduced = usePrefersReducedMotion();
-  const { rect, el } = useSelectorRect(ORB_SLOT, "cosmo-orb");
+  // On its way into Chat the bar lingers a moment (CosmoRoot): stay in it until it goes.
+  const handoff = useVoiceHandoff();
+  const { rect, el } = useSelectorRect(handoff ? '[data-cosmo-orb-slot="dock"]' : ORB_SLOT, "cosmo-orb");
   const x = useMotionValue(0);
   const y = useMotionValue(0);
   const scale = useMotionValue(1);
@@ -70,18 +74,23 @@ export function CosmoOrb() {
     return () => cancelAnimationFrame(frame);
   }, [dockEl, x, y]);
 
-  // Its slot is the button under it (clicking ends the call): light up while that is hovered.
-  const [hover, setHover] = useState(false);
+  // Its slot is the button under it (clicking ends the call). The orb doesn't move or glow under
+  // the pointer: its lights lean toward it, fed through a ref so the canvas loop reads it per frame.
+  const pointer = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => {
     if (!el) return;
-    const on = () => setHover(true);
-    const off = () => setHover(false);
-    el.addEventListener("pointerenter", on);
+    const move = (event: PointerEvent) => {
+      if (event.pointerType === "mouse") pointer.current = pointerIn(el, event.clientX, event.clientY);
+    };
+    const off = () => {
+      pointer.current = null;
+    };
+    el.addEventListener("pointermove", move);
     el.addEventListener("pointerleave", off);
     return () => {
-      el.removeEventListener("pointerenter", on);
+      el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerleave", off);
-      setHover(false);
+      pointer.current = null;
     };
   }, [el]);
 
@@ -90,13 +99,12 @@ export function CosmoOrb() {
     <motion.div
       aria-hidden
       data-orb-place={box.kind}
-      data-hover={hover || undefined}
       // In Chat's stage: over the page's cards, under menus and dialogs (z-50). Docked: just above
       // its bar, which sits over dialogs (z-51) so Cosmo stays usable with one open.
       className={box.kind === "stage" ? "cosmo-orb pointer-events-none fixed top-0 left-0 z-40" : "cosmo-orb pointer-events-none fixed top-0 left-0 z-[52]"}
       style={{ x, y, scale, width: box.size, height: box.size, transformOrigin: "0 0" }}
     >
-      <VoiceOrbit controls={voiceControls} mode={mode} muted={muted} />
+      <VoiceOrbit controls={voiceControls} mode={mode} muted={muted} pointer={pointer} />
     </motion.div>
   );
 }

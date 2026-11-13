@@ -104,6 +104,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
   if (new URL(page.url()).pathname.startsWith("/onboarding")) await ensureOnboarded(page);
   const starts: Array<{ threadId?: string; freshIfMissing?: boolean }> = [];
+  const lookups: unknown[] = [];
   const startNudges: Array<string | undefined> = [];
   const startScreens: Array<{ page: string | null; targets: string[] } | undefined> = [];
   const spoken: Array<{ action: string }> = [];
@@ -151,6 +152,12 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
         },
       });
     }
+    if (body.action === "tool" && body.tool === "search_contacts") {
+      lookups.push(body.input);
+      return route.fulfill({ json: { result: JSON.stringify({ untrusted_crm_data: { contacts: [{ name: "Ada" }] } }), proposal: null } });
+    }
+    if (body.action === "tool" && body.tool === "not_a_tool")
+      return route.fulfill({ status: 400, json: { error: "That tool isn't available in Orbit Voice" } });
     if (body.action === "tool" && body.tool === "draft_email")
       return route.fulfill({
         json: {
@@ -204,9 +211,12 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await expect(orb).toBeVisible();
   const cornerHeight = () =>
     page.evaluate(() => parseFloat(document.documentElement.style.getPropertyValue("--orbit-cosmo-height") || "0"));
-  // Hovered, it perks up: the halo comes on (and the call's code starts loading).
-  await orb.hover();
-  await expect.poll(() => orb.evaluate((el) => getComputedStyle(el, "::after").opacity)).toBe("1");
+  // Hovered, the orb stays put and has no halo; the lights inside lean toward the pointer.
+  const orbBox = (await orb.boundingBox())!;
+  await page.mouse.move(orbBox.x + orbBox.width * 0.75, orbBox.y + orbBox.height * 0.75); // inside the round orb
+  await expect.poll(() => orb.evaluate((el) => Number((el as HTMLElement).style.getPropertyValue("--cosmo-px")))).toBeGreaterThan(0.3);
+  expect(await orb.evaluate((el) => getComputedStyle(el, "::after").content)).toBe("none");
+  expect((await orb.boundingBox())!.x).toBeCloseTo(orbBox.x, 0);
   await expect.poll(cornerHeight).toBeGreaterThan(40);
 
   // Speaking up: whatever this account's pulse holds, the orb shows at most one nudge, and a
@@ -325,6 +335,30 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   ask("cc_off_2", "set_captions", { on: false });
   await expect.poll(() => reply("cc_off_2")).toBeTruthy();
   expect(reply("cc_off_2")).not.toContain("Screen now");
+
+  // Lookups however the model writes them: `input` as an object (not a JSON string) still
+  // reaches the server, and a server refusal comes back in its own words.
+  send({
+    type: "FunctionCallRequest",
+    functions: [{ id: "obj_1", name: "orbit_tool", client_side: true, arguments: JSON.stringify({ tool: "search_contacts", input: { query: "Ada" } }) }],
+  });
+  await expect.poll(() => reply("obj_1")).toContain("untrusted_crm_data");
+  expect(lookups).toEqual([{ query: "Ada" }]);
+  ask("bad_1", "not_a_tool", {});
+  await expect.poll(() => reply("bad_1")).toContain("isn't available");
+
+  // Driving the screen: Cosmo opens the form and types, and never presses Save itself.
+  ask("click_1", "click", { target: "reminders.new" });
+  await expect.poll(() => reply("click_1"), { timeout: 10_000 }).toContain("Cosmo clicked the New reminder button");
+  const title = page.locator('[data-tour="reminders.title"]').first();
+  await expect(title).toBeVisible();
+  ask("type_1", "type_into", { target: "reminders.title", text: "Call Ada" });
+  await expect.poll(() => (reply("type_1") ? JSON.parse(reply("type_1")!).done : undefined), { timeout: 10_000 }).toContain('typed "Call Ada"');
+  await expect(title).toHaveValue("Call Ada");
+  ask("save_1", "click", { target: "reminders.save" });
+  await expect.poll(() => reply("save_1")).toContain("point_at");
+  await expect(title).toBeVisible(); // not saved: the form is still open
+  await page.keyboard.press("Escape");
   await page.locator('a[href="/contacts"]:visible').first().click();
   await expect(page).toHaveURL(/\/contacts/);
 
@@ -407,7 +441,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   // Clicking Cosmo itself during a call ends it (the orb's canvas lets the click through).
   const liveOrb = cosmo.getByRole("button", { name: "End conversation with Cosmo" });
   await liveOrb.hover();
-  await expect(page.locator(".cosmo-orb")).toHaveAttribute("data-hover", "true");
+  expect(await page.locator(".cosmo-orb").evaluate((el) => getComputedStyle(el).filter)).toBe("none");
   await liveOrb.click();
   await expect.poll(() => ends).toBe(2);
 });

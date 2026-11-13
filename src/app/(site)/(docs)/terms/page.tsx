@@ -302,8 +302,9 @@ export default function TermsPage() {
             Cosmo, Orbit&apos;s voice assistant, can mishear you and can be
             wrong. It reads an email back before sending it and sends only after
             you say &ldquo;send it&rdquo; or click; you are responsible for what
-            you confirm. How many minutes of Cosmo a month your plan includes
-            may change.
+            you confirm. When it fills in a form for you, check it before you
+            save or send it. How many minutes of Cosmo a month your plan
+            includes may change.
           </p>
         </DocSection>
 

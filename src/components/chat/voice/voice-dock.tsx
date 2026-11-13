@@ -1,5 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
+import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { closeVoice, useVoiceDock } from "@/lib/voice/dock-store";
 
@@ -22,6 +23,11 @@ const VoicePanel = dynamic(
  */
 export function VoiceDock({ orb = false, tourActive = false }: { orb?: boolean; tourActive?: boolean }) {
   const { call, slot } = useVoiceDock();
+  // Load Chat's stage with the call, so flying into it never waits on (or blinks for) a download.
+  const live = Boolean(call);
+  useEffect(() => {
+    if (live) void import("../voice-panel");
+  }, [live]);
   return (
     <>
       {/* Keyed on the call, not its thread: a Cosmo call adopts its thread after it starts. */}

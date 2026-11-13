@@ -59,6 +59,9 @@ export const SET_THEME_TOOL = "set_theme";
 export const SET_CAPTIONS_TOOL = "set_captions";
 export const LOOK_AT_SCREEN_TOOL = "look_at_screen";
 export const POINT_AT_TOOL = "point_at";
+/** Cosmo pressing one of Orbit's own controls, or filling one of its text fields (src/lib/cosmo/actions.ts). */
+export const CLICK_TOOL = "click";
+export const TYPE_INTO_TOOL = "type_into";
 export const VOICE_THEMES = ["light", "dark", "system"] as const;
 
 /**

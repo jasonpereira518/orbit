@@ -72,8 +72,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // through Deepgram's voice agent, or ElevenLabs if calls are switched to it), the screen context
 // (page name, record id, Orbit's own button names; never page text), the day's Cosmo chat, small
 // changes applied with Undo, spoken "send it", minutes per plan. Terms: Cosmo can be wrong.
-export const TERMS_VERSION = "2026-11-13";
-export const LEGAL_LAST_UPDATED = "November 13, 2026";
+// 2026-11-13.2 (Cosmo revision): Cosmo can open pages, press Orbit's own buttons and type into
+// its fields when asked, never pressing save, send or delete. A suffix, not a new date:
+// accounts that accepted 2026-11-13 must be asked again (needsTermsAcceptance compares strings).
+export const TERMS_VERSION = "2026-11-13.2";
+export const LEGAL_LAST_UPDATED = "November 13, 2026 (revision 2)";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
