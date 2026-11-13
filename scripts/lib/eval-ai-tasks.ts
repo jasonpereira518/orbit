@@ -54,7 +54,9 @@ import { gateProbability, type GateName } from "../../src/lib/decisions/gates";
 import { looksLikeReferral } from "../../src/lib/opportunity-kinds";
 import type { BulkNotePersonPreview } from "../../src/lib/capture/types";
 import { DUPLICATE_TUNING } from "../../src/lib/decisions/catalog";
-import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "../../src/lib/duplicates";
+import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE, linkedinSlug } from "../../src/lib/duplicates";
+import { researchWithWebSearch } from "../../src/lib/work-history-research";
+import { corroborates } from "../../src/lib/profile-match";
 import { resolveMentions } from "../../src/lib/mention-resolution";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
@@ -153,7 +155,8 @@ export type TaskName =
   | "relationship"
   | "radar-editor"
   | "radar-connect"
-  | "web-search";
+  | "web-search"
+  | "profile-finder";
 
 export const TASK_NAMES: TaskName[] = [
   "capture",
@@ -176,6 +179,7 @@ export const TASK_NAMES: TaskName[] = [
   "radar-editor",
   "radar-connect",
   "web-search",
+  "profile-finder",
 ];
 
 /** Overridable so the harness itself can be exercised on throwaway fixtures. */
@@ -2302,6 +2306,55 @@ async function runWebSearchTask({ userId, limit, log }: RunOpts): Promise<TaskRe
   };
 }
 
+type ProfileFinderFixture = {
+  cases: Array<{
+    id: string;
+    contact: { fullName: string; company: string | null; email: string | null; school: string | null };
+    /** A slug the written profile must have; null = any; "none" = nothing may be written. */
+    expectSlug: string | null;
+  }>;
+};
+
+/**
+ * The profile finder (`researchWithWebSearch` with no LinkedIn URL, then `corroborates`): what
+ * would be WRITTEN for a person found by name. `wrongWrites` must be 0 before the sweep runs it
+ * (ORBIT_FIND_PROFILES=on); `found` is the share of real people it filled. Real searches.
+ */
+async function runProfileFinderTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const f = fixture<ProfileFinderFixture>("profile-finder-eval.json");
+  const db = await getDb();
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+  let wrongWrites = 0;
+  let found = 0;
+  let positives = 0;
+  const cases = f.cases.slice(0, limit ?? f.cases.length);
+  for (const c of cases) {
+    await db.execute(sql`DELETE FROM rate_limit_buckets WHERE bucket LIKE ${`%${userId}%`} OR bucket LIKE 'web-search-all:%'`);
+    const t0 = Date.now();
+    const answer = await researchWithWebSearch(userId, { ...c.contact, title: null, location: null, linkedinUrl: null }).catch(
+      (err) => (log(`  ${c.id}: ${String(err)}`), null)
+    );
+    latenciesMs.push(Date.now() - t0);
+    const written = Boolean(
+      answer?.confident && answer.experiences.length && corroborates(c.contact, { name: answer.name ?? null, experiences: answer.experiences })
+    );
+    const slug = linkedinSlug(answer?.linkedinUrl);
+    const wrong = written && (c.expectSlug === "none" || (c.expectSlug !== null && slug !== "" && slug !== c.expectSlug));
+    if (c.expectSlug !== "none") positives++;
+    if (wrong) wrongWrites++;
+    if (written && !wrong && c.expectSlug !== "none") found++;
+    if (wrong || (c.expectSlug !== "none" && !written)) misses.push(c.id);
+    log(`  ${c.id}: ${written ? `wrote ${slug || "(no url)"}` : "nothing written"}${wrong ? "  ← WRONG PERSON" : ""}`);
+  }
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: { wrongWrites, found: positives ? found / positives : null },
+  };
+}
+
 export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   capture: runCaptureTask,
   recruiter: runRecruiterTask,
@@ -2323,4 +2376,5 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   "radar-editor": runRadarEditorTask,
   "radar-connect": runRadarConnectTask,
   "web-search": runWebSearchTask,
+  "profile-finder": runProfileFinderTask,
 };
