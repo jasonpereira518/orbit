@@ -15,7 +15,7 @@ import { formatPersonName } from "@/lib/names/parse";
 export type DuplicateSubject = Pick<
   Contact,
   "id" | "fullName" | "email" | "linkedinUrl" | "xHandle" | "company" | "title"
->;
+> & { phone?: string | null };
 
 /**
  * The line between "confident enough to merge on its own" and "ask a human".
@@ -208,6 +208,7 @@ export type DuplicateIndex = {
   byLinkedin: Map<string, DuplicateSubject[]>;
   byX: Map<string, DuplicateSubject[]>;
   byEmail: Map<string, DuplicateSubject[]>;
+  byPhone: Map<string, DuplicateSubject[]>;
   byNameCompany: Map<string, DuplicateSubject[]>;
   byNameTitle: Map<string, DuplicateSubject[]>;
   byName: Map<string, DuplicateSubject[]>;
@@ -254,6 +255,7 @@ function emptyIndex(): DuplicateIndex {
     byLinkedin: new Map(),
     byX: new Map(),
     byEmail: new Map(),
+    byPhone: new Map(),
     byNameCompany: new Map(),
     byNameTitle: new Map(),
     byName: new Map(),
@@ -279,10 +281,28 @@ export function addToDuplicateIndex(index: DuplicateIndex, contact: DuplicateSub
   if (linkedin) pushTo(index.byLinkedin, linkedin, contact);
   if (xHandle) pushTo(index.byX, xHandle, contact);
   if (email) pushTo(index.byEmail, email, contact);
+  const phone = normalizePhone(contact.phone);
+  if (phone) pushTo(index.byPhone, phone, contact);
   if (name && company) pushTo(index.byNameCompany, compositeKey(name, company), contact);
   if (name && title) pushTo(index.byNameTitle, compositeKey(name, title), contact);
   if (name) pushTo(index.byName, name, contact);
   for (const key of fuzzyBucketKeys(contact.fullName)) pushTo(index.fuzzyBuckets, key, contact);
+}
+
+/**
+ * File a contact under one more identifier it owns in `contact_identities` (a second email,
+ * a phone, an older LinkedIn URL), so a record carrying that identifier finds them. Values
+ * arrive already normalized by `identityKeysFor`.
+ */
+export function addIdentityToIndex(index: DuplicateIndex, key: { kind: string; value: string }, contact: DuplicateSubject) {
+  const map =
+    key.kind === "email" ? index.byEmail
+    : key.kind === "phone_e164" ? index.byPhone
+    : key.kind === "linkedin_slug" ? index.byLinkedin
+    : key.kind === "x_handle" ? index.byX
+    : null;
+  if (!map || map.get(key.value)?.includes(contact)) return;
+  pushTo(map, key.value, contact);
 }
 
 export function buildDuplicateIndex(existing: DuplicateSubject[]): DuplicateIndex {
@@ -296,6 +316,7 @@ export type DuplicateProbe = {
   email?: string | null;
   linkedinUrl?: string | null;
   xHandle?: string | null;
+  phone?: string | null;
   company?: string | null;
   title?: string | null;
 };
@@ -365,6 +386,8 @@ export function findDuplicateCandidatesIndexed(
   if (linkedin) addAll(index.byLinkedin.get(linkedin), "Same LinkedIn URL", 0.98, true);
   if (xHandle) addAll(index.byX.get(xHandle), "Same X handle", 0.97, true);
   if (email) addAll(index.byEmail.get(email), "Same email", 0.95, true);
+  const phone = normalizePhone(incoming.phone);
+  if (phone) addAll(index.byPhone.get(phone), "Same phone", 0.95, true);
   if (name && company)
     addAll(
       index.byNameCompany.get(compositeKey(name, company)),

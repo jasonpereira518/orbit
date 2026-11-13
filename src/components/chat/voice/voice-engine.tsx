@@ -11,6 +11,8 @@ import {
   ASK_CHAT_TOOL,
   LOOK_AT_SCREEN_TOOL,
   OPEN_PAGE_TOOL,
+  CLICK_TOOL,
+  TYPE_INTO_TOOL,
   POINT_AT_TOOL,
   SET_CAPTIONS_TOOL,
   SET_THEME_TOOL,
@@ -20,11 +22,13 @@ import {
   voicePagePath,
 } from "@/lib/voice/policy";
 import { withAppEvents } from "@/lib/voice/app-events";
+import { normalizeToolInput } from "@/lib/voice/tool-input";
 import { CONFIRM_WINDOW_MS, confirmVerb, hasWords, isGoodbye, isUndo, judgeUtterance, norm, readBack, repromptLine, type ConfirmWindow } from "@/lib/voice/confirm-window";
 import { plainSpeech } from "@/lib/voice/caption-pace";
 import { setCaptions } from "@/lib/cosmo/captions-pref";
 import { describeScreen, readScreen } from "@/lib/cosmo/screen";
-import { planPointing } from "@/lib/cosmo/pointing";
+import { planPointing, type PointStep } from "@/lib/cosmo/pointing";
+import { cleanTyped, planAction } from "@/lib/cosmo/actions";
 import { allNudges, isResumeInterrupting, isStopInterrupting, mayInterject, nudgeInput } from "@/lib/cosmo/nudge";
 import { useAppPulse } from "@/lib/app-pulse-store";
 import { onPointingEvent, startPointing, stopPointing } from "@/lib/cosmo/pointer-store";
@@ -70,6 +74,90 @@ class VoiceRequestError extends Error {
     super(message);
   }
 }
+const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+const shown = (el: Element) =>
+  typeof (el as HTMLElement).checkVisibility === "function" ? (el as HTMLElement).checkVisibility() : el.getClientRects().length > 0;
+/** The first visible match, waiting up to `ms` for a page or a form to bring it. */
+async function waitForVisible(selector: string, ms: number): Promise<HTMLElement | null> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    const el = [...document.querySelectorAll<HTMLElement>(selector)].find(shown);
+    if (el) return el;
+    await sleep(100);
+  }
+  return null;
+}
+/** When the person last typed themselves: Cosmo never types over someone mid-sentence. */
+let lastUserKey = 0;
+if (typeof window !== "undefined")
+  window.addEventListener("keydown", (event) => {
+    if (event.isTrusted) lastUserKey = Date.now();
+  }, true);
+
+/**
+ * Cosmo pressing or filling one of Orbit's controls (`planAction` already said it may): its
+ * cursor flies there first (desktop; a phone just acts), a sidebar link first when the control
+ * is on another page. Typing goes through the field's native value setter plus an `input`
+ * event, so React's controlled fields see it as typing; it never presses Enter or submits.
+ */
+async function performSteps(steps: PointStep[], text?: string): Promise<{ note: string } | { error: string }> {
+  const cursor = window.matchMedia("(min-width: 768px)").matches;
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  try {
+    for (const step of steps) {
+      if (cursor) startPointing([step]);
+      const el = await waitForVisible(step.selector, 8000);
+      if (!el) return { error: `The ${step.label} didn't show up on screen.` };
+      if (cursor && !still) await sleep(650); // the cursor's flight, so it reads as Cosmo's hand
+      el.scrollIntoView({ block: "nearest" });
+      if (step.kind === "nav" || text === undefined) {
+        el.setAttribute("data-cosmo-pressed", "");
+        window.setTimeout(() => el.removeAttribute("data-cosmo-pressed"), 400);
+        el.click();
+        if (step.kind === "nav") await sleep(300);
+        continue;
+      }
+      const field = el.matches("input, textarea") ? el : el.querySelector<HTMLElement>("input, textarea");
+      if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement))
+        return { error: `The ${step.label} isn't a text field.` };
+      if (document.activeElement === field && Date.now() - lastUserKey < 3000)
+        return { error: `The user is typing in the ${step.label} right now. Let them finish.` };
+      const proto = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setValue = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (!setValue) return { error: `The ${step.label} can't be filled in.` };
+      field.focus();
+      // Visible typing, about a second however long the text: a few characters per frame.
+      const chunk = still ? text.length : Math.max(1, Math.ceil(text.length / 40));
+      for (let n = chunk; ; n = Math.min(text.length, n + chunk)) {
+        setValue.call(field, text.slice(0, n));
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        if (n >= text.length) break;
+        await sleep(25);
+      }
+    }
+    const last = steps[steps.length - 1];
+    return {
+      note:
+        text === undefined
+          ? `Cosmo clicked the ${last.label}.`
+          : `Cosmo typed "${text.length > 60 ? `${text.slice(0, 59)}…` : text}" into the ${last.label}.`,
+    };
+  } finally {
+    if (cursor) stopPointing();
+  }
+}
+
+/**
+ * A tool call that failed: the model gets the reason, and Sentry gets the tool name and kind
+ * (never the arguments, which can hold CRM text), so the next "can't look it up" is visible.
+ */
+function toolFailure(tool: string, kind: string, message: string): string {
+  void import("@sentry/nextjs")
+    .then((Sentry) => Sentry.captureMessage(`orbit:voice.tool ${kind}`, { level: "warning", tags: { tool: tool.slice(0, 60), kind } }))
+    .catch(() => {});
+  return JSON.stringify({ error: message });
+}
+
 async function command(body: Record<string, unknown>) {
   const response = await fetch("/api/voice", {
     method: "POST",
@@ -77,9 +165,10 @@ async function command(body: Record<string, unknown>) {
     body: JSON.stringify(body),
     cache: "no-store",
     keepalive: body.action === "transcript" || body.action === "end",
-    signal: AbortSignal.timeout(body.action === "start" ? 45000 : 12000),
+    // A lookup can do a lot on a cold start (dossiers, briefings): 25s, not the 12s the rest get.
+    signal: AbortSignal.timeout(body.action === "start" ? 45000 : body.action === "tool" ? 25000 : 12000),
   });
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   if (!response.ok)
     throw new VoiceRequestError(data.error || "Orbit Voice is unavailable. Try again.", response.status);
   return data;
@@ -116,6 +205,9 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
     (ConfirmWindow & { messageId: string; actionId: string; line: string; heard: boolean; createdAt: number }) | null
   >(null);
   const lastUserStart = useRef(0);
+  /** Cosmo's clicks and typing this call (capped in actions.ts), and whether a lookup turned them off. */
+  const actionsUsed = useRef({ click: 0, type: 0 });
+  const tainted = useRef(false);
   /** Anything happening in the call (speech either way, a tool, a mode change): for auto-sleep. */
   const lastActivity = useRef(0);
   /** The person said goodbye: end once Cosmo's goodbye has played (or after a few seconds). */
@@ -333,12 +425,14 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
   const events = useMemo<VoiceAgentEvents>(() => {
     const id = active?.sessionId;
     const current = () => Boolean(id && alive.current && session.current === id);
-    const runTool = async (tool: string, input: string): Promise<string> => {
+    const runTool = async (tool: string, input: unknown): Promise<string> => {
       try {
         if (!current()) return JSON.stringify({ error: "Voice session ended" });
+        const parsed = normalizeToolInput(input);
+        if ("error" in parsed) return toolFailure(tool, "bad_input", parsed.error);
         // App control runs here, not on the server: the call lives in the layout, so it keeps
         // going on the page it opens. Only allowlisted pages; record pages need a real id.
-        const args = JSON.parse(input || "{}") as Record<string, unknown>;
+        const args = parsed.args;
         if (tool === ASK_CHAT_TOOL) return await askChat(args.question);
         if (tool === START_RECORDING_TOOL) {
           if (!meeting?.ready)
@@ -376,21 +470,44 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
           setCaptions(args.on);
           return JSON.stringify({ captions: args.on ? "on" : "off" });
         }
+        if (tool === CLICK_TOOL || tool === TYPE_INTO_TOOL) {
+          const kind = tool === CLICK_TOOL ? "click" : "type";
+          const plan = planAction(kind, args.target, readScreen(), actionsUsed.current, tainted.current);
+          if ("error" in plan) return JSON.stringify({ error: plan.error });
+          let text: string | undefined;
+          if (kind === "type") {
+            const typed = cleanTyped(args.text);
+            if ("error" in typed) return JSON.stringify({ error: typed.error });
+            text = typed.text;
+          }
+          actionsUsed.current[kind]++;
+          const done = await performSteps(plan.steps, text);
+          if ("error" in done) return JSON.stringify({ error: done.error });
+          appEvents.current.push(done.note);
+          const screen = describeScreen(readScreen());
+          lastScreen.current = screen;
+          return JSON.stringify({ done: done.note, screen: screen ?? "The user is on a page Cosmo cannot describe." });
+        }
         if (tool === OPEN_PAGE_TOOL) {
           const path = voicePagePath(args.page, args.id, args.filters);
           if (!path) return JSON.stringify({ error: "Unknown page, or that page needs a valid id from a lookup." });
           router.push(path);
           return JSON.stringify({ opened: path });
         }
-        const response = await command({ action: "tool", sessionId: id, tool, input: JSON.parse(input) });
+        const response = await command({ action: "tool", sessionId: id, tool, input: args });
         if (!current()) return JSON.stringify({ error: "Voice session ended" });
+        if (response.tainted) tainted.current = true;
         if (response.proposal) {
           setVoiceCall({ cards: [...getVoiceCall().cards, response.proposal] });
           offerSpokenConfirm(response.proposal);
         }
-        return response.result;
-      } catch {
-        return JSON.stringify({ error: "The CRM lookup or proposal failed. Ask the user to retry; do not claim success." });
+        return typeof response.result === "string" ? response.result : JSON.stringify({ error: "That lookup returned nothing." });
+      } catch (err) {
+        // Say what actually went wrong, so the model can fix its call or tell the user honestly.
+        if (err instanceof VoiceRequestError) return toolFailure(tool, `http_${err.status}`, err.message);
+        if (err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError"))
+          return toolFailure(tool, "timeout", "That lookup took too long. Try a narrower question, or ask Orbit Chat.");
+        return toolFailure(tool, "failed", "That lookup failed. Tell the user it didn't work; don't claim success.");
       }
     };
     const setCardStatus = (actionId: string, status: VoiceCard["action"]["status"]) =>

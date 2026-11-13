@@ -38,8 +38,9 @@ import { CRM_VOICE_TOOL, DEEPGRAM_THINK_MODELS } from "../src/lib/voice/config";
 import { bootstrapAuthenticatedUser } from "../src/lib/auth";
 import { VOICE_PROMPT_BUDGET, voiceInstructions, voiceToolsFor, voiceSink } from "../src/lib/voice/tools";
 import { pointingCatalog } from "../src/lib/cosmo/pointing";
+import { actionsCatalog } from "../src/lib/cosmo/actions";
 import { describeScreen } from "../src/lib/cosmo/screen";
-import { ASK_CHAT_TOOL, LOOK_AT_SCREEN_TOOL, OPEN_PAGE_TOOL, POINT_AT_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL } from "../src/lib/voice/policy";
+import { ASK_CHAT_TOOL, CLICK_TOOL, LOOK_AT_SCREEN_TOOL, OPEN_PAGE_TOOL, POINT_AT_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, TYPE_INTO_TOOL } from "../src/lib/voice/policy";
 
 type Case = {
   say: string;
@@ -48,7 +49,7 @@ type Case = {
 };
 const USER = "eval-voice-user";
 const ADA = "5b0c8d62-7a49-4a8e-9f7f-1f0e3a0c2d11";
-const BROWSER_TOOLS = [OPEN_PAGE_TOOL, ASK_CHAT_TOOL, START_RECORDING_TOOL, SET_THEME_TOOL, SET_CAPTIONS_TOOL, LOOK_AT_SCREEN_TOOL, POINT_AT_TOOL];
+const BROWSER_TOOLS = [OPEN_PAGE_TOOL, ASK_CHAT_TOOL, START_RECORDING_TOOL, SET_THEME_TOOL, SET_CAPTIONS_TOOL, LOOK_AT_SCREEN_TOOL, POINT_AT_TOOL, CLICK_TOOL, TYPE_INTO_TOOL];
 
 async function main() {
   const { cases: all } = JSON.parse(readFileSync(join("scripts/eval-fixtures/voice-eval.json"), "utf8")) as { cases: Case[] };
@@ -61,7 +62,7 @@ async function main() {
     { id: ADA, userId: USER, fullName: "Ada Lovelace", company: "Analytical Engines", title: "Founder" },
     { userId: USER, fullName: "Grace Hopper", company: "Stripe", title: "Engineering Manager" },
   ]).onConflictDoNothing();
-  const prompt = await voiceInstructions(USER, "America/New_York", pointingCatalog());
+  const prompt = await voiceInstructions(USER, "America/New_York", pointingCatalog(), actionsCatalog());
 
   const known = new Set([...(await voiceToolsFor(USER, voiceSink({}, "UTC"))).map((t) => t.name), ...BROWSER_TOOLS]);
   const bad = cases.flatMap((c) => [...(c.expect.tools ?? []), ...(c.expect.notTools ?? [])].filter((t) => !known.has(t)).map((t) => `${c.say} → ${t}`));

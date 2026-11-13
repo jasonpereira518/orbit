@@ -44,6 +44,7 @@ import {
   type DuplicateIndex,
   type DuplicateSubject,
 } from "@/lib/duplicates";
+import { indexStoredIdentities } from "@/lib/contact-identity";
 import {
   bulkMergeContactsForUser,
   contactHeadroomForUser,
@@ -292,12 +293,16 @@ export async function openIngestContext(
         xHandle: true,
         company: true,
         title: true,
+        phone: true,
       },
     }) as Promise<DuplicateSubject[]>,
     createCompanyResolver(userId),
     options.createsContacts ? contactHeadroomForUser(userId) : null,
     openEngines(userId),
   ]);
+  const index = buildDuplicateIndex(existing);
+  // Second emails, phones and older LinkedIn URLs live only in contact_identities.
+  await indexStoredIdentities(userId, index, existing);
 
   return {
     userId,
@@ -307,7 +312,7 @@ export async function openIngestContext(
       source: options.source,
       createsContacts: options.createsContacts,
     },
-    index: buildDuplicateIndex(existing),
+    index,
     companyResolve,
     headroom,
     touchedContactIds: new Set(),
@@ -679,4 +684,14 @@ export async function finalizeIngest(
   // Contacts this import saved under a handle ("jsmith42") get a real name, or a "?".
   const { kickNameSweep } = await import("@/lib/contact-name-sweep");
   await kickNameSweep(ctx.userId);
+  // People this sync brought in who are also in the kept LinkedIn export.
+  const { fillFromStoredExport } = await import("@/lib/linkedin-export-facts");
+  await fillFromStoredExport(ctx.userId, [...ctx.touchedContactIds]).catch(
+    reportAndContinue({ where: "job.ingest.export-fill", userId: ctx.userId }, 0)
+  );
+  // Last, so the export and the address book fill a company first: a domain only guesses.
+  const { fillCompanyFromEmail } = await import("@/lib/email-domain-company");
+  await fillCompanyFromEmail(ctx.userId, [...ctx.touchedContactIds]).catch(
+    reportAndContinue({ where: "job.ingest.domain-company", userId: ctx.userId }, 0)
+  );
 }

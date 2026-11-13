@@ -118,7 +118,7 @@ import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 import { trackSearchPerformed } from "@/lib/search-events";
 import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
-import { maybeBuildStyleProfile } from "@/lib/writing-style-profile";
+import { deferStyleProfileBuild } from "@/lib/style-profile-defer";
 
 export type { ContactInput } from "@/lib/contact-writes";
 
@@ -1737,7 +1737,7 @@ export async function draftContactFollowUp(
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
   // Learn how they write from their sent mail, once, after the draft is on its way.
-  after(() => maybeBuildStyleProfile(userId));
+  deferStyleProfileBuild(userId);
   return draftFollowUpResult(userId, contactId, goals, { ...options, writingInstructions });
 }
 

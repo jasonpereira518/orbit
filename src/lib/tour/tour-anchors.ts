@@ -26,6 +26,12 @@ export const TOUR_ANCHORS = {
   "reminders.new": "reminders.new",
   "contacts.add": "contacts.add",
   "compose.email": "compose.email",
+  "reminders.title": "reminders.title",
+  "reminders.notes": "reminders.notes",
+  "reminders.save": "reminders.save",
+  "compose.subject": "compose.subject",
+  "compose.body": "compose.body",
+  "compose.send": "compose.send",
 } as const;
 
 export type TourAnchorId = keyof typeof TOUR_ANCHORS;
@@ -54,6 +60,48 @@ export const TOUR_ANCHOR_LABELS: Record<TourAnchorId, string> = {
   "reminders.new": "New reminder button",
   "contacts.add": "Add contact button",
   "compose.email": "Email button",
+  "reminders.title": "Reminder title field",
+  "reminders.notes": "Reminder notes field",
+  "reminders.save": "Add reminder button",
+  "compose.subject": "Email subject field",
+  "compose.body": "Email message field",
+  "compose.send": "Send email button",
+};
+
+/**
+ * What Cosmo may do with each control (Cosmo can drive the screen, src/lib/cosmo/actions.ts):
+ * - `click`: opens, shows or filters something; nothing is saved or sent by it.
+ * - `type`: a text field Cosmo may fill in (never submitted by Cosmo).
+ * - `confirm`: saves, sends, deletes or accepts. NEVER pressed by Cosmo: it points, you click.
+ * - `view`: something to look at or point to, not to press.
+ * Typed against the registry, so a new anchor must say which it is.
+ */
+export type CosmoAction = "click" | "type" | "confirm" | "view";
+export const TOUR_ANCHOR_ACTIONS: Record<TourAnchorId, CosmoAction> = {
+  "dashboard.stats": "view",
+  "contacts.search": "type",
+  "contacts.row": "click",
+  "contact.log-interaction": "click",
+  "capture.notes": "type",
+  "capture.extract": "click",
+  "capture.keep": "confirm",
+  "reminders.row-done": "confirm",
+  "reminders.rail-today": "click",
+  "chat.suggestions": "click",
+  "chat.composer": "type",
+  "graph.stage": "view",
+  "graph.show-all": "click",
+  "imports.connections": "click",
+  "imports.dropzone": "view",
+  "reminders.new": "click",
+  "contacts.add": "click",
+  "compose.email": "click",
+  "reminders.title": "type",
+  "reminders.notes": "type",
+  "reminders.save": "confirm",
+  "compose.subject": "type",
+  "compose.body": "type",
+  "compose.send": "confirm",
 };
 
 export const TOUR_ANCHOR_ATTR = "data-tour";

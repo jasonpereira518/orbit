@@ -59,6 +59,29 @@ export function closeVoice() {
   if (threadId) for (const fn of endListeners) fn(threadId);
 }
 
+/**
+ * Cosmo's docked bar is still showing on its way into Chat's stage (CosmoRoot's short linger):
+ * the orb stays in the bar until it is over, then flies. Kept apart from the dock state so the
+ * orb can read it without re-rendering everything that reads the dock.
+ */
+let handoff = false;
+const handoffListeners = new Set<() => void>();
+export function setVoiceHandoff(on: boolean) {
+  if (handoff === on) return;
+  handoff = on;
+  for (const fn of handoffListeners) fn();
+}
+export function useVoiceHandoff(): boolean {
+  return useSyncExternalStore(
+    (fn) => {
+      handoffListeners.add(fn);
+      return () => void handoffListeners.delete(fn);
+    },
+    () => handoff,
+    () => false,
+  );
+}
+
 export function setVoiceSlot(el: HTMLElement | null) {
   if (current.slot !== el) set({ slot: el });
 }

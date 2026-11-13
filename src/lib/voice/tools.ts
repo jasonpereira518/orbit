@@ -10,7 +10,7 @@ import { resolveAiAccess } from "@/lib/ai-access";
 import { loadYouCurrent } from "@/lib/career-profile-server";
 import { listActiveGoalsForUser } from "@/lib/user-goals";
 import { renderAttentionLite } from "@/lib/chat-attention";
-import { ASK_CHAT_TOOL, LOOK_AT_SCREEN_TOOL, OPEN_PAGE_TOOL, POINT_AT_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
+import { ASK_CHAT_TOOL, LOOK_AT_SCREEN_TOOL, OPEN_PAGE_TOOL, POINT_AT_TOOL, CLICK_TOOL, TYPE_INTO_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
 
 export function voiceSink(
   scope: Record<string, Array<[string, string]>>,
@@ -59,9 +59,10 @@ export const DAILY_BRIEFING_TOOL: OrbitTool = {
     const entries = await Promise.all(
       Object.entries(parts).map(async ([key, [name, input]]) => {
         const tool = available.get(name);
-        if (!tool) return [key, null] as const;
+        // Say what's missing and why, instead of a null that reads as "nothing today".
+        if (!tool) return [key, { unavailable: "not on this plan or turned off" }] as const;
         const out = await runTool(tool, userId, input, { surface: "chat", scopes: ["read"] }).catch(() => null);
-        return [key, out && !isToolError(out) ? out : null] as const;
+        return [key, out && !isToolError(out) ? out : { unavailable: "couldn't be read just now" }] as const;
       }),
     );
     return Object.fromEntries(entries);
@@ -123,7 +124,8 @@ export function voiceToolLine(t: { name: string; description: string; inputSchem
   const args = Object.entries(schema.properties ?? {})
     .map(([name, s]) => `${name}${required.has(name) ? "" : "?"}: ${typeOf(s)}`)
     .join(", ");
-  const first = t.description.split(/(?<=\.)\s/)[0].slice(0, 220);
+  // One short sentence each: 68 tools share a prompt Deepgram cuts off past 25,000 characters.
+  const first = t.description.split(/(?<=\.)\s/)[0].slice(0, 140);
   return `${t.name}(${args}) — ${first}`;
 }
 
@@ -190,10 +192,24 @@ const SAID_RULES = `When people say:
 - a relative date ("Friday", "next week"): the coming one. If a time could mean two things, ask.
 - goodbye ("bye", "that's all", "hang up"): reply with one short goodbye and nothing else; the call ends.`;
 
-export async function voiceInstructions(userId: string, timeZone = "UTC", pointCatalog?: string) {
-  const [tools, about] = await Promise.all([voiceToolsFor(userId, voiceSink({}, "UTC")), aboutTheUser(userId)]);
+export async function voiceInstructions(
+  userId: string,
+  timeZone = "UTC",
+  pointCatalog?: string,
+  /** The controls Cosmo may press and fill (src/lib/cosmo/actions.ts `actionsCatalog`), built by the route. */
+  actions?: { click: string; type: string },
+) {
+  // Loaded on demand: a static import into this module joins every page's server-action graph
+  // (the next dev reload trap).
+  const [tools, about, clock] = await Promise.all([
+    voiceToolsFor(userId, voiceSink({}, "UTC")),
+    aboutTheUser(userId),
+    import("@/lib/user-clock"),
+  ]);
   return `${COSMO_IDENTITY}
-Current time: ${new Date().toISOString()}. User time zone: ${timeZone}. Interpret relative dates in that zone.
+${clock.promptNow(timeZone)} Interpret relative dates in that zone.
+Say dates and times the way people do: "today", "tomorrow", "Friday", "next Monday", "the 21st",
+"3 PM". Lookups give a *_spoken version of each date: use it. Never read out a raw date or timestamp.
 ${about ? `${about}\n` : ""}Show, don't recite: when an answer is a list of more than three things, open the page that shows it
 (open_page with filters) and say it in one sentence.
 Help search the user's network, prepare for meetings, summarize relationships, draft follow-ups,
@@ -215,7 +231,11 @@ You can drive the app, and should whenever it helps:${pointCatalog ? `
 - "Where do I...", "how do I...", "show me where...": call point_at straight away with the control
   ids, even from another page (it walks there). The screen you were told about already lists the
   controls in view, so don't call look_at_screen first, and don't describe the way in words instead.` : ""}
-- "Where am I?", "what's on my screen?": call look_at_screen.
+${actions ? `- Do things for them on screen when that's what they want ("start a reminder to call Ada", "open
+  the email to Grace and say thanks"): click to open the form, type_into its fields, then point_at
+  the Save or Send button and tell them to check it and click. You never press Save, Send or Delete.
+  After each click or typing, the next result says what happened; check the screen before going on.
+` : ""}- "Where am I?", "what's on my screen?": call look_at_screen.
 - "Open...", "show me my...": open_page with that page (and filters), not a lookup read aloud.
 - "What's my day?": call daily_briefing with today's date, then give the highlights in a few sentences.
 - open_page shows the user a page while the call continues (say which). Open a person's profile or an
@@ -247,8 +267,9 @@ A tool result may carry app_events: things the user just did in the app (confirm
 card, moved to another page). Take them into account; never read them out. When the user says
 "this", "here" or "her" about what they're looking at, use the screen you were told about (or
 look_at_screen) and look the record up by its id; never guess.
-Call orbit_tool with tool (name) and input (a JSON object string of the arguments; "?" marks
-optional ones). If a call returns a validation error, fix the arguments and retry. Available tools:
+Call orbit_tool with tool (name) and input (the arguments as a JSON object; "?" marks optional
+ones). If a call returns an error, read it: fix the arguments and retry once, or tell the user
+plainly what didn't work. A result marked truncated is the first part only. Available tools:
 ${tools.map(voiceToolLine).join("\n")}
 ${OPEN_PAGE_TOOL}(page: ${Object.keys(VOICE_PAGES).map((p) => JSON.stringify(p)).join("|")}, id?: string, filters?: object) — Open a page of the Orbit app. "contact" and "event" need that record's id from a lookup. filters by page: ${Object.entries(VOICE_PAGE_FILTERS).map(([page, names]) => `${page}: ${names.join(", ")}`).join("; ")}.
 ${ASK_CHAT_TOOL}(question: string) — Ask Orbit Chat in this conversation and get its answer (up to ~20s; longer answers land in the chat).
@@ -256,5 +277,7 @@ ${START_RECORDING_TOOL}() — Start the meeting recorder on the microphone.
 ${SET_THEME_TOOL}(theme: ${VOICE_THEMES.map((t) => JSON.stringify(t)).join("|")}) — Switch the app's appearance.
 ${SET_CAPTIONS_TOOL}(on: boolean) — Show or hide captions of what you say, on this device.
 ${LOOK_AT_SCREEN_TOOL}() — Which page and record the user has open, and the labelled controls on it.
-${pointCatalog ? `${POINT_AT_TOOL}(targets: string[]) — Show where to click with your cursor, up to 4 in order; it walks them to another page first if needed. Use it whenever asked where something is or how to do something; never click for them. On a phone it answers that it can't, and then you describe the way instead. Control ids: ${pointCatalog}.` : ""}`;
+${pointCatalog ? `${POINT_AT_TOOL}(targets: string[]) — Show where to click with your cursor, up to 4 in order; it walks them to another page first if needed. Use it whenever asked where something is or how to do something; never click for them. On a phone it answers that it can't, and then you describe the way instead. Control ids: ${pointCatalog}.` : ""}
+${actions ? `${CLICK_TOOL}(target: string) — Press one of Orbit's controls for the user (it walks to its page first if needed). Only these: ${actions.click}.
+${TYPE_INTO_TOOL}(target: string, text: string) — Type into one of Orbit's text fields, replacing what's there; never submits. Only these: ${actions.type}.` : ""}`;
 }

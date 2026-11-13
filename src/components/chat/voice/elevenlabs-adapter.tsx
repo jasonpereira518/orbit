@@ -36,7 +36,7 @@ function Bridge({ credentials, events }: Props) {
     onError: () => events.onError(),
     onDisconnect: () => events.onDisconnected(),
     clientTools: {
-      orbit_tool: ({ tool, input }: { tool: string; input: string }) =>
+      orbit_tool: ({ tool, input }: { tool: string; input: unknown }) =>
         events.onTool(tool, input),
     },
   });
