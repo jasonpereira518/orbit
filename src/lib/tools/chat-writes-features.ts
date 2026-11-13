@@ -71,6 +71,7 @@ import { requireReleasedSurface } from "@/lib/surface-visibility";
 import { addGoalForUser, deleteGoalForUser, MAX_GOAL_CHARS, restoreGoalForUser, type GoalSnapshot } from "@/lib/user-goals";
 import { isoDay, name, s, text, uuid, type ChatWrite, type UndoFn } from "@/lib/tools/chat-write-kit";
 import { addMemory, deleteMemory, MEMORY_MAX_CHARS } from "@/lib/chat-memory";
+import { HARD_BANS } from "@/lib/message-format";
 
 const opportunityKind = z.enum(OPPORTUNITY_KINDS.map((k) => k.value) as [OpportunityKind, ...OpportunityKind[]]);
 const opportunityStatus = z.enum(OPPORTUNITY_STATUSES.map((st) => st.value) as [OpportunityStatus, ...OpportunityStatus[]]);
@@ -566,7 +567,9 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
     title: "Draft an email",
     description:
       "Propose an email to one of the user's contacts, in the user's voice: the text only. The card opens Orbit's send " +
-      "dialog with it prefilled — the user checks the address and subject there and presses Send themselves. Nothing is sent from here.",
+      "dialog with it prefilled — the user checks the address and subject there and presses Send themselves. Nothing is sent from here. " +
+      "Write it as a short email: \"Hi <first name>,\", one easy ask, then a sign-off and the user's full name. " +
+      HARD_BANS,
     inputSchema: {
       contactId: uuid,
       body: z.string().min(1).max(4000),

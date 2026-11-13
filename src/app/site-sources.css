@@ -249,6 +249,7 @@
 @source "../lib/mcp/sanitize.ts";
 @source "../lib/meeting-chunking.ts";
 @source "../lib/memory-chunks.ts";
+@source "../lib/message-format.ts";
 @source "../lib/met-context.ts";
 @source "../lib/microsoft-scopes.ts";
 @source "../lib/motion-preference.ts";

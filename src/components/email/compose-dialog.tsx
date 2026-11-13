@@ -189,7 +189,8 @@ export function ComposeDialog({
       }
       setBody(res.body);
       setAiBody(res.body);
-      setSubject((s) => (s.trim() ? s : "Following up"));
+      // A subject the person already typed stays; otherwise the draft's own, specific one.
+      setSubject((s) => (s.trim() ? s : res.subject || s));
     });
   }
 

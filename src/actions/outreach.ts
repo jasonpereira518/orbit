@@ -1026,7 +1026,9 @@ export async function regenerateOutreachDraft(input: {
       priorNotes: await priorNotesForContact(userId, prospect.contactId),
     },
     stepIndex,
+    lastStep: stepIndex > 0 && stepIndex >= ((campaign.sequenceSteps ?? []) as SequenceStep[]).length,
     previousBody: previous?.body,
+    previousSubject: previous?.subject,
     writingInstructions,
   });
 
@@ -1264,7 +1266,7 @@ export async function generateDueFollowUps(campaignId: string) {
       : [],
     parentIds.length
       ? db
-          .select({ id: outreachMessages.id, body: outreachMessages.body })
+          .select({ id: outreachMessages.id, body: outreachMessages.body, subject: outreachMessages.subject })
           .from(outreachMessages)
           .where(inArray(outreachMessages.id, parentIds))
       : [],
@@ -1278,6 +1280,7 @@ export async function generateDueFollowUps(campaignId: string) {
   ]);
   const repliedProspects = new Set(repliedRows.map((row) => row.prospectId));
   const parentBodies = new Map(parentRows.map((row) => [row.id, row.body]));
+  const parentSubjects = new Map(parentRows.map((row) => [row.id, row.subject]));
 
   const skippedIds: string[] = [];
   const toGenerate: typeof dueForCampaign = [];
@@ -1336,9 +1339,11 @@ export async function generateDueFollowUps(campaignId: string) {
           : null,
       },
       stepIndex: message.stepIndex ?? 1,
+      lastStep: (message.stepIndex ?? 1) >= steps.length,
       previousBody: message.parentMessageId
         ? parentBodies.get(message.parentMessageId)
         : undefined,
+      previousSubject: message.parentMessageId ? parentSubjects.get(message.parentMessageId) : undefined,
       writingInstructions,
       });
     } catch (err) {
@@ -1362,6 +1367,7 @@ export async function generateDueFollowUps(campaignId: string) {
       })
       .where(eq(outreachMessages.id, message.id));
     if (parentBodies.has(message.id)) parentBodies.set(message.id, draft.body);
+    if (parentSubjects.has(message.id)) parentSubjects.set(message.id, draft.subject);
     generated += 1;
   }
 

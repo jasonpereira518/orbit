@@ -16,11 +16,13 @@
  * Pure — no React, no DB — so the route, the renderer, the save action and the smoke share it.
  */
 import { DRAFT_MAX_CHARS, sanitizeDraft } from "@/lib/chat-draft";
+import { scrubPunctuation } from "@/lib/message-format";
+import { LINKEDIN_NOTE_MAX } from "@/lib/message-format";
 
 export type DraftChannel = "email" | "linkedin";
 
-/** LinkedIn's limit on the note sent with a connection request, as `sanitizeLinkedInNote` holds it. */
-export const LINKEDIN_NOTE_MAX = 300;
+/** LinkedIn's limit on a connection note (the free-account one), from the house format. */
+export { LINKEDIN_NOTE_MAX };
 /** A subject is one line; the send path's own cap (`SEND_SUBJECT_MAX`). */
 export const DRAFT_SUBJECT_MAX = 200;
 /**
@@ -127,6 +129,10 @@ export function draftContactIdsIn(text: string): string[] {
  * Every draft block rewritten to its canonical form, with a `to=` the server never offered
  * dropped (the block stays; only the recipient goes) and an unfinished block closed. The
  * stored answer goes through this, so a reload shows only recipients that were real.
+ *
+ * Model text only, so the house bans apply: dashes and "!" are scrubbed here as they were in
+ * the live stream (`createDraftStreamScrubber`). A person's own edit never passes through
+ * this (`cleanDraftEdit`), so their punctuation is theirs.
  */
 export function normalizeDraftBlocks(text: string, knownPeople: ReadonlySet<string>): string {
   const lines = text.split("\n");
@@ -140,8 +146,8 @@ export function normalizeDraftBlocks(text: string, knownPeople: ReadonlySet<stri
       formatDraftBlock({
         channel: b.channel,
         contactId: b.contactId && knownPeople.has(b.contactId) ? b.contactId : null,
-        subject: b.subject,
-        body: b.body,
+        subject: scrubPunctuation(b.subject),
+        body: scrubPunctuation(b.body),
       })
     );
     at = b.next;

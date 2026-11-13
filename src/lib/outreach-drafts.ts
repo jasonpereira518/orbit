@@ -8,7 +8,8 @@ import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { guardDraftOutput } from "@/lib/draft-output";
 import { senderProfileBlock } from "@/lib/sender-profile";
-import { loadSenderBio } from "@/lib/sender-profile-server";
+import { loadSenderBio, loadSenderName } from "@/lib/sender-profile-server";
+import { FALLBACK_VOICE, draftWithFormat, formatRules, toneNudge, type MessageKind } from "@/lib/message-format";
 import { withWritingPreferences } from "@/lib/writing-instructions";
 import type { OutreachChannel } from "@/lib/outreach-types";
 
@@ -29,7 +30,11 @@ export type DraftInput = {
   };
   templateSeed?: string;
   stepIndex?: number;
+  /** The sequence's last step: the follow-up offers an easy out. */
+  lastStep?: boolean;
   previousBody?: string | null;
+  /** The earlier message's subject: an email follow-up replies under it ("Re: …"). */
+  previousSubject?: string | null;
   variationHint?: string;
   /**
    * The sender's own style notes (`user_settings.writing_instructions`), loaded by whoever
@@ -44,14 +49,18 @@ export type GeneratedDraft = {
   body: string;
 };
 
-function channelRules(channel: OutreachChannel) {
-  if (channel === "email") {
-    return "Write a cold email under 120 words with a clear subject line and exactly one reply-seeking CTA (a question or soft ask).";
-  }
-  if (channel === "linkedin") {
-    return "Write a short LinkedIn connection note or InMail under 280 characters with one clear reply ask. No subject line.";
-  }
-  return "Write a conversational SMS under 160 characters with one clear reply ask. No subject line.";
+/** "Re: <subject>" once, however many replies deep; null when there is no subject to reply to. */
+export function replySubject(previous: string | null | undefined): string | null {
+  const base = previous?.trim().replace(/^(re:\s*)+/i, "").trim();
+  return base ? `Re: ${base}` : null;
+}
+
+/** Which house format a campaign message follows (`@/lib/message-format`). */
+export function outreachKind(channel: OutreachChannel, stepIndex = 0): MessageKind {
+  if (channel === "email") return stepIndex > 0 ? "email_followup" : "email_cold";
+  // A first LinkedIn touch is a connection note; a later one goes to someone who accepted.
+  if (channel === "linkedin") return stepIndex > 0 ? "linkedin_dm" : "linkedin_note";
+  return "sms";
 }
 
 function replyCtaGuidance(replyCta?: string | null) {
@@ -110,7 +119,8 @@ async function draftOutreachMessage(
       ? `Sender goals (secondary context only — do not invent a product pitch from these): ${input.userGoals.join("; ")}`
       : "Sender goals: (not specified)";
 
-  const senderBlock = senderProfileBlock(await loadSenderBio(userId));
+  const [senderBio, senderFullName] = await Promise.all([loadSenderBio(userId), loadSenderName(userId)]);
+  const senderBlock = senderProfileBlock(senderBio);
 
   const prospectBlock = [
     `Name: ${input.prospect.fullName}`,
@@ -128,6 +138,7 @@ async function draftOutreachMessage(
     .join("\n");
 
   const step = input.stepIndex ?? 0;
+  const kind = outreachKind(input.channel, step);
   const stepBlock =
     step > 0
       ? `This is follow-up #${step}. Reference the prior note lightly; do not repeat it. Prior message:\n${
@@ -145,9 +156,11 @@ async function draftOutreachMessage(
 Primary campaign intent (must drive the message): ${input.messageIntent}
 ${audienceBlock}
 ${replyCtaGuidance(input.replyCta)}
-${channelRules(input.channel)}
-Tone: ${input.tone}
 
+House rules for the message (strict):
+${formatRules(kind, { senderFullName, lastStep: input.lastStep })}
+- ${FALLBACK_VOICE}
+${toneNudge(input.tone) ? `- ${toneNudge(input.tone)}\n` : ""}
 Critical rules:
 - Write as the sender pursuing the campaign intent above.
 - Do NOT invent a SaaS/product pitch unless the campaign intent explicitly is selling a product.
@@ -159,12 +172,7 @@ Critical rules:
 - Do not use identical phrasing across people — vary openers and hooks.
 Return JSON: { "subject": string|null, "body": string }`;
 
-  const content = await completeJson(userId, {
-    operation: "outreach.draft",
-    schema: { name: "outreach_draft", zod: outreachDraftWire },
-    temperature: 0.55,
-    system: `${promptNow(await viewerTimeZone(userId))} ${LOCAL_TIME_RULE}\n\n${system}`,
-    user: `${withWritingPreferences(goalsBlock, input.writingInstructions)}
+  const userMessage = `${withWritingPreferences(goalsBlock, input.writingInstructions)}
 ${senderBlock ? `${senderBlock}\n` : ""}
 Prospect:
 ${fenceUntrusted("PROSPECT", prospectBlock)}
@@ -173,19 +181,32 @@ ${stepBlock}
 
 ${input.variationHint ? `Variation hint: ${input.variationHint}` : ""}
 
-${input.templateSeed ? `Template seed (a starting point for structure and wording):\n${fenceUntrusted("TEMPLATE", input.templateSeed)}` : ""}`,
-  });
+${input.templateSeed ? `Template seed (a starting point for structure and wording):\n${fenceUntrusted("TEMPLATE", input.templateSeed)}` : ""}`;
+  const dated = `${promptNow(await viewerTimeZone(userId))} ${LOCAL_TIME_RULE}\n\n${system}`;
 
-  // Was a bare cast: a reply with no `body`, or a non-string one, crashed on `.trim()` further
-  // down with nothing the person could read.
-  const reply = outreachDraftReply.safeParse(JSON.parse(content));
-  if (!reply.success) throw new Error(AI_INCOMPLETE_MESSAGE);
-  // Scrubbed, and refused if it quotes the system prompt, before anyone can send it (audit M-11).
-  const draft = guardDraftOutput(reply.data, { userId, surface: "outreach.draft", system });
-  return {
-    subject: scrubPlaceholders(draft.subject?.trim() || "") || null,
-    body: scrubPlaceholders(draft.body.trim()),
-  };
+  // Dashes and "!" are scrubbed in code; a hype word or a note over the limit buys one retry.
+  return draftWithFormat(kind, async (retry) => {
+    const content = await completeJson(userId, {
+      operation: "outreach.draft",
+      schema: { name: "outreach_draft", zod: outreachDraftWire },
+      temperature: 0.55,
+      system: dated,
+      user: retry ? `${userMessage}\n\n${retry}` : userMessage,
+    });
+
+    // Was a bare cast: a reply with no `body`, or a non-string one, crashed on `.trim()` further
+    // down with nothing the person could read.
+    const reply = outreachDraftReply.safeParse(JSON.parse(content));
+    if (!reply.success) throw new Error(AI_INCOMPLETE_MESSAGE);
+    // Scrubbed, and refused if it quotes the system prompt, before anyone can send it (audit M-11).
+    const draft = guardDraftOutput(reply.data, { userId, surface: "outreach.draft", system });
+    // A follow-up email stays in the first one's thread, so it keeps that subject.
+    const threadSubject = kind === "email_followup" ? replySubject(input.previousSubject) : null;
+    return {
+      subject: threadSubject ?? (scrubPlaceholders(draft.subject?.trim() || "") || null),
+      body: scrubPlaceholders(draft.body.trim()),
+    };
+  });
 }
 
 /** How many drafts of a bulk run count as one unit of the `draft` bucket. */
