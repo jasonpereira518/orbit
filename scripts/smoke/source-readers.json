@@ -319,7 +319,8 @@
     "src/app/(clerk)/(marketing)/pricing/page.tsx",
     "src/app/(site)/interest/page.tsx",
     "src/components/landing/landing-auth-controls.tsx",
-    "src/components/landing/landing-scenes.tsx"
+    "src/components/landing/landing-scenes.tsx",
+    "src/components/marketing/marketing-doc.tsx"
   ],
   "smoke-meeting-gate.ts": [
     "src/actions/meetings.ts"
