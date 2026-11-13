@@ -17,6 +17,8 @@ import { useCosmoPlacement } from "./use-cosmo-placement";
 import { openVoice, updateVoiceState, useVoiceDock } from "@/lib/voice/dock-store";
 import { useVoiceCall, voiceActions } from "@/lib/voice/call-store";
 import type { VoicePublicState } from "@/lib/voice/contracts";
+import { useAppPulse } from "@/lib/app-pulse-store";
+import { nudgeInput, pickNudge } from "@/lib/cosmo/nudge";
 import "@/components/chat/voice/voice-overlay.css";
 import "./cosmo.css";
 
@@ -32,6 +34,17 @@ function dayThread(): string | null {
   }
 }
 
+/** Nudges dismissed today, per device: a dismissed one stays gone until tomorrow. */
+const NUDGES_KEY = "orbit:cosmo-nudges";
+function readDismissed(): Set<string> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(NUDGES_KEY) ?? "null") as { day?: string; ids?: unknown } | null;
+    return new Set(saved?.day === today() && Array.isArray(saved.ids) ? saved.ids.filter((id) => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
 /**
  * Cosmo in the bottom-right corner of every signed-in page: an idle orb to click and talk, and,
  * during a call off Chat, the call's docked bar with its cards and errors. On Chat, with the
@@ -44,6 +57,25 @@ export function CosmoRoot({ tourActive = false }: { tourActive?: boolean }) {
   const [state, setState] = useState<VoicePublicState | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLDivElement>(null);
+  const { pulse } = useAppPulse();
+  const [dismissed, setDismissed] = useState(readDismissed);
+  // Minutes-until on the chip: a clock that ticks, not Date.now() in render.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const nudge = pulse ? pickNudge(nudgeInput(pulse), now, dismissed) : null;
+  const dismiss = (id: string) => {
+    const next = new Set(dismissed).add(id);
+    setDismissed(next);
+    try {
+      localStorage.setItem(NUDGES_KEY, JSON.stringify({ day: today(), ids: [...next] }));
+    } catch {
+      /* Private mode: dismissed for this page view only. */
+    }
+  };
+  const talk = () => state && openVoice(dayThread(), state, "cosmo", nudge?.id);
 
   useEffect(() => {
     let alive = true;
@@ -210,14 +242,37 @@ export function CosmoRoot({ tourActive = false }: { tourActive?: boolean }) {
         {call ? (
           <CosmoLive state={call.state} />
         ) : (
-          <button
-            type="button"
-            className="cosmo-idle pointer-events-auto"
-            aria-label="Talk to Cosmo"
-            title="Talk to Cosmo · drag or use arrow keys to move"
-            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
-            onClick={() => state && openVoice(dayThread(), state, "cosmo")}
-          />
+          <div className={cn("flex items-center gap-2", side === "left" && "flex-row-reverse")}>
+            {nudge && (
+              <div className="cosmo-chip pointer-events-auto flex items-center rounded-full border bg-popover text-popover-foreground shadow-md">
+                <button
+                  type="button"
+                  className="max-w-[13rem] truncate py-1.5 pl-3 pr-1 text-sm"
+                  aria-label={`${nudge.chip}: ask Cosmo`}
+                  onClick={talk}
+                >
+                  {nudge.chip}
+                </button>
+                <button
+                  type="button"
+                  className="mr-1 grid size-6 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label={`Dismiss: ${nudge.chip}`}
+                  onClick={() => dismiss(nudge.id)}
+                >
+                  <X className="size-3.5" aria-hidden />
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              className="cosmo-idle pointer-events-auto"
+              data-nudge={nudge ? nudge.kind : undefined}
+              aria-label="Talk to Cosmo"
+              title="Talk to Cosmo · drag or use arrow keys to move"
+              aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
+              onClick={talk}
+            />
+          </div>
         )}
       </motion.div>
     </>

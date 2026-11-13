@@ -15,6 +15,8 @@ export type VoiceCall = {
   state: VoicePublicState;
   /** Where it was started: Chat's composer (that thread) or the Cosmo orb (the day's thread). */
   origin: "chat" | "cosmo";
+  /** The nudge the idle orb showed when it was clicked; the server rebuilds its opener (nudge.ts). */
+  nudge?: string;
 };
 export type VoiceDockState = {
   call: VoiceCall | null;
@@ -30,8 +32,13 @@ function set(next: Partial<VoiceDockState>) {
   for (const fn of listeners) fn();
 }
 
-export function openVoice(threadId: string | null, state: VoicePublicState, origin: VoiceCall["origin"] = "chat") {
-  if (!current.call) set({ call: { id: crypto.randomUUID(), threadId, state, origin } });
+export function openVoice(
+  threadId: string | null,
+  state: VoicePublicState,
+  origin: VoiceCall["origin"] = "chat",
+  nudge?: string,
+) {
+  if (!current.call) set({ call: { id: crypto.randomUUID(), threadId, state, origin, nudge } });
 }
 
 /** The server answered with the call's thread (a new one, for a Cosmo call). */
