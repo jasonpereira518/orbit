@@ -384,8 +384,11 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await test.info().attach(`${provider} docked voice`, { path: docked, contentType: "image/png" });
     await cosmo.getByRole("link", { name: "Open chat" }).click();
     await expect(page).toHaveURL(/\/chat/);
+    // The hand-off reads as one move: the bar stays a moment saying where it's going, then goes.
+    await expect(page.locator("[data-handoff]")).toContainText("Moving to Chat…");
     await expect(voice.getByRole("button", { name: "Transcript", exact: true })).toBeVisible();
     await expect(orb).toHaveAttribute("data-orb-place", "stage");
+    await expect(cosmo).toHaveCount(0, { timeout: 3000 });
     await expect.poll(() => orbInside('[data-cosmo-orb-slot="stage"]')).toBe(true);
     // Another chat is that chat: the call docks instead of hiding its messages, and comes back
     // to the stage in its own thread.

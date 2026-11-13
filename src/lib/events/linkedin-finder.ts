@@ -18,6 +18,7 @@ import { getDb } from "@/db";
 import { contactIdentities, contacts, eventAttendees, events } from "@/db/schema";
 import { parseAiJson, userCanUseAi, webSearchJson } from "@/lib/ai";
 import { updateAttendeeForUser } from "@/lib/events/store";
+import { citedLinkedInUrl } from "@/lib/profile-match";
 
 export type FindLinkedInResult = {
   ok: boolean;
@@ -254,31 +255,17 @@ Return strictly valid JSON:
       maxOutputTokens: 250,
     });
 
-    // 1. Check parsed JSON
+    // Only the profile the model named, and only if the search actually cited it. The old
+    // fallbacks (any profile URL in the reply, else the first cited one) picked namesakes:
+    // a search for a common name cites several people's profiles (profile-match.ts).
     try {
       const parsed = parseAiJson(linkedinFinderReplySchema, result.json);
       if (parsed?.found && parsed.linkedinUrl) {
-        const valid = normalizeLinkedInUrl(parsed.linkedinUrl);
+        const cited = citedLinkedInUrl(parsed.linkedinUrl, result.sources ?? []);
+        const valid = cited ? normalizeLinkedInUrl(cited) : null;
         if (valid) return valid;
       }
     } catch {}
-
-    // 2. Scan raw JSON string for LinkedIn profile pattern
-    const rawMatch = result.json.match(
-      /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[A-Za-z0-9\-_%]+/i
-    );
-    if (rawMatch) {
-      const valid = normalizeLinkedInUrl(rawMatch[0]);
-      if (valid) return valid;
-    }
-
-    // 3. Inspect sources cited by search grounding
-    if (result.sources && result.sources.length > 0) {
-      for (const source of result.sources) {
-        const candidate = normalizeLinkedInUrl(source.url);
-        if (candidate) return candidate;
-      }
-    }
   } catch {
     // Non-blocking fallback
   }

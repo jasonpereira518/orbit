@@ -16,7 +16,14 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactIdentities, contacts } from "@/db/schema";
-import { identityKeysFor, type IdentityInput, type IdentityKey } from "@/lib/duplicates";
+import {
+  addIdentityToIndex,
+  identityKeysFor,
+  type DuplicateIndex,
+  type DuplicateSubject,
+  type IdentityInput,
+  type IdentityKey,
+} from "@/lib/duplicates";
 
 /** The contact that currently owns an identifier, as reported by the upsert. */
 export type IdentityOwner = { key: IdentityKey; contactId: string };
@@ -144,25 +151,65 @@ function keyToken(k: { kind: string; value: string }) {
 }
 
 /**
- * Bring a contact's identity rows in line with its current columns.
+ * Bring a contact's identity rows in line with an edit of its columns.
  *
- * Returns the owners reported by the claim, so a caller that has just written a contact can
- * see whether any identifier landed on somebody else and merge accordingly.
+ * Releases only what the edit replaced: the identifiers `previous` (the columns before the
+ * write) carried that the new columns do not. A contact can own more identifiers than its
+ * columns show (a second email from an address book, a phone from an import); those are not
+ * the edit's to drop. Returns the owners reported by the claim, so a caller that has just
+ * written a contact can see whether any identifier landed on somebody else.
  */
 export async function syncIdentitiesForContact(
   userId: string,
   contactId: string,
   input: IdentityInput,
-  source?: string
+  source?: string,
+  /** The columns before the write. Omitted: every row the columns don't carry is released. */
+  previous?: IdentityInput
 ): Promise<IdentityOwner[]> {
   const wanted = identityKeysFor(input);
-  const current = await identitiesForContact(userId, contactId);
   const wantedSet = new Set(wanted.map(keyToken));
-  const stale = current
-    .filter((c) => !wantedSet.has(keyToken(c)))
-    .map((c) => ({ kind: c.kind, value: c.value }));
+  const candidates = previous ? identityKeysFor(previous) : await identitiesForContact(userId, contactId);
+  const stale = candidates
+    .filter((k) => !wantedSet.has(keyToken(k)))
+    .map((k) => ({ kind: k.kind, value: k.value }));
   if (stale.length) await releaseIdentities(userId, contactId, stale);
   return claimIdentities(userId, contactId, wanted, source);
+}
+
+/**
+ * Add identifiers to contacts that already exist, in one statement; an identifier another
+ * contact owns stays theirs (the pair is the duplicate review's to judge, not this write's).
+ * Additive only: nothing is released. Sorted like `identityKeysFor` (deadlock order).
+ */
+export async function claimIdentitiesBulk(
+  userId: string,
+  claims: Array<{ contactId: string; keys: IdentityKey[] }>,
+  source?: string
+) {
+  const rows = claims
+    .flatMap((c) => c.keys.map((k) => ({ userId, contactId: c.contactId, kind: k.kind, value: k.value, source: source ?? null })))
+    .sort((a, b) => (a.kind === b.kind ? (a.value < b.value ? -1 : 1) : a.kind < b.kind ? -1 : 1));
+  if (!rows.length) return;
+  const db = await getDb();
+  await db.insert(contactIdentities).values(rows).onConflictDoNothing();
+}
+
+/**
+ * File every contact in `existing` under the identifiers it owns beyond its columns, so an
+ * import or sync matches a person by their second email or their phone too. One read.
+ */
+export async function indexStoredIdentities(userId: string, index: DuplicateIndex, existing: DuplicateSubject[]) {
+  const byId = new Map(existing.map((c) => [c.id, c]));
+  const db = await getDb();
+  const rows = await db
+    .select({ contactId: contactIdentities.contactId, kind: contactIdentities.kind, value: contactIdentities.value })
+    .from(contactIdentities)
+    .where(eq(contactIdentities.userId, userId));
+  for (const r of rows) {
+    const contact = byId.get(r.contactId);
+    if (contact) addIdentityToIndex(index, r, contact);
+  }
 }
 
 export type BackfillResult = {

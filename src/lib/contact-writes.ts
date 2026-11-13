@@ -59,7 +59,7 @@ import {
 import { isMetContext } from "@/lib/met-context";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
-import { claimIdentities, syncIdentitiesForContact } from "@/lib/contact-identity";
+import { claimIdentities, claimIdentitiesBulk, syncIdentitiesForContact } from "@/lib/contact-identity";
 import { identityKeysFor } from "@/lib/duplicates";
 import { normalizeBlueskyHandle, normalizeMastodonAcct } from "@/lib/social-handles";
 import {
@@ -212,6 +212,14 @@ async function recordFieldChanges(
       targetWhere: sql`status = 'suggested'`,
       set: { after: sql`excluded.after`, source: sql`excluded.source`, createdAt: sql`now()` },
     });
+}
+
+/**
+ * Offer a value for an empty field without writing it ("Updates to check"). For a finding
+ * that is probably right but not proven: the profile finder's uncorroborated match.
+ */
+export async function suggestFieldChange(userId: string, contactId: string, field: FieldKey, after: string, source: FieldSource) {
+  await recordFieldChanges(userId, [{ contactId, source, change: { field, before: null, after, status: "suggested" } }]);
 }
 
 const stampsSql = (stamps: FieldSources) =>
@@ -732,7 +740,29 @@ export async function createContactForUser(
     if (survivor) return survivor;
   }
 
+  if (options?.by !== "linkedin_export") deferExportFill(userId, contact.id);
   return contact;
+}
+
+/**
+ * After the response: a person added now may already be in the user's kept LinkedIn export
+ * (`@/lib/linkedin-export-facts`). Best-effort, like the avatar lookup; one indexed read and
+ * nothing more when there is no export. Imported lazily (it imports this module).
+ */
+function deferExportFill(userId: string, contactId: string) {
+  const task = async () => {
+    try {
+      const { fillFromStoredExport } = await import("@/lib/linkedin-export-facts");
+      await fillFromStoredExport(userId, [contactId]);
+    } catch {
+      // Swallowed: the next import or export upload fills them too.
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
 }
 
 /**
@@ -1124,6 +1154,13 @@ export async function bulkMergeContactsForUser(
   // ponytail: read-then-write without a lock; a writer landing in between is judged against
   // the older value, and the next write of that field re-judges it.
   const source = opts?.source ?? "import";
+  // Every email and phone a merge carries is the person's, written to the column or not: kept
+  // as identifiers so the next import or sync finds them by it. A LinkedIn URL or X handle
+  // is claimed only when it was written (a different one may be a namesake's).
+  const identityClaims = merges.map((m) => ({
+    contactId: m.contactId,
+    keys: identityKeysFor({ email: m.input.email, phone: m.input.phone }),
+  }));
   const current = await readSourcedFields(userId, merges.map((m) => m.contactId));
   const stampsById = new Map<string, FieldSources>();
   const changeRows: Array<{ contactId: string; source: FieldSource; change: FieldChange }> = [];
@@ -1218,6 +1255,10 @@ export async function bulkMergeContactsForUser(
     WHERE c.id = v.id AND c.user_id = ${userId}
   `);
   await recordFieldChanges(userId, changeRows);
+  for (const [i, m] of merges.entries()) {
+    identityClaims[i].keys.push(...identityKeysFor({ linkedinUrl: m.input.linkedinUrl, xHandle: m.input.xHandle }));
+  }
+  await claimIdentitiesBulk(userId, identityClaims, source);
 
   return now;
 }
@@ -1292,8 +1333,11 @@ export async function updateContactForUser(
   let changes: FieldChange[] = [];
   const by = options?.by;
   const incomingSourced = sourcedPart(input);
-  if (by && Object.keys(incomingSourced).length > 0) {
-    const current = (await readSourcedFields(userId, [id])).get(id);
+  // Read once for the gate and for the identity sync below (what this write replaces).
+  const current = Object.keys(incomingSourced).length > 0 ? (await readSourcedFields(userId, [id])).get(id) : undefined;
+  // An email or phone the gate does not write is still this person's: kept as an identifier.
+  const extraIdentities = by && by !== "user" ? identityKeysFor({ email: input.email, phone: input.phone }) : [];
+  if (by) {
     if (current) {
       if (by === "user") {
         stamps = userStamps(current, incomingSourced, staleAt);
@@ -1433,7 +1477,10 @@ export async function updateContactForUser(
       input.linkedinUrl !== undefined ||
       input.xHandle !== undefined)
   ) {
-    await syncIdentitiesForContact(userId, id, contact, input.source);
+    await syncIdentitiesForContact(userId, id, contact, input.source, current ?? {});
+  }
+  if (contact && extraIdentities.length) {
+    await claimIdentitiesBulk(userId, [{ contactId: id, keys: extraIdentities }], by);
   }
 
   // Only once the update matched the caller's own row. The UPDATE above is user-scoped, but

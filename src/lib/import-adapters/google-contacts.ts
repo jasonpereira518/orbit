@@ -27,6 +27,7 @@ export const googleContactsAdapter: ImportAdapter<GoogleContactRowPayload> = {
     return {
       fullName: payload.fullName,
       email: payload.email,
+      phone: payload.phone,
       company: payload.company,
       title: payload.title,
     };

@@ -1,4 +1,5 @@
 "use client";
+import { normalizeToolCall } from "@/lib/voice/tool-input";
 import { useEffect } from "react";
 import { AgentSession, AgentMicrophone, AgentPlayer } from "@deepgram/agents";
 import type { VoiceCredentials, VoiceAgentEvents } from "@/lib/voice/contracts";
@@ -132,15 +133,8 @@ export function DeepgramAdapter({
         if (closed) break;
         let result = JSON.stringify({ error: "Unknown voice tool" });
         if (fn.name === "orbit_tool" && fn.client_side) {
-          try {
-            const args = JSON.parse(fn.arguments) as {
-              tool: string;
-              input: string;
-            };
-            result = await events.onTool(args.tool, args.input);
-          } catch {
-            result = JSON.stringify({ error: "Invalid CRM tool arguments" });
-          }
+          const call = normalizeToolCall(fn.arguments);
+          result = "error" in call ? JSON.stringify({ error: call.error }) : await events.onTool(call.tool, call.input);
         }
         if (!closed) agent.sendFunctionCallResponse(fn.id, fn.name, result);
       }

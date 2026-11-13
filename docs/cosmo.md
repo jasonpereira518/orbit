@@ -78,6 +78,22 @@ you do?", bulk requests, relative dates and goodbyes.
 - Hovering the idle orb brings up a halo, faster breathing, a few pixels' lean toward the pointer
   (not with reduced motion), and loads the call's code ahead of time. Nothing is started.
 
+## Driving the screen, lookups and dates (Nov 13 revision)
+
+- **Clicking and typing:** `click(target)` and `type_into(target, text)` act only on registered controls
+  (`TOUR_ANCHOR_ACTIONS` in `src/lib/tour/tour-anchors.ts`: click / type / confirm / view). Cosmo's cursor flies
+  there first on desktop. Typing goes through the native value setter, so React sees it; nothing is ever submitted.
+  `confirm` controls (Save, Send, Keep, Done) are never pressed: Cosmo points at them. The cap is 30 of each per
+  call, and a tainted call loses both (`src/lib/cosmo/actions.ts`).
+- **Lookups:** `orbit_tool` input may arrive as a JSON string, an object, double-encoded or empty
+  (`normalizeToolInput`). Server errors reach the model in their own words, and failures go to Sentry as
+  `orbit:voice.tool <kind>`. Tools get 25 s. Oversized results are trimmed (`fitForVoice`, `truncated: true`),
+  never refused.
+- **Dates:** the prompt carries `promptNow` and a speak-dates-like-people rule. Every ISO date in a result gains a
+  `*_spoken` twin (`spokenWhen` / `withSpokenDates` in `src/lib/user-clock.ts`): "next Monday at 10 AM".
+- **Prompt size:** the base prompt is about 22,900 characters (tool lines are capped at 140). Deepgram cuts past
+  25,000, so leave room before adding more.
+
 ## Minutes and limits
 
 - Talk time per plan, per UTC month: Free 10 min, Pro 60, Max and Lifetime 180

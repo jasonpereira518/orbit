@@ -25,6 +25,13 @@ export const ANCHOR_PAGES: Record<TourAnchorId, VoicePage | null> = {
   "reminders.new": "reminders",
   "contacts.add": "contacts",
   "compose.email": null,
+  // Inside a form Cosmo (or you) opens first: on screen once it's open.
+  "reminders.title": null,
+  "reminders.notes": null,
+  "reminders.save": null,
+  "compose.subject": null,
+  "compose.body": null,
+  "compose.send": null,
 };
 
 const PAGE_NAMES: Partial<Record<VoicePage, string>> = { constellation: "Constellation", find_people: "Find people" };

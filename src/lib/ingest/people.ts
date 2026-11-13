@@ -16,6 +16,7 @@
 import {
   addToDuplicateIndex,
   findDuplicateCandidatesIndexed,
+  identityKeysFor,
 } from "@/lib/duplicates";
 import {
   bulkMergeContactsForUser,
@@ -23,6 +24,7 @@ import {
   type ContactInput,
 } from "@/lib/contact-writes";
 import type { IngestContext } from "@/lib/ingest/events";
+import { claimIdentitiesBulk } from "@/lib/contact-identity";
 import { isAdmissibleRecord } from "@/lib/names/classify";
 
 /** One person as a provider describes them. Every field but the name is optional. */
@@ -36,6 +38,9 @@ export type PersonRecord = {
   title?: string | null;
   location?: string | null;
   notes?: string | null;
+  /** Addresses and numbers besides the primary: never written to the row, kept as identifiers. */
+  otherEmails?: string[];
+  otherPhones?: string[];
 };
 
 export type PeopleIngestStats = {
@@ -155,23 +160,37 @@ export async function ingestPeople(
   const createScores: number[] = [];
   const createIndexByKey = new Map<string, number>();
   const mergeByContactId = new Map<string, Partial<ContactInput>>();
+  // Second emails and phones, claimed as identifiers once the contact exists (PR 6).
+  const extraClaims: Array<{ contactId: string; keys: ReturnType<typeof identityKeysFor> }> = [];
+  const extrasByEmail = new Map<string, ReturnType<typeof identityKeysFor>>();
 
   for (const person of people) {
     const name = person.fullName?.trim();
     if (!name) continue;
     stats.seen++;
 
-    const [best] = findDuplicateCandidatesIndexed(ctx.index, {
+    let [best] = findDuplicateCandidatesIndexed(ctx.index, {
       fullName: name,
       email: person.email ?? null,
       linkedinUrl: person.linkedinUrl ?? null,
       xHandle: person.xHandle ?? null,
+      phone: person.phone ?? null,
       company: person.company ?? null,
       title: person.title ?? null,
     });
+    // Not found by the primary address or number: their others may be what Orbit knows.
+    for (const other of [...(person.otherEmails ?? []).map((email) => ({ email })), ...(person.otherPhones ?? []).map((phone) => ({ phone }))]) {
+      if (best && best.confidence >= ctx.options.matchConfidence) break;
+      [best] = findDuplicateCandidatesIndexed(ctx.index, { fullName: name, ...other });
+    }
+    const extraKeys = [
+      ...(person.otherEmails ?? []).flatMap((email) => identityKeysFor({ email })),
+      ...(person.otherPhones ?? []).flatMap((phone) => identityKeysFor({ phone })),
+    ];
 
     if (best && best.confidence >= ctx.options.matchConfidence) {
       ctx.touchedContactIds.add(best.contact.id);
+      if (extraKeys.length) extraClaims.push({ contactId: best.contact.id, keys: extraKeys });
       const input = toContactInput(person, ctx.options.source);
       const existing = mergeByContactId.get(best.contact.id);
       if (existing) {
@@ -208,6 +227,7 @@ export async function ingestPeople(
       tagNames: ctx.options.tagNames,
     };
     if (key !== null) createIndexByKey.set(key, toCreate.length);
+    if (extraKeys.length && input.email) extrasByEmail.set(input.email.toLowerCase(), extraKeys);
     toCreate.push(input);
     createScores.push(completenessScore(person));
   }
@@ -242,6 +262,8 @@ export async function ingestPeople(
     if (ctx.headroom !== null) ctx.headroom -= created.length;
     for (const contact of created) {
       ctx.touchedContactIds.add(contact.id);
+      const extra = contact.email ? extrasByEmail.get(contact.email.toLowerCase()) : undefined;
+      if (extra) extraClaims.push({ contactId: contact.id, keys: extra });
       // Fold new contacts into the index so a LATER batch matches them rather than creating
       // the person again. Within this batch, `createIndexByKey` already did that job.
       addToDuplicateIndex(ctx.index, {
@@ -265,6 +287,9 @@ export async function ingestPeople(
       { source: "address_book" }
     );
   }
+
+  // 0-1 statements: every second email and phone, on whoever they turned out to be.
+  await claimIdentitiesBulk(ctx.userId, extraClaims, "address_book");
 
   return stats;
 }

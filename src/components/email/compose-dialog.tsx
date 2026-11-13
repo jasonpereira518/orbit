@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { upload } from "@vercel/blob/client";
 import { Loader2, Paperclip, Sparkles } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
@@ -324,6 +325,7 @@ export function ComposeDialog({
               </p>
             ) : (
               <Input
+                {...tourAnchor("compose.subject")}
                 aria-label="Subject"
                 placeholder="Subject"
                 value={subject}
@@ -334,6 +336,7 @@ export function ComposeDialog({
               />
             )}
             <Textarea
+              {...tourAnchor("compose.body")}
               aria-label="Message"
               rows={9}
               value={body}

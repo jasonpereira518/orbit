@@ -72,8 +72,15 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // through Deepgram's voice agent, or ElevenLabs if calls are switched to it), the screen context
 // (page name, record id, Orbit's own button names; never page text), the day's Cosmo chat, small
 // changes applied with Undo, spoken "send it", minutes per plan. Terms: Cosmo can be wrong.
-export const TERMS_VERSION = "2026-11-13";
-export const LEGAL_LAST_UPDATED = "November 13, 2026";
+// 2026-11-13.2 (contact-info accuracy, PR 8): Email insights also reads the signature of a
+// known contact's own message, by rule, into that contact's empty role, company, phone and
+// LinkedIn fields; each fill is undoable under "Changed by Orbit". No new mail is read.
+// smoke-legal-pages requires TERMS_VERSION to move with any /privacy change.
+// 2026-11-13.3 (Cosmo revision): Cosmo can open pages, press Orbit's own buttons and type into
+// its fields when asked, never pressing save, send or delete. A suffix (main took .2 first):
+// accounts that accepted 2026-11-13.2 must be asked again (needsTermsAcceptance compares strings).
+export const TERMS_VERSION = "2026-11-13.3";
+export const LEGAL_LAST_UPDATED = "November 13, 2026 (revision 3)";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

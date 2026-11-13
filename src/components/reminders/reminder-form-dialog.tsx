@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useEffect, useRef, useState } from "react";
 import { useGuardedTransition } from "@/lib/single-flight";
 import { X } from "lucide-react";
@@ -190,6 +191,7 @@ export function ReminderFormFields({
         className="space-y-2"
       >
         <Input
+          {...tourAnchor("reminders.title")}
           ref={titleRef}
           id={`${idPrefix}-title`}
           required
@@ -209,6 +211,7 @@ export function ReminderFormFields({
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-notes`}>Notes</Label>
         <Textarea
+          {...tourAnchor("reminders.notes")}
           id={`${idPrefix}-notes`}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -305,7 +308,7 @@ export function ReminderFormFields({
         >
           Cancel
         </Button>
-        <Button type="button" size="sm" disabled={pending} onClick={submit}>
+        <Button {...tourAnchor("reminders.save")} type="button" size="sm" disabled={pending} onClick={submit}>
           {pending
             ? "Saving…"
             : mode === "edit"

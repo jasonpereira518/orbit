@@ -24,6 +24,7 @@ export const outlookContactsAdapter: ImportAdapter<OutlookContactRowPayload> = {
     return {
       fullName: payload.fullName,
       email: payload.email,
+      phone: payload.phone,
       company: payload.company,
       title: payload.title,
     };
