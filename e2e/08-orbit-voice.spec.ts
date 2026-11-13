@@ -324,6 +324,19 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await expect(page.getByRole("button", {name: "Retry saving", exact: true})).toHaveCount(0);
     await expect.poll(() => turns.some(turn => turn.interrupted)).toBe(true);
     expect(new Set(turns.filter(turn => turn.text.startsWith("Ada researches")).map(turn => turn.id)).size).toBe(1);
+    // The orb is painted on top in the stage, not behind Chat's card.
+    expect(await page.evaluate(() => {
+      const box = document.querySelector('[data-cosmo-orb-slot="stage"]')!.getBoundingClientRect();
+      // Hit-testing skips pointer-events: none, so make the orb hittable just for this probe.
+      const orbEl = document.querySelector<HTMLElement>("[data-orb-place]")!;
+      orbEl.style.pointerEvents = "auto";
+      const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      orbEl.style.pointerEvents = "";
+      return Boolean(top && orbEl.contains(top));
+    })).toBe(true);
+    // Its pixels match its box: a stale backing store draws a dot stretched into a big square.
+    await expect.poll(() => page.locator(".voice-orbit").evaluate((c: HTMLCanvasElement) =>
+      Math.abs(c.width / Math.min(2, devicePixelRatio || 1) - c.clientWidth) <= 1)).toBe(true);
     const desktopScreenshot = test.info().outputPath(`${provider}-desktop.png`);
     await page.screenshot({path: desktopScreenshot});
     await test.info().attach(`${provider} desktop voice`, {path: desktopScreenshot, contentType: "image/png"});
@@ -339,9 +352,25 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     // again — one connection throughout.
     const voice = page.getByRole("region", {name: "Orbit Voice", exact: true});
     const cosmo = page.getByRole("region", {name: "Cosmo", exact: true});
+    /** The orb has landed: its centre is inside the given slot. */
+    const orbInside = (slot: string) =>
+      page.evaluate((selector) => {
+        const orbBox = document.querySelector("[data-orb-place]")?.getBoundingClientRect();
+        const slotBox = document.querySelector(selector)?.getBoundingClientRect();
+        if (!orbBox || !slotBox) return false;
+        const cx = orbBox.left + orbBox.width / 2;
+        const cy = orbBox.top + orbBox.height / 2;
+        return cx > slotBox.left && cx < slotBox.right && cy > slotBox.top && cy < slotBox.bottom &&
+          Math.abs(orbBox.width - Math.min(slotBox.width, slotBox.height)) < 2;
+      }, slot);
     await page.locator('a[href="/contacts"]:visible').first().click();
     await expect(page).toHaveURL(/\/contacts/);
     await expect(cosmo.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
+    // ONE orb: it flew out of Chat's stage into the bar's slot (no second canvas).
+    const orb = page.locator("[data-orb-place]");
+    await expect(page.locator(".voice-orbit")).toHaveCount(1);
+    await expect(orb).toHaveAttribute("data-orb-place", "dock");
+    await expect.poll(() => orbInside('[data-cosmo-orb-slot="dock"]')).toBe(true);
     await expect.poll(async () => {
       const box = await cosmo.boundingBox();
       const view = page.viewportSize()!;
@@ -353,6 +382,20 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await cosmo.getByRole("link", { name: "Open chat" }).click();
     await expect(page).toHaveURL(/\/chat/);
     await expect(voice.getByRole("button", { name: "Transcript", exact: true })).toBeVisible();
+    await expect(orb).toHaveAttribute("data-orb-place", "stage");
+    await expect.poll(() => orbInside('[data-cosmo-orb-slot="stage"]')).toBe(true);
+    // Another chat is that chat: the call docks instead of hiding its messages, and comes back
+    // to the stage in its own thread.
+    await page.locator("button:visible", { hasText: "New chat" }).first().click();
+    await expect(voice).toHaveCount(0);
+    await expect(cosmo.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
+    await expect(orb).toHaveAttribute("data-orb-place", "dock");
+    await page.locator('a[href="/contacts"]:visible').first().click();
+    await expect(page).toHaveURL(/\/contacts/);
+    await cosmo.getByRole("link", { name: "Open chat" }).click();
+    await expect(page).toHaveURL(/\/chat/);
+    await expect(voice.getByRole("button", { name: "Transcript", exact: true })).toBeVisible();
+    await expect(orb).toHaveAttribute("data-orb-place", "stage");
     expect(connected).toBe(1);
     expect(ends).toBe(0);
     // Leaving Chat and coming back must not reopen the provider socket: a new socket is a new
