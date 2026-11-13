@@ -22,6 +22,7 @@ import {
   WARP_EXTRA_SPAN,
   WARP_FIELD_REACH,
   WARP_LAP,
+  WARP_SHARE,
   WARP_MS,
   introOrigin,
   landingWarpStart,
@@ -29,6 +30,7 @@ import {
   warpLogK,
   warpPoint,
   warpProgress,
+  warpShareAlpha,
   warpStarAlpha,
 } from "@/lib/landing-intro";
 
@@ -419,7 +421,11 @@ export function Starfield({
           const y0 = warpOy - WARP_FIELD_REACH * warpOy;
           const y1 = warpOy + WARP_FIELD_REACH * (height - warpOy);
           const band = (x1 - x0) * (y1 - y0) - width * height;
-          const n = Math.min(Math.round((band * count) / (width * fieldH)), EDGE_STAR_CAP);
+          // Only the flying share: edge stars are all fliers, and land off-screen.
+          const n = Math.min(
+            Math.round((band * count * WARP_SHARE) / (width * fieldH)),
+            EDGE_STAR_CAP
+          );
           while (edgeStars.length < n) {
             const ex = x0 + Math.random() * (x1 - x0);
             const ey = y0 + Math.random() * (y1 - y0);
@@ -861,7 +867,11 @@ export function Starfield({
 
         if (warping) {
           // The first-visit flight (never on an interactive sky, so `active` is false here).
-          const dot = paintFlightStar(s, x, y, alpha * warpFade, r, warpP, warpPrevP);
+          // Only WARP_SHARE of the stars fly; the rest fade up as it lands. `phase` is the
+          // star's own uniform random, reused as the pick.
+          const share = warpShareAlpha(s.phase / (Math.PI * 2), warpP);
+          if (share <= 0) continue;
+          const dot = paintFlightStar(s, x, y, alpha * warpFade * share, r, warpP, warpPrevP);
           if (!dot) continue;
           x = dot.x;
           y = dot.y;

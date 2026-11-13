@@ -101,6 +101,9 @@ landing page. When on, and the attribute is present, and motion is allowed, the 
   `V`, fill them and land off-screen exactly when the flight ends.
 - Toned down after the first look (Jason: "a little less dramatic"): slower flight and
   shorter streaks.
+- Lighter (Jason: "Make it less dense when warping"): only 45% of the stars fly; the rest
+  stay hidden and fade up at their places over the last 15% of the flight, so the resting
+  sky is complete on arrival. Edge stars are thinned to the same share.
 - The streak joins where the star was 45ms ago, so its length is the speed and it
   collapses on arrival; it is skipped across a wrap. Respawned stars fade up. No second
   canvas.

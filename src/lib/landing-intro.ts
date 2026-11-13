@@ -89,6 +89,20 @@ export function warpLogK(offset: number, extra: number, p: number): number {
   return lap - offset;
 }
 
+/**
+ * The share of stars that fly (Jason, Nov 12: "Make it less dense when warping"). The rest stay
+ * hidden during the flight and fade up at their places as it lands, from p = SHARE_FADE_FROM.
+ */
+export const WARP_SHARE = 0.45;
+const SHARE_FADE_FROM = 0.85;
+
+/** Visibility factor for a star picked by `pick` in [0, 1): 1 if it flies, else 0 until the
+ *  arrival, fading to 1 by p=1. */
+export function warpShareAlpha(pick: number, p: number): number {
+  if (pick < WARP_SHARE || p >= 1) return 1;
+  return Math.max(0, (p - SHARE_FADE_FROM) / (1 - SHARE_FADE_FROM));
+}
+
 /** Brightness factor: faint just after a respawn at the sun, always full by arrival. */
 export function warpStarAlpha(offset: number, extra: number, p: number): number {
   if (p >= 1) return 1;

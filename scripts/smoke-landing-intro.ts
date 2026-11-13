@@ -17,6 +17,7 @@ import {
   WARP_EXTRA_SPAN,
   WARP_FIELD_REACH,
   WARP_LAP,
+  WARP_SHARE,
   WARP_TRAVEL,
   WARP_MS,
   introOrigin,
@@ -25,6 +26,7 @@ import {
   warpLogK,
   warpPoint,
   warpProgress,
+  warpShareAlpha,
   warpStarAlpha,
 } from "../src/lib/landing-intro";
 
@@ -158,6 +160,12 @@ const CASES: Array<[label: string, got: unknown, expected: unknown]> = [
   // As the flight slows every star closes in on its rest from the sun's side, so the edges would
   // empty out. Temporary stars resting off-screen, out to this reach, fill them and then leave.
   ["temporary edge stars reach well past the screen", WARP_FIELD_REACH >= 1.8, true],
+  // Less dense while flying (Jason, Nov 12): only WARP_SHARE of the stars fly; the rest stay
+  // hidden and fade up at their places as the flight lands, so the resting sky is complete.
+  ["a flying star is fully drawn mid-flight", warpShareAlpha(WARP_SHARE / 2, 0.5), 1],
+  ["a non-flying star is hidden mid-flight", warpShareAlpha((WARP_SHARE + 1) / 2, 0.5), 0],
+  ["a non-flying star is fully back on arrival", warpShareAlpha(0.99, 1), 1],
+  ["fewer than two thirds of the stars fly", WARP_SHARE <= 2 / 3, true],
   ["every star ends at full brightness", STARS.every(([o, e]) => warpStarAlpha(o, e, 1) === 1), true],
   // At p=0 this offset puts the star 0.01 into its lap: it has just respawned at the sun.
   ["a star just respawned at the vanishing point is faint", warpStarAlpha(((WARP_TRAVEL % WARP_LAP) + 0.01) % WARP_LAP, 0, 0) < 0.2, true],
