@@ -153,7 +153,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
   radar_digest_unsub_token_hash text,
   radar_daily_enabled integer NOT NULL DEFAULT 1,
   radar_auto_projects integer NOT NULL DEFAULT 1,
-  radar_discovery_enabled integer NOT NULL DEFAULT 1,
   radar_web_next_at timestamptz,
   radar_moment_last_day text,
   radar_moment_email_enabled integer NOT NULL DEFAULT 1,
@@ -619,7 +618,6 @@ CREATE TABLE IF NOT EXISTS recommendations (
   draft jsonb,
   autopilot jsonb,
   suggested_calendar_invite jsonb,
-  discovered_person jsonb,
   first_seen_at timestamptz,
   last_seen_at timestamptz,
   seen_count integer NOT NULL DEFAULT 0,
@@ -671,42 +669,6 @@ CREATE TABLE IF NOT EXISTS contact_signals (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS contact_signals_dedupe_uidx ON contact_signals(user_id, dedupe_hash);
 CREATE INDEX IF NOT EXISTS contact_signals_user_occurred_idx ON contact_signals(user_id, occurred_at DESC);
-CREATE TABLE IF NOT EXISTS external_sources (
-  id text PRIMARY KEY,
-  label text NOT NULL,
-  url text NOT NULL,
-  kind text NOT NULL,
-  enabled boolean NOT NULL DEFAULT true,
-  etag text,
-  last_modified text,
-  last_fetched_at timestamptz,
-  last_status text,
-  last_error text,
-  consecutive_failures integer NOT NULL DEFAULT 0,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS external_items (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  source_id text NOT NULL REFERENCES external_sources(id) ON DELETE CASCADE,
-  external_id text NOT NULL,
-  title text NOT NULL,
-  summary text,
-  url text,
-  published_at timestamptz NOT NULL,
-  first_seen_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS external_items_source_external_uidx ON external_items(source_id, external_id);
-CREATE INDEX IF NOT EXISTS external_items_published_idx ON external_items(published_at);
-CREATE TABLE IF NOT EXISTS external_item_companies (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  item_id uuid NOT NULL REFERENCES external_items(id) ON DELETE CASCADE,
-  company_key text NOT NULL,
-  company_name text NOT NULL,
-  published_at timestamptz NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS external_item_companies_item_key_uidx ON external_item_companies(item_id, company_key);
-CREATE INDEX IF NOT EXISTS external_item_companies_key_published_idx ON external_item_companies(company_key, published_at DESC);
 CREATE TABLE IF NOT EXISTS contact_embeddings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3211,7 +3173,13 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 238 = the email photo pool (admin refresh plan, PR 2): email_avatars (global, keyed by sha256 of
 // the lowercased trimmed address; public Gravatar lookups only) and contacts_email_lower_idx.
 // Built as 236; renumbered to 238 on Nov 12 2026 when main reached 237 (reminder priority).
-export const SCHEMA_VERSION = 238;
+// 239 = Radar PR 12b: drops what Radar's revision retired. external_sources, external_items and
+// external_item_companies (the global news sweep, cut in Radar PR 1), recommendations.
+// discovered_person and user_settings.radar_discovery_enabled (the arXiv/GitHub discovery, cut
+// in PR 0). Nothing reads them since PR 12a, so a deploy still serving during this migration
+// never selects them. Irreversible: the news cache and any discovery metadata are gone.
+// Scanned remote refs on Nov 12 2026: claude/email-avatar-cache holds 238 (now on main).
+export const SCHEMA_VERSION = 239;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -5685,9 +5653,7 @@ const alters = [
   `CREATE INDEX IF NOT EXISTS user_projects_user_activity_idx ON user_projects(user_id, last_activity_at)`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_daily_enabled integer NOT NULL DEFAULT 1`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_auto_projects integer NOT NULL DEFAULT 1`,
-  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_discovery_enabled integer NOT NULL DEFAULT 1`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS suggested_calendar_invite jsonb`,
-  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS discovered_person jsonb`,
   // Schema v224 (built as 221): Radar revision foundations (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
   // radar_opportunities and push_subscriptions are new tables (created from the template);
   // these are the two user_settings columns for older databases.
@@ -5703,6 +5669,12 @@ const alters = [
   `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS detail text`,
   // Schema v234: the same-day Radar email's off switch.
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_moment_email_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v239 (Radar PR 12b): what Radar's revision retired. Children first, for the FKs.
+  `DROP TABLE IF EXISTS external_item_companies`,
+  `DROP TABLE IF EXISTS external_items`,
+  `DROP TABLE IF EXISTS external_sources`,
+  `ALTER TABLE recommendations DROP COLUMN IF EXISTS discovered_person`,
+  `ALTER TABLE user_settings DROP COLUMN IF EXISTS radar_discovery_enabled`,
   // Schema v237 (cut from #609): reminder priority — priority, category, timing_rationale and importance_reason
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal'`,
   `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'action_item'`,
