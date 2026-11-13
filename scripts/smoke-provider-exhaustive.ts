@@ -269,14 +269,6 @@ const ALLOWLIST: Record<string, string> = {
   "src/actions/settings.ts::<anonymous>::openai": "the \"openai\" arm of the same ternary — same ternary as the entry for its sibling arm.",
   "src/actions/settings.ts::<anonymous>::anthropic": "the \"anthropic\" arm of the same ternary — same ternary as the entry for its sibling arm; " +
     "this is the comparison that was added, moving openrouter off the anthropic default.",
-  "src/lib/outreach-readiness-server.ts::hasAiKeyFor::gemini": "the \"gemini\" arm of hasAiKeyFor's " +
-    "personal-key ternary, which now has an explicit `provider === \"openrouter\"` arm " +
-    "reading openrouterApiKeyEncrypted before the `: null` default. It did NOT until the " +
-    "merge of main brought this checker alongside this file: an OpenRouter account's own " +
-    "key fell to null, so `hasAiKey` read false and outreach readiness told a user with a " +
-    "working key to go add one. Exhaustive over AiProvider now.",
-  "src/lib/outreach-readiness-server.ts::hasAiKeyFor::openai": "the \"openai\" arm of the same ternary — same ternary as the entry for its sibling arm.",
-  "src/lib/outreach-readiness-server.ts::hasAiKeyFor::anthropic": "the \"anthropic\" arm of the same ternary — same ternary as the entry for its sibling arm.",
   "src/lib/ai-settings-write.ts::applyAiKeyChange::gemini": "one of four INDEPENDENT `provider === X && encrypted` " +
     "ternaries, one per key column of nextKeyState — each keys off its own literal with no " +
     "shared fallthrough default, so no cascade needs an openrouter arm; openrouterApiKeyEncrypted " +

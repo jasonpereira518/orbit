@@ -49,7 +49,7 @@ export function PresenceProvider({
   return <LiveContext.Provider value={live}>{children}</LiveContext.Provider>;
 }
 
-export function useIsLive(userId: string): boolean {
+function useIsLive(userId: string): boolean {
   return useContext(LiveContext).has(userId);
 }
 

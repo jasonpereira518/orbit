@@ -21,6 +21,7 @@ import { FindProspectsSearch } from "@/components/outreach/find-prospects-search
 import { OutreachCampaignCard } from "@/components/outreach/outreach-campaign-card";
 import { formatReplyRate } from "@/lib/outreach-metrics";
 import { cn } from "@/lib/utils";
+import { integrationHref } from "@/components/settings/sections";
 import { SPRING_PILL } from "@/lib/motion";
 import type { FiveHourQuota } from "@/lib/outreach-types";
 import { BrightDataIntegrationGuide } from "@/components/outreach/brightdata-integration-guide";
@@ -267,7 +268,7 @@ export function UnifiedOutreachHub({
                 </p>
                 <div className="pt-1">
                   <Link
-                    href="/settings?section=google"
+                    href={integrationHref("google")}
                     className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-xs w-full")}
                   >
                     Manage Google Connection
@@ -297,7 +298,7 @@ export function UnifiedOutreachHub({
                 </p>
                 <div className="pt-1">
                   <Link
-                    href="/settings?section=microsoft"
+                    href={integrationHref("microsoft")}
                     className={cn(buttonVariants({ variant: "outline", size: "sm" }), "text-xs w-full")}
                   >
                     Manage Microsoft Connection

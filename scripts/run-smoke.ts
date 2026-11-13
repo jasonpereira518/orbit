@@ -149,7 +149,6 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-chat-mentions": "pure",
   "smoke-phase0-primitives": "pure",
   "smoke-honest-reporting": "pure",
-  "smoke-outreach-readiness": "pure",
   "smoke-route-progress": "pure",
   "smoke-settings-export": "pure",
   "smoke-chat-evidence": "pure",

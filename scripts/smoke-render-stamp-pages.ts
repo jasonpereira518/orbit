@@ -15,7 +15,7 @@ const ROOT = join(__dirname, "..", "src", "app", "(clerk)", "(app)");
  * Pages that deliberately go without. Onboarding is a single client-driven flow whose step
  * lives in client state; a refresh would buy nothing there.
  */
-const EXEMPT = new Set(["onboarding/page.tsx", "onboarding/wizard/page.tsx"]);
+const EXEMPT = new Set(["onboarding/page.tsx"]);
 
 function pages(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {

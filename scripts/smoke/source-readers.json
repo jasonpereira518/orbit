@@ -189,7 +189,6 @@
   "smoke-email-no-resend.ts": [
     "src/actions/outreach.ts",
     "src/lib/email/providers/gmail.ts",
-    "src/lib/outreach-readiness-server.ts",
     "src/lib/outreach-send.ts"
   ],
   "smoke-email-origins.ts": [

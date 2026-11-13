@@ -97,7 +97,7 @@ export type FinishCopy = {
 };
 
 /** Where the plan cap's notice sends a person — the same target as the history chip. */
-const PLAN_SETTINGS_HREF = "/settings?section=settings-plan";
+const PLAN_SETTINGS_HREF = "/settings#settings-plan";
 
 const people = (n: number) => `${n} ${n === 1 ? "person" : "people"}`;
 

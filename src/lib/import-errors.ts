@@ -60,7 +60,7 @@ export const IMPORT_FAILURE_COPY: Record<ImportFailureCode, ImportFailureCopy> =
     contact_limit: {
       cause: "Your plan’s contact limit was reached partway through",
       next: "Everyone up to the limit was imported, and upgrading brings in the rest",
-      fix: { label: "See plans", href: "/settings?section=settings-plan" },
+      fix: { label: "See plans", href: "/settings#settings-plan" },
     },
     needs_reconnect: {
       cause:
@@ -102,12 +102,12 @@ export const IMPORT_FAILURE_COPY: Record<ImportFailureCode, ImportFailureCopy> =
     ai_key: {
       cause: "Orbit doesn’t have a working AI key to read those files with",
       next: "Add or fix your AI key in Settings, then start the import again",
-      fix: { label: "Open AI settings", href: "/settings?section=settings-ai" },
+      fix: { label: "Open AI settings", href: "/settings#settings-ai" },
     },
     ai_credits: {
       cause: "Orbit’s AI credits ran out before this import finished",
       next: "Wait for your credits to refill or add your own AI key in Settings, then start the import again",
-      fix: { label: "Open AI settings", href: "/settings?section=settings-ai" },
+      fix: { label: "Open AI settings", href: "/settings#settings-ai" },
     },
     unknown: {
       cause: "This import didn’t finish",
