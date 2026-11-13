@@ -48,6 +48,7 @@ import type {
   EmailThreadStatus,
   ThreadDecision,
 } from "@/lib/email-intel/types";
+import type { RecruiterStage } from "@/lib/recruiter-stages";
 import type { MemorySourceKind } from "@/lib/memory-chunks";
 import type { FeedbackTriage } from "@/lib/feedback-report";
 
@@ -7040,6 +7041,30 @@ export const emailEvents = pgTable(
     uniqueIndex("email_events_rule_uidx").on(t.threadRowId, t.kind).where(sql`source = 'rule'`),
     index("email_events_user_idx").on(t.userId, t.occurredAt),
   ]
+);
+
+/**
+ * The person's corrections to the Recruiting board, which is a view over `email_events`: one
+ * row per company they have hidden ("Not a job") or whose stage they set by hand.
+ *
+ * Kept apart from the events on purpose. Events are rewritten by every sweep (a thread's rule
+ * event is replaced as the thread moves), and a correction written onto one would be lost the
+ * next time mail arrives on that thread — or, for a company's NEXT thread, never applied at
+ * all. Keyed by `companyKey()` (`src/lib/recruiting-board.ts`), so it follows the company.
+ */
+export const recruitingOverrides = pgTable(
+  "recruiting_overrides",
+  {
+    userId: text("user_id").notNull(),
+    companyKey: text("company_key").notNull(),
+    /** "Not a job". New mail never clears it; only "Put it back" does. */
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    /** A stage set by hand. It holds until mail dated after `stageAt` says otherwise. */
+    stage: text("stage").$type<RecruiterStage>(),
+    stageAt: timestamp("stage_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.companyKey] })]
 );
 
 /**
