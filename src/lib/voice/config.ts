@@ -139,7 +139,7 @@ export const CRM_VOICE_TOOL = {
       },
       input: {
         type: "string",
-        description: "JSON-encoded arguments matching that tool’s schema.",
+        description: "That tool’s arguments: a JSON object (a JSON-encoded string of one also works).",
       },
     },
   },

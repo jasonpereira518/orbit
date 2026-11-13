@@ -16,6 +16,7 @@ import {
 } from "@/lib/voice/sessions";
 import { describeScreen } from "@/lib/cosmo/screen";
 import { pointingCatalog } from "@/lib/cosmo/pointing";
+import { actionsCatalog } from "@/lib/cosmo/actions";
 import { confirmVoiceCard, dismissVoiceCard, undoVoiceSend } from "@/lib/voice/spoken-confirm";
 
 /**
@@ -146,6 +147,7 @@ export async function POST(request: Request) {
               freshIfMissing: body.freshIfMissing,
               screen: describeScreen(body.screen),
               pointCatalog: pointingCatalog(),
+              actions: actionsCatalog(),
               opener: await openerFor(userId, body.nudge),
             },
           ),

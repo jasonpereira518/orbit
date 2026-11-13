@@ -89,3 +89,13 @@ export function stepSlot(slot: CosmoSlot, key: string): CosmoSlot | null {
   if (key === "ArrowDown") return `${HEIGHTS[Math.min(2, at + 1)]}-${side}`;
   return null;
 }
+
+/** Where a pointer is inside an element's box, -1..1 on each axis from its centre (clamped). */
+export function pointerIn(el: { getBoundingClientRect(): { left: number; top: number; width: number; height: number } }, clientX: number, clientY: number) {
+  const r = el.getBoundingClientRect();
+  const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+  return {
+    x: clamp((clientX - (r.left + r.width / 2)) / (r.width / 2 || 1)),
+    y: clamp((clientY - (r.top + r.height / 2)) / (r.height / 2 || 1)),
+  };
+}
