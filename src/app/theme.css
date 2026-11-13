@@ -435,9 +435,18 @@
      wide enough to have room beside it (`dockLayoutFor`). */
   --orbit-dock-w: 0px;
 
+  /* Height Cosmo's orb (or its docked call bar) takes at the bottom of the corner, published
+     by `cosmo/cosmo-root.tsx`. 0px when Cosmo is off or hidden. */
+  --orbit-cosmo-height: 0px;
+
+  /* Where the job widget starts: above Cosmo. */
+  --orbit-stack-bottom: calc(
+    var(--orbit-corner-bottom) + var(--orbit-cosmo-height)
+  );
+
   /* Toasts stack ABOVE the job widget, never on it. */
   --orbit-toast-bottom: calc(
-    var(--orbit-corner-bottom) + var(--orbit-job-stack-height)
+    var(--orbit-stack-bottom) + var(--orbit-job-stack-height)
   );
 
   /* Vertical band the fixed mobile nav occupies, for content that must clear it.
@@ -1613,6 +1622,48 @@ html[data-motion="reduce"] .constellation-starfield-drift {
 
 .landing-solar-enter {
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
+}
+
+/* First visit in a tab session (`html[data-landing-intro]`, set before first paint by
+ * `LandingIntroGate`): the hero block's single fade becomes a three-step stagger. Nothing waits
+ * for a script — step 1 starts at first paint like the block did. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-landing-intro] [data-landing-hero] {
+    animation: none;
+  }
+  html[data-landing-intro] [data-intro-step] {
+    animation: landing-fade var(--transition-duration-celestial) var(--ease-house) both;
+  }
+  html[data-landing-intro] [data-intro-step="2"] {
+    animation-delay: 150ms;
+  }
+  html[data-landing-intro] [data-intro-step="3"] {
+    animation-delay: 300ms;
+  }
+
+  /* Arrival: the sky's flight streams out of the sun (starfield.tsx), so the solar system starts
+   * as a speck at that same point and grows into place as the flight slows (Jason, Nov 12:
+   * "zooming to space and then you arrive at the solar system"). It scales about its own centre,
+   * the sun, so it never moves toward the text. Same length as WARP_MS in lib/landing-intro.ts. */
+  html[data-landing-intro] .landing-solar-enter {
+    /* Ease-in-out: most of the growing happens in the second half, once the stars have
+     * braked (Jason: "As the galaxy zooms in the stars should already be slower"). */
+    animation: landing-solar-warp 1s cubic-bezier(0.5, 0, 0.3, 1) both;
+  }
+}
+
+@keyframes landing-solar-warp {
+  0% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ── Coming soon (`components/coming-soon`) ──

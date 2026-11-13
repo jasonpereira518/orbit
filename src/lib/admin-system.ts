@@ -401,8 +401,11 @@ export async function recentWebhookOutcomes(
   return out;
 }
 
-/** The sweep must have run this recently or its scheduler is presumed dead. */
-const SWEEP_QUIET_MS = 30 * 60 * 1000;
+/**
+ * The sweep must have run this recently or its scheduler is presumed dead. It runs every
+ * thirty minutes (`src/lib/schedules.ts`), so this is two missed ticks plus slack.
+ */
+const SWEEP_QUIET_MS = 75 * 60 * 1000;
 
 /** The one rule for "the ops sweep has gone quiet", shared by the admin strip and the deep probe. */
 export function isSweepQuiet(lastRun: CronHealth["lastRun"], now: Date): boolean {

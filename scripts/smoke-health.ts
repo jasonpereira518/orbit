@@ -80,7 +80,7 @@ async function main() {
     JSON.stringify(deep.config?.statementTimeout));
 
   // A dead scheduler: the nightly job's 25 h window is far too slow to notice that the
-  // ten-minute ops sweep stopped, so the deep view also degrades when the sweep is quiet.
+  // thirty-minute ops sweep stopped, so the deep view also degrades when the sweep is quiet.
   console.log("\nDeep probe, scheduler liveness...");
   const db = await getDb();
   const JOBS = ["imports.process-stalled", "ops.sweep"];
@@ -95,9 +95,9 @@ async function main() {
     check("no sweep ever recorded → degraded, still HTTP 200",
       neverSwept.status === "degraded" && neverSwept.httpStatus === 200, JSON.stringify(neverSwept.cron));
 
-    await seed("ops.sweep", 45);
+    await seed("ops.sweep", 90);
     const quiet = await checkHealth({ deep: true });
-    check("a sweep last seen 45 min ago → degraded, still HTTP 200",
+    check("a sweep last seen 90 min ago (two missed ticks) → degraded, still HTTP 200",
       quiet.status === "degraded" && quiet.httpStatus === 200 && quiet.cron?.processStalled.missed === false,
       JSON.stringify(quiet.cron));
 

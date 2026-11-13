@@ -20,13 +20,14 @@ import { monthWindow } from "@/lib/speech-limits";
  * applied), read once — never a per-account call. Internal and tester accounts are left out.
  */
 
-export const ALLOWANCES = ["credits", "meeting", "shortform", "enrichment", "contacts"] as const;
+export const ALLOWANCES = ["credits", "meeting", "shortform", "assistant", "enrichment", "contacts"] as const;
 export type Allowance = (typeof ALLOWANCES)[number];
 
 export const ALLOWANCE_LABELS: Record<Allowance, string> = {
   credits: "AI credits",
   meeting: "Meeting speech",
   shortform: "Short-form speech",
+  assistant: "Cosmo talk",
   enrichment: "Hosted enrichment",
   contacts: "Contacts",
 };
@@ -48,6 +49,8 @@ export type UsageReadings = {
   credits: Map<string, { granted: number; remaining: number }>;
   meeting: Map<string, number>;
   shortform: Map<string, number>;
+  /** Seconds talking with Cosmo (connected call time, as src/lib/voice/minutes.ts counts it). */
+  assistant: Map<string, number>;
   enrichment: Map<string, number>;
   contacts: Map<string, number>;
 };
@@ -60,6 +63,8 @@ function limitOf(allowance: Allowance, c: PlanConfig): number | null {
       return c.speech.meetingSeconds;
     case "shortform":
       return c.speech.shortformSeconds;
+    case "assistant":
+      return c.speech.assistantSeconds;
     case "enrichment":
       return c.hostedEnrichmentsPerMonth;
     case "contacts":
@@ -87,6 +92,7 @@ export function accountUsage(
       }
       meters.meeting.used = r.meeting.get(userId) ?? 0;
       meters.shortform.used = r.shortform.get(userId) ?? 0;
+      meters.assistant.used = r.assistant.get(userId) ?? 0;
       meters.enrichment.used = r.enrichment.get(userId) ?? 0;
       meters.contacts.used = r.contacts.get(userId) ?? 0;
       let peak = 0;
@@ -123,6 +129,10 @@ const num = (v: unknown) => Number(v ?? 0);
 const byUser = (rows: Array<{ userId: string | null; v: unknown }>) =>
   new Map(rows.flatMap((r) => (r.userId ? [[r.userId, num(r.v)] as const] : [])));
 const notInternal = (col: SQL) => sql`NOT ${internalAccountSql(col)}`;
+/** A call's talk time in seconds: the raw-SQL twin of `talked` in src/lib/voice/minutes.ts; change both together. */
+const TALKED = sql.raw(
+  "greatest(0, extract(epoch from (least(coalesce(ended_at, last_seen_at, connected_at), expires_at) - connected_at)))"
+);
 
 export async function loadAdminUsage(now = new Date()) {
   const db = await getDb();
@@ -130,7 +140,7 @@ export async function loadAdminUsage(now = new Date()) {
   const { start: monthStart } = monthWindow(now);
   const trendStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
 
-  const [accounts, grants, speech, meters, contactCounts, creditTrend, speechTrend, meterTrend, contactTrend] =
+  const [accounts, grants, speech, meters, contactCounts, creditTrend, speechTrend, meterTrend, contactTrend, talk, talkTrend] =
     await Promise.all([
       db
         .select({
@@ -199,6 +209,17 @@ export async function loadAdminUsage(now = new Date()) {
         WHERE created_at >= ${trendStart} AND ${notTourExample(sql`source`)}
           AND ${notInternal(sql`user_id`)}
         GROUP BY 1`),
+      // Cosmo: connected to ended (or last heartbeat), never past the call's expiry.
+      db.execute(sql`
+        SELECT user_id AS "userId", sum(${TALKED}) AS v
+        FROM orbit_voice_sessions
+        WHERE connected_at >= ${monthStart}
+        GROUP BY 1`),
+      db.execute(sql`
+        SELECT to_char(connected_at AT TIME ZONE 'UTC', 'YYYY-MM') AS month, sum(${TALKED}) AS used
+        FROM orbit_voice_sessions
+        WHERE connected_at >= ${trendStart} AND ${notInternal(sql`user_id`)}
+        GROUP BY 1`),
     ]);
 
   const readings: UsageReadings = {
@@ -207,6 +228,7 @@ export async function loadAdminUsage(now = new Date()) {
     ),
     meeting: byUser(speech.filter((s) => s.kind === "meeting")),
     shortform: byUser(speech.filter((s) => s.kind === "shortform")),
+    assistant: byUser(rowsOf<{ userId: string; v: string }>(talk)),
     enrichment: byUser(meters),
     contacts: byUser(contactCounts),
   };
@@ -222,6 +244,7 @@ export async function loadAdminUsage(now = new Date()) {
     credits: 0,
     meeting: 0,
     shortform: 0,
+    assistant: 0,
     enrichment: 0,
     contacts: 0,
   }));
@@ -233,6 +256,10 @@ export async function loadAdminUsage(now = new Date()) {
   for (const r of rowsOf<{ month: string; kind: string; used: string }>(speechTrend)) {
     const p = at(r.month);
     if (p && (r.kind === "meeting" || r.kind === "shortform")) p[r.kind] = num(r.used);
+  }
+  for (const r of rowsOf<{ month: string; used: string }>(talkTrend)) {
+    const p = at(r.month);
+    if (p) p.assistant = num(r.used);
   }
   for (const r of rowsOf<{ month: string; used: string }>(meterTrend)) {
     const p = at(r.month);
