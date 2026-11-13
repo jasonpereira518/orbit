@@ -476,6 +476,10 @@ export function ChatPanel({
   // A live Orbit Voice call (held by VoiceDock in the layout) takes the message list's place.
   const voiceCall = useVoiceDock().call;
   const voiceThreadOnMount = useRef(voiceCall?.threadId ?? null);
+  // The call takes the message list's place only in its OWN thread. Any other thread (or a new
+  // chat) shows normally while the call stays docked, so the composer and ask_chat can never
+  // write to different threads under one title.
+  const voiceHere = Boolean(voiceCall?.threadId && voiceCall.threadId === threadId);
   /** The `+` menu is outside the field, so it reaches the splice through here. */
   const composerRef = useRef<MentionComposerHandle | null>(null);
   const stickToBottomRef = useRef(true);
@@ -2043,8 +2047,8 @@ export function ChatPanel({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {/* `relative` so the jump button can sit on the scroller's bottom edge — above the
               composer, but not inside the scrolling content, where it would scroll away. */}
-          {voiceCall && <div ref={setVoiceSlot} className="flex min-h-0 flex-1 flex-col" />}
-          <div className={cn("relative flex min-h-0 flex-1 flex-col", voiceCall && "hidden")}>
+          {voiceHere && <div ref={setVoiceSlot} className="flex min-h-0 flex-1 flex-col" />}
+          <div className={cn("relative flex min-h-0 flex-1 flex-col", voiceHere && "hidden")}>
           <div
             ref={listRef}
             onScroll={onListScroll}

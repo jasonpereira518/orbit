@@ -77,6 +77,9 @@ export const PUBLIC_ROUTES = [
   "/api/contacts/name-sweep",
   "/api/linkedin/timeline-events/backfill",
   "/api/relationships/run",
+  // The one scheduled call (a thirty-minute tick that starts every due job, src/lib/schedules.ts)
+  // — same CRON_SECRET gate as the jobs it starts.
+  "/api/cron/tick",
   "/api/ops/sweep",
   "/api/ops/speech-usage",
   "/api/ops/billing-reconcile",

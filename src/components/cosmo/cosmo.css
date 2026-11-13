@@ -1,0 +1,135 @@
+/* Cosmo's idle orb: the live canvas orb's colours, drawn in CSS so an idle page runs no loop. */
+.cosmo-idle {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 34% 30%, rgb(244 114 182 / 0.85), transparent 46%),
+    radial-gradient(circle at 70% 66%, rgb(34 211 238 / 0.8), transparent 50%),
+    radial-gradient(circle at 50% 50%, rgb(167 139 250 / 0.9), #160c3a 72%);
+  box-shadow:
+    0 0 0 1px rgb(167 139 250 / 0.35),
+    0 10px 28px -8px rgb(76 29 149 / 0.6);
+  position: relative;
+  animation: cosmo-breathe 4.8s ease-in-out infinite;
+  /* `scale`, not `transform`: motion's lean toward the pointer owns the transform. */
+  transition: scale 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Hovered or focused, it perks up: a little bigger, breathing faster, a halo coming on. */
+.cosmo-idle::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  box-shadow:
+    0 0 0 2px rgb(167 139 250 / 0.55),
+    0 0 18px 4px rgb(34 211 238 / 0.35);
+  opacity: 0;
+  scale: 0.9;
+  pointer-events: none;
+  transition:
+    opacity 0.2s ease-out,
+    scale 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cosmo-idle:hover,
+.cosmo-idle:focus-visible {
+  scale: 1.08;
+  animation-duration: 2.4s;
+}
+.cosmo-idle:hover::after,
+.cosmo-idle:focus-visible::after {
+  opacity: 1;
+  scale: 1;
+}
+/* The live orb over its slot button: brighter while the pointer is on it (a click ends the call). */
+.cosmo-orb {
+  transition: filter 0.2s ease-out;
+}
+.cosmo-orb[data-hover] {
+  filter: brightness(1.2) drop-shadow(0 0 10px rgb(167 139 250 / 0.6));
+}
+@media (prefers-reduced-motion: reduce) {
+  .cosmo-idle:hover,
+  .cosmo-idle:focus-visible {
+    scale: 1;
+    animation-duration: 4.8s;
+  }
+  .cosmo-idle::after {
+    scale: 1;
+    transition: opacity 0.2s ease-out;
+  }
+}
+/* Something worth a word: a slow gold halo, so the orb reads as "I have something" before the chip. */
+.cosmo-idle[data-nudge] {
+  box-shadow:
+    0 0 0 1px rgb(167 139 250 / 0.35),
+    0 0 0 4px rgb(251 191 36 / 0.28),
+    0 10px 28px -8px rgb(76 29 149 / 0.6);
+}
+.cosmo-chip {
+  animation: cosmo-chip-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes cosmo-chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cosmo-chip {
+    animation: none;
+  }
+}
+.cosmo-idle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+/* On a phone the shared corner band ends a few pixels into the bottom nav's lifted pill: Cosmo
+   keeps clear of it. 0 at md, where there is no nav. */
+:root {
+  --cosmo-gap: 0.75rem;
+}
+@media (min-width: 48rem) {
+  :root {
+    --cosmo-gap: 0px;
+  }
+}
+
+/* On a phone with the keyboard up, Cosmo tucks into a slim tab on its side edge. */
+.cosmo-tab {
+  width: 0.75rem;
+  height: 3.5rem;
+  background: linear-gradient(180deg, rgb(244 114 182 / 0.9), rgb(167 139 250 / 0.95), rgb(34 211 238 / 0.9));
+  box-shadow: 0 6px 18px -6px rgb(76 29 149 / 0.6);
+}
+.cosmo-tab[data-side="right"] {
+  right: 0;
+  border-radius: 9999px 0 0 9999px;
+}
+.cosmo-tab[data-side="left"] {
+  left: 0;
+  border-radius: 0 9999px 9999px 0;
+}
+/* The ring around whatever Cosmo is pointing at: a spotlight without the scrim. */
+.cosmo-ring {
+  border-radius: 0.875rem;
+  box-shadow:
+    0 0 0 2px rgb(167 139 250 / 0.95),
+    0 0 0 7px rgb(167 139 250 / 0.22);
+  animation: cosmo-ring 1.8s ease-in-out infinite;
+}
+@keyframes cosmo-ring {
+  50% {
+    box-shadow:
+      0 0 0 2px rgb(34 211 238 / 0.95),
+      0 0 0 10px rgb(34 211 238 / 0.16);
+  }
+}
+@keyframes cosmo-breathe {
+  50% {
+    filter: brightness(1.12) saturate(1.1);
+    box-shadow:
+      0 0 0 1px rgb(167 139 250 / 0.5),
+      0 10px 34px -6px rgb(124 58 237 / 0.7);
+  }
+}

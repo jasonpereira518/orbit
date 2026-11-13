@@ -32,6 +32,8 @@ export type VoiceSessionStart = {
   threadId: string;
   expiresAt: string;
   credentials: VoiceCredentials;
+  /** Cosmo: the call ends at expiresAt because the minutes run out, not at the call cap. */
+  endsEarly?: boolean;
 };
 export type VoicePublicState = {
   enabled: boolean;
@@ -49,7 +51,18 @@ export type VoiceAgentControls = {
   getLevels(): { input: number; output: number };
   disconnect(): void;
   setMuted(value: boolean): void;
-  sendContext(text: string): void;
+  /**
+   * Tell the agent something WITHOUT it being spoken. Only providers with a silent channel
+   * implement it; otherwise the engine queues the note onto the next tool result (app_events).
+   */
+  sendContext?(text: string): void;
+  /** Speak this exact line now. Deepgram only; ElevenLabs cannot speak a fixed line. */
+  say?(text: string): void;
+  /**
+   * How much of the agent's current line has played, in seconds, for paced captions. Only
+   * providers that hand Orbit the audio can say; without it captions estimate from speech rate.
+   */
+  getPlayback?(): { text: string | null; played: number; queued: number; complete: boolean } | null;
 };
 export type VoiceAgentEvents = {
   onReady(controls: VoiceAgentControls | null): void;
@@ -61,4 +74,6 @@ export type VoiceAgentEvents = {
   onError(): void;
   onDisconnected(): void;
   onTool(tool: string, input: string): Promise<string>;
+  /** The person started talking (Deepgram): when a spoken confirmation's utterance began. */
+  onUserStarted?(): void;
 };

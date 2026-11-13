@@ -44,7 +44,7 @@ export function ComposerSendButton({
   // While streaming this is the only control in reach, so it stops rather than sits
   // disabled — a long answer the user no longer wants had no way out before.
   const stopping = busy && Boolean(onStop);
-  const label = stopping ? "Stop generating" : mode === "voice" ? "Start Orbit Voice" : mode === "send" ? "Send" : "Recall last message";
+  const label = stopping ? "Stop generating" : mode === "voice" ? "Talk with Cosmo here" : mode === "send" ? "Send" : "Recall last message";
 
   return (
     <Button
