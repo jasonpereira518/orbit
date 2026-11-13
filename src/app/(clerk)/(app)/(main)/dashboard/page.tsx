@@ -54,10 +54,13 @@ export default async function DashboardPage() {
   radarBriefing?.catch(() => {});
 
   // The outreach summary streams independently, and is not started at all when its card
-  // is hidden — it is the one query on this page that no other card shares.
-  const outreachSummary = show("dashboard.outreach-performance")
-    ? getOutreachPerformanceSummary()
-    : null;
+  // is hidden — it is the one query on this page that no other card shares. Like the Radar
+  // widget, it stays off while Outreach is marked coming soon: the reply-rate chip links to
+  // /outreach, which hasn't shipped.
+  const outreachSummary =
+    show("dashboard.outreach-performance") && !comingSoonMarked.has("page.outreach")
+      ? getOutreachPerformanceSummary()
+      : null;
 
   // Each row is guarded as well as each card: a `grid` whose children are all hidden still
   // renders, and its `gap` would leave an unexplained band of empty page behind.

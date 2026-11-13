@@ -153,25 +153,13 @@ export const ACTIONS: Command[] = [
     keywords: "overdue reach out check in people who need a message",
   },
   {
-    id: "action:quiet-30",
-    label: "Contacts quiet for 30+ days",
-    href: "/contacts?quiet=30",
-    icon: Hourglass,
-    keywords: "dormant gone quiet losing touch haven't spoken a month",
-  },
-  {
-    id: "action:quiet-90",
-    label: "Contacts quiet for 90+ days",
+    id: "action:quiet",
+    label: "Contacts gone quiet",
+    hint: "30, 90 or 180+ days since you last spoke",
     href: "/contacts?quiet=90",
     icon: Hourglass,
-    keywords: "dormant gone quiet losing touch haven't spoken three months quarter",
-  },
-  {
-    id: "action:quiet-180",
-    label: "Contacts quiet for 180+ days",
-    href: "/contacts?quiet=180",
-    icon: Hourglass,
-    keywords: "dormant gone quiet losing touch haven't spoken six months half year",
+    keywords:
+      "dormant gone quiet losing touch haven't spoken 30 days month 90 days three months quarter 180 days six months half year",
   },
   {
     id: "action:closest",
