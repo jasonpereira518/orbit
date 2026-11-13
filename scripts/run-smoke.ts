@@ -99,6 +99,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-cosmo-screen": "pure",
   "smoke-cosmo-pointing": "pure",
   "smoke-confirm-window": "pure",
+  "smoke-cosmo-nudge": "pure",
   "smoke-timeline-cost": "pure",
   "smoke-tap-targets": "pure",
   "smoke-a11y-patterns": "pure",

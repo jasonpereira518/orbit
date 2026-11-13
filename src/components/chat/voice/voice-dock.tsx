@@ -60,6 +60,8 @@ export function VoiceDock({ cosmo = false, tourActive = false }: { cosmo?: boole
           state={call.state}
           threadId={call.threadId}
           origin={call.origin}
+          nudge={call.nudge}
+          cosmo={cosmo}
           onClose={async () => closeVoice()}
         />
       )}

@@ -18,6 +18,17 @@ import { describeScreen } from "@/lib/cosmo/screen";
 import { pointingCatalog } from "@/lib/cosmo/pointing";
 import { confirmVoiceCard, dismissVoiceCard, undoVoiceSend } from "@/lib/voice/spoken-confirm";
 
+/**
+ * Cosmo's first line when the call was started from a nudge: found by id among the nudges the
+ * SERVER's own pulse supports, so nothing the browser sends is ever spoken. Unknown id: none.
+ */
+async function openerFor(userId: string, nudgeId: string | undefined): Promise<string | undefined> {
+  if (!nudgeId) return undefined;
+  const [{ loadAppPulse }, { allNudges, nudgeInput }] = await Promise.all([import("@/lib/app-pulse"), import("@/lib/cosmo/nudge")]);
+  const pulse = await loadAppPulse(userId, new Date()).catch(() => null);
+  return pulse ? allNudges(nudgeInput(pulse), Date.now()).find((n) => n.id === nudgeId)?.opener : undefined;
+}
+
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 const json = (data: unknown, status = 200) =>
@@ -31,6 +42,8 @@ const command = z.discriminatedUnion("action", [
     threadId: z.string().uuid().optional(),
     fallback: z.boolean().default(false),
     freshIfMissing: z.boolean().default(false),
+    // The id of the nudge the orb showed; the opener itself is rebuilt here from the server's pulse.
+    nudge: z.string().max(120).optional(),
     // Page, record and visible control ids only; described server-side (describeScreen).
     screen: z
       .object({
@@ -129,7 +142,12 @@ export async function POST(request: Request) {
             body.fallback,
             body.history,
             body.threadId,
-            { freshIfMissing: body.freshIfMissing, screen: describeScreen(body.screen), pointCatalog: pointingCatalog() },
+            {
+              freshIfMissing: body.freshIfMissing,
+              screen: describeScreen(body.screen),
+              pointCatalog: pointingCatalog(),
+              opener: await openerFor(userId, body.nudge),
+            },
           ),
         );
       case "tool":

@@ -16,6 +16,27 @@
 .cosmo-idle:hover {
   transform: scale(1.06);
 }
+/* Something worth a word: a slow gold halo, so the orb reads as "I have something" before the chip. */
+.cosmo-idle[data-nudge] {
+  box-shadow:
+    0 0 0 1px rgb(167 139 250 / 0.35),
+    0 0 0 4px rgb(251 191 36 / 0.28),
+    0 10px 28px -8px rgb(76 29 149 / 0.6);
+}
+.cosmo-chip {
+  animation: cosmo-chip-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes cosmo-chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cosmo-chip {
+    animation: none;
+  }
+}
 .cosmo-idle:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 3px;

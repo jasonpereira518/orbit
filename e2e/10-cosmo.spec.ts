@@ -104,6 +104,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
   if (new URL(page.url()).pathname.startsWith("/onboarding")) await ensureOnboarded(page);
   const starts: Array<{ threadId?: string; freshIfMissing?: boolean }> = [];
+  const startNudges: Array<string | undefined> = [];
   const startScreens: Array<{ page: string | null; targets: string[] } | undefined> = [];
   const spoken: Array<{ action: string }> = [];
   const draftMessage = "55555555-5555-4555-8555-555555555555";
@@ -128,6 +129,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
     const body = route.request().postDataJSON();
     if (body.action === "start") {
       starts.push({ threadId: body.threadId, freshIfMissing: body.freshIfMissing });
+      startNudges.push(body.nudge);
       startScreens.push(body.screen);
       return route.fulfill({
         json: {
@@ -191,7 +193,10 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
     ws.send(JSON.stringify({ type: "Welcome", request_id: "cosmo-test" }));
   });
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
-  await page.evaluate(() => localStorage.removeItem("orbit:cosmo-thread"));
+  await page.evaluate(() => {
+    localStorage.removeItem("orbit:cosmo-thread");
+    localStorage.removeItem("orbit:cosmo-nudges");
+  });
 
   const orb = page.getByRole("button", { name: "Talk to Cosmo" });
   await expect(orb).toBeVisible();
@@ -199,11 +204,30 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
     page.evaluate(() => parseFloat(document.documentElement.style.getPropertyValue("--orbit-cosmo-height") || "0"));
   await expect.poll(cornerHeight).toBeGreaterThan(40);
 
+  // Speaking up: whatever this account's pulse holds, the orb shows at most one nudge, and a
+  // call started from the orb names that nudge (only its id; the server rebuilds the words).
+  const chip = page.locator(".cosmo-chip");
+  await page.waitForTimeout(1500); // the pulse's first read
+  expect(await chip.count()).toBeLessThanOrEqual(1);
+  const shownNudge = (await chip.count())
+    ? await page.locator(".cosmo-idle").getAttribute("data-nudge")
+    : null;
+  if (shownNudge) {
+    // A dismissed nudge stays gone for the day on this device.
+    const label = await chip.getByRole("button").first().textContent();
+    await chip.getByRole("button", { name: /^Dismiss:/ }).click();
+    await expect(page.getByRole("button", { name: `Dismiss: ${label}` })).toHaveCount(0);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("orbit:cosmo-nudges") ?? "{}").ids?.length)).toBe(1);
+  }
+  const nudgeAtClick = (await chip.count()) ? await page.locator(".cosmo-idle").getAttribute("data-nudge") : null;
+
   await orb.click();
   const cosmo = page.getByRole("region", { name: "Cosmo", exact: true });
   await expect(cosmo.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
   await expect.poll(() => connected).toBe(1);
   expect(starts[0]).toEqual({ threadId: undefined, freshIfMissing: true });
+  if (nudgeAtClick) expect(startNudges[0]).toMatch(/^(meeting:|due$|debrief:|radar$)/);
+  else expect(startNudges[0]).toBeUndefined();
   // The call starts knowing where you are: the page key and registered control ids, nothing else.
   expect(startScreens[0]?.page).toBe("dashboard");
   expect(startScreens[0]?.targets.every((id) => /^[a-z]+\.[a-z-]+$/.test(id))).toBe(true);

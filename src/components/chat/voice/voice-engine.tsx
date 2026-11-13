@@ -1,7 +1,7 @@
 "use client";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { VoiceTransportBoundary } from "./transport-boundary";
 import { saveThemePreference } from "@/actions/settings";
@@ -24,6 +24,8 @@ import { plainSpeech } from "@/lib/voice/caption-pace";
 import { setCaptions } from "@/lib/cosmo/captions-pref";
 import { describeScreen, readScreen } from "@/lib/cosmo/screen";
 import { planPointing } from "@/lib/cosmo/pointing";
+import { allNudges, isResumeInterrupting, isStopInterrupting, mayInterject, nudgeInput } from "@/lib/cosmo/nudge";
+import { useAppPulse } from "@/lib/app-pulse-store";
 import { onPointingEvent, startPointing, stopPointing } from "@/lib/cosmo/pointer-store";
 import {
   getVoiceCall,
@@ -36,6 +38,24 @@ import {
 } from "@/lib/voice/call-store";
 import { setCallThread, type VoiceCall } from "@/lib/voice/dock-store";
 import type { VoiceAgentEvents, VoiceMode, VoicePublicState, VoiceSessionStart } from "@/lib/voice/contracts";
+
+/** "Stop interrupting", per device (orbit: localStorage like Cosmo's other preferences). */
+const INTERJECT_KEY = "orbit:cosmo-interject";
+function interjectionsOff(): boolean {
+  try {
+    return localStorage.getItem(INTERJECT_KEY) === "off";
+  } catch {
+    return false;
+  }
+}
+function setInterjectionsOff(off: boolean) {
+  try {
+    if (off) localStorage.setItem(INTERJECT_KEY, "off");
+    else localStorage.removeItem(INTERJECT_KEY);
+  } catch {
+    /* Private mode: the model still heard it; it applies to this call through app_events. */
+  }
+}
 
 const DeepgramAdapter = dynamic(() => import("./deepgram-adapter").then((m) => m.DeepgramAdapter), { ssr: false });
 const ElevenLabsAdapter = dynamic(() => import("./elevenlabs-adapter").then((m) => m.ElevenLabsAdapter), { ssr: false });
@@ -70,8 +90,8 @@ async function command(body: Record<string, unknown>) {
  * Everything a view shows goes through `call-store`; everything it does goes through
  * `voiceActions`.
  */
-export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
-  state: VoicePublicState; threadId: string | null; origin?: VoiceCall["origin"]; onClose(): Promise<void>;
+export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = false, onClose }: {
+  state: VoicePublicState; threadId: string | null; origin?: VoiceCall["origin"]; nudge?: string; cosmo?: boolean; onClose(): Promise<void>;
 }) {
   const router = useRouter();
   const { setTheme } = useTheme();
@@ -100,8 +120,21 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
   const session = useRef<string | null>(null);
   const generation = useRef(0);
   const starting = useRef(false);
+  /** Set once a session has started: later starts (reconnect, fallback) never replay the nudge. */
+  const started = useRef(false);
   /** The call's thread; a Cosmo call learns it from the start response. */
   const thread = useRef(threadId);
+  /**
+   * Cosmo speaking up mid-call (Deepgram only: it needs `say`). The first may come a minute into
+   * the call, never with the nudge the call opened with; `mayInterject` holds the rest.
+   */
+  const interject = useRef({ lastAt: 0, count: 0, lastPage: null as string | null, said: new Set(nudge ? [nudge] : []) });
+  const pathname = usePathname();
+  const { pulse } = useAppPulse();
+  const latest = useRef({ pathname, pulse });
+  useEffect(() => {
+    latest.current = { pathname, pulse };
+  }, [pathname, pulse]);
 
   useLayoutEffect(() => {
     resetVoiceCall(state.provider);
@@ -168,6 +201,35 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
     }
     await onClose();
   }, [onClose, retrySaves, stop]);
+
+  useEffect(() => {
+    if (!cosmo) return;
+    const tick = window.setInterval(() => {
+      const say = voiceControls.current?.say;
+      const { pathname: page, pulse: livePulse } = latest.current;
+      const it = interject.current;
+      const now = Date.now();
+      if (!say || !session.current || !livePulse || !it.lastAt) return;
+      const next = allNudges(nudgeInput(livePulse), now).find((n) => n.interject && !it.said.has(n.id));
+      if (!next?.interject) return;
+      const w = confirmRef.current;
+      const allowed = mayInterject({
+        off: interjectionsOff(),
+        mode: modeRef.current,
+        confirmOpen: Boolean(w && (w.expiresAt ? now < w.expiresAt : now - w.createdAt < 20_000)),
+        userSpeaking: now - lastUserStart.current < 4_000,
+        now,
+        lastAt: it.lastAt,
+        count: it.count,
+        page,
+        lastPage: it.lastPage,
+      });
+      if (!allowed) return;
+      interject.current = { lastAt: now, count: it.count + 1, lastPage: page, said: it.said.add(next.id) };
+      say(next.interject);
+    }, 5_000);
+    return () => window.clearInterval(tick);
+  }, [cosmo]);
 
   useEffect(() => {
     alive.current = true;
@@ -389,6 +451,12 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
           return;
         }
         const startedAt = lastUserStart.current || Date.now();
+        // "Stop interrupting" holds on this device until they say it may again; the model answers it.
+        if (cosmo && (isStopInterrupting(text) || isResumeInterrupting(text))) {
+          const off = isStopInterrupting(text);
+          setInterjectionsOff(off);
+          appEvents.current.push(off ? "Cosmo will no longer speak up on its own." : "Cosmo may speak up again when something is time-sensitive.");
+        }
         const send = lastSend.current;
         if (send && Date.now() < send.until && isUndo(text)) {
           lastSend.current = null;
@@ -450,7 +518,7 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
         return withAppEvents(result, queued);
       },
     };
-  }, [active, stop, persist, router, meeting, setTheme, askChat]);
+  }, [active, stop, persist, router, meeting, setTheme, askChat, cosmo]);
 
   // The adapters connect once per session and must NEVER see a new `events`: their effect
   // reconnects on it, and a reconnect is a new conversation ("Hi, I'm Orbit" mid-sentence).
@@ -500,12 +568,17 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
         // Cosmo's remembered day thread may have been deleted since; start a new one then.
         freshIfMissing: origin === "cosmo",
         screen,
+        // Only the first start opens with the nudge; a reconnect or fallback greets plainly.
+        nudge: started.current ? undefined : nudge,
       });
       if (!alive.current || attempt !== generation.current) {
         await command({ action: "end", sessionId: response.sessionId }).catch(() => {});
         return;
       }
       session.current = response.sessionId;
+      started.current = true;
+      // The minute before the first interjection counts from here: the opener has the floor.
+      if (!interject.current.lastAt) interject.current.lastAt = Date.now();
       thread.current = response.threadId;
       setCallThread(response.threadId);
       setActive(response);

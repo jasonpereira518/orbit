@@ -30,7 +30,13 @@ export async function startVoiceSession(
    * the screen module here put it in every page's server-action graph and sent next dev's
    * /onboarding into a full-reload loop.
    */
-  opts: { freshIfMissing?: boolean; screen?: string | null; pointCatalog?: string } = {},
+  opts: {
+    freshIfMissing?: boolean;
+    screen?: string | null;
+    pointCatalog?: string;
+    /** Cosmo's first line when the call came from a nudge; built by the route from the server's pulse. */
+    opener?: string;
+  } = {},
 ) {
   const state = await requireVoiceEnabled();
   let provider;
@@ -103,7 +109,7 @@ export async function startVoiceSession(
       instructions,
       state.config,
       () => requireVoiceSession(userId, session.id),
-      cosmo ? COSMO_GREETING : undefined,
+      cosmo ? (opts.opener ?? COSMO_GREETING) : undefined,
     );
     // A provider/configuration change during preflight must never issue stale credentials.
     await requireVoiceSession(userId, session.id);
