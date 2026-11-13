@@ -7,6 +7,7 @@ import { guardDraftOutput } from "@/lib/draft-output";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
 import { FALLBACK_VOICE, draftWithFormat, formatRules } from "@/lib/message-format";
+import { freeWindows } from "@/lib/calendar-free-windows";
 
 /**
  * Intent-shaped email drafting for recruiters.
@@ -53,6 +54,8 @@ export function isRecruiterIntent(value: string): value is RecruiterIntent {
 const recruiterDraftWire = z.object({ subject: z.string(), body: z.string() });
 
 export type RecruiterDraftInput = {
+  /** Real free times for a meeting ask; see `DraftInput.timeWindows` in outreach-drafts. */
+  timeWindows?: string[] | null;
   intent: RecruiterIntent;
   recruiter: {
     fullName: string;
@@ -129,12 +132,13 @@ export async function generateRecruiterDraft(
     .filter(Boolean)
     .join("\n");
 
+  const windows = input.timeWindows !== undefined ? input.timeWindows : await freeWindows(userId);
   const system = `You write short emails from a candidate to a recruiter they already know.
 
 Goal for this message: ${intent.guidance}
 
 House rules for the message (strict):
-${formatRules("email_warm", { senderFullName: input.senderName })}
+${formatRules("email_warm", { senderFullName: input.senderName, windows })}
 - ${FALLBACK_VOICE}
 
 Rules:
@@ -184,12 +188,15 @@ export async function generateRecruiterDraftsBatch(
   const results: Array<GeneratedRecruiterDraft | { error: string }> = new Array(
     inputs.length
   );
+  // One calendar read for the whole batch, not one per recruiter.
+  const timeWindows = inputs.length ? await freeWindows(userId) : null;
   let index = 0;
 
   async function worker() {
     while (index < inputs.length) {
       const current = index++;
       const input = {
+        timeWindows,
         ...inputs[current],
         variationHint:
           inputs[current].variationHint ||

@@ -914,6 +914,8 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
   last_action_at timestamptz,
   error_message text,
   delivery_id text,
+  rfc_message_id text,
+  provider_thread_id text,
   delivered_at timestamptz,
   opened_at timestamptz,
   clicked_at timestamptz,
@@ -3241,7 +3243,9 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 244 = writing style profile (message-format plan, PR 2): user_settings.writing_style_profile /
 // writing_style_profile_updated_at, learned from sent mail (`@/lib/writing-style-profile`).
 // Scanned every remote ref on Nov 13 2026: main and eight branches hold 243, so this takes 244.
-export const SCHEMA_VERSION = 244;
+// 245 = sequence threading (message-format plan, PR 3): outreach_messages.rfc_message_id /
+// provider_thread_id, so a follow-up replies in step 1's thread. Stacked on 244 (PR 2).
+export const SCHEMA_VERSION = 245;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4728,6 +4732,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "outreach_messages", "delivered_at", "timestamptz");
   await ensureColumn(client, "outreach_messages", "opened_at", "timestamptz");
   await ensureColumn(client, "outreach_messages", "clicked_at", "timestamptz");
+  // v245: a sequence's follow-ups reply in the first email's thread.
+  await ensureColumn(client, "outreach_messages", "rfc_message_id", "text");
+  await ensureColumn(client, "outreach_messages", "provider_thread_id", "text");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -5653,6 +5660,9 @@ const alters = [
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS delivered_at timestamptz`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS opened_at timestamptz`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS clicked_at timestamptz`,
+  // Schema v245: a sequence's follow-ups reply in the first email's thread.
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS rfc_message_id text`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS provider_thread_id text`,
   `CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS metrics_daily (day date NOT NULL, metric text NOT NULL, dim text NOT NULL DEFAULT '', value bigint NOT NULL, computed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (day, metric, dim))`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
