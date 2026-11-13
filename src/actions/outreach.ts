@@ -43,7 +43,7 @@ import {
   isDemoProspect,
   prospectSearchStatus,
 } from "@/lib/outreach-quality";
-import { sendOutreachMessage, get5HourSendQuota, type OutreachSendProvider } from "@/lib/outreach-send";
+import { sendOutreachMessage, get5HourSendQuota, type OutreachSendProvider, type OutreachThread } from "@/lib/outreach-send";
 import { interpolateMailMerge } from "@/lib/outreach-types";
 import { searchPeopleWithBrightData, getBrightDataConfig, type PeopleSearchCriteria, type BrightDataCandidate } from "@/lib/brightdata";
 import { getOutreachFlowSuggestions } from "@/lib/outreach-suggestions";
@@ -1386,6 +1386,23 @@ export async function sendOutreachMessageAction(messageId: string) {
   return asActionResult(() => sendOutreachMessageNow(messageId));
 }
 
+/**
+ * The earlier step a follow-up replies to, when it went out as an email (`OutreachThread`).
+ * A row with neither id was sent through Resend, or before Orbit kept ids: its delivery id is
+ * tried as a Resend id, and a miss only costs the threading.
+ */
+async function threadOf(parentMessageId: string | null): Promise<OutreachThread | null> {
+  if (!parentMessageId) return null;
+  const db = await getDb();
+  const parent = await db.query.outreachMessages.findFirst({
+    where: eq(outreachMessages.id, parentMessageId),
+    columns: { channel: true, status: true, deliveryId: true, rfcMessageId: true, providerThreadId: true },
+  });
+  if (!parent || parent.channel !== "email" || parent.status !== "sent") return null;
+  const known = Boolean(parent.rfcMessageId || parent.providerThreadId);
+  return { rfcMessageId: parent.rfcMessageId, threadId: parent.providerThreadId, resendId: known ? null : parent.deliveryId };
+}
+
 /** The send itself. Throws; `bulkSendOutreach` catches per message. */
 async function sendOutreachMessageNow(messageId: string) {
   const userId = await requireOutreachUser();
@@ -1446,6 +1463,7 @@ async function sendOutreachMessageNow(messageId: string) {
       toPhone: message.prospect.phone,
       subject: message.subject,
       body: message.body,
+      inThread: await threadOf(message.parentMessageId),
     });
 
     const [updated] = await db
@@ -1455,6 +1473,8 @@ async function sendOutreachMessageNow(messageId: string) {
         sentAt: now,
         lastActionAt: now,
         deliveryId: result.deliveryId,
+        rfcMessageId: result.rfcMessageId ?? null,
+        providerThreadId: result.threadId ?? null,
         errorMessage: null,
         updatedAt: now,
       })
@@ -2010,6 +2030,7 @@ export async function bulkSendMailMergeAction(input: {
         subject: finalSubject,
         body: finalBody,
         provider: input.provider,
+        inThread: await threadOf(message.parentMessageId),
       });
 
       const now = new Date();
@@ -2021,6 +2042,8 @@ export async function bulkSendMailMergeAction(input: {
           sentAt: now,
           lastActionAt: now,
           deliveryId: res.deliveryId,
+          rfcMessageId: res.rfcMessageId ?? null,
+          providerThreadId: res.threadId ?? null,
           errorMessage: null,
           updatedAt: now,
         })

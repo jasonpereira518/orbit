@@ -3191,6 +3191,13 @@ export const outreachMessages = pgTable(
     /** Resend's email id for an email send (Twilio's SID for SMS). The Resend webhook matches on it. */
     deliveryId: text("delivery_id"),
     /**
+     * The sent email's RFC Message-ID when Orbit knows it (it sets its own for Gmail sends), and
+     * Gmail's thread id: a sequence's later steps reply to them so they land in the same thread.
+     * A Resend send keeps neither here; the follow-up asks Resend for it by `deliveryId`.
+     */
+    rfcMessageId: text("rfc_message_id"),
+    providerThreadId: text("provider_thread_id"),
+    /**
      * Resend engagement for an email sent on Orbit's Resend account, from the webhook
      * (`email.delivered` / `email.opened` / `email.clicked`). First timestamp wins; NULL means
      * not (yet) seen, or the account's own Resend key sent it (its webhooks never reach Orbit).

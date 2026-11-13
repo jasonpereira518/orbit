@@ -17,6 +17,7 @@ import { AIM_LABELS, FIELD_LABELS, TIMELINE_LABELS } from "@/lib/about-you";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { withWritingPreferences } from "@/lib/writing-instructions";
 import { auditUntrustedWrite, fenceUntrusted, guardModelOutput, recordAiSecurityEvent } from "@/lib/ai-security";
+import { freeWindows } from "@/lib/calendar-free-windows";
 
 const draftSchema = z.object({
   body: z.string().min(1),
@@ -293,6 +294,8 @@ async function draftFromContext(input: {
 
   const kind = followUpKind(input.channel);
   const email = kind === "email_warm";
+  // Real free times for a meeting ask, email only (a DM asks loosely).
+  const windows = email ? await freeWindows(input.userId) : null;
   const shape = email
     ? '{ "purpose": string, "subject": string, "body": string }'
     : '{ "purpose": string, "body": string }';
@@ -306,7 +309,7 @@ The user is following up with someone they already know — not cold outreach.
 Return strict JSON: ${shape}
 
 House rules for the message (strict):
-${formatRules(kind, { senderFullName })}
+${formatRules(kind, { senderFullName, windows })}
 - ${FALLBACK_VOICE}
 
 Rules:

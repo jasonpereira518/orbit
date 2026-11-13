@@ -23,7 +23,8 @@ import { readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, rateLimitBuckets, userSettings } from "../src/db/schema";
+import { calendarEvents, calendarSources, contacts, interactions, rateLimitBuckets, userSettings } from "../src/db/schema";
+import { freeWindows } from "../src/lib/calendar-free-windows";
 import { encrypt } from "../src/lib/crypto";
 import { bootstrapAuthenticatedUser } from "../src/lib/auth";
 import { generateOutreachDraft, type DraftInput } from "../src/lib/outreach-drafts";
@@ -34,13 +35,23 @@ import { cleanSentBody, distillStyleProfile } from "../src/lib/writing-style-pro
 import { LINKEDIN_DM_MAX, LINKEDIN_NOTE_MAX, charLength, claimsAttachment, hypeHits, type MessageKind } from "../src/lib/message-format";
 
 const USER = "eval-draft-format-user";
+/** The two real free times the seeded calendar gives; any weekday an email names must be one. */
+let WINDOW_DAYS: string[] = [];
+const WEEKDAYS = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi;
 /** What drafts are told about the user's voice, read the way the actions read it. */
 let VOICE: string | null = null;
 const SENDER = "Jason Pereira";
 const flag = (name: string) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);
 
 type Draft = { subject?: string | null; body: string };
-type Case = { name: string; kind: MessageKind; run: () => Promise<Draft>; previousSubject?: string };
+/**
+ * `forbid`: what this case's history does NOT record the user doing. Grace only offered an intro
+ * IF the resume was sent, and Dana only asked for one: a draft saying it was sent (or is being
+ * sent, or is attached) invented it.
+ */
+type Case = { name: string; kind: MessageKind; run: () => Promise<Draft>; previousSubject?: string; forbid?: RegExp };
+// "…if I sent my resume" restates the offer, which is right; only a claim is a miss.
+const SENT_RESUME = /(?<!\bif )\b(i(['’]ve| have)? (sent|attached|forwarded)|i['’]m (sending|attaching)|sending (along|over)|(here['’]?s|here is|attached is) my|i['’]ve included)\b/i;
 type Check = { rule: string; ok: boolean; hard: boolean };
 
 /** The bare generics; "Introduction to the payments team" is specific and fine. */
@@ -63,6 +74,7 @@ function checks(c: Case, d: Draft): Check[] {
     { rule: "no hype words", ok: hypeHits(body).length === 0, hard: true },
     { rule: "no [placeholders]", ok: !/\[[^\]]+\]/.test(body), hard: true },
     { rule: "no invented attachment", ok: !claimsAttachment(body), hard: true },
+    { rule: "no invented action (history never records it)", ok: !c.forbid || !c.forbid.test(body), hard: true },
   ];
   if (c.kind.startsWith("email")) {
     const subject = (d.subject ?? "").trim();
@@ -74,7 +86,9 @@ function checks(c: Case, d: Draft): Check[] {
         { rule: "subject is not a banned generic", ok: !BANNED_SUBJECTS.test(subject), hard: true }
       );
     }
+    const named = [...new Set((body.match(WEEKDAYS) ?? []).map((d) => d.toLowerCase()))];
     out.push(
+      { rule: "offers only the calendar's free days", ok: named.every((d) => WINDOW_DAYS.includes(d)), hard: true },
       { rule: 'opens "Hi <name>,"', ok: /^hi [^,\n]+,/i.test(body), hard: true },
       { rule: "signs off with the full name", ok: new RegExp(`\\n${SENDER}\\s*$`).test(body), hard: true },
       { rule: "sign-off word is Best/Thanks", ok: /\n(best|thanks),\s*\n/i.test(body), hard: false }
@@ -187,6 +201,24 @@ async function seed(key: string, model: string): Promise<{ ada: string; grace: s
     { userId: USER, contactId: ada!.id, interactionType: "coffee", interactionDate: new Date("2026-10-20T15:00:00Z"), rawNotes: "Talked about her seed round, the London office, and that she is hiring a founding engineer in January." },
     { userId: USER, contactId: grace!.id, interactionType: "meeting", interactionDate: new Date("2026-10-04T18:00:00Z"), rawNotes: "Judged our HackNC project. Offered to introduce me to the payments infra team lead if I sent her my resume." },
   ]);
+  // A connected calendar with the first eligible morning booked, so the windows are real ones
+  // the model could not have guessed.
+  await db.delete(calendarSources).where(eq(calendarSources.userId, USER));
+  const [source] = await db
+    .insert(calendarSources)
+    .values({ userId: USER, provider: "google", connectionId: crypto.randomUUID(), calendarId: "primary", enabled: 1 })
+    .returning();
+  const busyFrom = new Date(Date.now() + 2 * 86_400_000);
+  await db.insert(calendarEvents).values(
+    Array.from({ length: 3 }, (_, i) => ({
+      userId: USER,
+      sourceId: source!.id,
+      providerEventId: `eval-busy-${i}`,
+      title: "Busy",
+      startAt: new Date(busyFrom.getTime() + i * 86_400_000 - 6 * 3_600_000),
+      endAt: new Date(busyFrom.getTime() + i * 86_400_000 + 6 * 3_600_000),
+    }))
+  );
   return { ada: ada!.id, grace: grace!.id };
 }
 
@@ -208,6 +240,9 @@ async function main() {
     await db.update(userSettings).set({ writingStyleProfile: profile }).where(eq(userSettings.userId, USER));
   }
   VOICE = await loadWritingInstructions(USER);
+  const windows = await freeWindows(USER);
+  WINDOW_DAYS = (windows ?? []).map((w) => w.split(" ")[0]!.toLowerCase());
+  console.log(`Calendar windows: ${windows ? windows.join(" | ") : "(none)"}\n`);
 
   const cases: Case[] = [
     ...PROSPECTS.map((p): Case => ({ name: `cold email: ${p.fullName}`, kind: "email_cold", run: () => outreach(p, "email") })),
@@ -223,12 +258,13 @@ async function main() {
         }),
     },
     { name: "warm email: Ada", kind: "email_warm", run: () => generateContactFollowUpDraft(USER, ada, [], { channel: "email", intent: "Ask about the founding engineer role", writingInstructions: VOICE }) },
-    { name: "warm email: Grace", kind: "email_warm", run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "email", writingInstructions: VOICE }) },
+    { name: "warm email: Grace", kind: "email_warm", forbid: SENT_RESUME, run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "email", writingInstructions: VOICE }) },
     { name: "LinkedIn DM: Ada", kind: "linkedin_dm", run: () => generateContactFollowUpDraft(USER, ada, [], { channel: "linkedin", writingInstructions: VOICE }) },
-    { name: "LinkedIn DM: Grace", kind: "linkedin_dm", run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "linkedin", writingInstructions: VOICE }) },
+    { name: "LinkedIn DM: Grace", kind: "linkedin_dm", forbid: SENT_RESUME, run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "linkedin", writingInstructions: VOICE }) },
     {
       name: "recruiter email: Dana Kim",
       kind: "email_warm",
+      forbid: SENT_RESUME,
       run: () =>
         generateRecruiterDraft(USER, {
           intent: "set_up_chat",

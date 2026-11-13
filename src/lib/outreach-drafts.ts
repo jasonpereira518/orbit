@@ -12,6 +12,7 @@ import { loadSenderBio, loadSenderName } from "@/lib/sender-profile-server";
 import { FALLBACK_VOICE, draftWithFormat, formatRules, toneNudge, type MessageKind } from "@/lib/message-format";
 import { withWritingPreferences } from "@/lib/writing-instructions";
 import type { OutreachChannel } from "@/lib/outreach-types";
+import { freeWindows } from "@/lib/calendar-free-windows";
 
 export type DraftInput = {
   channel: OutreachChannel;
@@ -33,6 +34,11 @@ export type DraftInput = {
   /** The sequence's last step: the follow-up offers an easy out. */
   lastStep?: boolean;
   previousBody?: string | null;
+  /**
+   * The user's two real free times for a meeting ask (`freeWindows`); a batch reads them once
+   * and passes them. Undefined: read here. Null: none (no calendar, or no two free slots).
+   */
+  timeWindows?: string[] | null;
   /** The earlier message's subject: an email follow-up replies under it ("Re: …"). */
   previousSubject?: string | null;
   variationHint?: string;
@@ -119,7 +125,13 @@ async function draftOutreachMessage(
       ? `Sender goals (secondary context only — do not invent a product pitch from these): ${input.userGoals.join("; ")}`
       : "Sender goals: (not specified)";
 
-  const [senderBio, senderFullName] = await Promise.all([loadSenderBio(userId), loadSenderName(userId)]);
+  const step0 = input.stepIndex ?? 0;
+  const wantsWindows = input.channel === "email" && step0 === 0;
+  const [senderBio, senderFullName, windows] = await Promise.all([
+    loadSenderBio(userId),
+    loadSenderName(userId),
+    !wantsWindows ? null : input.timeWindows !== undefined ? input.timeWindows : freeWindows(userId),
+  ]);
   const senderBlock = senderProfileBlock(senderBio);
 
   const prospectBlock = [
@@ -158,7 +170,7 @@ ${audienceBlock}
 ${replyCtaGuidance(input.replyCta)}
 
 House rules for the message (strict):
-${formatRules(kind, { senderFullName, lastStep: input.lastStep })}
+${formatRules(kind, { senderFullName, lastStep: input.lastStep, windows })}
 - ${FALLBACK_VOICE}
 ${toneNudge(input.tone) ? `- ${toneNudge(input.tone)}\n` : ""}
 Critical rules:
@@ -232,6 +244,8 @@ export async function generateOutreachDraftsBatch(
   if (inputs.length) {
     await consumeBucket("draft", userId, RATE_LIMITS.draft, Math.ceil(inputs.length / DRAFTS_PER_UNIT));
   }
+  // One calendar read for the whole batch, not one per prospect.
+  const timeWindows = inputs.some((i) => i.channel === "email") ? await freeWindows(userId) : null;
   let index = 0;
   let halted = false;
   let firstError: unknown = null;
@@ -240,6 +254,7 @@ export async function generateOutreachDraftsBatch(
     while (!halted && index < inputs.length) {
       const current = index++;
       const input = {
+        timeWindows,
         ...inputs[current],
         variationHint:
           inputs[current].variationHint ||

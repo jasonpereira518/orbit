@@ -151,6 +151,9 @@
   "smoke-draft-prompts.ts": [
     "scripts/fixtures/draft-prompt-goldens.json"
   ],
+  "smoke-draft-times-threads.ts": [
+    "src/lib/outreach-send.ts"
+  ],
   "smoke-drive-picker-token.ts": [
     "src/actions/drive.ts",
     "src/actions/imports.ts",

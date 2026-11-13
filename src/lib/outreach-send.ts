@@ -23,6 +23,7 @@ import { outreachEmailPayload } from "@/lib/outreach-email";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { gmailProvider } from "@/lib/email/providers/gmail";
 import { outlookProvider } from "@/lib/email/providers/outlook";
+import { newRfcMessageId } from "@/lib/email/mime";
 
 export type { OutreachSendProvider, FiveHourQuota };
 export { interpolateMailMerge };
@@ -183,9 +184,35 @@ function appendComplianceFooter(channel: OutreachChannel, body: string) {
     return `${body.trim()}\n\nReply STOP to opt out.`;
   }
   if (channel === "email") {
-    return `${body.trim()}\n\n—\nIf you'd rather not hear from me, reply and I'll remove you.`;
+    // No dash rule above it: the house format bans em dashes (`@/lib/message-format`).
+    return `${body.trim()}\n\nIf you'd rather not hear from me, reply and I'll remove you.`;
   }
   return body;
+}
+
+/**
+ * Where a sequence's earlier email lives, so a follow-up replies in its thread. Gmail sends
+ * record Orbit's own Message-ID and Gmail's thread id; a Resend send is looked up by its
+ * delivery id (Resend returns the real Message-ID). An Outlook first send has neither: Graph's
+ * JSON sendMail assigns the Message-ID, so that follow-up threads by its "Re:" subject alone.
+ */
+export type OutreachThread = { rfcMessageId: string | null; threadId: string | null; resendId: string | null };
+
+export type OutreachSendResult = { deliveryId: string | null; rfcMessageId?: string | null; threadId?: string | null };
+
+/** The Message-ID a follow-up replies to, or null when it cannot be known. */
+async function parentMessageId(thread: OutreachThread | null | undefined, resendApiKey: string | null): Promise<string | null> {
+  if (!thread) return null;
+  if (thread.rfcMessageId) return thread.rfcMessageId;
+  if (!thread.resendId || !resendApiKey) return null;
+  try {
+    const { Resend } = await import("resend");
+    const got = await new Resend(resendApiKey).emails.get(thread.resendId);
+    return got.data?.message_id ?? null;
+  } catch {
+    // A lookup failure costs only the threading: the "Re:" subject still groups it.
+    return null;
+  }
 }
 
 export async function sendOutreachMessage(input: {
@@ -196,7 +223,9 @@ export async function sendOutreachMessage(input: {
   subject?: string | null;
   body: string;
   provider?: OutreachSendProvider;
-}) {
+  /** The sequence's earlier email, for a follow-up; see `OutreachThread`. */
+  inThread?: OutreachThread | null;
+}): Promise<OutreachSendResult> {
   if (input.channel === "linkedin") {
     throw new Error("Direct LinkedIn send requires Browser Use automation. Use the 'Connect via LinkedIn (Browser Use)' option.");
   }
@@ -227,6 +256,31 @@ export async function sendOutreachMessage(input: {
 
   if (input.channel === "email") {
     if (!input.toEmail) throw new Error("Email address is required.");
+    const toEmail = input.toEmail;
+    const parent = await parentMessageId(input.inThread, config.resendApiKey);
+    const reply = parent ? { inReplyTo: parent, references: parent } : {};
+
+    // One message, sent from the user's own mailbox. Orbit sets the Message-ID, so a later
+    // step can reply to it.
+    const viaGmail = async (email: string): Promise<OutreachSendResult> => {
+      const rfcMessageId = newRfcMessageId();
+      const sent = await gmailProvider.send(
+        input.userId,
+        { from: { name: config.firstName, email }, to: [toEmail], cc: [], bcc: [], subject: input.subject || "", bodyText: body, bodyHtml: null, messageId: rfcMessageId, ...reply },
+        { sendId: `send-${crypto.randomUUID()}`, threadId: input.inThread?.threadId ?? null }
+      );
+      return { deliveryId: sent.providerMessageId || `gmail-${Date.now()}`, rfcMessageId, threadId: sent.providerThreadId };
+    };
+    const viaOutlook = async (email: string): Promise<OutreachSendResult> => {
+      const rfcMessageId = newRfcMessageId();
+      const sent = await outlookProvider.send(
+        input.userId,
+        { from: { name: config.firstName, email }, messageId: rfcMessageId, to: [toEmail], cc: [], bcc: [], subject: input.subject || "", bodyText: body, bodyHtml: null, ...reply },
+        { sendId: `send-${crypto.randomUUID()}` }
+      );
+      // Only a reply goes as MIME with this Message-ID; a first send's is Exchange's own.
+      return { deliveryId: sent.providerMessageId || `outlook-${Date.now()}`, rfcMessageId: parent ? rfcMessageId : null };
+    };
 
     // Handle sending via connected Gmail
     if (input.provider === "gmail") {
@@ -234,21 +288,7 @@ export async function sendOutreachMessage(input: {
       if (!gmailIdentity) {
         throw new UserFacingError("Gmail account is not connected or lacks send permission — connect Gmail in Settings");
       }
-      const sent = await gmailProvider.send(
-        input.userId,
-        {
-          from: { name: config.firstName, email: gmailIdentity.email },
-          to: [input.toEmail],
-          cc: [],
-          bcc: [],
-          subject: input.subject || "",
-          bodyText: body,
-          bodyHtml: null,
-          messageId: `<orbit-${crypto.randomUUID()}@orbit.local>`,
-        },
-        { sendId: `send-${crypto.randomUUID()}` }
-      );
-      return { deliveryId: sent.providerMessageId || `gmail-${Date.now()}` };
+      return viaGmail(gmailIdentity.email);
     }
 
     // Handle sending via connected Outlook
@@ -257,21 +297,7 @@ export async function sendOutreachMessage(input: {
       if (!outlookIdentity) {
         throw new UserFacingError("Outlook account is not connected or lacks send permission — connect Outlook in Settings");
       }
-      const sent = await outlookProvider.send(
-        input.userId,
-        {
-          from: { name: config.firstName, email: outlookIdentity.email },
-          messageId: `orbit-${crypto.randomUUID()}`,
-          to: [input.toEmail],
-          cc: [],
-          bcc: [],
-          subject: input.subject || "",
-          bodyText: body,
-          bodyHtml: null,
-        },
-        { sendId: `send-${crypto.randomUUID()}` }
-      );
-      return { deliveryId: sent.providerMessageId || `outlook-${Date.now()}` };
+      return viaOutlook(outlookIdentity.email);
     }
 
     // Default to Resend
@@ -281,40 +307,8 @@ export async function sendOutreachMessage(input: {
         gmailProvider.identity(input.userId).catch(() => null),
         outlookProvider.identity(input.userId).catch(() => null),
       ]);
-      if (gmailIdent) {
-        const sent = await gmailProvider.send(
-          input.userId,
-          {
-            from: { name: config.firstName, email: gmailIdent.email },
-            to: [input.toEmail],
-            cc: [],
-            bcc: [],
-            subject: input.subject || "",
-            bodyText: body,
-            bodyHtml: null,
-            messageId: `<orbit-${crypto.randomUUID()}@orbit.local>`,
-          },
-          { sendId: `send-${crypto.randomUUID()}` }
-        );
-        return { deliveryId: sent.providerMessageId || `gmail-${Date.now()}` };
-      }
-      if (outlookIdent) {
-        const sent = await outlookProvider.send(
-          input.userId,
-          {
-            from: { name: config.firstName, email: outlookIdent.email },
-            messageId: `orbit-${crypto.randomUUID()}`,
-            to: [input.toEmail],
-            cc: [],
-            bcc: [],
-            subject: input.subject || "",
-            bodyText: body,
-            bodyHtml: null,
-          },
-          { sendId: `send-${crypto.randomUUID()}` }
-        );
-        return { deliveryId: sent.providerMessageId || `outlook-${Date.now()}` };
-      }
+      if (gmailIdent) return viaGmail(gmailIdent.email);
+      if (outlookIdent) return viaOutlook(outlookIdent.email);
       throw new Error("No sending account configured. Connect Gmail, Outlook, or add a Resend key in Settings.");
     }
 
@@ -335,10 +329,11 @@ export async function sendOutreachMessage(input: {
     const result = await resend.emails.send(
       outreachEmailPayload({
         from,
-        to: input.toEmail,
+        to: toEmail,
         subject: input.subject,
         text: body,
         replyTo: config.replyTo,
+        inReplyTo: parent,
       })
     );
 

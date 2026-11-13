@@ -96,6 +96,8 @@ export type FormatOptions = {
   senderFullName?: string | null;
   /** Last step of a sequence: offer an easy out. */
   lastStep?: boolean;
+  /** Two real free times from the user's calendar (`@/lib/calendar-free-windows`). */
+  windows?: string[] | null;
 };
 
 function signOff(name: string | null | undefined): string {
@@ -113,9 +115,24 @@ function signOff(name: string | null | undefined): string {
 const MEETING_ASK =
   "When the ask is a meeting or call, offer two time windows (two weekdays and a part of the day, how long it takes) in your own words. Never invent a specific date.";
 
+/** The ask with the user's real free times, when the calendar gave two. */
+function meetingAsk(windows: string[] | null | undefined): string {
+  if (!windows || windows.length < 2) return MEETING_ASK;
+  return `When the ask is a meeting or call, offer exactly these two times from the user's calendar, in your own words, and say how long it takes: ${windows[0]}, or ${windows[1]}. Offer no other time.`;
+}
+
 const SUBJECT_BANNED = 'Never "Following up", "Quick question", "Hello", "Introduction" or "Checking in".';
 
 const NO_ATTACHMENTS = "Never say something is attached, enclosed or linked unless the context says the user added it.";
+
+/**
+ * Every kind. The eval caught "I sent you my resume" and "I'm sending along my resume" from a
+ * history that only said Grace offered an intro IF the resume was sent: the model read an
+ * offer as a thing done. Separate from the no-invented-facts rules each prompt has, because
+ * those are about the other person; this is about what the user has done.
+ */
+const NO_INVENTED_ACTIONS =
+  "Never say the user has done, or is doing right now, anything the history does not record them doing (sent, attached, applied, introduced, followed up). An offer, request or plan in the history is still to do: ask about it or offer to do it.";
 
 /**
  * The format lines for one kind of message, as prompt bullets. Each generator keeps its own
@@ -132,7 +149,7 @@ export function formatRules(kind: MessageKind, opts: FormatOptions = {}): string
         'Greeting: "Hi <their first name>," on its own line.',
         "First sentence: who the sender is, in one line, tied to why it matters to the reader.",
         "Then one short paragraph: why this person (one concrete detail from the context) and what the sender wants.",
-        `End with one easy ask. ${MEETING_ASK}`,
+        `End with one easy ask. ${meetingAsk(opts.windows)}`,
         signOff(opts.senderFullName),
         "60 to 120 words in the body, at most three short paragraphs. No links unless the context gives one.",
         NO_ATTACHMENTS
@@ -144,7 +161,7 @@ export function formatRules(kind: MessageKind, opts: FormatOptions = {}): string
         `Subject: 3 to 7 words, specific to what you share, sentence case. ${SUBJECT_BANNED}`,
         'Greeting: "Hi <their first name>," on its own line.',
         "They already know the sender, so no self-introduction: open with the shared context (where you last talked, what they said or did).",
-        `One purpose, one ask. ${MEETING_ASK}`,
+        `One purpose, one ask. ${meetingAsk(opts.windows)}`,
         signOff(opts.senderFullName),
         "40 to 90 words in the body. No links unless the context gives one.",
         NO_ATTACHMENTS
@@ -181,7 +198,7 @@ export function formatRules(kind: MessageKind, opts: FormatOptions = {}): string
       lines.push(`Format: a text message under ${SMS_MAX} characters.`, "No subject line, no sign-off. One clear ask.");
       break;
   }
-  lines.push(HARD_BANS, SOFT_RULES);
+  lines.push(NO_INVENTED_ACTIONS, HARD_BANS, SOFT_RULES);
   return lines.map((l) => `- ${l}`).join("\n");
 }
 
