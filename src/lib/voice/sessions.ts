@@ -9,7 +9,7 @@ import { consumeBucket } from "@/lib/rate-limit";
 import { contactsIn } from "@/lib/tools/chat-executor";
 import { runTool, isToolError } from "@/lib/tools/registry";
 import { SCOPE_KINDS } from "@/lib/tools/chat-write-kit";
-import { VOICE_AUTO_APPLY_CAP, VOICE_DURATION_SECONDS, VOICE_MAX_TOOL_CALLS } from "./policy";
+import { VOICE_AUTO_APPLY_CAP, VOICE_DURATION_SECONDS, VOICE_MAX_TOOL_CALLS, voiceCallLength } from "./policy";
 import { requireVoiceEnabled, VoiceUnavailableError } from "./settings";
 import { selectedVoiceProvider, type VoiceHistory } from "./config";
 import { VoiceProviderError, voiceCredentials } from "./providers";
@@ -46,18 +46,31 @@ export async function startVoiceSession(
     throw new VoiceUnavailableError();
   }
   if (!voiceConfigured(provider)) throw new VoiceProviderError(provider);
+  const cosmo = await isSurfaceReleased(userId, COSMO_SURFACE_KEY);
+  // Cosmo calls are short and many (click, talk, sleep), so starts are only an abuse limit and
+  // minutes are the real meter; an Orbit Voice call keeps its old start caps.
   await consumeBucket("voice-start-hour", userId, {
-    limit: 6,
+    limit: cosmo ? 30 : 6,
     windowSec: 3600,
   });
   await consumeBucket("voice-start-day", userId, {
-    limit: 20,
+    limit: cosmo ? 150 : 20,
     windowSec: 86400,
   });
-  await consumeBucket("voice-start-global", "all", {
-    limit: 100,
-    windowSec: 86400,
-  });
+  let length: { seconds: number; endsEarly: boolean } = { seconds: VOICE_DURATION_SECONDS, endsEarly: false };
+  if (cosmo) {
+    // Lazy: a static import here would join every page's server-action graph (reload trap).
+    const { voiceMinutes, voiceSecondsToday, voiceRefusal } = await import("./minutes");
+    const [mine, today] = await Promise.all([voiceMinutes(userId), voiceSecondsToday()]);
+    const decided = voiceCallLength({ monthLeft: mine.remaining, budgetLeft: state.config.dailyMinuteBudget * 60 - today });
+    if ("refused" in decided) throw new UserFacingError(await voiceRefusal(decided.refused, mine));
+    length = decided;
+  } else {
+    await consumeBucket("voice-start-global", "all", {
+      limit: 100,
+      windowSec: 86400,
+    });
+  }
   const db = await getDb();
   let thread = threadId ? await db.query.chatThreads.findFirst({
     where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
@@ -73,7 +86,6 @@ export async function startVoiceSession(
   });
   // Thread history is read on the server; client history remains for older callers only.
   history = recent.length ? recent.reverse().map(row => ({source: row.role === "user" ? "user" : "ai", text: row.content})) : history;
-  const cosmo = await isSurfaceReleased(userId, COSMO_SURFACE_KEY);
   // Pointing is Cosmo's: only a Cosmo call gets the cursor and its catalog of controls.
   let instructions = await voiceInstructions(
     userId,
@@ -97,7 +109,7 @@ export async function startVoiceSession(
       threadId: thread.id,
       provider,
       fallback,
-      expiresAt: new Date(Date.now() + VOICE_DURATION_SECONDS * 1000),
+      expiresAt: new Date(Date.now() + length.seconds * 1000),
       timeZone,
       // Decided once, here: a call doesn't change what it may do halfway through.
       cosmo,
@@ -118,6 +130,8 @@ export async function startVoiceSession(
       threadId: thread.id,
       credentials,
       expiresAt: session.expiresAt.toISOString(),
+      // The call ends at expiresAt because the month's (or today's) minutes do, not the call cap.
+      endsEarly: length.endsEarly,
     };
   } catch (err) {
     await endVoiceSession(userId, session.id, "failed");

@@ -26,6 +26,9 @@ export type VoiceCallView = {
   cards: VoiceCard[];
   saveError: boolean;
   closing: boolean;
+  /** When the call must end (epoch ms), and whether that's the minutes running out. */
+  endsAt: number | null;
+  endsEarly: boolean;
 };
 export type VoiceCallActions = {
   start(fallback?: boolean): void;
@@ -47,6 +50,8 @@ const IDLE: VoiceCallView = {
   cards: [],
   saveError: false,
   closing: false,
+  endsAt: null,
+  endsEarly: false,
 };
 let view = IDLE;
 const store = createExternalStore({ getSnapshot: () => view, getServerSnapshot: () => IDLE });

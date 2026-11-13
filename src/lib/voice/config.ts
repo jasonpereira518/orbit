@@ -73,6 +73,11 @@ const englishTtsModel = (v: unknown) =>
 export const voiceConfigSchema = z
   .object({
     provider: z.enum(VOICE_PROVIDERS).default("deepgram"),
+    /**
+     * Cosmo's spend ceiling across ALL accounts: talk minutes per UTC day. At Deepgram's Voice
+     * Agent rate (about $0.075/min) the default 600 is roughly $45 a day at worst.
+     */
+    dailyMinuteBudget: z.number().int().min(0).max(100_000).default(600),
     fallback: z.enum(["none", "offer-alternative"]).default("none"),
     deepgram: z
       .object({
