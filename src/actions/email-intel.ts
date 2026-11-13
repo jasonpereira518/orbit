@@ -6,6 +6,7 @@ import { getDb } from "@/db";
 import { gmailConnections, userSettings } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { deleteEmailEventChunks } from "@/lib/email-intel/search-index";
+import { enableEmailIntel } from "@/lib/email-intel/store";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { requireEntitlement } from "@/lib/entitlements";
 import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
@@ -35,18 +36,15 @@ export async function setEmailIntel(enabled: boolean): Promise<ActionResult<void
         throw new UserFacingError("Allow Orbit to read your email first — connect Gmail and tick mail access");
       }
     }
-    await db
-      .insert(userSettings)
-      .values({ userId, emailIntelEnabled: enabled ? 1 : 0 })
-      .onConflictDoUpdate({
-        target: userSettings.userId,
-        set: {
-          emailIntelEnabled: enabled ? 1 : 0,
-          // A fresh enable backfills from scratch and is due at once.
-          ...(enabled ? { emailIntelCursorAt: null, emailIntelNextAt: null } : {}),
-          updatedAt: new Date(),
-        },
-      });
+    if (enabled) {
+      // A fresh enable backfills from scratch and is due at once.
+      await enableEmailIntel(userId);
+    } else {
+      await db
+        .insert(userSettings)
+        .values({ userId, emailIntelEnabled: 0 })
+        .onConflictDoUpdate({ target: userSettings.userId, set: { emailIntelEnabled: 0, updatedAt: new Date() } });
+    }
     // Off means chat stops finding what the mail said, at once. The events stay on file (turning
     // it back on re-indexes them), as the copy says; only the search index is removed.
     if (!enabled) await deleteEmailEventChunks(userId);

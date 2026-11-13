@@ -20,6 +20,10 @@ import {
 import { GmailImportPanel } from "@/components/recruiters/gmail-import-panel";
 import { OutlookImportPanel } from "@/components/recruiters/outlook-import-panel";
 import { RecruiterSharingToggle } from "@/components/recruiters/sharing-toggle";
+import { CompaniesBoard } from "@/components/recruiters/companies-board";
+import { RecruitingSetup } from "@/components/recruiters/recruiting-setup";
+import { getInsightsStatus, loadRecruitingBoard } from "@/lib/recruiting-companies";
+import { isSurfaceLive } from "@/lib/surface-visibility";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
@@ -35,17 +39,34 @@ export default async function RecruitersPage({
   if (gate) return gate;
 
   const params = await searchParams;
-  const { canUseRecruiters } = await getEntitlements(await requireUserId());
+  const userId = await requireUserId();
+  const { canUseRecruiters } = await getEntitlements(userId);
 
   if (!canUseRecruiters) {
     return <RecruitersLocked config={await getEffectivePlanConfig()} />;
   }
 
+  // The Companies tab is a view over Email insights, which is released with Radar (Settings
+  // shows its switch under the same condition) — until then the page is what it always was.
+  const companiesLive = await isSurfaceLive(userId, "page.radar");
+
   // "Discover" replaced the old "Directory" tab. Directory used to mean "every recruiter
   // anyone had ever logged"; under the sharing model a private user's directory is
   // identical to their own list, so the tab was showing the same rows twice.
-  const tab = params.tab === "discover" ? "discover" : "mine";
+  const tab =
+    params.tab === "discover"
+      ? "discover"
+      : params.tab === "mine"
+        ? "mine"
+        : companiesLive
+          ? "companies"
+          : "mine";
   const q = params.q || "";
+
+  const [board, insights] =
+    tab === "companies"
+      ? await Promise.all([loadRecruitingBoard(userId), getInsightsStatus(userId)])
+      : [null, null];
 
   const [{ enabled: sharing, recruiterCount, minRequired }, mine, gmail, scan, outlook, outlookScan, discover] = await Promise.all([
     getRecruiterSharing(),
@@ -101,20 +122,37 @@ export default async function RecruitersPage({
     >
       <RenderStamp />
       <div className="space-y-6">
-        <RecruiterSharingToggle
-          enabled={sharing}
-          recruiterCount={recruiterCount}
-          minRequired={minRequired}
-        />
-        <GmailImportPanel connection={gmail} initialScan={scan} />
-        {/* The Outlook callback defaults to /imports (the contacts import lives there), so the
-            scan panel says where it wants to land. */}
-        <OutlookImportPanel connection={outlook} initialScan={outlookScan} returnTo="/recruiters" />
+        {tab !== "companies" ? (
+          <>
+            <RecruiterSharingToggle
+              enabled={sharing}
+              recruiterCount={recruiterCount}
+              minRequired={minRequired}
+            />
+            <GmailImportPanel connection={gmail} initialScan={scan} />
+            {/* The Outlook callback defaults to /imports (the contacts import lives there), so the
+                scan panel says where it wants to land. */}
+            <OutlookImportPanel connection={outlook} initialScan={outlookScan} returnTo="/recruiters" />
+          </>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex rounded-lg border border-border/70 bg-card p-0.5 text-sm">
+            {companiesLive ? (
+              <Link
+                href="/recruiters?tab=companies"
+                className={cn(
+                  "rounded-md px-3 py-1.5",
+                  tab === "companies"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Companies
+              </Link>
+            ) : null}
             <Link
-              href={`/recruiters${q ? `?q=${encodeURIComponent(q)}` : ""}`}
+              href={`/recruiters${companiesLive ? "?tab=mine" : ""}${q ? `${companiesLive ? "&" : "?"}q=${encodeURIComponent(q)}` : ""}`}
               className={cn(
                 "rounded-md px-3 py-1.5",
                 tab === "mine"
@@ -136,10 +174,20 @@ export default async function RecruitersPage({
               Discover
             </Link>
           </div>
-          <RecruiterSearch initialQ={q} className="min-w-[16rem] flex-1" />
+          {tab !== "companies" ? <RecruiterSearch initialQ={q} className="min-w-[16rem] flex-1" /> : null}
         </div>
 
-        {tab === "discover" && !sharing ? (
+        {tab === "companies" && board && insights ? (
+          <div className="space-y-4">
+            <RecruitingSetup
+              canRead={gmail.connected && gmail.canRead}
+              enabled={insights.enabled}
+              lastSweepAt={insights.lastSweepAt ? insights.lastSweepAt.toISOString() : null}
+              companies={board.companies.length}
+            />
+            <CompaniesBoard companies={board.companies} hidden={board.hidden} />
+          </div>
+        ) : tab === "discover" && !sharing ? (
           // The empty Discover tab is the incentive made visible. Hiding it entirely
           // would also hide the offer, so it renders the reason instead of a list.
           <div className="rounded-2xl border border-dashed border-border/70 bg-card px-5 py-12 text-center">

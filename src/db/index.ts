@@ -2234,6 +2234,15 @@ CREATE TABLE IF NOT EXISTS email_events (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS email_events_rule_uidx ON email_events(thread_row_id, kind) WHERE source = 'rule';
 CREATE INDEX IF NOT EXISTS email_events_user_idx ON email_events(user_id, occurred_at);
+CREATE TABLE IF NOT EXISTS recruiting_overrides (
+  user_id text NOT NULL,
+  company_key text NOT NULL,
+  hidden_at timestamptz,
+  stage text,
+  stage_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, company_key)
+);
 CREATE TABLE IF NOT EXISTS ignored_people (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3211,7 +3220,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 238 = the email photo pool (admin refresh plan, PR 2): email_avatars (global, keyed by sha256 of
 // the lowercased trimmed address; public Gravatar lookups only) and contacts_email_lower_idx.
 // Built as 236; renumbered to 238 on Nov 12 2026 when main reached 237 (reminder priority).
-export const SCHEMA_VERSION = 238;
+// 241 = the Recruiting board: recruiting_overrides (a company hidden as "Not a job", or a stage set
+// by hand), keyed by user and company. NOT 239 or 240: claude/radar-pr12b-drop and
+// claude/contact-fields-ledger claim them. Rescanned every remote ref, local branch and worktree
+// on Nov 12 2026: 240 was the highest claimed anywhere.
+export const SCHEMA_VERSION = 241;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,

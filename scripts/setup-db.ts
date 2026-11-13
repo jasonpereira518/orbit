@@ -65,6 +65,7 @@ import { sql } from "drizzle-orm";
   "external_item_companies",
   "email_threads",
   "email_events",
+  "recruiting_overrides",
 ] as const;
 
 async function main() {
