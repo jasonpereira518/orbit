@@ -3228,11 +3228,15 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 238 = the email photo pool (admin refresh plan, PR 2): email_avatars (global, keyed by sha256 of
 // the lowercased trimmed address; public Gravatar lookups only) and contacts_email_lower_idx.
 // Built as 236; renumbered to 238 on Nov 12 2026 when main reached 237 (reminder priority).
-// 240 = field sources (contact-info accuracy plan, PR 1): contacts.field_sources (where each
+// 242 = Cosmo instant changes (Cosmo PR 9): orbit_voice_sessions.cosmo / tainted_by /
+// auto_applied. Scanned every remote ref on Nov 12 2026: main 238, radar-pr12b-drop 239, four
+// contact branches 240, recruiter-board-v2 241, so this takes 242.
+// 243 = field sources (contact-info accuracy plan, PR 1): contacts.field_sources (where each
 // sourced field's value came from, `@/lib/contact-fields`) and contact_changes ("Changed by
 // Orbit" + field suggestions; the names plan's PR3 adds its kinds to the same table). Scanned
-// every remote ref and local worktree on Nov 12 2026: claude/radar-pr12b-drop holds 239.
-export const SCHEMA_VERSION = 240;
+// every remote ref and local worktree on Nov 12 2026: claude/radar-pr12b-drop holds 239. Built as
+// 240; renumbered to 243 on Nov 13 2026 when main reached 242 (Cosmo).
+export const SCHEMA_VERSION = 243;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3461,6 +3465,9 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS connected_at timestamptz`,
   `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS last_seen_at timestamptz`,
   `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS outcome text NOT NULL DEFAULT 'starting'`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS cosmo boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS tainted_by text`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS auto_applied integer NOT NULL DEFAULT 0`,
   `CREATE INDEX IF NOT EXISTS orbit_voice_sessions_user_idx ON orbit_voice_sessions(user_id)`,
   `CREATE INDEX IF NOT EXISTS orbit_voice_sessions_thread_idx ON orbit_voice_sessions(thread_id)`,
   // --- v62: meeting-notes workflow ---------------------------------------------------

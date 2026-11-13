@@ -65,7 +65,8 @@ const PROCESSORS = [
   { name: "Microlink", badge: "Automatic", body: "When unavatar.io has no photo, fetches the public preview image of the contact's LinkedIn profile URL." },
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Wikidata and Google's favicon service", badge: "Automatic", body: "Brand colors for the companies and schools in your network, and company logos on your meetings. Receives an organization's name or website domain only. A domain may come from a contact's or meeting guest's work email address; the address itself is never sent." },
-  { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
+  { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours. Deepgram also runs Cosmo, Orbit's voice assistant: during a call it receives your speech and Cosmo's instructions (your name, role and goals, a short summary of what needs your attention, the recent conversation, and the page you are on described in Orbit's own words) plus the Orbit records Cosmo looks up to answer you, and its voice agent passes the text of the conversation, not the audio, to OpenAI to write each reply. The zero-retention flag above covers transcription requests; how long Deepgram keeps a call is set by its own terms." },
+  { name: "ElevenLabs", badge: "Optional", body: "An alternative voice provider for Cosmo, used only if Orbit switches calls to it. During a call it receives what Deepgram would: your speech, Cosmo's instructions and the records Cosmo looks up." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
   { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. Also reading feedback you send, for the operator, on Orbit's account (see Feedback below). On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link. Looking up a meeting guest who is not yet a contact, when you press Look up, runs the same search by their name and the company named by their email domain — never the address. When you review the people a capture found, each one who would be added as a new contact is looked up the same way, by their name with the company, role, place you met and city your note gives — never an email address or phone number." },
   { name: "OpenRouter", badge: "Optional", body: "The same AI features, routed through OpenRouter, only if you connect your own OpenRouter account in Settings." },
@@ -154,6 +155,18 @@ export default function PrivacyPage() {
               <strong>Voice and meetings</strong> — audio you record is sent to be transcribed and is
               not kept. The transcript is: a voice note becomes the text of your note, and a meeting
               keeps its transcript until you delete the meeting.
+            </li>
+            <li>
+              <strong>Talking with Cosmo</strong> — Cosmo, the voice assistant in the corner of each
+              page, listens only after you click it, and a call ends when you end it or after a quiet
+              minute. What you and Cosmo say is saved as that day&rsquo;s Cosmo chat, which you can
+              delete like any chat. To know where you are, Cosmo is told the page&rsquo;s name, the id
+              of the record you have open and the names of Orbit&rsquo;s own buttons on screen, never
+              the text on the page or a screenshot. It can make small changes you ask for at once,
+              each with Undo; it sends an email only after you say &ldquo;send it&rdquo; or click.
+              Minutes are counted per account from when each call connects. Whether you turned
+              captions on, where you moved Cosmo and which suggestions you dismissed stay in your
+              browser.
             </li>
             <li>
               <strong>Connected accounts</strong> — if you connect Google, Orbit reads only what the

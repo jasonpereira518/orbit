@@ -16,6 +16,7 @@ export async function voiceCredentials(
   instructions: string,
   config: VoiceConfig,
   guard: () => Promise<unknown> = async () => {},
+  greeting?: string,
 ) {
   try {
     // Session setup can outlive an admin change; check again before the first vendor request.
@@ -24,7 +25,7 @@ export async function voiceCredentials(
       throw new Error("Provider is not configured");
     const credentials =
       provider === "deepgram"
-        ? await deepgramCredentials(instructions, config)
+        ? await deepgramCredentials(instructions, config, greeting)
         : await elevenCredentials(instructions, config, guard);
     await recordVoiceHealth(provider, true, "credentials-verified");
     return credentials;

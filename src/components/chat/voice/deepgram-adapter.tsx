@@ -33,6 +33,14 @@ export function DeepgramAdapter({
     const fail = () => {
       if (!closed) events.onError();
     };
+    // The current line's audio, for paced captions: linear16 at 24 kHz is 48,000 bytes a second.
+    let lineBytes = 0;
+    let lineComplete = false;
+    let lineLive = false;
+    // The line's words. Its text may arrive before or after its audio: a text that comes while no
+    // line is waiting for one is held for the next line's first audio.
+    let lineText: string | null = null;
+    let pendingText: string | null = null;
     events.onReady({
       getLevels: () => ({ input: microphone.getInputVolume(), output: player.getOutputVolume() }),
       disconnect: () => {
@@ -46,8 +54,14 @@ export function DeepgramAdapter({
         if (value) microphone.mute();
         else microphone.unmute();
       },
-      // A confirmed CRM result is an Orbit-authored agent update, never a fabricated user command.
-      sendContext: (text) => agent.injectAgentMessage(text),
+      // No sendContext: injectAgentMessage SPEAKS its text, so silent notes ride on tool results.
+      // Queued: a fixed line waits for the agent's current answer instead of cutting it off.
+      say: (text) => agent.injectAgentMessage(text, "queue"),
+      getPlayback: () => {
+        if (!lineLive) return null;
+        const queued = lineBytes / 48000;
+        return { text: lineText, played: Math.max(0, queued - player.getRemainingPlaybackTime()), queued, complete: lineComplete };
+      },
     });
     agent.on("settings-applied", () => {
       if (closed) return;
@@ -65,6 +79,10 @@ export function DeepgramAdapter({
         .catch(fail);
     });
     agent.on("conversation-text", (message) => {
+      if (message.role !== "user") {
+        if (lineLive && !lineComplete && !lineText) lineText = message.content;
+        else pendingText = message.content;
+      }
       if (!closed)
         events.onMessage(
           message.role === "user" ? "user" : "ai",
@@ -73,11 +91,22 @@ export function DeepgramAdapter({
     });
     agent.on("audio", (data) => {
       if (!closed) {
+        // The first audio after a finished or interrupted line starts a new one.
+        if (!lineLive || lineComplete) {
+          lineBytes = 0;
+          lineComplete = false;
+          lineLive = true;
+          lineText = pendingText;
+          pendingText = null;
+        }
+        lineBytes += data.byteLength;
         player.queue(data);
         events.onMode("speaking");
       }
     });
     agent.on("user-started-speaking", () => {
+      if (!closed) events.onUserStarted?.();
+      lineLive = false;
       clearTimeout(playbackTimer);
       player.interrupt();
       if (!closed) events.onInterrupted();
@@ -87,6 +116,7 @@ export function DeepgramAdapter({
       if (!closed) events.onMode("thinking");
     });
     agent.on("agent-audio-done", () => {
+      lineComplete = true;
       clearTimeout(playbackTimer);
       playbackTimer = setTimeout(
         () => {

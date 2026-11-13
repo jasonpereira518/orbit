@@ -17,7 +17,7 @@ test("voice defaults off and server rejects disabled and cross-site starts", asy
     provider: "deepgram",
     fallbackProvider: null,
   });
-  await expect(page.getByRole("button", { name: "Start Orbit Voice" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Talk with Cosmo here" })).toBeDisabled();
   expect(
     (
       await page.request.post("/api/voice", {
@@ -199,8 +199,8 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await composer.fill("Hello Orbit");
     await expect(page.getByRole("button", {name: "Send", exact: true})).toBeVisible();
     await composer.fill("   ");
-    await page.getByRole("button", { name: "Start Orbit Voice" }).click();
-    await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toBeVisible();
+    await page.getByRole("button", { name: "Talk with Cosmo here" }).click();
+    await expect(page.getByRole("region", {name: "Cosmo in this conversation", exact: true})).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Mute", exact: true }),
     ).toBeVisible();
@@ -223,7 +223,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       for (let index = 0; index < 48000; index++) audio.writeInt16LE(Math.round(Math.sin(index * 2 * Math.PI * 220 / 24000) * 6000), index * 2);
       socket!.send(audio);
       await expect(
-        page.getByRole("status").filter({ hasText: "Orbit is speaking" }),
+        page.getByRole("status").filter({ hasText: "Cosmo is speaking" }),
       ).toBeVisible();
       await expect.poll(() => page.locator(".voice-orbit").evaluate(el => Number((el as HTMLElement).style.getPropertyValue("--voice-output")))).toBeGreaterThan(.01);
       const closes = await page.evaluate(
@@ -270,6 +270,8 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
         await expect(page.locator("html")).toHaveClass(theme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b)/);
       }
       expect(sockets).toBe(1);
+      // InjectAgentMessage makes Deepgram SAY its text; context for the agent must stay silent.
+      expect(frames.some((f) => f.type === "InjectAgentMessage")).toBe(false);
     } else {
       send({
         type: "user_transcript",
@@ -322,6 +324,22 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await expect(page.getByRole("button", {name: "Retry saving", exact: true})).toHaveCount(0);
     await expect.poll(() => turns.some(turn => turn.interrupted)).toBe(true);
     expect(new Set(turns.filter(turn => turn.text.startsWith("Ada researches")).map(turn => turn.id)).size).toBe(1);
+    // The orb is painted on top in the stage, not behind Chat's card. Polled: the orb is loaded
+    // lazily and may still be arriving.
+    await expect.poll(() => page.evaluate(() => {
+      const slot = document.querySelector('[data-cosmo-orb-slot="stage"]');
+      const orbEl = document.querySelector<HTMLElement>("[data-orb-place]");
+      if (!slot || !orbEl) return false;
+      const box = slot.getBoundingClientRect();
+      // Hit-testing skips pointer-events: none, so make the orb hittable just for this probe.
+      orbEl.style.pointerEvents = "auto";
+      const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      orbEl.style.pointerEvents = "";
+      return Boolean(top && orbEl.contains(top));
+    })).toBe(true);
+    // Its pixels match its box: a stale backing store draws a dot stretched into a big square.
+    await expect.poll(() => page.locator(".voice-orbit").evaluate((c: HTMLCanvasElement) =>
+      Math.abs(c.width / Math.min(2, devicePixelRatio || 1) - c.clientWidth) <= 1)).toBe(true);
     const desktopScreenshot = test.info().outputPath(`${provider}-desktop.png`);
     await page.screenshot({path: desktopScreenshot});
     await test.info().attach(`${provider} desktop voice`, {path: desktopScreenshot, contentType: "image/png"});
@@ -332,23 +350,55 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       "true",
     );
     await page.getByRole("button", { name: "Unmute" }).click();
-    // Leaving Chat keeps the call: it docks at the middle right of the next page, then
-    // comes back inline when Chat opens again — one connection throughout.
-    const voice = page.getByRole("region", {name: "Orbit Voice", exact: true});
+    // Leaving Chat keeps the call: it docks as Cosmo's bar at the bottom right of the next
+    // page (localhost always previews `feature.cosmo`), then comes back inline when Chat opens
+    // again — one connection throughout.
+    const voice = page.getByRole("region", {name: "Cosmo in this conversation", exact: true});
+    const cosmo = page.getByRole("region", {name: "Cosmo", exact: true});
+    /** The orb has landed: its centre is inside the given slot. */
+    const orbInside = (slot: string) =>
+      page.evaluate((selector) => {
+        const orbBox = document.querySelector("[data-orb-place]")?.getBoundingClientRect();
+        const slotBox = document.querySelector(selector)?.getBoundingClientRect();
+        if (!orbBox || !slotBox) return false;
+        const cx = orbBox.left + orbBox.width / 2;
+        const cy = orbBox.top + orbBox.height / 2;
+        return cx > slotBox.left && cx < slotBox.right && cy > slotBox.top && cy < slotBox.bottom &&
+          Math.abs(orbBox.width - Math.min(slotBox.width, slotBox.height)) < 2;
+      }, slot);
     await page.locator('a[href="/contacts"]:visible').first().click();
     await expect(page).toHaveURL(/\/contacts/);
-    await expect(voice.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
+    await expect(cosmo.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
+    // ONE orb: it flew out of Chat's stage into the bar's slot (no second canvas).
+    const orb = page.locator("[data-orb-place]");
+    await expect(page.locator(".voice-orbit")).toHaveCount(1);
+    await expect(orb).toHaveAttribute("data-orb-place", "dock");
+    await expect.poll(() => orbInside('[data-cosmo-orb-slot="dock"]')).toBe(true);
     await expect.poll(async () => {
-      const box = await voice.boundingBox();
+      const box = await cosmo.boundingBox();
       const view = page.viewportSize()!;
-      return Boolean(box && Math.abs(box.y + box.height / 2 - view.height / 2) < 4 && view.width - (box.x + box.width) < 32);
+      return Boolean(box && view.height - (box.y + box.height) < 40 && view.width - (box.x + box.width) < 32);
     }).toBe(true);
     const docked = test.info().outputPath(`${provider}-docked.png`);
     await page.screenshot({ path: docked });
     await test.info().attach(`${provider} docked voice`, { path: docked, contentType: "image/png" });
-    await voice.getByRole("link", { name: "Open chat" }).click();
+    await cosmo.getByRole("link", { name: "Open chat" }).click();
     await expect(page).toHaveURL(/\/chat/);
     await expect(voice.getByRole("button", { name: "Transcript", exact: true })).toBeVisible();
+    await expect(orb).toHaveAttribute("data-orb-place", "stage");
+    await expect.poll(() => orbInside('[data-cosmo-orb-slot="stage"]')).toBe(true);
+    // Another chat is that chat: the call docks instead of hiding its messages, and comes back
+    // to the stage in its own thread.
+    await page.locator("button:visible", { hasText: "New chat" }).first().click();
+    await expect(voice).toHaveCount(0);
+    await expect(cosmo.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
+    await expect(orb).toHaveAttribute("data-orb-place", "dock");
+    await page.locator('a[href="/contacts"]:visible').first().click();
+    await expect(page).toHaveURL(/\/contacts/);
+    await cosmo.getByRole("link", { name: "Open chat" }).click();
+    await expect(page).toHaveURL(/\/chat/);
+    await expect(voice.getByRole("button", { name: "Transcript", exact: true })).toBeVisible();
+    await expect(orb).toHaveAttribute("data-orb-place", "stage");
     expect(connected).toBe(1);
     expect(ends).toBe(0);
     // Leaving Chat and coming back must not reopen the provider socket: a new socket is a new
@@ -356,7 +406,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     expect(sockets).toBe(1);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect.poll(async () => {
-      const box = await page.getByRole("region", {name: "Orbit Voice", exact: true}).boundingBox();
+      const box = await page.getByRole("region", {name: "Cosmo in this conversation", exact: true}).boundingBox();
       return box && box.x >= -1 && box.x + box.width <= 391;
     }).toBe(true);
     await expect(page.getByRole("button", {name: "Transcript", exact: true})).toBeInViewport({ratio: 1});
@@ -376,24 +426,24 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     });
     await page.evaluate(() => document.documentElement.classList.add("dark"));
     await page.emulateMedia({reducedMotion: "reduce"});
-    await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toHaveCSS("color", "rgb(231, 236, 241)");
+    await expect(page.getByRole("region", {name: "Cosmo in this conversation", exact: true})).toHaveCSS("color", "rgb(231, 236, 241)");
     await expect(page.locator(".voice-orbit")).toHaveAttribute("data-reduced", "");
     const darkScreenshot = test.info().outputPath(`${provider}-dark-mobile.png`);
     await page.screenshot({path: darkScreenshot});
     await test.info().attach(`${provider} dark mobile voice`, {path: darkScreenshot, contentType: "image/png"});
     await page.evaluate(() => document.documentElement.classList.remove("dark"));
-    await page.getByRole("button", { name: "End conversation" }).click();
+    await page.getByRole("button", { name: "End conversation", exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "Start Orbit Voice" }),
+      page.getByRole("button", { name: "Talk with Cosmo here" }),
     ).toBeVisible();
     await expect.poll(() => ends).toBe(1);
     await expect(composer).toBeFocused();
-    await page.getByRole("button", { name: "Start Orbit Voice" }).click();
+    await page.getByRole("button", { name: "Talk with Cosmo here" }).click();
     await expect(
       page.getByRole("button", { name: "Mute", exact: true }),
     ).toBeVisible();
     enabled = false;
-    await expect(page.getByRole("region", {name: "Orbit Voice", exact: true}).getByRole("alert")).toContainText("Voice settings changed", {timeout: 25000});
+    await expect(page.getByRole("region", {name: "Cosmo in this conversation", exact: true}).getByRole("alert")).toContainText("Voice settings changed", {timeout: 25000});
     await expect.poll(() => ends).toBe(2);
   });
 }
@@ -432,8 +482,8 @@ test("fallback is explicit; microphone permissions fail gracefully", async ({
     };
   });
   await page.goto("/chat", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Start Orbit Voice" }).click();
-  await expect(page.getByRole("region", { name: "Orbit Voice", exact: true }).getByRole("alert")).toContainText(
+  await page.getByRole("button", { name: "Talk with Cosmo here" }).click();
+  await expect(page.getByRole("region", { name: "Cosmo in this conversation", exact: true }).getByRole("alert")).toContainText(
     "Selected provider is unavailable",
   );
   await expect(
@@ -453,12 +503,12 @@ test("fallback is explicit; microphone permissions fail gracefully", async ({
     };
   });
   await page.getByRole("button", { name: "Retry Deepgram" }).click();
-  await expect(page.getByRole("region", { name: "Orbit Voice", exact: true }).getByRole("alert")).toContainText(
+  await expect(page.getByRole("region", { name: "Cosmo in this conversation", exact: true }).getByRole("alert")).toContainText(
     "Microphone access was denied",
   );
   expect(starts.length).toBe(2);
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toHaveCount(0);
+  await expect(page.getByRole("region", {name: "Cosmo in this conversation", exact: true})).toHaveCount(0);
   await expect(page.getByRole("combobox", {name: "Message Orbit"})).toBeFocused();
 });
 

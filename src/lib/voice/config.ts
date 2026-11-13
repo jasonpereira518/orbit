@@ -53,7 +53,13 @@ export const DEEPGRAM_VOICES = [
   "aura-2-vesta-en",
   "aura-2-zeus-en",
 ] as const;
-export const DEEPGRAM_THINK_MODELS = ["gpt-4o-mini", "gpt-4o"] as const;
+/**
+ * Deepgram's managed OpenAI models, as the installed SDK's `OpenAiThinkProvider` lists them
+ * (nano models left out: too weak to drive tools). Default gpt-4.1: the best on the voice test set
+ * (`npx tsx scripts/eval-voice.ts --score`, Nov 13 2026: 93% at ~0.8 s; gpt-4o-mini 91% at ~1.1 s;
+ * the gpt-5 models slower than 4 s a turn). A stored config keeps its own choice: change it in admin.
+ */
+export const DEEPGRAM_THINK_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5"] as const;
 /**
  * ElevenLabs only accepts the English v2 models for an English agent ("English Agents must use
  * turbo or flash v2"); the _v2_5 models are its multilingual line and fail agent creation.
@@ -68,16 +74,21 @@ const englishTtsModel = (v: unknown) =>
 export const voiceConfigSchema = z
   .object({
     provider: z.enum(VOICE_PROVIDERS).default("deepgram"),
+    /**
+     * Cosmo's spend ceiling across ALL accounts: talk minutes per UTC day. At Deepgram's Voice
+     * Agent rate (about $0.075/min) the default 600 is roughly $45 a day at worst.
+     */
+    dailyMinuteBudget: z.number().int().min(0).max(100_000).default(600),
     fallback: z.enum(["none", "offer-alternative"]).default("none"),
     deepgram: z
       .object({
         listenModel: z.enum(["nova-3", "nova-2"]).default("nova-3"),
-        thinkModel: z.enum(DEEPGRAM_THINK_MODELS).default("gpt-4o-mini"),
+        thinkModel: z.enum(DEEPGRAM_THINK_MODELS).default("gpt-4.1"),
         voice: z.enum(DEEPGRAM_VOICES).default("aura-2-asteria-en"),
       })
       .default({
         listenModel: "nova-3",
-        thinkModel: "gpt-4o-mini",
+        thinkModel: "gpt-4.1",
         voice: "aura-2-asteria-en",
       }),
     elevenlabs: z

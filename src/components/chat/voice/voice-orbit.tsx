@@ -38,8 +38,8 @@ export function VoiceOrbit({ controls, mode, muted }: {
       size = canvas.clientWidth;
       canvas.width = canvas.height = Math.round(size * dpr);
     };
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
+    // Re-checked every frame (in `tick`), not by a ResizeObserver: Cosmo's orb is resized as it
+    // moves between slots, and a missed observation left a 5px backing store stretched to 58px.
     resize();
     let frame = 0;
     let input = 0;
@@ -52,6 +52,7 @@ export function VoiceOrbit({ controls, mode, muted }: {
       const dt = Math.min(now - last, 100);
       last = now;
       const { mode, muted, reduced } = live.current;
+      if (canvas.clientWidth !== size || Math.min(2, window.devicePixelRatio || 1) !== dpr) resize();
       const levels = controls.current?.getLevels() ?? { input: 0, output: 0 };
       input = smoothVoiceLevel(input, muted ? 0 : levels.input, dt);
       output = smoothVoiceLevel(output, mode === "speaking" ? levels.output : 0, dt);
@@ -68,7 +69,6 @@ export function VoiceOrbit({ controls, mode, muted }: {
     frame = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(frame);
-      observer.disconnect();
     };
   }, [controls]);
 
