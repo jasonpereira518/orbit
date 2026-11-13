@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { LOCAL_TIME_RULE, promptNow } from "@/lib/user-clock";
 import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { completeJson, parseAiJson } from "@/lib/ai";
@@ -5,6 +6,7 @@ import { cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import { guardDraftOutput } from "@/lib/draft-output";
 import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { renderWritingPreferences } from "@/lib/writing-instructions";
+import { FALLBACK_VOICE, draftWithFormat, formatRules } from "@/lib/message-format";
 
 /**
  * Intent-shaped email drafting for recruiters.
@@ -47,6 +49,8 @@ export type RecruiterIntent = keyof typeof RECRUITER_INTENTS;
 export function isRecruiterIntent(value: string): value is RecruiterIntent {
   return Object.prototype.hasOwnProperty.call(RECRUITER_INTENTS, value);
 }
+
+const recruiterDraftWire = z.object({ subject: z.string(), body: z.string() });
 
 export type RecruiterDraftInput = {
   intent: RecruiterIntent;
@@ -129,32 +133,40 @@ export async function generateRecruiterDraft(
 
 Goal for this message: ${intent.guidance}
 
+House rules for the message (strict):
+${formatRules("email_warm", { senderFullName: input.senderName })}
+- ${FALLBACK_VOICE}
+
 Rules:
-- Under 120 words. One clear ask. Plain sentences.
 - Ground the opener in the actual history when there is any. Never invent a meeting, referral, interview, or outcome that is not in the context.
 - If the history records a rejection or a frozen role, acknowledge it plainly and move forward. Do not pretend it went well.
-- No flattery, no "I hope this finds you well", no exaggerated enthusiasm.
-- Never leave placeholders like [Your Name] or [Company]. If the sender's name is unknown, end without a signature line.
-- The subject line must be specific to this conversation, not generic ("Following up" is not acceptable).
+- Never leave placeholders like [Your Name] or [Company].
 
 Return JSON: {"subject": string, "body": string}`;
 
-  const content = await completeJson(userId, {
-    operation: "recruiter.draft",
-    temperature: 0.55,
-    maxOutputTokens: 600,
-    system: `${promptNow(await viewerTimeZone(userId))} ${LOCAL_TIME_RULE}\n\n${system}`,
-    user: `${context}
+  const dated = `${promptNow(await viewerTimeZone(userId))} ${LOCAL_TIME_RULE}\n\n${system}`;
+  const user = `${context}
 
-${input.variationHint ? `Vary phrasing from other drafts in this batch: ${input.variationHint}` : ""}`,
+${input.variationHint ? `Vary phrasing from other drafts in this batch: ${input.variationHint}` : ""}`;
+
+  // Dashes and "!" are scrubbed in code; a hype word buys one retry.
+  const { subject, body } = await draftWithFormat("email_warm", async (retry) => {
+    const content = await completeJson(userId, {
+      operation: "recruiter.draft",
+      // The shape is enforced by the provider, not only asked for: without it the reply was
+      // now and then another shape and the draft failed as malformed.
+      schema: { name: "recruiter_draft", zod: recruiterDraftWire },
+      temperature: 0.55,
+      maxOutputTokens: 600,
+      system: dated,
+      user: retry ? `${user}\n\n${retry}` : user,
+    });
+    // Schema-checked and scrubbed before anyone can send it (audit M-11).
+    const draft = guardDraftOutput(parseAiJson(content), { userId, surface: "recruiter.draft", system });
+    return { subject: scrubPlaceholders(draft.subject?.trim() || ""), body: scrubPlaceholders(draft.body.trim()) };
   });
-
-  // Schema-checked and scrubbed before anyone can send it (audit M-11).
-  const draft = guardDraftOutput(parseAiJson(content), { userId, surface: "recruiter.draft", system });
-  const subject = scrubPlaceholders(draft.subject?.trim() || "");
-  const body = scrubPlaceholders(draft.body.trim());
   if (!body) throw new Error("The model returned an empty draft");
-  return { subject: subject || `Following up — ${input.recruiter.fullName}`, body };
+  return { subject: subject || `Note for ${input.recruiter.fullName}`, body };
 }
 
 /**

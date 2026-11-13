@@ -22,3 +22,22 @@ export async function loadSenderBio(userId: string): Promise<string | null> {
     return null;
   }
 }
+
+/**
+ * The user's full name as Orbit's mirror holds it ("Jason Pereira"), for an email sign-off.
+ * Read from `user_settings` rather than Clerk so it works with no request in flight (a
+ * sequence's follow-ups, Radar overnight). Best-effort like the bio: null drops the sign-off.
+ */
+export async function loadSenderName(userId: string): Promise<string | null> {
+  try {
+    const db = await getDb();
+    const row = await db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+      columns: { firstName: true, lastName: true },
+    });
+    const name = [row?.firstName, row?.lastName].map((p) => p?.trim()).filter(Boolean).join(" ");
+    return name || null;
+  } catch {
+    return null;
+  }
+}

@@ -107,12 +107,12 @@ async function main() {
 
   console.log("\nThe LinkedIn limit");
   const exactly = "a".repeat(LINKEDIN_NOTE_MAX);
-  check("the limit is LinkedIn's 300", LINKEDIN_NOTE_MAX === 300);
-  check("exactly 300 is within the limit", !noteStatus(exactly).over && noteStatus(exactly).remaining === 0);
-  check("301 is over by one", noteStatus(exactly + "a").over && noteStatus(exactly + "a").remaining === -1);
+  check("the limit is LinkedIn's free-account 200", LINKEDIN_NOTE_MAX === 200);
+  check("exactly 200 is within the limit", !noteStatus(exactly).over && noteStatus(exactly).remaining === 0);
+  check("201 is over by one", noteStatus(exactly + "a").over && noteStatus(exactly + "a").remaining === -1);
   check("surrounding whitespace is not counted", noteStatus(`  ${exactly}\n`).over === false);
-  check("an emoji is one character, not two", noteStatus("👋".repeat(300)).over === false && noteStatus("👋".repeat(301)).over === true);
-  check("a screen reader hears how far over, or how many are left", noteStatusText(noteStatus(exactly + "aaaaa")) === "5 over LinkedIn’s 300-character limit" && noteStatusText(noteStatus("hello")) === "295 of 300 characters left");
+  check("an emoji is one character, not two", noteStatus("👋".repeat(200)).over === false && noteStatus("👋".repeat(201)).over === true);
+  check("a screen reader hears how far over, or how many are left", noteStatusText(noteStatus(exactly + "aaaaa")) === "5 over LinkedIn’s 200-character limit" && noteStatusText(noteStatus("hello")) === "195 of 200 characters left");
   check("an over-limit note may not be used without the go-ahead", (() => { const g = mayUseNote(exactly + "aaa", false); return !g.ok && g.over === 3; })());
   check("with the go-ahead it may", mayUseNote(exactly + "aaa", true).ok);
   check("a note within the limit never needs one", mayUseNote("short", false).ok);
@@ -150,7 +150,8 @@ async function main() {
   const route = readFileSync("src/app/api/chat/route.ts", "utf8");
   check("the stored answer's recipients are checked against what the server offered", route.includes("normalizeDraftBlocks(unblocked"));
   const prompt = readFileSync("src/lib/ai.ts", "utf8");
-  check("the model is told the block format, with LinkedIn's 300", prompt.includes("draft email to=<id>") && prompt.includes("draft linkedin to=<id>") && prompt.includes("at most 300 characters"));
+  check("the model is told the block format, with the shared note limit", prompt.includes("draft email to=<id>") && prompt.includes("draft linkedin to=<id>") && prompt.includes("at most ${LINKEDIN_NOTE_MAX} characters"));
+  check("the live stream scrubs draft blocks", route.includes("draftScrub.push(redactor.push(delta))"));
 
   await db.delete(chatThreads).where(inArray(chatThreads.userId, [ME, OTHER]));
 }

@@ -10,6 +10,7 @@ import { friendlyError } from "@/lib/errors";
 import { copyText } from "@/lib/clipboard";
 import { generateLinkedInBrowserUsePromptAction } from "@/actions/outreach";
 import type { BrowserUseTaskConfig } from "@/lib/browser-use";
+import { LINKEDIN_NOTE_MAX } from "@/lib/message-format";
 
 export function LinkedInBrowserUseDialog({
   campaignId,
@@ -131,7 +132,7 @@ export function LinkedInBrowserUseDialog({
               <div className="rounded-xl border border-border/80 bg-muted/30 p-4 space-y-2 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2 font-medium text-ink text-sm">
                   <ShieldAlert className="h-4 w-4 text-amber-500" />
-                  Automated Human-Like Pacing & 300-Char Safety Guardrails
+                  Automated Human-Like Pacing & {LINKEDIN_NOTE_MAX}-Char Safety Guardrails
                 </div>
                 <p>
                   This prefilled prompt instructs OpenAI’s Browser Use agent to visit each LinkedIn profile, verify they aren’t already connected, insert their custom personalized note, and space actions by 6-12 seconds to respect LinkedIn’s weekly invitation quota.
@@ -161,7 +162,7 @@ export function LinkedInBrowserUseDialog({
                         </span>
                         <div className="flex items-center gap-2">
                           <span className="text-3xs text-muted-foreground">
-                            {target.personalizedNote.length}/300 chars
+                            {Array.from(target.personalizedNote).length}/{LINKEDIN_NOTE_MAX} chars
                           </span>
                           {executing && idx === progressIndex && (
                             <Badge className="bg-primary/20 text-primary border-primary/30 text-3xs animate-pulse">

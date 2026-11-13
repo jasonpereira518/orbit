@@ -5,6 +5,7 @@
  * for OpenAI Browser Use / Operator agents to automate sending LinkedIn connection
  * requests with personalized notes at scale.
  */
+import { LINKEDIN_NOTE_MAX } from "@/lib/message-format";
 
 export type LinkedInBrowserTarget = {
   prospectId: string;
@@ -33,12 +34,17 @@ export type BrowserUseTaskConfig = {
 };
 
 /**
- * Trims note to LinkedIn's strict 300 character limit for connection requests
+ * Fits a note to LinkedIn's connection-note limit (`LINKEDIN_NOTE_MAX`, the free-account
+ * 200), cut at a word boundary with an ellipsis. Drafts are written to fit; this is the
+ * backstop for one that was edited past it.
  */
 export function sanitizeLinkedInNote(note: string): string {
   const cleaned = note.replace(/\s+/g, " ").trim();
-  if (cleaned.length <= 300) return cleaned;
-  return cleaned.slice(0, 297) + "...";
+  const chars = Array.from(cleaned);
+  if (chars.length <= LINKEDIN_NOTE_MAX) return cleaned;
+  const head = chars.slice(0, LINKEDIN_NOTE_MAX - 1).join("");
+  const cut = head.lastIndexOf(" ");
+  return `${(cut > LINKEDIN_NOTE_MAX / 2 ? head.slice(0, cut) : head).replace(/[\s,;:.]+$/, "")}…`;
 }
 
 /**
@@ -64,7 +70,7 @@ export function generateLinkedInBrowserUsePrompt(
 Name: ${t.fullName}
 Role: ${t.title || "Professional"} at ${t.company || "Company"}
 LinkedIn Profile: ${t.linkedinUrl}
-Personalized Connection Note (${t.personalizedNote.length}/300 chars):
+Personalized Connection Note (${Array.from(t.personalizedNote).length}/${LINKEDIN_NOTE_MAX} chars):
 "${t.personalizedNote}"`
     )
     .join("\n\n");
@@ -79,7 +85,7 @@ Log in to LinkedIn (if not already logged in) and connect with the following ${c
 
 ## Safety & Rate Limiting Rules (MANDATORY)
 1. **Pacing**: Wait between 6 to 12 seconds between visiting consecutive profiles. Never perform rapid clicks.
-2. **Note Length**: Verify that the connection note does not exceed 300 characters before submitting.
+2. **Note Length**: Verify that the connection note does not exceed ${LINKEDIN_NOTE_MAX} characters before submitting.
 3. **Existing Connections**: If the person is already a 1st-degree connection, or if the button says "Pending", DO NOT click anything. Log status as "ALREADY_CONNECTED" or "PENDING" and proceed to the next target.
 4. **Rate Limit / Warning Modal**: If LinkedIn displays "You've reached the weekly invitation limit" or a CAPTCHA, STOP IMMEDIATELY and report the event.
 
@@ -122,7 +128,7 @@ When all targets have been processed, output a structured table of:
     safetyRules: {
       maxConnectionsPerRun: 25,
       delayBetweenActionsSec: [6, 12],
-      enforceMaxCharLimit: 300,
+      enforceMaxCharLimit: LINKEDIN_NOTE_MAX,
       stopOnCaptcha: true,
       skipIfAlreadyConnected: true,
     },

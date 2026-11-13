@@ -40,6 +40,7 @@ import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { integrationHref } from "@/components/settings/sections";
+import { scrubPunctuation } from "@/lib/message-format";
 
 /** Icons for the chat writes (`CHAT_WRITES` in @/lib/tools/chat-writes), by tool name. */
 const TOOL_ICON: Record<string, typeof NotebookPen> = {
@@ -87,7 +88,8 @@ const TOOL_ICON: Record<string, typeof NotebookPen> = {
 function draftOf(action: StoredProposedAction): { contactId: string; body: string } | null {
   if (action.args.tool !== "draft_email") return null;
   const { contactId, body } = action.args.input as { contactId?: unknown; body?: unknown };
-  return typeof contactId === "string" && typeof body === "string" ? { contactId, body } : null;
+  // Model text, so the house bans apply before it prefills the dialog (`@/lib/message-format`).
+  return typeof contactId === "string" && typeof body === "string" ? { contactId, body: scrubPunctuation(body) } : null;
 }
 
 /** Commit one proposal and report the state the server settled it in. */
