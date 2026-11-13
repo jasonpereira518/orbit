@@ -8,9 +8,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * Trigger for the known-condition sweep (`src/lib/ops-sweep.ts`). Called every ten minutes
- * by the GitHub Actions scheduler, which also tells us where `main` is so the sweep can
- * notice production pinned to an old deploy. Shared-secret auth, fail-closed.
+ * Trigger for the known-condition sweep (`src/lib/ops-sweep.ts`). Started every thirty minutes
+ * by the tick (`src/lib/schedules.ts`), and every three hours by the GitHub drift run, which also tells us where `main` is
+ * so the sweep can notice production pinned to an old deploy. Shared-secret auth, fail-closed.
  */
 export async function POST(request: Request) {
   if (!isInternalRequest(request)) {

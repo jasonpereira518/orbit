@@ -35,7 +35,6 @@ import {
   leadReason,
   type RadarAiNote,
   type RadarCalendarInvite,
-  type RadarDiscoveredPerson,
   type RadarEvidence,
   type RadarModel,
   type RadarProof,
@@ -237,7 +236,6 @@ export type RadarPick = {
   evidence: RadarEvidence[];
   expiresAt: Date;
   suggestedCalendarInvite?: RadarCalendarInvite | null;
-  discoveredPerson?: RadarDiscoveredPerson | null;
 };
 
 function daysBetween(later: Date, earlier: Date): number {

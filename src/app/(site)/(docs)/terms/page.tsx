@@ -298,6 +298,13 @@ export default function TermsPage() {
             only schedules reminders when you ask or turn on autopilot. You are
             responsible for any introduction or message you send.
           </p>
+          <p>
+            Cosmo, Orbit&apos;s voice assistant, can mishear you and can be
+            wrong. It reads an email back before sending it and sends only after
+            you say &ldquo;send it&rdquo; or click; you are responsible for what
+            you confirm. How many minutes of Cosmo a month your plan includes
+            may change.
+          </p>
         </DocSection>
 
         <DocSection id="availability" index={9} title="Availability and changes">

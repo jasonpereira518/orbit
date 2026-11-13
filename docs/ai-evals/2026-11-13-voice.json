@@ -1,0 +1,109 @@
+{
+  "runs": 2,
+  "cases": 28,
+  "report": {
+    "gpt-4o-mini": {
+      "passed": 48,
+      "total": 56,
+      "ms": 100358,
+      "failures": [
+        "Open my reminders. → called list_reminders, wanted open_page",
+        "Where do I add a new reminder? → called open_page, wanted point_at",
+        "How do I add a contact? → no tool",
+        "Record this meeting. → no tool",
+        "Where do I add a new reminder? → called open_page, wanted point_at",
+        "Open my reminders. → called list_reminders, wanted open_page",
+        "How do I add a contact? → no tool",
+        "Record this meeting. → no tool"
+      ]
+    },
+    "gpt-4o": {
+      "passed": 50,
+      "total": 56,
+      "ms": 51072,
+      "failures": [
+        "Draft a thank-you email to Ada for the intro. → no tool",
+        "Show me where to log a call with her. → no tool",
+        "What do I know about her? → no tool",
+        "Add Ada as a contact, I just met her at the fintech meetup. → no tool",
+        "Show me where to log a call with her. → no tool",
+        "Add Ada as a contact, I just met her at the fintech meetup. → no tool"
+      ]
+    },
+    "gpt-4.1-mini": {
+      "passed": 43,
+      "total": 56,
+      "ms": 37698,
+      "failures": [
+        "Prep me for my next meeting. → called open_page, wanted upcoming_meetings|meeting_context|daily_briefing",
+        "Where do I add a new reminder? → called reminders.new, wanted point_at",
+        "Open my reminders. → called list_reminders, wanted open_page",
+        "How do I add a contact? → no tool",
+        "Show me where to log a call with her. → no tool",
+        "When did I last talk to this person? → no tool",
+        "What do I know about her? → no tool",
+        "Prep me for my next meeting. → called open_page, wanted upcoming_meetings|meeting_context|daily_briefing",
+        "Open my reminders. → called list_reminders, wanted open_page",
+        "How do I add a contact? → no tool",
+        "Show me where to log a call with her. → no tool",
+        "What do I know about her? → no tool",
+        "When did I last talk to this person? → no tool"
+      ]
+    },
+    "gpt-4.1": {
+      "passed": 52,
+      "total": 56,
+      "ms": 39164,
+      "failures": [
+        "How do I add a contact? → no tool",
+        "Where do I add a new reminder? → called open_page, wanted point_at",
+        "How do I add a contact? → no tool",
+        "Where do I add a new reminder? → called open_page, wanted point_at"
+      ]
+    },
+    "gpt-5-mini": {
+      "passed": 46,
+      "total": 56,
+      "ms": 255617,
+      "failures": [
+        "What's on my calendar this week? → no tool",
+        "When am I free on Thursday afternoon? → no tool",
+        "Show me everyone I know at Google. → no tool",
+        "Show me where to log a call with her. → no tool",
+        "What do I know about her? → no tool",
+        "Who in my network could introduce me to someone at Ramp, and how close am I to each of them? → no tool",
+        "What's on my calendar this week? → no tool",
+        "When am I free on Thursday afternoon? → no tool",
+        "Show me where to log a call with her. → error: That OpenAI model isn’t available — pick another in Settings",
+        "How do I add a contact? → no tool"
+      ]
+    },
+    "gpt-5": {
+      "passed": 36,
+      "total": 56,
+      "ms": 254932,
+      "failures": [
+        "Who should I follow up with this week? → no tool",
+        "What's on my calendar this week? → no tool",
+        "Prep me for my next meeting. → no tool",
+        "Show me everyone I know at Google. → no tool",
+        "When am I free on Thursday afternoon? → no tool",
+        "What do I know about her? → no tool",
+        "Who in my network could introduce me to someone at Ramp, and how close am I to each of them? → no tool",
+        "Add Ada as a contact, I just met her at the fintech meetup. → no tool",
+        "Who should I follow up with this week? → no tool",
+        "What's on my calendar this week? → no tool",
+        "Remind me to email Grace on Friday. → no tool",
+        "When am I free on Thursday afternoon? → no tool",
+        "Prep me for my next meeting. → no tool",
+        "Draft a thank-you email to Ada for the intro. → no tool",
+        "Show me where to log a call with her. → no tool",
+        "How do I add a contact? → error: That OpenAI model isn’t available — pick another in Settings",
+        "What do I know about her? → no tool",
+        "When did I last talk to this person? → no tool",
+        "Who in my network could introduce me to someone at Ramp, and how close am I to each of them? → no tool",
+        "Add Ada as a contact, I just met her at the fintech meetup. → no tool"
+      ]
+    }
+  }
+}

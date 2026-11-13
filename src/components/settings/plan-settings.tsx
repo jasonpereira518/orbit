@@ -244,12 +244,14 @@ export function PlanSettings({
     ? planCopy(base, config).features.filter((f) => !covered.has(styleOf(f)?.key))
     : [];
 
-  const { meeting, shortform } = speech;
-  const voiceLimit = Math.max(0, meeting.limit) + Math.max(0, shortform.limit);
-  const voiceLeft = Math.max(0, meeting.remaining) + Math.max(0, shortform.remaining);
+  const { meeting, shortform, assistant } = speech;
+  const cosmoLimit = Math.max(0, assistant?.limit ?? 0);
+  const voiceLimit = Math.max(0, meeting.limit) + Math.max(0, shortform.limit) + cosmoLimit;
+  const voiceLeft = Math.max(0, meeting.remaining) + Math.max(0, shortform.remaining) + Math.max(0, assistant?.remaining ?? 0);
   const voiceKinds = [
     meeting.limit > 0 && <VoiceKind key="m" label="Meetings" allowance={meeting} />,
     shortform.limit > 0 && <VoiceKind key="s" label="Notes" allowance={shortform} />,
+    assistant && cosmoLimit > 0 && <VoiceKind key="c" label="Cosmo" allowance={assistant} />,
   ].filter(Boolean);
 
   return (
@@ -327,6 +329,7 @@ export function PlanSettings({
               segments={[
                 { percent: pct(Math.max(0, meeting.used), voiceLimit), className: accent.meter },
                 { percent: pct(Math.max(0, shortform.used), voiceLimit), className: accent.meterSoft },
+                ...(assistant ? [{ percent: pct(Math.max(0, assistant.used), voiceLimit), className: accent.meterSoft }] : []),
               ]}
               foot={`of ${formatMinutes(voiceLimit)} · resets ${formatAllowanceReset(meeting.limit > 0 ? meeting.resetsAt : shortform.resetsAt)}`}
             >

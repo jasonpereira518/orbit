@@ -23,9 +23,38 @@ export const TOUR_ANCHORS = {
   "graph.show-all": "graph.show-all",
   "imports.connections": "imports.connections",
   "imports.dropzone": "imports.dropzone",
+  "reminders.new": "reminders.new",
+  "contacts.add": "contacts.add",
+  "compose.email": "compose.email",
 } as const;
 
 export type TourAnchorId = keyof typeof TOUR_ANCHORS;
+
+/**
+ * What each anchor is, in words. Cosmo is told which of these are on screen (src/lib/cosmo/screen.ts)
+ * so it can say "the New reminder button" and point at it: the label comes from here, never from
+ * the page's own text, which can hold anything a record says.
+ */
+export const TOUR_ANCHOR_LABELS: Record<TourAnchorId, string> = {
+  "dashboard.stats": "Network stats on the dashboard",
+  "contacts.search": "Contact search box",
+  "contacts.row": "A contact in the list",
+  "contact.log-interaction": "Log interaction button",
+  "capture.notes": "Notes box on Capture",
+  "capture.extract": "Extract people button",
+  "capture.keep": "Keep this person button",
+  "reminders.row-done": "Mark a reminder done",
+  "reminders.rail-today": "Today's reminders",
+  "chat.suggestions": "Suggested questions in Chat",
+  "chat.composer": "Chat message box",
+  "graph.stage": "Constellation map",
+  "graph.show-all": "Show everyone on the map",
+  "imports.connections": "LinkedIn connections import",
+  "imports.dropzone": "File drop area for imports",
+  "reminders.new": "New reminder button",
+  "contacts.add": "Add contact button",
+  "compose.email": "Email button",
+};
 
 export const TOUR_ANCHOR_ATTR = "data-tour";
 
