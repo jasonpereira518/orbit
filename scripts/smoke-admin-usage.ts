@@ -86,7 +86,7 @@ run(async () => {
     free?.meters.contacts.used === 2 && free?.meters.contacts.limit === PLAN_CONFIG.free.contactLimit, free?.meters.contacts);
 
   console.log("\nLimits and order (pure)");
-  const empty = { credits: new Map(), meeting: new Map(), shortform: new Map(), enrichment: new Map(), contacts: new Map() };
+  const empty = { credits: new Map(), meeting: new Map(), shortform: new Map(), assistant: new Map(), enrichment: new Map(), contacts: new Map() };
   const readings = { ...empty, contacts: new Map([["a", 4], ["b", 1]]), enrichment: new Map([["c", 1]]) };
   const accounts = [
     { userId: "b", plan: "orbit" as const },

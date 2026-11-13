@@ -18,12 +18,10 @@ import { relations, sql } from "drizzle-orm";
 import type {
   ContactSignalKind,
   ContactSignalPayload,
-  ExternalSourceKind,
   RadarAiNote,
   RadarAutopilot,
   RadarAutopilotAction,
   RadarCalendarInvite,
-  RadarDiscoveredPerson,
   RadarDraft,
   RadarEvidence,
   RadarFeedbackAction,
@@ -692,8 +690,6 @@ export const userSettings = pgTable("user_settings", {
   radarDailyEnabled: integer("radar_daily_enabled").default(1).notNull(),
   /** 1 = automatically extract active projects from Gmail, calendar, notes. */
   radarAutoProjects: integer("radar_auto_projects").default(1).notNull(),
-  /** 1 = outbound web discovery for prospective connections matching projects/goals. */
-  radarDiscoveryEnabled: integer("radar_discovery_enabled").default(1).notNull(),
   /** When Radar's web lane (events, people to meet, programs) is next due for this account. */
   radarWebNextAt: timestamp("radar_web_next_at", { withTimezone: true }),
   /** Local day ("2026-11-11") of the last same-day Radar email, claimed before sending. */
@@ -2973,8 +2969,6 @@ export const recommendations = pgTable(
     autopilot: jsonb("autopilot").$type<RadarAutopilotAction>(),
     /** A suggested calendar invite, prepared ahead of time so the user can send/confirm in 1 click. */
     suggestedCalendarInvite: jsonb("suggested_calendar_invite").$type<RadarCalendarInvite>(),
-    /** Prospective new connection discovered outside the user's current network. */
-    discoveredPerson: jsonb("discovered_person").$type<RadarDiscoveredPerson>(),
     /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
@@ -3078,68 +3072,10 @@ export const contactSignals = pgTable(
   ]
 );
 
-/**
- * Public news feeds Radar reads (global, no `user_id`), beside `job_feed_sources`. Adding or
- * disabling a source is a row, not a deploy.
- */
-export const externalSources = pgTable("external_sources", {
-  id: text("id").primaryKey(),
-  label: text("label").notNull(),
-  url: text("url").notNull(),
-  kind: text("kind").$type<ExternalSourceKind>().notNull(),
-  enabled: boolean("enabled").default(true).notNull(),
-  etag: text("etag"),
-  lastModified: text("last_modified"),
-  lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true }),
-  lastStatus: text("last_status"),
-  lastError: text("last_error"),
-  consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
-
-/** One headline from one source (global). Pruned after 30 days. */
-export const externalItems = pgTable(
-  "external_items",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    sourceId: text("source_id")
-      .notNull()
-      .references(() => externalSources.id, { onDelete: "cascade" }),
-    externalId: text("external_id").notNull(),
-    title: text("title").notNull(),
-    summary: text("summary"),
-    url: text("url"),
-    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
-    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => [
-    uniqueIndex("external_items_source_external_uidx").on(t.sourceId, t.externalId),
-    index("external_items_published_idx").on(t.publishedAt),
-  ]
-);
-
-/**
- * The companies a headline may be about, keyed by `jobCompanyBucketKey` so the per-user
- * probe is one indexed lookup with the account's own company keys. Candidates, not
- * verdicts: `companiesMatch` confirms each hit before a signal is written.
- */
-export const externalItemCompanies = pgTable(
-  "external_item_companies",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    itemId: uuid("item_id")
-      .notNull()
-      .references(() => externalItems.id, { onDelete: "cascade" }),
-    companyKey: text("company_key").notNull(),
-    companyName: text("company_name").notNull(),
-    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
-  },
-  (t) => [
-    uniqueIndex("external_item_companies_item_key_uidx").on(t.itemId, t.companyKey),
-    index("external_item_companies_key_published_idx").on(t.companyKey, t.publishedAt.desc()),
-  ]
-);
+// Radar's retired news tables (external_sources, external_items, external_item_companies),
+// recommendations.discovered_person and user_settings.radar_discovery_enabled are out of the
+// code as of Radar PR 12a; the database keeps them until PR 12b drops them, so a deploy still
+// serving during the next migration never selects a column that is gone.
 
 export type AudienceFilters = {
   titles?: string[];
@@ -4084,6 +4020,12 @@ export const orbitVoiceSessions = pgTable("orbit_voice_sessions", {
   connectedAt: timestamp("connected_at", { withTimezone: true }),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   outcome: text("outcome").$type<"starting" | "connected" | "ended" | "failed">().default("starting").notNull(),
+  /** Started as a Cosmo call (feature.cosmo released for this person then): it may apply small changes. */
+  cosmo: boolean("cosmo").default(false).notNull(),
+  /** Why this call may not apply anything more (an injection signal in a lookup). Sticky. */
+  taintedBy: text("tainted_by"),
+  /** Changes this call applied without a click; capped by VOICE_AUTO_APPLY_CAP. */
+  autoApplied: integer("auto_applied").default(0).notNull(),
 }, (t) => [index("orbit_voice_sessions_user_idx").on(t.userId), index("orbit_voice_sessions_thread_idx").on(t.threadId)]);
 
 export const chatMessages = pgTable(

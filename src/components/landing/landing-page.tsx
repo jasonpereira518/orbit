@@ -1,5 +1,6 @@
 import { EarlyAccessPill } from "@/components/landing/early-access-pill";
 import { LandingHeroCopy } from "@/components/landing/landing-hero";
+import { LandingIntroGate } from "@/components/landing/landing-intro-gate";
 import { LandingPageShell } from "@/components/landing/landing-page-shell";
 import { LandingHowItWorks } from "@/components/landing/landing-how-it-works";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
@@ -32,7 +33,9 @@ export function LandingPage({
   // container, so the sticky frames inside keep working.
   return (
     <div className="landing-root relative overflow-clip bg-[#03050c] text-[#e8f3f1]">
-      <LandingStarfield />
+      {/* First, so it runs before the hero copy is parsed and painted. */}
+      <LandingIntroGate />
+      <LandingStarfield intro />
 
       <LandingPageShell
         {...authProps}

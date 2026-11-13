@@ -430,7 +430,10 @@
   ],
   "smoke-schedules.ts": [
     "docs/RUNBOOK.md",
-    "src/app/api/imports/process-stalled/route.ts"
+    "scripts/qstash-schedules.ts",
+    "src/app/api/imports/process-stalled/route.ts",
+    "src/lib/public-routes.ts",
+    "src/lib/schedules.ts"
   ],
   "smoke-schema-ddl.ts": [
     "src/db/index.ts"
