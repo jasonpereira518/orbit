@@ -127,6 +127,7 @@ import type {
 import type { CaptureParseHints } from "@/lib/ai";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type { NameGuess } from "@/lib/contact-name-guess";
+import type { FieldSources } from "@/lib/contact-fields";
 
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -765,6 +766,11 @@ export const contacts = pgTable(
      * See `@/lib/contact-name-guess`.
      */
     nameGuess: jsonb("name_guess").$type<NameGuess>(),
+    /**
+     * Where each sourced field's value came from and when that fact was true (schema 240).
+     * Null or a missing key = written before sources existed. See `@/lib/contact-fields`.
+     */
+    fieldSources: jsonb("field_sources").$type<FieldSources>(),
     company: text("company"),
     companyId: uuid("company_id").references(() => companies.id, {
       onDelete: "set null",
@@ -1119,6 +1125,43 @@ export const duplicateSuggestions = pgTable(
     index("duplicate_suggestions_pending_idx")
       .on(t.userId, t.confidence.desc())
       .where(sql`status = 'pending'`),
+  ]
+);
+
+/**
+ * What Orbit changed on a contact, and what it would change if asked (schema 240): the
+ * "Changed by Orbit" list with undo, and field suggestions waiting for a yes. `kind` is
+ * "field" here; the names plan adds "rename" / "remove". Blank fills from imports and address
+ * books are not logged (import revert covers them).
+ */
+export const contactChanges = pgTable(
+  "contact_changes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").default("field").notNull(),
+    /** `FieldKey` for kind "field". */
+    field: text("field"),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    /** `FieldSource` that made or offered the change. */
+    source: text("source"),
+    status: text("status")
+      .$type<"applied" | "suggested" | "undone" | "accepted" | "dismissed">()
+      .default("applied")
+      .notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("contact_changes_user_idx").on(t.userId, t.createdAt.desc()),
+    uniqueIndex("contact_changes_open_suggestion_uidx")
+      .on(t.contactId, t.field)
+      .where(sql`status = 'suggested'`),
   ]
 );
 
@@ -2811,6 +2854,13 @@ export type ImportRevertSnapshot = {
   dateMet: string | null;
   firstInteractionAt: string | null;
   lastInteractionAt: string | null;
+  /** The sourced fields merges may fill since schema 240. Absent on older snapshots = leave alone. */
+  location?: string | null;
+  school?: string | null;
+  xHandle?: string | null;
+  website?: string | null;
+  industry?: string | null;
+  fieldSources?: FieldSources | null;
 };
 
 export const calendarSubscriptions = pgTable(

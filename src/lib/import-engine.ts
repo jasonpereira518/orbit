@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { getDb, rowsOf } from "@/db";
+import type { FieldSource, FieldSources } from "@/lib/contact-fields";
 import {
   contacts,
   imports,
@@ -147,6 +148,12 @@ export type ImportAdapter<P> = {
    * exactly what a matched-but-not-merged row needs, it just needs it at a lower bar.
    */
   matchConfidence?: number;
+  /**
+   * Which source this file's merged fields count as (`@/lib/contact-fields`). Defaults to
+   * "import": fills blanks, never replaces. The LinkedIn export is the person's own record
+   * ("linkedin_export"); an address-book export is "address_book".
+   */
+  fieldSource?: FieldSource;
   /** Interaction rows to bulk-insert for this payload, once its contact id is known. */
   interactions?(payload: P, contactId: string, userId: string): InteractionInsert[];
   /**
@@ -399,6 +406,12 @@ type PreMergeContact = {
   dateMet: Date | null;
   firstInteractionAt: Date | null;
   lastInteractionAt: Date | null;
+  location: string | null;
+  school: string | null;
+  xHandle: string | null;
+  website: string | null;
+  industry: string | null;
+  fieldSources: FieldSources | null;
 };
 
 /**
@@ -433,6 +446,12 @@ function snapshotOf(
     dateMet: iso(prior.dateMet),
     firstInteractionAt: iso(prior.firstInteractionAt),
     lastInteractionAt: iso(prior.lastInteractionAt),
+    location: prior.location,
+    school: prior.school,
+    xHandle: prior.xHandle,
+    website: prior.website,
+    industry: prior.industry,
+    fieldSources: prior.fieldSources,
   };
 }
 
@@ -982,7 +1001,7 @@ export async function runImportJob(importId: string): Promise<void> {
                 userId,
                 batch.map((item) => item.input),
                 companyResolve,
-                { skipRevalidate: true, skipEmbedding: true, headroom }
+                { skipRevalidate: true, skipEmbedding: true, headroom, by: adapter.fieldSource ?? "import" }
               );
               // Only reached once the insert has actually succeeded — a batch whose insert
               // throws is caught by `writeWithNarrowing`, which retries smaller slices of the
@@ -1102,6 +1121,12 @@ export async function runImportJob(importId: string): Promise<void> {
                   dateMet: contacts.dateMet,
                   firstInteractionAt: contacts.firstInteractionAt,
                   lastInteractionAt: contacts.lastInteractionAt,
+                  location: contacts.location,
+                  school: contacts.school,
+                  xHandle: contacts.xHandle,
+                  website: contacts.website,
+                  industry: contacts.industry,
+                  fieldSources: contacts.fieldSources,
                 })
                 .from(contacts)
                 .where(
@@ -1121,7 +1146,8 @@ export async function runImportJob(importId: string): Promise<void> {
               const mergedAt = await bulkMergeContactsForUser(
                 userId,
                 batch.map((item) => ({ contactId: item.contactId, input: item.input })),
-                companyResolve
+                companyResolve,
+                { source: adapter.fieldSource }
               );
               for (const item of batch) {
                 contactIdByRowId.set(item.row.id, item.contactId);

@@ -153,6 +153,7 @@ export async function saveContactFromExtension(
     await updateContactForUser(userId, target, patch, {
       ...WRITE_OPTIONS,
       mergeFactLists: true,
+      by: "extension",
     });
     contactId = target;
     created = false;

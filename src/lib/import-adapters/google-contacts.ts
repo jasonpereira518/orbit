@@ -21,6 +21,7 @@ export const GOOGLE_CONTACTS_IMPORT_TYPE = "google_contacts";
  * safer than silently merging two different people who happen to share a name.
  */
 export const googleContactsAdapter: ImportAdapter<GoogleContactRowPayload> = {
+  fieldSource: "address_book",
   identity(payload) {
     if (!payload.fullName.trim()) return null;
     return {

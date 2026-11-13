@@ -9,8 +9,9 @@
  * It takes the same `IngestContext` rather than one of its own so a connector that syncs
  * both people and meetings builds the duplicate index once.
  *
- * Enrichment is fill-blanks-only, deliberately: a provider's stale title must never
- * overwrite what the user typed. `bulkMergeContactsForUser` already implements that rule.
+ * A provider's stale title must never overwrite what the user typed: merges go through
+ * `bulkMergeContactsForUser` as "address_book", which fills blanks and replaces nothing
+ * the user or a dated record wrote (`@/lib/contact-fields`).
  */
 import {
   addToDuplicateIndex,
@@ -228,6 +229,7 @@ export async function ingestPeople(
   // 1 statement (plus the resolver's primed lookups, which are per-batch, not per-row).
   if (toCreate.length > 0) {
     const created = await createContactsBulkForUser(ctx.userId, toCreate, ctx.companyResolve, {
+      by: "address_book",
       skipRevalidate: true,
       skipEmbedding: true,
       skipSummary: true,
@@ -259,7 +261,8 @@ export async function ingestPeople(
     await bulkMergeContactsForUser(
       ctx.userId,
       [...mergeByContactId.entries()].map(([contactId, input]) => ({ contactId, input })),
-      ctx.companyResolve
+      ctx.companyResolve,
+      { source: "address_book" }
     );
   }
 
