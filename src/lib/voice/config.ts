@@ -55,8 +55,9 @@ export const DEEPGRAM_VOICES = [
 ] as const;
 /**
  * Deepgram's managed OpenAI models, as the installed SDK's `OpenAiThinkProvider` lists them
- * (nano models left out: too weak to drive tools). gpt-4o-mini stays the default until the voice
- * test set (`npx tsx scripts/eval-voice.ts`) says another is worth its latency and price.
+ * (nano models left out: too weak to drive tools). Default gpt-4.1: the best on the voice test set
+ * (`npx tsx scripts/eval-voice.ts --score`, Nov 13 2026: 93% at ~0.8 s; gpt-4o-mini 91% at ~1.1 s;
+ * the gpt-5 models slower than 4 s a turn). A stored config keeps its own choice: change it in admin.
  */
 export const DEEPGRAM_THINK_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5"] as const;
 /**
@@ -82,12 +83,12 @@ export const voiceConfigSchema = z
     deepgram: z
       .object({
         listenModel: z.enum(["nova-3", "nova-2"]).default("nova-3"),
-        thinkModel: z.enum(DEEPGRAM_THINK_MODELS).default("gpt-4o-mini"),
+        thinkModel: z.enum(DEEPGRAM_THINK_MODELS).default("gpt-4.1"),
         voice: z.enum(DEEPGRAM_VOICES).default("aura-2-asteria-en"),
       })
       .default({
         listenModel: "nova-3",
-        thinkModel: "gpt-4o-mini",
+        thinkModel: "gpt-4.1",
         voice: "aura-2-asteria-en",
       }),
     elevenlabs: z

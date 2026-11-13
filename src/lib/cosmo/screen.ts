@@ -41,7 +41,8 @@ export function describeScreen(screen: unknown): string | null {
     for (const target of targets)
       if (typeof target === "string" && Object.hasOwn(TOUR_ANCHORS, target) && known.size < MAX_TARGETS)
         known.add(target as TourAnchorId);
-  const visible = [...known].map((target) => TOUR_ANCHOR_LABELS[target]);
+  // Label and id: the id is what point_at takes (registry ids only, never browser text).
+  const visible = [...known].map((target) => `${TOUR_ANCHOR_LABELS[target]} (${target})`);
   return `The user is on the ${page.replace("_", " ")} page${record}.${visible.length ? ` On screen: ${visible.join(", ")}.` : ""}`;
 }
 
