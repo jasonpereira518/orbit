@@ -74,6 +74,7 @@
 @source "../components/landing/landing-header.tsx";
 @source "../components/landing/landing-hero.tsx";
 @source "../components/landing/landing-how-it-works.tsx";
+@source "../components/landing/landing-intro-gate.tsx";
 @source "../components/landing/landing-motion-provider.tsx";
 @source "../components/landing/landing-page-shell.tsx";
 @source "../components/landing/landing-page.tsx";
@@ -233,6 +234,7 @@
 @source "../lib/internal-auth.ts";
 @source "../lib/job-changes.ts";
 @source "../lib/join-notify.ts";
+@source "../lib/landing-intro.ts";
 @source "../lib/legal.ts";
 @source "../lib/linkedin-scraper.ts";
 @source "../lib/log-redaction.ts";

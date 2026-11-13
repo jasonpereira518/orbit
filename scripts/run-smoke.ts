@@ -372,6 +372,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-relationship-health": "pure",
   "smoke-relative-date": "pure",
   "smoke-reveal-reduced-motion": "pure",
+  "smoke-landing-intro": "pure",
   "smoke-scan-image": "pure",
   "smoke-scan-reorder": "pure",
   "smoke-scale-schema": "pure", // own in-memory PGlite
