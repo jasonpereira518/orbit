@@ -110,7 +110,7 @@ export default function RootLayout({
           <Toaster />
         </ThemeProvider>
         {/* Orbit's own traffic pipeline: page views, sessions and geography, read by
-            /admin/analytics. Vercel's Web Analytics counts page views too, and Speed
+            /admin/growth. Vercel's Web Analytics counts page views too, and Speed
             Insights measures load performance, but neither can be joined to the users and
             billing tables — so conversion has to be measured here. */}
         <PageviewBeacon />

@@ -122,7 +122,7 @@ export function summarizeImport(item: SummarisableImport): ImportChip[] {
     stats.blockedByPlan,
     (n) => `${n} waiting on your plan`,
     "offer",
-    "/settings?section=settings-plan",
+    "/settings#settings-plan",
   );
   add(stats.failedRows, (n) => `${n} Orbit couldn’t save`, "warn");
 

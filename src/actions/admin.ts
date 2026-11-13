@@ -624,7 +624,7 @@ export async function setYcModeAction(input: { on: boolean }): Promise<never> {
     });
 
   revalidatePath("/admin", "layout");
-  redirect(input.on ? "/admin/yc" : "/admin");
+  redirect(input.on ? "/admin/yc/runway" : "/admin");
 }
 
 /**

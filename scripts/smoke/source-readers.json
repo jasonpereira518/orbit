@@ -189,7 +189,6 @@
   "smoke-email-no-resend.ts": [
     "src/actions/outreach.ts",
     "src/lib/email/providers/gmail.ts",
-    "src/lib/outreach-readiness-server.ts",
     "src/lib/outreach-send.ts"
   ],
   "smoke-email-origins.ts": [
@@ -320,7 +319,8 @@
     "src/app/(clerk)/(marketing)/pricing/page.tsx",
     "src/app/(site)/interest/page.tsx",
     "src/components/landing/landing-auth-controls.tsx",
-    "src/components/landing/landing-scenes.tsx"
+    "src/components/landing/landing-scenes.tsx",
+    "src/components/marketing/marketing-doc.tsx"
   ],
   "smoke-meeting-gate.ts": [
     "src/actions/meetings.ts"

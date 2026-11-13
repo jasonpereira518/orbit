@@ -38,6 +38,7 @@ function code(file: string): string {
 const PAGES = [
   "src/components/landing/landing-scenes.tsx",
   "src/app/(clerk)/(marketing)/pricing/page.tsx",
+  "src/components/marketing/marketing-doc.tsx",
 ];
 
 /** The waitlist leads nowhere (lib/waitlist-host.ts), so it must NOT carry the site footer. */
@@ -48,13 +49,13 @@ function main() {
   const html = renderToStaticMarkup(
     React.createElement(MarketingFooter, { className: "max-w-4xl" })
   );
-  for (const href of ["/", "/pricing", "/interest", "/privacy", "/contact", "https://jasonpereira.live/"]) {
+  for (const href of ["/", "/pricing", "/connect", "/interest", "/privacy", "/contact", "https://jasonpereira.live/"]) {
     check(`links to ${href}`, html.includes(`href="${href}"`));
   }
   const anchorClasses = [...html.matchAll(/<a\b[^>]*class="([^"]*)"/g)].map((m) => m[1]);
   check(
     "every footer link is a 44px-tall box",
-    anchorClasses.length === 6 && anchorClasses.every((c) => c.split(/\s+/).includes("min-h-11")),
+    anchorClasses.length === 7 && anchorClasses.every((c) => c.split(/\s+/).includes("min-h-11")),
     `${anchorClasses.length} links`
   );
   check(

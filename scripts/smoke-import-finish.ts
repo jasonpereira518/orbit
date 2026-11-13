@@ -148,7 +148,7 @@ check(
   capped.notices.some(
     (n) =>
       n.text === "40 more are waiting on your plan" &&
-      n.href === "/settings?section=settings-plan" &&
+      n.href === "/settings#settings-plan" &&
       n.tone === "offer",
   ),
   JSON.stringify(capped.notices),
@@ -284,7 +284,7 @@ console.log("The card leaves the announcement to the region that outlives it");
 check("the card carries no status region of its own", !cardHtml(base).includes('role="status"'));
 check(
   "the card links the plan cap",
-  cardHtml({ ...base, blockedByPlan: 40 }).includes("/settings?section=settings-plan") &&
+  cardHtml({ ...base, blockedByPlan: 40 }).includes("/settings#settings-plan") &&
     cardHtml({ ...base, blockedByPlan: 40 }).includes("40 more are waiting on your plan"),
 );
 check(
