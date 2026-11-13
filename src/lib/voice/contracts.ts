@@ -72,4 +72,6 @@ export type VoiceAgentEvents = {
   onError(): void;
   onDisconnected(): void;
   onTool(tool: string, input: string): Promise<string>;
+  /** The person started talking (Deepgram): when a spoken confirmation's utterance began. */
+  onUserStarted?(): void;
 };

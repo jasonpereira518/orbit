@@ -19,6 +19,7 @@ import {
   voicePagePath,
 } from "@/lib/voice/policy";
 import { withAppEvents } from "@/lib/voice/app-events";
+import { CONFIRM_WINDOW_MS, confirmVerb, isUndo, judgeUtterance, readBack, type ConfirmWindow } from "@/lib/voice/confirm-window";
 import { plainSpeech } from "@/lib/voice/caption-pace";
 import { setCaptions } from "@/lib/cosmo/captions-pref";
 import { describeScreen, readScreen } from "@/lib/cosmo/screen";
@@ -31,6 +32,7 @@ import {
   setVoiceCall,
   voiceControls,
   type TranscriptTurn,
+  type VoiceCard,
 } from "@/lib/voice/call-store";
 import { setCallThread, type VoiceCall } from "@/lib/voice/dock-store";
 import type { VoiceAgentEvents, VoiceMode, VoicePublicState, VoiceSessionStart } from "@/lib/voice/contracts";
@@ -85,6 +87,16 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
   const appEvents = useRef<string[]>([]);
   /** The screen as the agent last heard it, so a change is told once and only once. */
   const lastScreen = useRef<string | null>(null);
+  /**
+   * Spoken confirmation (Deepgram only: it can say a fixed line). One card at a time: Orbit reads
+   * it back, and the window opens only once that read-back has been heard to the end.
+   */
+  const confirmRef = useRef<
+    (ConfirmWindow & { messageId: string; actionId: string; line: string; heard: boolean; createdAt: number }) | null
+  >(null);
+  const lastUserStart = useRef(0);
+  /** The last email a spoken "send it" queued, while "undo" can still stop it. */
+  const lastSend = useRef<{ sendId: string; until: number } | null>(null);
   const session = useRef<string | null>(null);
   const generation = useRef(0);
   const starting = useRef(false);
@@ -287,15 +299,65 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
         }
         const response = await command({ action: "tool", sessionId: id, tool, input: JSON.parse(input) });
         if (!current()) return JSON.stringify({ error: "Voice session ended" });
-        if (response.proposal) setVoiceCall({ cards: [...getVoiceCall().cards, response.proposal] });
+        if (response.proposal) {
+          setVoiceCall({ cards: [...getVoiceCall().cards, response.proposal] });
+          offerSpokenConfirm(response.proposal);
+        }
         return response.result;
       } catch {
         return JSON.stringify({ error: "The CRM lookup or proposal failed. Ask the user to retry; do not claim success." });
       }
     };
+    const setCardStatus = (actionId: string, status: VoiceCard["action"]["status"]) =>
+      setVoiceCall({ cards: getVoiceCall().cards.map((c) => (c.action.id === actionId ? { ...c, action: { ...c.action, status } } : c)) });
+    /** A waiting card: Orbit reads it back (its own words) and listens for the phrase. */
+    function offerSpokenConfirm(card: VoiceCard) {
+      const say = voiceControls.current?.say;
+      if (!say || card.action.status !== "proposed") return;
+      const open = confirmRef.current;
+      const now = Date.now();
+      // One at a time; a window nobody answered stops blocking after it has closed.
+      if (open && (open.expiresAt ? now < open.expiresAt : now - open.createdAt < 20_000)) return;
+      const verb = confirmVerb({ tool: card.action.args.tool, destructive: Boolean(card.action.destructive) });
+      const line = readBack(card.action.preview, verb);
+      confirmRef.current = { messageId: card.messageId, actionId: card.action.id, verb, line, heard: false, opensAt: null, expiresAt: null, createdAt: now };
+      say(line);
+    }
+    /** What the person said to an open window, done by the server and announced in Orbit's words. */
+    async function act(kind: "confirm" | "dismiss", w: { messageId: string; actionId: string }) {
+      const say = (text: string) => voiceControls.current?.say?.(text);
+      try {
+        const res = await command({ action: kind, sessionId: id, messageId: w.messageId, actionId: w.actionId });
+        if (kind === "dismiss") {
+          setCardStatus(w.actionId, "dismissed");
+          appEvents.current.push("The user said cancel, so that change was not made.");
+          return say("Okay, I won't.");
+        }
+        if (res.outcome === "sent") {
+          setCardStatus(w.actionId, "done");
+          lastSend.current = { sendId: res.sendId, until: Date.parse(res.sendAt) };
+          appEvents.current.push(`The email was sent to ${res.to} (it can be undone for a few seconds).`);
+          return say(`Sending to ${res.to}. Say "undo" in the next few seconds to stop it.`);
+        }
+        if (res.outcome === "done") {
+          setCardStatus(w.actionId, "done");
+          appEvents.current.push("The user said yes, and the change was saved.");
+          return say("Done.");
+        }
+        if (res.outcome === "needs_mailbox")
+          return say("I can't send from Orbit yet. Connect Gmail in Settings, under Integrations, then try again.");
+        if (res.outcome === "no_address") return say("I don't have an email address for them. Add one on their page first.");
+        return say(`That didn't work. ${res.reason ?? ""}`.trim());
+      } catch {
+        say("That didn't work. The card is still there if you want to try.");
+      }
+    }
     return {
       onReady: (driver) => {
         if (current()) voiceControls.current = driver;
+      },
+      onUserStarted: () => {
+        lastUserStart.current = Date.now();
       },
       onConnected: () => {
         if (current())
@@ -305,6 +367,12 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
       },
       onMode: (next) => {
         if (!current()) return;
+        // The read-back has been heard to its end: only now may a spoken yes count.
+        const w = confirmRef.current;
+        if (w && w.heard && w.opensAt === null && modeRef.current === "speaking" && next === "listening") {
+          w.opensAt = Date.now();
+          w.expiresAt = w.opensAt + CONFIRM_WINDOW_MS;
+        }
         modeRef.current = next;
         setVoiceCall(next !== "connecting" ? { mode: next, busy: false } : { mode: next });
       },
@@ -314,6 +382,31 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
         const turn = { id: crypto.randomUUID(), source, text: text.slice(0, 4000), interrupted: false, revision: 1 };
         setLines([...transcript.current, turn]);
         persist(id!, turn);
+        const w = confirmRef.current;
+        // The agent's line IS the read-back: its audio is what must finish before listening.
+        if (source === "ai") {
+          if (w && !w.heard && text.trim() === w.line) w.heard = true;
+          return;
+        }
+        const startedAt = lastUserStart.current || Date.now();
+        const send = lastSend.current;
+        if (send && Date.now() < send.until && isUndo(text)) {
+          lastSend.current = null;
+          void command({ action: "undo_send", sessionId: id, sendId: send.sendId })
+            .then((res: { result: string }) => {
+              const stopped = res.result === "canceled";
+              appEvents.current.push(stopped ? "The user said undo: the email was stopped." : "The email had already gone.");
+              voiceControls.current?.say?.(stopped ? "Stopped. It won't be sent." : "Too late, it already went.");
+            })
+            .catch(() => {});
+          return;
+        }
+        if (!w) return;
+        const judgement = judgeUtterance(w, text, startedAt);
+        if (judgement === "early") return;
+        confirmRef.current = null;
+        if (judgement === "confirm") void act("confirm", w);
+        else if (judgement === "cancel") void act("dismiss", w);
       },
       onInterrupted: () => {
         if (!current() || modeRef.current !== "speaking") return;
@@ -377,6 +470,7 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
     onError: () => eventsRef.current.onError(),
     onDisconnected: () => eventsRef.current.onDisconnected(),
     onTool: (tool, input) => eventsRef.current.onTool(tool, input),
+    onUserStarted: () => eventsRef.current.onUserStarted?.(),
   }), []);
 
   async function start(fallback = false) {

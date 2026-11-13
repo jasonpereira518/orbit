@@ -55,7 +55,8 @@ export function DeepgramAdapter({
         else microphone.unmute();
       },
       // No sendContext: injectAgentMessage SPEAKS its text, so silent notes ride on tool results.
-      say: (text) => agent.injectAgentMessage(text),
+      // Queued: a fixed line waits for the agent's current answer instead of cutting it off.
+      say: (text) => agent.injectAgentMessage(text, "queue"),
       getPlayback: () => {
         if (!lineLive) return null;
         const queued = lineBytes / 48000;
@@ -104,6 +105,7 @@ export function DeepgramAdapter({
       }
     });
     agent.on("user-started-speaking", () => {
+      if (!closed) events.onUserStarted?.();
       lineLive = false;
       clearTimeout(playbackTimer);
       player.interrupt();

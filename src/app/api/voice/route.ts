@@ -16,6 +16,7 @@ import {
 } from "@/lib/voice/sessions";
 import { describeScreen } from "@/lib/cosmo/screen";
 import { pointingCatalog } from "@/lib/cosmo/pointing";
+import { confirmVoiceCard, dismissVoiceCard, undoVoiceSend } from "@/lib/voice/spoken-confirm";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -70,6 +71,10 @@ const command = z.discriminatedUnion("action", [
     turn: z.object({ id: z.string().uuid(), source: z.enum(["user", "ai"]), text: z.string().min(1).max(4000), interrupted: z.boolean().default(false), revision: z.number().int().min(1).max(1000000) }),
   }),
   z.object({ action: z.literal("heartbeat"), sessionId: z.string().uuid() }),
+  // Spoken confirmation (Cosmo): the browser heard the phrase; the server checks the card.
+  z.object({ action: z.literal("confirm"), sessionId: z.string().uuid(), messageId: z.string().uuid(), actionId: z.string().min(1).max(80) }),
+  z.object({ action: z.literal("dismiss"), sessionId: z.string().uuid(), messageId: z.string().uuid(), actionId: z.string().min(1).max(80) }),
+  z.object({ action: z.literal("undo_send"), sessionId: z.string().uuid(), sendId: z.string().uuid() }),
   z.object({ action: z.literal("connected"), sessionId: z.string().uuid() }),
   z.object({
     action: z.literal("end"),
@@ -137,6 +142,12 @@ export async function POST(request: Request) {
       case "heartbeat":
         await heartbeatVoiceSession(userId, body.sessionId);
         return json({ ok: true });
+      case "confirm":
+        return json(await confirmVoiceCard(userId, body.sessionId, body.messageId, body.actionId));
+      case "dismiss":
+        return json(await dismissVoiceCard(userId, body.sessionId, body.messageId, body.actionId));
+      case "undo_send":
+        return json(await undoVoiceSend(userId, body.sessionId, body.sendId));
       case "connected":
         await connectVoiceSession(userId, body.sessionId);
         return json({ ok: true });
