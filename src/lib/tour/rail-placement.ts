@@ -20,7 +20,7 @@ export const RAIL_CARD_WIDTH = 320;
 export const RAIL_CARD_HEIGHT = 340;
 export const RAIL_EDGE = 20;
 
-function overlapArea(a: Box, b: Box) {
+export function overlapArea(a: Box, b: Box) {
   const w = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left);
   const h = Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top);
   return w > 0 && h > 0 ? w * h : 0;

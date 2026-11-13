@@ -26,6 +26,7 @@ import { POST as timelineBackfill } from "../src/app/api/linkedin/timeline-event
 import { POST as runCaptureJob } from "../src/app/api/capture/jobs/[id]/run/route";
 import { POST as radarRun } from "../src/app/api/radar/run/route";
 import { POST as radarWeb } from "../src/app/api/radar/web/route";
+import { POST as cronTick } from "../src/app/api/cron/tick/route";
 import { POST as radarDigest } from "../src/app/api/radar/digest/route";
 
 const SECRET = "smoke-internal-auth-secret";
@@ -150,6 +151,8 @@ async function main() {
   check("radar/web → 401", web.status === 401, `got ${web.status}`);
   const digest = await radarDigest(req());
   check("radar/digest → 401", digest.status === 401, `got ${digest.status}`);
+  const tick = await cronTick(req());
+  check("cron/tick → 401", tick.status === 401, `got ${tick.status}`);
 
   console.log("\nRoutes reject a wrong bearer when a secret is configured...");
   env({ CRON_SECRET: SECRET, VERCEL: "1", NODE_ENV: "production" });

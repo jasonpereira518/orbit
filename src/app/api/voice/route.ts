@@ -14,6 +14,20 @@ import {
   heartbeatVoiceSession,
   connectVoiceSession,
 } from "@/lib/voice/sessions";
+import { describeScreen } from "@/lib/cosmo/screen";
+import { pointingCatalog } from "@/lib/cosmo/pointing";
+import { confirmVoiceCard, dismissVoiceCard, undoVoiceSend } from "@/lib/voice/spoken-confirm";
+
+/**
+ * Cosmo's first line when the call was started from a nudge: found by id among the nudges the
+ * SERVER's own pulse supports, so nothing the browser sends is ever spoken. Unknown id: none.
+ */
+async function openerFor(userId: string, nudgeId: string | undefined): Promise<string | undefined> {
+  if (!nudgeId) return undefined;
+  const [{ loadAppPulse }, { allNudges, nudgeInput }] = await Promise.all([import("@/lib/app-pulse"), import("@/lib/cosmo/nudge")]);
+  const pulse = await loadAppPulse(userId, new Date()).catch(() => null);
+  return pulse ? allNudges(nudgeInput(pulse), Date.now()).find((n) => n.id === nudgeId)?.opener : undefined;
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -27,6 +41,17 @@ const command = z.discriminatedUnion("action", [
     action: z.literal("start"),
     threadId: z.string().uuid().optional(),
     fallback: z.boolean().default(false),
+    freshIfMissing: z.boolean().default(false),
+    // The id of the nudge the orb showed; the opener itself is rebuilt here from the server's pulse.
+    nudge: z.string().max(120).optional(),
+    // Page, record and visible control ids only; described server-side (describeScreen).
+    screen: z
+      .object({
+        page: z.string().max(40).nullable(),
+        id: z.string().max(60).nullable().optional(),
+        targets: z.array(z.string().max(60)).max(40).default([]),
+      })
+      .optional(),
     history: z
       .array(
         z.object({
@@ -59,6 +84,10 @@ const command = z.discriminatedUnion("action", [
     turn: z.object({ id: z.string().uuid(), source: z.enum(["user", "ai"]), text: z.string().min(1).max(4000), interrupted: z.boolean().default(false), revision: z.number().int().min(1).max(1000000) }),
   }),
   z.object({ action: z.literal("heartbeat"), sessionId: z.string().uuid() }),
+  // Spoken confirmation (Cosmo): the browser heard the phrase; the server checks the card.
+  z.object({ action: z.literal("confirm"), sessionId: z.string().uuid(), messageId: z.string().uuid(), actionId: z.string().min(1).max(80) }),
+  z.object({ action: z.literal("dismiss"), sessionId: z.string().uuid(), messageId: z.string().uuid(), actionId: z.string().min(1).max(80) }),
+  z.object({ action: z.literal("undo_send"), sessionId: z.string().uuid(), sendId: z.string().uuid() }),
   z.object({ action: z.literal("connected"), sessionId: z.string().uuid() }),
   z.object({
     action: z.literal("end"),
@@ -113,6 +142,12 @@ export async function POST(request: Request) {
             body.fallback,
             body.history,
             body.threadId,
+            {
+              freshIfMissing: body.freshIfMissing,
+              screen: describeScreen(body.screen),
+              pointCatalog: pointingCatalog(),
+              opener: await openerFor(userId, body.nudge),
+            },
           ),
         );
       case "tool":
@@ -125,6 +160,12 @@ export async function POST(request: Request) {
       case "heartbeat":
         await heartbeatVoiceSession(userId, body.sessionId);
         return json({ ok: true });
+      case "confirm":
+        return json(await confirmVoiceCard(userId, body.sessionId, body.messageId, body.actionId));
+      case "dismiss":
+        return json(await dismissVoiceCard(userId, body.sessionId, body.messageId, body.actionId));
+      case "undo_send":
+        return json(await undoVoiceSend(userId, body.sessionId, body.sendId));
       case "connected":
         await connectVoiceSession(userId, body.sessionId);
         return json({ ok: true });
