@@ -20,6 +20,20 @@
       "dateMet": "2023-03-02T00:00:00.000Z",
       "email": null,
       "embeddingStaleAt": "2026-09-15T12:00:00.000Z",
+      "fieldSources": {
+        "company": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "linkedinUrl": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "title": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        }
+      },
       "firstInteractionAt": null,
       "firstName": "Alan",
       "followUpStatus": "none",
@@ -82,6 +96,20 @@
       "dateMet": "2021-02-01T00:00:00.000Z",
       "email": "dorothy@example.test",
       "embeddingStaleAt": "2026-09-15T12:00:00.000Z",
+      "fieldSources": {
+        "company": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "email": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "title": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        }
+      },
       "firstInteractionAt": "2021-02-01T00:00:00.000Z",
       "firstName": "Dorothy",
       "followUpStatus": "none",
@@ -144,6 +172,20 @@
       "dateMet": "2024-01-15T00:00:00.000Z",
       "email": null,
       "embeddingStaleAt": "2026-09-15T12:00:00.000Z",
+      "fieldSources": {
+        "company": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "linkedinUrl": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "title": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        }
+      },
       "firstInteractionAt": "2024-01-15T00:00:00.000Z",
       "firstName": "Grace",
       "followUpStatus": "none",
@@ -206,6 +248,20 @@
       "dateMet": "2024-01-15T00:00:00.000Z",
       "email": null,
       "embeddingStaleAt": "2026-09-15T12:00:00.000Z",
+      "fieldSources": {
+        "company": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "linkedinUrl": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "title": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        }
+      },
       "firstInteractionAt": "2024-01-15T00:00:00.000Z",
       "firstName": "Grace",
       "followUpStatus": "none",
@@ -268,6 +324,20 @@
       "dateMet": "2022-06-10T00:00:00.000Z",
       "email": null,
       "embeddingStaleAt": "2026-09-15T12:00:00.000Z",
+      "fieldSources": {
+        "company": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "linkedinUrl": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "title": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        }
+      },
       "firstInteractionAt": "2022-06-10T00:00:00.000Z",
       "firstName": "Katherine",
       "followUpStatus": "none",
@@ -330,6 +400,16 @@
       "dateMet": null,
       "email": null,
       "embeddingStaleAt": "2026-09-15T12:00:00.000Z",
+      "fieldSources": {
+        "company": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        },
+        "title": {
+          "at": "2026-09-15T12:00:00.000Z",
+          "s": "linkedin_export"
+        }
+      },
       "firstInteractionAt": "2026-09-15T12:00:00.000Z",
       "firstName": "Mary",
       "followUpStatus": "none",
@@ -446,19 +526,25 @@
         "companyId": null,
         "dateMet": null,
         "email": null,
+        "fieldSources": null,
         "firstInteractionAt": null,
         "firstName": null,
         "howMet": null,
+        "industry": null,
         "lastInteractionAt": null,
         "lastName": null,
         "linkedinUrl": "https://www.linkedin.com/in/alan-turing-e2e",
+        "location": null,
         "mergedAt": "2026-09-15T12:00:00.000Z",
         "metContext": null,
         "phone": null,
         "profileImageSource": null,
         "profileImageUrl": null,
+        "school": null,
         "source": null,
-        "title": "Old Title"
+        "title": "Old Title",
+        "website": null,
+        "xHandle": null
       },
       "rowIndex": 1,
       "status": "done",
