@@ -95,6 +95,15 @@
   --color-night-pro: #599de7;
   --color-night-max: #f2c14e;
   --color-night-lifetime: #c9d1db;
+  /* The always-dark canvases' own palette (landing, waitlist, pricing, sign-in): fixed values
+     that never follow the theme. `night-gold` is the bright gold that reads on navy; in-app
+     gold stays `--gold`. */
+  --color-night-sky: #03050c;
+  --color-night-surface: #05070f;
+  --color-night-ink: #e8f3f1;
+  --color-night-muted: #9aada8;
+  --color-night-subtle: #6d807c;
+  --color-night-gold: #f2c14e;
   --color-ink: var(--ink);
   --color-gold: var(--gold);
   --color-gold-ink: var(--gold-ink);
@@ -131,6 +140,25 @@
    * interaction tier in one place. */
   --default-transition-duration: 120ms;
   --default-transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
+
+  /* Elevation: Tailwind's seven shadow steps drawn as three, so every `shadow-*` call site
+   * lands on one scale without being edited. Resting (2xs/xs/sm), raised (md/lg), floating
+   * (xl/2xl). Tinted by `--shadow-color` and deepened in dark by `--shadow-strength`. */
+  --shadow-2xs: 0 1px 2px 0 hsl(var(--shadow-color) / calc(0.07 * var(--shadow-strength)));
+  --shadow-xs: 0 1px 2px 0 hsl(var(--shadow-color) / calc(0.07 * var(--shadow-strength)));
+  --shadow-sm: 0 1px 2px 0 hsl(var(--shadow-color) / calc(0.07 * var(--shadow-strength)));
+  --shadow-md:
+    0 2px 4px -1px hsl(var(--shadow-color) / calc(0.06 * var(--shadow-strength))),
+    0 8px 20px -6px hsl(var(--shadow-color) / calc(0.1 * var(--shadow-strength)));
+  --shadow-lg:
+    0 2px 4px -1px hsl(var(--shadow-color) / calc(0.06 * var(--shadow-strength))),
+    0 8px 20px -6px hsl(var(--shadow-color) / calc(0.1 * var(--shadow-strength)));
+  --shadow-xl:
+    0 4px 10px -2px hsl(var(--shadow-color) / calc(0.07 * var(--shadow-strength))),
+    0 24px 48px -12px hsl(var(--shadow-color) / calc(0.18 * var(--shadow-strength)));
+  --shadow-2xl:
+    0 4px 10px -2px hsl(var(--shadow-color) / calc(0.07 * var(--shadow-strength))),
+    0 24px 48px -12px hsl(var(--shadow-color) / calc(0.18 * var(--shadow-strength)));
 }
 
 :root {
@@ -248,6 +276,10 @@
   /* Admin nav hover wash. Carries its own alpha rather than being tinted at the call
      site, because the hover span uses `opacity` for its fade-in — the two would fight. */
   --admin-nav-hover: rgb(15 61 62 / 0.10);
+  /* Shadows carry a trace of the teal ink rather than neutral black, so they sit in the
+     warm off-white instead of greying it. */
+  --shadow-color: 170deg 18% 12%;
+  --shadow-strength: 1;
   --radius: 0.625rem;
   --sidebar: #f7f8f6;
   --sidebar-foreground: #1a1c1a;
@@ -373,6 +405,7 @@
   /* Shadows on a dark ground want to be deeper than the surface, not neutral
      black — a pure-black shadow over a tinted ground reads as a dead hole. */
   --shadow-color: 215deg 20% 3%;
+  --shadow-strength: 3.5;
   --sidebar: #0c0d0e;
   --sidebar-foreground: #e7ecf1;
   --sidebar-primary: #7cc3e2;
@@ -522,6 +555,15 @@
      No `.dark .yc-theme` counterpart: the admin console is always light
      (`src/components/theme-provider.tsx` forces it on /admin). */
   --admin-nav-hover: rgb(255 178 127 / 0.45);
+}
+
+/* The app's one bordered surface and its one small-caps label, named so pages stop
+ * hand-writing them. `Card` draws the same panel. */
+@utility panel {
+  @apply rounded-2xl border border-border/70 bg-card;
+}
+@utility eyebrow {
+  @apply text-xs font-medium tracking-wide uppercase;
 }
 
 @layer base {
