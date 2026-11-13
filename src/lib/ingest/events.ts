@@ -684,4 +684,9 @@ export async function finalizeIngest(
   // Contacts this import saved under a handle ("jsmith42") get a real name, or a "?".
   const { kickNameSweep } = await import("@/lib/contact-name-sweep");
   await kickNameSweep(ctx.userId);
+  // People this sync brought in who are also in the kept LinkedIn export.
+  const { fillFromStoredExport } = await import("@/lib/linkedin-export-facts");
+  await fillFromStoredExport(ctx.userId, [...ctx.touchedContactIds]).catch(
+    reportAndContinue({ where: "job.ingest.export-fill", userId: ctx.userId }, 0)
+  );
 }

@@ -732,7 +732,29 @@ export async function createContactForUser(
     if (survivor) return survivor;
   }
 
+  if (options?.by !== "linkedin_export") deferExportFill(userId, contact.id);
   return contact;
+}
+
+/**
+ * After the response: a person added now may already be in the user's kept LinkedIn export
+ * (`@/lib/linkedin-export-facts`). Best-effort, like the avatar lookup; one indexed read and
+ * nothing more when there is no export. Imported lazily (it imports this module).
+ */
+function deferExportFill(userId: string, contactId: string) {
+  const task = async () => {
+    try {
+      const { fillFromStoredExport } = await import("@/lib/linkedin-export-facts");
+      await fillFromStoredExport(userId, [contactId]);
+    } catch {
+      // Swallowed: the next import or export upload fills them too.
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
 }
 
 /**
