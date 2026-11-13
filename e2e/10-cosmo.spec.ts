@@ -5,6 +5,96 @@ import { ensureOnboarded } from "./helpers";
 const sessionId = "33333333-3333-4333-8333-333333333333";
 const threadId = "44444444-4444-4444-8444-444444444444";
 
+test("Cosmo can be moved, steps out of the way, stays usable over a dialog and tucks away on a phone", async ({ page }) => {
+  await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
+  if (new URL(page.url()).pathname.startsWith("/onboarding")) await ensureOnboarded(page);
+  await page.route("**/api/voice", (route) =>
+    route.fulfill({ json: { enabled: true, provider: "deepgram", fallbackProvider: null, revision: "cosmo-test" } }),
+  );
+  await page.goto("/contacts", { waitUntil: "domcontentloaded" });
+  await page.evaluate(() => localStorage.removeItem("orbit:cosmo-slot"));
+  await page.reload({ waitUntil: "domcontentloaded" });
+  const orb = page.getByRole("button", { name: "Talk to Cosmo" });
+  const column = page.locator("[data-cosmo-slot]");
+  await expect(orb).toBeVisible();
+  await expect(column).toHaveAttribute("data-cosmo-slot", "bottom-right");
+
+  // Drag it to the top left: it snaps there, and that is home on this device.
+  const start = (await orb.boundingBox())!;
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(400, 200, { steps: 12 });
+  await page.mouse.move(380, 150, { steps: 4 });
+  await page.mouse.up();
+  await expect(column).toHaveAttribute("data-cosmo-slot", "top-left");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("orbit:cosmo-slot"))).toBe("top-left");
+  await expect(page.getByRole("region", { name: "Cosmo" })).toHaveCount(0); // a drag never presses the orb
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(column).toHaveAttribute("data-cosmo-slot", "top-left");
+  const left = (await orb.boundingBox())!;
+  const sidebar = (await page.locator("[data-app-sidebar]").boundingBox())!;
+  expect(left.x).toBeGreaterThan(sidebar.x + sidebar.width); // beside the sidebar, never on it
+
+  // Arrow keys move it too.
+  await orb.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(column).toHaveAttribute("data-cosmo-slot", "top-right");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(column).toHaveAttribute("data-cosmo-slot", "bottom-right");
+  await page.mouse.move(10, 10); // off Cosmo, so it may move on its own again
+
+  // Something marked to avoid lands on its corner: it steps aside, and comes back after.
+  await page.evaluate(() => {
+    const block = document.createElement("div");
+    block.id = "cosmo-obstacle";
+    block.dataset.cosmoAvoid = "";
+    Object.assign(block.style, { position: "fixed", right: "0", bottom: "0", width: "320px", height: "200px" });
+    document.body.append(block);
+  });
+  await expect(column).not.toHaveAttribute("data-cosmo-slot", "bottom-right");
+  await page.evaluate(() => document.getElementById("cosmo-obstacle")?.remove());
+  await expect(column).toHaveAttribute("data-cosmo-slot", "bottom-right");
+
+  // With a dialog open Cosmo is still on top, reachable and not hidden from assistive tech.
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+k" : "Control+k");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  // Measured each time: it may still be gliding aside from the dialog.
+  await expect
+    .poll(() =>
+      orb.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return `${hit?.getAttribute("aria-label") ?? hit?.tagName ?? "nothing"} @ ${el.closest("[data-cosmo-slot]")?.getAttribute("data-cosmo-slot")}`;
+      }),
+    )
+    .toMatch(/^Talk to Cosmo @/);
+  expect(await orb.evaluate((el) => el.closest('[aria-hidden="true"]') === null)).toBe(true);
+  await page.keyboard.press("Escape");
+  // Closed for good: it hands focus back on the way out, which would steal the field's below.
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // On a phone it sits above the bottom nav, and tucks into an edge tab while you type.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(orb).toBeVisible();
+  const phone = (await orb.boundingBox())!;
+  // Clear of the bottom nav's pill, whose top is the top of its tallest item (the lifted Capture).
+  const navTop = Math.min(
+    ...(await page.locator('a[href="/capture"]:visible, a[href="/contacts"]:visible').evaluateAll((els) =>
+      els.map((el) => el.closest("nav")?.getBoundingClientRect().top ?? 9999),
+    )),
+  );
+  expect(phone.y + phone.height).toBeLessThanOrEqual(navTop);
+  await page.getByPlaceholder(/search contacts/i).first().focus();
+  await expect(page.getByRole("button", { name: "Show Cosmo" })).toBeVisible();
+  await expect(orb).toHaveCount(0);
+  await page.getByRole("button", { name: "Show Cosmo" }).click();
+  await expect(orb).toBeVisible();
+  const shot = test.info().outputPath("cosmo-phone.png");
+  await page.screenshot({ path: shot });
+  await test.info().attach("cosmo phone", { path: shot, contentType: "image/png" });
+});
+
 test("Cosmo starts from any page, survives navigation and resumes the day's thread", async ({ page }) => {
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
   if (new URL(page.url()).pathname.startsWith("/onboarding")) await ensureOnboarded(page);

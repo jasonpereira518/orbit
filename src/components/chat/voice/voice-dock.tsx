@@ -31,7 +31,7 @@ function voiceHost() {
  * (inline) and the fixed middle-right dock (every other tab), which keeps the view's own state
  * (transcript open, scroll) across the move.
  */
-export function VoiceDock({ cosmo = false }: { cosmo?: boolean }) {
+export function VoiceDock({ cosmo = false, tourActive = false }: { cosmo?: boolean; tourActive?: boolean }) {
   const { call, slot } = useVoiceDock();
   const floating = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -64,7 +64,8 @@ export function VoiceDock({ cosmo = false }: { cosmo?: boolean }) {
       )}
       {call && showPanel &&
         createPortal(<VoicePanel key={call.id} state={call.state} compact={!slot} cosmo={cosmo} />, voiceHost())}
-      {cosmo && <CosmoRoot />}
+      {/* Hidden while the guided tour runs: its rail and cursor use the same corners. */}
+      {cosmo && <CosmoRoot tourActive={tourActive} />}
       {cosmo && call && <CosmoOrb />}
     </>
   );

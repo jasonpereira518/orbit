@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Loader2, MessageSquare, Mic, MicOff, X } from "lucide-react";
@@ -7,6 +7,11 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ProposedActionsCard } from "@/components/chat/proposed-actions";
 import { cn } from "@/lib/utils";
 import { PROVIDER_LABELS } from "@/lib/voice/config";
+import { animate, motion, useMotionValue } from "motion/react";
+import { SPRING_SOFT } from "@/lib/motion";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { slotParts, stepSlot } from "@/lib/cosmo/placement";
+import { useCosmoPlacement } from "./use-cosmo-placement";
 import { openVoice, updateVoiceState, useVoiceDock } from "@/lib/voice/dock-store";
 import { useVoiceCall, voiceActions } from "@/lib/voice/call-store";
 import type { VoicePublicState } from "@/lib/voice/contracts";
@@ -31,11 +36,12 @@ function dayThread(): string | null {
  * call's slot present, the inline stage shows instead (VoiceDock). Toasts and the job stack sit
  * above it: the height published here is added to their offsets in theme.css.
  */
-export function CosmoRoot() {
+export function CosmoRoot({ tourActive = false }: { tourActive?: boolean }) {
   const pathname = usePathname();
   const { call, slot } = useVoiceDock();
   const [state, setState] = useState<VoicePublicState | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const probe = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -69,13 +75,26 @@ export function CosmoRoot() {
     }
   }, [call?.origin, call?.threadId]);
 
-  const hidden = pathname.startsWith("/onboarding") || Boolean(call && slot) || (!call && !state?.enabled);
+  const hidden =
+    tourActive || pathname.startsWith("/onboarding") || Boolean(call && slot) || (!call && !state?.enabled);
+  /** Where Cosmo was just before it moves, so it glides from there (FLIP) instead of jumping. */
+  const from = useRef<DOMRect | null>(null);
+  const capture = useCallback(() => {
+    if (!from.current && root.current) from.current = root.current.getBoundingClientRect();
+  }, []);
+  const place = useCosmoPlacement(root, probe, !hidden, capture);
+  const { side, height } = slotParts(place.slot);
+  const inCorner = place.slot === "bottom-right" && !place.collapsed;
+  const reduced = usePrefersReducedMotion();
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const dragged = useRef(false);
 
   // Publish the corner Cosmo occupies so the job stack and toasts stack above it.
   useLayoutEffect(() => {
     const el = root.current;
     const html = document.documentElement;
-    if (hidden || !el) return;
+    if (hidden || !inCorner || !el) return;
     const publish = () => html.style.setProperty("--orbit-cosmo-height", `${el.offsetHeight + 8}px`);
     publish();
     const observer = new ResizeObserver(publish);
@@ -84,30 +103,122 @@ export function CosmoRoot() {
       observer.disconnect();
       html.style.removeProperty("--orbit-cosmo-height");
     };
-  }, [hidden]);
+  }, [hidden, inCorner]);
+
+  // A new slot: start from where it was, glide to the new place.
+  useLayoutEffect(() => {
+    const el = root.current;
+    const start = from.current;
+    from.current = null;
+    if (!el) return;
+    const now = el.getBoundingClientRect();
+    const baseLeft = now.left - x.get();
+    const baseTop = now.top - y.get();
+    if (!start || reduced) {
+      x.set(0);
+      y.set(0);
+      return;
+    }
+    // Keep the edge it hugs still: the right edge for right-side slots, the bottom for bottom ones.
+    x.set(side === "right" ? start.right - (baseLeft + now.width) : start.left - baseLeft);
+    y.set(height === "bottom" ? start.bottom - (baseTop + now.height) : start.top - baseTop);
+    void animate(x, 0, SPRING_SOFT);
+    void animate(y, 0, SPRING_SOFT);
+  }, [place.slot, side, height, reduced, x, y]);
 
   if (hidden) return null;
+  if (place.collapsed)
+    return (
+      <button
+        type="button"
+        aria-label="Show Cosmo"
+        title="Show Cosmo"
+        onClick={place.expand}
+        data-side={side}
+        className="cosmo-tab fixed top-1/2 z-[51] -translate-y-1/2"
+      />
+    );
   return (
-    // aria-live="off": Base UI's modal hides everything outside it from assistive tech except
-    // live regions, so this keeps Cosmo reachable while a dialog is open.
-    <div
-      ref={root}
-      aria-live="off"
-      // Click-through except its own controls: the column is as wide as a card, the bar is not.
-      className="pointer-events-none fixed right-(--orbit-toast-right) bottom-(--orbit-corner-bottom) z-40 flex w-[min(20rem,calc(100vw-1.5rem))] flex-col items-end gap-2"
-    >
-      {call ? (
-        <CosmoLive state={call.state} />
-      ) : (
-        <button
-          type="button"
-          className="cosmo-idle pointer-events-auto"
-          aria-label="Talk to Cosmo"
-          title="Talk to Cosmo"
-          onClick={() => state && openVoice(dayThread(), state, "cosmo")}
-        />
-      )}
-    </div>
+    <>
+      {/* Pinned to the shared corner, so its live insets (nav, lift, shift) can be read in px. */}
+      <div
+        ref={probe}
+        aria-hidden
+        className="pointer-events-none fixed size-0"
+        style={{ right: "var(--orbit-toast-right)", bottom: "calc(var(--orbit-corner-bottom) + var(--cosmo-gap))" }}
+      />
+      <motion.div
+        ref={root}
+        // aria-live="off": Base UI's modal hides everything outside it from assistive tech except
+        // live regions, so this keeps Cosmo reachable while a dialog is open.
+        aria-live="off"
+        data-cosmo-slot={place.slot}
+        drag
+        dragMomentum={false}
+        dragElastic={0}
+        onDragStart={() => {
+          dragged.current = true;
+          place.hold(true);
+        }}
+        onDragEnd={() => {
+          if (root.current) {
+            const rect = root.current.getBoundingClientRect();
+            from.current = rect;
+            place.drop(rect);
+          }
+          place.hold(false);
+        }}
+        onPointerEnter={() => place.hold(true)}
+        onPointerLeave={() => place.hold(false)}
+        // A drag that ends on a button must not press it.
+        onClickCapture={(event) => {
+          if (!dragged.current) return;
+          dragged.current = false;
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onPointerDown={() => {
+          dragged.current = false;
+        }}
+        onKeyDown={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.matches("input, textarea, select, [contenteditable='true']")) return;
+          const next = stepSlot(place.home, event.key);
+          if (!next) return;
+          event.preventDefault();
+          place.setHome(next);
+        }}
+        style={{
+          x,
+          y,
+          ...(side === "right" ? { right: "var(--orbit-toast-right)" } : { left: "var(--cosmo-left, 0.75rem)" }),
+          ...(height === "bottom"
+            ? { bottom: "calc(var(--orbit-corner-bottom) + var(--cosmo-gap))" }
+            : height === "top"
+              ? { top: "var(--cosmo-top, 4.5rem)" }
+              : { top: "50%", translate: "0 -50%" }),
+        }}
+        // Above dialogs (z-50) so it stays usable with one open; it steps aside instead of covering.
+        className={cn(
+          "cosmo-root pointer-events-none fixed z-[51] flex w-[min(20rem,calc(100vw-1.5rem))] gap-2",
+          side === "right" ? "items-end" : "items-start",
+          height === "top" ? "flex-col-reverse" : "flex-col",
+        )}
+      >
+        {call ? (
+          <CosmoLive state={call.state} />
+        ) : (
+          <button
+            type="button"
+            className="cosmo-idle pointer-events-auto"
+            aria-label="Talk to Cosmo"
+            title="Talk to Cosmo · drag or use arrow keys to move"
+            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
+            onClick={() => state && openVoice(dayThread(), state, "cosmo")}
+          />
+        )}
+      </motion.div>
+    </>
   );
 }
 
