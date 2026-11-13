@@ -6,6 +6,7 @@ import { closeVoice, useVoiceDock } from "@/lib/voice/dock-store";
 
 // Both lazy: this dock is in every page's layout, and the call code is only needed on a call.
 const VoiceEngine = dynamic(() => import("./voice-engine").then((m) => m.VoiceEngine), { ssr: false });
+const CosmoOrb = dynamic(() => import("@/components/cosmo/cosmo-orb").then((m) => m.CosmoOrb), { ssr: false });
 const CosmoRoot = dynamic(() => import("@/components/cosmo/cosmo-root").then((m) => m.CosmoRoot), { ssr: false });
 const VoicePanel = dynamic(
   () => import("../voice-panel").then((m) => m.VoicePanel),
@@ -62,8 +63,9 @@ export function VoiceDock({ cosmo = false }: { cosmo?: boolean }) {
         />
       )}
       {call && showPanel &&
-        createPortal(<VoicePanel key={call.id} state={call.state} compact={!slot} />, voiceHost())}
+        createPortal(<VoicePanel key={call.id} state={call.state} compact={!slot} cosmo={cosmo} />, voiceHost())}
       {cosmo && <CosmoRoot />}
+      {cosmo && call && <CosmoOrb />}
     </>
   );
 }

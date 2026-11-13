@@ -17,7 +17,9 @@ import type { VoicePublicState } from "@/lib/voice/contracts";
  * the middle right of every other page (`compact` true). `VoiceDock` owns where it sits, and
  * `VoiceEngine` owns the call itself, so this can move or remount without hanging up.
  */
-export function VoicePanel({ state, compact = false }: { state: VoicePublicState; compact?: boolean }) {
+export function VoicePanel({ state, compact = false, cosmo = false }: {
+  state: VoicePublicState; compact?: boolean; cosmo?: boolean;
+}) {
   const { provider, active, mode, busy, muted, error, failed, lines, cards, saveError, closing } = useVoiceCall();
   const [showTranscript, setShowTranscript] = useState(false);
   const panel = useRef<HTMLDivElement | null>(null);
@@ -66,7 +68,12 @@ export function VoicePanel({ state, compact = false }: { state: VoicePublicState
           <p className="mt-2 text-sm text-muted-foreground">In this conversation · {PROVIDER_LABELS[provider]}</p>
         </div>
         <div className={cn("flex min-h-0 w-full items-center justify-center", compact ? "py-0.5" : "py-4 sm:py-6")}>
-          <VoiceOrbit controls={voiceControls} mode={mode} muted={muted} />
+          {cosmo && !compact ? (
+            // Cosmo's one orb (cosmo-orb.tsx) flies into this space and out again.
+            <div data-cosmo-orb-slot="stage" className="voice-orbit-slot" />
+          ) : (
+            <VoiceOrbit controls={voiceControls} mode={mode} muted={muted} />
+          )}
         </div>
         <p role="status" className={compact ? "text-2xs leading-tight text-muted-foreground" : "min-h-6 text-sm text-muted-foreground"}>
           {busy

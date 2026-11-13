@@ -4,12 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Loader2, MessageSquare, Mic, MicOff, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { VoiceOrbit } from "@/components/chat/voice/voice-orbit";
 import { ProposedActionsCard } from "@/components/chat/proposed-actions";
 import { cn } from "@/lib/utils";
 import { PROVIDER_LABELS } from "@/lib/voice/config";
 import { openVoice, updateVoiceState, useVoiceDock } from "@/lib/voice/dock-store";
-import { useVoiceCall, voiceActions, voiceControls } from "@/lib/voice/call-store";
+import { useVoiceCall, voiceActions } from "@/lib/voice/call-store";
 import type { VoicePublicState } from "@/lib/voice/contracts";
 import "@/components/chat/voice/voice-overlay.css";
 import "./cosmo.css";
@@ -160,7 +159,8 @@ function CosmoLive({ state }: { state: VoicePublicState }) {
         </div>
       )}
       <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/70 bg-card py-1 pr-1.5 pl-1 shadow-lg">
-        <VoiceOrbit controls={voiceControls} mode={mode} muted={muted} />
+        {/* Cosmo's one orb (cosmo-orb.tsx) flies here off Chat. */}
+        <div data-cosmo-orb-slot="dock" className="size-11 shrink-0" />
         <p role="status" className="w-[4.75rem] text-xs text-muted-foreground">{status}</p>
         {connected && (
           <Button

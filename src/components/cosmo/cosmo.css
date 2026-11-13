@@ -28,7 +28,3 @@
       0 10px 34px -6px rgb(124 58 237 / 0.7);
   }
 }
-/* The live orb in the docked bar; the canvas sizes itself by height. */
-.cosmo-live .voice-orbit {
-  height: 44px;
-}
