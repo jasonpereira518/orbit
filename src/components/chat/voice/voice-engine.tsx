@@ -10,12 +10,15 @@ import { useMeetingSession } from "@/components/capture/meeting-session";
 import {
   ASK_CHAT_TOOL,
   OPEN_PAGE_TOOL,
+  SET_CAPTIONS_TOOL,
   SET_THEME_TOOL,
   START_RECORDING_TOOL,
   VOICE_THEMES,
   voicePagePath,
 } from "@/lib/voice/policy";
 import { withAppEvents } from "@/lib/voice/app-events";
+import { plainSpeech } from "@/lib/voice/caption-pace";
+import { setCaptions } from "@/lib/cosmo/captions-pref";
 import {
   getVoiceCall,
   installVoiceActions,
@@ -30,17 +33,7 @@ import type { VoiceAgentEvents, VoiceMode, VoicePublicState, VoiceSessionStart }
 const DeepgramAdapter = dynamic(() => import("./deepgram-adapter").then((m) => m.DeepgramAdapter), { ssr: false });
 const ElevenLabsAdapter = dynamic(() => import("./elevenlabs-adapter").then((m) => m.ElevenLabsAdapter), { ssr: false });
 
-/**
- * A turn as words, without the markdown a model sometimes writes despite the prompt: links keep
- * their text, and emphasis, code ticks, headings and list markers go. Display only; the prompt
- * is what keeps the symbols out of the speech itself.
- */
-export function plainSpeech(text: string) {
-  return text
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/^\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/gm, "")
-    .replace(/(\*\*|__|\*|`)/g, "");
-}
+export { plainSpeech };
 class VoiceRequestError extends Error {
   constructor(
     message: string,
@@ -256,6 +249,11 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
           setTheme(theme);
           void saveThemePreference(theme).catch(() => {});
           return JSON.stringify({ theme });
+        }
+        if (tool === SET_CAPTIONS_TOOL) {
+          if (typeof args.on !== "boolean") return JSON.stringify({ error: "Say on: true or on: false." });
+          setCaptions(args.on);
+          return JSON.stringify({ captions: args.on ? "on" : "off" });
         }
         if (tool === OPEN_PAGE_TOOL) {
           const path = voicePagePath(args.page, args.id, args.filters);

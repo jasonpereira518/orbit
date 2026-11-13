@@ -2,7 +2,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Loader2, MessageSquare, Mic, MicOff, X } from "lucide-react";
+import { Captions, Loader2, MessageSquare, Mic, MicOff, X } from "lucide-react";
+import { setCaptions, useCaptions } from "@/lib/cosmo/captions-pref";
+import { CosmoCaption } from "./cosmo-caption";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ProposedActionsCard } from "@/components/chat/proposed-actions";
 import { cn } from "@/lib/utils";
@@ -225,6 +227,7 @@ export function CosmoRoot({ tourActive = false }: { tourActive?: boolean }) {
 function CosmoLive({ state }: { state: VoicePublicState }) {
   const { provider, active, mode, busy, muted, error, failed, cards, saveError, closing } = useVoiceCall();
   const connected = active && mode !== "connecting" && mode !== "disconnected";
+  const captions = useCaptions();
   const status = busy
     ? "Connecting…"
     : mode === "speaking"
@@ -269,6 +272,7 @@ function CosmoLive({ state }: { state: VoicePublicState }) {
           ))}
         </div>
       )}
+      {captions && active && <CosmoCaption />}
       <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/70 bg-card py-1 pr-1.5 pl-1 shadow-lg">
         {/* Cosmo's one orb (cosmo-orb.tsx) flies here off Chat. */}
         <div data-cosmo-orb-slot="dock" className="size-11 shrink-0" />
@@ -296,6 +300,17 @@ function CosmoLive({ state }: { state: VoicePublicState }) {
             <Mic className="size-4" aria-hidden />
           </Button>
         )}
+        <Button
+          size="icon"
+          variant={captions ? "default" : "secondary"}
+          className="size-9 rounded-full"
+          aria-pressed={captions}
+          aria-label="Captions"
+          title={captions ? "Hide captions" : "Show captions"}
+          onClick={() => setCaptions(!captions)}
+        >
+          <Captions className="size-4" aria-hidden />
+        </Button>
         <Link
           href="/chat"
           aria-label="Open chat"
