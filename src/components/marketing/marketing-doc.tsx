@@ -4,6 +4,7 @@ import { LandingAuthControls } from "@/components/landing/landing-auth-controls"
 import { LandingStarfield } from "@/components/landing/landing-visuals";
 import { DocSwitcher } from "@/components/marketing/doc-switcher";
 import { DocToc, type TocItem } from "@/components/marketing/doc-toc";
+import { MarketingFooter } from "@/components/marketing/marketing-footer";
 import { Reveal } from "@/components/motion/reveal";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { BackControl } from "@/components/pricing/back-control";
@@ -78,41 +79,7 @@ export function MarketingDocShell({
 
       <main id="main-content" className="relative z-10">{children}</main>
 
-      {/* Lighter on the bottom than the top: there is nothing after this row,
-          so symmetric padding just reads as a gap at the end of the page. */}
-      <footer className="relative z-10 mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-4 px-6 pb-7 pt-12 md:px-10">
-        <Link href="/" className="flex items-center gap-2.5" aria-label="Orbit home">
-          <OrbitLogo size="sm" />
-          <span className="font-[family-name:var(--font-display)] text-[17px] tracking-tight text-[#e8f3f1]">
-            Orbit
-          </span>
-        </Link>
-        <div className="flex items-center gap-6">
-          {[
-            { href: "/pricing", label: "Pricing" },
-            { href: "/connect", label: "Connect" },
-            { href: "/interest", label: "Interest list" },
-            { href: "/privacy", label: "Privacy" },
-            { href: "/contact", label: "Contact" },
-          ].map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="text-sm text-[#6d807c] transition-colors hover:text-[#e8f3f1]"
-            >
-              {link.label}
-            </Link>
-          ))}
-        </div>
-        <a
-          href="https://jasonpereira.live/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="landing-credit-shimmer text-sm"
-        >
-          By Jason Pereira
-        </a>
-      </footer>
+      <MarketingFooter className="max-w-6xl px-6 md:px-10" />
     </div>
   );
 }
