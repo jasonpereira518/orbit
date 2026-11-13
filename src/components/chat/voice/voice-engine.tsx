@@ -454,7 +454,8 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
         setVoiceCall({
           cards: getVoiceCall().cards.map((c) => (c.action.id === next.id ? { ...c, action: next } : c)),
         });
-        const note = `The user ${next.status === "done" ? "confirmed and saved" : next.status} the proposal: ${next.preview}`;
+        const verb = next.status === "done" ? "confirmed and saved" : next.status === "undone" ? "undid" : next.status;
+        const note = `The user ${verb} the change: ${next.preview}`;
         const controls = voiceControls.current;
         try {
           if (controls?.sendContext) controls.sendContext(note);

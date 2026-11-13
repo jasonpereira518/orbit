@@ -3940,6 +3940,12 @@ export const orbitVoiceSessions = pgTable("orbit_voice_sessions", {
   connectedAt: timestamp("connected_at", { withTimezone: true }),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   outcome: text("outcome").$type<"starting" | "connected" | "ended" | "failed">().default("starting").notNull(),
+  /** Started as a Cosmo call (feature.cosmo released for this person then): it may apply small changes. */
+  cosmo: boolean("cosmo").default(false).notNull(),
+  /** Why this call may not apply anything more (an injection signal in a lookup). Sticky. */
+  taintedBy: text("tainted_by"),
+  /** Changes this call applied without a click; capped by VOICE_AUTO_APPLY_CAP. */
+  autoApplied: integer("auto_applied").default(0).notNull(),
 }, (t) => [index("orbit_voice_sessions_user_idx").on(t.userId), index("orbit_voice_sessions_thread_idx").on(t.threadId)]);
 
 export const chatMessages = pgTable(

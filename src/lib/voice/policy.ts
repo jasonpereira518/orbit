@@ -1,6 +1,8 @@
 /** Client-safe limits and allowlists. Voice never exposes arbitrary MCP or web tools. */
 export const VOICE_DURATION_SECONDS = 600;
 export const VOICE_MAX_TOOL_CALLS = 60;
+/** Small changes one Cosmo call may apply without a click; the rest wait on a card. */
+export const VOICE_AUTO_APPLY_CAP = 5;
 export function voiceAvailable(
   enabled: boolean | null | undefined,
   configured: boolean,

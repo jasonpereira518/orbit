@@ -9,7 +9,7 @@ import { consumeBucket } from "@/lib/rate-limit";
 import { contactsIn } from "@/lib/tools/chat-executor";
 import { runTool, isToolError } from "@/lib/tools/registry";
 import { SCOPE_KINDS } from "@/lib/tools/chat-write-kit";
-import { VOICE_DURATION_SECONDS, VOICE_MAX_TOOL_CALLS } from "./policy";
+import { VOICE_AUTO_APPLY_CAP, VOICE_DURATION_SECONDS, VOICE_MAX_TOOL_CALLS } from "./policy";
 import { requireVoiceEnabled, VoiceUnavailableError } from "./settings";
 import { selectedVoiceProvider, type VoiceHistory } from "./config";
 import { VoiceProviderError, voiceCredentials } from "./providers";
@@ -93,6 +93,8 @@ export async function startVoiceSession(
       fallback,
       expiresAt: new Date(Date.now() + VOICE_DURATION_SECONDS * 1000),
       timeZone,
+      // Decided once, here: a call doesn't change what it may do halfway through.
+      cosmo,
     })
     .returning();
   try {
@@ -213,28 +215,62 @@ export async function callVoiceTool(
     .update(orbitVoiceSessions)
     .set({ scope })
     .where(eq(orbitVoiceSessions.id, session.id));
-  const proposal = sink.latest();
+  // Cosmo applies a small change the person asked for at once (Chat's own gate: auto tier only,
+  // never destructive or identity, few records), with Undo on its card. Anything a lookup in this
+  // call returned that looks like an injection stops that for the rest of the call.
+  // Loaded on demand, not imported: this module is in every page's server-action graph, and
+  // pulling the auto-apply module in statically sends next dev's /onboarding into a reload loop.
+  const { createAutoApplyGate } = await import("@/lib/chat-auto-apply");
+  const gate = createAutoApplyGate(userId, session.cosmo);
+  let taintedBy = session.taintedBy;
+  if (session.cosmo && !taintedBy) {
+    gate.inspect(tool.name, encoded);
+    if (gate.taintedBy) {
+      taintedBy = gate.taintedBy;
+      await db.update(orbitVoiceSessions).set({ taintedBy }).where(eq(orbitVoiceSessions.id, session.id));
+    }
+  }
+  let proposal = sink.latest();
   let messageId: string | null = null;
+  let applied = false;
   if (proposal) {
-    const [message] = await db
-      .insert(chatMessages)
-      .values({
-        userId,
-        threadId: session.threadId,
-        role: "assistant",
-        content: proposal.preview,
-        clientTurnId: `voice-proposal:${session.id}`,
-        proposedActions: [proposal],
-      })
-      .returning();
-    messageId = message.id;
+    messageId = crypto.randomUUID();
+    if (session.cosmo && !taintedBy && proposal.args.input?.asked_for === true) {
+      // A slot under the per-call cap, claimed atomically and given back if nothing was applied.
+      const [slot] = await db
+        .update(orbitVoiceSessions)
+        .set({ autoApplied: sql`${orbitVoiceSessions.autoApplied} + 1` })
+        .where(and(eq(orbitVoiceSessions.id, session.id), lt(orbitVoiceSessions.autoApplied, VOICE_AUTO_APPLY_CAP)))
+        .returning();
+      if (slot) {
+        // Applied before the card exists, so a click can never race it.
+        proposal = await gate.maybeApply(proposal, messageId);
+        applied = proposal.status === "done";
+        if (!applied)
+          await db
+            .update(orbitVoiceSessions)
+            .set({ autoApplied: sql`${orbitVoiceSessions.autoApplied} - 1` })
+            .where(eq(orbitVoiceSessions.id, session.id));
+      }
+    }
+    await db.insert(chatMessages).values({
+      id: messageId,
+      userId,
+      threadId: session.threadId,
+      role: "assistant",
+      content: proposal.preview,
+      clientTurnId: `voice-proposal:${session.id}`,
+      proposedActions: [proposal],
+    });
     await db
       .update(chatThreads)
       .set({ updatedAt: new Date() })
       .where(eq(chatThreads.id, session.threadId));
   }
   return {
-    result: encoded,
+    result: applied
+      ? JSON.stringify({ untrusted_crm_data: result, applied: "Done: this change is saved now. Tell the user it's done; they can undo it on its card." })
+      : encoded,
     proposal: proposal && messageId ? { messageId, action: proposal } : null,
   };
 }
