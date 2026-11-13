@@ -10,11 +10,54 @@
   box-shadow:
     0 0 0 1px rgb(167 139 250 / 0.35),
     0 10px 28px -8px rgb(76 29 149 / 0.6);
+  position: relative;
   animation: cosmo-breathe 4.8s ease-in-out infinite;
-  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  /* `scale`, not `transform`: motion's lean toward the pointer owns the transform. */
+  transition: scale 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.cosmo-idle:hover {
-  transform: scale(1.06);
+/* Hovered or focused, it perks up: a little bigger, breathing faster, a halo coming on. */
+.cosmo-idle::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  box-shadow:
+    0 0 0 2px rgb(167 139 250 / 0.55),
+    0 0 18px 4px rgb(34 211 238 / 0.35);
+  opacity: 0;
+  scale: 0.9;
+  pointer-events: none;
+  transition:
+    opacity 0.2s ease-out,
+    scale 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cosmo-idle:hover,
+.cosmo-idle:focus-visible {
+  scale: 1.08;
+  animation-duration: 2.4s;
+}
+.cosmo-idle:hover::after,
+.cosmo-idle:focus-visible::after {
+  opacity: 1;
+  scale: 1;
+}
+/* The live orb over its slot button: brighter while the pointer is on it (a click ends the call). */
+.cosmo-orb {
+  transition: filter 0.2s ease-out;
+}
+.cosmo-orb[data-hover] {
+  filter: brightness(1.2) drop-shadow(0 0 10px rgb(167 139 250 / 0.6));
+}
+@media (prefers-reduced-motion: reduce) {
+  .cosmo-idle:hover,
+  .cosmo-idle:focus-visible {
+    scale: 1;
+    animation-duration: 4.8s;
+  }
+  .cosmo-idle::after {
+    scale: 1;
+    transition: opacity 0.2s ease-out;
+  }
 }
 /* Something worth a word: a slow gold halo, so the orb reads as "I have something" before the chip. */
 .cosmo-idle[data-nudge] {

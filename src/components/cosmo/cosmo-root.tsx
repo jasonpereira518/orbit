@@ -34,6 +34,18 @@ function dayThread(): string | null {
   }
 }
 
+/**
+ * Hovering the idle orb loads the call's code (engine + Deepgram adapter), so a click connects
+ * sooner. Loading only: no session, no microphone, nothing billed.
+ */
+let warmed = false;
+function warmUp() {
+  if (warmed) return;
+  warmed = true;
+  void import("@/components/chat/voice/voice-engine").catch(() => (warmed = false));
+  void import("@/components/chat/voice/deepgram-adapter").catch(() => {});
+}
+
 /** Nudges dismissed today, per device: a dismissed one stays gone until tomorrow. */
 const NUDGES_KEY = "orbit:cosmo-nudges";
 function readDismissed(): Set<string> {
@@ -76,6 +88,8 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
     }
   };
   const talk = () => state && openVoice(dayThread(), state, "cosmo", nudge?.id);
+  const leanX = useMotionValue(0);
+  const leanY = useMotionValue(0);
 
   useEffect(() => {
     let alive = true;
@@ -269,13 +283,27 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
                 </button>
               </div>
             )}
-            <button
+            <motion.button
               type="button"
               className="cosmo-idle pointer-events-auto"
               data-nudge={nudge ? nudge.kind : undefined}
               aria-label="Talk to Cosmo"
               title="Talk to Cosmo · drag or use arrow keys to move"
               aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
+              style={{ x: leanX, y: leanY }}
+              onPointerEnter={warmUp}
+              onFocus={warmUp}
+              // It notices you: a few pixels toward the pointer while hovered (not with reduced motion).
+              onPointerMove={(event) => {
+                if (reduced || event.pointerType !== "mouse") return;
+                const r = event.currentTarget.getBoundingClientRect();
+                leanX.set(Math.max(-1, Math.min(1, (event.clientX - (r.left + r.width / 2)) / (r.width / 2))) * 3);
+                leanY.set(Math.max(-1, Math.min(1, (event.clientY - (r.top + r.height / 2)) / (r.height / 2))) * 3);
+              }}
+              onPointerLeave={() => {
+                void animate(leanX, 0, SPRING_SOFT);
+                void animate(leanY, 0, SPRING_SOFT);
+              }}
               onClick={talk}
             />
           </div>
@@ -337,7 +365,16 @@ function CosmoLive({ state }: { state: VoicePublicState }) {
       {active && endsEarly && endsAt && <MinutesLeft endsAt={endsAt} />}
       <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/70 bg-card py-1 pr-1.5 pl-1 shadow-lg">
         {/* Cosmo's one orb (cosmo-orb.tsx) flies here off Chat. */}
-        <div data-cosmo-orb-slot="dock" className="size-11 shrink-0" />
+        {/* Clicking Cosmo during a call ends it (Jason, Nov 13); the orb's canvas lets clicks through. */}
+        <button
+          type="button"
+          data-cosmo-orb-slot="dock"
+          className="size-11 shrink-0 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          aria-label="End conversation with Cosmo"
+          title="End conversation"
+          disabled={closing}
+          onClick={() => void voiceActions.close()}
+        />
         <p role="status" className="w-[4.75rem] text-xs text-muted-foreground">{status}</p>
         {connected && (
           <Button

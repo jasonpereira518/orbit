@@ -432,7 +432,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await page.screenshot({path: darkScreenshot});
     await test.info().attach(`${provider} dark mobile voice`, {path: darkScreenshot, contentType: "image/png"});
     await page.evaluate(() => document.documentElement.classList.remove("dark"));
-    await page.getByRole("button", { name: "End conversation" }).click();
+    await page.getByRole("button", { name: "End conversation", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Talk with Cosmo here" }),
     ).toBeVisible();

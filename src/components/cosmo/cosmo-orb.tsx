@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { animate, motion, useMotionValue } from "motion/react";
 import { VoiceOrbit } from "@/components/chat/voice/voice-orbit";
 import { useSelectorRect } from "@/lib/tour/use-anchor-rect";
@@ -15,7 +15,7 @@ export const ORB_SLOT = "[data-cosmo-orb-slot]";
  * Cosmo's ONE live orb. The stage and the docked bar only leave an empty slot; this fixed canvas
  * flies to whichever slot is on screen, so going in and out of Chat is one orb moving, not two
  * orbs swapping. It springs only between slots (FLIP: real size at once, scale from the old);
- * a scroll or resize within a slot just follows. Never takes clicks.
+ * a scroll or resize within a slot just follows. Never takes clicks: they reach the slot button.
  */
 export function CosmoOrb() {
   const { mode, muted } = useVoiceCall();
@@ -70,11 +70,27 @@ export function CosmoOrb() {
     return () => cancelAnimationFrame(frame);
   }, [dockEl, x, y]);
 
+  // Its slot is the button under it (clicking ends the call): light up while that is hovered.
+  const [hover, setHover] = useState(false);
+  useEffect(() => {
+    if (!el) return;
+    const on = () => setHover(true);
+    const off = () => setHover(false);
+    el.addEventListener("pointerenter", on);
+    el.addEventListener("pointerleave", off);
+    return () => {
+      el.removeEventListener("pointerenter", on);
+      el.removeEventListener("pointerleave", off);
+      setHover(false);
+    };
+  }, [el]);
+
   if (!box) return null;
   return (
     <motion.div
       aria-hidden
       data-orb-place={box.kind}
+      data-hover={hover || undefined}
       // In Chat's stage: over the page's cards, under menus and dialogs (z-50). Docked: just above
       // its bar, which sits over dialogs (z-51) so Cosmo stays usable with one open.
       className={box.kind === "stage" ? "cosmo-orb pointer-events-none fixed top-0 left-0 z-40" : "cosmo-orb pointer-events-none fixed top-0 left-0 z-[52]"}

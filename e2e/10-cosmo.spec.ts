@@ -204,6 +204,9 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await expect(orb).toBeVisible();
   const cornerHeight = () =>
     page.evaluate(() => parseFloat(document.documentElement.style.getPropertyValue("--orbit-cosmo-height") || "0"));
+  // Hovered, it perks up: the halo comes on (and the call's code starts loading).
+  await orb.hover();
+  await expect.poll(() => orb.evaluate((el) => getComputedStyle(el, "::after").opacity)).toBe("1");
   await expect.poll(cornerHeight).toBeGreaterThan(40);
 
   // Speaking up: whatever this account's pulse holds, the orb shows at most one nudge, and a
@@ -387,7 +390,12 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await page.screenshot({ path: shot });
   await test.info().attach("cosmo docked", { path: shot, contentType: "image/png" });
 
-  await cosmo.getByRole("button", { name: "End conversation" }).click();
+  // Saying goodbye ends the call once Cosmo's own goodbye has played.
+  send({ type: "UserStartedSpeaking" });
+  send({ type: "ConversationText", role: "user", content: "Bye, Cosmo." });
+  send({ type: "ConversationText", role: "assistant", content: "Bye!" });
+  socket!.send(speech(0.5));
+  send({ type: "AgentAudioDone" });
   await expect.poll(() => ends).toBe(1);
   await expect(orb).toBeVisible();
 
@@ -396,6 +404,10 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await expect.poll(() => starts.length).toBe(2);
   expect(starts[1]).toEqual({ threadId, freshIfMissing: true });
   await expect(cosmo.getByText("Under a minute of Cosmo left for now")).toBeVisible();
-  await cosmo.getByRole("button", { name: "End conversation" }).click();
+  // Clicking Cosmo itself during a call ends it (the orb's canvas lets the click through).
+  const liveOrb = cosmo.getByRole("button", { name: "End conversation with Cosmo" });
+  await liveOrb.hover();
+  await expect(page.locator(".cosmo-orb")).toHaveAttribute("data-hover", "true");
+  await liveOrb.click();
   await expect.poll(() => ends).toBe(2);
 });

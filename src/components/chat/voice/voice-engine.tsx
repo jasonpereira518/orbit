@@ -20,7 +20,7 @@ import {
   voicePagePath,
 } from "@/lib/voice/policy";
 import { withAppEvents } from "@/lib/voice/app-events";
-import { CONFIRM_WINDOW_MS, confirmVerb, isUndo, judgeUtterance, readBack, type ConfirmWindow } from "@/lib/voice/confirm-window";
+import { CONFIRM_WINDOW_MS, confirmVerb, hasWords, isGoodbye, isUndo, judgeUtterance, norm, readBack, repromptLine, type ConfirmWindow } from "@/lib/voice/confirm-window";
 import { plainSpeech } from "@/lib/voice/caption-pace";
 import { setCaptions } from "@/lib/cosmo/captions-pref";
 import { describeScreen, readScreen } from "@/lib/cosmo/screen";
@@ -118,6 +118,11 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
   const lastUserStart = useRef(0);
   /** Anything happening in the call (speech either way, a tool, a mode change): for auto-sleep. */
   const lastActivity = useRef(0);
+  /** The person said goodbye: end once Cosmo's goodbye has played (or after a few seconds). */
+  const goodbye = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (goodbye.current) window.clearTimeout(goodbye.current);
+  }, []);
   /** The last email a spoken "send it" queued, while "undo" can still stop it. */
   const lastSend = useRef<{ sendId: string; until: number } | null>(null);
   const session = useRef<string | null>(null);
@@ -437,8 +442,8 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
         if (current()) voiceControls.current = driver;
       },
       onUserStarted: () => {
+        // Not activity: any sound starts this (a TV, a café). Only real words keep a call awake.
         lastUserStart.current = Date.now();
-        lastActivity.current = Date.now();
       },
       onConnected: () => {
         if (current())
@@ -454,13 +459,15 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
           w.opensAt = Date.now();
           w.expiresAt = w.opensAt + CONFIRM_WINDOW_MS;
         }
+        // Cosmo's goodbye has played to its end: hang up.
+        if (goodbye.current && modeRef.current === "speaking" && next === "listening") void close();
         modeRef.current = next;
-        lastActivity.current = Date.now();
+        if (next === "speaking" || next === "thinking") lastActivity.current = Date.now();
         setVoiceCall(next !== "connecting" ? { mode: next, busy: false } : { mode: next });
       },
       onMessage: (source, text) => {
         if (!current() || !text.trim()) return;
-        lastActivity.current = Date.now();
+        if (source === "ai" || hasWords(text)) lastActivity.current = Date.now();
         // Providers emit finalized turns here; recognition drafts never enter Chat history.
         const turn = { id: crypto.randomUUID(), source, text: text.slice(0, 4000), interrupted: false, revision: 1 };
         setLines([...transcript.current, turn]);
@@ -479,6 +486,13 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
           appEvents.current.push(off ? "Cosmo will no longer speak up on its own." : "Cosmo may speak up again when something is time-sensitive.");
         }
         const send = lastSend.current;
+        // "Undo" just after the window closed: say so, rather than leave the model to guess.
+        if (send && Date.now() >= send.until && Date.now() - send.until < 120_000 && /\b(undo|unsend)\b|\btake it back\b/.test(norm(text))) {
+          lastSend.current = null;
+          appEvents.current.push("The user said undo, but the email had already gone.");
+          voiceControls.current?.say?.("Too late, it already went.");
+          return;
+        }
         if (send && Date.now() < send.until && isUndo(text)) {
           lastSend.current = null;
           void command({ action: "undo_send", sessionId: id, sendId: send.sendId })
@@ -490,12 +504,26 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
             .catch(() => {});
           return;
         }
-        if (!w) return;
+        const leaving = () => {
+          if (!isGoodbye(text) || goodbye.current) return;
+          appEvents.current.push("The user said goodbye; the call ends after your reply.");
+          goodbye.current = window.setTimeout(() => void close(), 8_000);
+        };
+        if (!w) return leaving();
         const judgement = judgeUtterance(w, text, startedAt);
         if (judgement === "early") return;
+        if (judgement === "reprompt") {
+          // A bare "yes" to a send: ask once for the verb. The window reopens only after this
+          // line has played, like the read-back, so its own "send it" can't be heard as a yes.
+          const line = repromptLine(w.verb);
+          Object.assign(w, { reprompted: true, line, heard: false, opensAt: null, expiresAt: null, createdAt: Date.now() });
+          voiceControls.current?.say?.(line);
+          return;
+        }
         confirmRef.current = null;
         if (judgement === "confirm") void act("confirm", w);
         else if (judgement === "cancel") void act("dismiss", w);
+        else leaving();
       },
       onInterrupted: () => {
         if (!current() || modeRef.current !== "speaking") return;
@@ -540,7 +568,7 @@ export function VoiceEngine({ state, threadId, origin = "chat", nudge, cosmo = f
         return withAppEvents(result, queued);
       },
     };
-  }, [active, stop, persist, router, meeting, setTheme, askChat, cosmo]);
+  }, [active, stop, persist, router, meeting, setTheme, askChat, cosmo, close]);
 
   // The adapters connect once per session and must NEVER see a new `events`: their effect
   // reconnects on it, and a reconnect is a new conversation ("Hi, I'm Orbit" mid-sentence).

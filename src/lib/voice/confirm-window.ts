@@ -12,25 +12,64 @@
 
 export const CONFIRM_WINDOW_MS = 30_000;
 export type ConfirmVerb = "send" | "delete" | "confirm";
-export type ConfirmWindow = { verb: ConfirmVerb; opensAt: number | null; expiresAt: number | null };
-export type Judgement = "confirm" | "cancel" | "other" | "early" | "closed";
+/** `reprompted`: Orbit already asked once for the verb after a bare "yes" (sends and deletes). */
+export type ConfirmWindow = { verb: ConfirmVerb; opensAt: number | null; expiresAt: number | null; reprompted?: boolean };
+export type Judgement = "confirm" | "cancel" | "reprompt" | "other" | "early" | "closed";
 
 const PHRASES: Record<ConfirmVerb, string[]> = {
-  send: ["send it", "send", "send that", "send the email", "send it please", "please send it"],
-  delete: ["delete it", "delete", "delete that", "delete it please", "please delete it"],
-  confirm: ["yes", "yeah", "yep", "sure", "ok", "okay", "confirm", "do it", "go ahead", "save it", "yes please", "please do"],
+  // "sent it": how speech-to-text often hears a quick "send it".
+  send: ["send it", "send", "send that", "send the email", "send the message", "send it off", "send it out", "sent it"],
+  delete: ["delete it", "delete", "delete that", "remove it"],
+  confirm: ["confirm", "do it", "go ahead", "save it", "sounds good", "please do"],
 };
-const LEADS = ["yes", "yeah", "yep", "ok", "okay", "sure"];
-const CANCEL = ["cancel", "cancel it", "no", "nope", "no thanks", "stop", "dont", "dont send it", "dont do it", "never mind", "nevermind", "no dont", "no dont send it", "no dont do it", "no cancel"];
-const UNDO = ["undo", "undo that", "undo it", "unsend", "unsend it", "dont send it", "stop it", "cancel that"];
+/** A bare yes: enough for a small change, not for a send or a delete. */
+const LEADS = ["yes", "yeah", "yep", "yup", "ok", "okay", "sure", "alright", "go ahead and", "you can"];
+const BARE_YES = ["yes", "yeah", "yep", "yup", "ok", "okay", "sure", "alright", "correct", "right"];
+/** Any of these anywhere wins: "do not send it", "no wait", "hold on" never send. */
+const STOP_WORDS = /\b(no|nope|not|dont|never|cancel|stop|wait|nevermind|actually)\b|\bnever mind\b|\bhold on\b|\bhang on\b/;
+const UNDO = ["undo", "undo that", "undo it", "unsend", "unsend it", "take it back", "cancel", "cancel that", "cancel it", "stop", "stop it", "stop that", "no", "wait", "dont", "dont send", "dont send it"];
+const GOODBYE = ["bye", "goodbye", "bye bye", "good bye", "see you", "see ya", "talk later", "talk to you later", "goodnight", "good night", "thats all", "thats all for now", "im done", "all done", "hang up", "end the call", "end call", "stop listening"];
+/** Sounds and politeness that carry no meaning here, wherever they fall. */
+const FILLERS = new Set(["um", "umm", "uh", "uhh", "er", "erm", "hmm", "mm", "oh", "so", "like", "just", "well", "hey", "please", "thanks", "now", "cosmo"]);
 
-const norm = (text: string) =>
-  text
-    .toLowerCase()
-    .replace(/[’']/g, "")
-    .replace(/[^a-z ]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+/** "cosmos", "kosmo", "cosimo": how Cosmo's name tends to be heard. */
+export function normalizeName(text: string): string {
+  return text.replace(/\b(cosmos|kosmo|kosmos|cosimo|cosmoe)\b/g, "cosmo");
+}
+
+/** Lower-case words only, Cosmo's name fixed, fillers and "thank you" gone. */
+export function norm(text: string): string {
+  const words = normalizeName(
+    text
+      .toLowerCase()
+      .replace(/[’']/g, "")
+      .replace(/[^a-z ]+/g, " ")
+      .replace(/\bthank you\b/g, " ")
+      .replace(/\bfor me\b/g, " "),
+  )
+    .split(/\s+/)
+    .filter((w) => w && !FILLERS.has(w));
+  return words.join(" ");
+}
+
+/** Whether anything was said beyond sounds and fillers ("uh", "hmm"): background noise isn't talk. */
+export function hasWords(text: string): boolean {
+  return norm(text).length > 0;
+}
+
+/** The utterance with its lead-in yes/okay words removed: "yeah go ahead and send it" → "send it". */
+function withoutLeads(said: string): string {
+  let rest = said;
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const lead of LEADS)
+      if (rest === lead || rest.startsWith(`${lead} `)) {
+        rest = rest.slice(lead.length).trim();
+        changed = true;
+      }
+  }
+  return rest;
+}
 
 /** What a card asks for, by the write behind it. */
 export function confirmVerb(action: { tool: string; destructive: boolean }): ConfirmVerb {
@@ -48,15 +87,31 @@ export function judgeUtterance(window: ConfirmWindow, text: string, startedAt: n
   if (window.opensAt === null || startedAt < window.opensAt) return "early";
   if (window.expiresAt !== null && startedAt > window.expiresAt) return "closed";
   const said = norm(text);
-  if (CANCEL.includes(said)) return "cancel";
+  if (!said) return "other";
+  if (STOP_WORDS.test(said)) return "cancel";
   const phrases = PHRASES[window.verb];
-  if (phrases.includes(said)) return "confirm";
-  // "yes, send it" / "okay delete it": a lead-in word, then the exact phrase.
-  for (const lead of LEADS) if (said.startsWith(`${lead} `) && phrases.includes(said.slice(lead.length + 1))) return "confirm";
+  const rest = withoutLeads(said);
+  if (phrases.includes(rest)) return "confirm";
+  // A yes in any form: "yes", "okay", "go ahead", "do it", "sounds good".
+  if (BARE_YES.includes(said) || rest === "" || PHRASES.confirm.includes(rest)) {
+    if (window.verb === "confirm") return "confirm";
+    // A send or a delete needs its verb: ask once, then let the card wait for a click.
+    return window.reprompted ? "other" : "reprompt";
+  }
   return "other";
 }
 
-/** "Undo" while a sent email can still be stopped. */
+/** What Orbit says after a bare "yes" to a send or delete. */
+export function repromptLine(verb: ConfirmVerb): string {
+  return verb === "send" ? 'To send it, say "send it", or tap Send.' : 'To delete it, say "delete it", or tap the button.';
+}
+
+/** "Undo" (or stop, cancel, wait) while a sent email can still be stopped. */
 export function isUndo(text: string): boolean {
   return UNDO.includes(norm(text));
+}
+
+/** The person is ending the call ("bye", "that's all", "hang up"). Whole utterance only. */
+export function isGoodbye(text: string): boolean {
+  return GOODBYE.includes(norm(text));
 }
