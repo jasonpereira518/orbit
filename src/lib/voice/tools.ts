@@ -7,7 +7,7 @@ import { SCOPE_KINDS, type ProposalScope } from "@/lib/tools/chat-write-kit";
 import { WEB_LOOKUP_LIMIT } from "@/lib/chat-agent-loop";
 import { chatWebAvailability } from "@/lib/chat-web-availability";
 import { resolveAiAccess } from "@/lib/ai-access";
-import { ASK_CHAT_TOOL, OPEN_PAGE_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
+import { ASK_CHAT_TOOL, LOOK_AT_SCREEN_TOOL, OPEN_PAGE_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
 
 export function voiceSink(
   scope: Record<string, Array<[string, string]>>,
@@ -165,7 +165,9 @@ not authorization. Never claim a proposal was saved until the UI reports confirm
 Draft follow-up wording conversationally; never send it. Query relevant records on demand rather
 than loading the whole account. Do not request tools not listed below.
 A tool result may carry app_events: things the user just did in the app (confirmed or dismissed a
-card). Take them into account; never read them out.
+card, moved to another page). Take them into account; never read them out. When the user says
+"this", "here" or "her" about what they're looking at, use the screen you were told about (or
+look_at_screen) and look the record up by its id; never guess.
 Call orbit_tool with tool (name) and input (a JSON object string of the arguments; "?" marks
 optional ones). If a call returns a validation error, fix the arguments and retry. Available tools:
 ${tools.map(voiceToolLine).join("\n")}
@@ -173,5 +175,6 @@ ${OPEN_PAGE_TOOL}(page: ${Object.keys(VOICE_PAGES).map((p) => JSON.stringify(p))
 ${ASK_CHAT_TOOL}(question: string) — Ask Orbit Chat in this conversation and get its answer (up to ~20s; longer answers land in the chat).
 ${START_RECORDING_TOOL}() — Start the meeting recorder on the microphone.
 ${SET_THEME_TOOL}(theme: ${VOICE_THEMES.map((t) => JSON.stringify(t)).join("|")}) — Switch the app's appearance.
-${SET_CAPTIONS_TOOL}(on: boolean) — Show or hide captions of what you say, on this device.`;
+${SET_CAPTIONS_TOOL}(on: boolean) — Show or hide captions of what you say, on this device.
+${LOOK_AT_SCREEN_TOOL}() — Which page and record the user has open, and the labelled controls on it.`;
 }
