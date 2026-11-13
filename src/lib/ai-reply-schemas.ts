@@ -56,7 +56,15 @@ export const rerankReplySchema = z.object({
 });
 
 /** Fields are `unknown` on purpose: each goes through its own sanitizer. This fixes the outer shape. */
-export const workHistoryAnswerSchema = z.object({ match: z.unknown().optional(), headline: z.unknown().optional(), experiences: z.unknown().optional() });
+export const workHistoryAnswerSchema = z.object({
+  match: z.unknown().optional(),
+  headline: z.unknown().optional(),
+  experiences: z.unknown().optional(),
+  // Profile finder (contact-info accuracy PR 5): the name, place and profile the sources show.
+  name: z.unknown().optional(),
+  location: z.unknown().optional(),
+  linkedinUrl: z.unknown().optional(),
+});
 
 export const currentRoleAnswerSchema = z.object({
   match: z.unknown().optional(),

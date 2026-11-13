@@ -31,6 +31,9 @@ import {
   calendarAdapter,
 } from "@/lib/import-adapters/calendar";
 
+import { linkedinSignalsAdapter } from "@/lib/import-adapters/linkedin-signals";
+import { LINKEDIN_EXPORT_IMPORT_TYPE } from "@/lib/linkedin-export-type";
+
 /**
  * Every import type the engine can run, keyed by `imports.import_type`.
  *
@@ -53,6 +56,7 @@ const ADAPTERS: Record<string, ImportAdapter<ImportJobRowPayload>> = {
   [IMESSAGE_CHAT_IMPORT_TYPE]: chatAdapter("imessage"),
   [CALENDAR_ICS_IMPORT_TYPE]: calendarAdapter,
   [CALENDAR_CSV_IMPORT_TYPE]: calendarAdapter,
+  [LINKEDIN_EXPORT_IMPORT_TYPE]: linkedinSignalsAdapter,
 };
 
 /**

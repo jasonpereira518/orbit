@@ -71,7 +71,7 @@ function searchFailureCopy(outcome: string): string {
     case "not_found":
       return "Couldn’t find their work history on the web.";
     case "no_anchor":
-      return "Add a LinkedIn URL to this contact first.";
+      return "Add their full name with a company, school or LinkedIn URL, so Orbit can tell them apart from people with the same name.";
     case "no_ai":
       return "Add an AI key in Settings to search the web for this.";
     case "rate_limited":
@@ -179,19 +179,17 @@ export function ContactExperienceSection({
             Their roles, schools, and About — so you can ask about any of it
             in chat.
           </p>
-          {!linkedinUrl && (
-            <p className="text-sm text-muted-foreground">
-              Add a LinkedIn URL to this contact to fill their profile.
-            </p>
-          )}
-          {linkedinUrl && canSearchWeb && (
+          {/* Without a LinkedIn URL the search looks for their profile by name and company or
+              school, and saves only what matches (profile-match.ts); the server says if there
+              isn't enough to go on. */}
+          {canSearchWeb && (
             <div className="pt-1">
-              <FindHistoryButton contactId={contactId} label="Find work history" />
+              <FindHistoryButton contactId={contactId} label={linkedinUrl ? "Find work history" : "Find their profile"} />
             </div>
           )}
           {/* Honest rather than silent: without this, a contact with no AI key configured
               just looks like there is no way to fill this in. */}
-          {linkedinUrl && !canSearchWeb && (
+          {!canSearchWeb && (
             <p className="text-sm text-muted-foreground">
               Add an AI key in{" "}
               <a

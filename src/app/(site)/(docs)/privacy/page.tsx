@@ -351,6 +351,14 @@ export default function PrivacyPage() {
               bodies, and it does not use this mail to train models or for advertising.
             </p>
             <p>
+              In those same messages, when the sender is already one of your contacts, Orbit reads
+              the signature at the end of their own text by rule, with no AI, and copies their
+              role, company, phone number and LinkedIn link into any of those fields that are
+              empty on their contact. It never changes a field that already has a value, and each
+              one it fills is listed under &ldquo;Changed by Orbit&rdquo; on the Duplicates page,
+              where you can undo it.
+            </p>
+            <p>
               The notes it keeps can appear as reasons on your Radar cards, in the short lines
               and drafts Radar writes with your AI provider, and in your in-app briefing. They
               are never put in Radar&rsquo;s Monday email.
