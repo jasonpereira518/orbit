@@ -324,11 +324,14 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await expect(page.getByRole("button", {name: "Retry saving", exact: true})).toHaveCount(0);
     await expect.poll(() => turns.some(turn => turn.interrupted)).toBe(true);
     expect(new Set(turns.filter(turn => turn.text.startsWith("Ada researches")).map(turn => turn.id)).size).toBe(1);
-    // The orb is painted on top in the stage, not behind Chat's card.
-    expect(await page.evaluate(() => {
-      const box = document.querySelector('[data-cosmo-orb-slot="stage"]')!.getBoundingClientRect();
+    // The orb is painted on top in the stage, not behind Chat's card. Polled: the orb is loaded
+    // lazily and may still be arriving.
+    await expect.poll(() => page.evaluate(() => {
+      const slot = document.querySelector('[data-cosmo-orb-slot="stage"]');
+      const orbEl = document.querySelector<HTMLElement>("[data-orb-place]");
+      if (!slot || !orbEl) return false;
+      const box = slot.getBoundingClientRect();
       // Hit-testing skips pointer-events: none, so make the orb hittable just for this probe.
-      const orbEl = document.querySelector<HTMLElement>("[data-orb-place]")!;
       orbEl.style.pointerEvents = "auto";
       const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
       orbEl.style.pointerEvents = "";

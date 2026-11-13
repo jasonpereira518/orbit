@@ -56,6 +56,11 @@ export type VoiceAgentControls = {
   sendContext?(text: string): void;
   /** Speak this exact line now. Deepgram only; ElevenLabs cannot speak a fixed line. */
   say?(text: string): void;
+  /**
+   * How much of the agent's current line has played, in seconds, for paced captions. Only
+   * providers that hand Orbit the audio can say; without it captions estimate from speech rate.
+   */
+  getPlayback?(): { text: string | null; played: number; queued: number; complete: boolean } | null;
 };
 export type VoiceAgentEvents = {
   onReady(controls: VoiceAgentControls | null): void;

@@ -7,7 +7,7 @@ import { SCOPE_KINDS, type ProposalScope } from "@/lib/tools/chat-write-kit";
 import { WEB_LOOKUP_LIMIT } from "@/lib/chat-agent-loop";
 import { chatWebAvailability } from "@/lib/chat-web-availability";
 import { resolveAiAccess } from "@/lib/ai-access";
-import { ASK_CHAT_TOOL, OPEN_PAGE_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
+import { ASK_CHAT_TOOL, OPEN_PAGE_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
 
 export function voiceSink(
   scope: Record<string, Array<[string, string]>>,
@@ -172,5 +172,6 @@ ${tools.map(voiceToolLine).join("\n")}
 ${OPEN_PAGE_TOOL}(page: ${Object.keys(VOICE_PAGES).map((p) => JSON.stringify(p)).join("|")}, id?: string, filters?: object) — Open a page of the Orbit app. "contact" and "event" need that record's id from a lookup. filters by page: ${Object.entries(VOICE_PAGE_FILTERS).map(([page, names]) => `${page}: ${names.join(", ")}`).join("; ")}.
 ${ASK_CHAT_TOOL}(question: string) — Ask Orbit Chat in this conversation and get its answer (up to ~20s; longer answers land in the chat).
 ${START_RECORDING_TOOL}() — Start the meeting recorder on the microphone.
-${SET_THEME_TOOL}(theme: ${VOICE_THEMES.map((t) => JSON.stringify(t)).join("|")}) — Switch the app's appearance.`;
+${SET_THEME_TOOL}(theme: ${VOICE_THEMES.map((t) => JSON.stringify(t)).join("|")}) — Switch the app's appearance.
+${SET_CAPTIONS_TOOL}(on: boolean) — Show or hide captions of what you say, on this device.`;
 }

@@ -37,6 +37,7 @@ export const OPEN_PAGE_TOOL = "open_page";
 export const ASK_CHAT_TOOL = "ask_chat";
 export const START_RECORDING_TOOL = "start_recording";
 export const SET_THEME_TOOL = "set_theme";
+export const SET_CAPTIONS_TOOL = "set_captions";
 export const VOICE_THEMES = ["light", "dark", "system"] as const;
 
 /**

@@ -140,10 +140,17 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
     if (body.action === "end") ends++;
     return route.fulfill({ json: { ok: true } });
   });
+  let socket: { send(message: string | Buffer): void } | undefined;
+  const frames: Array<Record<string, unknown>> = [];
   await page.routeWebSocket("wss://agent.deepgram.com/**", (ws) => {
     sockets++;
+    socket = ws;
+    // One handler: a second onMessage replaces the first.
     ws.onMessage((raw) => {
-      if (typeof raw === "string" && JSON.parse(raw).type === "Settings") ws.send(JSON.stringify({ type: "SettingsApplied" }));
+      if (typeof raw !== "string") return;
+      const message = JSON.parse(raw);
+      frames.push(message);
+      if (message.type === "Settings") ws.send(JSON.stringify({ type: "SettingsApplied" }));
     });
     ws.send(JSON.stringify({ type: "Welcome", request_id: "cosmo-test" }));
   });
@@ -164,6 +171,51 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await expect
     .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("orbit:cosmo-thread") ?? "{}").id))
     .toBe(threadId);
+
+  // Captions: off by default, on from the bar, and they keep pace with the voice.
+  const send = (message: unknown) => socket!.send(JSON.stringify(message));
+  const speech = (seconds: number) => {
+    const audio = Buffer.alloc(seconds * 48000);
+    for (let i = 0; i < seconds * 24000; i++) audio.writeInt16LE(Math.round(Math.sin((i * 2 * Math.PI * 220) / 24000) * 6000), i * 2);
+    return audio;
+  };
+  const caption = page.locator("[data-cosmo-caption] p:not(.truncate)");
+  const captionWords = () => caption.textContent({ timeout: 1000 }).then((t) => (t ?? "").replace("…", "").trim().split(/\s+/).filter(Boolean).length).catch(() => 0);
+  const ccButton = cosmo.getByRole("button", { name: "Captions" });
+  await expect(ccButton).toHaveAttribute("aria-pressed", "false");
+  await ccButton.click();
+  await expect(ccButton).toHaveAttribute("aria-pressed", "true");
+  const line = "Coffee with Ada is at three tomorrow at the usual place near her office";
+  send({ type: "ConversationText", role: "assistant", content: line });
+  socket!.send(speech(3));
+  send({ type: "AgentAudioDone" });
+  const seen: number[] = [];
+  for (let i = 0; i < 40 && seen.at(-1) !== 14; i++) {
+    seen.push(await captionWords());
+    await page.waitForTimeout(100);
+  }
+  expect(seen.some((n) => n > 0 && n < 14), `words appear as it speaks, not all at once: ${seen.join(",")}`).toBe(true);
+  await expect.poll(captionWords).toBe(14);
+
+  // Cut off mid-line: the words said so far stay, marked with an ellipsis, and stop growing.
+  send({ type: "ConversationText", role: "assistant", content: "Before that you might want to read her latest paper on compilers and ask her about it" });
+  socket!.send(speech(5));
+  await expect.poll(async () => (await caption.textContent())?.startsWith("Before")).toBe(true);
+  send({ type: "UserStartedSpeaking" });
+  await expect(caption).toHaveText(/…$/);
+  const cutAt = await captionWords();
+  await page.waitForTimeout(600);
+  expect(await captionWords()).toBe(cutAt);
+  expect(cutAt).toBeLessThan(17);
+
+  // The voice can switch them too.
+  send({
+    type: "FunctionCallRequest",
+    functions: [{ id: "cc_off", name: "orbit_tool", client_side: true, arguments: JSON.stringify({ tool: "set_captions", input: JSON.stringify({ on: false }) }) }],
+  });
+  await expect(ccButton).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("[data-cosmo-caption]")).toHaveCount(0);
+  await expect.poll(() => frames.find((f) => f.type === "FunctionCallResponse" && f.id === "cc_off")?.content).toContain("off");
 
   // Another page: same call, same socket, still docked bottom-right, and the corner it takes is
   // published so toasts and the job stack stack above it.
