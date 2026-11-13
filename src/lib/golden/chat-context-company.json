@@ -143,6 +143,8 @@
       "wizardStep": null,
       "workHistoryAutoEnabled": 1,
       "writingInstructions": null,
+      "writingStyleProfile": null,
+      "writingStyleProfileUpdatedAt": null,
       "ycModeEnabled": false
     },
     "userId": "golden-user"
