@@ -13,16 +13,19 @@ import {
   LANDING_INTRO_KEY,
   LANDING_INTRO_PREPAINT_SCRIPT,
   SKY_FADE_MS,
-  STREAK_MAX,
-  WARP_DEPTH_MIN,
+  STREAK_LAG_MS,
+  WARP_EXTRA_SPAN,
+  WARP_FIELD_REACH,
+  WARP_LAP,
+  WARP_TRAVEL,
   WARP_MS,
   introOrigin,
   landingWarpStart,
   skyAlpha,
-  warpK,
+  warpLogK,
   warpPoint,
   warpProgress,
-  warpTailK,
+  warpStarAlpha,
 } from "../src/lib/landing-intro";
 
 function monotonicWithinOne() {
@@ -35,20 +38,50 @@ function monotonicWithinOne() {
   return true;
 }
 
-// The streak trails from each star back toward the origin and collapses to a point at the end.
-const endK = warpK(0.9, warpProgress(WARP_MS));
-const head = warpPoint(300, 200, 100, 100, endK);
-const tail = warpPoint(300, 200, 100, 100, warpTailK(endK, warpProgress(WARP_MS)));
-function tailShrinks() {
-  let prev = Infinity;
-  for (let t = 0; t <= WARP_MS; t += 16) {
-    const p = warpProgress(t);
-    const len = warpK(0.9, p) - warpTailK(warpK(0.9, p), p);
-    if (len > prev + 1e-12 || len < 0) return false;
-    prev = len;
+// The flight (Jason, Nov 12: "like you are zooming to space and then you arrive at the solar
+// system"). Each star's depth `u` (log of k) streams outward and wraps back to the vanishing
+// point like flying through a field, then decelerates onto u=0, its exact rest position.
+// Two random numbers per star: lap offset in [0, WARP_LAP) and extra travel in
+// [0, WARP_EXTRA_SPAN). Stand-ins: 50 stars with the two spread independently (37 is coprime
+// with 50).
+const STARS = Array.from({ length: 50 }, (_, i) => [(i / 50) * WARP_LAP, (((i * 37) % 50) / 50) * WARP_EXTRA_SPAN] as const);
+const allLand = STARS.every(([o, e]) => warpLogK(o, e, 1) === 0);
+// Within a frame step a star either moves outward (u grows) or wraps back by one lap.
+function flowsOutward() {
+  for (const [o, e] of STARS) {
+    let prev = warpLogK(o, e, 0);
+    for (let t = 16; t <= WARP_MS; t += 16) {
+      const u = warpLogK(o, e, warpProgress(t));
+      const wrapped = Math.abs(prev - u - WARP_LAP) < 0.5;
+      if (u < prev - 1e-9 && !wrapped) return false;
+      prev = u;
+    }
   }
   return true;
 }
+// The screen is full from the first frame: stars sit at every depth, inside and past their rest.
+const startDepths = STARS.map(([o, e]) => warpLogK(o, e, 0));
+const coversDepths = Math.min(...startDepths) < -1 && Math.max(...startDepths) > 0.5;
+// Still mixed well into the flight, not bunched into one shrunken copy of the sky.
+const midDepths = STARS.map(([o, e]) => warpLogK(o, e, warpProgress(600)));
+const midSpread = Math.max(...midDepths) - Math.min(...midDepths);
+// Every star actually travels: at least one full lap over the flight.
+function travels() {
+  return STARS.every(([o, e]) => {
+    let wraps = 0;
+    let prev = warpLogK(o, e, 0);
+    for (let t = 16; t <= WARP_MS; t += 16) {
+      const u = warpLogK(o, e, warpProgress(t));
+      if (u < prev) wraps++;
+      prev = u;
+    }
+    return wraps >= 1;
+  });
+}
+// The streak joins where the star was STREAK_LAG_MS ago; once the flight is over it has no length.
+const END = WARP_MS + STREAK_LAG_MS;
+const head = warpPoint(300, 200, 100, 100, Math.exp(warpLogK(0.7, 0.3, warpProgress(END))));
+const tail = warpPoint(300, 200, 100, 100, Math.exp(warpLogK(0.7, 0.3, warpProgress(END - STREAK_LAG_MS))));
 const restPoint = warpPoint(300, 200, 100, 100, 1);
 const s = LANDING_INTRO_PREPAINT_SCRIPT;
 
@@ -117,16 +150,20 @@ const CASES: Array<[label: string, got: unknown, expected: unknown]> = [
   ["progress ends at exactly 1", warpProgress(WARP_MS), 1],
   ["a tab hidden for a minute comes back at rest", warpProgress(WARP_MS * 40), 1],
   ["progress is monotonic and never above 1", monotonicWithinOne(), true],
-  ["k ends at exactly 1", warpK(0.2, 1), 1],
-  ["k starts at the star's depth", warpK(0.2, 0), 0.2],
+  ["every star lands exactly on its rest depth", allLand, true],
+  ["stars stream outward, wrapping back to the vanishing point", flowsOutward(), true],
+  ["the first frame has stars at every depth (screen covered)", coversDepths, true],
+  ["every star flies at least one full lap", travels(), true],
+  ["600ms in, stars still sit across most of a lap of depth", midSpread > WARP_LAP * 0.8, true],
+  // As the flight slows every star closes in on its rest from the sun's side, so the edges would
+  // empty out. Temporary stars resting off-screen, out to this reach, fill them and then leave.
+  ["temporary edge stars reach well past the screen", WARP_FIELD_REACH >= 1.8, true],
+  ["every star ends at full brightness", STARS.every(([o, e]) => warpStarAlpha(o, e, 1) === 1), true],
+  // At p=0 this offset puts the star 0.01 into its lap: it has just respawned at the sun.
+  ["a star just respawned at the vanishing point is faint", warpStarAlpha(((WARP_TRAVEL % WARP_LAP) + 0.01) % WARP_LAP, 0, 0) < 0.2, true],
   ["k=1 lands on the rest pixel (x)", restPoint.x, 300],
   ["k=1 lands on the rest pixel (y)", restPoint.y, 200],
   ["streak has no length once the warp is over", head.x === tail.x && head.y === tail.y, true],
-  ["streak only ever shrinks", tailShrinks(), true],
-  ["streak starts STREAK_MAX of the way back to the origin", warpTailK(1, 0), 1 - STREAK_MAX],
-  // Jason, Nov 12: the whole screen is covered with stars from the first frame, not poured out
-  // of one point. Every star starts most of the way to its rest position.
-  ["every star starts at least 80% of the way to its rest", WARP_DEPTH_MIN >= 0.8, true],
   ["sky alpha starts at 0", skyAlpha(0), 0],
   ["sky alpha is full after the fade", skyAlpha(SKY_FADE_MS), 1],
   ["sky alpha stays full", skyAlpha(1e6), 1],

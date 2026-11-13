@@ -26,13 +26,13 @@ Why: a memorable first impression for the landing page.
 0.00s  first paint        "Orbit" fades up
 0.15s                     tagline and paragraph fade up
 0.30s                     hero button fades up (md and wider; phones use the header's)
-sky loads (after idle,    background and nebulae fade up over ~0.4s; the
- as today, ~0.5–2s)       whole screen is already covered with streaking stars
- +0.5s                    full speed
- +1.1s                    streaks shorten as the stars slow
- +1.6s                    each star stops exactly where it rests today
-solar system loads        comes out of the warp: small, faint, a little to the
- (same idle gate)         left of its spot, growing into place over ~1.1s
+sky loads (after idle,    the flight: already at speed, stars stream out of the
+ as today, ~0.5–2s)       sun past the camera, covering the whole screen
+ +0.6–1.2s                still flying; streaks begin to shorten
+ +1.8s                    short dashes; the flight is slowing
+ +2.4s                    arrived: each star stops exactly where it rests today
+solar system loads        a speck at the sun that grows into place over 2.4s
+ (same idle gate)         as the flight slows, scaling about its own centre
 ```
 
 After that the page is exactly today's page. Scroll, clicks and the header work the
@@ -83,18 +83,25 @@ as today (one block). With it, the block's own fade is off and its three parts
 
 **The warp.** A new `intro` prop on `Starfield` (off by default), passed only by the
 landing page. When on, and the attribute is present, and motion is allowed, the first
-~1.6s of drawing is the warp:
+~2.4s of drawing is the flight:
 
 - Vanishing point `V`: the centre of the solar system's box, found once by a
   `data-sky-warp-origin` attribute on the stage wrapper in `hero-pin.tsx`. Fallback:
   the viewport centre.
-- Revised Nov 12 after the first build (Jason: "Instead of all the stars coming from one
-  place the whole screen should always be covered with stars"): each star is drawn at
-  `V + (rest − V) × k`, where `k` starts at a random 0.82–0.97 (already near its own
-  place, so the screen is full from the first frame) and eases to exactly 1.
-- Each streak trails from the star back toward `V`, starting at half the star's distance
-  from `V` and shrinking to a point as the warp slows: dropping out of lightspeed rather
-  than pouring out of one point. No second canvas.
+- Revised twice on Nov 12. Jason: "Instead of all the stars coming from one place the
+  whole screen should always be covered with stars", then "I want it to be like you are
+  zooming to space and then you arrive at the solar system."
+- A forward flight. Each star is drawn at `V + (rest − V) × e^u`, where `u` is its depth
+  in log space: it streams outward past the camera and wraps back to `V`, like flying
+  through an endless field, until the flight slows and its last lap ends at `u = 0`, its
+  exact rest position. Two random numbers per star (lap offset, extra distance flown)
+  spread the stars across every depth so the screen is full on every frame.
+- As the flight slows every star closes in on its rest from `V`'s side, which would empty
+  the edges. Temporary edge stars, resting off-screen out to 2x the screen's distance from
+  `V`, fill them and land off-screen exactly when the flight ends.
+- The streak joins where the star was 70ms ago, so its length is the speed and it
+  collapses on arrival; it is skipped across a wrap. Respawned stars fade up. No second
+  canvas.
 - The background blit and the stars' alpha ramp up over the first ~0.4s, so the sky
   does not pop in.
 - Shooting stars wait until the warp is over.
@@ -105,9 +112,10 @@ The timing and the position formula live in one small pure module
 (`src/lib/landing-intro.ts`) so they can be checked without a browser.
 
 **The solar system.** CSS only. With the attribute present, `.landing-solar-enter`
-uses a new keyframe: from about 30% size, transparent and shifted left by about a
-fifth of its own width, to rest, over ~1.1s. On phones the shift is larger, since the
-system sits under the text and nothing is beside it. It starts when the solar system
+uses a new keyframe: from 4% size and transparent, at the sun's position, growing to
+rest over 2.4s (the flight's length), so you arrive at it. It scales about its own
+centre and never moves toward the text. (Replaced the first build's left-to-right drift
+when the flight was asked for.) It starts when the solar system
 mounts; the sky starts when the sky mounts. Both sit behind the same idle gate, so
 they start within a few tens of milliseconds of each other. No shared clock (my call:
 add one only if the drift is visible).

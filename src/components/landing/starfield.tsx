@@ -18,16 +18,18 @@ import {
   type ConstellationSearch,
 } from "@/lib/constellation-match";
 import {
-  WARP_DEPTH_MAX,
-  WARP_DEPTH_MIN,
+  STREAK_LAG_MS,
+  WARP_EXTRA_SPAN,
+  WARP_FIELD_REACH,
+  WARP_LAP,
   WARP_MS,
   introOrigin,
   landingWarpStart,
   skyAlpha,
-  warpK,
+  warpLogK,
   warpPoint,
   warpProgress,
-  warpTailK,
+  warpStarAlpha,
 } from "@/lib/landing-intro";
 
 // Opaque fills with the alpha on `globalAlpha`: an `rgba(…, alpha)` string per star per
@@ -62,10 +64,12 @@ type Star = {
   wx: number;
   wy: number;
   /**
-   * First-visit landing intro only: the fraction of its rest distance from the warp origin this
-   * star starts at (`lib/landing-intro.ts`). Zero, and never read, on every other sky.
+   * First-visit landing intro only: the star's lap offset (d0) and extra flight distance (d1),
+   * both random in [0, WARP_LAP) (`lib/landing-intro.ts`). Zero, and never read, on every other
+   * sky.
    */
   d0: number;
+  d1: number;
 };
 
 type ShootingStar = {
@@ -97,6 +101,8 @@ const PARALLAX = 0.35;
  * keeps the per-frame arc count bounded on ultrawide displays. */
 const STAR_AREA = 2650;
 const STAR_CAP = 1400;
+/** The flight's temporary edge stars (landing intro only, ~2.4s). */
+const EDGE_STAR_CAP = 1800;
 
 /* ── The gravity well (interactive skies only) ──
  *
@@ -249,6 +255,47 @@ export function Starfield({
     let warpEnd = warpFrom === null ? -Infinity : warpFrom + WARP_MS;
     let warpOx = 0;
     let warpOy = 0;
+    /** Temporary stars resting just off-screen; drawn only during the flight. */
+    let edgeStars: Star[] = [];
+
+    /**
+     * One star of the first-visit flight. The star is drawn on the line from the sun through its
+     * rest position, e^u of the way out, streaming outward and wrapping back to the sun until its
+     * last lap lands it at rest. The streak joins where it was STREAK_LAG_MS ago — skipped across
+     * a wrap, which would otherwise draw a line from the edge back to the sun. Culled on the
+     * drawn position. Returns where to draw a plain dot, or null when it drew a streak or is
+     * off-screen.
+     */
+    function paintFlightStar(
+      s: Star,
+      restX: number,
+      restY: number,
+      alpha: number,
+      r: number,
+      p: number,
+      prevP: number
+    ): { x: number; y: number; alpha: number } | null {
+      const u = warpLogK(s.d0, s.d1, p);
+      const head = warpPoint(restX, restY, warpOx, warpOy, Math.exp(u));
+      if (head.y < -8 || head.y > height + 8 || head.x < -8 || head.x > width + 8) return null;
+      const a = alpha * warpStarAlpha(s.d0, s.d1, p);
+      const uPrev = warpLogK(s.d0, s.d1, prevP);
+      if (uPrev <= u) {
+        const tail = warpPoint(restX, restY, warpOx, warpOy, Math.exp(uPrev));
+        if (Math.abs(head.x - tail.x) + Math.abs(head.y - tail.y) >= 0.5) {
+          ctx!.strokeStyle = s.gold ? GOLD_FILL : WHITE_FILL;
+          ctx!.globalAlpha = a;
+          ctx!.lineWidth = r * 2;
+          ctx!.lineCap = "round";
+          ctx!.beginPath();
+          ctx!.moveTo(tail.x, tail.y);
+          ctx!.lineTo(head.x, head.y);
+          ctx!.stroke();
+          return null;
+        }
+      }
+      return { x: head.x, y: head.y, alpha: a };
+    }
     let drawnOnce = false;
 
     // Interactive state. `settled` is what keeps the idle cost equal to a plain
@@ -329,11 +376,11 @@ export function Starfield({
       paintBackground();
 
       const count = Math.min(Math.floor((width * fieldH) / STAR_AREA), STAR_CAP);
-      stars = Array.from({ length: count }, () => {
+      const makeStar = (x: number, y: number): Star => {
         const gold = Math.random() < 0.04;
         return {
-          x: Math.random() * width,
-          y: Math.random() * fieldH,
+          x,
+          y,
           r: Math.random() * 1.4 + 0.3,
           a: Math.random() * 0.55 + 0.25,
           twinkle: Math.random() * 0.008 + 0.004,
@@ -345,9 +392,14 @@ export function Starfield({
           glow: 0,
           wx: 0,
           wy: 0,
-          d0: warping ? WARP_DEPTH_MIN + Math.random() * (WARP_DEPTH_MAX - WARP_DEPTH_MIN) : 0,
+          d0: warping ? Math.random() * WARP_LAP : 0,
+          d1: warping ? Math.random() * WARP_EXTRA_SPAN : 0,
         };
-      });
+      };
+      stars = Array.from({ length: count }, () =>
+        makeStar(Math.random() * width, Math.random() * fieldH)
+      );
+      edgeStars = [];
       if (warping) {
         // The vanishing point is the solar system's centre, so the sky comes out of the place
         // the system then grows into. The canvas is fixed at inset 0, so viewport = canvas px.
@@ -359,6 +411,21 @@ export function Starfield({
         if (origin) {
           warpOx = origin.x;
           warpOy = origin.y;
+          // The temporary edge stars (WARP_FIELD_REACH): the same density as the sky, resting
+          // in the band between the screen and REACH times its distance from the sun, in
+          // viewport px (no field wrap — they only exist for the flight).
+          const x0 = warpOx - WARP_FIELD_REACH * warpOx;
+          const x1 = warpOx + WARP_FIELD_REACH * (width - warpOx);
+          const y0 = warpOy - WARP_FIELD_REACH * warpOy;
+          const y1 = warpOy + WARP_FIELD_REACH * (height - warpOy);
+          const band = (x1 - x0) * (y1 - y0) - width * height;
+          const n = Math.min(Math.round((band * count) / (width * fieldH)), EDGE_STAR_CAP);
+          while (edgeStars.length < n) {
+            const ex = x0 + Math.random() * (x1 - x0);
+            const ey = y0 + Math.random() * (y1 - y0);
+            if (ex >= 0 && ex <= width && ey >= 0 && ey <= height) continue;
+            edgeStars.push(makeStar(ex, ey));
+          }
         } else {
           // Scrolled past the hero before the sky loaded: plain sky (lib/landing-intro.ts).
           warpEnd = -Infinity;
@@ -758,6 +825,7 @@ export function Starfield({
         ctx!.globalAlpha = 1;
       }
       const warpP = warping ? warpProgress(warpE) : 1;
+      const warpPrevP = warping ? warpProgress(warpE - STREAK_LAG_MS) : 1;
 
       // Read scroll once per frame rather than binding a scroll listener —
       // the value is only ever consumed here.
@@ -792,28 +860,12 @@ export function Starfield({
           : s.a * (0.65 + 0.35 * Math.sin(now * s.twinkle + s.phase));
 
         if (warping) {
-          // The first-visit warp (never on an interactive sky, so `active` is false here). The
-          // star is drawn `k` of the way from the origin to its rest position (most of the way
-          // already, so the screen is full from the first frame), with a streak trailing back
-          // toward the origin that shrinks to a point. Culled on the drawn position.
-          const k = warpK(s.d0, warpP);
-          const p = warpPoint(x, y, warpOx, warpOy, k);
-          if (p.y < -8 || p.y > height + 8 || p.x < -8 || p.x > width + 8) continue;
-          const q = warpPoint(x, y, warpOx, warpOy, warpTailK(k, warpP));
-          alpha *= warpFade;
-          x = p.x;
-          y = p.y;
-          if (Math.abs(p.x - q.x) + Math.abs(p.y - q.y) >= 0.5) {
-            ctx!.strokeStyle = s.gold ? GOLD_FILL : WHITE_FILL;
-            ctx!.globalAlpha = alpha;
-            ctx!.lineWidth = r * 2;
-            ctx!.lineCap = "round";
-            ctx!.beginPath();
-            ctx!.moveTo(q.x, q.y);
-            ctx!.lineTo(p.x, p.y);
-            ctx!.stroke();
-            continue;
-          }
+          // The first-visit flight (never on an interactive sky, so `active` is false here).
+          const dot = paintFlightStar(s, x, y, alpha * warpFade, r, warpP, warpPrevP);
+          if (!dot) continue;
+          x = dot.x;
+          y = dot.y;
+          alpha = dot.alpha;
         } else if (!active) {
           // The plain sky: exactly the work a non-interactive starfield does.
           if (y < -8 || y > height + 8) continue;
@@ -920,6 +972,20 @@ export function Starfield({
         ctx!.arc(x, y, r, 0, Math.PI * 2);
         ctx!.fill();
         if (s.bloom) ctx!.shadowBlur = 0;
+      }
+      if (warping) {
+        for (const s of edgeStars) {
+          const dot = paintFlightStar(s, s.x, s.y, s.a * warpFade, s.r, warpP, warpPrevP);
+          if (!dot) continue;
+          ctx!.beginPath();
+          ctx!.fillStyle = s.gold ? GOLD_FILL : WHITE_FILL;
+          ctx!.globalAlpha = dot.alpha;
+          ctx!.arc(dot.x, dot.y, s.r, 0, Math.PI * 2);
+          ctx!.fill();
+        }
+      } else if (edgeStars.length > 0) {
+        // Landed: every edge star is off-screen at rest, so they are simply let go.
+        edgeStars = [];
       }
       ctx!.globalAlpha = 1;
 

@@ -25,25 +25,46 @@ export const LANDING_INTRO_ATTR = "data-landing-intro";
  */
 export const LANDING_INTRO_PREPAINT_SCRIPT = `try{var d=document.documentElement,h=location.hostname,dev=h==="localhost"||h==="127.0.0.1"||h==="[::1]"||/\\.localhost$/.test(h);if(!location.hash&&d.getAttribute("data-motion")!=="reduce"&&!matchMedia("(prefers-reduced-motion: reduce)").matches&&(dev||!sessionStorage.getItem(${JSON.stringify(LANDING_INTRO_KEY)}))){sessionStorage.setItem(${JSON.stringify(LANDING_INTRO_KEY)},"1");d.setAttribute(${JSON.stringify(LANDING_INTRO_ATTR)},"")}}catch(e){}`;
 
-/* Tuning knobs. Starting points; set by eye in the browser. */
-export const WARP_MS = 1600;
+/*
+ * The flight (Jason, Nov 12: "like you are zooming to space and then you arrive at the solar
+ * system", and earlier: "the whole screen should always be covered with stars").
+ *
+ * Each star lives on the line from the vanishing point (the sun) through its rest position, at
+ * `k = e^u` of the way out. `u` is depth in log space, which is what makes it read as flying
+ * forward: equal steps in `u` are equal steps of travel, so stars near the sun creep and stars
+ * near the edge race past. Stars stream outward and, past the edge of their lap, wrap back to the
+ * vanishing point, like flying through an endless field; their per-star lap offsets spread them
+ * over every depth at once, so the screen is full on every frame. Then the flight decelerates and
+ * each star's final lap ends exactly at u=0, its rest position, which is the arrival.
+ *
+ * Tuning knobs. Starting points; set by eye in the browser.
+ */
+export const WARP_MS = 2400;
 /** The sky's background and stars fade up over this, so the canvas does not pop in. */
 export const SKY_FADE_MS = 400;
-/** At the start, a star's streak reaches this fraction of the way back toward the origin; it
- *  shrinks to nothing as the warp slows. Stars far from the sun get long streaks, near ones
- *  short — the perspective of dropping out of lightspeed. */
-export const STREAK_MAX = 0.5;
+/** A streak runs from where its star was this long ago to where it is now. Time, not frames,
+ *  so a slow machine draws the same streak length as a fast one; it is the speed, so it
+ *  collapses to a point on arrival. */
+export const STREAK_LAG_MS = 70;
+/** One lap in log depth: a star respawns at e^-LAP (about 1/11) of its rest distance. */
+export const WARP_LAP = 2.4;
+/** Total log depth flown. TRAVEL / LAP is roughly how many times each star streams past. */
+export const WARP_TRAVEL = 7;
+/** Each star flies up to this much further than WARP_TRAVEL. Several laps wide, so the stars
+ *  stay mixed across every depth well into the flight instead of bunching into one copy of the
+ *  sky at a single scale. */
+export const WARP_EXTRA_SPAN = 3 * WARP_LAP;
 /**
- * Each star starts at a random fraction of its rest distance from the origin, in this range.
- *
- * High on purpose (Jason, Nov 12: "the whole screen should always be covered with stars"): every
- * star is already near its own place on the first frame, so the screen is full from the start
- * and nothing pours out of one point. The spread is what keeps it from reading as a uniform zoom.
+ * Temporary stars rest off-screen, out to this multiple of the screen's distance from the sun.
+ * As the flight slows every star closes in on its rest from the sun's side, which would empty
+ * the edges; these fill them, and land off-screen exactly when the flight ends, leaving the
+ * plain sky.
  */
-export const WARP_DEPTH_MIN = 0.82;
-export const WARP_DEPTH_MAX = 0.97;
+export const WARP_FIELD_REACH = 2;
+/** A respawned star fades up over this much of its lap, so nothing pops in at the sun. */
+const RESPAWN_FADE = 0.35;
 
-/** Eased 0→1 over WARP_MS (ease-out cubic: fast out of the warp, settling into place). */
+/** Eased 0→1 over WARP_MS: fastest at the start (already at speed), decelerating to arrive. */
 export function warpProgress(elapsedMs: number): number {
   if (elapsedMs <= 0) return 0;
   if (elapsedMs >= WARP_MS) return 1;
@@ -51,20 +72,27 @@ export function warpProgress(elapsedMs: number): number {
   return 1 - (1 - t) ** 3;
 }
 
-/** How far along its line a star is: its starting depth at p=0, exactly 1 at p=1. */
-export function warpK(depth0: number, p: number): number {
-  return p >= 1 ? 1 : depth0 + (1 - depth0) * p;
+/**
+ * A star's log depth `u` at progress `p`. Exactly 0 (its rest position) at p=1; before that it
+ * streams outward and wraps back by one lap at a time.
+ *
+ * Two random numbers per star, both in [0, WARP_LAP): `offset` places its laps, `extra` adds to
+ * the distance it flies. The extra is what spreads the stars over every depth on the first frame;
+ * with the offset alone every star would sit at the same depth and the flight would read as a
+ * plain zoom.
+ */
+export function warpLogK(offset: number, extra: number, p: number): number {
+  if (p >= 1) return 0;
+  const v = -(WARP_TRAVEL + extra) * (1 - p);
+  const lap = (((v + offset) % WARP_LAP) + WARP_LAP) % WARP_LAP;
+  return lap - offset;
 }
 
-/**
- * Where a star's streak ends, as a `k` on the same line as its head: STREAK_MAX of the way
- * back toward the origin at the start, shrinking (quadratically in what is left of the warp)
- * to the head itself at p=1.
- */
-export function warpTailK(headK: number, p: number): number {
-  if (p >= 1) return headK;
-  const left = 1 - p;
-  return headK * (1 - STREAK_MAX * left * left);
+/** Brightness factor: faint just after a respawn at the sun, always full by arrival. */
+export function warpStarAlpha(offset: number, extra: number, p: number): number {
+  if (p >= 1) return 1;
+  const lapPos = warpLogK(offset, extra, p) + offset;
+  return Math.max(Math.min(1, lapPos / RESPAWN_FADE), p);
 }
 
 /** Where a star is drawn: on the line from the origin to its rest position, `k` of the way. */
