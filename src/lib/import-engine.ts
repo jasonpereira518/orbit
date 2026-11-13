@@ -48,6 +48,7 @@ import { reportAndContinue, reportError } from "@/lib/report-error";
 import { withReference } from "@/lib/errors";
 import { track } from "@/lib/product-events";
 import type { IMPORT_PROVIDERS } from "@/lib/product-event-schemas";
+import { isAdmissibleRecord } from "@/lib/names/classify";
 
 /**
  * Rows pulled from the DB per processing loop iteration. Widened from 40 to cut the fixed
@@ -870,7 +871,9 @@ export async function runImportJob(importId: string): Promise<void> {
             }
           }
           const probe = adapter.identity(payload);
-          if (!probe) {
+          // A company, a machine mailbox or a shared inbox in a file is not a person: skipped
+          // like a row with no identity, so it never becomes or rewrites a contact.
+          if (!probe || !isAdmissibleRecord(probe.fullName, probe.email)) {
             toSkip.push(row);
             continue;
           }
@@ -1458,6 +1461,10 @@ export async function runImportJob(importId: string): Promise<void> {
       reportAndContinue({ where: "job.import.finalize.recalibrate", userId: importRow.userId }, null)
     );
     await kickEmbeddingBackfill(importRow.userId);
+    // Contacts this file saved under a handle ("jsmith42") get a real name, or a "?", now
+    // rather than at the next hourly pass. Same step `finalizeIngest` runs for connectors.
+    const { kickNameSweep } = await import("@/lib/contact-name-sweep");
+    await kickNameSweep(importRow.userId);
 
     revalidatePath("/");
     revalidatePath("/contacts");

@@ -247,6 +247,7 @@
 @source "../lib/motion-preference.ts";
 @source "../lib/motion.ts";
 @source "../lib/names/classify.ts";
+@source "../lib/names/compare.ts";
 @source "../lib/names/key.ts";
 @source "../lib/names/nicknames.ts";
 @source "../lib/names/parse.ts";

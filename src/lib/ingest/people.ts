@@ -22,6 +22,7 @@ import {
   type ContactInput,
 } from "@/lib/contact-writes";
 import type { IngestContext } from "@/lib/ingest/events";
+import { isAdmissibleRecord } from "@/lib/names/classify";
 
 /** One person as a provider describes them. Every field but the name is optional. */
 export type PersonRecord = {
@@ -195,6 +196,10 @@ export async function ingestPeople(
       createScores[pending] = Math.max(createScores[pending], completenessScore(person));
       continue;
     }
+
+    // A company, a machine mailbox or a shared inbox in an address book is not a person to
+    // keep in touch with. Before the cap, so it never takes a person's place there.
+    if (!isAdmissibleRecord(name, person.email)) continue;
 
     // Tags belong on the create path only: a matched contact's tags are the user's to manage.
     const input: ContactInput = {

@@ -25,6 +25,8 @@ import {
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { FACT_LIST_CAP, mergeFactList } from "@/lib/fact-lists";
 import type { NameGuess } from "@/lib/contact-name-guess";
+import { isPersonName } from "@/lib/names/classify";
+import { formatPersonName } from "@/lib/names/parse";
 import {
   contactIdentities,
   contactTags,
@@ -113,6 +115,12 @@ export type ContactWriteOptions = {
    * settings row the caller may already have. Omitted, they are read as before.
    */
   entitlements?: Entitlements;
+  /**
+   * "user": the person typed this name (the contact form, the "?" review). It is written as
+   * given and stamped `name_guess.source = "user"`, which every automated writer, the name
+   * sweep and `shouldReplaceName` treat as final. Set only from those two places.
+   */
+  nameBy?: "user";
 };
 
 export type ContactInput = {
@@ -388,19 +396,30 @@ function contactInsertValues(
   userId: string,
   input: ContactInput,
   companyFields: { company: string | null; companyId: string | null },
-  now: Date
+  now: Date,
+  nameBy?: "user"
 ) {
   const metAt = safeTimestamp(input.dateMet);
+  // A person's name as sources hand it over ("DOE, JANE (Acme)") is stored formatted; a
+  // handle, address or anything else is stored as given, for the name sweep to read later.
+  // A name the user typed is theirs, as typed.
+  const formatted = nameBy === "user" ? null : formatPersonName(input.fullName);
+  const name = formatted && isPersonName(formatted.fullName, { email: input.email }) ? formatted : null;
   const firstInteractionAt =
     input.firstInteractionAt !== undefined
       ? safeTimestamp(input.firstInteractionAt)
       : metAt;
   return {
     userId,
-    fullName: input.fullName,
-    firstName: input.firstName,
-    lastName: input.lastName,
+    fullName: name?.fullName ?? input.fullName,
+    firstName: input.firstName ?? name?.firstName ?? undefined,
+    lastName: input.lastName ?? name?.lastName ?? undefined,
     preferredName: input.preferredName,
+    ...(nameBy === "user"
+      ? { nameGuess: { from: input.fullName, source: "user" as const, weak: false, at: now.toISOString() } }
+      : input.nameGuess !== undefined
+        ? { nameGuess: input.nameGuess }
+        : {}),
     company: companyFields.company,
     companyId: companyFields.companyId,
     title: input.title,
@@ -532,7 +551,7 @@ export async function createContactForUser(
   const [contact] = await db
     .insert(contacts)
     .values({
-      ...contactInsertValues(userId, input, companyFields, now),
+      ...contactInsertValues(userId, input, companyFields, now, options?.nameBy),
       // Stale from birth: the embedding is built after the response (see deferEmbeddingRebuild).
       embeddingStaleAt: now,
     })
@@ -817,7 +836,7 @@ export async function createContactsBulkForUser(
   );
 
   const values = admitted.map((input, i) => ({
-    ...contactInsertValues(userId, input, companyFieldsList[i], now),
+    ...contactInsertValues(userId, input, companyFieldsList[i], now, options?.nameBy),
     // Flagged, not embedded. `skipEmbedding` used to mean "the caller will embed these in
     // a batch"; it now means "the backfill will" — the same promise with the provider call
     // moved out of the write loop.
@@ -946,6 +965,11 @@ export function foldMergesByContact(
  * checks: each field is passed as NULL and coalesced against the existing column. The two
  * interaction-timestamp columns are the one exception to "leave alone" — see below.
  *
+ * FILL-ONLY columns: `first_name`, `last_name`, `source`, `how_met`, `met_context` and
+ * `date_met` take the incoming value only when the contact has none. An import is a source
+ * re-telling what it always says ("LinkedIn connection", the connection date); what the
+ * person or an earlier note recorded about where they met wins.
+ *
  * KNOWN LIMITATION: COALESCE cannot tell "this field was explicitly normalized/resolved to
  * null" apart from "this field was never mentioned" — both arrive as SQL NULL in the VALUES
  * tuple, so this path can only set a column or leave it alone, never clear one. Four fields
@@ -1035,15 +1059,17 @@ export async function bulkMergeContactsForUser(
         email             = COALESCE(v.email, c.email),
         phone             = COALESCE(v.phone, c.phone),
         linkedin_url      = COALESCE(v.linkedin_url, c.linkedin_url),
-        first_name        = COALESCE(v.first_name, c.first_name),
-        last_name         = COALESCE(v.last_name, c.last_name),
+        -- FILL-ONLY: the name parts, origin and where-met are what the person (or the first
+        -- source) said; a re-import must not turn "Met at AWS Summit" into "LinkedIn connection".
+        first_name        = COALESCE(NULLIF(c.first_name, ''), v.first_name),
+        last_name         = COALESCE(NULLIF(c.last_name, ''), v.last_name),
         profile_image_url = COALESCE(v.profile_image_url, c.profile_image_url),
         profile_image_source = CASE WHEN v.profile_image_url IS NULL THEN c.profile_image_source
                                     ELSE v.profile_image_source END,
-        source            = COALESCE(v.source, c.source),
-        how_met           = COALESCE(v.how_met, c.how_met),
-        met_context       = COALESCE(v.met_context, c.met_context),
-        date_met          = COALESCE(v.date_met, c.date_met),
+        source            = COALESCE(NULLIF(c.source, ''), v.source),
+        how_met           = COALESCE(NULLIF(c.how_met, ''), v.how_met),
+        met_context       = COALESCE(NULLIF(c.met_context, ''), v.met_context),
+        date_met          = COALESCE(c.date_met, v.date_met),
         -- WIDEN, not set-or-leave-alone — see this function's doc comment. A re-import
         -- can only push the known interaction window outward, never narrow it.
         first_interaction_at = LEAST(c.first_interaction_at, v.first_interaction_at),
@@ -1148,7 +1174,12 @@ export async function updateContactForUser(
         : {}),
       ...(input.nameGuess !== undefined
         ? { nameGuess: input.nameGuess }
-        : input.fullName !== undefined
+        : input.fullName !== undefined && options?.nameBy === "user"
+          ? {
+              // The person named them: final, whatever a guess said before.
+              nameGuess: sql`jsonb_build_object('from', ${contacts.fullName}::text, 'source', 'user', 'weak', false, 'at', ${staleAt.toISOString()}::text)`,
+            }
+          : input.fullName !== undefined
           ? {
               // Old values on the right of SET: only a name that actually changed settles it.
               nameGuess: sql`CASE WHEN ${contacts.nameGuess} IS NOT NULL AND ${contacts.fullName} IS DISTINCT FROM ${input.fullName}

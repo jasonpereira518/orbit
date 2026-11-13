@@ -214,7 +214,8 @@ export async function runMonthlyContactUpkeep(
     }
 
     // 3. Name upkeep: check if name is a handle, username, or email prefix
-    if (isHandle(c.fullName, c.email)) {
+    // A handle the person kept on purpose (typed, or confirmed at the "?") stays.
+    if (isHandle(c.fullName, c.email) && c.nameGuess?.source !== "user") {
       let bestName = resolvedLinkedInName;
       let guessSource: NameGuess["source"] = "linkedin";
       let isWeak = false;

@@ -60,6 +60,7 @@ import type { InteractionInsert, ReminderInsert } from "@/lib/import-engine";
 import { reportAndContinue } from "@/lib/report-error";
 import { isNonPersonParticipant } from "@/lib/non-person-participant";
 import { displayNameFor } from "@/lib/names/from-identifier";
+import { isAdmissibleRecord } from "@/lib/names/classify";
 
 /** One identifiable person on an event. Every field optional — sources differ in what they know. */
 export type NetworkParticipant = {
@@ -463,9 +464,9 @@ export async function ingestEvents(
       metContext: ctx.options.metContext,
       howMet: ctx.options.howMet?.(pair.event) ?? null,
     });
-    // A group calendar, room or mailbox on the invite is not someone to keep in touch with.
-    // Checked before the cap so it never counts as a contact the plan blocked.
-    if (!input.fullName || isNonPersonParticipant(input.fullName, input.email)) {
+    // A group calendar, room, mailbox or company on the invite is not someone to keep in
+    // touch with. Checked before the cap so it never counts as a contact the plan blocked.
+    if (!input.fullName || isNonPersonParticipant(input.fullName, input.email) || !isAdmissibleRecord(pair.participant.name, input.email)) {
       stats.unmatched++;
       continue;
     }
