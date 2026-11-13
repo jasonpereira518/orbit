@@ -1,11 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getDb } from "@/db";
-import { startupExpenses } from "@/db/schema";
 import { requireAdminUserId } from "@/lib/admin";
 import { setInfraCost } from "@/lib/infra-costs";
 import { requireClientDate } from "@/lib/input/dates";
+import { addStartupExpenseAction } from "@/actions/admin-yc";
 
 /**
  * Cost entry for the Money section.
@@ -49,15 +48,9 @@ export async function addOneOffCostAction(input: {
   incurredAt: string;
   note?: string;
 }): Promise<{ ok: true }> {
-  await requireAdminUserId();
-  const db = await getDb();
-
-  await db.insert(startupExpenses).values({
-    category: input.category,
-    amountUsd: input.amountUsd,
-    incurredAt: requireClientDate(input.incurredAt, "date"),
-    note: input.note?.trim() || null,
-  });
+  // One insert path, with its validation (category, positive amount, date), shared with the
+  // Runway form; this wrapper only adds the Money pages' revalidation.
+  await addStartupExpenseAction(input);
 
   revalidatePath("/admin/billing/costs");
   revalidatePath("/admin/billing");

@@ -9,7 +9,7 @@ import { getInterestListSummary } from "@/lib/admin-interest-list";
 import { buildPlanBreakdown, getOverviewLive } from "@/lib/admin-metrics";
 import { formatCostMicros } from "@/lib/ai-pricing";
 import { currentMrrCents } from "@/lib/billing-events";
-import { byokAiUsage, managedAiUsage } from "@/lib/credits/admin-credits";
+import { managedAiUsage } from "@/lib/credits/admin-credits";
 import { formatCents } from "@/lib/format-money";
 
 export const metadata = { title: "Admin · Overview" };
@@ -27,13 +27,12 @@ export const metadata = { title: "Admin · Overview" };
  */
 export default async function AdminOverviewPage() {
   const now = new Date();
-  const [{ triage, ...initialLive }, mrrCents, waitlist, byok, managed] = await Promise.all([
+  const [{ triage, ...initialLive }, mrrCents, waitlist, managed] = await Promise.all([
     getOverviewLive(),
     // Each KPI degrades on its own: a broken read prints "—", never 500s triage.
     currentMrrCents().catch(() => null),
     getInterestListSummary().catch(() => null),
-    // AI spend split by whose key paid: BYOK is the user's bill, managed is Orbit's.
-    byokAiUsage(30, now).catch(() => null),
+    // Orbit's own AI bill (users' own keys are their bill, not shown here).
     managedAiUsage(30, now).catch(() => null),
   ]);
 
@@ -69,7 +68,6 @@ export default async function AdminOverviewPage() {
         <LiveKpiTiles
           mrr={mrrCents == null ? "—" : formatCents(mrrCents)}
           waiting={waitlist?.active ?? null}
-          aiByok={formatCostMicros(byok?.costMicros) ?? "—"}
           aiManaged={formatCostMicros(managed?.costMicros) ?? "—"}
         />
       </div>
