@@ -1,5 +1,5 @@
 "use client";
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { animate, motion, useMotionValue } from "motion/react";
 import { VoiceOrbit } from "@/components/chat/voice/voice-orbit";
 import { useSelectorRect } from "@/lib/tour/use-anchor-rect";
@@ -51,14 +51,33 @@ export function CosmoOrb() {
     });
   }, [rect, el, reduced, x, y, scale]);
 
+  // Docked, the bar itself moves (drag, a glide to another slot), which no event reports: follow
+  // its slot every frame, unless the orb is mid-flight between stage and dock.
+  const dockEl = box?.kind === "dock" ? el : null;
+  useEffect(() => {
+    if (!dockEl) return;
+    let frame = 0;
+    const follow = () => {
+      if (!flying.current) {
+        const r = dockEl.getBoundingClientRect();
+        const size = Math.min(r.width, r.height);
+        x.set(r.left + (r.width - size) / 2);
+        y.set(r.top + (r.height - size) / 2);
+      }
+      frame = requestAnimationFrame(follow);
+    };
+    frame = requestAnimationFrame(follow);
+    return () => cancelAnimationFrame(frame);
+  }, [dockEl, x, y]);
+
   if (!box) return null;
   return (
     <motion.div
       aria-hidden
       data-orb-place={box.kind}
-      // z-40: over the page's own cards (Chat's stage is inside an opaque one), under menus,
-      // popovers and dialogs (z-50), level with the docked bar it belongs to.
-      className="cosmo-orb pointer-events-none fixed top-0 left-0 z-40"
+      // In Chat's stage: over the page's cards, under menus and dialogs (z-50). Docked: just above
+      // its bar, which sits over dialogs (z-51) so Cosmo stays usable with one open.
+      className={box.kind === "stage" ? "cosmo-orb pointer-events-none fixed top-0 left-0 z-40" : "cosmo-orb pointer-events-none fixed top-0 left-0 z-[52]"}
       style={{ x, y, scale, width: box.size, height: box.size, transformOrigin: "0 0" }}
     >
       <VoiceOrbit controls={voiceControls} mode={mode} muted={muted} />

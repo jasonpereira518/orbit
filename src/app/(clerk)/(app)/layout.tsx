@@ -243,7 +243,7 @@ export default async function AppLayout({
       {/* Above any page, like the meeting recorder: an Orbit Voice call keeps going when you
           leave Chat, and docks at the middle right until you come back. Inside the meeting
           provider so a call can start the recorder ("record this meeting"). */}
-      <VoiceDock cosmo={!visibility.hidden.has(COSMO_SURFACE_KEY)} />
+      <VoiceDock cosmo={!visibility.hidden.has(COSMO_SURFACE_KEY)} tourActive={tourRailVisible(settings)} />
       </MeetingSessionProvider>
 
       {/* Deliberately a SIBLING of AppShell, not a child. AppShell early-returns a bare
