@@ -1,457 +1,30 @@
 "use client";
-import dynamic from "next/dynamic";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Mic, MicOff, X, Captions, Loader2, MessageSquare } from "lucide-react";
 import { VoiceOrbit } from "./voice/voice-orbit";
+import { plainSpeech } from "./voice/voice-engine";
 import { cn } from "@/lib/utils";
 import "./voice/voice-overlay.css";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { VoiceTransportBoundary } from "./voice/transport-boundary";
 import { ProposedActionsCard } from "./proposed-actions";
-import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
-import {
-  ASK_CHAT_TOOL,
-  OPEN_PAGE_TOOL,
-  SET_THEME_TOOL,
-  START_RECORDING_TOOL,
-  VOICE_DURATION_SECONDS,
-  VOICE_THEMES,
-  voicePagePath,
-} from "@/lib/voice/policy";
-import { useTheme } from "next-themes";
-import { saveThemePreference } from "@/actions/settings";
-import { streamChat } from "@/lib/chat-stream-client";
-import { useMeetingSession } from "@/components/capture/meeting-session";
-import {
-  PROVIDER_LABELS,
-  type VoiceProvider,
-} from "@/lib/voice/config";
-import type {
-  VoiceAgentControls,
-  VoiceAgentEvents,
-  VoiceMode,
-  VoicePublicState,
-  VoiceSessionStart,
-} from "@/lib/voice/contracts";
-const DeepgramAdapter = dynamic(
-  () => import("./voice/deepgram-adapter").then((m) => m.DeepgramAdapter),
-  { ssr: false },
-);
-const ElevenLabsAdapter = dynamic(
-  () => import("./voice/elevenlabs-adapter").then((m) => m.ElevenLabsAdapter),
-  { ssr: false },
-);
+import { VOICE_DURATION_SECONDS } from "@/lib/voice/policy";
+import { PROVIDER_LABELS } from "@/lib/voice/config";
+import { useVoiceCall, voiceActions, voiceControls } from "@/lib/voice/call-store";
+import type { VoicePublicState } from "@/lib/voice/contracts";
 /**
- * A turn as words, without the markdown a model sometimes writes despite the prompt: links keep
- * their text, and emphasis, code ticks, headings and list markers go. Display only; the prompt
- * is what keeps the symbols out of the speech itself.
+ * The live call's view. Inline in Chat's conversation column (`compact` false); a small card at
+ * the middle right of every other page (`compact` true). `VoiceDock` owns where it sits, and
+ * `VoiceEngine` owns the call itself, so this can move or remount without hanging up.
  */
-function plainSpeech(text: string) {
-  return text
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/^\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/gm, "")
-    .replace(/(\*\*|__|\*|`)/g, "");
-}
-class VoiceRequestError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-  ) {
-    super(message);
-  }
-}
-async function command(body: Record<string, unknown>) {
-  const response = await fetch("/api/voice", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-    keepalive: body.action === "transcript" || body.action === "end",
-    signal: AbortSignal.timeout(body.action === "start" ? 45000 : 12000),
-  });
-  const data = await response.json();
-  if (!response.ok)
-    throw new VoiceRequestError(
-      data.error || "Orbit Voice is unavailable. Try again.",
-      response.status,
-    );
-  return data;
-}
-type TranscriptTurn = { id: string; source: "user" | "ai"; text: string; interrupted: boolean; revision: number };
-/**
- * The live call. Inline in Chat's conversation column (`compact` false); a small card at the
- * middle right of every other page (`compact` true). `VoiceDock` owns where it sits.
- */
-export function VoicePanel({ state, threadId, onClose, compact = false }: {
-  state: VoicePublicState; threadId: string; onClose(): Promise<void>; compact?: boolean;
-}) {
-  const router = useRouter();
-  const { setTheme } = useTheme();
-  const meeting = useMeetingSession();
-  const [active, setActive] = useState<VoiceSessionStart | null>(null);
-  const [mode, setMode] = useState<VoiceMode>("disconnected");
-  const [busy, setBusy] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [error, setError] = useState("");
-  const [failed, setFailed] = useState(false);
-  const [lastProvider, setLastProvider] = useState<VoiceProvider>(
-    state.provider,
-  );
-  const [lines, setLines] = useState<TranscriptTurn[]>([]);
-  const transcript = useRef<TranscriptTurn[]>([]);
+export function VoicePanel({ state, compact = false }: { state: VoicePublicState; compact?: boolean }) {
+  const { provider, active, mode, busy, muted, error, failed, lines, cards, saveError, closing } = useVoiceCall();
   const [showTranscript, setShowTranscript] = useState(false);
-  const [saveError, setSaveError] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const closingRef = useRef(false);
-  const alive = useRef(true);
-  const pending = useRef(new Map<string, {sessionId: string; turn: TranscriptTurn}>());
-  const writes = useRef(Promise.resolve());
-  const modeRef = useRef<VoiceMode>("disconnected");
-  const persist = useCallback((id: string, turn: TranscriptTurn) => {
-    const item = {sessionId: id, turn};
-    pending.current.set(turn.id, item);
-    writes.current = writes.current.then(async () => {
-      try {
-        await command({action: "transcript", ...item});
-        if (pending.current.get(turn.id) === item) pending.current.delete(turn.id);
-        if (alive.current && pending.current.size === 0) setSaveError(false);
-      } catch { if (alive.current) setSaveError(true); }
-    });
-  }, []);
-  const [cards, setCards] = useState<
-    Array<{ messageId: string; action: StoredProposedAction }>
-  >([]);
-  const session = useRef<string | null>(null);
-  const controls = useRef<VoiceAgentControls | null>(null);
-  const generation = useRef(0);
-  const starting = useRef(false);
   const panel = useRef<HTMLDivElement | null>(null);
   const follow = useRef(true);
-  const stop = useCallback(async (outcome: "ended" | "failed" = "ended") => {
-    generation.current++;
-    const id = session.current;
-    if (id && modeRef.current === "speaking") {
-      const last = transcript.current.findLast(line => line.source === "ai");
-      if (last && !last.interrupted) {
-        const next = {...last, interrupted: true, revision: last.revision + 1};
-        transcript.current = transcript.current.map(line => line.id === last.id ? next : line);
-        if (alive.current) setLines(transcript.current);
-        persist(id, next);
-      }
-    }
-    modeRef.current = "disconnected";
-    session.current = null;
-    const driver = controls.current;
-    controls.current = null;
-    driver?.disconnect();
-    await writes.current;
-    if (alive.current) {
-      setActive(null);
-      setBusy(false);
-      setMuted(false);
-      setMode("disconnected");
-    }
-    if (id)
-      await command({ action: "end", sessionId: id, outcome }).catch(() => {});
-  }, [persist]);
-  const close = useCallback(async () => {
-    if (closingRef.current) return;
-    closingRef.current = true;
-    setClosing(true);
-    await stop();
-    for (const item of pending.current.values()) persist(item.sessionId, item.turn);
-    await writes.current;
-    if (pending.current.size) {
-      setClosing(false);
-      closingRef.current = false;
-      setSaveError(true);
-      return;
-    }
-    await onClose();
-  }, [onClose, persist, stop]);
   useEffect(() => {
-    alive.current = true;
-    const unsaved = pending.current;
-    return () => {
-      alive.current = false;
-      const id = session.current;
-      session.current = null;
-      controls.current?.disconnect();
-      controls.current = null;
-      for (const item of unsaved.values()) {
-        void command({action: "transcript", ...item}).catch(() => {});
-      }
-      if (id)
-        void fetch("/api/voice", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "end", sessionId: id }),
-          keepalive: true,
-        }).catch(() => {});
-    };
-  }, []);
-  useEffect(() => {
-    if (panel.current && follow.current)
-      panel.current.scrollTop = panel.current.scrollHeight;
+    if (panel.current && follow.current) panel.current.scrollTop = panel.current.scrollHeight;
   }, [lines, cards]);
-  useEffect(() => {
-    if (!active) return;
-    const id = active.sessionId;
-    const deadline = setTimeout(
-      () => {
-        if (session.current === id) {
-          setError(
-            "This voice session has reached its time limit. Start a new conversation.",
-          );
-          void stop();
-        }
-      },
-      Math.max(0, new Date(active.expiresAt).getTime() - Date.now()),
-    );
-    const heartbeat = setInterval(() => {
-      void command({ action: "heartbeat", sessionId: id }).catch(() => {
-        if (session.current !== id) return;
-        setFailed(false);
-        setError(
-          "Voice settings changed or this session ended. Start a new conversation.",
-        );
-        void stop();
-      });
-    }, 15000);
-    return () => {
-      clearTimeout(deadline);
-      clearInterval(heartbeat);
-    };
-  }, [active, stop]);
-  /**
-   * ask_chat: the question goes to Orbit Chat in this call's own thread, exactly as if typed.
-   * A spoken answer can't wait minutes, so after 20 seconds the agent is told Chat is still
-   * working; the turn finishes server-side regardless and shows in the thread.
-   */
-  const askChat = useCallback(async (question: unknown) => {
-    if (typeof question !== "string" || !question.trim())
-      return JSON.stringify({ error: "Give ask_chat a question." });
-    let answer = "";
-    const finished = new Promise<string | null>((resolve) => {
-      void streamChat(
-        { question: question.trim().slice(0, 2000), threadId, turnId: crypto.randomUUID() },
-        {
-          onAnswer: (delta) => { answer += delta; },
-          onRecommendations: () => {},
-          onDone: () => resolve(null),
-          onError: (message) => resolve(message),
-        },
-      );
-    });
-    const outcome = await Promise.race([
-      finished,
-      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 20_000)),
-    ]);
-    if (outcome === "pending")
-      return JSON.stringify({ status: "still_working", note: "Chat is still answering. The full answer will appear in this conversation." });
-    if (outcome) return JSON.stringify({ error: outcome });
-    return JSON.stringify({ untrusted_chat_answer: plainSpeech(answer).slice(0, 3000) });
-  }, [threadId]);
-  const events = useMemo<VoiceAgentEvents>(() => {
-    const id = active?.sessionId;
-    const current = () =>
-      Boolean(id && alive.current && session.current === id);
-    return {
-      onReady: (driver) => {
-        if (current()) controls.current = driver;
-      },
-      onConnected: () => {
-        if (current())
-          void command({ action: "connected", sessionId: id }).catch(() => {
-            if (current()) void stop("failed");
-          });
-      },
-      onMode: (next) => {
-        if (current()) {
-          modeRef.current = next;
-          setMode(next);
-          if (next !== "connecting") setBusy(false);
-        }
-      },
-      onMessage: (source, text) => {
-        if (!current() || !text.trim()) return;
-        // Providers emit finalized turns here; recognition drafts never enter Chat history.
-        const turn = {id: crypto.randomUUID(), source, text: text.slice(0, 4000), interrupted: false, revision: 1};
-        transcript.current = [...transcript.current, turn];
-        setLines(transcript.current);
-        persist(id!, turn);
-      },
-      onInterrupted: () => {
-        if (!current() || modeRef.current !== "speaking") return;
-        const last = transcript.current.findLast(line => line.source === "ai");
-        if (last) {
-          const next = {...last, interrupted: true, revision: last.revision + 1};
-          transcript.current = transcript.current.map(line => line.id === last.id ? next : line);
-          setLines(transcript.current);
-          persist(id!, next);
-        }
-        modeRef.current = "listening";
-        setMode("listening");
-      },
-      onCorrection: (original, corrected) => {
-        if (!current()) return;
-        const last = transcript.current.findLast(line => line.source === "ai" && line.text === original.slice(0, 4000));
-        if (!last) return;
-        const next = {...last, text: corrected.slice(0, 4000) || "[Interrupted]", interrupted: true, revision: last.revision + 1};
-        transcript.current = transcript.current.map(line => line.id === last.id ? next : line);
-        setLines(transcript.current);
-        persist(id!, next);
-      },
-      onError: () => {
-        if (current()) {
-          setFailed(true);
-          setError(
-            "The voice provider couldn’t connect or the call was interrupted. Try again.",
-          );
-          void stop("failed");
-        }
-      },
-      onDisconnected: () => {
-        if (current()) {
-          setFailed(true);
-          setError(
-            "The voice connection ended. You can start another conversation.",
-          );
-          void stop("failed");
-        }
-      },
-      onTool: async (tool, input) => {
-        try {
-          if (!current())
-            return JSON.stringify({ error: "Voice session ended" });
-          // App control runs here, not on the server: the call lives in the layout, so it keeps
-          // going on the page it opens. Only allowlisted pages; record pages need a real id.
-          const args = JSON.parse(input || "{}") as Record<string, unknown>;
-          if (tool === ASK_CHAT_TOOL) return await askChat(args.question);
-          if (tool === START_RECORDING_TOOL) {
-            if (!meeting?.ready)
-              return JSON.stringify({ error: "The meeting recorder isn't ready on this page yet. Try again in a moment." });
-            meeting.startRecording(null, "mic");
-            router.push("/meetings");
-            return JSON.stringify({ started: true, note: "Recording on the microphone. The user can pause or finish it on Meetings." });
-          }
-          if (tool === SET_THEME_TOOL) {
-            const theme = VOICE_THEMES.find((t) => t === args.theme);
-            if (!theme) return JSON.stringify({ error: "Theme must be light, dark or system." });
-            setTheme(theme);
-            void saveThemePreference(theme).catch(() => {});
-            return JSON.stringify({ theme });
-          }
-          if (tool === OPEN_PAGE_TOOL) {
-            const path = voicePagePath(args.page, args.id, args.filters);
-            if (!path)
-              return JSON.stringify({ error: "Unknown page, or that page needs a valid id from a lookup." });
-            router.push(path);
-            return JSON.stringify({ opened: path });
-          }
-          const response = await command({
-            action: "tool",
-            sessionId: id,
-            tool,
-            input: JSON.parse(input),
-          });
-          if (!current())
-            return JSON.stringify({ error: "Voice session ended" });
-          if (response.proposal) setCards((old) => [...old, response.proposal]);
-          return response.result;
-        } catch {
-          return JSON.stringify({
-            error:
-              "The CRM lookup or proposal failed. Ask the user to retry; do not claim success.",
-          });
-        }
-      },
-    };
-  }, [active, stop, persist, router, meeting, setTheme, askChat]);
-  // The adapters connect once per session and must NEVER see a new `events`: their effect
-  // reconnects on it, and a reconnect is a new conversation ("Hi, I'm Orbit" mid-sentence).
-  // `events` changes whenever the theme, the router or the meeting recorder's state does, so
-  // the adapters get this stable object, which always calls the latest handlers.
-  const eventsRef = useRef(events);
-  useLayoutEffect(() => {
-    eventsRef.current = events;
-  });
-  const stableEvents = useMemo<VoiceAgentEvents>(() => ({
-    onReady: (controls) => eventsRef.current.onReady(controls),
-    onConnected: () => eventsRef.current.onConnected(),
-    onMode: (mode) => eventsRef.current.onMode(mode),
-    onInterrupted: () => eventsRef.current.onInterrupted(),
-    onMessage: (source, text) => eventsRef.current.onMessage(source, text),
-    onCorrection: (original, corrected) => eventsRef.current.onCorrection(original, corrected),
-    onError: () => eventsRef.current.onError(),
-    onDisconnected: () => eventsRef.current.onDisconnected(),
-    onTool: (tool, input) => eventsRef.current.onTool(tool, input),
-  }), []);
-  async function start(fallback = false) {
-    if (starting.current || session.current) return;
-    starting.current = true;
-    const attempt = ++generation.current;
-    setBusy(true);
-    setMode("connecting");
-    setError("");
-    setFailed(false);
-    setLastProvider(
-      fallback && state.fallbackProvider
-        ? state.fallbackProvider
-        : state.provider,
-    );
-    try {
-      if (!navigator.mediaDevices?.getUserMedia)
-        throw new VoiceRequestError(
-          "Microphone access needs a supported browser and HTTPS.",
-          400,
-        );
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((track) => track.stop());
-      if (!alive.current || attempt !== generation.current) return;
-      const response: VoiceSessionStart = await command({
-        action: "start",
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        fallback,
-        threadId,
-      });
-      if (!alive.current || attempt !== generation.current) {
-        await command({ action: "end", sessionId: response.sessionId }).catch(
-          () => {},
-        );
-        return;
-      }
-      session.current = response.sessionId;
-      setLastProvider(response.credentials.provider);
-      setActive(response);
-    } catch (err) {
-      if (alive.current) {
-        const denied = err instanceof Error && err.name === "NotAllowedError";
-        setFailed(
-          !denied && (!(err instanceof VoiceRequestError) || err.status >= 500),
-        );
-        setError(
-          denied
-            ? "Microphone access was denied. Allow it in your browser settings, then try again."
-            : err instanceof VoiceRequestError
-              ? err.message
-              : "Couldn’t start Orbit Voice. Check your microphone and try again.",
-        );
-      }
-      await stop("failed");
-    } finally {
-      starting.current = false;
-    }
-  }
-  const provider = active?.credentials.provider ?? lastProvider;
-  const startRef = useRef(start);
-  useEffect(() => { startRef.current = start; });
-  useEffect(() => {
-    const timer = setTimeout(() => void startRef.current(), 0);
-    return () => clearTimeout(timer);
-  }, []);
   const root = useRef<HTMLElement | null>(null);
   // The old dialog ended the call on Escape. Keep that, but only when focus is in the panel
   // or nowhere (a button that just unmounted drops it to <body>), never from another menu.
@@ -461,13 +34,14 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       const nowhere = focus === document.body || focus === null;
       // Floating over another page, a stray Escape there must not hang up.
-      if ((nowhere && !compact) || root.current?.contains(focus)) void close();
+      if ((nowhere && !compact) || root.current?.contains(focus)) void voiceActions.close();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [close, compact]);
+  }, [compact]);
   const connected = active && mode !== "connecting" && mode !== "disconnected";
   const waiting = cards.some((card) => card.action.status === "proposed");
+  const lastProvider = provider;
   return (
     <section
       aria-label="Orbit Voice"
@@ -481,27 +55,6 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
           : "w-full flex-1 overflow-y-auto px-6 py-4 sm:px-10",
       )}
     >
-      {active && (
-        <VoiceTransportBoundary
-          key={active.sessionId}
-          onFailure={stableEvents.onError}
-        >
-          {active?.credentials.provider === "deepgram" && (
-            <DeepgramAdapter
-              key={active.sessionId}
-              credentials={active.credentials}
-              events={stableEvents}
-            />
-          )}
-          {active?.credentials.provider === "elevenlabs" && (
-            <ElevenLabsAdapter
-              key={active.sessionId}
-              credentials={active.credentials}
-              events={stableEvents}
-            />
-          )}
-        </VoiceTransportBoundary>
-      )}
       {/* One centred column: `m-auto` centres it in Chat's space, and unlike justify-center
           it still scrolls from the top when the transcript makes it taller than the page.
           Docked on another page it is a slim vertical card: orbit, a word of status, then
@@ -513,7 +66,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
           <p className="mt-2 text-sm text-muted-foreground">In this conversation · {PROVIDER_LABELS[provider]}</p>
         </div>
         <div className={cn("flex min-h-0 w-full items-center justify-center", compact ? "py-0.5" : "py-4 sm:py-6")}>
-          <VoiceOrbit controls={controls} mode={mode} muted={muted} />
+          <VoiceOrbit controls={voiceControls} mode={mode} muted={muted} />
         </div>
         <p role="status" className={compact ? "text-2xs leading-tight text-muted-foreground" : "min-h-6 text-sm text-muted-foreground"}>
           {busy
@@ -537,10 +90,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
               aria-pressed={muted}
               aria-label={compact ? (muted ? "Unmute" : "Mute") : undefined}
               title={compact ? (muted ? "Unmute" : "Mute") : undefined}
-              onClick={() => {
-                controls.current?.setMuted(!muted);
-                setMuted(!muted);
-              }}
+              onClick={() => voiceActions.toggleMute()}
             >
               {muted ? (
                 <MicOff className="size-4" aria-hidden />
@@ -555,7 +105,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
               size={compact ? "icon" : "sm"}
               className={compact ? "size-10 rounded-full" : "h-11 rounded-full px-5"}
               aria-label={compact ? (error ? `Retry ${PROVIDER_LABELS[state.provider]}` : "Start conversation") : undefined}
-              onClick={() => void start()}
+              onClick={() => voiceActions.start()}
             >
               <Mic className="size-4" aria-hidden />
               {!compact && (error
@@ -586,7 +136,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
             title="End conversation"
             className={cn(compact ? "size-10" : "size-11", "rounded-full bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground")}
             disabled={closing}
-            onClick={() => void close()}
+            onClick={() => void voiceActions.close()}
           >
             {closing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <X className="size-5" aria-hidden />}
           </Button>
@@ -594,11 +144,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
       </div>
       {saveError && <div role="status" className={cn("text-center", compact ? "mt-2 text-2xs leading-tight" : "mt-4 text-sm")}>
         {compact ? "Transcript not saved yet." : "Some transcript turns haven’t saved yet. Keep this window open."}
-        <Button variant="link" size={compact ? "sm" : "default"} className={cn(compact && "h-auto px-0 text-2xs")} onClick={async () => {
-          for (const item of pending.current.values()) persist(item.sessionId, item.turn);
-          await writes.current;
-          setSaveError(pending.current.size > 0);
-        }}>Retry saving</Button>
+        <Button variant="link" size={compact ? "sm" : "default"} className={cn(compact && "h-auto px-0 text-2xs")} onClick={() => void voiceActions.retrySaves()}>Retry saving</Button>
       </div>}
       {!active && !compact && (
         <p className="mt-2 text-center text-xs text-muted-foreground">
@@ -620,7 +166,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
                 size="sm"
                 variant="outline"
                 className={cn(compact && "h-auto w-full whitespace-normal px-1 py-1 text-2xs")}
-                onClick={() => void start(true)}
+                onClick={() => voiceActions.start(true)}
               >
                 Try {PROVIDER_LABELS[state.fallbackProvider]}
               </Button>
@@ -659,20 +205,7 @@ export function VoicePanel({ state, threadId, onClose, compact = false }: {
             <ProposedActionsCard
               key={card.action.id}
               {...card}
-              onSettled={(next) => {
-                setCards((old) =>
-                  old.map((c) =>
-                    c.action.id === next.id ? { ...c, action: next } : c,
-                  ),
-                );
-                try {
-                  controls.current?.sendContext(
-                    `The user ${next.status === "done" ? "confirmed and saved" : next.status} the proposal: ${next.preview}`,
-                  );
-                } catch {
-                  /* The call may have ended while the card saved. */
-                }
-              }}
+              onSettled={(next) => voiceActions.settleCard(next)}
             />
           ))}
         </div>

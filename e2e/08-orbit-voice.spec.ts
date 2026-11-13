@@ -270,6 +270,8 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
         await expect(page.locator("html")).toHaveClass(theme === "dark" ? /\bdark\b/ : /^(?!.*\bdark\b)/);
       }
       expect(sockets).toBe(1);
+      // InjectAgentMessage makes Deepgram SAY its text; context for the agent must stay silent.
+      expect(frames.some((f) => f.type === "InjectAgentMessage")).toBe(false);
     } else {
       send({
         type: "user_transcript",

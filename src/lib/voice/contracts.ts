@@ -49,7 +49,13 @@ export type VoiceAgentControls = {
   getLevels(): { input: number; output: number };
   disconnect(): void;
   setMuted(value: boolean): void;
-  sendContext(text: string): void;
+  /**
+   * Tell the agent something WITHOUT it being spoken. Only providers with a silent channel
+   * implement it; otherwise the engine queues the note onto the next tool result (app_events).
+   */
+  sendContext?(text: string): void;
+  /** Speak this exact line now. Deepgram only; ElevenLabs cannot speak a fixed line. */
+  say?(text: string): void;
 };
 export type VoiceAgentEvents = {
   onReady(controls: VoiceAgentControls | null): void;

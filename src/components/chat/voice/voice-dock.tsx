@@ -4,6 +4,8 @@ import { useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { closeVoice, useVoiceDock } from "@/lib/voice/dock-store";
 
+// Both lazy: this dock is in every page's layout, and the call code is only needed on a call.
+const VoiceEngine = dynamic(() => import("./voice-engine").then((m) => m.VoiceEngine), { ssr: false });
 const VoicePanel = dynamic(
   () => import("../voice-panel").then((m) => m.VoicePanel),
   { ssr: false },
@@ -21,11 +23,11 @@ function voiceHost() {
 }
 
 /**
- * Mounted once in the app layout so an Orbit Voice call survives navigation. The panel is
- * portalled into ONE detached host element, and that element is moved between the chat
- * page's slot (inline) and the fixed middle-right dock (every other tab). Moving the DOM node
- * keeps the React tree — and so the socket, mic and transcript — alive; switching portal
- * containers instead would remount the panel and hang up.
+ * Mounted once in the app layout so an Orbit Voice call survives navigation. `VoiceEngine` (the
+ * call itself) renders here, never portalled, so nothing a view does can hang up. The panel
+ * (the view) is portalled into ONE detached host element, moved between the chat page's slot
+ * (inline) and the fixed middle-right dock (every other tab), which keeps the view's own state
+ * (transcript open, scroll) across the move.
  */
 export function VoiceDock() {
   const { call, slot } = useVoiceDock();
@@ -46,17 +48,11 @@ export function VoiceDock() {
             : "hidden"
         }
       />
+      {call && (
+        <VoiceEngine key={call.threadId} state={call.state} threadId={call.threadId} onClose={async () => closeVoice()} />
+      )}
       {call &&
-        createPortal(
-          <VoicePanel
-            key={call.threadId}
-            state={call.state}
-            threadId={call.threadId}
-            compact={!slot}
-            onClose={async () => closeVoice()}
-          />,
-          voiceHost(),
-        )}
+        createPortal(<VoicePanel key={call.threadId} state={call.state} compact={!slot} />, voiceHost())}
     </>
   );
 }
