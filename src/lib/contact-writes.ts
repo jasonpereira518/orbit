@@ -214,6 +214,14 @@ async function recordFieldChanges(
     });
 }
 
+/**
+ * Offer a value for an empty field without writing it ("Updates to check"). For a finding
+ * that is probably right but not proven: the profile finder's uncorroborated match.
+ */
+export async function suggestFieldChange(userId: string, contactId: string, field: FieldKey, after: string, source: FieldSource) {
+  await recordFieldChanges(userId, [{ contactId, source, change: { field, before: null, after, status: "suggested" } }]);
+}
+
 const stampsSql = (stamps: FieldSources) =>
   sql`COALESCE(${contacts.fieldSources}, '{}'::jsonb) || ${JSON.stringify(stamps)}::jsonb`;
 
