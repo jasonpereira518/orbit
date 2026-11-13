@@ -1637,7 +1637,9 @@ html[data-motion="reduce"] .constellation-starfield-drift {
    * "zooming to space and then you arrive at the solar system"). It scales about its own centre,
    * the sun, so it never moves toward the text. Same length as WARP_MS in lib/landing-intro.ts. */
   html[data-landing-intro] .landing-solar-enter {
-    animation: landing-solar-warp 1.2s cubic-bezier(0.3, 0.55, 0.25, 1) both;
+    /* Ease-in-out: most of the growing happens in the second half, once the stars have
+     * braked (Jason: "As the galaxy zooms in the stars should already be slower"). */
+    animation: landing-solar-warp 1s cubic-bezier(0.5, 0, 0.3, 1) both;
   }
 }
 

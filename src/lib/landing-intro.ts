@@ -43,19 +43,22 @@ export const LANDING_INTRO_PREPAINT_SCRIPT = `try{var d=document.documentElement
  * travel 4.5 -> 2, streak 45ms -> 30ms. Then "Make it half the time": 2400ms -> 1200ms, with
  * the streak window halved to 15ms so the doubled speed keeps the same streak lengths. Then
  * "Make it even less fast": quadratic ease (2/3 the top speed), travel 2 -> 1.5, extra span
- * 3 -> 2 laps: about half the average speed, same 1.2s.
+ * 3 -> 2 laps: about half the average speed, same 1.2s. Then "Make the length 1 s": 1000ms.
+ * Then "As the galaxy zooms in the stars should already be slower": quartic ease (front-loaded
+ * braking), lap 1.4 -> 0.8 and travel 1.5 -> 1 so the top speed stays about where it was,
+ * streak 15ms -> 12ms; the solar system's zoom moved later (theme.css).
  */
-export const WARP_MS = 1200;
+export const WARP_MS = 1000;
 /** The sky's background and stars fade up over this, so the canvas does not pop in. */
 export const SKY_FADE_MS = 250;
 /** A streak runs from where its star was this long ago to where it is now. Time, not frames,
  *  so a slow machine draws the same streak length as a fast one; it is the speed, so it
  *  collapses to a point on arrival. */
-export const STREAK_LAG_MS = 15;
-/** One lap in log depth: a star respawns at e^-LAP (about 1/4) of its rest distance. */
-export const WARP_LAP = 1.4;
+export const STREAK_LAG_MS = 12;
+/** One lap in log depth: a star respawns at e^-LAP (about 45%) of its rest distance. */
+export const WARP_LAP = 0.8;
 /** Total log depth flown. TRAVEL / LAP is roughly how many times each star streams past. */
-export const WARP_TRAVEL = 1.5;
+export const WARP_TRAVEL = 1;
 /** Each star flies up to this much further than WARP_TRAVEL. Several laps wide, so the stars
  *  stay mixed across every depth well into the flight instead of bunching into one copy of the
  *  sky at a single scale. */
@@ -71,12 +74,13 @@ export const WARP_FIELD_REACH = 2;
 const RESPAWN_FADE = 0.35;
 
 /** Eased 0→1 over WARP_MS: fastest at the start (already at speed), decelerating to arrive.
- *  Ease-out quadratic, not cubic: it starts at two thirds of the cubic's top speed. */
+ *  Ease-out quartic: the braking is front-loaded, so the stars are already slow (1/8 of their
+ *  starting speed at halfway) while the solar system zooms in. */
 export function warpProgress(elapsedMs: number): number {
   if (elapsedMs <= 0) return 0;
   if (elapsedMs >= WARP_MS) return 1;
   const t = elapsedMs / WARP_MS;
-  return 1 - (1 - t) ** 2;
+  return 1 - (1 - t) ** 4;
 }
 
 /**
