@@ -6,8 +6,7 @@
  * network latency into it would make Orbit's alert cadence hostage to how slow a customer's
  * endpoint happens to be today.
  *
- * Driven by the ten-minute GitHub Actions schedule in .github/workflows/ops.yml, the only
- * scheduler.
+ * Started every thirty minutes by the tick (src/lib/schedules.ts), the only scheduler.
  */
 import { NextResponse } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";

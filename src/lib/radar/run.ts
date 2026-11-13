@@ -73,8 +73,6 @@ const HOUR_MS = 3_600_000;
 
 /** How long a claimed account stays claimed if its run dies without releasing it. */
 export const RADAR_LEASE_MS = 10 * 60 * 1000;
-/** The UTC hour the nightly pass aims every account at. `ops.yml` runs it at 04:17. */
-export const RADAR_NIGHTLY_HOUR_UTC = 4;
 /** A failed run retries after this, rather than waiting for the next night. */
 const RETRY_AFTER_MS = 6 * HOUR_MS;
 /** A page view older than this since the last run refreshes in the background. */
