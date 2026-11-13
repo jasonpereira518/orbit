@@ -23,6 +23,10 @@ import {
 } from "@/lib/gmail";
 import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
+import { updateContactForUser } from "@/lib/contact-writes";
+import { parseSignature } from "@/lib/contact-signature";
+import { parseFromHeader } from "@/lib/recruiter-detect";
+import { resolveEmails } from "./resolve";
 import { utcDayKey } from "@/lib/timeline-cost";
 import { extractThread, type ExtractInput } from "./extract";
 import {
@@ -177,6 +181,11 @@ async function extractForAccount(userId: string, d: Resolved, now: Date, stats: 
     }
     const messages = toIntelMessages(list);
     const newest = list[list.length - 1];
+    // Best-effort, before (and whatever happens to) the extraction: signatures in mail this
+    // feature already reads fill a known sender's empty role, company and phone.
+    await learnFromSignatures(userId, list, conn.email).catch((err) =>
+      reportError(err, { where: "email-intel.signatures", level: "warning", extra: { userId } })
+    );
 
     try {
       const result = await d.extract(userId, {
@@ -237,4 +246,37 @@ export async function runEmailIntelExtraction(deps: EmailIntelExtractDeps = {}):
     }
   }
   return stats;
+}
+
+/**
+ * Signatures (contact-info accuracy plan, PR 8, `@/lib/contact-signature`): for each message a
+ * known contact sent in this thread, the newest per sender, fill their empty role, company,
+ * phone and LinkedIn link as "signature" (the weakest source: blanks only, logged). The user's
+ * own messages are skipped; so is anyone not already a contact.
+ */
+async function learnFromSignatures(userId: string, list: GmailMessageContent[], userEmail: string | null): Promise<void> {
+  const newestBySender = new Map<string, { name: string; email: string; body: string; at: number | null }>();
+  for (const m of list) {
+    const from = parseFromHeader(m.from);
+    if (!from?.email || !from.name) continue;
+    const email = from.email.toLowerCase();
+    if (userEmail && email === userEmail.toLowerCase()) continue;
+    newestBySender.set(email, { name: from.name, email, body: m.body, at: m.internalDate });
+  }
+  if (!newestBySender.size) return;
+  const owners = await resolveEmails(userId, [...newestBySender.keys()]);
+  for (const [email, msg] of newestBySender) {
+    const contactId = owners.get(email);
+    if (!contactId) continue;
+    const fields = parseSignature(msg.body, msg);
+    if (!Object.keys(fields).length) continue;
+    await updateContactForUser(userId, contactId, fields, {
+      by: "signature",
+      at: msg.at ? new Date(msg.at) : undefined,
+      skipRevalidate: true,
+      skipEmbedding: true,
+      skipSummary: true,
+      skipCloseness: true,
+    });
+  }
 }

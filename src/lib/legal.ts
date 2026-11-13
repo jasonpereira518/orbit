@@ -68,8 +68,12 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // as something Radar reads and adds to its weekly web search.
 // 2026-11-12.5 (admin refresh, PR 2): public Gravatar photos found by email join the shared photo
 // set, kept under a one-way hash of the address; uploads named as never shared.
-export const TERMS_VERSION = "2026-11-12.5";
-export const LEGAL_LAST_UPDATED = "November 12, 2026 (revision 4)";
+// 2026-11-13 (contact-info accuracy, PR 8): Email insights also reads the signature of a
+// known contact's own message, by rule, into that contact's empty role, company, phone and
+// LinkedIn fields; each fill is undoable under "Changed by Orbit". No new mail is read.
+// smoke-legal-pages requires TERMS_VERSION to move with any /privacy change.
+export const TERMS_VERSION = "2026-11-13";
+export const LEGAL_LAST_UPDATED = "November 13, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

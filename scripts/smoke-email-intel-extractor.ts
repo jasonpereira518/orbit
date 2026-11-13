@@ -7,7 +7,8 @@ import "./smoke/_env";
 
 import { eq, inArray, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { emailEvents, emailThreads, rateLimitBuckets, userSettings } from "../src/db/schema";
+import { contacts, emailEvents, emailThreads, rateLimitBuckets, userSettings } from "../src/db/schema";
+import { createContactForUser } from "../src/lib/contact-writes";
 import { AiAccessError } from "../src/lib/ai-access";
 import {
   EXTRACT_CLAIM_PER_ACCOUNT,
@@ -62,7 +63,7 @@ const message = (id: string): GmailMessageContent => ({
   listUnsubscribe: "",
   listId: "",
   precedence: "",
-  body: "We are hiring an engineer at Acme.",
+  body: "We are hiring an engineer at Acme.\n\nBest,\nDana Kim\nEngineering Manager | Acme\n+1 555 010 0177",
 });
 
 type Calls = { tokens: string[]; fetches: string[]; extracts: string[] };
@@ -135,6 +136,8 @@ async function main() {
   for (const u of USERS) await ensureUserSettings(u);
 
   console.log("\nA healthy account");
+  await db.delete(contacts).where(inArray(contacts.userId, USERS));
+  const dana = await createContactForUser(OK, { fullName: "Dana Kim", email: "dana@acme.example" }, { skipRevalidate: true, skipEmbedding: true, skipSummary: true, skipCloseness: true });
   await arm([OK]);
   for (const t of ["o1", "o2", "o3"]) await upsertThreadResult(OK, pending(t));
   let calls = freshCalls();
@@ -148,6 +151,12 @@ async function main() {
   check("one ai event per thread", events.length === 3 && events.every((e) => e.source === "ai" && e.summary.startsWith("Summary for")));
   check("the model got the thread's own subject", calls.extracts.every((e) => e.includes("Subject o")));
   check("rejection counts add up in the stats", stats.rejected.badKind === 3, JSON.stringify(stats.rejected));
+  {
+    // PR 8: the sender's signature filled the empty fields of the contact she already is.
+    const [d] = await db.select().from(contacts).where(eq(contacts.id, dana.id));
+    check("a known sender's signature fills her empty role, company and phone", d.title === "Engineering Manager" && d.company === "Acme" && d.phone === "+1 555 010 0177", JSON.stringify([d.title, d.company, d.phone]));
+    check("as the weakest source", d.fieldSources?.title?.s === "signature", JSON.stringify(d.fieldSources));
+  }
   check("a second run has nothing to do", (await runEmailIntelExtraction(deps(freshCalls(), T0))).accounts === 0);
 
   console.log("\nThe per-run claim limit");

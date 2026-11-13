@@ -507,6 +507,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-export-facts": "pglite",
   "smoke-profile-match": "pglite",
   "smoke-address-book-signals": "pglite",
+  "smoke-contact-signature": "pglite",
   "smoke-demo-signin-message": "pure",
   "smoke-demo-data": "pglite",
   "smoke-linkedin-reminder": "pglite",
