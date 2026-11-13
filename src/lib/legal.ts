@@ -72,7 +72,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // through Deepgram's voice agent, or ElevenLabs if calls are switched to it), the screen context
 // (page name, record id, Orbit's own button names; never page text), the day's Cosmo chat, small
 // changes applied with Undo, spoken "send it", minutes per plan. Terms: Cosmo can be wrong.
-export const TERMS_VERSION = "2026-11-13";
+// 2026-11-13.3 (message-format PR 2): matching your writing style — about twenty recent sent
+// emails from Gmail or Outlook, cleaned of quotes, signatures and contact details, go to your AI
+// provider once to describe how you write; only that description (600 characters) is kept. ".3"
+// because claude/email-signatures and claude/cosmo-revision both hold ".2".
+export const TERMS_VERSION = "2026-11-13.3";
 export const LEGAL_LAST_UPDATED = "November 13, 2026";
 
 /**

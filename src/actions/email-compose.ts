@@ -26,6 +26,8 @@ import { requireUserForReleasedSurface, requireUserForSurface } from "@/lib/plan
 import { COMPOSE_SURFACE_KEY } from "@/lib/surfaces";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
+import { maybeBuildStyleProfile } from "@/lib/writing-style-profile";
+import { after } from "next/server";
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : []);
 
@@ -75,6 +77,8 @@ export async function draftComposeWithAi(
       listActiveGoalTextsForUser(userId),
       loadWritingInstructions(userId),
     ]);
+    // Learn how they write from their sent mail, once, after the draft is on its way.
+    after(() => maybeBuildStyleProfile(userId));
     const draft = await generateContactFollowUpDraft(userId, String(contactId), goals, {
       channel: "email",
       meter: "compose",

@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
   writing_instructions text,
+  writing_style_profile text,
+  writing_style_profile_updated_at timestamptz,
   email_signature_text text,
   email_signature_html text,
   default_send_provider text,
@@ -3236,7 +3238,10 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // Orbit" + field suggestions; the names plan's PR3 adds its kinds to the same table). Scanned
 // every remote ref and local worktree on Nov 12 2026: claude/radar-pr12b-drop holds 239. Built as
 // 240; renumbered to 243 on Nov 13 2026 when main reached 242 (Cosmo).
-export const SCHEMA_VERSION = 243;
+// 244 = writing style profile (message-format plan, PR 2): user_settings.writing_style_profile /
+// writing_style_profile_updated_at, learned from sent mail (`@/lib/writing-style-profile`).
+// Scanned every remote ref on Nov 13 2026: main and eight branches hold 243, so this takes 244.
+export const SCHEMA_VERSION = 244;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4738,6 +4743,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "email_signature_text", "text");
   await ensureColumn(client, "user_settings", "email_signature_html", "text");
   await ensureColumn(client, "user_settings", "default_send_provider", "text");
+  // v244: the writing style profile learned from sent mail.
+  await ensureColumn(client, "user_settings", "writing_style_profile", "text");
+  await ensureColumn(client, "user_settings", "writing_style_profile_updated_at", "timestamptz");
   // v182: which model made a stored vector.
   await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
   await ensureColumn(client, "memory_chunks", "embedding_model", "text");
@@ -5678,6 +5686,9 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_text text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_html text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS default_send_provider text`,
+  // Schema v244: the writing style profile learned from sent mail.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_style_profile text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_style_profile_updated_at timestamptz`,
   // Schema v147: the relationship engine. Tables are in the template; these are the columns
   // it adds to tables that older databases already have.
   `ALTER TABLE action_items ADD COLUMN IF NOT EXISTS owed_by text`,

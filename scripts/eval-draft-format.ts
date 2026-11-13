@@ -9,6 +9,11 @@
  *
  *   ORBIT_EVAL_OPENAI_KEY=… npx tsx scripts/eval-draft-format.ts
  *   npx tsx scripts/eval-draft-format.ts --keys-from ../../.env.local --model gpt-4.1 --runs 2
+ *   npx tsx scripts/eval-draft-format.ts --keys-from ../../.env.local --mirror
+ *
+ * `--mirror` first distills a writing style profile (`@/lib/writing-style-profile`) from a few
+ * synthetic sent emails in a casual voice, prints it, and drafts with it on: the hard rules
+ * must hold with a personal voice too, and the drafts should read more like those emails.
  *
  * Through the AI gate with the synthetic user's own OpenAI key, like scripts/eval-voice.ts:
  * nothing calls a provider directly, and nothing touches a shared database.
@@ -24,9 +29,13 @@ import { bootstrapAuthenticatedUser } from "../src/lib/auth";
 import { generateOutreachDraft, type DraftInput } from "../src/lib/outreach-drafts";
 import { generateContactFollowUpDraft } from "../src/lib/follow-up-drafts";
 import { generateRecruiterDraft } from "../src/lib/recruiter-drafts";
+import { loadWritingInstructions } from "../src/lib/writing-instructions-store";
+import { cleanSentBody, distillStyleProfile } from "../src/lib/writing-style-profile";
 import { LINKEDIN_DM_MAX, LINKEDIN_NOTE_MAX, charLength, claimsAttachment, hypeHits, type MessageKind } from "../src/lib/message-format";
 
 const USER = "eval-draft-format-user";
+/** What drafts are told about the user's voice, read the way the actions read it. */
+let VOICE: string | null = null;
 const SENDER = "Jason Pereira";
 const flag = (name: string) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);
 
@@ -97,6 +106,16 @@ function checks(c: Case, d: Draft): Check[] {
   return out;
 }
 
+/** A casual, short voice, so a profile built from it visibly changes the drafts. */
+const SENT_SAMPLES = [
+  "hey Marco,\n\nthanks for grabbing coffee yesterday, really useful. I took your advice and cut the onboarding down to two screens, signups went up the same day. can I send you the new flow next week to poke holes in?\n\nJason",
+  "Hi Dana,\n\nquick update: I finished the backend project we talked about and put the writeup on my site. would love to know if it changes which roles you'd put me up for. no rush, I know Q1 is busy for you.\n\nthanks,\nJason",
+  "hey team,\n\nshipping the import fix tonight. if anything looks off in the morning ping me, I'll be up early. also moving standup to 10 tomorrow since half of us are at the career fair.\n\nJason",
+  "Hi Professor Liu,\n\nthanks for the feedback on the proposal. I reworked section 2 so the evaluation comes first, and I cut the related work down by half like you suggested. could we use Thursday office hours to go over the new version?\n\nJason",
+  "hey Priya,\n\ngreat seeing you at the mixer. I mentioned the student networking app, here's the short version: it tells you who to follow up with and drafts the note. if you're ever up for 15 min of feedback I'd owe you one.\n\nJason",
+  "Hi Sam,\n\nsorry for the slow reply, midterms ate my week. yes to the Saturday hackathon, count me in for the backend side. I can bring the API starter we used last time so we don't burn the first hour on setup.\n\nJason",
+];
+
 const PROSPECTS: Array<DraftInput["prospect"] & { intent: string; cta: string }> = [
   {
     fullName: "Priya Shah",
@@ -139,6 +158,7 @@ function outreach(p: (typeof PROSPECTS)[number], channel: "email" | "linkedin", 
     lastStep: step >= 2,
     previousBody: previous?.body,
     previousSubject: previous?.subject,
+    writingInstructions: VOICE,
   });
 }
 
@@ -146,6 +166,7 @@ async function seed(key: string, model: string): Promise<{ ada: string; grace: s
   await bootstrapAuthenticatedUser(USER);
   const db = await getDb();
   const settings = {
+    writingStyleProfile: null,
     aiProvider: "openai",
     aiModel: model,
     openaiApiKeyEncrypted: encrypt(key),
@@ -178,6 +199,15 @@ async function main() {
   const runs = Math.max(1, Number(flag("--runs") ?? 1));
   const { ada, grace } = await seed(key, model);
   const db = await getDb();
+  if (process.argv.includes("--mirror")) {
+    const samples = SENT_SAMPLES.map(cleanSentBody).filter((b): b is string => Boolean(b));
+    const profile = await distillStyleProfile(USER, samples);
+    if (!profile) throw new Error("--mirror: the style profile came back empty");
+    console.log(`Learned style (${samples.length} samples, ${Array.from(profile).length} chars):\n${profile}\n`);
+    if (/marco|dana|priya|sam\b|liu|orbit|hackathon|midterm/i.test(profile)) console.log("   MISS the profile names a person or a topic");
+    await db.update(userSettings).set({ writingStyleProfile: profile }).where(eq(userSettings.userId, USER));
+  }
+  VOICE = await loadWritingInstructions(USER);
 
   const cases: Case[] = [
     ...PROSPECTS.map((p): Case => ({ name: `cold email: ${p.fullName}`, kind: "email_cold", run: () => outreach(p, "email") })),
@@ -192,10 +222,10 @@ async function main() {
           body: "Hi Priya,\n\nI'm Jason, a CS student at UNC building Orbit. Your Collision point about referrals stuck with me. Would Tuesday or Thursday afternoon next week work for 20 minutes?\n\nThanks,\nJason Pereira",
         }),
     },
-    { name: "warm email: Ada", kind: "email_warm", run: () => generateContactFollowUpDraft(USER, ada, [], { channel: "email", intent: "Ask about the founding engineer role" }) },
-    { name: "warm email: Grace", kind: "email_warm", run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "email" }) },
-    { name: "LinkedIn DM: Ada", kind: "linkedin_dm", run: () => generateContactFollowUpDraft(USER, ada, [], { channel: "linkedin" }) },
-    { name: "LinkedIn DM: Grace", kind: "linkedin_dm", run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "linkedin" }) },
+    { name: "warm email: Ada", kind: "email_warm", run: () => generateContactFollowUpDraft(USER, ada, [], { channel: "email", intent: "Ask about the founding engineer role", writingInstructions: VOICE }) },
+    { name: "warm email: Grace", kind: "email_warm", run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "email", writingInstructions: VOICE }) },
+    { name: "LinkedIn DM: Ada", kind: "linkedin_dm", run: () => generateContactFollowUpDraft(USER, ada, [], { channel: "linkedin", writingInstructions: VOICE }) },
+    { name: "LinkedIn DM: Grace", kind: "linkedin_dm", run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "linkedin", writingInstructions: VOICE }) },
     {
       name: "recruiter email: Dana Kim",
       kind: "email_warm",
@@ -209,6 +239,7 @@ async function main() {
           lastEmailAt: new Date("2026-09-18T12:00:00Z"),
           userGoals: ["Land a software engineering internship for summer 2027"],
           senderName: SENDER,
+          writingInstructions: VOICE,
         }),
     },
   ];

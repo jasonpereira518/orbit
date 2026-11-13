@@ -346,7 +346,7 @@ ${senderBlock ? "- Write from the sender's own background where it makes the ask
       accept: (raw) => Boolean(parseDraft(raw).body),
     });
     return parseDraft(content);
-  });
+  }, { senderFullName });
 
   // Secrets the contact's notes held, and fence markers, never reach a draft someone sends.
   const guarded = guardModelOutput(draft.body);

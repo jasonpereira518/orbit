@@ -10,6 +10,7 @@ import {
   createDraftStreamScrubber,
   draftWithFormat,
   formatRules,
+  fullNameSignOff,
   hypeHits,
   retryNote,
   scrubDraft,
@@ -88,6 +89,14 @@ async function main() {
   });
   check("never more than one retry", calls3.length === 2);
   eq("the second draft is kept, scrubbed", stubborn.body, "So amazing.");
+
+  eq("a bare first-name sign-off becomes the full name", fullNameSignOff("Hi Priya,\n\nThanks,\nJason", "Jason Pereira"), "Hi Priya,\n\nThanks,\nJason Pereira");
+  eq("a full name is left alone", fullNameSignOff("Thanks,\nJason Pereira", "Jason Pereira"), "Thanks,\nJason Pereira");
+  eq("a body that ends on a sentence is left alone", fullNameSignOff("See you, Jason", "Jason Pereira"), "See you, Jason");
+  const named = await draftWithFormat("email_warm", async () => ({ body: "Hi Sam,\n\nGood seeing you.\n\nBest,\nJason" }), { senderFullName: "Jason Pereira" });
+  check("draftWithFormat applies it to emails", named.body.endsWith("Best,\nJason Pereira"));
+  const dm = await draftWithFormat("linkedin_dm", async () => ({ body: "Good seeing you.\nJason" }), { senderFullName: "Jason Pereira" });
+  check("but not to a DM", dm.body.endsWith("\nJason"));
 
   console.log("rules");
   const cold = formatRules("email_cold", { senderFullName: "Jason Pereira" });

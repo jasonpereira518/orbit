@@ -156,6 +156,15 @@ export const userSettings = pgTable("user_settings", {
    * redacts those by name).
    */
   writingInstructions: text("writing_instructions"),
+  /**
+   * How the user writes, distilled from their recent sent mail (`@/lib/writing-style-profile`):
+   * sentence length, greetings, sign-offs, words they use. Style only, never names or content;
+   * the raw mail is never stored. NULL = never built (built lazily); "" = the user cleared it,
+   * which also means "don't learn". Content like `writingInstructions`: a preferences purge
+   * clears it, and it takes no `_hash`/`_token`/`_secret` suffix.
+   */
+  writingStyleProfile: text("writing_style_profile"),
+  writingStyleProfileUpdatedAt: timestamp("writing_style_profile_updated_at", { withTimezone: true }),
   /** Appended to email sent from Orbit (direct email). Plain text, and a sanitized HTML twin. */
   emailSignatureText: text("email_signature_text"),
   emailSignatureHtml: text("email_signature_html"),
