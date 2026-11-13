@@ -34,6 +34,50 @@ Deepgram-managed OpenAI model thinks) and **ElevenLabs as an alternative**. Desi
 - **Captions:** off by default; paced by Deepgram's playback (ElevenLabs: a speaking-rate
   estimate). Toggle in the bar or by asking.
 
+## Who Cosmo is
+
+Every call is Cosmo, even with `feature.cosmo` hidden (that only removes the orb and Cosmo's
+powers). Its name is Cosmo and Jason created it. Asked about the model behind it, it says it is
+an AI assistant Jason created for Orbit, without naming providers, and never claims to be a
+person (`COSMO_IDENTITY` in `src/lib/voice/tools.ts`). Every greeting is "Hi, I'm Cosmo. What can
+I help with?": Deepgram's, the admin voice preview's and the ElevenLabs template's. The template
+only reaches ElevenLabs when `scripts/setup-orbit-voice.ts` is re-run.
+
+## What people say
+
+Decided in code, never by the model (`src/lib/voice/confirm-window.ts`, smoke-tested):
+
+- **Normalising:** case, punctuation, fillers (um, uh, so, just, please, thanks, thank you, now)
+  and misheard names ("cosmos", "kosmo", "cosimo") are cleaned up first.
+- **Confirming a card:** "uh yeah send it please", "send it now", "sent it" and "Cosmos, send it"
+  all send.
+  - Any no, not, don't, wait, hold on, stop, cancel or actually anywhere cancels, so
+    "do not send it" never sends.
+  - A bare "yes" or "go ahead" to an email or a delete asks once for the verb. That line, like
+    the read-back, has to finish playing before a reply counts.
+  - "Send it to Bob" closes the window; the card stays.
+- **Undo** within 10 seconds of a send: undo, unsend, take it back, cancel, stop, no, wait,
+  don't send. Just after the window closes, Cosmo says it's too late.
+- **Goodbye:** bye, goodbye, that's all, I'm done, hang up, end the call, stop listening. Cosmo
+  says one goodbye and the call ends when it has played (8 s at most). "That's it" and "I'm good"
+  don't count, because they often mean yes or no.
+- **Interjections:** only "stop interrupting", "don't interrupt" and "no more interruptions" turn
+  them off. "Be quiet" and "stop talking" only stop the current sentence.
+- **Background noise** never keeps a call awake: only real words, Cosmo speaking or a tool call
+  reset the quiet minute.
+
+Left to the model (`SAID_RULES` in `tools.ts`, cases in `scripts/eval-fixtures/voice-eval.json`):
+spoken emails and numbers (spelled back first), two people with one name, "send it" or "undo"
+with nothing waiting, off-topic questions, other languages, "are you recording me?", "what can
+you do?", bulk requests, relative dates and goodbyes.
+
+**Clicking and hovering:**
+- Clicking the idle orb starts a call.
+- Clicking the live orb, docked or on Chat's stage, ends it (the canvas lets the click through to
+  a button).
+- Hovering the idle orb brings up a halo, faster breathing, a few pixels' lean toward the pointer
+  (not with reduced motion), and loads the call's code ahead of time. Nothing is started.
+
 ## Minutes and limits
 
 - Talk time per plan, per UTC month: Free 10 min, Pro 60, Max and Lifetime 180

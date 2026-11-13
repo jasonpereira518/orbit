@@ -125,8 +125,12 @@ export function mayInterject(s: {
 }
 
 const said = (text: string) => text.toLowerCase().replace(/[’']/g, "").replace(/[^a-z ]+/g, " ").replace(/\s+/g, " ").trim();
+/**
+ * Only an explicit ask turns interjections off. "Be quiet", "shut up" or "stop talking" mean stop
+ * talking NOW, which barge-in already does; they must not silence Cosmo for good.
+ */
 export function isStopInterrupting(text: string): boolean {
-  return /\b(stop|quit|dont|no more) (interrupting|interrupt|butting in)\b|\bbe quiet\b|\bdont interrupt\b/.test(said(text));
+  return /\b(stop|quit) (interrupting|butting in)\b|\bdont interrupt\b|\bno more interrupt(ions|ing)\b/.test(said(text));
 }
 export function isResumeInterrupting(text: string): boolean {
   return /\byou can interrupt( me)? again\b|\bstart interrupting again\b/.test(said(text));

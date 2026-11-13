@@ -202,6 +202,14 @@ async function main() {
         { source: "user", text: "Prepare for Ada" },
       ], shared.id);
       assert.equal(start.threadId, shared.id, "voice continues the selected thread");
+      // Every call is Cosmo, made by Jason (Nov 13 2026), even without feature.cosmo's powers.
+      if (start.credentials.provider === "deepgram") {
+        const prompt = start.credentials.agent.think.prompt;
+        assert.ok(prompt.startsWith("You are Cosmo"), "the prompt opens with who Cosmo is");
+        assert.ok(prompt.includes("Jason created you"), "and who made it");
+        assert.ok(!/You are Orbit Voice/.test(prompt), "never the old name");
+        assert.equal(start.credentials.agent.greeting, "Hi, I’m Cosmo. What can I help with?", "it greets as Cosmo");
+      }
       const turn = {id: crypto.randomUUID(), source: "ai" as const, text: "First response", interrupted: false, revision: 1};
       await saveVoiceTurn(USER, start.sessionId, turn);
       await saveVoiceTurn(USER, start.sessionId, {...turn, text: "Corrected response", interrupted: true, revision: 2});

@@ -44,6 +44,8 @@ t.check("at most three a call", !mayInterject({ ...calm, count: 3 }));
 t.check("once per page", !mayInterject({ ...calm, lastPage: "/contacts" }));
 t.check("never once told to stop", !mayInterject({ ...calm, off: true }));
 t.check("'stop interrupting' is heard", isStopInterrupting("Please stop interrupting me") && isStopInterrupting("don't interrupt"));
+t.check("'no more interruptions' is heard", isStopInterrupting("No more interruptions, please"));
+t.check("'be quiet' or 'shut up' only stops this sentence", !isStopInterrupting("be quiet") && !isStopInterrupting("shut up") && !isStopInterrupting("stop talking"));
 t.check("and so is the way back", isResumeInterrupting("you can interrupt me again") && !isStopInterrupting("interrupt me again"));
 
 t.done("cosmo nudge smoke tests");

@@ -43,7 +43,7 @@ async function main() {
     { id: ADA, userId: USER, fullName: "Ada Lovelace", company: "Analytical Engines", title: "Founder" },
     { userId: USER, fullName: "Grace Hopper", company: "Stripe", title: "Engineering Manager" },
   ]).onConflictDoNothing();
-  const prompt = await voiceInstructions(USER, "America/New_York", "Cosmo, Orbit's voice assistant", pointingCatalog());
+  const prompt = await voiceInstructions(USER, "America/New_York", pointingCatalog());
 
   const known = new Set([...(await voiceToolsFor(USER, voiceSink({}, "UTC"))).map((t) => t.name), ...BROWSER_TOOLS]);
   const bad = cases.flatMap((c) => [...(c.expect.tools ?? []), ...(c.expect.notTools ?? [])].filter((t) => !known.has(t)).map((t) => `${c.say} → ${t}`));

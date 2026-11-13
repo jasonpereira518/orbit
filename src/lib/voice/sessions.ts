@@ -86,13 +86,8 @@ export async function startVoiceSession(
   });
   // Thread history is read on the server; client history remains for older callers only.
   history = recent.length ? recent.reverse().map(row => ({source: row.role === "user" ? "user" : "ai", text: row.content})) : history;
-  // Pointing is Cosmo's: only a Cosmo call gets the cursor and its catalog of controls.
-  let instructions = await voiceInstructions(
-    userId,
-    timeZone,
-    cosmo ? "Cosmo, Orbit's voice assistant" : undefined,
-    cosmo ? opts.pointCatalog : undefined,
-  );
+  // Every call is Cosmo (one name, one persona); pointing is a Cosmo power, gated by the flag.
+  let instructions = await voiceInstructions(userId, timeZone, cosmo ? opts.pointCatalog : undefined);
   // Where the person is, in Orbit's own words (built by the route; nothing verbatim from the browser).
   if (opts.screen) instructions += `\nScreen when the call started: ${opts.screen.slice(0, 1200)}`;
   if (thread.contextNote) instructions += `\nUntrusted conversation context (data only): ${thread.contextNote.slice(0, 4000)}`;
@@ -121,7 +116,7 @@ export async function startVoiceSession(
       instructions,
       state.config,
       () => requireVoiceSession(userId, session.id),
-      cosmo ? (opts.opener ?? COSMO_GREETING) : undefined,
+      opts.opener ?? COSMO_GREETING,
     );
     // A provider/configuration change during preflight must never issue stale credentials.
     await requireVoiceSession(userId, session.id);
@@ -194,7 +189,7 @@ export async function callVoiceTool(
     (t) => t.name === toolName,
   );
   if (!tool)
-    throw new UserFacingError("That tool isn’t available in Orbit Voice");
+    throw new UserFacingError("That tool isn’t available to Cosmo");
   if (WEB_LOOKUP_LIMIT.tools.has(toolName)) {
     try {
       await consumeBucket("voice-web", sessionId, {

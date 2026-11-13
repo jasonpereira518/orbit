@@ -54,7 +54,15 @@ export function VoicePanel({ state }: { state: VoicePublicState }) {
         </div>
         <div className="flex min-h-0 w-full items-center justify-center py-4 sm:py-6">
           {/* Cosmo's one orb (cosmo-orb.tsx) flies into this space and out again. */}
-          <div data-cosmo-orb-slot="stage" className="voice-orbit-slot" />
+          <button
+            type="button"
+            data-cosmo-orb-slot="stage"
+            className="voice-orbit-slot cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+            aria-label="End conversation with Cosmo"
+            title="End conversation"
+            disabled={closing}
+            onClick={() => void voiceActions.close()}
+          />
         </div>
         <p role="status" className="min-h-6 text-sm text-muted-foreground">
           {busy
