@@ -24,6 +24,7 @@ import {
   voiceControls,
   type TranscriptTurn,
 } from "@/lib/voice/call-store";
+import { setCallThread, type VoiceCall } from "@/lib/voice/dock-store";
 import type { VoiceAgentEvents, VoiceMode, VoicePublicState, VoiceSessionStart } from "@/lib/voice/contracts";
 
 const DeepgramAdapter = dynamic(() => import("./deepgram-adapter").then((m) => m.DeepgramAdapter), { ssr: false });
@@ -69,8 +70,8 @@ async function command(body: Record<string, unknown>) {
  * Everything a view shows goes through `call-store`; everything it does goes through
  * `voiceActions`.
  */
-export function VoiceEngine({ state, threadId, onClose }: {
-  state: VoicePublicState; threadId: string; onClose(): Promise<void>;
+export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
+  state: VoicePublicState; threadId: string | null; origin?: VoiceCall["origin"]; onClose(): Promise<void>;
 }) {
   const router = useRouter();
   const { setTheme } = useTheme();
@@ -87,6 +88,8 @@ export function VoiceEngine({ state, threadId, onClose }: {
   const session = useRef<string | null>(null);
   const generation = useRef(0);
   const starting = useRef(false);
+  /** The call's thread; a Cosmo call learns it from the start response. */
+  const thread = useRef(threadId);
 
   useLayoutEffect(() => {
     resetVoiceCall(state.provider);
@@ -211,7 +214,7 @@ export function VoiceEngine({ state, threadId, onClose }: {
     let answer = "";
     const finished = new Promise<string | null>((resolve) => {
       void streamChat(
-        { question: question.trim().slice(0, 2000), threadId, turnId: crypto.randomUUID() },
+        { question: question.trim().slice(0, 2000), threadId: thread.current ?? undefined, turnId: crypto.randomUUID() },
         {
           onAnswer: (delta) => { answer += delta; },
           onRecommendations: () => {},
@@ -228,7 +231,7 @@ export function VoiceEngine({ state, threadId, onClose }: {
       return JSON.stringify({ status: "still_working", note: "Chat is still answering. The full answer will appear in this conversation." });
     if (outcome) return JSON.stringify({ error: outcome });
     return JSON.stringify({ untrusted_chat_answer: plainSpeech(answer).slice(0, 3000) });
-  }, [threadId]);
+  }, []);
 
   const events = useMemo<VoiceAgentEvents>(() => {
     const id = active?.sessionId;
@@ -369,13 +372,17 @@ export function VoiceEngine({ state, threadId, onClose }: {
         action: "start",
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         fallback,
-        threadId,
+        threadId: thread.current ?? undefined,
+        // Cosmo's remembered day thread may have been deleted since; start a new one then.
+        freshIfMissing: origin === "cosmo",
       });
       if (!alive.current || attempt !== generation.current) {
         await command({ action: "end", sessionId: response.sessionId }).catch(() => {});
         return;
       }
       session.current = response.sessionId;
+      thread.current = response.threadId;
+      setCallThread(response.threadId);
       setActive(response);
       setVoiceCall({ active: true, provider: response.credentials.provider });
     } catch (err) {

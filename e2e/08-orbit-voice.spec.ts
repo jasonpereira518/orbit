@@ -334,21 +334,23 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       "true",
     );
     await page.getByRole("button", { name: "Unmute" }).click();
-    // Leaving Chat keeps the call: it docks at the middle right of the next page, then
-    // comes back inline when Chat opens again — one connection throughout.
+    // Leaving Chat keeps the call: it docks as Cosmo's bar at the bottom right of the next
+    // page (localhost always previews `feature.cosmo`), then comes back inline when Chat opens
+    // again — one connection throughout.
     const voice = page.getByRole("region", {name: "Orbit Voice", exact: true});
+    const cosmo = page.getByRole("region", {name: "Cosmo", exact: true});
     await page.locator('a[href="/contacts"]:visible').first().click();
     await expect(page).toHaveURL(/\/contacts/);
-    await expect(voice.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
+    await expect(cosmo.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
     await expect.poll(async () => {
-      const box = await voice.boundingBox();
+      const box = await cosmo.boundingBox();
       const view = page.viewportSize()!;
-      return Boolean(box && Math.abs(box.y + box.height / 2 - view.height / 2) < 4 && view.width - (box.x + box.width) < 32);
+      return Boolean(box && view.height - (box.y + box.height) < 40 && view.width - (box.x + box.width) < 32);
     }).toBe(true);
     const docked = test.info().outputPath(`${provider}-docked.png`);
     await page.screenshot({ path: docked });
     await test.info().attach(`${provider} docked voice`, { path: docked, contentType: "image/png" });
-    await voice.getByRole("link", { name: "Open chat" }).click();
+    await cosmo.getByRole("link", { name: "Open chat" }).click();
     await expect(page).toHaveURL(/\/chat/);
     await expect(voice.getByRole("button", { name: "Transcript", exact: true })).toBeVisible();
     expect(connected).toBe(1);

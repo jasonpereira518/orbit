@@ -27,6 +27,7 @@ const command = z.discriminatedUnion("action", [
     action: z.literal("start"),
     threadId: z.string().uuid().optional(),
     fallback: z.boolean().default(false),
+    freshIfMissing: z.boolean().default(false),
     history: z
       .array(
         z.object({
@@ -113,6 +114,7 @@ export async function POST(request: Request) {
             body.fallback,
             body.history,
             body.threadId,
+            { freshIfMissing: body.freshIfMissing },
           ),
         );
       case "tool":

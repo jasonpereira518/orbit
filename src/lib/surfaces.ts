@@ -270,6 +270,8 @@ export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
 export const CLOUD_NOTES_SURFACE_KEY = "feature.cloud-notes";
 /** Notion: the settings page, the Capture picker and the people-database sync. */
 export const NOTION_SURFACE_KEY = "feature.notion";
+/** Cosmo: the voice assistant orb on every page (docs/superpowers/specs/2026-11-12-cosmo-design.md). */
+export const COSMO_SURFACE_KEY = "feature.cosmo";
 const FEATURES: Surface[] = [
   {
     key: COMPOSE_SURFACE_KEY,
@@ -316,6 +318,14 @@ const FEATURES: Surface[] = [
     label: "Notion",
     description: "Connect Notion: pick pages to capture on Capture, and sync a people database into contacts.",
     // Until /privacy says what Orbit reads from Notion and the public integration is approved.
+    comingSoon: true,
+  },
+  {
+    key: COSMO_SURFACE_KEY,
+    kind: "feature",
+    label: "Cosmo",
+    description: "The voice assistant orb in the corner of every page: talk to Orbit from anywhere.",
+    // Built PR by PR behind this flag; released once metering and /privacy land (Cosmo PR 13).
     comingSoon: true,
   },
 ];

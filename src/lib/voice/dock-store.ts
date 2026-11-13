@@ -5,9 +5,19 @@ import type { VoicePublicState } from "./contracts";
 /**
  * The one live Orbit Voice call, held above the page so it survives navigation.
  * `VoiceDock` (app layout) renders it; the chat page only offers a `slot` to dock it inline.
+ *
+ * `id` names the call itself and is what the engine is keyed on: a Cosmo call starts without a
+ * thread (`threadId` null) and adopts the one the server picks, which must not remount it.
  */
+export type VoiceCall = {
+  id: string;
+  threadId: string | null;
+  state: VoicePublicState;
+  /** Where it was started: Chat's composer (that thread) or the Cosmo orb (the day's thread). */
+  origin: "chat" | "cosmo";
+};
 export type VoiceDockState = {
-  call: { threadId: string; state: VoicePublicState } | null;
+  call: VoiceCall | null;
   slot: HTMLElement | null;
 };
 
@@ -20,11 +30,16 @@ function set(next: Partial<VoiceDockState>) {
   for (const fn of listeners) fn();
 }
 
-export function openVoice(threadId: string, state: VoicePublicState) {
-  if (!current.call) set({ call: { threadId, state } });
+export function openVoice(threadId: string | null, state: VoicePublicState, origin: VoiceCall["origin"] = "chat") {
+  if (!current.call) set({ call: { id: crypto.randomUUID(), threadId, state, origin } });
 }
 
-/** Admin changes (provider, fallback) reach a live call through Chat's status poll. */
+/** The server answered with the call's thread (a new one, for a Cosmo call). */
+export function setCallThread(threadId: string) {
+  if (current.call && current.call.threadId !== threadId) set({ call: { ...current.call, threadId } });
+}
+
+/** Admin changes (provider, fallback) reach a live call through the status poll. */
 export function updateVoiceState(state: VoicePublicState) {
   if (current.call) set({ call: { ...current.call, state } });
 }
