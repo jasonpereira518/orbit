@@ -105,6 +105,10 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   if (new URL(page.url()).pathname.startsWith("/onboarding")) await ensureOnboarded(page);
   const starts: Array<{ threadId?: string; freshIfMissing?: boolean }> = [];
   const startScreens: Array<{ page: string | null; targets: string[] } | undefined> = [];
+  const spoken: Array<{ action: string }> = [];
+  const draftMessage = "55555555-5555-4555-8555-555555555555";
+  const adaId = "66666666-6666-4666-8666-666666666666";
+  const sendId = "77777777-7777-4777-8777-777777777777";
   let connected = 0;
   let ends = 0;
   let sockets = 0;
@@ -141,6 +145,31 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
             },
           },
         },
+      });
+    }
+    if (body.action === "tool" && body.tool === "draft_email")
+      return route.fulfill({
+        json: {
+          result: JSON.stringify({ untrusted_crm_data: { proposed: true } }),
+          proposal: {
+            messageId: draftMessage,
+            action: {
+              id: "draft-1",
+              args: { tool: "draft_email", input: { contactId: adaId, body: "Thanks for the intro" } },
+              preview: "Email Ada: “Thanks for the intro” — you review and send it",
+              status: "proposed",
+              tier: "confirm",
+            },
+          },
+        },
+      });
+    if (body.action === "confirm" || body.action === "undo_send") {
+      spoken.push(body);
+      return route.fulfill({
+        json:
+          body.action === "confirm"
+            ? { outcome: "sent", sendId: sendId, sendAt: new Date(Date.now() + 10_000).toISOString(), to: "ada@example.com" }
+            : { result: "canceled" },
       });
     }
     if (body.action === "connected") connected++;
@@ -301,6 +330,32 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   ask("after_point", "look_at_screen", {});
   await expect.poll(() => reply("after_point")).toContain("The user clicked the New reminder button.");
   expect(reply("after_point")).toContain("The user clicked the Reminders in the menu.");
+
+  // Spoken confirmation: Orbit reads the email back in its own words; a "send it" said over the
+  // read-back is ignored; one said after it has been heard sends; "undo" stops it.
+  const injected = () => frames.filter((f) => f.type === "InjectAgentMessage").map((f) => String(f.content ?? f.message));
+  ask("draft_1", "draft_email", { contactId: adaId, body: "Thanks for the intro" });
+  await expect.poll(() => injected().find((line) => line.includes('Say "send it"'))).toBeTruthy();
+  const readBackLine = injected().find((line) => line.includes('Say "send it"'))!;
+  expect(readBackLine).toContain("Email Ada");
+  send({ type: "UserStartedSpeaking" });
+  send({ type: "ConversationText", role: "user", content: "send it" });
+  await page.waitForTimeout(800);
+  expect(spoken, "a 'send it' before the read-back finished is ignored").toHaveLength(0);
+  // The read-back is spoken (its text comes back as the agent's line, then its audio plays out).
+  send({ type: "ConversationText", role: "assistant", content: readBackLine });
+  socket!.send(speech(1));
+  send({ type: "AgentAudioDone" });
+  await expect(cosmo.getByRole("status")).toHaveText("Speaking");
+  await expect(cosmo.getByRole("status")).toHaveText("Listening", { timeout: 5000 });
+  send({ type: "UserStartedSpeaking" });
+  send({ type: "ConversationText", role: "user", content: "Send it." });
+  await expect.poll(() => spoken.map((s) => s.action)).toEqual(["confirm"]);
+  await expect.poll(() => injected().some((line) => line.startsWith("Sending to ada@example.com"))).toBe(true);
+  send({ type: "UserStartedSpeaking" });
+  send({ type: "ConversationText", role: "user", content: "undo" });
+  await expect.poll(() => spoken.map((s) => s.action)).toEqual(["confirm", "undo_send"]);
+  await expect.poll(() => injected().some((line) => line.startsWith("Stopped."))).toBe(true);
   const shot = test.info().outputPath("cosmo-docked.png");
   await page.screenshot({ path: shot });
   await test.info().attach("cosmo docked", { path: shot, contentType: "image/png" });

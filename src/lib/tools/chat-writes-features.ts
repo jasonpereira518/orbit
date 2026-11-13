@@ -567,7 +567,12 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
     description:
       "Propose an email to one of the user's contacts, in the user's voice: the text only. The card opens Orbit's send " +
       "dialog with it prefilled — the user checks the address and subject there and presses Send themselves. Nothing is sent from here.",
-    inputSchema: { contactId: uuid, body: z.string().min(1).max(4000) },
+    inputSchema: {
+      contactId: uuid,
+      body: z.string().min(1).max(4000),
+      // Optional: the send dialog (or a spoken "send it") falls back to Orbit's default subject.
+      subject: z.string().min(1).max(200).optional(),
+    },
     tier: "confirm",
     opensDialog: "gmail_send",
     refs: (i) => ({ contacts: [s(i.contactId)] }),
