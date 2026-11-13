@@ -31,22 +31,40 @@ export const AGENCY_DOMAIN_HINTS = [
 ];
 
 export function parseFromHeader(from: string): { name: string; email: string } | null {
-  const match = from.match(/^(?:"?([^"<]*)"?\s*)?<?([^\s<>]+@[^\s<>]+)>?$/);
-  if (!match) return null;
-  const email = match[2].trim().toLowerCase();
-  const shown = (match[1] || "").trim().replace(/^"|"$/g, "");
+  // A display name only ever precedes `<…>`. The old single pattern let it swallow the start
+  // of a BARE address — `no-reply@ashbyhq.com` parsed as "no-repl" at `y@ashbyhq.com` — and
+  // Graph hands out bare addresses whenever a sender has no name.
+  const trimmed = from.trim();
+  const angled = trimmed.match(/^(?:"?([^"<]*?)"?\s*)?<([^\s<>]+@[^\s<>]+)>$/);
+  const bare = angled ? null : trimmed.match(/^([^\s<>"]+@[^\s<>"]+)$/);
+  const address = angled?.[2] ?? bare?.[1];
+  if (!address) return null;
+  const email = address.trim().toLowerCase();
+  const shown = (angled?.[1] || "").trim().replace(/^"|"$/g, "");
   // A display name is formatted ("DOE, JANE" → Jane Doe); none, the address is read.
   const name = formatPersonName(shown)?.fullName || nameFromEmail(email)?.full || email.split("@")[0].replace(/[._]/g, " ");
   return { name, email };
 }
 
+const FREE_MAIL_LABELS = new Set([
+  "gmail", "googlemail", "yahoo", "ymail", "outlook", "hotmail", "live", "msn", "icloud", "me", "mac", "aol", "proton", "protonmail",
+]);
+
+/** The middle of a two-part public suffix: `bbc.co.uk` is the BBC, not "Co". */
+const SECOND_LEVEL_LABELS = new Set(["co", "com", "ac", "org", "net", "gov", "edu", "ne", "or"]);
+
+/**
+ * The company a domain belongs to — the label before the public suffix, never the first one.
+ * Companies put real recruiters on subdomains: `talent.capitalone.com` is Capital One's, and
+ * reading the first label turned it into a firm called "Talent".
+ */
 export function firmFromEmail(email: string): string | null {
-  const domain = email.split("@")[1];
-  if (!domain) return null;
-  const base = domain.split(".")[0];
-  if (!base || ["gmail", "yahoo", "outlook", "hotmail", "icloud"].includes(base)) {
-    return null;
-  }
+  const labels = (email.split("@")[1] ?? "").toLowerCase().split(".").filter(Boolean);
+  if (labels.length < 2) return null;
+  let i = labels.length - 2;
+  if (i > 0 && labels[labels.length - 1].length === 2 && SECOND_LEVEL_LABELS.has(labels[i])) i -= 1;
+  const base = labels[i];
+  if (!base || FREE_MAIL_LABELS.has(base)) return null;
   return base.charAt(0).toUpperCase() + base.slice(1);
 }
 

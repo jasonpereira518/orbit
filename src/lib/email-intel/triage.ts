@@ -9,7 +9,7 @@
  */
 import type { GmailHeaderSummary, GmailThreadSummary } from "@/lib/gmail";
 import { ATS_SENDER_DOMAINS } from "@/lib/gmail";
-import { deriveAtsStage, triageThread } from "@/lib/recruiter-triage";
+import { atsCompanyOf, deriveAtsStage, isAtsVendorDomain, isNonJobApplication, triageThread } from "@/lib/recruiter-triage";
 import { STAGE_LABELS } from "@/lib/recruiter-stages";
 import type { RuleEvent, ThreadResult } from "./types";
 
@@ -57,7 +57,15 @@ function ruleEvent(headers: GmailHeaderSummary[], userEmail: string): RuleEvent 
   if (!latest) return null;
   const stage = deriveAtsStage(`${latest.subject} ${latest.snippet}`);
   if (!stage) return null;
-  const company = companyFromSender(latest.from);
+  // From anyone but an ATS vendor, "your application has been received" may not be about a
+  // job: a bank's no-reply is a credit card, and it used to become "Applied — Chase".
+  if (!isAtsVendorDomain(domainOf(latest.from)) && isNonJobApplication(`${latest.from} ${latest.subject} ${latest.snippet}`)) return null;
+  // An ATS vendor is never the employer, so `companyFromSender` gives up on it — and an event
+  // with no company is one nothing can group by. The subject, the display name or the Workday
+  // tenant in the address usually names the company.
+  const company =
+    companyFromSender(latest.from) ??
+    atsCompanyOf({ from: latest.from, subject: latest.subject, text: latest.snippet });
   const label = STAGE_LABELS[stage];
   const preview = (latest.snippet.trim() || latest.subject.trim()).slice(0, EVIDENCE_MAX);
   return {
