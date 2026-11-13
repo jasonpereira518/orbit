@@ -365,6 +365,9 @@ async function main() {
         // Cosmo applies a small change the person asked for at once (with Undo on its card);
         // anything else stays a card. Plain Orbit Voice never applies.
         const call = await startVoiceSession(COSMO, "UTC");
+        // Cosmo is released, so a call starts as Cosmo's; feature.cosmo hidden makes it plain.
+        assert.equal((await db.query.orbitVoiceSessions.findFirst({ where: eq(orbitVoiceSessions.id, call.sessionId) }))?.cosmo, true, "released: calls are Cosmo's");
+        await db.update(orbitVoiceSessions).set({ cosmo: false }).where(eq(orbitVoiceSessions.id, call.sessionId));
         const [ada] = await db.insert(contacts).values({ userId: COSMO, fullName: "Ada Cosmo", aiSummary: "Analyst" }).returning();
         await callVoiceTool(COSMO, call.sessionId, "get_contact", { contactId: ada.id });
         const remind = (title: string, extra: Record<string, unknown> = { asked_for: true }) =>

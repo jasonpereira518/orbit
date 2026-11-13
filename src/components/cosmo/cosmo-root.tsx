@@ -51,10 +51,10 @@ function readDismissed(): Set<string> {
  * call's slot present, the inline stage shows instead (VoiceDock). Toasts and the job stack sit
  * above it: the height published here is added to their offsets in theme.css.
  */
-export function CosmoRoot({ tourActive = false }: { tourActive?: boolean }) {
+export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boolean; orb?: boolean }) {
   const pathname = usePathname();
-  const { call, slot } = useVoiceDock();
-  const [state, setState] = useState<VoicePublicState | null>(null);
+  const { call, slot, state } = useVoiceDock();
+  const onChat = pathname.startsWith("/chat");
   const root = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLDivElement>(null);
   const { pulse } = useAppPulse();
@@ -82,11 +82,9 @@ export function CosmoRoot({ tourActive = false }: { tourActive?: boolean }) {
     async function check() {
       try {
         const response = await fetch("/api/voice", { cache: "no-store" });
-        if (!response.ok) return void (alive && setState(null));
+        if (!response.ok) return void (alive && updateVoiceState(null));
         const data = (await response.json()) as VoicePublicState;
-        if (!alive) return;
-        setState(data);
-        updateVoiceState(data);
+        if (alive) updateVoiceState(data);
       } catch {
         // Offline or blocked: keep what we had; a live call owns its own cleanup.
       }
@@ -94,11 +92,15 @@ export function CosmoRoot({ tourActive = false }: { tourActive?: boolean }) {
     void check();
     const onVisible = () => document.visibilityState === "visible" && void check();
     document.addEventListener("visibilitychange", onVisible);
+    // On Chat (where the composer used to poll), admin changes such as an offered fallback
+    // reach an open page within 15 seconds; elsewhere, on load and when the tab returns.
+    const timer = onChat ? window.setInterval(() => document.visibilityState === "visible" && void check(), 15_000) : 0;
     return () => {
       alive = false;
+      window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, []);
+  }, [onChat]);
 
   useEffect(() => {
     if (call?.origin !== "cosmo" || !call.threadId) return;
@@ -110,7 +112,11 @@ export function CosmoRoot({ tourActive = false }: { tourActive?: boolean }) {
   }, [call?.origin, call?.threadId]);
 
   const hidden =
-    tourActive || pathname.startsWith("/onboarding") || Boolean(call && slot) || (!call && !state?.enabled);
+    tourActive ||
+    pathname.startsWith("/onboarding") ||
+    Boolean(call && slot) ||
+    // `orb` off (feature.cosmo hidden): no idle orb, but a Chat call still docks here off Chat.
+    (!call && (!orb || !state?.enabled));
   /** Where Cosmo was just before it moves, so it glides from there (FLIP) instead of jumping. */
   const from = useRef<DOMRect | null>(null);
   const capture = useCallback(() => {

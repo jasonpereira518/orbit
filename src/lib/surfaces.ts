@@ -325,8 +325,7 @@ const FEATURES: Surface[] = [
     kind: "feature",
     label: "Cosmo",
     description: "The voice assistant orb in the corner of every page: talk to Orbit from anywhere.",
-    // Built PR by PR behind this flag; released once metering and /privacy land (Cosmo PR 13).
-    comingSoon: true,
+    // Hidden = the orb's off switch: no idle orb, and calls lose Cosmo's powers and metering.
   },
 ];
 

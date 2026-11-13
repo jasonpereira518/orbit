@@ -17,7 +17,7 @@ test("voice defaults off and server rejects disabled and cross-site starts", asy
     provider: "deepgram",
     fallbackProvider: null,
   });
-  await expect(page.getByRole("button", { name: "Start Orbit Voice" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Talk with Cosmo here" })).toBeDisabled();
   expect(
     (
       await page.request.post("/api/voice", {
@@ -199,8 +199,8 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await composer.fill("Hello Orbit");
     await expect(page.getByRole("button", {name: "Send", exact: true})).toBeVisible();
     await composer.fill("   ");
-    await page.getByRole("button", { name: "Start Orbit Voice" }).click();
-    await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toBeVisible();
+    await page.getByRole("button", { name: "Talk with Cosmo here" }).click();
+    await expect(page.getByRole("region", {name: "Cosmo in this conversation", exact: true})).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Mute", exact: true }),
     ).toBeVisible();
@@ -223,7 +223,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
       for (let index = 0; index < 48000; index++) audio.writeInt16LE(Math.round(Math.sin(index * 2 * Math.PI * 220 / 24000) * 6000), index * 2);
       socket!.send(audio);
       await expect(
-        page.getByRole("status").filter({ hasText: "Orbit is speaking" }),
+        page.getByRole("status").filter({ hasText: "Cosmo is speaking" }),
       ).toBeVisible();
       await expect.poll(() => page.locator(".voice-orbit").evaluate(el => Number((el as HTMLElement).style.getPropertyValue("--voice-output")))).toBeGreaterThan(.01);
       const closes = await page.evaluate(
@@ -353,7 +353,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     // Leaving Chat keeps the call: it docks as Cosmo's bar at the bottom right of the next
     // page (localhost always previews `feature.cosmo`), then comes back inline when Chat opens
     // again — one connection throughout.
-    const voice = page.getByRole("region", {name: "Orbit Voice", exact: true});
+    const voice = page.getByRole("region", {name: "Cosmo in this conversation", exact: true});
     const cosmo = page.getByRole("region", {name: "Cosmo", exact: true});
     /** The orb has landed: its centre is inside the given slot. */
     const orbInside = (slot: string) =>
@@ -406,7 +406,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     expect(sockets).toBe(1);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect.poll(async () => {
-      const box = await page.getByRole("region", {name: "Orbit Voice", exact: true}).boundingBox();
+      const box = await page.getByRole("region", {name: "Cosmo in this conversation", exact: true}).boundingBox();
       return box && box.x >= -1 && box.x + box.width <= 391;
     }).toBe(true);
     await expect(page.getByRole("button", {name: "Transcript", exact: true})).toBeInViewport({ratio: 1});
@@ -426,7 +426,7 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     });
     await page.evaluate(() => document.documentElement.classList.add("dark"));
     await page.emulateMedia({reducedMotion: "reduce"});
-    await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toHaveCSS("color", "rgb(231, 236, 241)");
+    await expect(page.getByRole("region", {name: "Cosmo in this conversation", exact: true})).toHaveCSS("color", "rgb(231, 236, 241)");
     await expect(page.locator(".voice-orbit")).toHaveAttribute("data-reduced", "");
     const darkScreenshot = test.info().outputPath(`${provider}-dark-mobile.png`);
     await page.screenshot({path: darkScreenshot});
@@ -434,16 +434,16 @@ for (const provider of ["deepgram", "elevenlabs"] as const) {
     await page.evaluate(() => document.documentElement.classList.remove("dark"));
     await page.getByRole("button", { name: "End conversation" }).click();
     await expect(
-      page.getByRole("button", { name: "Start Orbit Voice" }),
+      page.getByRole("button", { name: "Talk with Cosmo here" }),
     ).toBeVisible();
     await expect.poll(() => ends).toBe(1);
     await expect(composer).toBeFocused();
-    await page.getByRole("button", { name: "Start Orbit Voice" }).click();
+    await page.getByRole("button", { name: "Talk with Cosmo here" }).click();
     await expect(
       page.getByRole("button", { name: "Mute", exact: true }),
     ).toBeVisible();
     enabled = false;
-    await expect(page.getByRole("region", {name: "Orbit Voice", exact: true}).getByRole("alert")).toContainText("Voice settings changed", {timeout: 25000});
+    await expect(page.getByRole("region", {name: "Cosmo in this conversation", exact: true}).getByRole("alert")).toContainText("Voice settings changed", {timeout: 25000});
     await expect.poll(() => ends).toBe(2);
   });
 }
@@ -482,8 +482,8 @@ test("fallback is explicit; microphone permissions fail gracefully", async ({
     };
   });
   await page.goto("/chat", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "Start Orbit Voice" }).click();
-  await expect(page.getByRole("region", { name: "Orbit Voice", exact: true }).getByRole("alert")).toContainText(
+  await page.getByRole("button", { name: "Talk with Cosmo here" }).click();
+  await expect(page.getByRole("region", { name: "Cosmo in this conversation", exact: true }).getByRole("alert")).toContainText(
     "Selected provider is unavailable",
   );
   await expect(
@@ -503,12 +503,12 @@ test("fallback is explicit; microphone permissions fail gracefully", async ({
     };
   });
   await page.getByRole("button", { name: "Retry Deepgram" }).click();
-  await expect(page.getByRole("region", { name: "Orbit Voice", exact: true }).getByRole("alert")).toContainText(
+  await expect(page.getByRole("region", { name: "Cosmo in this conversation", exact: true }).getByRole("alert")).toContainText(
     "Microphone access was denied",
   );
   expect(starts.length).toBe(2);
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("region", {name: "Orbit Voice", exact: true})).toHaveCount(0);
+  await expect(page.getByRole("region", {name: "Cosmo in this conversation", exact: true})).toHaveCount(0);
   await expect(page.getByRole("combobox", {name: "Message Orbit"})).toBeFocused();
 });
 

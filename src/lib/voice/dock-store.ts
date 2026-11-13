@@ -21,9 +21,11 @@ export type VoiceCall = {
 export type VoiceDockState = {
   call: VoiceCall | null;
   slot: HTMLElement | null;
+  /** Orbit Voice's public state, read once per page by CosmoRoot (on load and when the tab returns). */
+  state: VoicePublicState | null;
 };
 
-let current: VoiceDockState = { call: null, slot: null };
+let current: VoiceDockState = { call: null, slot: null, state: null };
 const listeners = new Set<() => void>();
 const endListeners = new Set<(threadId: string) => void>();
 
@@ -46,9 +48,9 @@ export function setCallThread(threadId: string) {
   if (current.call && current.call.threadId !== threadId) set({ call: { ...current.call, threadId } });
 }
 
-/** Admin changes (provider, fallback) reach a live call through the status poll. */
-export function updateVoiceState(state: VoicePublicState) {
-  if (current.call) set({ call: { ...current.call, state } });
+/** Admin changes (provider, fallback) reach a live call, and the Chat mic, through the status read. */
+export function updateVoiceState(state: VoicePublicState | null) {
+  set(current.call && state ? { state, call: { ...current.call, state } } : { state });
 }
 
 export function closeVoice() {
@@ -71,7 +73,7 @@ function subscribe(fn: () => void) {
   return () => void listeners.delete(fn);
 }
 
-const SERVER: VoiceDockState = { call: null, slot: null };
+const SERVER: VoiceDockState = { call: null, slot: null, state: null };
 export function useVoiceDock(): VoiceDockState {
   return useSyncExternalStore(subscribe, () => current, () => SERVER);
 }
