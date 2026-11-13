@@ -64,8 +64,8 @@ function flowsOutward() {
 // The screen is full from the first frame: stars sit at every depth, inside and past their rest.
 const startDepths = STARS.map(([o, e]) => warpLogK(o, e, 0));
 const coversDepths = Math.min(...startDepths) < -1 && Math.max(...startDepths) > 0.5;
-// Still mixed well into the flight, not bunched into one shrunken copy of the sky.
-const midDepths = STARS.map(([o, e]) => warpLogK(o, e, warpProgress(600)));
+// Still mixed a quarter of the way into the flight, not bunched into one shrunken copy of the sky.
+const midDepths = STARS.map(([o, e]) => warpLogK(o, e, warpProgress(WARP_MS / 4)));
 const midSpread = Math.max(...midDepths) - Math.min(...midDepths);
 // Every star actually travels: at least one full lap over the flight.
 function travels() {
@@ -156,7 +156,7 @@ const CASES: Array<[label: string, got: unknown, expected: unknown]> = [
   ["stars stream outward, wrapping back to the vanishing point", flowsOutward(), true],
   ["the first frame has stars at every depth (screen covered)", coversDepths, true],
   ["every star flies at least one full lap", travels(), true],
-  ["600ms in, stars still sit across most of a lap of depth", midSpread > WARP_LAP * 0.8, true],
+  ["a quarter in, stars still sit across most of a lap of depth", midSpread > WARP_LAP * 0.8, true],
   // As the flight slows every star closes in on its rest from the sun's side, so the edges would
   // empty out. Temporary stars resting off-screen, out to this reach, fill them and then leave.
   ["temporary edge stars reach well past the screen", WARP_FIELD_REACH >= 1.8, true],

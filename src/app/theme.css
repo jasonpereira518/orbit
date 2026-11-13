@@ -1637,7 +1637,7 @@ html[data-motion="reduce"] .constellation-starfield-drift {
    * "zooming to space and then you arrive at the solar system"). It scales about its own centre,
    * the sun, so it never moves toward the text. Same length as WARP_MS in lib/landing-intro.ts. */
   html[data-landing-intro] .landing-solar-enter {
-    animation: landing-solar-warp 2.4s cubic-bezier(0.3, 0.55, 0.25, 1) both;
+    animation: landing-solar-warp 1.2s cubic-bezier(0.3, 0.55, 0.25, 1) both;
   }
 }
 

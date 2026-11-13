@@ -28,10 +28,10 @@ Why: a memorable first impression for the landing page.
 0.30s                     hero button fades up (md and wider; phones use the header's)
 sky loads (after idle,    the flight: already at speed, stars stream out of the
  as today, ~0.5–2s)       sun past the camera, covering the whole screen
- +0.6–1.2s                still flying; streaks begin to shorten
- +1.8s                    short dashes; the flight is slowing
- +2.4s                    arrived: each star stops exactly where it rests today
-solar system loads        a speck at the sun that grows into place over 2.4s
+ +0.3s                    short dashes; the flight is slowing
+ +0.6s                    nearly settled
+ +1.2s                    arrived: each star stops exactly where it rests today
+solar system loads        starts at a fifth of its size and grows into place over 1.2s
  (same idle gate)         as the flight slows, scaling about its own centre
 ```
 
@@ -83,7 +83,7 @@ as today (one block). With it, the block's own fade is off and its three parts
 
 **The warp.** A new `intro` prop on `Starfield` (off by default), passed only by the
 landing page. When on, and the attribute is present, and motion is allowed, the first
-~2.4s of drawing is the flight:
+~1.2s of drawing is the flight:
 
 - Vanishing point `V`: the centre of the solar system's box, found once by a
   `data-sky-warp-origin` attribute on the stage wrapper in `hero-pin.tsx`. Fallback:
@@ -104,6 +104,9 @@ landing page. When on, and the attribute is present, and motion is allowed, the 
 - Lighter (Jason: "Make it less dense when warping"): only 45% of the stars fly; the rest
   stay hidden and fade up at their places over the last 15% of the flight, so the resting
   sky is complete on arrival. Edge stars are thinned to the same share.
+- Calmer and shorter (Jason: "Still a lot less movement for the stars", then "Make it half
+  the time"): stars respawn at ~1/4 of their rest distance instead of ~1/11, fly less far,
+  and the whole intro is 1.2s instead of 2.4s. Exact values are in lib/landing-intro.ts.
 - The streak joins where the star was 45ms ago, so its length is the speed and it
   collapses on arrival; it is skipped across a wrap. Respawned stars fade up. No second
   canvas.
@@ -118,7 +121,7 @@ The timing and the position formula live in one small pure module
 
 **The solar system.** CSS only. With the attribute present, `.landing-solar-enter`
 uses a new keyframe: from 20% size and transparent, at the sun's position, growing to
-rest over 2.4s (the flight's length), so you arrive at it. It scales about its own
+rest over 1.2s (the flight's length), so you arrive at it. It scales about its own
 centre and never moves toward the text. (Replaced the first build's left-to-right drift
 when the flight was asked for.) It starts when the solar system
 mounts; the sky starts when the sky mounts. Both sit behind the same idle gate, so

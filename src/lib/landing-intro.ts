@@ -38,19 +38,22 @@ export const LANDING_INTRO_PREPAINT_SCRIPT = `try{var d=document.documentElement
  * each star's final lap ends exactly at u=0, its rest position, which is the arrival.
  *
  * Tuning knobs, set by eye in the browser. Toned down Nov 12 (Jason: "a little less dramatic"):
- * travel 7 -> 4.5 (slower flight), streak 70ms -> 45ms (shorter streaks).
+ * travel 7 -> 4.5 (slower flight), streak 70ms -> 45ms (shorter streaks). Then "still a lot
+ * less movement for the stars": lap 2.4 -> 1.4 (respawn at ~1/4 of rest distance, not ~1/11),
+ * travel 4.5 -> 2, streak 45ms -> 30ms. Then "Make it half the time": 2400ms -> 1200ms, with
+ * the streak window halved to 15ms so the doubled speed keeps the same streak lengths.
  */
-export const WARP_MS = 2400;
+export const WARP_MS = 1200;
 /** The sky's background and stars fade up over this, so the canvas does not pop in. */
-export const SKY_FADE_MS = 400;
+export const SKY_FADE_MS = 250;
 /** A streak runs from where its star was this long ago to where it is now. Time, not frames,
  *  so a slow machine draws the same streak length as a fast one; it is the speed, so it
  *  collapses to a point on arrival. */
-export const STREAK_LAG_MS = 45;
-/** One lap in log depth: a star respawns at e^-LAP (about 1/11) of its rest distance. */
-export const WARP_LAP = 2.4;
+export const STREAK_LAG_MS = 15;
+/** One lap in log depth: a star respawns at e^-LAP (about 1/4) of its rest distance. */
+export const WARP_LAP = 1.4;
 /** Total log depth flown. TRAVEL / LAP is roughly how many times each star streams past. */
-export const WARP_TRAVEL = 4.5;
+export const WARP_TRAVEL = 2;
 /** Each star flies up to this much further than WARP_TRAVEL. Several laps wide, so the stars
  *  stay mixed across every depth well into the flight instead of bunching into one copy of the
  *  sky at a single scale. */
