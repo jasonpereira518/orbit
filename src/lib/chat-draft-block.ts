@@ -16,7 +16,8 @@
  * Pure — no React, no DB — so the route, the renderer, the save action and the smoke share it.
  */
 import { DRAFT_MAX_CHARS, sanitizeDraft } from "@/lib/chat-draft";
-import { LINKEDIN_NOTE_MAX, scrubPunctuation } from "@/lib/message-format";
+import { scrubPunctuation } from "@/lib/message-format";
+import { LINKEDIN_NOTE_MAX } from "@/lib/message-format";
 
 export type DraftChannel = "email" | "linkedin";
 
