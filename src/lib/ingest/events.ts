@@ -44,6 +44,7 @@ import {
   type DuplicateIndex,
   type DuplicateSubject,
 } from "@/lib/duplicates";
+import { indexStoredIdentities } from "@/lib/contact-identity";
 import {
   bulkMergeContactsForUser,
   contactHeadroomForUser,
@@ -292,12 +293,16 @@ export async function openIngestContext(
         xHandle: true,
         company: true,
         title: true,
+        phone: true,
       },
     }) as Promise<DuplicateSubject[]>,
     createCompanyResolver(userId),
     options.createsContacts ? contactHeadroomForUser(userId) : null,
     openEngines(userId),
   ]);
+  const index = buildDuplicateIndex(existing);
+  // Second emails, phones and older LinkedIn URLs live only in contact_identities.
+  await indexStoredIdentities(userId, index, existing);
 
   return {
     userId,
@@ -307,7 +312,7 @@ export async function openIngestContext(
       source: options.source,
       createsContacts: options.createsContacts,
     },
-    index: buildDuplicateIndex(existing),
+    index,
     companyResolve,
     headroom,
     touchedContactIds: new Set(),

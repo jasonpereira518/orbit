@@ -782,8 +782,9 @@ async function main() {
   await runJob(id);
   out = await outcome(id);
   check(
-    "contacts file re-import merges every row with an email or a LinkedIn URL",
-    out.updated === 38,
+    // 39: row 6 has no email and no LinkedIn URL, but its phone is an identifier too (PR 2).
+    "contacts file re-import merges every row with an email, a LinkedIn URL or a phone",
+    out.updated === 39,
     JSON.stringify(out)
   );
   {
@@ -802,8 +803,9 @@ async function main() {
     );
   }
   check(
-    "contacts file re-import creates the name-only row again instead of merging it",
-    out.created === 1,
+    // Row 6 used to be created again (name only); its phone now finds the first import's row.
+    "contacts file re-import finds the phone-only row instead of creating it again",
+    out.created === 0,
     JSON.stringify(out)
   );
 
