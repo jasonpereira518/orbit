@@ -2,9 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { Sparkles } from "lucide-react";
 import { useGuardedTransition } from "@/lib/single-flight";
 import { toast } from "@/lib/toast";
 import {
+  autofillContactWithAi,
   createContact,
   getContactFieldSuggestions,
   lookupLinkedInProfile,
@@ -13,6 +15,7 @@ import {
   type ContactInput,
 } from "@/actions/contacts";
 import { queueContactWorkHistory } from "@/actions/contact-profile";
+import { AI_FILL_LABELS, type AiFillField } from "@/lib/contact-ai-fill";
 import { MET_CONTEXTS, MET_CONTEXT_LABELS, type MetContext } from "@/lib/met-context";
 import { SuggestInput } from "@/components/contacts/suggest-input";
 import { Button } from "@/components/ui/button";
@@ -67,6 +70,7 @@ export function ContactForm({
   const router = useRouter();
   const [pending, start] = useGuardedTransition();
   const [lookingUp, setLookingUp] = useState(false);
+  const [aiFilling, setAiFilling] = useState(false);
   // A save that failed on the server. The toast can time out or be missed; this stays by the
   // button until the next attempt.
   const [formError, setFormError] = useState<string | null>(null);
@@ -92,8 +96,6 @@ export function ContactForm({
     phone: initial?.phone || "",
     linkedinUrl: initial?.linkedinUrl || "",
     website: initial?.website || "",
-    blueskyHandle: initial?.blueskyHandle || "",
-    mastodonAcct: initial?.mastodonAcct || "",
     notes: initial?.notes || "",
     industry: initial?.industry || "",
     sharedInterests: (initial?.sharedInterests || []).join("\n"),
@@ -176,6 +178,47 @@ export function ContactForm({
     await queueContactWorkHistory(savedId).catch(() => null);
   }
 
+  /** Web-research the person and fill only the fields still empty; the person reviews, then saves. */
+  async function autofillWithAi() {
+    if (aiFilling || lookingUp || !form.fullName.trim()) return;
+    setAiFilling(true);
+    try {
+      const res = await autofillContactWithAi({
+        fullName: form.fullName,
+        company: form.company,
+        linkedinUrl: form.linkedinUrl,
+        // Only what identifies them; the notes about how you met stay out of the search.
+        context: [form.title, form.location].filter((v) => v.trim()).join("; "),
+        current: {
+          title: form.title,
+          company: form.company,
+          location: form.location,
+          school: form.school,
+          linkedinUrl: form.linkedinUrl,
+        },
+      });
+      if (!res.ok) {
+        toast.message(res.message);
+        return;
+      }
+      const keys = Object.keys(res.fields) as AiFillField[];
+      if (keys.length === 0) {
+        toast.message("Couldn’t find anything new for them");
+        return;
+      }
+      setForm((f) => {
+        const next = { ...f };
+        for (const k of keys) if (!next[k].trim()) next[k] = res.fields[k]!;
+        return next;
+      });
+      toast.success(`Filled ${keys.map((k) => AI_FILL_LABELS[k]).join(", ")}`);
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t look them up — try again?"));
+    } finally {
+      setAiFilling(false);
+    }
+  }
+
   async function autofillFromLinkedIn(url: string) {
     const trimmed = url.trim();
     if (!looksLikeLinkedInProfile(trimmed)) return;
@@ -247,8 +290,6 @@ export function ContactForm({
               phone: form.phone.trim(),
               linkedinUrl: form.linkedinUrl.trim(),
               website: form.website.trim(),
-              blueskyHandle: form.blueskyHandle.trim(),
-              mastodonAcct: form.mastodonAcct.trim(),
               notes: form.notes.trim(),
               industry: form.industry.trim(),
               sharedInterests: form.sharedInterests
@@ -396,35 +437,13 @@ export function ContactForm({
               disabled={lookingUp}
             />
           </Field>
-          <Field label="Website">
+          <Field label="Email">
             <Input
               autoComplete="off"
-              type="url"
-              value={form.website}
-              onChange={(e) => set("website", e.target.value)}
-              placeholder="https://jasonpereira.live"
-            />
-          </Field>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Bluesky">
-            <Input
-              autoComplete="off"
-              value={form.blueskyHandle}
-              onChange={(e) => set("blueskyHandle", e.target.value)}
-              placeholder="name.bsky.social"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
-          </Field>
-          <Field label="Mastodon">
-            <Input
-              autoComplete="off"
-              value={form.mastodonAcct}
-              onChange={(e) => set("mastodonAcct", e.target.value)}
-              placeholder="name@mastodon.social"
-              autoCapitalize="none"
-              spellCheck={false}
+              type="email"
+              value={form.email}
+              onChange={(e) => set("email", e.target.value)}
+              placeholder="jason@orbit.com"
             />
           </Field>
         </div>
@@ -465,6 +484,22 @@ export function ContactForm({
               placeholder="Columbia University"
             />
           </Field>
+        </div>
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/20 px-4 py-3">
+          <p className="text-xs text-muted-foreground">
+            Search the web for their role, company, location and school. Only empty fields are filled.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0 gap-1.5"
+            disabled={aiFilling || lookingUp || !form.fullName.trim()}
+            onClick={() => void autofillWithAi()}
+          >
+            <Sparkles className={cn("h-4 w-4", aiFilling && "animate-pulse")} aria-hidden />
+            {aiFilling ? "Searching…" : "Autofill with AI"}
+          </Button>
         </div>
         <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
           <div>
@@ -509,13 +544,13 @@ export function ContactForm({
           </Field>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Email">
+          <Field label="Website">
             <Input
               autoComplete="off"
-              type="email"
-              value={form.email}
-              onChange={(e) => set("email", e.target.value)}
-              placeholder="jason@orbit.com"
+              type="url"
+              value={form.website}
+              onChange={(e) => set("website", e.target.value)}
+              placeholder="https://jasonpereira.live"
             />
           </Field>
           <Field label="Phone">

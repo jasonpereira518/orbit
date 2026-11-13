@@ -20,6 +20,7 @@ import { collapseSamePeople } from "../src/lib/capture/person-cleanup";
 import { isPersonName } from "../src/lib/names/classify";
 import type { BulkNotePersonPreview } from "../src/lib/capture/types";
 import { fillFromDossier, lookUpNewPeople, wouldCreate } from "../src/lib/capture/web-lookup";
+import { aiFillFields } from "../src/lib/contact-ai-fill";
 import { createContactForUser } from "../src/lib/contact-writes";
 import { DUPLICATE_MERGE_CONFIDENCE, findLooseNameCandidates, type LooseNameSubject } from "../src/lib/duplicates";
 import { isSelf } from "../src/lib/meeting-digest";
@@ -231,6 +232,20 @@ async function lookupChecks() {
   const other = card("Bob", { company: "Ramp" });
   fillFromDossier(other, dossierFor("Bob"));
   check("a first name upgrades only to the same first name", short.parsed.name === "Priya Raman" && other.parsed.name === "Bob");
+
+  // Contact autofill (form button + bulk): same brief, empty fields only.
+  const brief = {
+    ...dossierFor("Priya Raman"),
+    experiences: [{ kind: "education", organization: "Columbia University" }],
+    sources: [{ url: "https://www.linkedin.com/in/priyaraman", title: "Priya" }],
+  } as unknown as Parameters<typeof aiFillFields>[1];
+  const blank = aiFillFields({ company: "  ", title: null }, brief);
+  check("autofill fills every empty field a confident brief has",
+    blank.company === "Ramp" && blank.title === "Product Manager" && blank.location === "Austin, TX" &&
+      blank.school === "Columbia University" && blank.linkedinUrl === "https://www.linkedin.com/in/priyaraman", JSON.stringify(blank));
+  const kept = aiFillFields({ company: "Stripe", title: "Eng", location: "NYC", school: "MIT", linkedinUrl: "https://www.linkedin.com/in/p" }, brief);
+  check("autofill never overwrites what is there", Object.keys(kept).length === 0, JSON.stringify(kept));
+  check("autofill ignores an unsure brief", Object.keys(aiFillFields({}, { ...brief, match: "unsure" })).length === 0);
 }
 
 // ── save ──────────────────────────────────────────────────────────────────────────────
