@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { getDb, rowsOf } from "@/db";
 import type { FieldSource, FieldSources } from "@/lib/contact-fields";
+import { indexStoredIdentities } from "@/lib/contact-identity";
 import {
   contacts,
   imports,
@@ -659,9 +660,12 @@ export async function runImportJob(importId: string): Promise<void> {
           xHandle: true,
           company: true,
           title: true,
+          phone: true,
         },
       });
       duplicateIndex = buildDuplicateIndex(existingContacts);
+      // Second emails, phones and older LinkedIn URLs live only in contact_identities.
+      await indexStoredIdentities(userId, duplicateIndex, existingContacts);
       contactById = new Map(existingContacts.map((c) => [c.id, c]));
       companyResolve = await createCompanyResolver(userId);
       // Opened once per invocation, like the index: Jev checks name-evidence folds below.
@@ -1491,6 +1495,15 @@ export async function runImportJob(importId: string): Promise<void> {
     // rather than at the next hourly pass. Same step `finalizeIngest` runs for connectors.
     const { kickNameSweep } = await import("@/lib/contact-name-sweep");
     await kickNameSweep(importRow.userId);
+    // Anyone still without a LinkedIn URL who is in the kept LinkedIn export. The Connections
+    // import is that export, so it has nothing to add to itself. (The export upload's own
+    // signals job does run it: that is when a newly kept export first meets the network.)
+    if (getAdapter(importRow.importType)?.fieldSource !== "linkedin_export") {
+      const { fillFromStoredExport } = await import("@/lib/linkedin-export-facts");
+      await fillFromStoredExport(importRow.userId).catch(
+        reportAndContinue({ where: "job.import.finalize.export-fill", userId: importRow.userId }, 0)
+      );
+    }
 
     revalidatePath("/");
     revalidatePath("/contacts");

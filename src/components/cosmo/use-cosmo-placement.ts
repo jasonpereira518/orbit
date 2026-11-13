@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Box } from "@/lib/tour/rail-placement";
-import { chooseSlot, HOME_SLOT, isCosmoSlot, nearestSlot, type CosmoSlot, type SlotFrame } from "@/lib/cosmo/placement";
+import { chooseSlot, HOME_SLOT, isCosmoSlot, nearestSlot, slotBox, type CosmoSlot, type SlotFrame } from "@/lib/cosmo/placement";
 
 const HOME_KEY = "orbit:cosmo-slot";
 /** Quiet time after a change before Cosmo re-decides where to sit, so it never jitters. */
@@ -153,10 +153,20 @@ export function useCosmoPlacement(
       busy.current = on;
       if (!on) window.setTimeout(solve, SETTLE_MS);
     },
-    /** A drop: the slot nearest where it was let go becomes home. */
-    drop: (rect: DOMRect) => {
+    /** A drop: the slot nearest where it was let go becomes home. Returns it (null: no frame). */
+    drop: (rect: DOMRect): CosmoSlot | null => {
       const f = frame();
-      if (f) setHome(nearestSlot({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }, f));
+      if (!f) return null;
+      const next = nearestSlot({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }, f);
+      setHome(next);
+      return next;
+    },
+    /** Mid-drag: where it would land if let go now, as a box on screen (the drop preview). */
+    landing: (rect: DOMRect): { slot: CosmoSlot; box: Box } | null => {
+      const f = frame();
+      if (!f) return null;
+      const next = nearestSlot({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }, f);
+      return { slot: next, box: slotBox(next, f) };
     },
     setHome,
   };

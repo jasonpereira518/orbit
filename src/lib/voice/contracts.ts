@@ -73,7 +73,8 @@ export type VoiceAgentEvents = {
   onCorrection(original: string, corrected: string): void;
   onError(): void;
   onDisconnected(): void;
-  onTool(tool: string, input: string): Promise<string>;
+  /** `input`: whatever the model sent (string, object or nothing); see normalizeToolInput. */
+  onTool(tool: string, input: unknown): Promise<string>;
   /** The person started talking (Deepgram): when a spoken confirmation's utterance began. */
   onUserStarted?(): void;
 };

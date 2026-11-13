@@ -164,6 +164,9 @@ export default function PrivacyPage() {
               of the record you have open and the names of Orbit&rsquo;s own buttons on screen, never
               the text on the page or a screenshot. It can make small changes you ask for at once,
               each with Undo; it sends an email only after you say &ldquo;send it&rdquo; or click.
+              When you ask, it can also open pages, press Orbit&rsquo;s own buttons and type into
+              Orbit&rsquo;s fields for you, with its cursor showing where; it never presses save,
+              send or delete itself, and leaves those to you.
               Minutes are counted per account from when each call connects. Whether you turned
               captions on, where you moved Cosmo and which suggestions you dismissed stay in your
               browser.
@@ -346,6 +349,14 @@ export default function PrivacyPage() {
               those notes, the thread id, the subject, the participants and one short quote
               (under 200 characters) copied from the mail as evidence. It stores no message
               bodies, and it does not use this mail to train models or for advertising.
+            </p>
+            <p>
+              In those same messages, when the sender is already one of your contacts, Orbit reads
+              the signature at the end of their own text by rule, with no AI, and copies their
+              role, company, phone number and LinkedIn link into any of those fields that are
+              empty on their contact. It never changes a field that already has a value, and each
+              one it fills is listed under &ldquo;Changed by Orbit&rdquo; on the Duplicates page,
+              where you can undo it.
             </p>
             <p>
               The notes it keeps can appear as reasons on your Radar cards, in the short lines

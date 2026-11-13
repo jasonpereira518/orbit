@@ -10,11 +10,11 @@ import { ProposedActionsCard } from "@/components/chat/proposed-actions";
 import { cn } from "@/lib/utils";
 import { PROVIDER_LABELS } from "@/lib/voice/config";
 import { animate, motion, useMotionValue } from "motion/react";
-import { SPRING_SOFT } from "@/lib/motion";
+import { SPRING_PILL } from "@/lib/motion";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
-import { slotParts, stepSlot } from "@/lib/cosmo/placement";
+import { pointerIn, slotParts, stepSlot } from "@/lib/cosmo/placement";
 import { useCosmoPlacement } from "./use-cosmo-placement";
-import { openVoice, updateVoiceState, useVoiceDock } from "@/lib/voice/dock-store";
+import { openVoice, setVoiceHandoff, updateVoiceState, useVoiceDock } from "@/lib/voice/dock-store";
 import { useVoiceCall, voiceActions } from "@/lib/voice/call-store";
 import type { VoicePublicState } from "@/lib/voice/contracts";
 import { useAppPulse } from "@/lib/app-pulse-store";
@@ -46,6 +46,11 @@ function warmUp() {
   void import("@/components/chat/voice/deepgram-adapter").catch(() => {});
 }
 
+/** How long the docked bar stays on its way into Chat, so the move reads as one thing going there. */
+const HANDOFF_MS = 1200;
+/** When, within that, the orb leaves the bar for the stage. */
+const ORB_LIFT_MS = 450;
+
 /** Nudges dismissed today, per device: a dismissed one stays gone until tomorrow. */
 const NUDGES_KEY = "orbit:cosmo-nudges";
 function readDismissed(): Set<string> {
@@ -66,6 +71,7 @@ function readDismissed(): Set<string> {
 export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boolean; orb?: boolean }) {
   const pathname = usePathname();
   const { call, slot, state } = useVoiceDock();
+  const reduced = usePrefersReducedMotion();
   const onChat = pathname.startsWith("/chat");
   const root = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLDivElement>(null);
@@ -88,8 +94,6 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
     }
   };
   const talk = () => state && openVoice(dayThread(), state, "cosmo", nudge?.id);
-  const leanX = useMotionValue(0);
-  const leanY = useMotionValue(0);
 
   useEffect(() => {
     let alive = true;
@@ -125,10 +129,31 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
     }
   }, [call?.origin, call?.threadId]);
 
+  // Into Chat: the docked bar stays HANDOFF_MS with "Moving to Chat…", then the orb flies to the
+  // stage and the bar goes. `handedTo` is the stage slot the hand-off finished for, so a new
+  // slot (another visit) starts it again, and leaving Chat brings the bar straight back.
+  const [handedTo, setHandedTo] = useState<HTMLElement | null>(null);
+  const [orbLeftFor, setOrbLeftFor] = useState<HTMLElement | null>(null);
+  const handingOff = Boolean(call && slot && handedTo !== slot);
+  useEffect(() => {
+    if (!call || !slot) return;
+    // The orb lifts off first, while the bar is still there to leave from; the bar follows.
+    const lift = window.setTimeout(() => setOrbLeftFor(slot), reduced ? 0 : ORB_LIFT_MS);
+    const done = window.setTimeout(() => setHandedTo(slot), reduced ? 600 : HANDOFF_MS);
+    return () => {
+      window.clearTimeout(lift);
+      window.clearTimeout(done);
+    };
+  }, [call, slot, reduced]);
+  const orbWaits = handingOff && orbLeftFor !== slot;
+  useEffect(() => {
+    setVoiceHandoff(orbWaits);
+    return () => setVoiceHandoff(false);
+  }, [orbWaits]);
   const hidden =
     tourActive ||
     pathname.startsWith("/onboarding") ||
-    Boolean(call && slot) ||
+    Boolean(call && slot && !handingOff) ||
     // `orb` off (feature.cosmo hidden): no idle orb, but a Chat call still docks here off Chat.
     (!call && (!orb || !state?.enabled));
   /** Where Cosmo was just before it moves, so it glides from there (FLIP) instead of jumping. */
@@ -139,10 +164,11 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
   const place = useCosmoPlacement(root, probe, !hidden, capture);
   const { side, height } = slotParts(place.slot);
   const inCorner = place.slot === "bottom-right" && !place.collapsed;
-  const reduced = usePrefersReducedMotion();
   const x = useMotionValue(0);
   const y = useMotionValue(0);
   const dragged = useRef(false);
+  /** Mid-drag: the slot it would land in, outlined on screen so the drop is never a surprise. */
+  const [landing, setLanding] = useState<{ slot: string; box: { left: number; top: number; width: number; height: number } } | null>(null);
 
   // Publish the corner Cosmo occupies so the job stack and toasts stack above it.
   useLayoutEffect(() => {
@@ -176,8 +202,9 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
     // Keep the edge it hugs still: the right edge for right-side slots, the bottom for bottom ones.
     x.set(side === "right" ? start.right - (baseLeft + now.width) : start.left - baseLeft);
     y.set(height === "bottom" ? start.bottom - (baseTop + now.height) : start.top - baseTop);
-    void animate(x, 0, SPRING_SOFT);
-    void animate(y, 0, SPRING_SOFT);
+    // Snappy, not floaty: it lands where you meant in about a third of a second.
+    void animate(x, 0, SPRING_PILL);
+    void animate(y, 0, SPRING_PILL);
   }, [place.slot, side, height, reduced, x, y]);
 
   if (hidden) return null;
@@ -194,6 +221,14 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
     );
   return (
     <>
+      {landing && (
+        <div
+          aria-hidden
+          data-cosmo-landing={landing.slot}
+          className="cosmo-landing pointer-events-none fixed z-50 rounded-2xl"
+          style={{ left: landing.box.left, top: landing.box.top, width: landing.box.width, height: landing.box.height }}
+        />
+      )}
       {/* Pinned to the shared corner, so its live insets (nav, lift, shift) can be read in px. */}
       <div
         ref={probe}
@@ -210,15 +245,42 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
         drag
         dragMomentum={false}
         dragElastic={0}
+        whileDrag={reduced ? undefined : { scale: 1.04 }}
+        data-dragging={landing ? "" : undefined}
         onDragStart={() => {
           dragged.current = true;
           place.hold(true);
         }}
+        onDrag={() => {
+          if (!root.current) return;
+          const next = place.landing(root.current.getBoundingClientRect());
+          // Only when the target changes: a state update per pointer move would be wasted.
+          if (!next || next.slot === landing?.slot) return;
+          // Outline what you see (the orb, or the bar), not Cosmo's wider invisible column: it
+          // hugs the slot's side edge, so its width is all that carries over.
+          let lo = Infinity;
+          let hi = -Infinity;
+          root.current.querySelectorAll(".pointer-events-auto").forEach((part) => {
+            const r = part.getBoundingClientRect();
+            lo = Math.min(lo, r.left);
+            hi = Math.max(hi, r.right);
+          });
+          const visible = hi > lo ? hi - lo : 0;
+          const width = Math.min(next.box.width, visible || next.box.width);
+          const left = slotParts(next.slot).side === "right" ? next.box.left + next.box.width - width : next.box.left;
+          setLanding({ slot: next.slot, box: { ...next.box, left, width } });
+        }}
         onDragEnd={() => {
+          setLanding(null);
           if (root.current) {
             const rect = root.current.getBoundingClientRect();
             from.current = rect;
-            place.drop(rect);
+            // Dropped back into its own slot: no slot change runs the glide, so spring home here.
+            if (place.drop(rect) === place.slot) {
+              from.current = null;
+              void animate(x, 0, reduced ? { duration: 0 } : SPRING_PILL);
+              void animate(y, 0, reduced ? { duration: 0 } : SPRING_PILL);
+            }
           }
           place.hold(false);
         }}
@@ -260,7 +322,7 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
         )}
       >
         {call ? (
-          <CosmoLive state={call.state} />
+          <CosmoLive state={call.state} handoff={handingOff} />
         ) : (
           <div className={cn("flex items-center gap-2", side === "left" && "flex-row-reverse")}>
             {nudge && (
@@ -283,26 +345,26 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
                 </button>
               </div>
             )}
-            <motion.button
+            <button
               type="button"
               className="cosmo-idle pointer-events-auto"
               data-nudge={nudge ? nudge.kind : undefined}
               aria-label="Talk to Cosmo"
               title="Talk to Cosmo · drag or use arrow keys to move"
               aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
-              style={{ x: leanX, y: leanY }}
               onPointerEnter={warmUp}
               onFocus={warmUp}
-              // It notices you: a few pixels toward the pointer while hovered (not with reduced motion).
+              // The orb stays put; its lights follow the pointer inside it (cosmo.css). Written
+              // straight to the element: a re-render per mouse move would be wasted.
               onPointerMove={(event) => {
                 if (reduced || event.pointerType !== "mouse") return;
-                const r = event.currentTarget.getBoundingClientRect();
-                leanX.set(Math.max(-1, Math.min(1, (event.clientX - (r.left + r.width / 2)) / (r.width / 2))) * 3);
-                leanY.set(Math.max(-1, Math.min(1, (event.clientY - (r.top + r.height / 2)) / (r.height / 2))) * 3);
+                const { x: px, y: py } = pointerIn(event.currentTarget, event.clientX, event.clientY);
+                event.currentTarget.style.setProperty("--cosmo-px", px.toFixed(3));
+                event.currentTarget.style.setProperty("--cosmo-py", py.toFixed(3));
               }}
-              onPointerLeave={() => {
-                void animate(leanX, 0, SPRING_SOFT);
-                void animate(leanY, 0, SPRING_SOFT);
+              onPointerLeave={(event) => {
+                event.currentTarget.style.removeProperty("--cosmo-px");
+                event.currentTarget.style.removeProperty("--cosmo-py");
               }}
               onClick={talk}
             />
@@ -313,11 +375,13 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
   );
 }
 
-function CosmoLive({ state }: { state: VoicePublicState }) {
+function CosmoLive({ state, handoff = false }: { state: VoicePublicState; handoff?: boolean }) {
   const { provider, active, mode, busy, muted, error, failed, cards, saveError, closing, endsAt, endsEarly } = useVoiceCall();
   const connected = active && mode !== "connecting" && mode !== "disconnected";
   const captions = useCaptions();
-  const status = busy
+  const status = handoff
+    ? "Moving to Chat…"
+    : busy
     ? "Connecting…"
     : mode === "speaking"
       ? "Speaking"
@@ -331,6 +395,10 @@ function CosmoLive({ state }: { state: VoicePublicState }) {
   return (
     <section
       aria-label="Cosmo"
+      data-handoff={handoff || undefined}
+      // Leaving for Chat's stage, which has the same controls: only something to see now.
+      inert={handoff || undefined}
+      aria-hidden={handoff || undefined}
       className="cosmo-live flex w-full flex-col items-end gap-2"
       onKeyDown={(event) => {
         if (event.key === "Escape" && !event.defaultPrevented) void voiceActions.close();

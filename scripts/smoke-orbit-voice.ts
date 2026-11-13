@@ -416,6 +416,15 @@ async function main() {
         assert.ok(Math.abs(minutes.used - before - 150) < 5, `90s ended + 60s capped at expiry, got ${minutes.used - before}`);
         assert.equal(minutes.remaining, Math.max(0, minutes.limit - minutes.used));
         console.log("ok cosmo minutes count connected time, capped at expiry");
+
+        // A result too big for a spoken turn is trimmed to fit, never replaced by an error.
+        const { fitForVoice, VOICE_RESULT_CHARS } = await import("../src/lib/voice/sessions");
+        const big = { contacts: Array.from({ length: 400 }, (_, i) => ({ id: String(i), name: `Person ${i}`, note: "x".repeat(300) })) };
+        const fitted = fitForVoice(big, VOICE_RESULT_CHARS) as { contacts: unknown[]; truncated?: boolean };
+        assert.ok(JSON.stringify(fitted).length <= VOICE_RESULT_CHARS, "fits");
+        assert.ok(fitted.truncated && fitted.contacts.length > 1, "keeps the first people and says it was cut");
+        assert.equal(fitForVoice({ a: 1 }, VOICE_RESULT_CHARS) && JSON.stringify(fitForVoice({ a: 1 }, VOICE_RESULT_CHARS)), '{"a":1}', "small results untouched");
+        console.log("ok oversized lookups are trimmed, not refused");
       }
       console.log(
         `ok ${provider}: scoped CRM + AI knowledge, confirmation-only writes, connection usage`,
@@ -474,7 +483,8 @@ async function main() {
     console.log(
       "ok fallback requires configuration and explicit request; tool and time budgets are enforced",
     );
-    // The third allowed start for USER exercises truncation without widening proposal scope.
+    // The third allowed start for USER exercises truncation: the trimmed result still carries the
+    // person (so it widens scope, as any result the agent actually received does).
     const lease = await startVoiceSession(USER, "UTC");
     const read = voiceReadTools().find((t) => t.name === "get_contact")!;
     const originalRun = read.run;
@@ -490,16 +500,17 @@ async function main() {
             contactId: mine.id,
           })
         ).result,
-        /Result too large/,
+        // Trimmed to fit, never refused: the person is still there, shortened and marked.
+        /"truncated":true/,
       );
       assert.equal(
         (
           await callVoiceTool(USER, lease.sessionId, "log_note", {
             contactId: mine.id,
-            text: "Must not authorize",
+            text: "Allowed: the trimmed result named this person",
           })
-        ).proposal,
-        null,
+        ).proposal?.action.status,
+        "proposed",
       );
     } finally {
       read.run = originalRun;
