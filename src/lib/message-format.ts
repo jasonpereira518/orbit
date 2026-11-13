@@ -273,19 +273,38 @@ export function retryNote(result: ScrubResult, kind: MessageKind): string | null
  */
 export async function draftWithFormat<T extends { body: string; subject?: string | null }>(
   kind: MessageKind,
-  run: (retry: string | null) => Promise<T>
+  run: (retry: string | null) => Promise<T>,
+  opts: { senderFullName?: string | null } = {}
 ): Promise<T> {
+  const finish = (draft: T, body: string) =>
+    cleaned(draft, kind.startsWith("email") ? fullNameSignOff(body, opts.senderFullName) : body);
   const first = await run(null);
   const scrubbed = scrubDraft(first.body, kind);
   const note = retryNote(scrubbed, kind);
-  if (!note) return cleaned(first, scrubbed.text);
+  if (!note) return finish(first, scrubbed.text);
   try {
     const second = await run(note);
-    return cleaned(second, scrubDraft(second.body, kind).text);
+    return finish(second, scrubDraft(second.body, kind).text);
   } catch {
     // The retry is an improvement, never a requirement: a failed one keeps the first draft.
-    return cleaned(first, scrubbed.text);
+    return finish(first, scrubbed.text);
   }
+}
+
+/**
+ * An email signed with the sender's bare first name gets the full name: the house sign-off.
+ * The user's learned style ("signs off with just first name") won over the prompt in 2 of 5
+ * eval drafts, so it is settled here rather than argued in the prompt.
+ */
+export function fullNameSignOff(body: string, fullName: string | null | undefined): string {
+  const full = fullName?.trim();
+  const first = full?.split(/\s+/)[0];
+  if (!full || !first || first === full) return body;
+  const lines = body.trimEnd().split("\n");
+  const last = lines[lines.length - 1].trim().replace(/^[-–—]\s*/, "");
+  if (last.toLowerCase() !== first.toLowerCase()) return body;
+  lines[lines.length - 1] = full;
+  return lines.join("\n");
 }
 
 function cleaned<T extends { body: string; subject?: string | null }>(draft: T, body: string): T {

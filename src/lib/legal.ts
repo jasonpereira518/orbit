@@ -79,8 +79,12 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // 2026-11-13.3 (Cosmo revision): Cosmo can open pages, press Orbit's own buttons and type into
 // its fields when asked, never pressing save, send or delete. A suffix (main took .2 first):
 // accounts that accepted 2026-11-13.2 must be asked again (needsTermsAcceptance compares strings).
-export const TERMS_VERSION = "2026-11-13.3";
-export const LEGAL_LAST_UPDATED = "November 13, 2026 (revision 3)";
+// 2026-11-13.4 (message-format PR 2): matching your writing style. About twenty recent sent
+// emails from Gmail or Outlook, cleaned of quotes, signatures and contact details, go to your AI
+// provider once to describe how you write; only that description (600 characters) is kept.
+// First claimed .3; renumbered when main took .3 (Cosmo revision).
+export const TERMS_VERSION = "2026-11-13.4";
+export const LEGAL_LAST_UPDATED = "November 13, 2026 (revision 4)";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

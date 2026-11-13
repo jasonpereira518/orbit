@@ -206,7 +206,7 @@ ${input.templateSeed ? `Template seed (a starting point for structure and wordin
       subject: threadSubject ?? (scrubPlaceholders(draft.subject?.trim() || "") || null),
       body: scrubPlaceholders(draft.body.trim()),
     };
-  });
+  }, { senderFullName });
 }
 
 /** How many drafts of a bulk run count as one unit of the `draft` bucket. */

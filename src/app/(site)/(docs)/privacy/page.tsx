@@ -382,6 +382,23 @@ export default function PrivacyPage() {
               in Settings, removes what it recorded.
             </p>
           </DocCallout>
+          <DocCallout title="Matching your writing style">
+            <p>
+              So the messages Orbit drafts for you sound like you, Orbit reads about twenty of
+              your recent sent emails from Gmail or Outlook, once, after your first draft (and
+              again when you press Refresh). It removes quoted replies, signatures, email
+              addresses, links and phone numbers, and sends what is left, each email cut to 1,200
+              characters, to the AI provider that runs your account&rsquo;s AI features.
+            </p>
+            <p>
+              The model writes a short description of how you write: greetings, sign-offs,
+              length, tone and the words you tend to use, with no names, companies or details of
+              what the emails were about. Orbit keeps only that description (at most 600
+              characters) and never stores the emails themselves. You can read, edit or turn it
+              off under &ldquo;How I like things written&rdquo; in Chat; turning it off deletes it and stops
+              Orbit reading your sent mail for this. Deleting your preferences deletes it too.
+            </p>
+          </DocCallout>
         </DocSection>
 
         <DocSection id="recruiters" index={5} title="The recruiter scan and the shared directory">

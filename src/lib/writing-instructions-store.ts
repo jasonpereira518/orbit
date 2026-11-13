@@ -1,10 +1,14 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
-import { sanitizeWritingInstructions } from "@/lib/writing-instructions";
+import { sanitizeWritingInstructions, withStyleProfile } from "@/lib/writing-instructions";
 
 /**
- * The user's writing notes, read straight off the row.
+ * What every draft is told about how the user writes: their own notes, then the style learned
+ * from their sent mail (`withStyleProfile`). The notes box itself reads
+ * `loadOwnWritingInstructions`, so the learned part never shows up as text they typed.
+ *
+ * Read straight off the row.
  *
  * A direct column read rather than `ensureUserSettings`: that helper is wrapped in React's
  * request-scoped `cache()`, so a value saved earlier in the same request would come back
@@ -15,9 +19,19 @@ export async function loadWritingInstructions(userId: string): Promise<string | 
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
-    columns: { writingInstructions: true },
+    columns: { writingInstructions: true, writingStyleProfile: true },
   });
   return writingInstructionsFromRow(row);
+}
+
+/** Only what the user typed into the notes box. */
+export async function loadOwnWritingInstructions(userId: string): Promise<string | null> {
+  const db = await getDb();
+  const row = await db.query.userSettings.findFirst({
+    where: eq(userSettings.userId, userId),
+    columns: { writingInstructions: true },
+  });
+  return sanitizeWritingInstructions(row?.writingInstructions);
 }
 
 /**
@@ -26,9 +40,9 @@ export async function loadWritingInstructions(userId: string): Promise<string | 
  * row read after any save this request made (see above for why a stale row is wrong here).
  */
 export function writingInstructionsFromRow(
-  row: { writingInstructions?: string | null } | null | undefined
+  row: { writingInstructions?: string | null; writingStyleProfile?: string | null } | null | undefined
 ): string | null {
-  return sanitizeWritingInstructions(row?.writingInstructions);
+  return withStyleProfile(row?.writingInstructions, row?.writingStyleProfile);
 }
 
 /**

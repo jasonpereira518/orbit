@@ -70,6 +70,7 @@ import { asActionResult, classifyAiError, UserFacingError } from "@/lib/errors";
 import { logMessageOutcomeForUser, updateOutreachDraftForUser } from "@/lib/outreach-writes";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { actionFailure } from "@/lib/action-failure";
+import { deferStyleProfileBuild } from "@/lib/style-profile-defer";
 
 /** Due follow-ups one call drafts, and how long it keeps starting new ones. */
 const DUE_FOLLOWUPS_PER_CALL = 15;
@@ -890,6 +891,8 @@ export async function generateOutreachDrafts(input: {
   const db = await getDb();
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
+  // Learn how they write from their sent mail, once, after the draft is on its way.
+  deferStyleProfileBuild(userId);
 
   const channel = (input.channel ||
     campaign.defaultChannel ||

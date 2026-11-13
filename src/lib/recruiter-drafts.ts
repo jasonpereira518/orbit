@@ -164,7 +164,7 @@ ${input.variationHint ? `Vary phrasing from other drafts in this batch: ${input.
     // Schema-checked and scrubbed before anyone can send it (audit M-11).
     const draft = guardDraftOutput(parseAiJson(content), { userId, surface: "recruiter.draft", system });
     return { subject: scrubPlaceholders(draft.subject?.trim() || ""), body: scrubPlaceholders(draft.body.trim()) };
-  });
+  }, { senderFullName: input.senderName });
   if (!body) throw new Error("The model returned an empty draft");
   return { subject: subject || `Note for ${input.recruiter.fullName}`, body };
 }
