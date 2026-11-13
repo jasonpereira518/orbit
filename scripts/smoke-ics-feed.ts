@@ -102,19 +102,33 @@ check(
 // Date-only detection. Both storage conventions in this codebase must be recognized,
 // or a dated commitment degrades into a spurious half-hour meeting and loses its
 // 9am-local alarm. This regressed once already: extracted dates are stored via
-// atLocalNoon, which is never UTC midnight outside a UTC server.
+// atLocalNoon, which is UTC noon on the (UTC) server, not UTC midnight.
+//
+// The rule is the shared one in reminder-due-bucket.ts: UTC midnight or UTC noon. It reads
+// UTC fields only, so the machine's timezone must not change any answer below.
 check(
   "UTC midnight counts as date-only",
   isDateOnly(new Date(Date.UTC(2026, 9, 15, 0, 0, 0)))
 );
 check(
-  "atLocalNoon counts as date-only (whatever the server timezone)",
-  isDateOnly(atLocalNoon(new Date(2026, 9, 15))),
-  atLocalNoon(new Date(2026, 9, 15)).toISOString()
+  "UTC noon counts as date-only",
+  isDateOnly(new Date(Date.UTC(2026, 9, 15, 12, 0, 0)))
+);
+check(
+  "noon in another zone is a time, not a date",
+  !isDateOnly(new Date("2026-10-15T12:00:00-04:00"))
 );
 check(
   "a real appointment time is not date-only",
   !isDateOnly(new Date(Date.UTC(2026, 9, 15, 14, 30, 0)))
+);
+// The writer and the rule together, as production runs them. Node re-reads TZ when it is
+// assigned, so this holds on a laptop in any zone; it is the last check for that reason.
+process.env.TZ = "UTC";
+check(
+  "atLocalNoon on a UTC server counts as date-only",
+  isDateOnly(atLocalNoon(new Date(2026, 9, 15))),
+  atLocalNoon(new Date(2026, 9, 15)).toISOString()
 );
 
 console.log("\nAll ICS feed smoke checks passed.");
