@@ -4,3 +4,8 @@
 # A fake web-push subscription key in the PR 9b smoke (not a credential: a sample P-256 public
 # key and auth value, replaced in the next commit by keys the test builds itself).
 6ca238951689cc2c36ca7428d6267a94ce402073:scripts/smoke-radar-reach.ts:generic-api-key:134
+
+# A false positive in the message-format PR 1 commit: `import { LINKEDIN_NOTE_MAX, scrubPunctuation }`
+# reads to the linkedin-client-secret rule as "LinkedIn" + a 16-character secret. The next commit
+# splits the import; this entry covers only that one line in that one commit.
+30ee4f8bf01ed5c5eaa59eb209873fe0a4c204a4:src/lib/chat-draft-block.ts:linkedin-client-secret:19
