@@ -40,7 +40,7 @@ whole time; nothing waits on the intro and nothing can skip-lock it.
 
 ## Goals
 
-- Plays once per browser session (per tab, `sessionStorage`).
+- Plays once per browser session (per tab, `sessionStorage`). On localhost it plays on every load (Jason, Nov 12), so it can be watched while working on it.
 - The resting sky is pixel-for-pixel what it is today once the warp ends.
 - No change to when the text, sky or solar system load. The text stays the first
   thing painted.

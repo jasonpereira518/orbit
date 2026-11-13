@@ -77,7 +77,36 @@ const partlyAbove = introOrigin(rect(-300), 1440, 900);
 const noBox = introOrigin(null, 1440, 900);
 const zeroBox = introOrigin(rect(200, 0, 800, 0), 1440, 900);
 
+// Run the real gate script against a stubbed page, twice in one tab, and report whether each
+// load got the attribute. Localhost replays every load (Jason, Nov 12) so the intro can be
+// watched while working on it; everywhere else it is once per tab session.
+function gateRuns(hostname: string, hash = ""): boolean[] {
+  const store = new Map<string, string>();
+  const runs: boolean[] = [];
+  for (let i = 0; i < 2; i++) {
+    const attrs = new Map<string, string>();
+    const doc = {
+      documentElement: {
+        getAttribute: (k: string) => attrs.get(k) ?? null,
+        setAttribute: (k: string, v: string) => void attrs.set(k, v),
+      },
+    };
+    const run = new Function("document", "location", "matchMedia", "sessionStorage", s);
+    run(doc, { hostname, hash }, () => ({ matches: false }), {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    });
+    runs.push(attrs.has(LANDING_INTRO_ATTR));
+  }
+  return runs;
+}
+
 const CASES: Array<[label: string, got: unknown, expected: unknown]> = [
+  ["production host: first load plays", gateRuns("orbit.example.com")[0], true],
+  ["production host: second load in the tab does not", gateRuns("orbit.example.com")[1], false],
+  ["localhost: every load plays", gateRuns("localhost").join(), "true,true"],
+  ["127.0.0.1: every load plays", gateRuns("127.0.0.1").join(), "true,true"],
+  ["localhost with a hash link still skips", gateRuns("localhost", "#features").join(), "false,false"],
   ["origin is the box centre when it is on screen", inView && `${inView.x},${inView.y}`, "1000,400"],
   ["box scrolled off the top -> no warp", scrolledPast, null],
   ["box centre above the viewport -> no warp", partlyAbove, null],

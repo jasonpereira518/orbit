@@ -19,8 +19,11 @@ export const LANDING_INTRO_ATTR = "data-landing-intro";
  * Skipped for a hash link (the visitor lands mid-page, away from the hero), for reduced motion
  * (system setting, or Orbit's own `data-motion="reduce"`, which the root layout's
  * `MOTION_PREPAINT_SCRIPT` has already set by the time this runs), and wherever storage throws.
+ *
+ * On localhost it plays on every load, not once per session (Jason, Nov 12), so the intro can be
+ * watched while working on it. The hash and reduced-motion skips still apply there.
  */
-export const LANDING_INTRO_PREPAINT_SCRIPT = `try{var d=document.documentElement;if(!location.hash&&d.getAttribute("data-motion")!=="reduce"&&!matchMedia("(prefers-reduced-motion: reduce)").matches&&!sessionStorage.getItem(${JSON.stringify(LANDING_INTRO_KEY)})){sessionStorage.setItem(${JSON.stringify(LANDING_INTRO_KEY)},"1");d.setAttribute(${JSON.stringify(LANDING_INTRO_ATTR)},"")}}catch(e){}`;
+export const LANDING_INTRO_PREPAINT_SCRIPT = `try{var d=document.documentElement,h=location.hostname,dev=h==="localhost"||h==="127.0.0.1"||h==="[::1]"||/\\.localhost$/.test(h);if(!location.hash&&d.getAttribute("data-motion")!=="reduce"&&!matchMedia("(prefers-reduced-motion: reduce)").matches&&(dev||!sessionStorage.getItem(${JSON.stringify(LANDING_INTRO_KEY)}))){sessionStorage.setItem(${JSON.stringify(LANDING_INTRO_KEY)},"1");d.setAttribute(${JSON.stringify(LANDING_INTRO_ATTR)},"")}}catch(e){}`;
 
 /* Tuning knobs. Starting points; set by eye in the browser. */
 export const WARP_MS = 1600;
