@@ -220,6 +220,8 @@
 @source "../lib/ics.ts";
 @source "../lib/identity/email.ts";
 @source "../lib/identity/linkedin.ts";
+@source "../lib/imports/export-upload.ts";
+@source "../lib/imports/linkedin-export-files.ts";
 @source "../lib/input/text.ts";
 @source "../lib/interaction-date.ts";
 @source "../lib/interaction-provenance.ts";
@@ -235,6 +237,10 @@
 @source "../lib/job-changes.ts";
 @source "../lib/join-notify.ts";
 @source "../lib/legal.ts";
+@source "../lib/linkedin-connections.ts";
+@source "../lib/linkedin-export-facts.ts";
+@source "../lib/linkedin-export-store.ts";
+@source "../lib/linkedin-export-type.ts";
 @source "../lib/linkedin-scraper.ts";
 @source "../lib/log-redaction.ts";
 @source "../lib/managed-ai-policy.ts";
