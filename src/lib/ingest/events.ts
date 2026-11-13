@@ -689,4 +689,9 @@ export async function finalizeIngest(
   await fillFromStoredExport(ctx.userId, [...ctx.touchedContactIds]).catch(
     reportAndContinue({ where: "job.ingest.export-fill", userId: ctx.userId }, 0)
   );
+  // Last, so the export and the address book fill a company first: a domain only guesses.
+  const { fillCompanyFromEmail } = await import("@/lib/email-domain-company");
+  await fillCompanyFromEmail(ctx.userId, [...ctx.touchedContactIds]).catch(
+    reportAndContinue({ where: "job.ingest.domain-company", userId: ctx.userId }, 0)
+  );
 }
