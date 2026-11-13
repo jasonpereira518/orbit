@@ -296,6 +296,7 @@ export async function runCaptureParse(
             xHandle: true,
             company: true,
             title: true,
+            phone: true,
           } satisfies Record<keyof DuplicateSubject, true>),
           // For the loose first-name / nickname candidates only.
           preferredName: true,
@@ -851,6 +852,7 @@ async function parsePastedLinkedInProfiles(
       xHandle: true,
       company: true,
       title: true,
+      phone: true,
     } satisfies Record<keyof DuplicateSubject, true>,
   });
   const duplicateIndex = buildDuplicateIndex(existing);

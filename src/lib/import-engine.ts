@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { getDb, rowsOf } from "@/db";
 import type { FieldSource, FieldSources } from "@/lib/contact-fields";
+import { indexStoredIdentities } from "@/lib/contact-identity";
 import {
   contacts,
   imports,
@@ -659,9 +660,12 @@ export async function runImportJob(importId: string): Promise<void> {
           xHandle: true,
           company: true,
           title: true,
+          phone: true,
         },
       });
       duplicateIndex = buildDuplicateIndex(existingContacts);
+      // Second emails, phones and older LinkedIn URLs live only in contact_identities.
+      await indexStoredIdentities(userId, duplicateIndex, existingContacts);
       contactById = new Map(existingContacts.map((c) => [c.id, c]));
       companyResolve = await createCompanyResolver(userId);
       // Opened once per invocation, like the index: Jev checks name-evidence folds below.

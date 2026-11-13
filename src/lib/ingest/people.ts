@@ -166,6 +166,7 @@ export async function ingestPeople(
       email: person.email ?? null,
       linkedinUrl: person.linkedinUrl ?? null,
       xHandle: person.xHandle ?? null,
+      phone: person.phone ?? null,
       company: person.company ?? null,
       title: person.title ?? null,
     });
