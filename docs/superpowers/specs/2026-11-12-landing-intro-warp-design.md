@@ -107,6 +107,8 @@ landing page. When on, and the attribute is present, and motion is allowed, the 
 - Calmer and shorter (Jason: "Still a lot less movement for the stars", then "Make it half
   the time"): stars respawn at ~1/4 of their rest distance instead of ~1/11, fly less far,
   and the whole intro is 1.2s instead of 2.4s. Exact values are in lib/landing-intro.ts.
+- Slower again (Jason: "Make it even less fast"): a gentler ease and less distance flown,
+  about half the average star speed, same 1.2s.
 - The streak joins where the star was 45ms ago, so its length is the speed and it
   collapses on arrival; it is skipped across a wrap. Respawned stars fade up. No second
   canvas.

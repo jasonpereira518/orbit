@@ -41,7 +41,9 @@ export const LANDING_INTRO_PREPAINT_SCRIPT = `try{var d=document.documentElement
  * travel 7 -> 4.5 (slower flight), streak 70ms -> 45ms (shorter streaks). Then "still a lot
  * less movement for the stars": lap 2.4 -> 1.4 (respawn at ~1/4 of rest distance, not ~1/11),
  * travel 4.5 -> 2, streak 45ms -> 30ms. Then "Make it half the time": 2400ms -> 1200ms, with
- * the streak window halved to 15ms so the doubled speed keeps the same streak lengths.
+ * the streak window halved to 15ms so the doubled speed keeps the same streak lengths. Then
+ * "Make it even less fast": quadratic ease (2/3 the top speed), travel 2 -> 1.5, extra span
+ * 3 -> 2 laps: about half the average speed, same 1.2s.
  */
 export const WARP_MS = 1200;
 /** The sky's background and stars fade up over this, so the canvas does not pop in. */
@@ -53,11 +55,11 @@ export const STREAK_LAG_MS = 15;
 /** One lap in log depth: a star respawns at e^-LAP (about 1/4) of its rest distance. */
 export const WARP_LAP = 1.4;
 /** Total log depth flown. TRAVEL / LAP is roughly how many times each star streams past. */
-export const WARP_TRAVEL = 2;
+export const WARP_TRAVEL = 1.5;
 /** Each star flies up to this much further than WARP_TRAVEL. Several laps wide, so the stars
  *  stay mixed across every depth well into the flight instead of bunching into one copy of the
  *  sky at a single scale. */
-export const WARP_EXTRA_SPAN = 3 * WARP_LAP;
+export const WARP_EXTRA_SPAN = 2 * WARP_LAP;
 /**
  * Temporary stars rest off-screen, out to this multiple of the screen's distance from the sun.
  * As the flight slows every star closes in on its rest from the sun's side, which would empty
@@ -68,12 +70,13 @@ export const WARP_FIELD_REACH = 2;
 /** A respawned star fades up over this much of its lap, so nothing pops in at the sun. */
 const RESPAWN_FADE = 0.35;
 
-/** Eased 0→1 over WARP_MS: fastest at the start (already at speed), decelerating to arrive. */
+/** Eased 0→1 over WARP_MS: fastest at the start (already at speed), decelerating to arrive.
+ *  Ease-out quadratic, not cubic: it starts at two thirds of the cubic's top speed. */
 export function warpProgress(elapsedMs: number): number {
   if (elapsedMs <= 0) return 0;
   if (elapsedMs >= WARP_MS) return 1;
   const t = elapsedMs / WARP_MS;
-  return 1 - (1 - t) ** 3;
+  return 1 - (1 - t) ** 2;
 }
 
 /**
