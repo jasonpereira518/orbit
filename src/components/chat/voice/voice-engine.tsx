@@ -9,6 +9,7 @@ import { streamChat } from "@/lib/chat-stream-client";
 import { useMeetingSession } from "@/components/capture/meeting-session";
 import {
   ASK_CHAT_TOOL,
+  LOOK_AT_SCREEN_TOOL,
   OPEN_PAGE_TOOL,
   SET_CAPTIONS_TOOL,
   SET_THEME_TOOL,
@@ -19,6 +20,7 @@ import {
 import { withAppEvents } from "@/lib/voice/app-events";
 import { plainSpeech } from "@/lib/voice/caption-pace";
 import { setCaptions } from "@/lib/cosmo/captions-pref";
+import { describeScreen, readScreen } from "@/lib/cosmo/screen";
 import {
   getVoiceCall,
   installVoiceActions,
@@ -78,6 +80,8 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
   const modeRef = useRef<VoiceMode>("disconnected");
   /** What the user did in the app, waiting to ride on the next tool result (`app_events`). */
   const appEvents = useRef<string[]>([]);
+  /** The screen as the agent last heard it, so a change is told once and only once. */
+  const lastScreen = useRef<string | null>(null);
   const session = useRef<string | null>(null);
   const generation = useRef(0);
   const starting = useRef(false);
@@ -250,6 +254,11 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
           void saveThemePreference(theme).catch(() => {});
           return JSON.stringify({ theme });
         }
+        if (tool === LOOK_AT_SCREEN_TOOL) {
+          const screen = describeScreen(readScreen());
+          lastScreen.current = screen;
+          return JSON.stringify({ screen: screen ?? "The user is on a page Cosmo cannot open or describe." });
+        }
         if (tool === SET_CAPTIONS_TOOL) {
           if (typeof args.on !== "boolean") return JSON.stringify({ error: "Say on: true or on: false." });
           setCaptions(args.on);
@@ -322,6 +331,12 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
       },
       onTool: async (tool, input) => {
         const result = await runTool(tool, input);
+        // The screen as it is now, told once whenever it has changed since the agent last heard.
+        const screen = describeScreen(readScreen());
+        if (screen && screen !== lastScreen.current) {
+          lastScreen.current = screen;
+          appEvents.current.push(`Screen now: ${screen}`);
+        }
         const queued = appEvents.current;
         appEvents.current = [];
         return withAppEvents(result, queued);
@@ -361,6 +376,8 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
       provider: fallback && state.fallbackProvider ? state.fallbackProvider : state.provider,
     });
     try {
+      const screen = readScreen();
+      lastScreen.current = describeScreen(screen);
       if (!navigator.mediaDevices?.getUserMedia)
         throw new VoiceRequestError("Microphone access needs a supported browser and HTTPS.", 400);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -373,6 +390,7 @@ export function VoiceEngine({ state, threadId, origin = "chat", onClose }: {
         threadId: thread.current ?? undefined,
         // Cosmo's remembered day thread may have been deleted since; start a new one then.
         freshIfMissing: origin === "cosmo",
+        screen,
       });
       if (!alive.current || attempt !== generation.current) {
         await command({ action: "end", sessionId: response.sessionId }).catch(() => {});

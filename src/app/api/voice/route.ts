@@ -14,6 +14,7 @@ import {
   heartbeatVoiceSession,
   connectVoiceSession,
 } from "@/lib/voice/sessions";
+import { describeScreen } from "@/lib/cosmo/screen";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,6 +29,14 @@ const command = z.discriminatedUnion("action", [
     threadId: z.string().uuid().optional(),
     fallback: z.boolean().default(false),
     freshIfMissing: z.boolean().default(false),
+    // Page, record and visible control ids only; described server-side (describeScreen).
+    screen: z
+      .object({
+        page: z.string().max(40).nullable(),
+        id: z.string().max(60).nullable().optional(),
+        targets: z.array(z.string().max(60)).max(40).default([]),
+      })
+      .optional(),
     history: z
       .array(
         z.object({
@@ -114,7 +123,7 @@ export async function POST(request: Request) {
             body.fallback,
             body.history,
             body.threadId,
-            { freshIfMissing: body.freshIfMissing },
+            { freshIfMissing: body.freshIfMissing, screen: describeScreen(body.screen) },
           ),
         );
       case "tool":

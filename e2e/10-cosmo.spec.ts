@@ -99,6 +99,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
   if (new URL(page.url()).pathname.startsWith("/onboarding")) await ensureOnboarded(page);
   const starts: Array<{ threadId?: string; freshIfMissing?: boolean }> = [];
+  const startScreens: Array<{ page: string | null; targets: string[] } | undefined> = [];
   let connected = 0;
   let ends = 0;
   let sockets = 0;
@@ -118,6 +119,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
     const body = route.request().postDataJSON();
     if (body.action === "start") {
       starts.push({ threadId: body.threadId, freshIfMissing: body.freshIfMissing });
+      startScreens.push(body.screen);
       return route.fulfill({
         json: {
           sessionId,
@@ -168,6 +170,9 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await expect(cosmo.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
   await expect.poll(() => connected).toBe(1);
   expect(starts[0]).toEqual({ threadId: undefined, freshIfMissing: true });
+  // The call starts knowing where you are: the page key and registered control ids, nothing else.
+  expect(startScreens[0]?.page).toBe("dashboard");
+  expect(startScreens[0]?.targets.every((id) => /^[a-z]+\.[a-z-]+$/.test(id))).toBe(true);
   await expect
     .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("orbit:cosmo-thread") ?? "{}").id))
     .toBe(threadId);
@@ -235,6 +240,28 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
     y: box.y + box.height - 8,
   });
   expect(besideBar).toBe(true);
+  // It can look at the screen: this page, in Orbit's own labels.
+  const ask = (id: string, tool: string, input: unknown) =>
+    send({
+      type: "FunctionCallRequest",
+      functions: [{ id, name: "orbit_tool", client_side: true, arguments: JSON.stringify({ tool, input: JSON.stringify(input) }) }],
+    });
+  const reply = (id: string) => frames.find((f) => f.type === "FunctionCallResponse" && f.id === id)?.content as string | undefined;
+  ask("look_1", "look_at_screen", {});
+  await expect.poll(() => reply("look_1")).toContain("contacts page");
+  expect(reply("look_1")).toContain("Add contact button");
+  // Moving on: the next tool result tells it, once.
+  await page.locator('a[href="/reminders"]:visible').first().click();
+  await expect(page).toHaveURL(/\/reminders/);
+  await expect(page.locator('[data-tour="reminders.new"]').first()).toBeVisible();
+  ask("cc_on", "set_captions", { on: true });
+  await expect.poll(() => reply("cc_on")).toContain("Screen now: The user is on the reminders page");
+  expect(reply("cc_on")).toContain("New reminder button");
+  ask("cc_off_2", "set_captions", { on: false });
+  await expect.poll(() => reply("cc_off_2")).toBeTruthy();
+  expect(reply("cc_off_2")).not.toContain("Screen now");
+  await page.locator('a[href="/contacts"]:visible').first().click();
+  await expect(page).toHaveURL(/\/contacts/);
   const shot = test.info().outputPath("cosmo-docked.png");
   await page.screenshot({ path: shot });
   await test.info().attach("cosmo docked", { path: shot, contentType: "image/png" });
