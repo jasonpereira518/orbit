@@ -8,6 +8,8 @@ import { requireUserId } from "@/lib/auth";
 import { mergeConfidentDuplicates } from "@/lib/duplicate-sweep";
 import { openEngines } from "@/lib/decisions/engine";
 import { DuplicateReviewList } from "@/components/contacts/duplicate-review-list";
+import { ContactChangesList } from "@/components/contacts/contact-changes-list";
+import { listContactChangesForUser } from "@/lib/contact-changes";
 import { DuplicatesListSkeleton } from "@/components/loading/page-skeletons";
 import { RenderStamp } from "@/components/layout/render-stamp";
 
@@ -72,10 +74,21 @@ async function DuplicatesList({ userId }: { userId: string }) {
   // waits on a chat model; see duplicate-sweep.ts).
   await mergeConfidentDuplicates(userId, { engines: await openEngines(userId) });
 
-  const [{ proposed }, recentMerges] = await Promise.all([
+  const [{ proposed }, recentMerges, changes] = await Promise.all([
     listDuplicates(),
     listRecentMerges(),
+    listContactChangesForUser(userId),
   ]);
 
-  return <DuplicateReviewList proposed={proposed} recentMerges={recentMerges} />;
+  return (
+    <div className="space-y-8">
+      <ContactChangesList suggestions={changes.suggestions} applied={[]} />
+      <DuplicateReviewList
+        proposed={proposed}
+        recentMerges={recentMerges}
+        hideEmpty={changes.suggestions.length > 0}
+      />
+      <ContactChangesList suggestions={[]} applied={changes.applied} />
+    </div>
+  );
 }
