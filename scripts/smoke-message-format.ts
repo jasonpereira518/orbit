@@ -105,6 +105,7 @@ async function main() {
   check("no name means no sign-off", formatRules("email_warm").includes("no sign-off, no signature"));
   check("warm email has a subject", formatRules("email_warm").includes("Subject: 3 to 7 words"));
   check("the last follow-up offers an easy out", formatRules("email_followup", { lastStep: true }).includes("easy out"));
+  check("every kind forbids inventing what the user did", (["email_cold", "email_warm", "email_followup", "linkedin_note", "linkedin_dm", "sms"] as const).every((k) => formatRules(k).includes("An offer, request or plan in the history is still to do")));
   check("every kind carries the hard bans", (["email_cold", "email_warm", "email_followup", "linkedin_note", "linkedin_dm", "sms"] as const).every((k) => formatRules(k).includes("Never use em dashes")));
   check("the note rule states the 200 limit", formatRules("linkedin_note").includes("at most 200 characters"));
 

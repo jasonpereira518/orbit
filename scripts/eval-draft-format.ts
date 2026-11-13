@@ -44,7 +44,14 @@ const SENDER = "Jason Pereira";
 const flag = (name: string) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : undefined);
 
 type Draft = { subject?: string | null; body: string };
-type Case = { name: string; kind: MessageKind; run: () => Promise<Draft>; previousSubject?: string };
+/**
+ * `forbid`: what this case's history does NOT record the user doing. Grace only offered an intro
+ * IF the resume was sent, and Dana only asked for one: a draft saying it was sent (or is being
+ * sent, or is attached) invented it.
+ */
+type Case = { name: string; kind: MessageKind; run: () => Promise<Draft>; previousSubject?: string; forbid?: RegExp };
+// "…if I sent my resume" restates the offer, which is right; only a claim is a miss.
+const SENT_RESUME = /(?<!\bif )\b(i(['’]ve| have)? (sent|attached|forwarded)|i['’]m (sending|attaching)|sending (along|over)|(here['’]?s|here is|attached is) my|i['’]ve included)\b/i;
 type Check = { rule: string; ok: boolean; hard: boolean };
 
 /** The bare generics; "Introduction to the payments team" is specific and fine. */
@@ -67,6 +74,7 @@ function checks(c: Case, d: Draft): Check[] {
     { rule: "no hype words", ok: hypeHits(body).length === 0, hard: true },
     { rule: "no [placeholders]", ok: !/\[[^\]]+\]/.test(body), hard: true },
     { rule: "no invented attachment", ok: !claimsAttachment(body), hard: true },
+    { rule: "no invented action (history never records it)", ok: !c.forbid || !c.forbid.test(body), hard: true },
   ];
   if (c.kind.startsWith("email")) {
     const subject = (d.subject ?? "").trim();
@@ -250,12 +258,13 @@ async function main() {
         }),
     },
     { name: "warm email: Ada", kind: "email_warm", run: () => generateContactFollowUpDraft(USER, ada, [], { channel: "email", intent: "Ask about the founding engineer role", writingInstructions: VOICE }) },
-    { name: "warm email: Grace", kind: "email_warm", run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "email", writingInstructions: VOICE }) },
+    { name: "warm email: Grace", kind: "email_warm", forbid: SENT_RESUME, run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "email", writingInstructions: VOICE }) },
     { name: "LinkedIn DM: Ada", kind: "linkedin_dm", run: () => generateContactFollowUpDraft(USER, ada, [], { channel: "linkedin", writingInstructions: VOICE }) },
-    { name: "LinkedIn DM: Grace", kind: "linkedin_dm", run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "linkedin", writingInstructions: VOICE }) },
+    { name: "LinkedIn DM: Grace", kind: "linkedin_dm", forbid: SENT_RESUME, run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "linkedin", writingInstructions: VOICE }) },
     {
       name: "recruiter email: Dana Kim",
       kind: "email_warm",
+      forbid: SENT_RESUME,
       run: () =>
         generateRecruiterDraft(USER, {
           intent: "set_up_chat",
