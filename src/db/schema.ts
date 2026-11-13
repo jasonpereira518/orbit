@@ -18,12 +18,10 @@ import { relations, sql } from "drizzle-orm";
 import type {
   ContactSignalKind,
   ContactSignalPayload,
-  ExternalSourceKind,
   RadarAiNote,
   RadarAutopilot,
   RadarAutopilotAction,
   RadarCalendarInvite,
-  RadarDiscoveredPerson,
   RadarDraft,
   RadarEvidence,
   RadarFeedbackAction,
@@ -97,7 +95,7 @@ export type ClosenessCohortSnapshot = {
  * Structural mirror of `ClosenessBreakdown` in `@/lib/closeness`.
  *
  * Declared here rather than imported so `schema.ts` keeps no dependency on the lib layer —
- * drizzle-kit loads this file directly and cannot resolve the `@/` alias. A compile-time
+ * drizzle-kit (since removed) loaded this file directly and could not resolve the `@/` alias. A compile-time
  * assertion in `@/lib/closeness-materialize` keeps the two in step.
  */
 export type StoredClosenessBreakdown = {
@@ -213,6 +211,8 @@ export const userSettings = pgTable("user_settings", {
    */
   estimatedMonthlyChurnPct: real("estimated_monthly_churn_pct"),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
+  brightDataApiKeyEncrypted: text("bright_data_api_key_encrypted"),
+  brightDataZone: text("bright_data_zone"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
   twilioAuthTokenEncrypted: text("twilio_auth_token_encrypted"),
@@ -689,12 +689,12 @@ export const userSettings = pgTable("user_settings", {
   radarDailyEnabled: integer("radar_daily_enabled").default(1).notNull(),
   /** 1 = automatically extract active projects from Gmail, calendar, notes. */
   radarAutoProjects: integer("radar_auto_projects").default(1).notNull(),
-  /** 1 = outbound web discovery for prospective connections matching projects/goals. */
-  radarDiscoveryEnabled: integer("radar_discovery_enabled").default(1).notNull(),
   /** When Radar's web lane (events, people to meet, programs) is next due for this account. */
   radarWebNextAt: timestamp("radar_web_next_at", { withTimezone: true }),
   /** Local day ("2026-11-11") of the last same-day Radar email, claimed before sending. */
   radarMomentLastDay: text("radar_moment_last_day"),
+  /** 1 = email the person the day something on Radar won't keep (at most one a day). */
+  radarMomentEmailEnabled: integer("radar_moment_email_enabled").default(1).notNull(),
   /**
    * When the person first pressed "Turn on Radar". Null = never: Radar is off by default and
    * spends nothing until then. On = set AND `radarPaused` = 0 (`radarIsOn` in run.ts).
@@ -1157,8 +1157,11 @@ export const userGoals = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
     text: text("text").notNull(),
+    progress: text("progress"),
+    category: text("category"),
     active: integer("active").default(1).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("user_goals_user_idx").on(t.userId)]
 );
@@ -1375,6 +1378,13 @@ export type ReminderActionKind =
   | "task"
   | "follow_up";
 
+export type ReminderPriority = "critical" | "high" | "normal" | "low";
+export type ReminderCategory =
+  | "action_item"
+  | "next_step"
+  | "waiting_on"
+  | "cadence_followup";
+
 export const reminderLists = pgTable(
   "reminder_lists",
   {
@@ -1416,6 +1426,16 @@ export const reminders = pgTable(
       .$type<ReminderActionKind>()
       .default("task")
       .notNull(),
+    priority: text("priority")
+      .$type<ReminderPriority>()
+      .default("normal")
+      .notNull(),
+    category: text("category")
+      .$type<ReminderCategory>()
+      .default("action_item")
+      .notNull(),
+    timingRationale: text("timing_rationale"),
+    importanceReason: text("importance_reason"),
     createdBy: text("created_by").default("user").notNull(),
     /** Set when the reminder came out of a note paste; links to the results page and drives "From notes". */
     noteBatchId: uuid("note_batch_id"),
@@ -1462,6 +1482,7 @@ export const reminders = pgTable(
   },
   (t) => [
     index("reminders_user_status_idx").on(t.userId, t.status),
+    index("reminders_user_priority_idx").on(t.userId, t.priority, t.status),
     index("reminders_due_idx").on(t.userId, t.dueDate),
     index("reminders_list_idx").on(t.userId, t.listId),
     uniqueIndex("reminders_user_item_hash_uidx").on(t.userId, t.itemHash),
@@ -1508,6 +1529,16 @@ export const suggestedReminders = pgTable(
       .$type<ReminderActionKind>()
       .default("task")
       .notNull(),
+    priority: text("priority")
+      .$type<ReminderPriority>()
+      .default("normal")
+      .notNull(),
+    category: text("category")
+      .$type<ReminderCategory>()
+      .default("action_item")
+      .notNull(),
+    timingRationale: text("timing_rationale"),
+    importanceReason: text("importance_reason"),
     /** 0-100, matching aiSuggestions.confidenceScore's scale. */
     confidenceScore: integer("confidence_score"),
     /** pending | confirmed | discarded */
@@ -1522,6 +1553,7 @@ export const suggestedReminders = pgTable(
   },
   (t) => [
     index("suggested_reminders_user_status_idx").on(t.userId, t.status),
+    index("suggested_reminders_user_priority_idx").on(t.userId, t.priority, t.status),
     index("suggested_reminders_batch_idx").on(t.captureBatchId),
     uniqueIndex("suggested_reminders_user_item_uidx").on(t.userId, t.itemHash),
   ]
@@ -1548,7 +1580,19 @@ export type NoteBatchResult = {
   mentions: { interactionId: string; contactId: string; text: string; confidence: number; matchedBy: string }[];
   unresolvedMentions: { text: string; context: string | null }[];
   actionItems: { id: string; contactId: string; text: string; reminderId: string | null }[];
-  reminders: { id: string; contactId: string | null; title: string; dueIso: string; dateBasis: ReminderDateBasis; rawDatePhrase: string | null; sourceExcerpt: string | null }[];
+  reminders: {
+    id: string;
+    contactId: string | null;
+    title: string;
+    dueIso: string;
+    dateBasis: ReminderDateBasis;
+    rawDatePhrase: string | null;
+    sourceExcerpt: string | null;
+    priority?: ReminderPriority;
+    category?: ReminderCategory;
+    timingRationale?: string | null;
+    importanceReason?: string | null;
+  }[];
   /**
    * Typed opportunities the batch opened.
    *
@@ -2075,6 +2119,10 @@ export type CareerProfile = {
   };
   /** The confirm screen's "Your major(s)", at most 3. A jsonb key, so no DDL. */
   majors?: string[];
+  /** The city the person typed in Settings (Radar's events near you). Beats `profile.location`, which an import sets; kept when imports are removed. */
+  city?: string;
+  /** The hashtags the person uses most in their own LinkedIn posts (Shares.csv), at most 8. Imported, so "Remove imported details" clears it. */
+  postTopics?: string[];
   importedAt?: string;
 };
 
@@ -2841,8 +2889,6 @@ export const recommendations = pgTable(
     autopilot: jsonb("autopilot").$type<RadarAutopilotAction>(),
     /** A suggested calendar invite, prepared ahead of time so the user can send/confirm in 1 click. */
     suggestedCalendarInvite: jsonb("suggested_calendar_invite").$type<RadarCalendarInvite>(),
-    /** Prospective new connection discovered outside the user's current network. */
-    discoveredPerson: jsonb("discovered_person").$type<RadarDiscoveredPerson>(),
     /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
@@ -2946,68 +2992,10 @@ export const contactSignals = pgTable(
   ]
 );
 
-/**
- * Public news feeds Radar reads (global, no `user_id`), beside `job_feed_sources`. Adding or
- * disabling a source is a row, not a deploy.
- */
-export const externalSources = pgTable("external_sources", {
-  id: text("id").primaryKey(),
-  label: text("label").notNull(),
-  url: text("url").notNull(),
-  kind: text("kind").$type<ExternalSourceKind>().notNull(),
-  enabled: boolean("enabled").default(true).notNull(),
-  etag: text("etag"),
-  lastModified: text("last_modified"),
-  lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true }),
-  lastStatus: text("last_status"),
-  lastError: text("last_error"),
-  consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
-
-/** One headline from one source (global). Pruned after 30 days. */
-export const externalItems = pgTable(
-  "external_items",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    sourceId: text("source_id")
-      .notNull()
-      .references(() => externalSources.id, { onDelete: "cascade" }),
-    externalId: text("external_id").notNull(),
-    title: text("title").notNull(),
-    summary: text("summary"),
-    url: text("url"),
-    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
-    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => [
-    uniqueIndex("external_items_source_external_uidx").on(t.sourceId, t.externalId),
-    index("external_items_published_idx").on(t.publishedAt),
-  ]
-);
-
-/**
- * The companies a headline may be about, keyed by `jobCompanyBucketKey` so the per-user
- * probe is one indexed lookup with the account's own company keys. Candidates, not
- * verdicts: `companiesMatch` confirms each hit before a signal is written.
- */
-export const externalItemCompanies = pgTable(
-  "external_item_companies",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    itemId: uuid("item_id")
-      .notNull()
-      .references(() => externalItems.id, { onDelete: "cascade" }),
-    companyKey: text("company_key").notNull(),
-    companyName: text("company_name").notNull(),
-    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
-  },
-  (t) => [
-    uniqueIndex("external_item_companies_item_key_uidx").on(t.itemId, t.companyKey),
-    index("external_item_companies_key_published_idx").on(t.companyKey, t.publishedAt.desc()),
-  ]
-);
+// Radar's retired news tables (external_sources, external_items, external_item_companies),
+// recommendations.discovered_person and user_settings.radar_discovery_enabled are out of the
+// code as of Radar PR 12a; the database keeps them until PR 12b drops them, so a deploy still
+// serving during the next migration never selects a column that is gone.
 
 export type AudienceFilters = {
   titles?: string[];
@@ -3146,7 +3134,8 @@ export const outreachMessages = pgTable(
  *
  * The same warning as `contactEmbeddings` applies to `embedding_vector`: it is created and
  * indexed at runtime by `migratePgvector`, is deliberately absent from this declaration, and
- * `drizzle-kit push` would drop it. Migrations here are hand-written SQL on purpose.
+ * a schema-diffing tool (`drizzle-kit push`, since removed) would drop it. Migrations here are
+ * hand-written SQL on purpose.
  */
 export const memoryChunks = pgTable(
   "memory_chunks",
@@ -3221,11 +3210,10 @@ export const contactEmbeddings = pgTable(
      * `scripts/migrate-embedding-stale.ts`. All four must agree on name AND column list.
      *
      * Nothing at runtime reads this declaration — Orbit's migrations are hand-written SQL,
-     * deliberately, because `drizzle-kit push` drops the runtime-managed
-     * `embedding_vector` column. But `drizzle.config.ts` points `schema` at this file and
-     * `package.json` still ships `db:push`/`db:generate`, so a stale declaration here is a
-     * loaded gun: running either would recreate whatever this says against whatever
-     * `DATABASE_URL` resolves to.
+     * deliberately, because a schema-diffing tool (`drizzle-kit push`, since
+     * removed) drops the runtime-managed `embedding_vector` column. A stale declaration here
+     * would be a loaded gun if such a tool were ever reintroduced: it would recreate whatever
+     * this says against whatever `DATABASE_URL` resolves to.
      *
      * `source_id` is in the key because that is the real uniqueness contract.
      * `upsertContactEmbedding` (`src/lib/search.ts`) keys its existence check on all four
@@ -5659,6 +5647,22 @@ export const linkedinAvatars = pgTable(
   },
   (t) => [index("linkedin_avatars_resolved_at_idx").on(t.resolvedAt)]
 );
+
+/**
+ * Cross-user photo cache for people found by email (`src/lib/shared-avatars.ts`), the email
+ * twin of `linkedinAvatars`: keyed by sha256 of the lowercased, trimmed address, never the
+ * address itself. Public lookups (Gravatar) only; never a Google/Outlook mailbox photo, an
+ * extension capture or an upload. `imageUrl` null = looked and found nothing. Deleted once no
+ * contact in any account has the address; `blockedAt` rows stay (admin takedown).
+ */
+export const emailAvatars = pgTable("email_avatars", {
+  emailHash: text("email_hash").primaryKey(),
+  imageUrl: text("image_url"),
+  source: text("source").$type<"gravatar">().notNull(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
+  blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  blockedBy: text("blocked_by"),
+});
 
 /**
  * Work history found by a public web search (`src/lib/public-work-history.ts`), shared across

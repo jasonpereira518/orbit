@@ -4,7 +4,7 @@ import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { Suspense } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { Bell, Sparkles, Users } from "lucide-react";
 import type { getOutreachPerformanceSummary } from "@/actions/outreach";
 import type { fetchDashboard } from "@/actions/reminders";
@@ -359,6 +359,7 @@ export async function MorningBriefingSection({
         <MorningBriefing
           total={b.total}
           today={b.today}
+          lanes={b.lanes}
           drafts={b.drafts}
           changes={b.changes}
           paused={b.paused}
@@ -379,7 +380,6 @@ export async function MorningBriefingSection({
             tier: r.tier,
             avatarUrl: r.avatarUrl,
             suggestedCalendarInvite: r.suggestedCalendarInvite,
-            discoveredPerson: r.discoveredPerson,
           }))}
         />
       </div>
@@ -515,6 +515,10 @@ export async function RemindersAndFollowUpsSection({
               ? data.contactNameById.get(r.contactId) ?? null
               : null,
             noteBatchId: r.noteBatchId,
+            priority: r.priority,
+            category: r.category,
+            timingRationale: r.timingRationale,
+            importanceReason: r.importanceReason,
           }))}
         />
       </div>
@@ -664,7 +668,7 @@ export async function RecentlyUpdatedSection({
                     </div>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
+                    {longRelativeLabel(new Date(c.updatedAt))}
                   </span>
                 </IntentLink>
               );

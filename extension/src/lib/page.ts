@@ -105,6 +105,56 @@ export async function readActivePage(): Promise<PageReadResult> {
   }
 }
 
+export type ScannedPost = { authorProfileUrl: string; authorName: string | null; excerpt: string; url: string | null };
+
+/**
+ * "Scan this page for people I know": the one time the extractor reads a feed, because the
+ * person clicked. A timestamped flag is set, the same extractor file is injected (it reads the
+ * flag, clears it and parks the posts on `__orbitScan`), and a third call reads them back.
+ */
+export async function scanActivePage(): Promise<{ ok: true; posts: ScannedPost[] } | { ok: false; message: string }> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url) return { ok: false, message: "Orbit needs your go-ahead to read this site." };
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const w = window as unknown as { __orbitScanAt?: number; __orbitScan?: unknown };
+        w.__orbitScan = undefined;
+        w.__orbitScanAt = Date.now();
+      },
+    });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["inject/extract.js"] });
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const w = window as unknown as { __orbitScanAt?: number; __orbitScan?: unknown };
+        const value = w.__orbitScan;
+        w.__orbitScan = undefined;
+        w.__orbitScanAt = undefined;
+        return value;
+      },
+    });
+    const value = result?.result as { posts: ScannedPost[] } | { error: string } | undefined;
+    if (!value) return { ok: false, message: "Couldn't read this page. Try again." };
+    if ("error" in value) return { ok: false, message: value.error };
+    return { ok: true, posts: value.posts };
+  } catch {
+    return { ok: false, message: "Orbit needs your go-ahead to read this site." };
+  }
+}
+
+/** Where "Scan this page" is offered: the LinkedIn feed and a person's activity pages. */
+export function isScanPage(page: PageContext): boolean {
+  if (page.site !== "linkedin") return false;
+  try {
+    const path = new URL(page.sourceUrl).pathname;
+    return /^\/feed\/?$/i.test(path) || /^\/in\/[^/]+\/recent-activity(\/|$)/i.test(path);
+  } catch {
+    return false;
+  }
+}
+
 /** Best display name for whoever the page is about. */
 export function pageDisplayName(page: PageContext): string | null {
   // An event page names the event, not a person.

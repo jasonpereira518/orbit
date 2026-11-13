@@ -1,3 +1,4 @@
+import { reportError } from "@/lib/report-error";
 import { getDb } from "@/db";
 import { accountAuditLog } from "@/db/schema";
 
@@ -41,6 +42,6 @@ export async function recordAccountAudit(input: AccountAuditInput): Promise<void
       detail: input.detail ?? {},
     });
   } catch (err) {
-    console.error("[account-audit] could not record", input.action, err instanceof Error ? err.message : err);
+    reportError(err, { where: "account-audit.record", level: "warning", extra: { action: input.action } });
   }
 }

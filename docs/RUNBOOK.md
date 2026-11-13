@@ -42,14 +42,24 @@ from the dashboard. `main` and production always build.
 ## Roll back
 
 Vercel → Deployments → the last good one → **Promote to Production**. Schema changes are
-additive and idempotent, so old code runs fine on a newer schema. What happens next:
+idempotent but **not all additive**: the sweep has dropped the `guest_profiles` table (v170) and
+columns (`user_settings.wispr_api_key_encrypted`, `user_settings.radar_apollo_cursor`; search
+`src/db/index.ts` for `DROP`), so code older than a drop will fail queries on what it removed. Pick a
+deployment newer than the last drop. Two more things a rollback does not undo:
+
+- Vercel freezes env values per deployment, so promoting an old deployment **also restores any
+  secret rotated since** (`CRON_SECRET`, webhook secrets, managed AI keys). Re-check them.
+- Data written by the newer build's migration (the identity backfill, confident duplicate merges)
+  stays.
+
+What happens next:
 
 - `/api/health` answers **200 with `status: "degraded"`** and `schema.ahead: true` (the
   database was migrated by the newer build). The uptime monitor stays green and the `ops`
   workflow keeps running the sweep, the stalled-import job, the webhook drain and sync.
 - The older code sees a recorded version at or above its own, so it does **not** re-run its
   schema sweep, and it never writes its lower number back.
-- Nothing is undone: columns the newer build added stay, and old code ignores them.
+- Nothing is undone: columns the newer build added stay, and old code ignores them (dropped columns are what break it).
 
 Then fix forward. The next deploy from `main` carries a version at or above the recorded
 one and health returns to `ok`. A **503 `schema_mismatch`** still means the database is

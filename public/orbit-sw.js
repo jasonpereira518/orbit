@@ -1,7 +1,9 @@
 /* Orbit service worker.
  *
- * One job: desktop notifications while the app is installed or backgrounded
- * (`notificationclick`).
+ * Two jobs: desktop notifications while the app is installed or backgrounded
+ * (`notificationclick`), and web push (`push`): Radar's same-day alerts, sent by the server
+ * (`src/lib/push.ts`) even when no Orbit tab is open. A push carries `{ title, body, url, kind }`
+ * and never a name, because a lock screen shows it to anyone nearby.
  *
  * It does NOT intercept page loads. When the server is stopped or there is no internet, the
  * browser's own error page is the honest answer, so navigations go straight to the network
@@ -25,6 +27,27 @@ self.addEventListener("activate", (event) => {
       }
       await self.clients.claim();
     })()
+  );
+});
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  // Only same-origin paths open on click: a payload is the server's, but the worker trusts no URL.
+  const url = typeof data.url === "string" && data.url.startsWith("/") && !data.url.startsWith("//") ? data.url : "/radar";
+  const title = typeof data.title === "string" && data.title ? data.title.slice(0, 120) : "Orbit";
+  const body = typeof data.body === "string" ? data.body.slice(0, 240) : "";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: "/icon.png",
+      tag: url,
+      data: { url, kind: data.kind === "radar_moment" ? "radar_moment" : undefined },
+    })
   );
 });
 

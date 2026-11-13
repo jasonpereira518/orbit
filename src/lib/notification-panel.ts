@@ -3,7 +3,16 @@ import { unreadRepliesFor } from "@/lib/feedback-thread";
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getDb, rowsOf } from "@/db";
-import { aiSuggestions, captureJobs, cloudNoteFiles, contacts, reminders, suggestedReminders } from "@/db/schema";
+import {
+  aiSuggestions,
+  captureJobs,
+  cloudNoteFiles,
+  contacts,
+  reminders,
+  suggestedReminders,
+  type ReminderPriority,
+  type ReminderCategory,
+} from "@/db/schema";
 import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
 import {
   getAccountAlerts,
@@ -140,14 +149,19 @@ export async function loadNotificationPanel(
       orderBy: (j, { desc: descOrder }) => [descOrder(j.updatedAt)],
       limit: 3,
     }),
-    // Radar's live list, as one summary line: how many and who's first. Never items, so
-    // never "due", so never a badge or a desktop notification (an unconfirmed guess must
-    // not reach either). One indexed read; empty for anyone Radar has never run for.
+    // Radar's live list, as one summary line: how many and who's first. Never items, so never
+    // a desktop notification (Radar's own alerts are push, `src/lib/radar/moments.ts`, with
+    // their own daily cap). Today's moments — the ones that won't keep — count on the bell's
+    // badge (Radar PR 9b); the rest of the week's plan never does. One indexed read; empty for
+    // anyone Radar has never run for.
     opts.radar
       ? db.execute(sql`
           SELECT count(*)::int AS n,
                  count(*) FILTER (WHERE r.draft ->> 'inputsHash' = r.inputs_hash)::int AS drafts,
-                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names
+                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names,
+                 count(*) FILTER (WHERE r.bucket = 'today')::int AS today,
+                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id)
+                    FILTER (WHERE r.bucket = 'today'))[1:2] AS today_names
             FROM recommendations r
             JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
            WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
@@ -178,7 +192,9 @@ export async function loadNotificationPanel(
     // The operator answered their feedback and they haven't opened it yet.
     unreadRepliesFor(userId),
   ]);
-  const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
+  const radarRow = radarRows
+    ? rowsOf<{ n: number; drafts: number; names: string[] | null; today: number; today_names: string[] | null }>(radarRows)[0]
+    : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
 
   type PanelItem = {
@@ -198,6 +214,10 @@ export async function loadNotificationPanel(
     /** Follow-ups only: the contact's role and company, so the UI can tint the company. */
     contactTitle?: string | null;
     company?: string | null;
+    priority?: ReminderPriority;
+    category?: ReminderCategory;
+    timingRationale?: string | null;
+    importanceReason?: string | null;
   };
 
   const items: PanelItem[] = [];
@@ -255,6 +275,10 @@ export async function loadNotificationPanel(
       urgency: isDue ? "due" : "upcoming",
       reminderId: r.id,
       contactId: r.contactId,
+      priority: r.priority,
+      category: r.category,
+      timingRationale: r.timingRationale,
+      importanceReason: r.importanceReason,
     });
   }
 
@@ -279,7 +303,7 @@ export async function loadNotificationPanel(
 
   for (const s of suggestions) {
     const related = Array.isArray(s.relatedContactIds)
-      ? (s.relatedContactIds as string[])
+      ? (s.relatedContactIds)
       : [];
     items.push({
       id: `suggestion:${s.id}`,
@@ -314,6 +338,10 @@ export async function loadNotificationPanel(
       urgency: "info",
       suggestedReminderId: s.id,
       contactId: s.contactId,
+      priority: s.priority,
+      category: s.category,
+      timingRationale: s.timingRationale,
+      importanceReason: s.importanceReason,
     });
   }
 
@@ -374,9 +402,14 @@ export async function loadNotificationPanel(
   }
 
   const urgencyRank = { due: 0, upcoming: 1, info: 2 } as const;
+  const priorityRank = { critical: 0, high: 1, normal: 2, low: 3 } as const;
   items.sort((a, b) => {
     const ur = urgencyRank[a.urgency] - urgencyRank[b.urgency];
     if (ur !== 0) return ur;
+    const prA = a.priority ? priorityRank[a.priority] : 2;
+    const prB = b.priority ? priorityRank[b.priority] : 2;
+    const pr = prA - prB;
+    if (pr !== 0) return pr;
     const aTime = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
     const bTime = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
     return aTime - bTime;
@@ -398,7 +431,13 @@ export async function loadNotificationPanel(
      */
     radar:
       radarCount > 0
-        ? { count: radarCount, drafts: Number(radarRow?.drafts ?? 0), names: radarRow?.names ?? [] }
+        ? {
+            count: radarCount,
+            drafts: Number(radarRow?.drafts ?? 0),
+            names: radarRow?.names ?? [],
+            today: Number(radarRow?.today ?? 0),
+            todayNames: radarRow?.today_names ?? [],
+          }
         : undefined,
     /**
      * Account health, as a SIBLING of `items` and never an entry in it. That placement is

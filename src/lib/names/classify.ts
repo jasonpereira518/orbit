@@ -73,7 +73,7 @@ export function isRoomName(name: string | null | undefined): boolean {
 
 /** The local part of an address without its `+tag`: `ada+github@x.com` is still Ada. */
 export function mailboxLocal(email: string | null | undefined): string {
-  return (email ?? "").trim().toLowerCase().split("@")[0]!.split("+")[0]!;
+  return (email ?? "").trim().toLowerCase().split("@")[0].split("+")[0];
 }
 
 /** person | role (a shared inbox, may be one person on a founder's domain) | machine. */

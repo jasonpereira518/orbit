@@ -333,7 +333,7 @@ export async function createEventForUser(
       rsvpStatus: input.rsvpStatus ?? null,
     })
     .returning();
-  return row!;
+  return row;
 }
 
 export async function updateEventForUser(
@@ -356,8 +356,8 @@ export async function updateEventForUser(
     .update(events)
     .set({
       ...safe,
-      ...("startsAt" in safe ? { startsAt: validDateOrNull(safe.startsAt as Date | null | undefined) } : {}),
-      ...("endsAt" in safe ? { endsAt: validDateOrNull(safe.endsAt as Date | null | undefined) } : {}),
+      ...("startsAt" in safe ? { startsAt: validDateOrNull(safe.startsAt) } : {}),
+      ...("endsAt" in safe ? { endsAt: validDateOrNull(safe.endsAt) } : {}),
       updatedAt: new Date(),
     })
     .where(and(eq(events.id, eventId), eq(events.userId, userId)));

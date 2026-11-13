@@ -119,7 +119,7 @@ function unescapeIcs(value: string) {
  */
 function tzidOfLine(line: string): string | null {
   const hit = /;TZID=([^:;]+)/i.exec(line.slice(0, line.indexOf(":") + 1));
-  return hit ? hit[1]!.trim() : null;
+  return hit ? hit[1].trim() : null;
 }
 
 /** The `TZID=` parameter off a property line, e.g. `DTSTART;TZID=America/New_York:2026…`. */
@@ -274,7 +274,7 @@ export function parseIcsEvents(icsText: string): ParsedCalendarEvent[] {
     const attendeeLines = getAllPropLines(block, "ATTENDEE");
     const selfResponse =
       attendeeLines.length === 1
-        ? /;PARTSTAT=([^;:]+)/i.exec(attendeeLines[0]!.slice(0, attendeeLines[0]!.indexOf(":") + 1))?.[1] ?? null
+        ? /;PARTSTAT=([^;:]+)/i.exec(attendeeLines[0].slice(0, attendeeLines[0].indexOf(":") + 1))?.[1] ?? null
         : null;
 
     const organizerLine = block

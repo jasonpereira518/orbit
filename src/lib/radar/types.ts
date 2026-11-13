@@ -80,6 +80,12 @@ export const KIND_SECTION_TITLES: Record<RecommendationKind, string> = {
 export const RADAR_LANES = ["follow_up", "connect", "opportunities"] as const;
 export type RadarLane = (typeof RADAR_LANES)[number];
 
+export const LANE_TITLES: Record<RadarLane, string> = {
+  follow_up: "Follow up",
+  connect: "Connect",
+  opportunities: "Opportunities",
+};
+
 export const LANE_OF_KIND: Record<RecommendationKind, RadarLane> = {
   prep: "follow_up",
   heads_up: "follow_up",
@@ -278,25 +284,6 @@ export type RadarCalendarInvite = {
   calendarEventKey?: string;
 };
 
-/** A new prospective connection discovered outside the user's current network. */
-export type RadarDiscoveredPerson = {
-  fullName: string;
-  title?: string | null;
-  company?: string | null;
-  location?: string | null;
-  bio?: string | null;
-  avatarUrl?: string | null;
-  linkedinUrl?: string | null;
-  twitterHandle?: string | null;
-  githubHandle?: string | null;
-  website?: string | null;
-  sourceUrl?: string | null;
-  sourcePlatform: "linkedin" | "twitter" | "github" | "research" | "event" | "web";
-  matchReason: string;
-  matchingProjectId?: string;
-  matchingProjectTitle?: string;
-};
-
 /**
  * What one account has taught Radar: accept and decline tallies per kind and per reason
  * code, rebuilt from the last 90 days of rows at the end of every run. `a` counts accepts
@@ -325,6 +312,8 @@ export type RadarAutopilot = Partial<Record<RecommendationKind, boolean>>;
 export const CONTACT_SIGNAL_KINDS = [
   "social_post",
   "linkedin_activity",
+  /** A recent public post, talk or news item the people check found, on a link the search cited. */
+  "web_mention",
 ] as const;
 export type ContactSignalKind = (typeof CONTACT_SIGNAL_KINDS)[number];
 
@@ -340,10 +329,12 @@ export type ContactSignalPayload = {
   url?: string | null;
   /** Human label for where it came from ("Hacker News", "SEC EDGAR", "Extension"). */
   sourceLabel?: string;
+  /** web_mention: what kind of mention it is. */
+  mentionKind?: MentionKind;
 };
 
-/** The retired global news tables' source kinds (`external_sources.kind`); the tables drop in Radar PR 12. */
-export type ExternalSourceKind = "rss" | "atom" | "hn" | "edgar";
+/** What the people check reports about someone (`src/lib/radar/pulse.ts`). */
+export type MentionKind = "post" | "talk" | "news";
 
 /**
  * An opportunity with no contact row (`radar_opportunities`): an event near the person, someone
@@ -353,6 +344,27 @@ export const RADAR_OPPORTUNITY_KINDS = ["event", "person", "opening", "program"]
 export type RadarOpportunityKind = (typeof RADAR_OPPORTUNITY_KINDS)[number];
 /** `found` = checked but not shown yet; `pending` = on the page; `saved` = the person kept it. */
 export type RadarOpportunityStatus = "found" | "pending" | "saved" | "dismissed" | "expired";
+
+/**
+ * Why a card was dismissed, asked on the page. `wrong_reason` is a vote against the kind and its
+ * reasons (a plain dismissal); `wrong_person` is about the person, not the kind, so it quiets
+ * every card about them for a while and teaches the model nothing; `already_handled` is not a
+ * vote; `not_now` is a week's snooze.
+ */
+export const RADAR_DISMISS_REASONS = ["wrong_person", "wrong_reason", "already_handled", "not_now"] as const;
+export type RadarDismissReason = (typeof RADAR_DISMISS_REASONS)[number];
+export const RADAR_DISMISS_LABELS: Record<RadarDismissReason, string> = {
+  wrong_person: "Wrong person",
+  wrong_reason: "Wrong reason",
+  already_handled: "Already handled",
+  not_now: "Not now",
+};
+/** Dismissal reasons that are not a vote against the card's kind or reasons. */
+export const NON_VOTING_DISMISS_REASONS = ["wrong_person", "already_handled"] as const satisfies readonly RadarDismissReason[];
+
+export function isRadarDismissReason(v: unknown): v is RadarDismissReason {
+  return typeof v === "string" && (RADAR_DISMISS_REASONS as readonly string[]).includes(v);
+}
 
 /** What a person did with a recommendation, recorded so the next run respects it. */
 export type RadarFeedbackAction = "accepted" | "dismissed" | "snoozed" | "never";
@@ -404,6 +416,8 @@ type RadarSignalFact =
       network: "linkedin";
       url: string | null;
     }
+  /** A public post, talk or news item the people check found (`web_mention`); `url` is a cited link. */
+  | { kind: "public_mention"; contactId: string; at: Date; text: string; url: string; mentionKind: MentionKind }
   /** A move the work-history check logged (`contact_career_moves`); `text` is its sentence. */
   | { kind: "job_change"; contactId: string; at: Date; move: "joined" | "left" | "title_change"; text: string }
   /**

@@ -11,7 +11,7 @@
  */
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, captureJobs, contactOpportunities, contacts, ignoredPeople, interactionMentions, interactions, meetingSessions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin } from "@/db/schema";
+import { actionItems, captureJobs, contactOpportunities, contacts, ignoredPeople, interactionMentions, interactions, meetingSessions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin, type ReminderPriority, type ReminderCategory } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
@@ -124,6 +124,10 @@ export type NoteBatchCommitmentInput = Omit<
   rawDatePhrase: string | null;
   /** Defaults to `"explicit"` — everything that reached here before implied steps existed was. */
   origin?: ReminderOrigin;
+  priority?: ReminderPriority;
+  category?: ReminderCategory;
+  timingRationale?: string | null;
+  importanceReason?: string | null;
 };
 
 export type NoteBatchMentionInput = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | null };
@@ -213,6 +217,10 @@ type ReminderDraft = {
   actionItemId: string | null;
   origin: ReminderOrigin;
   confidenceScore: number | null;
+  priority: ReminderPriority;
+  category: ReminderCategory;
+  timingRationale: string | null;
+  importanceReason: string | null;
 };
 
 export type SaveNoteBatchOptions = {
@@ -407,7 +415,7 @@ export async function saveNoteBatch(
           const IDENTITY = ["company", "title", "location", "email", "linkedinUrl", "howMet", "aiSummary"] as const;
           const kept = { ...restAll } as Record<string, unknown>;
           for (const key of IDENTITY) {
-            if (typeof current[key] === "string" && current[key]!.trim()) delete kept[key];
+            if (typeof current[key] === "string" && current[key].trim()) delete kept[key];
           }
           rest = kept as typeof restAll;
         }
@@ -495,7 +503,7 @@ export async function saveNoteBatch(
         const inserted = await insertOpportunities(
           userId,
           p.opportunities.map((o) => ({
-            contactId: contactId!,
+            contactId: contactId,
             kind: o.kind,
             label: o.label,
             direction: o.direction,
@@ -506,7 +514,7 @@ export async function saveNoteBatch(
             rawDatePhrase: o.rawDatePhrase,
             confidenceScore: o.confidenceScore,
             createdBy: "ai" as const,
-            itemHash: buildOpportunityItemHash(input.sourceHash, contactId!, o.kind, o.label),
+            itemHash: buildOpportunityItemHash(input.sourceHash, contactId, o.kind, o.label),
           }))
         );
         // `emptyNoteBatchResult` always seeds this, but the field is optional on the type so
@@ -515,7 +523,7 @@ export async function saveNoteBatch(
         for (const r of inserted) {
           opportunityResults.push({
             id: r.id,
-            contactId: contactId!,
+            contactId: contactId,
             kind: r.kind,
             label: r.label,
             dueIso: r.dueDate ? isoDay(new Date(r.dueDate)) : null,
@@ -546,6 +554,10 @@ export async function saveNoteBatch(
             dateBasis: "window", rawDatePhrase: null, sourceExcerpt: null, actionItemId: item.id,
             // An action item is something the note SAID somebody would do.
             origin: "explicit", confidenceScore: null,
+            priority: "high",
+            category: "action_item",
+            timingRationale: "Action item from notes",
+            importanceReason: "Direct action item from interaction",
           });
           result.actionItems.push({ id: item.id, contactId, text: item.text, reminderId: null });
         }
@@ -574,6 +586,10 @@ export async function saveNoteBatch(
           actionKind: inferReminderActionKind({ title: item.text, description: null, reminderType: "ai_suggested", contactId: item.contactId }),
           dateBasis: "window", rawDatePhrase: null, sourceExcerpt: null, actionItemId: item.id,
           origin: "explicit", confidenceScore: null,
+          priority: "high",
+          category: "action_item",
+          timingRationale: "Action item from notes",
+          importanceReason: "Direct action item from interaction",
         });
       }
     }
@@ -657,6 +673,10 @@ export async function saveNoteBatch(
         actionItemId: null,
         origin: c.origin ?? "explicit",
         confidenceScore: c.confidenceScore,
+        priority: c.priority ?? "normal",
+        category: c.category ?? "action_item",
+        timingRationale: c.timingRationale ?? null,
+        importanceReason: c.importanceReason ?? null,
       });
     }
 
@@ -682,6 +702,10 @@ export async function saveNoteBatch(
         actionItemId: null,
         origin: "explicit",
         confidenceScore: null,
+        priority: "normal",
+        category: "next_step",
+        timingRationale: `Scheduled based on relationship cadence (${days} days)`,
+        importanceReason: "Follow-up to maintain connection",
       });
     }
 
@@ -713,6 +737,10 @@ export async function saveNoteBatch(
         // A digest item is something the call produced, not something Orbit inferred.
         origin: "explicit",
         confidenceScore: null,
+        priority: extra.kind === "blocker" ? "critical" : "high",
+        category: "action_item",
+        timingRationale: "Action item from meeting digest",
+        importanceReason: `Meeting ${extra.kind}`,
       });
     }
 
@@ -754,6 +782,10 @@ export async function saveNoteBatch(
             actionItemId: d.actionItemId,
             origin: d.origin,
             confidenceScore: d.confidenceScore,
+            priority: d.priority,
+            category: d.category,
+            timingRationale: d.timingRationale,
+            importanceReason: d.importanceReason,
             itemHash: d.actionItemId
               ? buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), `action-item:${d.actionItemId}`)
               : buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), d.title),
@@ -776,8 +808,12 @@ export async function saveNoteBatch(
       for (const r of landed) {
         result.reminders.push({
           id: r.id, contactId: r.contactId, title: r.title, dueIso: isoDay(new Date(r.dueDate!)),
-          dateBasis: (r.dateBasis ?? "window") as NoteBatchResult["reminders"][number]["dateBasis"],
+          dateBasis: (r.dateBasis ?? "window"),
           rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
+          priority: r.priority,
+          category: r.category,
+          timingRationale: r.timingRationale,
+          importanceReason: r.importanceReason,
         });
         if (r.actionItemId) {
           reminderByActionItem.set(r.actionItemId, r.id);

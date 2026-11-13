@@ -59,7 +59,7 @@ export function ScanCamera({
     // stream — that is the whole point of depending on `active`.
     if (!active) return;
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const stream = await openCameraStream();
         if (cancelled) {

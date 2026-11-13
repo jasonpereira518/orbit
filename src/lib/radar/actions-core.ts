@@ -12,7 +12,7 @@ import { scheduleEmailEventReminder } from "@/lib/email-intel/reminders";
 import { scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import { settleJobChangeCongratsForUser } from "@/lib/job-changes";
 import { recordFeedback } from "@/lib/radar/store";
-import { LIVE_RECOMMENDATION_STATUSES } from "@/lib/radar/types";
+import { LIVE_RECOMMENDATION_STATUSES, type RadarDismissReason } from "@/lib/radar/types";
 
 const DAY_MS = 86_400_000;
 
@@ -65,7 +65,9 @@ export async function snoozeRecommendationForUser(userId: string, id: string, le
   return { ok: true as const };
 }
 
-export async function dismissRecommendationForUser(userId: string, id: string) {
+/** Dismiss, with the reason the page asked for. "Not now" is a week's snooze, not a dismissal. */
+export async function dismissRecommendationForUser(userId: string, id: string, reason: RadarDismissReason | null = null) {
+  if (reason === "not_now") return snoozeRecommendationForUser(userId, id, "1w");
   const rec = await ownedPending(userId, id);
   if (!rec || rec.status !== "pending") return { ok: false as const };
   const db = await getDb();
@@ -74,7 +76,7 @@ export async function dismissRecommendationForUser(userId: string, id: string) {
     .update(recommendations)
     .set({ status: "dismissed", resolvedAt: now, actedAt: now, updatedAt: now })
     .where(and(eq(recommendations.id, id), eq(recommendations.userId, userId)));
-  await recordFeedback(userId, { contactId: rec.contactId, recommendationId: id, kind: rec.kind, action: "dismissed" });
+  await recordFeedback(userId, { contactId: rec.contactId, recommendationId: id, kind: rec.kind, action: "dismissed", reason });
   return { ok: true as const };
 }
 

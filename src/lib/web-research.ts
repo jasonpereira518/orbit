@@ -27,6 +27,7 @@ import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiResultCache, userSettings } from "@/db/schema";
 import { parseAiJson, userCanUseAi, webSearchJson, type WebSource } from "@/lib/ai";
+import { companyResearchSchema, discoveryResearchSchema, personResearchSchema, matchReplySchema } from "@/lib/ai-reply-schemas";
 import { RESEARCH_CACHE_DAYS, aiResultCacheKey, withAiResultCache } from "@/lib/ai-result-cache";
 import { fenceUntrusted } from "@/lib/ai-security";
 import { linkedinSlug } from "@/lib/duplicates";
@@ -58,7 +59,7 @@ export function legacyWebSearch(): boolean {
 /** The model's verdict in a raw answer, or null when the answer does not parse. */
 export function answerMatch(json: string): "confident" | "unsure" | "none" | null {
   try {
-    const match = parseAiJson<{ match?: unknown }>(json).match;
+    const match = parseAiJson(matchReplySchema, json).match;
     return match === "confident" || match === "unsure" || match === "none" ? match : null;
   } catch {
     return null;
@@ -253,16 +254,6 @@ function subjectPrompt(subject: PersonSubject): string {
   return `Research this person:\n\n${fenceUntrusted("person", lines.join("\n"))}`;
 }
 
-type RawPerson = {
-  match?: unknown;
-  name?: unknown;
-  headline?: unknown;
-  current?: { organization?: unknown; title?: unknown } | null;
-  location?: unknown;
-  summary?: unknown;
-  talkingPoints?: unknown;
-  experiences?: unknown;
-};
 
 /** The model's answer, bounded and — unless it is sure — emptied of every fact. */
 export function toPersonDossier(
@@ -271,7 +262,7 @@ export function toPersonDossier(
   sources: WebSource[],
   now: Date,
 ): PersonDossier {
-  const raw = parseAiJson<RawPerson>(json);
+  const raw = parseAiJson(personResearchSchema, json);
   const match = raw.match === "confident" || raw.match === "unsure" ? raw.match : "none";
   const seen = new Set<string>();
   const dossier: PersonDossier = {
@@ -412,7 +403,7 @@ function expectedFailure(err: unknown): { ok: false; reason: "no_ai" | "rate_lim
 
 function asBrief(result: unknown): ResearchBrief | null {
   if (typeof result !== "object" || result === null || !("v" in result)) return null;
-  const v = (result as { v: unknown }).v;
+  const v = (result).v;
   if (typeof v !== "object" || v === null) return null;
   const kind = (v as { kind?: unknown }).kind;
   return kind === "person" || kind === "company" || kind === "discover" ? (v as ResearchBrief) : null;
@@ -681,16 +672,6 @@ function companyPrompt(subject: CompanySubject, website: string | null, homepage
   return parts.join("\n\n");
 }
 
-type RawCompany = {
-  match?: unknown;
-  website?: unknown;
-  description?: unknown;
-  headquarters?: unknown;
-  founded?: unknown;
-  size?: unknown;
-  news?: unknown;
-  people?: unknown;
-};
 
 /** The model's answer, bounded and — unless it is sure — emptied of every fact. */
 export function toCompanyDossier(
@@ -700,7 +681,7 @@ export function toCompanyDossier(
   sources: WebSource[],
   now: Date,
 ): CompanyDossier {
-  const raw = parseAiJson<RawCompany>(json);
+  const raw = parseAiJson(companyResearchSchema, json);
   const match = raw.match === "confident" || raw.match === "unsure" ? raw.match : "none";
   const seen = new Set<string>();
   const dossier: CompanyDossier = {
@@ -852,7 +833,7 @@ export type DiscoverPeopleResult =
   | { ok: true; key: string; result: DiscoveryResult }
   | { ok: false; reason: "invalid" | "no_ai" | "rate_limited"; message: string };
 
-const DISCOVER_SYSTEM = `You find people who match a description, using web search, for someone looking to reach out to people they do not know yet.
+export const DISCOVER_SYSTEM = `You find people who match a description, using web search, for someone looking to reach out to people they do not know yet.
 
 Use as few searches as possible — every search costs money. Good sources: public LinkedIn profile snippets in search results, company team and leadership pages, conference speaker lists, press releases, university and alumni pages, personal sites.
 
@@ -879,7 +860,7 @@ export function normalizeDiscoveryQuery(input: unknown): { ok: true; query: stri
 
 /** The model's list, keeping only cited, explained, distinct people. */
 export function toDiscoveryResult(query: string, json: string, sources: WebSource[], now: Date): DiscoveryResult {
-  const raw = parseAiJson<{ candidates?: unknown }>(json);
+  const raw = parseAiJson(discoveryResearchSchema, json);
   const seenPeople = new Set<string>();
   const candidates = (Array.isArray(raw.candidates) ? raw.candidates : [])
     .map((c: { fullName?: unknown; title?: unknown; company?: unknown; whyMatches?: unknown; url?: unknown } | null) => ({

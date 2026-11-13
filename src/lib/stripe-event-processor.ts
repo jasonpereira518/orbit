@@ -36,7 +36,7 @@ export async function processStripeEvent(
     decision.outcome === "handled" &&
     (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated")
   ) {
-    await reconcileFoundingDiscount(event.data.object as Stripe.Subscription, deps.updateSubscription, now);
+    await reconcileFoundingDiscount(event.data.object, deps.updateSubscription, now);
   }
   if (decision.outcome === "handled") {
     await markStripeEventProcessed(event.id, event.type);

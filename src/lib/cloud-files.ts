@@ -402,7 +402,7 @@ export async function fileThumbnail(ctx: CloudCtx, provider: CloudProvider, file
       headers: { authorization: `Bearer ${ctx.token}` },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim();
+    const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
     if (!res.ok || !THUMB_TYPES.test(type)) return null;
     const bytes = await readBodyCapped(res, THUMB_MAX_BYTES);
     if (!bytes) return null;

@@ -14,7 +14,6 @@ import { RADAR_WINDOWS, type RadarPick, type RadarSuppression } from "@/lib/rada
 import type {
   RadarAutopilotAction,
   RadarCalendarInvite,
-  RadarDiscoveredPerson,
   RadarDraft,
   RadarAiNote,
   RadarEvidence,
@@ -24,7 +23,7 @@ import type {
   RecommendationKind,
   RecommendationStatus,
 } from "@/lib/radar/types";
-import { LIVE_RECOMMENDATION_STATUSES, recommendationKey } from "@/lib/radar/types";
+import { LIVE_RECOMMENDATION_STATUSES, RECOMMENDATION_KINDS, recommendationKey } from "@/lib/radar/types";
 import { RADAR_MODEL_HISTORY_DAYS, RADAR_MODEL_VOTES, type RadarModelTallyRow } from "@/lib/radar/model";
 import { RADAR_IGNORED_MIN_SEEN } from "@/lib/radar/metrics";
 
@@ -82,6 +81,7 @@ export async function loadSuppressions(
       contactId: recommendationFeedback.contactId,
       kind: recommendationFeedback.kind,
       action: recommendationFeedback.action,
+      reason: recommendationFeedback.reason,
       at: sql<Date>`max(${recommendationFeedback.createdAt})`.mapWith(recommendationFeedback.createdAt),
     })
     .from(recommendationFeedback)
@@ -91,7 +91,7 @@ export async function loadSuppressions(
         or(eq(recommendationFeedback.action, "never"), gte(recommendationFeedback.createdAt, since))
       )
     )
-    .groupBy(recommendationFeedback.contactId, recommendationFeedback.kind, recommendationFeedback.action);
+    .groupBy(recommendationFeedback.contactId, recommendationFeedback.kind, recommendationFeedback.action, recommendationFeedback.reason);
 
   const out = new Map<string, RadarSuppression>();
   const entry = (contactId: string) => {
@@ -108,7 +108,11 @@ export async function loadSuppressions(
       if (r.kind === null) e.never = "all";
       else if (e.never !== "all") e.never = new Set([...(e.never ?? []), r.kind]);
     } else if (r.kind !== null && r.action === "dismissed") {
-      e.dismissedAt[r.kind] = r.at;
+      // "Wrong person" quiets every kind about them, not only the one dismissed.
+      for (const k of r.reason === "wrong_person" ? RECOMMENDATION_KINDS : [r.kind]) {
+        const prev = e.dismissedAt[k];
+        if (!prev || prev < r.at) e.dismissedAt[k] = r.at;
+      }
     } else if (r.kind !== null && r.action === "accepted") {
       e.acceptedAt[r.kind] = r.at;
     }
@@ -289,7 +293,6 @@ export async function writeRunResult(
               inputsHash: r.inputsHash,
               aiNote: r.aiNote ?? null,
               suggestedCalendarInvite: r.suggestedCalendarInvite ?? null,
-              discoveredPerson: r.discoveredPerson ?? null,
               createdAt: now,
               updatedAt: now,
             }))
@@ -314,7 +317,6 @@ export async function writeRunResult(
               expiresAt: sql`excluded.expires_at`,
               runId: sql`excluded.run_id`,
               suggestedCalendarInvite: sql`coalesce(excluded.suggested_calendar_invite, ${recommendations.suggestedCalendarInvite})`,
-              discoveredPerson: sql`coalesce(excluded.discovered_person, ${recommendations.discoveredPerson})`,
               // The editor's fresh note wins. Otherwise every SET expression reads the OLD row,
               // so this compares the stored hash with the new one before the new one is written,
               // and keeps the old note only while the facts it was written from are unchanged.
@@ -393,8 +395,6 @@ export type RecommendationRow = {
   draft: RadarDraft | null;
   /** Suggested calendar invite for 1-click execution */
   suggestedCalendarInvite?: RadarCalendarInvite | null;
-  /** Discovered prospective connection metadata */
-  discoveredPerson?: RadarDiscoveredPerson | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -425,7 +425,6 @@ export async function listPendingRecommendations(userId: string, limit: number):
     ai_angle: string | null;
     draft: RadarDraft | null;
     suggested_calendar_invite: RadarCalendarInvite | null;
-    discovered_person: RadarDiscoveredPerson | null;
     full_name: string;
     preferred_name: string | null;
     title: string | null;
@@ -439,7 +438,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
   }>(
     await db.execute(sql`
       SELECT r.id, r.contact_id, r.kind, r.score, r.bucket, r.reasons, r.evidence, r.ai_note, r.ai_angle, r.updated_at,
-             r.created_at, r.first_seen_at, r.suggested_calendar_invite, r.discovered_person,
+             r.created_at, r.first_seen_at, r.suggested_calendar_invite,
              CASE WHEN r.draft ->> 'inputsHash' = r.inputs_hash THEN r.draft END AS draft,
              contacts.full_name, contacts.preferred_name, contacts.title, contacts.company,
              contacts.closeness_tier, contacts.last_interaction_at,
@@ -464,7 +463,6 @@ export async function listPendingRecommendations(userId: string, limit: number):
     aiAngle: r.ai_angle,
     draft: r.draft,
     suggestedCalendarInvite: r.suggested_calendar_invite,
-    discoveredPerson: r.discovered_person,
     contactName: (r.preferred_name ?? "").trim() || r.full_name,
     title: r.title,
     company: r.company,
@@ -546,7 +544,12 @@ export async function loadModelTallies(userId: string, now: Date): Promise<Radar
                  ELSE 0
                END AS a,
                CASE
-                 WHEN status = 'dismissed' THEN ${V.dismissed}::numeric
+                 -- "Wrong person" and "already handled" say nothing about the kind or its reasons.
+                 WHEN status = 'dismissed' AND NOT EXISTS (
+                   SELECT 1 FROM recommendation_feedback f
+                    WHERE f.recommendation_id = recommendations.id AND f.action = 'dismissed'
+                      AND f.reason IN ('wrong_person', 'already_handled')
+                 ) THEN ${V.dismissed}::numeric
                  -- Ignored only when it ran its course. A daily pass retires a card early when its
                  -- reason is gone (the person already wrote to them): that is not a vote.
                  WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN}

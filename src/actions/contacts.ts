@@ -1,6 +1,7 @@
 "use server";
 
 import { after } from "next/server";
+import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { requirePageUser } from "@/lib/plan-guards";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { and, asc, desc, eq, gte, inArray, sql, type AnyColumn, type SQL } from "drizzle-orm";
@@ -52,20 +53,19 @@ import {
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
 import { kickWorkHistoryResearch } from "@/lib/work-history-research";
-import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   AVATAR_BACKFILL_BATCH_SIZE,
   AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
-  fetchGravatarPhotoUrl,
   isLinkedInProfilePhoto,
   isUnusableAvatarUrl,
   AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
 import {
   adoptPhotoIntoSharedPool,
+  resolveGravatarCached,
   resolveLinkedInPhotoCached,
   sharedPhotoSlug,
   type ProfileImageSource,
@@ -115,16 +115,14 @@ import {
   type RelatedContactCandidate,
 } from "@/lib/related-contacts";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
+import { isLinkedInProfileUrl } from "@/lib/identity/linkedin";
 import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 import { trackSearchPerformed } from "@/lib/search-events";
 import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
 
-export type {
-  ContactInput,
-  ContactWriteOptions,
-} from "@/lib/contact-writes";
+export type { ContactInput } from "@/lib/contact-writes";
 
 export type {
   ContactListRow,
@@ -760,7 +758,7 @@ export async function createContactDetailed(input: ContactInput) {
       await resolveAvatarNow(db, userId, contactId, {
         persistRemote: downloadAndPersistAvatar,
         resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
-        resolveGravatar: fetchGravatarPhotoUrl,
+        resolveGravatar: resolveGravatarCached,
         deadline: Date.now() + 2500,
       });
     } catch {
@@ -1262,7 +1260,7 @@ export async function backfillContactAvatars(
         persistRemote: downloadAndPersistAvatar,
         resolveConnectedAccount,
         resolveLinkedIn: (contactId, url) => resolveLinkedInPhotoCached(contactId, url, userId),
-        resolveGravatar: fetchGravatarPhotoUrl,
+        resolveGravatar: resolveGravatarCached,
         resolveApollo,
         sourcesUnavailable,
         save: async (contactId, photoUrl, source) => {
@@ -1305,20 +1303,6 @@ export async function backfillContactAvatars(
     ...result,
     pending: Math.max(0, backlog - result.saved - result.failedIds.length),
   };
-}
-
-function isLinkedInProfileUrl(raw: string) {
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  try {
-    const url = new URL(
-      trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
-    );
-    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
-    return host === "linkedin.com" && /\/in\//i.test(url.pathname);
-  } catch {
-    return /linkedin\.com\/in\//i.test(trimmed);
-  }
 }
 
 /**
@@ -1723,13 +1707,12 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         // Gravatar fallback by email
         if (!profileImageUrl && !sharedPhoto && contact.email) {
           try {
-            const gravatarUrl = await fetchGravatarPhotoUrl(contact.id, contact.email);
-            if (gravatarUrl) {
-              const persisted = await downloadAndPersistAvatar(contact.id, gravatarUrl);
-              if (persisted) {
-                profileImageUrl = persisted;
-                profileImageSource = "gravatar";
-              }
+            const gravatar = await resolveGravatarCached(contact.id, contact.email);
+            if (typeof gravatar === "string") {
+              profileImageUrl = gravatar;
+              profileImageSource = "gravatar";
+            } else if (gravatar) {
+              sharedPhoto = true;
             }
           } catch {
             // Gravatar miss is normal
@@ -1955,7 +1938,7 @@ export async function sendContactFollowUpEmail(
   });
   if (!queued.ok) return queued;
   scheduleDispatch(queued.id, queued.sendAt);
-  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0]! };
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0] };
 }
 
 // The related-contacts SQL lives in two IMMUTABLE functions defined with the schema

@@ -9,6 +9,7 @@ import {
   usageEvents,
   userSettings,
 } from "@/db/schema";
+import { num, toDate } from "@/lib/admin-metrics";
 
 /**
  * Cross-user operational triage: what is broken across every account, right now.
@@ -111,18 +112,7 @@ export type MissingKeyAccount = { userId: string; email: string | null; provider
  */
 export const MISSING_KEY_LIST_LIMIT = 50;
 
-function toDate(value: Date | string | null | undefined): Date | null {
-  if (value == null) return null;
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
 
-function num(value: string | number | null | undefined): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
 /** Gmail and Outlook are structurally identical here, so one query shape serves both. */
 async function connectionsFor(

@@ -397,8 +397,8 @@ export async function POST(request: Request) {
           ...placed.map((id) => ({
             contact_id: id,
             recruiter_id: null,
-            name: blocks.people[id]!.name,
-            reason: blocks.people[id]!.subtitle ?? "",
+            name: blocks.people[id].name,
+            reason: blocks.people[id].subtitle ?? "",
             suggested_action: "",
             draft_message: null,
           })),

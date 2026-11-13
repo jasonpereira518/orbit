@@ -302,8 +302,9 @@ async function main() {
   const radarPageCount = stopQueryCount();
   console.log(`  page statements: ${radarPageCount}`);
   // 5: the list, one settings read (which also answers "anyone in the network?" and "signals
-  // this week"), the AI key check (two), and what autopilot did. The plan's ceiling is 6.
-  check("radar page issues ≤ 6 statements", radarPageCount <= 6, `got ${radarPageCount}`);
+  // this week"), the AI key check (two), and what autopilot did; plus, since Radar PR 9a, the
+  // Opportunities lane's finds (introducer joined in, so one). The ceiling is 7.
+  check("radar page issues ≤ 7 statements", radarPageCount <= 7, `got ${radarPageCount}`);
   const radarJson = JSON.stringify(radarPage);
   check("radar page payload carries no inline base64", !radarJson.includes("data:image/"));
   check("radar page payload under 100 KB", radarJson.length < 100_000, `${(radarJson.length / 1024).toFixed(0)} KB`);
@@ -311,8 +312,9 @@ async function main() {
   const briefing = await loadRadarBriefing(USER);
   const briefingCount = stopQueryCount();
   // The dashboard's morning briefing is its own load, started beside the dashboard bundle,
-  // so the dashboard's own budget above does not move. The plan's ceiling is 3.
-  check("dashboard's morning briefing issues ≤ 3 statements", briefingCount <= 3, `got ${briefingCount}`);
+  // so the dashboard's own budget above does not move. 4 since Radar PR 9b: the run state, the
+  // list, active projects, and the web finds counted into the Opportunities lane.
+  check("dashboard's morning briefing issues ≤ 4 statements", briefingCount <= 4, `got ${briefingCount}`);
   check("and shows at most three people", briefing.hasRun && briefing.top.length <= 3);
 
   // ---- Graph -------------------------------------------------------------------------

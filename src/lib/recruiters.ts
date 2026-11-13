@@ -1,3 +1,4 @@
+import { normalizeEmail } from "@/lib/identity/email";
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { escapeLike } from "@/lib/contact-search-rank";
@@ -38,10 +39,8 @@ export function normalizePersonName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-export function normalizeEmail(email: string | null | undefined): string | null {
-  const t = email?.trim().toLowerCase();
-  return t || null;
-}
+// One canonical normalizer (lib/identity/email.ts); null means "no email".
+export { normalizeEmail };
 
 export function normalizeFirm(firm: string | null | undefined): string | null {
   const t = firm?.trim().toLowerCase().replace(/\s+/g, " ");

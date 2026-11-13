@@ -276,7 +276,6 @@ const FEATURES: Surface[] = [
     kind: "feature",
     label: "Compose email",
     description: "Write and send email to anyone from a contact's page or ⌘K, from your own mailbox.",
-    comingSoon: true,
   },
   {
     key: OUTLOOK_SEND_SURFACE_KEY,
@@ -541,7 +540,6 @@ export function orderNavItems<T extends { href: string }>(
  */
 export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
   "page.outreach": ["dashboard.outreach-performance", "settings.outreach"],
-  [COMPOSE_SURFACE_KEY]: ["settings.email"],
 };
 
 /** True when `href` is a page in `soon` (the effective set; defaults to the code defaults). */

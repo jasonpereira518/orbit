@@ -175,7 +175,7 @@ function schoolKeys(value: string): string[] {
   // The acronym, when there is more than one significant word — "mit", "unc", "nyu".
   if (words.length > 1) keys.add(words.map((word) => word[0]).join(""));
   // A short form as written ("unc") is already its own key.
-  if (words.length === 1) keys.add(words[0]!);
+  if (words.length === 1) keys.add(words[0]);
   return [...keys];
 }
 

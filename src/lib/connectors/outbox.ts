@@ -63,6 +63,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { connectorOutbox, externalLinks } from "@/db/schema";
+import { withTimeout as sharedWithTimeout } from "@/lib/async";
 
 /** Attempts before an item is abandoned. Mirrors MAX_DELIVERY_ATTEMPTS in dispatch.ts. */
 export const MAX_OUTBOX_ATTEMPTS = 7;
@@ -71,7 +72,7 @@ export const MAX_OUTBOX_ATTEMPTS = 7;
 const BACKOFF_MINUTES = [0.5, 2, 10, 60, 360, 1440];
 
 function backoffFor(attempt: number): number {
-  const minutes = BACKOFF_MINUTES[Math.min(attempt, BACKOFF_MINUTES.length - 1)]!;
+  const minutes = BACKOFF_MINUTES[Math.min(attempt, BACKOFF_MINUTES.length - 1)];
   // ±20% jitter, so a provider-wide outage does not bring every item back on the same
   // ten-minute boundary once it clears.
   return minutes * (0.8 + Math.random() * 0.4) * 60_000;
@@ -86,7 +87,7 @@ function backoffFor(attempt: number): number {
  * an override could quietly become the only thing exercised.
  */
 export function backoffBoundsMs(attempt: number): { min: number; max: number } {
-  const minutes = BACKOFF_MINUTES[Math.min(attempt, BACKOFF_MINUTES.length - 1)]!;
+  const minutes = BACKOFF_MINUTES[Math.min(attempt, BACKOFF_MINUTES.length - 1)];
   return { min: minutes * 0.8 * 60_000, max: minutes * 1.2 * 60_000 };
 }
 
@@ -280,22 +281,12 @@ const ITEM_BUDGET_FLOOR_MS = MIN_ROUND_TRIP_BUDGET_MS + MIN_DELIVER_WINDOW_MS;
  * A real P2 `deliver` should still apply its own request timeout internally for that reason.
  */
 function withTimeout(promise: Promise<DeliverResult>, ms: number): Promise<DeliverResult> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(
-      () => resolve({ ok: false, error: `Delivery timed out after ${ms}ms` }),
-      ms
-    );
-    promise.then(
-      (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      },
-      (err: unknown) => {
-        clearTimeout(timer);
-        resolve({ ok: false, error: err instanceof Error ? err.message : String(err) });
-      }
-    );
-  });
+  return sharedWithTimeout(promise, ms, `Delivery timed out after ${ms}ms`).catch(
+    (err: unknown): DeliverResult => ({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  );
 }
 
 /** What the claim statement hands back. Deliberately no timestamps: raw SQL returns those as

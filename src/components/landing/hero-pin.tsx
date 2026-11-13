@@ -108,7 +108,7 @@ export const HeroPin = forwardRef<
       // the whole composition (plus label margins) fits, then center it in
       // the leftover space.
       const baseRingR =
-        el.offsetWidth * (RING_LABELS[RING_LABELS.length - 1]!.r / SOLAR_VIEW);
+        el.offsetWidth * (RING_LABELS[RING_LABELS.length - 1].r / SOLAR_VIEW);
       const claimBottom = claimRef.current
         ? claimRef.current.getBoundingClientRect().bottom - frameRect.top
         : frameRect.height * 0.3;

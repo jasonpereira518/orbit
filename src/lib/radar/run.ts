@@ -350,7 +350,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
       "radar.run",
       async () => {
         const [run] = await db.insert(radarRuns).values({ userId, trigger: opts.trigger, startedAt: now }).returning();
-        runId = run!.id;
+        runId = run.id;
         await mark("read");
 
         const [signals, emailSignals, goals, targetKeys, live, outcomes, tallies, settingsRow, initialProjects] = await Promise.all([
@@ -454,7 +454,8 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           loadSuppressions(userId, live, now),
         ]);
 
-        // Posts the person saved from LinkedIn with the extension. The news sweep and the
+        // Posts the person saved from LinkedIn with the extension, and what the people check
+        // found on the web (src/lib/radar/pulse.ts). The news sweep and the
         // Bluesky/Mastodon polling are gone (docs/superpowers/specs/2026-11-10-radar-analyst-design.md).
         const posts = await loadPostSignals(userId, new Set(candidates.map((c) => c.id)), now).catch((err) => {
           reportUnlessQuiet(err, { where: "job.radar.posts", userId, level: "warning" });

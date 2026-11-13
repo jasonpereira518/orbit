@@ -117,6 +117,7 @@ function main() {
     "/api/ops/rollup",
     "/api/sync/run",
     "/api/radar/run",
+    "/api/radar/web",
     "/api/radar/digest",
     // Radar's Monday email's off switch: a mail client (or Gmail's own unsubscribe button)
     // has no session. The signed token in the query is the credential.

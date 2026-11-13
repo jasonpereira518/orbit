@@ -1,3 +1,4 @@
+import { isLinkedInProfileUrl } from "@/lib/identity/linkedin";
 import { z } from "zod";
 import type { ContactInput } from "@/lib/contact-writes";
 import { MAX_LIST_ITEMS, MAX_TAGS, TEXT_LIMITS, cleanText, cleanTextList } from "@/lib/input/text";
@@ -57,26 +58,7 @@ function optionalText(max: number) {
     .optional();
 }
 
-/**
- * Accepts any host under linkedin.com, including regional subdomains
- * (`uk.linkedin.com`) and bare hostnames without a scheme, both of which appear in
- * real Connections.csv exports. Rejects a well-formed URL on some other host, which
- * is the actual reported bug — `https://evil.example.com/not-linkedin` saved happily
- * into the LinkedIn field.
- */
-export function isLinkedInProfileUrl(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed) return false;
-  try {
-    const parsed = new URL(
-      trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
-    );
-    const host = parsed.hostname.toLowerCase();
-    return host === "linkedin.com" || host.endsWith(".linkedin.com");
-  } catch {
-    return /linkedin\.com\//i.test(trimmed);
-  }
-}
+export { isLinkedInProfileUrl };
 
 const baseShape = {
   fullName: trimmedMax(LIMITS.name).refine((v) => v.length > 0, {

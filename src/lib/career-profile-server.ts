@@ -3,6 +3,7 @@
  * id, so a PGlite smoke can drive it directly. `src/actions/imports.ts` is the authenticated door.
  */
 import { eq, sql } from "drizzle-orm";
+import { cleanSingleLine } from "@/lib/ai-security";
 import { getDb } from "@/db";
 import { userSettings, type CareerProfile } from "@/db/schema";
 import type { YouCurrent, YouPatch } from "@/lib/career-profile";
@@ -63,6 +64,41 @@ export async function saveCareerPatch(userId: string, patch: YouPatch): Promise<
 }
 
 /**
+ * The city Radar looks for events in (`career_profile.city`). Kept apart from the
+ * `profile.location` an import writes, so removing imported details never clears it. Empty
+ * clears it. Returns what was stored.
+ */
+export async function setCity(userId: string, input: string): Promise<string | null> {
+  const city = cleanSingleLine(input, 120);
+  const db = await getDb();
+  await db.execute(sql`
+    INSERT INTO user_settings (user_id, career_profile)
+    VALUES (${userId}, ${JSON.stringify(city ? { city } : {})}::jsonb)
+    ON CONFLICT (user_id) DO UPDATE SET
+      career_profile = CASE WHEN ${city}::text IS NULL
+        THEN NULLIF(COALESCE(user_settings.career_profile, '{}'::jsonb) - 'city', '{}'::jsonb)
+        ELSE COALESCE(user_settings.career_profile, '{}'::jsonb) || jsonb_build_object('city', ${city}::text) END,
+      updated_at = now()
+  `);
+  return city;
+}
+
+/** The hashtags from the person's own LinkedIn posts (`linkedin-shares.ts`). Empty removes the key. */
+export async function setPostTopics(userId: string, topics: readonly string[]): Promise<void> {
+  const db = await getDb();
+  const value = topics.length ? JSON.stringify(topics) : null;
+  await db.execute(sql`
+    INSERT INTO user_settings (user_id, career_profile)
+    VALUES (${userId}, ${JSON.stringify(value ? { postTopics: topics } : {})}::jsonb)
+    ON CONFLICT (user_id) DO UPDATE SET
+      career_profile = CASE WHEN ${value}::text IS NULL
+        THEN NULLIF(COALESCE(user_settings.career_profile, '{}'::jsonb) - 'postTopics', '{}'::jsonb)
+        ELSE COALESCE(user_settings.career_profile, '{}'::jsonb) || jsonb_build_object('postTopics', ${value}::jsonb) END,
+      updated_at = now()
+  `);
+}
+
+/**
  * Forget what was imported. Leaves `sender_bio` and everything else the person typed alone,
  * including `aim`: that came from the onboarding About you step, not from an export.
  */
@@ -71,7 +107,7 @@ export async function clearCareerProfile(userId: string): Promise<void> {
   await db.execute(sql`
     UPDATE user_settings SET
       career_profile = NULLIF(jsonb_strip_nulls(jsonb_build_object(
-        'aim', career_profile->'aim', 'majors', career_profile->'majors')), '{}'::jsonb),
+        'aim', career_profile->'aim', 'majors', career_profile->'majors', 'city', career_profile->'city')), '{}'::jsonb),
       updated_at = now()
     WHERE user_id = ${userId}
   `);

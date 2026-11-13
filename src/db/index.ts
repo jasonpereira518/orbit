@@ -12,7 +12,8 @@ import { formatVectorLiteral } from "@/lib/pgvector";
 import { noteQuery } from "@/lib/query-counter";
 import { RELATED_SQL_LOWER } from "@/lib/related-contacts";
 import { AI_DERIVED_SOURCE, EXCHANGE_TOUCH_TYPES, MEETING_TOUCH_TYPES, NOTE_TOUCH_TYPES, sqlList } from "@/lib/touch-kinds";
-import { createHash, randomUUID } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -155,6 +156,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
   radar_discovery_enabled integer NOT NULL DEFAULT 1,
   radar_web_next_at timestamptz,
   radar_moment_last_day text,
+  radar_moment_email_enabled integer NOT NULL DEFAULT 1,
   radar_enabled_at timestamptz,
   radar_opened_at timestamptz
 );
@@ -234,8 +236,11 @@ CREATE TABLE IF NOT EXISTS user_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
   text text NOT NULL,
+  progress text,
+  category text,
   active integer NOT NULL DEFAULT 1,
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS user_goals_user_idx ON user_goals(user_id);
 CREATE TABLE IF NOT EXISTS user_projects (
@@ -349,6 +354,10 @@ CREATE TABLE IF NOT EXISTS reminders (
   status text NOT NULL DEFAULT 'pending',
   reminder_type text NOT NULL DEFAULT 'manual',
   action_kind text NOT NULL DEFAULT 'task',
+  priority text NOT NULL DEFAULT 'normal',
+  category text NOT NULL DEFAULT 'action_item',
+  timing_rationale text,
+  importance_reason text,
   created_by text NOT NULL DEFAULT 'user',
   note_batch_id uuid,
   import_id uuid,
@@ -376,6 +385,10 @@ CREATE TABLE IF NOT EXISTS suggested_reminders (
   source_hash text NOT NULL,
   item_hash text NOT NULL,
   action_kind text NOT NULL DEFAULT 'task',
+  priority text NOT NULL DEFAULT 'normal',
+  category text NOT NULL DEFAULT 'action_item',
+  timing_rationale text,
+  importance_reason text,
   confidence_score integer,
   status text NOT NULL DEFAULT 'pending',
   reminder_id uuid REFERENCES reminders(id) ON DELETE SET NULL,
@@ -383,6 +396,8 @@ CREATE TABLE IF NOT EXISTS suggested_reminders (
   resolved_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS suggested_reminders_user_status_idx ON suggested_reminders(user_id, status);
+CREATE INDEX IF NOT EXISTS suggested_reminders_user_priority_idx ON suggested_reminders(user_id, priority, status);
+CREATE INDEX IF NOT EXISTS reminders_user_priority_idx ON reminders(user_id, priority, status);
 CREATE INDEX IF NOT EXISTS suggested_reminders_batch_idx ON suggested_reminders(capture_batch_id);
 CREATE UNIQUE INDEX IF NOT EXISTS suggested_reminders_user_item_uidx ON suggested_reminders(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS note_batches (
@@ -1731,6 +1746,14 @@ CREATE TABLE IF NOT EXISTS linkedin_avatars (
   blocked_by text
 );
 CREATE INDEX IF NOT EXISTS linkedin_avatars_resolved_at_idx ON linkedin_avatars(resolved_at);
+CREATE TABLE IF NOT EXISTS email_avatars (
+  email_hash text PRIMARY KEY,
+  image_url text,
+  source text NOT NULL,
+  resolved_at timestamptz NOT NULL DEFAULT now(),
+  blocked_at timestamptz,
+  blocked_by text
+);
 CREATE TABLE IF NOT EXISTS public_work_history (
   slug text PRIMARY KEY,
   answer jsonb,
@@ -3175,7 +3198,20 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 231 = Radar run progress: radar_runs.stage / progress / detail, written as a run moves through
 // its stages so "Refresh now" can show how much is done. Scanned every remote ref on Nov 12 2026:
 // custom constellations holds 229 and the Orbit Card / planet PR (#635) holds 230.
-export const SCHEMA_VERSION = 231;
+// 234 = Radar same-day email switch: user_settings.radar_moment_email_enabled (1 = on), the
+// person's own off switch for the email Radar sends when a Today item won't keep (PR 9b).
+// Scanned remote refs on Nov 12 2026: custom constellations (youthful-herschel) holds 232 and
+// the Orbit Card / planet PR (#635) will need 233, so this takes 234.
+// 235 = user_settings.bright_data_api_key_encrypted + bright_data_zone
+// 237 = reminder priority and goal progress (cut from #609, which also proposed a Smart
+// Opportunities table that Radar's Connect lane replaced): reminders and suggested_reminders get
+// priority / category / timing_rationale / importance_reason (+ a (user_id, priority, status)
+// index each), and user_goals gets progress / category / updated_at. Built as 209/210 on #609;
+// renumbered on Nov 12 2026 above main's 235 and claude/email-avatar-cache's 236.
+// 238 = the email photo pool (admin refresh plan, PR 2): email_avatars (global, keyed by sha256 of
+// the lowercased trimmed address; public Gravatar lookups only) and contacts_email_lower_idx.
+// Built as 236; renumbered to 238 on Nov 12 2026 when main reached 237 (reminder priority).
+export const SCHEMA_VERSION = 238;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3596,6 +3632,8 @@ export const SCALE_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS contacts_user_last_touch_idx ON contacts(user_id, last_interaction_at DESC NULLS LAST, id DESC)`,
   `CREATE INDEX IF NOT EXISTS contacts_search_gin ON contacts USING gin(search_tsv)`,
   `CREATE INDEX IF NOT EXISTS contacts_slug_idx ON contacts(linkedin_slug) WHERE linkedin_slug IS NOT NULL`,
+  // Schema v238: contacts by address across accounts (the email photo pool, the admin People list).
+  `CREATE INDEX IF NOT EXISTS contacts_email_lower_idx ON contacts(lower(email)) WHERE email IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS contacts_user_email_idx ON contacts(user_id, email) WHERE email IS NOT NULL`,
   // Both of these back a foreign key that had no index: deleting a company or a tag was a
   // full scan of the referencing table.
@@ -4084,7 +4122,7 @@ export function schemaFingerprint(): string {
     const statements = [DDL, ...SCALE_DDL, ...alters]
       .map((s) => s.replace(/\s+/g, " ").trim())
       .filter(Boolean);
-    fingerprintMemo = createHash("sha256").update(statements.join("\n")).digest("hex");
+    fingerprintMemo = sha256Hex(statements.join("\n"));
   }
   return fingerprintMemo;
 }
@@ -4285,6 +4323,8 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   );
   await ensureColumn(client, "imports", "total_rows", "integer");
   await ensureColumn(client, "user_settings", "apollo_api_key_encrypted", "text");
+  await ensureColumn(client, "user_settings", "bright_data_api_key_encrypted", "text");
+  await ensureColumn(client, "user_settings", "bright_data_zone", "text");
   await ensureColumn(client, "user_settings", "resend_api_key_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_account_sid_encrypted", "text");
   await ensureColumn(client, "user_settings", "twilio_auth_token_encrypted", "text");
@@ -4722,7 +4762,7 @@ const ADMIN_V2_STATEMENTS = [
  */
 export function rowsOf<T>(result: unknown): T[] {
   if (Array.isArray(result)) return result as T[];
-  return ((result as { rows?: T[] } | null)?.rows ?? []) as T[];
+  return ((result as { rows?: T[] } | null)?.rows ?? []);
 }
 
 export function isPgvectorAvailable() {
@@ -4928,6 +4968,8 @@ const alters = [
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now()`,
   `ALTER TABLE imports ADD COLUMN IF NOT EXISTS total_rows integer`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS apollo_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bright_data_api_key_encrypted text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bright_data_zone text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS resend_api_key_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_account_sid_encrypted text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS twilio_auth_token_encrypted text`,
@@ -5659,6 +5701,23 @@ const alters = [
   `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS stage text`,
   `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS progress integer NOT NULL DEFAULT 0`,
   `ALTER TABLE radar_runs ADD COLUMN IF NOT EXISTS detail text`,
+  // Schema v234: the same-day Radar email's off switch.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_moment_email_enabled integer NOT NULL DEFAULT 1`,
+  // Schema v237 (cut from #609): reminder priority — priority, category, timing_rationale and importance_reason
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal'`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'action_item'`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS timing_rationale text`,
+  `ALTER TABLE reminders ADD COLUMN IF NOT EXISTS importance_reason text`,
+  `CREATE INDEX IF NOT EXISTS reminders_user_priority_idx ON reminders (user_id, priority, status)`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal'`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT 'action_item'`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS timing_rationale text`,
+  `ALTER TABLE suggested_reminders ADD COLUMN IF NOT EXISTS importance_reason text`,
+  `CREATE INDEX IF NOT EXISTS suggested_reminders_user_priority_idx ON suggested_reminders (user_id, priority, status)`,
+  // Schema v237: goal progress
+  `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS progress text`,
+  `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS category text`,
+  `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`,
 ];
 
 /**
@@ -6170,7 +6229,7 @@ export async function runAtomicWrite(
   };
 
   if (typeof batchable.batch === "function") {
-    const statements = build(db as unknown as AtomicWriter);
+    const statements = build(db);
     if (!statements.length) return;
     await batchable.batch(statements);
     return;
@@ -6180,7 +6239,7 @@ export async function runAtomicWrite(
   await local.transaction(async (tx) => {
     // Awaited one at a time on purpose: these are ordered writes (delete-then-insert),
     // and a `Promise.all` would let the driver interleave them.
-    for (const statement of build(tx as unknown as AtomicWriter)) {
+    for (const statement of build(tx)) {
       await (statement as unknown as Promise<unknown>);
     }
   });
@@ -6204,15 +6263,15 @@ export async function runAtomicBatch(
     batch?: (statements: AtomicStatement[]) => Promise<unknown[]>;
   };
   if (typeof batchable.batch === "function") {
-    const statements = build(db as unknown as AtomicWriter);
+    const statements = build(db);
     if (!statements.length) return [];
     return batchable.batch(statements);
   }
   const local = db as ReturnType<typeof drizzlePglite<typeof schema>>;
   return local.transaction(async (tx) => {
     const results: unknown[] = [];
-    for (const statement of build(tx as unknown as AtomicWriter)) {
-      results.push(await (statement as unknown as Promise<unknown>));
+    for (const statement of build(tx)) {
+      results.push(await (statement as unknown));
     }
     return results;
   });

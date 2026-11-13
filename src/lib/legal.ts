@@ -47,8 +47,29 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // contact's work history needs another web search, reading the stored job history and short
 // summaries of the user's notes and messages since the last check (never the notes, an email
 // address or a phone number), and may judge an unsure search's public answer to be someone else.
-export const TERMS_VERSION = "2026-11-11";
-export const LEGAL_LAST_UPDATED = "November 11, 2026";
+// 2026-11-12.2 (Google verification): the calendar wording now matches the code — Google
+// calendars are the ones you tick (primary by default, not primary only), and meetings from 90
+// days back to 60 days ahead are matched to your contacts, besides the two-week window kept for
+// prep. Both were true and unsaid. A suffix, not a new date: the constellations PR (#636) also
+// claims 2026-11-12, and needsTermsAcceptance compares strings, so whichever merges second must
+// still ask everyone again.
+// 2026-11-12.3 (Radar, revision PR 10): a Radar section — off until turned on; what it reads;
+// Connect compares notes about people you have met; the people check widens the work-history
+// search to recent posts, talks and news (kept for the account only); the weekly web search
+// sends only city and up to five goals and may open public event pages (never lu.ma); people it
+// finds stay out of contacts until saved; unsaved finds deleted 30 days after they end; push
+// carries no names; Radar's emails go through Resend with their own unsubscribe; dismiss reasons
+// shape that account only. Processors: Bluesky and Mastodon removed (Radar PR 1), web push
+// services and event websites added, Radar's emails added to Resend. Terms: Radar can be wrong
+// and never contacts anyone for you.
+// 2026-11-12.4 (Radar PR 11): the extension's "Save post to Radar" and "Scan this page" (a scan
+// sends Orbit only the authors' profile links first; only contacts' posts follow and are kept;
+// strangers' posts never leave the browser), and the hashtags from your own posts (Shares.csv)
+// as something Radar reads and adds to its weekly web search.
+// 2026-11-12.5 (admin refresh, PR 2): public Gravatar photos found by email join the shared photo
+// set, kept under a one-way hash of the address; uploads named as never shared.
+export const TERMS_VERSION = "2026-11-12.5";
+export const LEGAL_LAST_UPDATED = "November 12, 2026 (revision 4)";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -119,8 +140,8 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.gmailRead,
     permission: "Read your email (gmail.readonly)",
-    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Confirmation emails: reads mail from Luma, Partiful, Eventbrite, Meetup and Posh to find events you registered for. Email insights: reads the sender, subject and Gmail’s short preview of new job and hiring-process threads, and for hiring conversations the text of the latest messages, which it sends to your AI provider to note the company, role, stage, dates and people. The notes can appear on your Radar cards, which can also offer to add people an email names to your contacts when you press Add. Your chat assistant can search the notes too. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
-    askedWhen: "Connect Gmail on Recruiters, turn on Confirmation emails on Events, or turn on Email insights in Settings",
+    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Email insights: reads the sender, subject and Gmail’s short preview of new job and hiring-process threads, and for hiring conversations the text of the latest messages, which it sends to your AI provider to note the company, role, stage, dates and people. The notes can appear on your Radar cards, which can also offer to add people an email names to your contacts when you press Add. Your chat assistant can search the notes too. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
+    askedWhen: "Connect Gmail on Recruiters, or turn on Email insights in Settings",
   },
   {
     scope: GOOGLE_SCOPES.gmailSend,
@@ -131,7 +152,7 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.calendar,
     permission: "See your calendar events (calendar.readonly)",
-    use: "Reads your primary calendar from two days back to two weeks ahead and keeps that window in Orbit, updating it as your calendar changes and deleting meetings that leave it. Adds meetings with people in your network to their timelines, and uses upcoming meetings for prep and follow-up reminders, recording suggestions, meeting prep, recording summaries and answers in Chat and in assistants you connect.",
+    use: "Reads the calendars you choose (your primary calendar by default). Keeps the meetings from two days back to two weeks ahead in Orbit, updating them as your calendar changes and deleting meetings that leave that window. Looks from 90 days back to 60 days ahead to match meetings to people in your network, add them to those people’s timelines and suggest follow-up reminders. Uses upcoming meetings for prep and follow-up reminders, recording suggestions, meeting prep, recording summaries and answers in Chat and in assistants you connect.",
     askedWhen: "Connect Google Calendar on Events",
   },
   {

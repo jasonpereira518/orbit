@@ -1,5 +1,6 @@
 "use server";
 
+import { getBrightDataConfig } from "@/lib/brightdata";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -12,6 +13,7 @@ import {
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { normalizeSenderBio } from "@/lib/sender-profile";
+import { setCity } from "@/lib/career-profile-server";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
 import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
@@ -146,6 +148,9 @@ export async function getSettings() {
       apollo:
         Boolean(settings?.apolloApiKeyEncrypted) ||
         (hostedEnrichment && Boolean(process.env.APOLLO_API_KEY)),
+      brightdata:
+        Boolean(settings?.brightDataApiKeyEncrypted) || getBrightDataConfig().isConfigured,
+      brightDataZone: settings?.brightDataZone || getBrightDataConfig().zone,
       resend:
         Boolean(settings?.resendApiKeyEncrypted) ||
         (hostedSending && Boolean(process.env.RESEND_API_KEY)),
@@ -210,6 +215,17 @@ export async function saveSenderBio(bio: string) {
 
   revalidatePath("/settings");
   return { senderBio: senderBio ?? "" };
+}
+
+/**
+ * The city Radar looks for events in. Stored as `career_profile.city`, apart from the
+ * `profile.location` an import writes, so removing imported details never clears it.
+ */
+export async function saveCity(input: string) {
+  const userId = await requireUserId();
+  const city = await setCity(userId, input);
+  revalidatePath("/settings");
+  return { city: city ?? "" };
 }
 
 export async function saveThemePreference(theme: ThemePreference) {
@@ -415,6 +431,8 @@ export async function clearDecisionKey() {
 
 export async function saveOutreachSettings(input: {
   apolloApiKey?: string;
+  brightDataApiKey?: string;
+  brightDataZone?: string;
   resendApiKey?: string;
   twilioAccountSid?: string;
   twilioAuthToken?: string;
@@ -430,6 +448,10 @@ export async function saveOutreachSettings(input: {
     apolloApiKeyEncrypted: input.apolloApiKey?.trim()
       ? encrypt(input.apolloApiKey.trim())
       : (existing?.apolloApiKeyEncrypted ?? null),
+    brightDataApiKeyEncrypted: input.brightDataApiKey?.trim()
+      ? encrypt(input.brightDataApiKey.trim())
+      : (existing?.brightDataApiKeyEncrypted ?? null),
+    brightDataZone: input.brightDataZone?.trim() || (existing?.brightDataZone ?? null),
     resendApiKeyEncrypted: input.resendApiKey?.trim()
       ? encrypt(input.resendApiKey.trim())
       : (existing?.resendApiKeyEncrypted ?? null),

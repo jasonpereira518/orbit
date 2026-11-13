@@ -23,6 +23,7 @@ export function showUndoSendToast(opts: {
     keep: false,
     action: {
       label: "Undo",
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the async body catches its own errors; nothing can reject out of it
       onClick: async () => {
         try {
           const { result } = await cancelEmailSendAction(opts.sendId);

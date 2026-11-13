@@ -54,7 +54,7 @@ export function RecruiterLogForm({
     linkedinUrl: initial?.linkedinUrl || "",
     phone: initial?.phone || "",
     notes: initial?.notes || "",
-    status: (initial?.status || "planned") as RecruiterLinkStatus,
+    status: (initial?.status || "planned"),
     personalRating: initial?.personalRating
       ? String(initial.personalRating)
       : "",

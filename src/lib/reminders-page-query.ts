@@ -21,8 +21,6 @@ import {
   contacts,
   reminders,
   suggestedReminders,
-  type ReminderActionKind,
-  type ReminderOrigin,
 } from "@/db/schema";
 import { dueDayOf, isDateOnlyDue, ymdInZone } from "@/lib/reminder-due-bucket";
 import {
@@ -163,6 +161,7 @@ function filterConditions(
     )`);
   }
   if (filters.kinds?.length) conds.push(inArray(reminders.actionKind, filters.kinds));
+  if (filters.priority) conds.push(eq(reminders.priority, filters.priority));
   if (filters.sources?.length) {
     const parts = filters.sources.map(sourceCondition).filter((c): c is SQL => Boolean(c));
     if (parts.length) conds.push(or(...parts) as SQL);
@@ -219,6 +218,10 @@ export async function queryRemindersPage(
       actionKind: reminders.actionKind,
       origin: reminders.origin,
       confidenceScore: reminders.confidenceScore,
+      priority: reminders.priority,
+      category: reminders.category,
+      timingRationale: reminders.timingRationale,
+      importanceReason: reminders.importanceReason,
       listId: reminders.listId,
       contactId: reminders.contactId,
       contactFullName: contacts.fullName,
@@ -270,9 +273,13 @@ export async function queryRemindersPage(
         : null,
     status: r.status,
     reminderType: r.reminderType,
-    actionKind: (r.actionKind || "task") as ReminderActionKind,
-    origin: (r.origin || "explicit") as ReminderOrigin,
+    actionKind: (r.actionKind || "task"),
+    origin: (r.origin || "explicit"),
     confidenceScore: r.confidenceScore,
+    priority: (r.priority || "normal"),
+    category: (r.category || "action_item"),
+    timingRationale: r.timingRationale,
+    importanceReason: r.importanceReason,
     listId: r.listId ?? opts.inboxId,
     contactId: r.contactId,
     contactName: r.contactId

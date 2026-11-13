@@ -10,7 +10,6 @@ import {
   otherVoiceProvider,
   type VoiceConfig,
   type VoiceProvider,
-  type VoiceHealthMap,
 } from "./config";
 
 export function voiceConfigured(provider: VoiceProvider = "deepgram") {
@@ -46,7 +45,7 @@ export async function getVoiceSettings() {
     providers,
     changedAt: row?.orbitVoiceChangedAt ?? null,
     config,
-    health: row?.orbitVoiceHealth ?? ({} as VoiceHealthMap),
+    health: row?.orbitVoiceHealth ?? ({}),
   };
 }
 export class VoiceUnavailableError extends Error {

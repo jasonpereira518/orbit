@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import type { ReminderActionKind } from "@/db/schema";
+import type { ReminderActionKind, ReminderPriority, ReminderCategory } from "@/db/schema";
 import { ReminderRow } from "@/components/dashboard/reminder-row";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +23,10 @@ export type DashboardReminderItem = {
   contactId?: string | null;
   contactName?: string | null;
   noteBatchId?: string | null;
+  priority?: ReminderPriority;
+  category?: ReminderCategory;
+  timingRationale?: string | null;
+  importanceReason?: string | null;
 };
 
 export function RemindersDashboardCard({
@@ -69,6 +73,10 @@ export function RemindersDashboardCard({
                   contactId={r.contactId}
                   contactName={r.contactName}
                   noteBatchId={r.noteBatchId}
+                  priority={r.priority}
+                  category={r.category}
+                  timingRationale={r.timingRationale}
+                  importanceReason={r.importanceReason}
                 />
               ))}
             </div>

@@ -5,7 +5,8 @@
  * the surface first (`requireUserForReleasedSurface`), then calls the request-free functions in
  * `src/lib/radar/actions-core.ts`, so the smoke drives the same code.
  */
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { parsePushSubscription, removePushSubscription, savePushSubscription } from "@/lib/push";
 import { after } from "next/server";
 import { addInboxPersonForUser, dismissInboxPersonForUser } from "@/lib/email-intel/inbox-actions";
 import { reconcileEmailChunkContacts } from "@/lib/email-intel/search-index";
@@ -43,7 +44,8 @@ import { eq } from "drizzle-orm";
 import { setRadarAutopilotForUser, undoAutopilotForUser } from "@/lib/radar/autopilot";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
-import { AUTOPILOT_KINDS, KIND_LABELS, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS, isRadarDismissReason, type RecommendationKind } from "@/lib/radar/types";
+import { dismissOpportunityForUser, saveOpportunityForUser } from "@/lib/radar/opportunity-actions";
 import type { NetworkStats } from "@/lib/network-stats";
 
 const SURFACE = "page.radar";
@@ -118,9 +120,9 @@ export async function snoozeRecommendation(id: string, length: SnoozeLength): Pr
   return result.ok ? { ok: true } : { ok: false, message: "That card has already changed — refresh to see the latest" };
 }
 
-export async function dismissRecommendation(id: string): Promise<RadarActionResult> {
+export async function dismissRecommendation(id: string, reason?: string | null): Promise<RadarActionResult> {
   const userId = await requireUserForReleasedSurface(SURFACE);
-  const result = await dismissRecommendationForUser(userId, id);
+  const result = await dismissRecommendationForUser(userId, id, isRadarDismissReason(reason) ? reason : null);
   revalidateRadar();
   return result.ok ? { ok: true } : { ok: false, message: "That card has already changed — refresh to see the latest" };
 }
@@ -168,6 +170,33 @@ export async function dismissInboxPerson(key: string): Promise<RadarActionResult
   await dismissInboxPersonForUser(userId, key);
   revalidateRadar();
   return { ok: true, message: "Dismissed. You can still add them from Ignored people on Capture" };
+}
+
+/** Keep a find from the Opportunities lane: an event, a contact or a reminder, by its kind. */
+export async function saveRadarOpportunity(id: string): Promise<RadarActionResult & { href?: string }> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  try {
+    const result = await saveOpportunityForUser(userId, id);
+    if (!result.ok) return result;
+    if (result.kind === "event") revalidatePathIfRequestScoped("/events");
+    const contactId = result.contactId;
+    if (contactId) {
+      after(() => rebuildContactEmbedding(userId, contactId).catch(() => undefined));
+      revalidatePathIfRequestScoped("/contacts");
+    }
+    if (result.kind === "program") revalidatePathIfRequestScoped("/reminders");
+    revalidateRadar();
+    return { ok: true, message: result.message, href: result.href };
+  } catch (err) {
+    return { ok: false, message: friendlyError(err, "Couldn’t save that just now — try again?") };
+  }
+}
+
+export async function dismissRadarOpportunity(id: string, reason?: string | null): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const result = await dismissOpportunityForUser(userId, id, isRadarDismissReason(reason) ? reason : null);
+  revalidateRadar();
+  return result.ok ? { ok: true } : { ok: false, message: "That find has already changed — refresh to see the latest" };
 }
 
 /** "Refresh now": the same run the nightly pass does, inline and rate-limited. */
@@ -261,6 +290,32 @@ export async function setRadarDigest(on: boolean): Promise<RadarActionResult> {
   revalidateRadar();
   revalidatePathIfRequestScoped("/settings");
   return { ok: true, message: on ? "Monday email on" : "Monday email off" };
+}
+
+/** The same-day email Radar sends when a Today item won't keep (at most one a day). */
+export async function setRadarMomentEmail(on: boolean): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const db = await getDb();
+  await db.update(userSettings).set({ radarMomentEmailEnabled: on ? 1 : 0 }).where(eq(userSettings.userId, userId));
+  revalidateRadar();
+  return { ok: true, message: on ? "Same-day email on" : "Same-day email off" };
+}
+
+/** "Turn on" push for this browser: the subscription the browser just made, saved for the account. */
+export async function saveRadarPushSubscription(raw: unknown): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const target = parsePushSubscription(raw);
+  if (!target) return { ok: false, message: "This browser gave Orbit a subscription it can’t use — try again?" };
+  const ua = (await headers()).get("user-agent");
+  await savePushSubscription(userId, target, ua);
+  return { ok: true, message: "Push on for this device" };
+}
+
+export async function removeRadarPushSubscription(endpoint: string): Promise<RadarActionResult> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  if (typeof endpoint !== "string" || endpoint.length > 1000) return { ok: false, message: "Couldn’t turn that off — try again?" };
+  await removePushSubscription(userId, endpoint);
+  return { ok: true, message: "Push off for this device" };
 }
 
 /** Whether the extension may save LinkedIn posts by known contacts as Radar activity. */

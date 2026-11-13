@@ -126,7 +126,7 @@ export function OrgCombobox({
       disabled={disabled}
       itemToStringValue={(row: Row) => row.name}
       onItemHighlighted={(row) => {
-        highlighted.current = row as Row | undefined;
+        highlighted.current = row;
       }}
       onOpenChange={(open) => {
         if (!open) highlighted.current = undefined;

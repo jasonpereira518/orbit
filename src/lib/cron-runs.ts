@@ -32,6 +32,7 @@ export type CronJobName =
   | "product.digest"
   | "radar.digest"
   | "radar.run"
+  | "radar.web"
   | "sync.run"
   | "webhooks.drain"
   | "work-history.sweep";
@@ -70,6 +71,14 @@ export function hasMissedRun(
 ): boolean {
   if (!lastStartedAt) return true;
   return now.getTime() - lastStartedAt.getTime() > MISSED_AFTER_MS;
+}
+
+/** Header an internal caller sets so the run it starts is logged as `manual` (the admin Refresh page). */
+export const CRON_TRIGGER_HEADER = "x-orbit-cron-trigger";
+
+/** Only read after `isInternalRequest` passed: the header is trusted because the bearer was. */
+export function cronTrigger(request: Request): "schedule" | "manual" {
+  return request.headers.get(CRON_TRIGGER_HEADER) === "manual" ? "manual" : "schedule";
 }
 
 /**

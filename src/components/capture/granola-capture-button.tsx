@@ -129,7 +129,7 @@ function GranolaPickerDialog({ onClose, onQueued }: { onClose: () => void; onQue
 
   useEffect(() => {
     getGranolaPickerState().then(setState, () => setState(null));
-    getGranolaPickable(null).catch(() => null).then(applyPage);
+    void getGranolaPickable(null).catch(() => null).then(applyPage);
   }, [applyPage]);
 
   const autoExtract = state?.state === "connected" && state.autoExtract;
@@ -158,7 +158,7 @@ function GranolaPickerDialog({ onClose, onQueued }: { onClose: () => void; onQue
     let i = 0;
     const worker = async () => {
       while (i < picked.length) {
-        const note = picked[i++]!;
+        const note = picked[i++];
         try {
           const res = await queueGranolaCapture({ noteId: note.id, batchGroupId });
           if (!res.ok) failures.push(`${note.title}: ${res.error}`);
@@ -180,7 +180,7 @@ function GranolaPickerDialog({ onClose, onQueued }: { onClose: () => void; onQue
     } else if (duplicates) {
       toast.info(duplicates === 1 ? "That note is already in Orbit" : "Those notes are already in Orbit");
     }
-    if (failures.length) toast.error(failures[0]!, failures.length > 1 ? { description: `and ${failures.length - 1} more` } : undefined);
+    if (failures.length) toast.error(failures[0], failures.length > 1 ? { description: `and ${failures.length - 1} more` } : undefined);
     if (!failures.length) onClose();
   }
 

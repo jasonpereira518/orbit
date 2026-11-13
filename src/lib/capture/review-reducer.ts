@@ -24,6 +24,7 @@ import {
   type ReminderPlanParticipant,
 } from "@/lib/note-batches";
 import type { OpportunityKind } from "@/lib/opportunity-kinds";
+import type { ReminderPriority } from "@/db/schema";
 
 export type CapturePhase =
   | "input"
@@ -45,7 +46,7 @@ export function firstPendingIndex(
 ): number {
   const people = peopleDecisions(decisions);
   for (let i = 0; i < items.length; i++) {
-    if (!people[items[i]!.key]) return i;
+    if (!people[items[i].key]) return i;
   }
   return -1;
 }
@@ -187,16 +188,25 @@ export const IMPLIED_AUTO_TICK_SCORE = 80;
 
 /** Default ticks for the review list. */
 export function defaultReminderKeys(
-  suggestions: readonly { key: string; confidenceScore: number; origin?: "explicit" | "implied" }[]
+  suggestions: readonly {
+    key: string;
+    confidenceScore: number;
+    origin?: "explicit" | "implied";
+    priority?: ReminderPriority;
+  }[]
 ): string[] {
   return suggestions
-    .filter((s) =>
-      // `origin` is optional so a `CaptureReminderChoices` written before implied steps
-      // existed still reads as explicit rather than falling off the list.
-      s.origin === "implied"
+    .filter((s) => {
+      // An implied next step (nobody said a date) is pre-ticked only when it rates critical or
+      // high, which keeps a long note's review list from arriving full of maybes. A commitment
+      // someone actually stated keeps main's rule: a missed promise costs more than a click.
+      if (s.origin === "implied" && s.priority && s.priority !== "critical" && s.priority !== "high") {
+        return false;
+      }
+      return s.origin === "implied"
         ? s.confidenceScore >= IMPLIED_AUTO_TICK_SCORE
-        : s.confidenceScore >= EXPLICIT_AUTO_TICK_CONFIDENCE
-    )
+        : s.confidenceScore >= EXPLICIT_AUTO_TICK_CONFIDENCE;
+    })
     .map((s) => s.key);
 }
 

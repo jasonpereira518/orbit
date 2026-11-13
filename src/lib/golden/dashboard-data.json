@@ -1,0 +1,849 @@
+{
+  "closenessById": {
+    "<map>": [
+      [
+        "<id:1>",
+        {
+          "closeness": 0.6010377994763951,
+          "orbitScore": 4,
+          "raw": 0.6010377994763951,
+          "tier": "inner"
+        }
+      ],
+      [
+        "<id:2>",
+        {
+          "closeness": 0.5888095386068299,
+          "orbitScore": 3,
+          "raw": 0.5888095386068299,
+          "tier": "mid"
+        }
+      ],
+      [
+        "<id:3>",
+        {
+          "closeness": 0.5071749232222146,
+          "orbitScore": 2,
+          "raw": 0.5071749232222146,
+          "tier": "mid"
+        }
+      ],
+      [
+        "<id:4>",
+        {
+          "closeness": 0.6130140840613754,
+          "orbitScore": 5,
+          "raw": 0.6130140840613754,
+          "tier": "inner"
+        }
+      ],
+      [
+        "<id:5>",
+        {
+          "closeness": 0.4552518462991376,
+          "orbitScore": 2,
+          "raw": 0.4552518462991376,
+          "tier": "outer"
+        }
+      ],
+      [
+        "<id:6>",
+        {
+          "closeness": 0.40638306801859464,
+          "orbitScore": 1,
+          "raw": 0.40638306801859464,
+          "tier": "outer"
+        }
+      ],
+      [
+        "<id:7>",
+        {
+          "closeness": 0.2713184427164189,
+          "orbitScore": 1,
+          "raw": 0.2713184427164189,
+          "tier": "outer"
+        }
+      ],
+      [
+        "<id:8>",
+        {
+          "closeness": 0.13790310604894562,
+          "orbitScore": 1,
+          "raw": 0.13790310604894562,
+          "tier": "outer"
+        }
+      ],
+      [
+        "<id:9>",
+        {
+          "closeness": 0.23708794520547946,
+          "orbitScore": 1,
+          "raw": 0.23708794520547946,
+          "tier": "outer"
+        }
+      ],
+      [
+        "<id:10>",
+        {
+          "closeness": 0.29692479452054793,
+          "orbitScore": 1,
+          "raw": 0.29692479452054793,
+          "tier": "outer"
+        }
+      ]
+    ]
+  },
+  "contactById": {
+    "<map>": [
+      [
+        "<id:1>",
+        {
+          "avatarUrl": null,
+          "company": "Zenith",
+          "fullName": "Margaret Hamilton",
+          "id": "<id:1>",
+          "preferredName": null,
+          "title": "Director"
+        }
+      ],
+      [
+        "<id:2>",
+        {
+          "avatarUrl": null,
+          "company": "Acme",
+          "fullName": "Ada Lovelace",
+          "id": "<id:2>",
+          "lastInteractionAt": "2026-09-12T12:00:00.000Z",
+          "preferredName": null,
+          "title": "Engineer"
+        }
+      ],
+      [
+        "<id:3>",
+        {
+          "avatarUrl": null,
+          "company": "Acme",
+          "fullName": "Dennis Ritchie",
+          "id": "<id:3>",
+          "preferredName": null,
+          "title": "Staff"
+        }
+      ],
+      [
+        "<id:4>",
+        {
+          "avatarUrl": null,
+          "company": "Acme",
+          "fullName": "Grace Hopper",
+          "id": "<id:4>",
+          "lastInteractionAt": "2026-09-05T12:00:00.000Z",
+          "preferredName": null,
+          "title": "Founder"
+        }
+      ],
+      [
+        "<id:5>",
+        {
+          "avatarUrl": null,
+          "company": "Zenith",
+          "fullName": "Barbara Liskov",
+          "id": "<id:5>",
+          "preferredName": null,
+          "title": "Professor"
+        }
+      ],
+      [
+        "<id:6>",
+        {
+          "avatarUrl": null,
+          "company": "Bletchley",
+          "fullName": "Alan Turing",
+          "id": "<id:6>",
+          "lastInteractionAt": "2026-08-06T12:00:00.000Z",
+          "preferredName": null,
+          "title": "Researcher"
+        }
+      ],
+      [
+        "<id:7>",
+        {
+          "avatarUrl": null,
+          "company": "Bletchley",
+          "fullName": "Ken Thompson",
+          "id": "<id:7>",
+          "preferredName": null,
+          "title": "Engineer"
+        }
+      ],
+      [
+        "<id:8>",
+        {
+          "avatarUrl": null,
+          "company": "Bletchley",
+          "fullName": "Katherine Johnson",
+          "id": "<id:8>",
+          "lastInteractionAt": "2025-08-11T12:00:00.000Z",
+          "preferredName": null,
+          "title": "Analyst"
+        }
+      ],
+      [
+        "<id:9>",
+        {
+          "avatarUrl": null,
+          "company": null,
+          "fullName": "Radia Perlman",
+          "id": "<id:9>",
+          "preferredName": null,
+          "title": null
+        }
+      ],
+      [
+        "<id:10>",
+        {
+          "avatarUrl": null,
+          "company": "Zenith",
+          "fullName": "Linus Torvalds",
+          "id": "<id:10>",
+          "preferredName": null,
+          "title": "Maintainer"
+        }
+      ]
+    ]
+  },
+  "contactNameById": {
+    "<map>": [
+      [
+        "<id:1>",
+        "Margaret Hamilton"
+      ],
+      [
+        "<id:2>",
+        "Ada Lovelace"
+      ],
+      [
+        "<id:3>",
+        "Dennis Ritchie"
+      ],
+      [
+        "<id:4>",
+        "Grace Hopper"
+      ],
+      [
+        "<id:5>",
+        "Barbara Liskov"
+      ],
+      [
+        "<id:6>",
+        "Alan Turing"
+      ],
+      [
+        "<id:7>",
+        "Ken Thompson"
+      ],
+      [
+        "<id:8>",
+        "Katherine Johnson"
+      ],
+      [
+        "<id:9>",
+        "Radia Perlman"
+      ],
+      [
+        "<id:10>",
+        "Linus Torvalds"
+      ]
+    ]
+  },
+  "dueFollowUps": [
+    {
+      "company": "Bletchley",
+      "email": null,
+      "fullName": "Ken Thompson",
+      "id": "<id:7>",
+      "lastInteractionAt": "2026-06-17T12:00:00.000Z",
+      "linkedinUrl": null,
+      "nextFollowUpAt": "2026-08-26T12:00:00.000Z",
+      "preferredName": null,
+      "priorityLevel": 0,
+      "profileImageUrl": null,
+      "relationshipScore": 2,
+      "school": null,
+      "tags": [],
+      "title": "Engineer"
+    },
+    {
+      "company": "Acme",
+      "email": "grace@acme.test",
+      "fullName": "Grace Hopper",
+      "id": "<id:4>",
+      "lastInteractionAt": "2026-09-05T12:00:00.000Z",
+      "linkedinUrl": null,
+      "nextFollowUpAt": "2026-09-05T12:00:00.000Z",
+      "preferredName": null,
+      "priorityLevel": 1,
+      "profileImageUrl": null,
+      "relationshipScore": 5,
+      "school": "Yale",
+      "tags": [
+        "mentor",
+        "founder"
+      ],
+      "title": "Founder"
+    },
+    {
+      "company": "Acme",
+      "email": null,
+      "fullName": "Dennis Ritchie",
+      "id": "<id:3>",
+      "lastInteractionAt": "2026-09-08T12:00:00.000Z",
+      "linkedinUrl": null,
+      "nextFollowUpAt": "2026-09-11T12:00:00.000Z",
+      "preferredName": null,
+      "priorityLevel": 0,
+      "profileImageUrl": null,
+      "relationshipScore": 3,
+      "school": "Harvard",
+      "tags": [],
+      "title": "Staff"
+    },
+    {
+      "company": "Acme",
+      "email": "ada@acme.test",
+      "fullName": "Ada Lovelace",
+      "id": "<id:2>",
+      "lastInteractionAt": "2026-09-12T12:00:00.000Z",
+      "linkedinUrl": null,
+      "nextFollowUpAt": "2026-09-13T12:00:00.000Z",
+      "preferredName": null,
+      "priorityLevel": 2,
+      "profileImageUrl": null,
+      "relationshipScore": 4,
+      "school": "MIT",
+      "tags": [
+        "mentor"
+      ],
+      "title": "Engineer"
+    },
+    {
+      "company": "Zenith",
+      "email": null,
+      "fullName": "Margaret Hamilton",
+      "id": "<id:1>",
+      "lastInteractionAt": "2026-09-14T12:00:00.000Z",
+      "linkedinUrl": null,
+      "nextFollowUpAt": "2026-09-14T12:00:00.000Z",
+      "preferredName": null,
+      "priorityLevel": 0,
+      "profileImageUrl": null,
+      "relationshipScore": 4,
+      "school": null,
+      "tags": [],
+      "title": "Director"
+    }
+  ],
+  "goalAlignedContacts": [],
+  "goals": [
+    {
+      "active": 1,
+      "category": null,
+      "createdAt": "2026-08-16T12:00:00.000Z",
+      "id": "<id:11>",
+      "progress": null,
+      "text": "Meet more people in hardware",
+      "updatedAt": "<db-now>",
+      "userId": "golden-user"
+    }
+  ],
+  "graphPreview": {
+    "contacts": [
+      {
+        "aiSummary": null,
+        "closeness": 0.2713184427164189,
+        "closenessTier": "outer",
+        "company": "Bletchley",
+        "dateMet": null,
+        "dormant": false,
+        "email": null,
+        "fullName": "Ken Thompson",
+        "hasLoggedInteraction": true,
+        "howMet": null,
+        "id": "<id:7>",
+        "keyFacts": [],
+        "lastInteractionAt": "2026-06-17T12:00:00.000Z",
+        "linkedinUrl": null,
+        "metContext": null,
+        "nextFollowUpAt": "2026-08-26T12:00:00.000Z",
+        "notes": null,
+        "orbitScore": 1,
+        "phone": null,
+        "preferredName": null,
+        "profileImageUrl": null,
+        "relationshipScore": 2,
+        "school": null,
+        "sharedInterests": [],
+        "substantive": true,
+        "tags": [],
+        "title": "Engineer",
+        "website": null
+      },
+      {
+        "aiSummary": null,
+        "closeness": 0.5071749232222146,
+        "closenessTier": "mid",
+        "company": "Acme",
+        "dateMet": null,
+        "dormant": false,
+        "email": null,
+        "fullName": "Dennis Ritchie",
+        "hasLoggedInteraction": true,
+        "howMet": null,
+        "id": "<id:3>",
+        "keyFacts": [],
+        "lastInteractionAt": "2026-09-08T12:00:00.000Z",
+        "linkedinUrl": null,
+        "metContext": null,
+        "nextFollowUpAt": "2026-09-11T12:00:00.000Z",
+        "notes": null,
+        "orbitScore": 2,
+        "phone": null,
+        "preferredName": null,
+        "profileImageUrl": null,
+        "relationshipScore": 3,
+        "school": "Harvard",
+        "sharedInterests": [],
+        "substantive": true,
+        "tags": [],
+        "title": "Staff",
+        "website": null
+      },
+      {
+        "aiSummary": null,
+        "closeness": 0.4552518462991376,
+        "closenessTier": "outer",
+        "company": "Zenith",
+        "dateMet": null,
+        "dormant": false,
+        "email": null,
+        "fullName": "Barbara Liskov",
+        "hasLoggedInteraction": true,
+        "howMet": null,
+        "id": "<id:5>",
+        "keyFacts": [],
+        "lastInteractionAt": "2026-08-26T12:00:00.000Z",
+        "linkedinUrl": null,
+        "metContext": null,
+        "nextFollowUpAt": "2026-10-15T12:00:00.000Z",
+        "notes": null,
+        "orbitScore": 2,
+        "phone": null,
+        "preferredName": null,
+        "profileImageUrl": null,
+        "relationshipScore": 3,
+        "school": "MIT",
+        "sharedInterests": [],
+        "substantive": true,
+        "tags": [],
+        "title": "Professor",
+        "website": null
+      },
+      {
+        "aiSummary": null,
+        "closeness": 0.6010377994763951,
+        "closenessTier": "inner",
+        "company": "Zenith",
+        "dateMet": null,
+        "dormant": false,
+        "email": null,
+        "fullName": "Margaret Hamilton",
+        "hasLoggedInteraction": true,
+        "howMet": null,
+        "id": "<id:1>",
+        "keyFacts": [],
+        "lastInteractionAt": "2026-09-14T12:00:00.000Z",
+        "linkedinUrl": null,
+        "metContext": null,
+        "nextFollowUpAt": "2026-09-14T12:00:00.000Z",
+        "notes": null,
+        "orbitScore": 4,
+        "phone": null,
+        "preferredName": null,
+        "profileImageUrl": null,
+        "relationshipScore": 4,
+        "school": null,
+        "sharedInterests": [],
+        "substantive": true,
+        "tags": [],
+        "title": "Director",
+        "website": null
+      },
+      {
+        "aiSummary": null,
+        "closeness": 0.13790310604894562,
+        "closenessTier": "outer",
+        "company": "Bletchley",
+        "dateMet": null,
+        "dormant": true,
+        "email": null,
+        "fullName": "Katherine Johnson",
+        "hasLoggedInteraction": true,
+        "howMet": null,
+        "id": "<id:8>",
+        "keyFacts": [],
+        "lastInteractionAt": "2025-08-11T12:00:00.000Z",
+        "linkedinUrl": null,
+        "metContext": null,
+        "nextFollowUpAt": null,
+        "notes": null,
+        "orbitScore": 1,
+        "phone": null,
+        "preferredName": null,
+        "profileImageUrl": null,
+        "relationshipScore": 2,
+        "school": "MIT",
+        "sharedInterests": [],
+        "substantive": true,
+        "tags": [],
+        "title": "Analyst",
+        "website": null
+      },
+      {
+        "aiSummary": null,
+        "closeness": 0.40638306801859464,
+        "closenessTier": "outer",
+        "company": "Bletchley",
+        "dateMet": null,
+        "dormant": false,
+        "email": null,
+        "fullName": "Alan Turing",
+        "hasLoggedInteraction": true,
+        "howMet": null,
+        "id": "<id:6>",
+        "keyFacts": [],
+        "lastInteractionAt": "2026-08-06T12:00:00.000Z",
+        "linkedinUrl": null,
+        "metContext": null,
+        "nextFollowUpAt": "2026-09-20T12:00:00.000Z",
+        "notes": null,
+        "orbitScore": 1,
+        "phone": null,
+        "preferredName": null,
+        "profileImageUrl": null,
+        "relationshipScore": 3,
+        "school": "MIT",
+        "sharedInterests": [],
+        "substantive": true,
+        "tags": [],
+        "title": "Researcher",
+        "website": null
+      },
+      {
+        "aiSummary": null,
+        "closeness": 0.6130140840613754,
+        "closenessTier": "inner",
+        "company": "Acme",
+        "dateMet": null,
+        "dormant": false,
+        "email": "grace@acme.test",
+        "fullName": "Grace Hopper",
+        "hasLoggedInteraction": true,
+        "howMet": null,
+        "id": "<id:4>",
+        "keyFacts": [],
+        "lastInteractionAt": "2026-09-05T12:00:00.000Z",
+        "linkedinUrl": null,
+        "metContext": null,
+        "nextFollowUpAt": "2026-09-05T12:00:00.000Z",
+        "notes": null,
+        "orbitScore": 5,
+        "phone": null,
+        "preferredName": null,
+        "profileImageUrl": null,
+        "relationshipScore": 5,
+        "school": "Yale",
+        "sharedInterests": [],
+        "substantive": true,
+        "tags": [
+          "mentor",
+          "founder"
+        ],
+        "title": "Founder",
+        "website": null
+      },
+      {
+        "aiSummary": null,
+        "closeness": 0.5888095386068299,
+        "closenessTier": "mid",
+        "company": "Acme",
+        "dateMet": null,
+        "dormant": false,
+        "email": "ada@acme.test",
+        "fullName": "Ada Lovelace",
+        "hasLoggedInteraction": true,
+        "howMet": null,
+        "id": "<id:2>",
+        "keyFacts": [],
+        "lastInteractionAt": "2026-09-12T12:00:00.000Z",
+        "linkedinUrl": null,
+        "metContext": null,
+        "nextFollowUpAt": "2026-09-13T12:00:00.000Z",
+        "notes": null,
+        "orbitScore": 3,
+        "phone": null,
+        "preferredName": null,
+        "profileImageUrl": null,
+        "relationshipScore": 4,
+        "school": "MIT",
+        "sharedInterests": [],
+        "substantive": true,
+        "tags": [
+          "mentor"
+        ],
+        "title": "Engineer",
+        "website": null
+      }
+    ],
+    "summary": {
+      "constellationFilter": {
+        "active": true,
+        "available": 10,
+        "enabled": true,
+        "engaged": 8,
+        "scope": "engaged",
+        "shown": 8
+      },
+      "dormantCount": 1,
+      "goals": [],
+      "overdueCount": 5,
+      "scoreCounts": {
+        "1": 5,
+        "2": 2,
+        "3": 1,
+        "4": 1,
+        "5": 1
+      },
+      "socialLinks": {},
+      "strongTies": 6,
+      "total": 10,
+      "userEmail": null,
+      "userImageUrl": null,
+      "userName": "Golden"
+    },
+    "userId": "golden-user"
+  },
+  "networkMetrics": {
+    "avgPeerDegree": 1.8,
+    "degreeBuckets": {
+      "none": 1,
+      "oneToTwo": 9,
+      "threePlus": 0
+    },
+    "metricsSampleSize": 10,
+    "tierCounts": {
+      "inner": 2,
+      "mid": 4,
+      "outer": 4
+    },
+    "totalContacts": 10,
+    "totalPeerEdges": 9
+  },
+  "recentContacts": [
+    {
+      "avatarUrl": null,
+      "company": "Bletchley",
+      "createdAt": "2026-03-09T12:00:00.000Z",
+      "email": null,
+      "fullName": "Ken Thompson",
+      "id": "<id:7>",
+      "lastInteractionAt": "2026-06-17T12:00:00.000Z",
+      "linkedinUrl": null,
+      "nextFollowUpAt": "2026-08-26T12:00:00.000Z",
+      "preferredName": null,
+      "relationshipScore": 2,
+      "school": null,
+      "title": "Engineer",
+      "updatedAt": "2026-06-17T12:00:00.000Z"
+    },
+    {
+      "avatarUrl": null,
+      "company": null,
+      "createdAt": "2026-03-08T12:00:00.000Z",
+      "email": null,
+      "fullName": "Radia Perlman",
+      "id": "<id:9>",
+      "lastInteractionAt": null,
+      "linkedinUrl": null,
+      "nextFollowUpAt": null,
+      "preferredName": null,
+      "relationshipScore": 1,
+      "school": null,
+      "title": null,
+      "updatedAt": "2026-06-16T12:00:00.000Z"
+    },
+    {
+      "avatarUrl": null,
+      "company": "Acme",
+      "createdAt": "2026-03-07T12:00:00.000Z",
+      "email": null,
+      "fullName": "Dennis Ritchie",
+      "id": "<id:3>",
+      "lastInteractionAt": "2026-09-08T12:00:00.000Z",
+      "linkedinUrl": null,
+      "nextFollowUpAt": "2026-09-11T12:00:00.000Z",
+      "preferredName": null,
+      "relationshipScore": 3,
+      "school": "Harvard",
+      "title": "Staff",
+      "updatedAt": "2026-06-15T12:00:00.000Z"
+    },
+    {
+      "avatarUrl": null,
+      "company": "Zenith",
+      "createdAt": "2026-03-06T12:00:00.000Z",
+      "email": null,
+      "fullName": "Barbara Liskov",
+      "id": "<id:5>",
+      "lastInteractionAt": "2026-08-26T12:00:00.000Z",
+      "linkedinUrl": null,
+      "nextFollowUpAt": "2026-10-15T12:00:00.000Z",
+      "preferredName": null,
+      "relationshipScore": 3,
+      "school": "MIT",
+      "title": "Professor",
+      "updatedAt": "2026-06-14T12:00:00.000Z"
+    },
+    {
+      "avatarUrl": null,
+      "company": "Zenith",
+      "createdAt": "2026-03-05T12:00:00.000Z",
+      "email": null,
+      "fullName": "Linus Torvalds",
+      "id": "<id:10>",
+      "lastInteractionAt": null,
+      "linkedinUrl": null,
+      "nextFollowUpAt": null,
+      "preferredName": null,
+      "relationshipScore": 2,
+      "school": "Helsinki",
+      "title": "Maintainer",
+      "updatedAt": "2026-06-13T12:00:00.000Z"
+    },
+    {
+      "avatarUrl": null,
+      "company": "Zenith",
+      "createdAt": "2026-03-04T12:00:00.000Z",
+      "email": null,
+      "fullName": "Margaret Hamilton",
+      "id": "<id:1>",
+      "lastInteractionAt": "2026-09-14T12:00:00.000Z",
+      "linkedinUrl": null,
+      "nextFollowUpAt": "2026-09-14T12:00:00.000Z",
+      "preferredName": null,
+      "relationshipScore": 4,
+      "school": null,
+      "title": "Director",
+      "updatedAt": "2026-06-12T12:00:00.000Z"
+    }
+  ],
+  "reminders": [
+    {
+      "actionItemId": null,
+      "actionKind": "task",
+      "calendarEventKey": null,
+      "category": "action_item",
+      "completedAt": null,
+      "confidenceScore": null,
+      "contactId": "<id:2>",
+      "createdAt": "2026-09-10T12:00:00.000Z",
+      "createdBy": "user",
+      "dateBasis": null,
+      "description": null,
+      "dueDate": "2026-09-14T12:00:00.000Z",
+      "id": "<id:12>",
+      "importId": null,
+      "importanceReason": null,
+      "itemHash": null,
+      "listId": null,
+      "noteBatchId": null,
+      "origin": "explicit",
+      "priority": "normal",
+      "rawDatePhrase": null,
+      "reminderType": "manual",
+      "sourceExcerpt": null,
+      "sourceInteractionId": null,
+      "status": "pending",
+      "timingRationale": null,
+      "title": "Send Ada the deck",
+      "userId": "golden-user"
+    },
+    {
+      "actionItemId": null,
+      "actionKind": "task",
+      "calendarEventKey": null,
+      "category": "action_item",
+      "completedAt": null,
+      "confidenceScore": null,
+      "contactId": "<id:1>",
+      "createdAt": "2026-09-11T12:00:00.000Z",
+      "createdBy": "user",
+      "dateBasis": null,
+      "description": null,
+      "dueDate": "2026-09-17T12:00:00.000Z",
+      "id": "<id:13>",
+      "importId": null,
+      "importanceReason": null,
+      "itemHash": null,
+      "listId": null,
+      "noteBatchId": null,
+      "origin": "explicit",
+      "priority": "normal",
+      "rawDatePhrase": null,
+      "reminderType": "manual",
+      "sourceExcerpt": null,
+      "sourceInteractionId": null,
+      "status": "pending",
+      "timingRationale": null,
+      "title": "Intro Margaret to hardware lead",
+      "userId": "golden-user"
+    },
+    {
+      "actionItemId": null,
+      "actionKind": "task",
+      "calendarEventKey": null,
+      "category": "action_item",
+      "completedAt": null,
+      "confidenceScore": null,
+      "contactId": null,
+      "createdAt": "2026-09-12T12:00:00.000Z",
+      "createdBy": "user",
+      "dateBasis": null,
+      "description": null,
+      "dueDate": "2026-10-05T12:00:00.000Z",
+      "id": "<id:14>",
+      "importId": null,
+      "importanceReason": null,
+      "itemHash": null,
+      "listId": null,
+      "noteBatchId": null,
+      "origin": "explicit",
+      "priority": "normal",
+      "rawDatePhrase": null,
+      "reminderType": "manual",
+      "sourceExcerpt": null,
+      "sourceInteractionId": null,
+      "status": "pending",
+      "timingRationale": null,
+      "title": "File expenses",
+      "userId": "golden-user"
+    }
+  ],
+  "stats": {
+    "dueFollowUps": 5,
+    "pendingReminders": 3,
+    "strongConnections": 6,
+    "topCompany": null,
+    "totalContacts": 10
+  },
+  "suggestions": [],
+  "totalSuggestions": 0
+}

@@ -19,7 +19,7 @@ import {
   ShaderMaterial,
   SphereGeometry,
   SRGBColorSpace,
-  Texture,
+  type Texture,
   TextureLoader,
   Vector3,
   WebGLRenderer,

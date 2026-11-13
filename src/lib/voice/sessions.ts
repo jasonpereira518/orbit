@@ -11,7 +11,8 @@ import { requireVoiceEnabled, VoiceUnavailableError } from "./settings";
 import { selectedVoiceProvider, type VoiceHistory } from "./config";
 import { VoiceProviderError, voiceCredentials } from "./providers";
 import { voiceConfigured, recordVoiceHealth } from "./settings";
-import { VOICE_PROMPT_BUDGET, voiceInstructions, voiceSink, voiceToolsFor } from "./tools";
+import { VOICE_PROMPT_BUDGET, VOICE_WEB_LOOKUPS, voiceInstructions, voiceSink, voiceToolsFor } from "./tools";
+import { WEB_LOOKUP_LIMIT } from "@/lib/chat-agent-loop";
 import { generateChatTitle } from "@/lib/chat-title";
 
 export async function startVoiceSession(
@@ -150,6 +151,19 @@ export async function callVoiceTool(
   );
   if (!tool)
     throw new UserFacingError("That tool isn’t available in Orbit Voice");
+  if (WEB_LOOKUP_LIMIT.tools.has(toolName)) {
+    try {
+      await consumeBucket("voice-web", sessionId, {
+        limit: VOICE_WEB_LOOKUPS,
+        windowSec: VOICE_DURATION_SECONDS + 300,
+      });
+    } catch {
+      return {
+        result: JSON.stringify({ error: `This call has used its ${VOICE_WEB_LOOKUPS} web lookups. Answer from what you found, or suggest Find people in the app.` }),
+        proposal: null,
+      };
+    }
+  }
   const result = await runTool(tool, userId, input, {
     surface: "chat",
     scopes: ["read"],

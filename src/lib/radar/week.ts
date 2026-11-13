@@ -25,7 +25,7 @@ const MIN_GAP_MS = 6 * HOUR_MS;
 export function nextLocal5am(now: Date, tz: string = "UTC"): Date {
   const { hour, ymd } = localClock(now, tz);
   const [y, m, d] = ymd.split("-").map(Number);
-  const targetDay = new Date(Date.UTC(y!, m! - 1, d! + (hour < 4 ? 0 : 1)));
+  const targetDay = new Date(Date.UTC(y, m - 1, d + (hour < 4 ? 0 : 1)));
   const ymdTarget = targetDay.toISOString().slice(0, 10);
   const guess = new Date(`${ymdTarget}T05:00:00Z`);
   const check = localClock(guess, tz);
@@ -56,7 +56,7 @@ export function nextRadarRunAt(now: Date, tz: string, dailyEnabled: boolean): Da
 /** Due within two days: a meeting or event, a due date. */
 const DATED_MOMENTS: ReadonlySet<string> = new Set(["upcoming_meeting", "event_upcoming", "email_prep", "opportunity_due"]);
 /** Fresh for two days after Orbit learns it: news about them that goes stale. */
-const FRESH_MOMENTS: ReadonlySet<string> = new Set(["job_change", "job_change_left", "social_post", "email_followup", "email_job", "email_process", "email_news", "email_event"]);
+const FRESH_MOMENTS: ReadonlySet<string> = new Set(["job_change", "job_change_left", "social_post", "public_mention", "email_followup", "email_job", "email_process", "email_news", "email_event"]);
 /** A moment for as long as it lasts: someone is waiting on the person. */
 const OWED_MOMENTS: ReadonlySet<string> = new Set(["inbound_unanswered", "open_thread", "opportunity_overdue"]);
 const MOMENT_WINDOW_MS = 2 * DAY_MS;

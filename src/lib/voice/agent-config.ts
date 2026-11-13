@@ -25,7 +25,7 @@ export const ORBIT_VOICE_AGENT_CONFIG = {
         ],
       },
     },
-    tts: { model_id: "eleven_flash_v2_5" },
+    tts: { model_id: "eleven_flash_v2" },
     turn: { turn_timeout: 7, silence_end_call_timeout: 45 },
     conversation: {
       max_duration_seconds: VOICE_DURATION_SECONDS,
@@ -41,9 +41,13 @@ export const ORBIT_VOICE_AGENT_CONFIG = {
   },
   platform_settings: {
     auth: { enable_auth: true },
+    // ElevenLabs reads overrides under `conversation_config_override`; the old top-level
+    // shape is silently dropped, leaving the system prompt and TTS overrides switched off.
     overrides: {
-      agent: { prompt: { prompt: true } },
-      tts: { voice_id: true, model_id: true },
+      conversation_config_override: {
+        agent: { prompt: { prompt: true } },
+        tts: { voice_id: true, model_id: true },
+      },
     },
     call_limits: {
       agent_concurrency_limit: 5,
@@ -53,6 +57,17 @@ export const ORBIT_VOICE_AGENT_CONFIG = {
     privacy: { record_voice: false, retention_days: 1 },
   },
 };
+
+type OverrideFlags = {
+  agent?: { prompt?: { prompt?: boolean } };
+  tts?: { voice_id?: boolean; model_id?: boolean };
+};
+/** An agent's override switches, wherever this API version keeps them (new shape first). */
+export function agentOverrides(agent: unknown): OverrideFlags | undefined {
+  const overrides = (agent as { platform_settings?: { overrides?: OverrideFlags & { conversation_config_override?: OverrideFlags } } })
+    ?.platform_settings?.overrides;
+  return overrides?.conversation_config_override ?? overrides;
+}
 
 /** Misconfigured public/unbounded agents must never receive an Orbit-issued session. */
 export function isSafeVoiceAgent(
@@ -77,7 +92,7 @@ export function isSafeVoiceAgent(
     typeof duration === "number" &&
     duration > 0 &&
     duration <= VOICE_DURATION_SECONDS &&
-    config.platform_settings?.overrides?.agent?.prompt?.prompt === true &&
+    agentOverrides(agent)?.agent?.prompt?.prompt === true &&
     Array.isArray(tools) &&
     tools.length === 1 &&
     tools.every((t) => {

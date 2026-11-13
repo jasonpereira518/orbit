@@ -74,6 +74,10 @@ import {
 } from "@/lib/admin-contact-upkeep";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { startLinkedInPhotoQueue, stopLinkedInPhotoQueue } from "@/lib/linkedin-photo-queue";
+import { findRefreshJob, resolveRefreshTarget, runRefreshJobForAll } from "@/lib/admin-refresh-jobs";
+import { parseInput } from "@/lib/action";
+import { z } from "zod";
+import { reportError } from "@/lib/report-error";
 
 /**
  * Every export here re-asserts `requireAdminUserId()`.
@@ -685,38 +689,6 @@ export async function resubscribeInterestListAction(input: {
   revalidateInterestList();
   return { ok: true, email: restored.email };
 }
-
-/** In-person event signup: adds the row, names on the pass, welcome email names the event. */
-export async function addManualInterestListSignupAction(input: {
-  email: string;
-  firstName: string;
-  lastName: string;
-  eventLabel: string;
-  reason: string;
-}): Promise<{ ok: true; email: string }> {
-  const adminUserId = await requireAdminUserId();
-  const reason = ops.requireReason(input.reason);
-
-  const added = await interestList.addManualInterestListSignup({
-    email: input.email,
-    firstName: input.firstName,
-    lastName: input.lastName,
-    eventLabel: input.eventLabel,
-  });
-
-  await recordAdminAction({
-    adminUserId,
-    action: "interest_list.manual_add",
-    resourceType: "interest_list_signup",
-    resourceId: added.id,
-    detail: { email: added.email, eventLabel: input.eventLabel.trim() },
-    reason,
-  });
-
-  revalidateInterestList();
-  return { ok: true, email: added.email };
-}
-
 /** Spreadsheet paste from an event: many people, one event label, join order preserved. */
 export async function addManualInterestListPasteAction(input: {
   paste: string;
@@ -1442,6 +1414,63 @@ export async function triggerGlobalContactUpkeepAction(options?: {
   const res = await triggerAdminContactUpkeepJob(options);
   revalidatePath("/admin/product/photos");
   return res;
+}
+
+const refreshJobInputSchema = z.object({
+  key: z.string().max(64),
+  scope: z.enum(["all", "user"]),
+  target: z.string().max(320).optional(),
+  reason: z.string().max(2000),
+});
+
+/**
+ * Run one job from the admin Refresh page, for every account or for one.
+ *
+ * All-users runs call the job's scheduled route in `after()`, so the click returns at once
+ * and the route's own `cron_runs` row (trigger `manual`) is the record of how it went.
+ * One-user runs are kicks: the route answers at once and works that account's backlog.
+ */
+export async function runRefreshJobAction(input: {
+  key: string;
+  scope: "all" | "user";
+  target?: string;
+  reason: string;
+}): Promise<void> {
+  const adminUserId = await requireAdminUserId();
+  const parsed = parseInput(refreshJobInputSchema, input, "admin.run-refresh-job");
+  if (!parsed.ok) throw new UserFacingError(parsed.error);
+  input = parsed.value;
+  const reason = ops.requireReason(input.reason);
+  const job = findRefreshJob(input.key);
+  if (!job) throw new UserFacingError("That job no longer exists");
+
+  if (input.scope === "user") {
+    if (!job.runOne) throw new UserFacingError(`${job.label} can only run for all accounts`);
+    const userId = await resolveRefreshTarget(input.target ?? "");
+    if (!userId) throw new UserFacingError("No account matches that user id or email");
+    await recordAdminAction({
+      adminUserId,
+      action: `refresh.${job.key}`,
+      targetUserId: userId,
+      detail: { scope: "user" },
+      reason,
+    });
+    await job.runOne(userId);
+  } else {
+    if (!job.allRoute) throw new UserFacingError(`${job.label} can only run for one account`);
+    await recordAdminAction({
+      adminUserId,
+      action: `refresh.${job.key}`,
+      detail: { scope: "all" },
+      reason,
+    });
+    after(() =>
+      runRefreshJobForAll(job).catch((err) =>
+        reportError(err, { where: `admin.refresh.${job.key}`, level: "warning" })
+      )
+    );
+  }
+  revalidatePath("/admin/health/refresh");
 }
 
 /**
