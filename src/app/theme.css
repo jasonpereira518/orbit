@@ -1644,7 +1644,7 @@ html[data-motion="reduce"] .constellation-starfield-drift {
 @keyframes landing-solar-warp {
   0% {
     opacity: 0;
-    transform: scale(0.04);
+    transform: scale(0.2);
   }
   20% {
     opacity: 1;

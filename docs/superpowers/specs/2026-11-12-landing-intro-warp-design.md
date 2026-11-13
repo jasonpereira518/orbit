@@ -99,7 +99,9 @@ landing page. When on, and the attribute is present, and motion is allowed, the 
 - As the flight slows every star closes in on its rest from `V`'s side, which would empty
   the edges. Temporary edge stars, resting off-screen out to 2x the screen's distance from
   `V`, fill them and land off-screen exactly when the flight ends.
-- The streak joins where the star was 70ms ago, so its length is the speed and it
+- Toned down after the first look (Jason: "a little less dramatic"): slower flight and
+  shorter streaks.
+- The streak joins where the star was 45ms ago, so its length is the speed and it
   collapses on arrival; it is skipped across a wrap. Respawned stars fade up. No second
   canvas.
 - The background blit and the stars' alpha ramp up over the first ~0.4s, so the sky
@@ -112,7 +114,7 @@ The timing and the position formula live in one small pure module
 (`src/lib/landing-intro.ts`) so they can be checked without a browser.
 
 **The solar system.** CSS only. With the attribute present, `.landing-solar-enter`
-uses a new keyframe: from 4% size and transparent, at the sun's position, growing to
+uses a new keyframe: from 20% size and transparent, at the sun's position, growing to
 rest over 2.4s (the flight's length), so you arrive at it. It scales about its own
 centre and never moves toward the text. (Replaced the first build's left-to-right drift
 when the flight was asked for.) It starts when the solar system

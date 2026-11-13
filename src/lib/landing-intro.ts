@@ -37,7 +37,8 @@ export const LANDING_INTRO_PREPAINT_SCRIPT = `try{var d=document.documentElement
  * over every depth at once, so the screen is full on every frame. Then the flight decelerates and
  * each star's final lap ends exactly at u=0, its rest position, which is the arrival.
  *
- * Tuning knobs. Starting points; set by eye in the browser.
+ * Tuning knobs, set by eye in the browser. Toned down Nov 12 (Jason: "a little less dramatic"):
+ * travel 7 -> 4.5 (slower flight), streak 70ms -> 45ms (shorter streaks).
  */
 export const WARP_MS = 2400;
 /** The sky's background and stars fade up over this, so the canvas does not pop in. */
@@ -45,11 +46,11 @@ export const SKY_FADE_MS = 400;
 /** A streak runs from where its star was this long ago to where it is now. Time, not frames,
  *  so a slow machine draws the same streak length as a fast one; it is the speed, so it
  *  collapses to a point on arrival. */
-export const STREAK_LAG_MS = 70;
+export const STREAK_LAG_MS = 45;
 /** One lap in log depth: a star respawns at e^-LAP (about 1/11) of its rest distance. */
 export const WARP_LAP = 2.4;
 /** Total log depth flown. TRAVEL / LAP is roughly how many times each star streams past. */
-export const WARP_TRAVEL = 7;
+export const WARP_TRAVEL = 4.5;
 /** Each star flies up to this much further than WARP_TRAVEL. Several laps wide, so the stars
  *  stay mixed across every depth well into the flight instead of bunching into one copy of the
  *  sky at a single scale. */
