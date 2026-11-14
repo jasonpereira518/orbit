@@ -33,6 +33,7 @@ import { z } from "zod";
 import { cleanSingleLine, fenceUntrusted, guardModelOutput } from "@/lib/ai-security";
 import { RADAR_BUCKETS, type RadarPick } from "@/lib/radar/score";
 import { KIND_LABELS, recommendationKey, type RadarAiNote, type RadarEvidence, type RadarReason } from "@/lib/radar/types";
+import { scrubPunctuation } from "@/lib/message-format";
 
 /** Cards the model sees: the top of the verified list after learning, before the plan's caps. */
 export const RADAR_EDITOR_SIZE = 20;
@@ -185,10 +186,15 @@ export function parseEditorReply(raw: string, prompt: Pick<EditorPrompt, "idToKe
     out.set(key, {
       adjust,
       why: checkedLine(item.why ?? null, WHY_MAX, prompt),
-      opener: checkedLine(item.opener ?? null, OPENER_MAX, prompt),
+      // A line the user sends, so the house bans apply (`@/lib/message-format`).
+      opener: scrubLine(checkedLine(item.opener ?? null, OPENER_MAX, prompt)),
     });
   }
   return out;
+}
+
+function scrubLine(line: string | null): string | null {
+  return line ? scrubPunctuation(line) : null;
 }
 
 function checkedLine(text: string | null, max: number, prompt: Pick<EditorPrompt, "factText" | "system">): string | null {

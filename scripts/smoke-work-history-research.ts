@@ -12,7 +12,7 @@ import "./smoke/_env";
 
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, publicWorkHistory, rateLimitBuckets } from "../src/db/schema";
+import { contactChanges, contacts, interactions, publicWorkHistory, rateLimitBuckets } from "../src/db/schema";
 import {
   PUBLIC_WORK_HISTORY_DAYS,
   readPublicWorkHistory,
@@ -220,11 +220,37 @@ async function main() {
   const outranked = await researchContactWorkHistory(USER, captured, { researcher: ext.researcher, force: true });
   check("an extension capture is never searched over", outranked === "outranked" && ext.asked.length === 0, outranked);
 
-  // --- no LinkedIn URL, no search -------------------------------------------------------
-  const noUrl = await makeContact("No Url", null);
+  // --- no LinkedIn URL: a search for their profile, only with enough to tell them apart ---
+  const [oneName] = await db.insert(contacts).values({ userId: USER, fullName: "Priya", company: "Stripe" }).returning();
   const unanchored = fake({ experiences: [role("Anything")] });
-  const noAnchor = await researchContactWorkHistory(USER, noUrl, { researcher: unanchored.researcher });
-  check("a contact with no LinkedIn URL is not searched", noAnchor === "no_anchor" && unanchored.asked.length === 0);
+  const noAnchor = await researchContactWorkHistory(USER, oneName.id, { researcher: unanchored.researcher });
+  check("a first name alone is not searched", noAnchor === "no_anchor" && unanchored.asked.length === 0);
+
+  const byName = await makeContact("Dana Whitfield", null);
+  const finder = fake({
+    name: "Dana Whitfield",
+    location: "Austin, TX",
+    linkedinUrl: "https://www.linkedin.com/in/dana-whitfield",
+    experiences: [role("Stripe", { isCurrent: true })],
+  });
+  const foundOutcome = await researchContactWorkHistory(USER, byName, { researcher: finder.researcher, force: true });
+  const foundRow = await db.query.contacts.findFirst({ where: eq(contacts.id, byName) });
+  check("found by name + company: saved", foundOutcome === "saved" && finder.asked.length === 1, foundOutcome);
+  check("the profile URL and location are filled", foundRow?.linkedinUrl === "https://www.linkedin.com/in/dana-whitfield" && foundRow?.location === "Austin, TX", JSON.stringify([foundRow?.linkedinUrl, foundRow?.location]));
+  check("stamped as a web finding", foundRow?.fieldSources?.linkedinUrl?.s === "web");
+
+  const lookalike = await makeContact("Dana Whitfield", null);
+  const other = fake({
+    name: "Dana Whitfield",
+    linkedinUrl: "https://www.linkedin.com/in/dana-whitfield-uk",
+    experiences: [role("Barclays", { isCurrent: true })],
+  });
+  const namesakeOutcome = await researchContactWorkHistory(USER, lookalike, { researcher: other.researcher, force: true });
+  const namesakeRow = await db.query.contacts.findFirst({ where: eq(contacts.id, lookalike) });
+  check("a namesake at another company is not saved", namesakeOutcome === "unsure" && !namesakeRow?.linkedinUrl, namesakeOutcome);
+  check("nothing written to their profile", (await getContactProfile(USER, lookalike)) === null);
+  const offered = await db.query.contactChanges.findFirst({ where: eq(contactChanges.contactId, lookalike) });
+  check("their profile is offered instead", offered?.status === "suggested" && offered.field === "linkedinUrl", JSON.stringify(offered));
 
   // --- a researcher failure is a value, not a throw -------------------------------------
   const brokenContact = await makeContact("Broken Search", "https://www.linkedin.com/in/broken");
@@ -243,7 +269,7 @@ async function main() {
   check("a web-search budget refusal is rate_limited, not an error", capped === "rate_limited", capped);
 
   // --- which contacts a pull hands to the route ---------------------------------------
-  const due = await contactsNeedingWorkHistory(USER, [priya, namesake, captured, noUrl, brokenContact]);
+  const due = await contactsNeedingWorkHistory(USER, [priya, namesake, captured, oneName.id, brokenContact]);
   check(
     "only contacts with a URL, no settled history and no recent miss are due",
     due.sort().join() === [brokenContact].sort().join(),

@@ -7,8 +7,8 @@ export type SyncKickFetch = (path: string, init?: RequestInit) => Promise<Respon
  * Ask the scheduler for a pass NOW rather than at the next 15-minute tick.
  *
  * Connecting Google or Outlook already arms the connection (`next_sync_at = now`), so it is
- * due the instant the OAuth callback finishes — it just waits for the next GitHub Actions run
- * to notice, and GitHub schedules lag by 5-30 minutes. For someone connecting during
+ * due the instant the OAuth callback finishes — it just waits for the next scheduled sync run to
+ * notice, up to fifteen minutes. For someone connecting during
  * onboarding that is a first look at an empty app. Kicking the same route the cron calls
  * closes the gap without a second code path: `runSyncPass` claims every due connection under
  * its own budget, and its own continuation kick handles a backlog.

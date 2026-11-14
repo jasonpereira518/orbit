@@ -40,6 +40,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { DatePickerButton, toLocalYmd } from "@/components/ui/date-picker";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { DraftPurposeRow, editedPurpose } from "@/components/follow-up/draft-purpose-row";
 import { KEEP_IN_TOUCH_PRESETS } from "@/lib/keep-in-touch";
@@ -100,6 +101,8 @@ export function ContactFollowUpSection({
   const router = useRouter();
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [draft, setDraft] = useState("");
+  /** Email only: the draft's own subject, editable before it goes. */
+  const [subject, setSubject] = useState("");
   const [aiError, setAiError] = useState<string | null>(null);
   const [purpose, setPurpose] = useState("");
   const [pickedPurpose, setPickedPurpose] = useState("");
@@ -201,6 +204,7 @@ export function ContactFollowUpSection({
         }
         setAiError(null);
         setDraft(result.body);
+        setSubject(result.subject);
         setPurpose(result.purpose);
         setPickedPurpose(result.purpose);
         toast.success("Draft ready");
@@ -215,10 +219,10 @@ export function ContactFollowUpSection({
   function openNative() {
     if (!draft.trim() || !platform) return;
     if (platform === "email" && sendOptions.email) {
-      const subject = encodeURIComponent(`Following up · ${contactName}`);
+      const subjectParam = encodeURIComponent(subject.trim() || `Hi ${contactName}`);
       const body = encodeURIComponent(draft);
       window.open(
-        `mailto:${sendOptions.email}?subject=${subject}&body=${body}`,
+        `mailto:${sendOptions.email}?subject=${subjectParam}&body=${body}`,
         "_blank"
       );
       return;
@@ -244,7 +248,7 @@ export function ContactFollowUpSection({
     if (!draft.trim()) return;
     startSend(async () => {
       try {
-        const res = await sendContactFollowUpEmail(contactId, draft);
+        const res = await sendContactFollowUpEmail(contactId, draft, subject.trim() || undefined);
         if (!res.ok) {
           toast.error(res.message);
           return;
@@ -460,6 +464,15 @@ export function ContactFollowUpSection({
                   setPurpose(v);
                   setPurposeEditedFor(v.trim() ? contactId : null);
                 }}
+              />
+            ) : null}
+            {platform === "email" ? (
+              <Input
+                aria-label="Subject"
+                placeholder="Subject"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                className="text-sm"
               />
             ) : null}
             <Textarea

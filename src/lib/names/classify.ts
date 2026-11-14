@@ -160,9 +160,13 @@ export function classifyName(
   const words = key.split(" ");
   if (PLACEHOLDER_NAMES.has(key) || NUMBERED_PLACEHOLDER.test(key)) return { verdict: "placeholder", certain: true };
   if (words.length > 1 && words.some((w) => LEGAL_SUFFIX.has(w))) return { verdict: "organization", certain: true };
-  // A shared inbox named after itself ("support" <support@acme.com>).
-  if (mailbox === "role" && (isHandle(n, ctx.email) || ROLE_EMAIL_LOCALS.has(key))) {
-    return { verdict: "mailbox", certain: false };
+  // A shared inbox named after itself ("support" <support@acme.com>) or after its company
+  // ("Acme" <info@acme.com>).
+  if (mailbox === "role") {
+    if (isHandle(n, ctx.email) || ROLE_EMAIL_LOCALS.has(key)) return { verdict: "mailbox", certain: false };
+    const domain = (ctx.email ?? "").toLowerCase().split("@")[1]?.split(".")[0] ?? "";
+    // One word only: "Jane Doe" <hello@janedoe.com> is a founder on her own domain.
+    if (domain && words.length === 1 && key === domain) return { verdict: "organization", certain: false };
   }
   if (ctx.company && key === nameKey(ctx.company)) return { verdict: "organization", certain: false };
   if (words.some((w) => ORG_WORDS.has(w))) return { verdict: "organization", certain: false };
@@ -186,4 +190,18 @@ export function classifyName(
 export function isPersonName(raw: string | null | undefined, ctx?: { email?: string | null; company?: string | null }): boolean {
   const { verdict } = classifyName(raw, ctx);
   return verdict === "person_full" || verdict === "person_partial";
+}
+
+/**
+ * THE admission rule for automated sources (calendar, mail, address books, file imports):
+ * never create a contact for a record that is certainly not a person — a company by its legal
+ * form, a machine mailbox, a calendar room — or for a shared inbox (info@, team@) whose name
+ * is not a person's. A record with a placeholder, a handle or no name at all is still a
+ * person whose name Orbit does not know yet: it is kept, and the name sweep reads it later.
+ * Never for anything a person typed or chose.
+ */
+export function isAdmissibleRecord(name: string | null | undefined, email?: string | null): boolean {
+  const { verdict, certain } = classifyName(name, { email });
+  if (certain && (verdict === "organization" || verdict === "mailbox")) return false;
+  return classifyMailbox(email) !== "role" || isPersonName(name, { email });
 }

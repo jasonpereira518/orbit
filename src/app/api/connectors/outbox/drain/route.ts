@@ -1,6 +1,6 @@
 /**
- * Drains the connector outbox. Rides the ten-minute ops schedule like the webhook drain: a
- * write that failed can wait ten minutes, and its own route keeps its latency off the sweep.
+ * Drains the connector outbox. Rides the thirty-minute tick like the webhook drain: a
+ * write that failed can wait half an hour, and its own route keeps its latency off the sweep.
  *
  * Delivery is dispatched through the registry, so this route never learns a provider's API.
  */

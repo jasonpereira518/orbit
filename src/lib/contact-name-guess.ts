@@ -13,7 +13,8 @@ import { nameKey } from "@/lib/names/key";
 
 export { isHandle, type GuessedName };
 
-export type NameGuessSource = "address_book" | "linkedin" | "handle" | "ai" | "none";
+/** `user`: the person typed or confirmed this name; final for every automated writer. */
+export type NameGuessSource = "address_book" | "linkedin" | "handle" | "ai" | "none" | "user";
 
 /** Stored on `contacts.name_guess`. `weak` puts a "?" by the name until someone settles it. */
 export type NameGuess = {

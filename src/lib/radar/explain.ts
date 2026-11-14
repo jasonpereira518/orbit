@@ -21,6 +21,7 @@ import { friendlyError } from "@/lib/errors";
 import { chooseCompletionKey } from "@/lib/managed-ai-policy";
 import type { RadarAiNote, RadarEvidence, RadarReason, RecommendationKind } from "@/lib/radar/types";
 import { buildRadarWhyPrompt, radarWhyInputs } from "@/lib/radar/why-prompt";
+import { scrubPunctuation } from "@/lib/message-format";
 
 const noteSchema = z.object({ why: z.string(), opener: z.string() });
 
@@ -75,7 +76,8 @@ async function writeNote(
     return null;
   }
   const why = guardModelOutput(parsed.why.trim(), { system }).text.slice(0, WHY_MAX).trim();
-  const opener = guardModelOutput(parsed.opener.trim(), { system }).text.slice(0, OPENER_MAX).trim();
+  // A line the user sends, so the house bans apply (`@/lib/message-format`).
+  const opener = scrubPunctuation(guardModelOutput(parsed.opener.trim(), { system }).text).slice(0, OPENER_MAX).trim();
   if (!why && !opener) return null;
 
   const note: RadarAiNote = { why, opener, inputsHash: target.inputsHash, generatedAt: new Date().toISOString() };

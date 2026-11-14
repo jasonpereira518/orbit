@@ -65,20 +65,40 @@ Then fix forward. The next deploy from `main` carries a version at or above the 
 one and health returns to `ok`. A **503 `schema_mismatch`** still means the database is
 BEHIND the code — a build whose migration did not run — and is worth waking up for.
 
-## The nightly job or the sweep stopped
+## The nightly job or the sweep stopped (the heartbeat went quiet)
 
-1. `/admin/health` → "Ops sweep" tile. Quiet for over 30 min means the GitHub schedule is not
-   firing — see "Scheduled workflows were disabled" below.
-2. "Nightly job" tile red (it runs hourly, from `ops.yml` only): trigger it by hand —
+Every job on a clock is started by ONE outside schedule: a tick every thirty minutes to
+`POST /api/cron/tick`, which starts whatever `src/lib/schedules.ts` says is due in that
+window. One schedule is 48 calls a day, which keeps it free: QStash's free tier allows 1,000
+a day (`scripts/qstash-schedules.ts` sets it up), and any free cron service can stand in.
+Thirty minutes, not faster, because the database is on Neon Free (100 compute-hours a
+month): two bursts an hour let the compute sleep in between. The Better Stack heartbeat is
+pinged by each completed sweep, so set its period to 30 min with at least 15 min grace; a
+quiet heartbeat means the tick stopped arriving, the call fails, or production is down.
+
+1. `/admin/health` → "Ops sweep" tile. Quiet for over 75 min: Upstash console → QStash →
+   Logs, filter on `orbit-tick`. A 401 means `CRON_SECRET` in Vercel no longer matches the
+   one the schedule forwards — re-run the script with the current value. No calls at all:
+   check the schedule exists (Upstash → QStash → Schedules, ONE `orbit-tick` row) and that
+   the free tier's daily quota is not spent, then re-run:
+   `npx tsx scripts/qstash-schedules.ts` (needs `APP_URL`, `CRON_SECRET`, `QSTASH_TOKEN` in `.env.local`).
+   **Without any Upstash account:** create one free job at cron-job.org — every 30 minutes
+   (minutes 0 and 30),
+   `POST https://myorbitnetwork.com/api/cron/tick`, header
+   `Authorization: Bearer <CRON_SECRET>`. The tick answers at once and starts the jobs
+   after, so cron-job.org's short request timeout is fine. Run only ONE of the two, or
+   every job starts twice.
+2. "Nightly job" tile red (it runs hourly from the tick, `process-stalled` in
+   `src/lib/schedules.ts`): trigger it by hand —
    `curl -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/imports/process-stalled`
-   A 401 means `CRON_SECRET` differs between Vercel and GitHub.
+   A 401 means `CRON_SECRET` differs between Vercel and what you sent.
 
 ## Scheduled workflows were disabled (GitHub's 60-day rule)
 
 GitHub disables a public repository's scheduled workflows after 60 days without repository
-activity. That stops `ops` (sweep, process-stalled, drain, connector sync); the Better Stack
-heartbeat goes quiet within 30 minutes. (`backup` lives in the private ops repository, which
-the rule does not apply to.)
+activity. `ops` now only posts the drift sweep and probes health, so this costs
+`deploy.drift` detection and the outside down-probe — not the jobs, which the tick starts.
+(`backup` lives in the private ops repository, which the rule does not apply to.)
 
 ```bash
 gh api repos/jasonpereira518/orbit/actions/workflows --jq '.workflows[] | [.name, .state] | @tsv'
@@ -88,8 +108,7 @@ gh workflow run ops.yml --repo jasonpereira518/orbit
 ```
 
 Or GitHub → Actions → the workflow → **Enable workflow**, then **Run workflow**. Any push to
-`main` resets the timer; a recurring calendar reminder every 45 days runs the `gh api` line
-above. Vercel Pro crons remove the rule entirely.
+`main` resets the timer.
 
 ## Alert → what to do
 
@@ -103,7 +122,7 @@ above. Vercel Pro crons remove the rule entirely.
 | `purge.stuck` | `SELECT id, target_user_id, last_error, completed_steps FROM data_purge_runs WHERE status = 'failed';` Fix the cause `last_error` names, then requeue: `UPDATE data_purge_runs SET status = 'running', attempts = 0, last_attempt_at = now() - interval '1 hour' WHERE id = '<id>';` The next nightly run finishes it (or trigger `/api/imports/process-stalled`). |
 | `cron.partial_streak` | `/admin/health` → Nightly job → the run's stats. Each housekeeping step in `src/app/api/imports/process-stalled/route.ts` is its own try/catch; the one whose counter stays at zero is failing. Sentry has the exception. |
 | `drain.failed` | No outbound webhook is being retried. Run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/webhooks/outbound/drain`; a 500 means the drain throws — Sentry has it. |
-| `radar.schedule_missed` | Radar's nightly pass started once and then went quiet for over 30 hours, so nobody's list is being refreshed overnight. Check the ops workflow ran the 04:17 step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/run`. Pages still rebuild a list older than a day when someone opens Radar. |
+| `radar.schedule_missed` | Radar's nightly pass started once and then went quiet for over 30 hours, so nobody's list is being refreshed overnight. Check the thirty-minute tick is arriving (`radar-run` starts at the :30 tick every hour), then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/run`. Pages still rebuild a list older than a day when someone opens Radar. |
 | `radar.run_failed` | The last nightly pass failed or was killed at the 300 s ceiling. Read its `cron_runs` row and the `job.radar` / `job.radar.user` errors, fix, then run it by hand with the same `curl`. One account failing marks the pass `partial`, which is not an alert. |
 | `radardigest.schedule_missed` | Radar's Monday email, which runs hourly through Sunday and Monday UTC, has not started for six days, so a whole Sunday passed without a run and nobody gets their weekly list. Check the ops workflow ran the `13 * * * 0,1` step, then run it by hand: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://myorbitnetwork.com/api/radar/digest`. A run outside someone's Monday 06:00–09:00 sends them nothing, and the week claim means a repeated run never sends twice. |
 | `radardigest.run_failed` | The last Monday-email run failed or was killed. Read its `cron_runs` row and the `job.radar.digest` error. A send Resend refused marks the run `partial`, which is not an alert: that person's claim is released and the next hour retries; the `resend.rejected` error (kind `radar.digest`) carries Resend's reason, recorded once per run. `notConfigured` in the stats means `RESEND_API_KEY` or `RESEND_FROM_EMAIL` is unset. To stop the email for everyone, hide `page.radar`; for one person, set their `radar_digest_enabled` to 0. |
@@ -258,8 +277,8 @@ enrichment.
 - **Kill switch:** `ORBIT_DEEPGRAM=off` reverts every surface to the Whisper/Gemini chain
   (`deepgramEnabled()` in `deepgram.ts`). Use it if Deepgram is down or misbehaving; transcription
   keeps working, just on a different engine and without keyterm-boosted contact names.
-- **Nightly reconciliation:** `POST /api/ops/speech-usage`, run daily by the GitHub Actions
-  scheduler (`.github/workflows/ops.yml`). Meetings stream straight from the browser to Deepgram
+- **Nightly reconciliation:** `POST /api/ops/speech-usage`, run daily at 05:30 UTC by the
+  tick (`src/lib/schedules.ts`). Meetings stream straight from the browser to Deepgram
   on Orbit's key and the browser self-reports its seconds into `speech_usage`, so this job
   compares Deepgram's own billed seconds per meeting (tag `meeting:<sessionId>`) against what was
   recorded and posts a `:warning:` to Slack (`ops-notify.ts`) for any meeting Deepgram reports

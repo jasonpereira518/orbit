@@ -28,8 +28,11 @@ export async function saveOrbitVoiceConfig(input: unknown) {
   await setVoiceConfig(adminUserId, input);
   refresh();
 }
-/** The line every preview speaks: the greeting a real call opens with. Fixed, never user text. */
-const PREVIEW_LINE = "Hi, I’m Orbit. Who would you like to catch up with?";
+/**
+ * The line every preview speaks: Cosmo's greeting (COSMO_GREETING), written out because a provider
+ * import here would join this action's graph. Fixed, never user text.
+ */
+const PREVIEW_LINE = "Hi, I’m Cosmo. What can I help with?";
 /** An Aura voice saying the greeting, as a data URL the admin panel can play. Admins only. */
 export async function previewOrbitVoice(voice: unknown): Promise<string> {
   const adminUserId = await requireAdminUserId();

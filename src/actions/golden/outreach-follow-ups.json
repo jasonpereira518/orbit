@@ -21,7 +21,7 @@
         "sentAt": null,
         "status": "generated",
         "step": 1,
-        "subject": "Subject for Ann Opened"
+        "subject": "Re: Hello"
       },
       {
         "body": "Hi 2, a note long enough to pass.",
@@ -87,7 +87,7 @@
         "sentAt": null,
         "status": "generated",
         "step": 1,
-        "subject": "Subject for Dan Dup"
+        "subject": "Re: Hello"
       }
     ],
     "prospects": [
@@ -329,7 +329,7 @@
         "sentAt": "2026-09-21T12:00:00.000Z",
         "status": "opened",
         "step": 1,
-        "subject": "Subject for Ann Opened"
+        "subject": "Re: Hello"
       },
       {
         "body": "",
@@ -406,7 +406,7 @@
         "sentAt": null,
         "status": "generated",
         "step": 1,
-        "subject": "Subject for Dan Dup"
+        "subject": "Re: Hello"
       }
     ],
     "prospects": [

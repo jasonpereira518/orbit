@@ -43,7 +43,7 @@ import {
   isDemoProspect,
   prospectSearchStatus,
 } from "@/lib/outreach-quality";
-import { sendOutreachMessage, get5HourSendQuota, type OutreachSendProvider } from "@/lib/outreach-send";
+import { sendOutreachMessage, get5HourSendQuota, type OutreachSendProvider, type OutreachThread } from "@/lib/outreach-send";
 import { interpolateMailMerge } from "@/lib/outreach-types";
 import { searchPeopleWithBrightData, getBrightDataConfig, type PeopleSearchCriteria, type BrightDataCandidate } from "@/lib/brightdata";
 import { getOutreachFlowSuggestions } from "@/lib/outreach-suggestions";
@@ -70,6 +70,7 @@ import { asActionResult, classifyAiError, UserFacingError } from "@/lib/errors";
 import { logMessageOutcomeForUser, updateOutreachDraftForUser } from "@/lib/outreach-writes";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { actionFailure } from "@/lib/action-failure";
+import { deferStyleProfileBuild } from "@/lib/style-profile-defer";
 
 /** Due follow-ups one call drafts, and how long it keeps starting new ones. */
 const DUE_FOLLOWUPS_PER_CALL = 15;
@@ -890,6 +891,8 @@ export async function generateOutreachDrafts(input: {
   const db = await getDb();
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
+  // Learn how they write from their sent mail, once, after the draft is on its way.
+  deferStyleProfileBuild(userId);
 
   const channel = (input.channel ||
     campaign.defaultChannel ||
@@ -1026,7 +1029,9 @@ export async function regenerateOutreachDraft(input: {
       priorNotes: await priorNotesForContact(userId, prospect.contactId),
     },
     stepIndex,
+    lastStep: stepIndex > 0 && stepIndex >= ((campaign.sequenceSteps ?? []) as SequenceStep[]).length,
     previousBody: previous?.body,
+    previousSubject: previous?.subject,
     writingInstructions,
   });
 
@@ -1264,7 +1269,7 @@ export async function generateDueFollowUps(campaignId: string) {
       : [],
     parentIds.length
       ? db
-          .select({ id: outreachMessages.id, body: outreachMessages.body })
+          .select({ id: outreachMessages.id, body: outreachMessages.body, subject: outreachMessages.subject })
           .from(outreachMessages)
           .where(inArray(outreachMessages.id, parentIds))
       : [],
@@ -1278,6 +1283,7 @@ export async function generateDueFollowUps(campaignId: string) {
   ]);
   const repliedProspects = new Set(repliedRows.map((row) => row.prospectId));
   const parentBodies = new Map(parentRows.map((row) => [row.id, row.body]));
+  const parentSubjects = new Map(parentRows.map((row) => [row.id, row.subject]));
 
   const skippedIds: string[] = [];
   const toGenerate: typeof dueForCampaign = [];
@@ -1336,9 +1342,11 @@ export async function generateDueFollowUps(campaignId: string) {
           : null,
       },
       stepIndex: message.stepIndex ?? 1,
+      lastStep: (message.stepIndex ?? 1) >= steps.length,
       previousBody: message.parentMessageId
         ? parentBodies.get(message.parentMessageId)
         : undefined,
+      previousSubject: message.parentMessageId ? parentSubjects.get(message.parentMessageId) : undefined,
       writingInstructions,
       });
     } catch (err) {
@@ -1362,6 +1370,7 @@ export async function generateDueFollowUps(campaignId: string) {
       })
       .where(eq(outreachMessages.id, message.id));
     if (parentBodies.has(message.id)) parentBodies.set(message.id, draft.body);
+    if (parentSubjects.has(message.id)) parentSubjects.set(message.id, draft.subject);
     generated += 1;
   }
 
@@ -1375,6 +1384,23 @@ export async function generateDueFollowUps(campaignId: string) {
  */
 export async function sendOutreachMessageAction(messageId: string) {
   return asActionResult(() => sendOutreachMessageNow(messageId));
+}
+
+/**
+ * The earlier step a follow-up replies to, when it went out as an email (`OutreachThread`).
+ * A row with neither id was sent through Resend, or before Orbit kept ids: its delivery id is
+ * tried as a Resend id, and a miss only costs the threading.
+ */
+async function threadOf(parentMessageId: string | null): Promise<OutreachThread | null> {
+  if (!parentMessageId) return null;
+  const db = await getDb();
+  const parent = await db.query.outreachMessages.findFirst({
+    where: eq(outreachMessages.id, parentMessageId),
+    columns: { channel: true, status: true, deliveryId: true, rfcMessageId: true, providerThreadId: true },
+  });
+  if (!parent || parent.channel !== "email" || parent.status !== "sent") return null;
+  const known = Boolean(parent.rfcMessageId || parent.providerThreadId);
+  return { rfcMessageId: parent.rfcMessageId, threadId: parent.providerThreadId, resendId: known ? null : parent.deliveryId };
 }
 
 /** The send itself. Throws; `bulkSendOutreach` catches per message. */
@@ -1437,6 +1463,7 @@ async function sendOutreachMessageNow(messageId: string) {
       toPhone: message.prospect.phone,
       subject: message.subject,
       body: message.body,
+      inThread: await threadOf(message.parentMessageId),
     });
 
     const [updated] = await db
@@ -1446,6 +1473,8 @@ async function sendOutreachMessageNow(messageId: string) {
         sentAt: now,
         lastActionAt: now,
         deliveryId: result.deliveryId,
+        rfcMessageId: result.rfcMessageId ?? null,
+        providerThreadId: result.threadId ?? null,
         errorMessage: null,
         updatedAt: now,
       })
@@ -2001,6 +2030,7 @@ export async function bulkSendMailMergeAction(input: {
         subject: finalSubject,
         body: finalBody,
         provider: input.provider,
+        inThread: await threadOf(message.parentMessageId),
       });
 
       const now = new Date();
@@ -2012,6 +2042,8 @@ export async function bulkSendMailMergeAction(input: {
           sentAt: now,
           lastActionAt: now,
           deliveryId: res.deliveryId,
+          rfcMessageId: res.rfcMessageId ?? null,
+          providerThreadId: res.threadId ?? null,
           errorMessage: null,
           updatedAt: now,
         })

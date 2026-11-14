@@ -445,7 +445,8 @@ export async function saveNoteBatch(
             ...gaps,
             ...(addedFacts.length ? { keyFacts: [...priorFacts, ...addedFacts] } : {}),
           },
-          WRITE_OPTS
+          // A reviewed card is the person's own record; an unattended run is a kept one.
+          { ...WRITE_OPTS, by: p.fillOnly ? "unattended_capture" : "capture" }
         );
         // Added, never replaced, and without reading the current list first (audit M-13).
         if (tagNames?.length) await addTagsForUser(userId, contactId, tagNames);

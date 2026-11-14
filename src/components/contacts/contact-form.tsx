@@ -277,7 +277,7 @@ export function ContactForm({
               onSuccess?.({ id: contactId });
               if (redirectOnSuccess) router.push(`/contacts/${contactId}`);
             } else {
-              const c = await createContact(payload);
+              const c = await createContact(payload, { typedName: true });
               await queueWorkHistory(c.id, payload.linkedinUrl);
               toast.success("Added to your orbit");
               onSuccess?.({ id: c.id });

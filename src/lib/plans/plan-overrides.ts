@@ -35,6 +35,7 @@ export const LIMIT_FIELDS = [
   "monthlyCredits",
   "speech.meetingSeconds",
   "speech.shortformSeconds",
+  "speech.assistantSeconds",
   "googleMicrosoftConnections",
 ] as const;
 export type LimitField = (typeof LIMIT_FIELDS)[number];
@@ -51,6 +52,7 @@ export const LIMIT_MIN: Record<LimitField, number> = {
   monthlyCredits: 0,
   "speech.meetingSeconds": 0,
   "speech.shortformSeconds": 0,
+  "speech.assistantSeconds": 0,
   googleMicrosoftConnections: 1,
 };
 
@@ -119,6 +121,8 @@ export function limitOf(config: PlanConfig, field: LimitField): LimitValue {
       return config.speech.meetingSeconds;
     case "speech.shortformSeconds":
       return config.speech.shortformSeconds;
+    case "speech.assistantSeconds":
+      return config.speech.assistantSeconds;
     default:
       return config[field];
   }
@@ -153,6 +157,7 @@ export function applyPlanOverrides(
     for (const [field, value] of Object.entries(rules.limits[plan] ?? {}) as [LimitField, LimitValue][]) {
       if (field === "speech.meetingSeconds") config.speech.meetingSeconds = value ?? 0;
       else if (field === "speech.shortformSeconds") config.speech.shortformSeconds = value ?? 0;
+      else if (field === "speech.assistantSeconds") config.speech.assistantSeconds = value ?? 0;
       else if (field === "monthlyCredits") config.monthlyCredits = value;
       else if (field === "contactLimit") config.contactLimit = value;
       else if (field === "googleMicrosoftConnections") {

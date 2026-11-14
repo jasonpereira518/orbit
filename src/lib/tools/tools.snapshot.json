@@ -1874,6 +1874,97 @@
       }
     },
     {
+      "name": "what_needs_attention",
+      "title": "What needs attention",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "items",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "items",
+          "dueCount",
+          "problems"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [
+        "limit"
+      ],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "default": 8,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 15
+          }
+        }
+      }
+    },
+    {
+      "name": "radar_briefing",
+      "title": "Radar briefing",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "briefing",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "hasRun",
+          "paused",
+          "today",
+          "total",
+          "drafts",
+          "top"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [],
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "integration_status",
+      "title": "Integration status",
+      "scope": "read",
+      "surfaces": [
+        "mcp",
+        "chat"
+      ],
+      "resultLabel": "integrations",
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "fields": {
+        "mcp": [
+          "app",
+          "status",
+          "lastSyncedAt",
+          "problem"
+        ]
+      },
+      "surfaceKey": null,
+      "inputKeys": [],
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
       "name": "list_campaigns",
       "title": "Outreach campaigns",
       "scope": "read",
@@ -2719,6 +2810,9 @@
         "list_opportunities",
         "list_radar_cards",
         "list_radar_finds",
+        "what_needs_attention",
+        "radar_briefing",
+        "integration_status",
         "list_campaigns",
         "list_my_recruiters",
         "get_dossier",
@@ -2759,6 +2853,9 @@
         "list_opportunities",
         "list_radar_cards",
         "list_radar_finds",
+        "what_needs_attention",
+        "radar_briefing",
+        "integration_status",
         "list_campaigns",
         "list_my_recruiters",
         "get_dossier",
@@ -2796,6 +2893,9 @@
         "list_opportunities",
         "list_radar_cards",
         "list_radar_finds",
+        "what_needs_attention",
+        "radar_briefing",
+        "integration_status",
         "list_campaigns",
         "list_outreach_messages",
         "list_my_recruiters",
@@ -2832,6 +2932,9 @@
         "list_opportunities",
         "list_radar_cards",
         "list_radar_finds",
+        "what_needs_attention",
+        "radar_briefing",
+        "integration_status",
         "list_campaigns",
         "list_outreach_messages",
         "list_my_recruiters",

@@ -125,6 +125,7 @@ const COVERED_BY_INTERNAL_AUTH = new Set([
   "radar/run",
   "radar/web",
   "radar/digest",
+  "cron/tick",
 ]);
 
 type Handler = (req: Request) => Promise<Response>;

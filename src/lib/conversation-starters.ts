@@ -39,6 +39,7 @@ import {
   buildProfileBlock,
   type ContactRow,
 } from "@/lib/follow-up-drafts";
+import { scrubPunctuation } from "@/lib/message-format";
 
 /**
  * How long an extension route lets its model call run. The routes' `maxDuration` is 30 s and the
@@ -738,7 +739,8 @@ export async function generateConversationStarters(
   if (parsed.success) {
     candidates = parsed.data.starters.map((s, i) => ({
       id: `a${i}`,
-      text: s.text.trim(),
+      // The house bans (`@/lib/message-format`): a starter is a line the user sends.
+      text: scrubPunctuation(s.text.trim()),
       kind: s.kind,
       basis: s.basis.trim(),
       source: "ai" as const,

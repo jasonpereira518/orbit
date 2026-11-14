@@ -44,6 +44,7 @@ import {
   type DuplicateIndex,
   type DuplicateSubject,
 } from "@/lib/duplicates";
+import { indexStoredIdentities } from "@/lib/contact-identity";
 import {
   bulkMergeContactsForUser,
   contactHeadroomForUser,
@@ -60,6 +61,7 @@ import type { InteractionInsert, ReminderInsert } from "@/lib/import-engine";
 import { reportAndContinue } from "@/lib/report-error";
 import { isNonPersonParticipant } from "@/lib/non-person-participant";
 import { displayNameFor } from "@/lib/names/from-identifier";
+import { isAdmissibleRecord } from "@/lib/names/classify";
 
 /** One identifiable person on an event. Every field optional — sources differ in what they know. */
 export type NetworkParticipant = {
@@ -148,8 +150,8 @@ export type IngestOptions = {
   /**
    * Written to `contacts.met_context` / `how_met` on contacts this run CREATES.
    *
-   * Only on create: `bulkMergeContactsForUser` COALESCEs, so an existing contact keeps
-   * whatever story it already had rather than having it rewritten by a later source.
+   * Only on create: `bulkMergeContactsForUser` keeps where-met fill-only, so an existing
+   * contact keeps whatever story it already had rather than having it rewritten.
    */
   metContext?: string;
   howMet?: (event: NetworkEvent) => string | null;
@@ -227,8 +229,8 @@ function participantIdentityKey(p: NetworkParticipant): string | null {
  *
  * Windows take the extremes — `bulkMergeContactsForUser` widens with LEAST/GREATEST against
  * what is already stored, but it can only see the single row we hand it, so the batch has to
- * arrive pre-widened. Scalars keep the first non-empty value: enrichment fills blanks, and
- * the merge itself COALESCEs, so nothing a user typed is ever overwritten.
+ * arrive pre-widened. Scalars keep the first non-empty value, and the merge writes them as
+ * "calendar" (`@/lib/contact-fields`): blanks fill, nothing a user typed is overwritten.
  */
 function foldMerge(into: Partial<ContactInput>, pair: { event: NetworkEvent; participant: NetworkParticipant }): Partial<ContactInput> {
   const at = pair.event.timestamp;
@@ -291,12 +293,16 @@ export async function openIngestContext(
         xHandle: true,
         company: true,
         title: true,
+        phone: true,
       },
     }) as Promise<DuplicateSubject[]>,
     createCompanyResolver(userId),
     options.createsContacts ? contactHeadroomForUser(userId) : null,
     openEngines(userId),
   ]);
+  const index = buildDuplicateIndex(existing);
+  // Second emails, phones and older LinkedIn URLs live only in contact_identities.
+  await indexStoredIdentities(userId, index, existing);
 
   return {
     userId,
@@ -306,7 +312,7 @@ export async function openIngestContext(
       source: options.source,
       createsContacts: options.createsContacts,
     },
-    index: buildDuplicateIndex(existing),
+    index,
     companyResolve,
     headroom,
     touchedContactIds: new Set(),
@@ -463,9 +469,9 @@ export async function ingestEvents(
       metContext: ctx.options.metContext,
       howMet: ctx.options.howMet?.(pair.event) ?? null,
     });
-    // A group calendar, room or mailbox on the invite is not someone to keep in touch with.
-    // Checked before the cap so it never counts as a contact the plan blocked.
-    if (!input.fullName || isNonPersonParticipant(input.fullName, input.email)) {
+    // A group calendar, room, mailbox or company on the invite is not someone to keep in
+    // touch with. Checked before the cap so it never counts as a contact the plan blocked.
+    if (!input.fullName || isNonPersonParticipant(input.fullName, input.email) || !isAdmissibleRecord(pair.participant.name, input.email)) {
       stats.unmatched++;
       continue;
     }
@@ -500,6 +506,7 @@ export async function ingestEvents(
       }),
       ctx.companyResolve,
       {
+        by: "calendar",
         skipRevalidate: true,
         skipEmbedding: true,
         skipSummary: true,
@@ -539,7 +546,8 @@ export async function ingestEvents(
     await bulkMergeContactsForUser(
       ctx.userId,
       [...mergeByContactId.entries()].map(([contactId, m]) => ({ contactId, input: m.input })),
-      ctx.companyResolve
+      ctx.companyResolve,
+      { source: "calendar" }
     );
   }
 
@@ -676,4 +684,14 @@ export async function finalizeIngest(
   // Contacts this import saved under a handle ("jsmith42") get a real name, or a "?".
   const { kickNameSweep } = await import("@/lib/contact-name-sweep");
   await kickNameSweep(ctx.userId);
+  // People this sync brought in who are also in the kept LinkedIn export.
+  const { fillFromStoredExport } = await import("@/lib/linkedin-export-facts");
+  await fillFromStoredExport(ctx.userId, [...ctx.touchedContactIds]).catch(
+    reportAndContinue({ where: "job.ingest.export-fill", userId: ctx.userId }, 0)
+  );
+  // Last, so the export and the address book fill a company first: a domain only guesses.
+  const { fillCompanyFromEmail } = await import("@/lib/email-domain-company");
+  await fillCompanyFromEmail(ctx.userId, [...ctx.touchedContactIds]).catch(
+    reportAndContinue({ where: "job.ingest.domain-company", userId: ctx.userId }, 0)
+  );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { upload } from "@vercel/blob/client";
 import { Loader2, Paperclip, Sparkles } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
@@ -188,7 +189,8 @@ export function ComposeDialog({
       }
       setBody(res.body);
       setAiBody(res.body);
-      setSubject((s) => (s.trim() ? s : "Following up"));
+      // A subject the person already typed stays; otherwise the draft's own, specific one.
+      setSubject((s) => (s.trim() ? s : res.subject || s));
     });
   }
 
@@ -323,6 +325,7 @@ export function ComposeDialog({
               </p>
             ) : (
               <Input
+                {...tourAnchor("compose.subject")}
                 aria-label="Subject"
                 placeholder="Subject"
                 value={subject}
@@ -333,6 +336,7 @@ export function ComposeDialog({
               />
             )}
             <Textarea
+              {...tourAnchor("compose.body")}
               aria-label="Message"
               rows={9}
               value={body}

@@ -181,6 +181,27 @@ export function OrbitVoiceSwitch({
               </option>
             </select>
           </label>
+          <label className="text-sm font-medium">
+            Cosmo minutes per day (all accounts)
+            <input
+              type="number"
+              min={0}
+              max={100000}
+              step={1}
+              aria-label="Cosmo minutes per day"
+              className={field}
+              value={draft.dailyMinuteBudget}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  dailyMinuteBudget: Math.max(0, Math.min(100000, Math.round(Number(e.target.value) || 0))),
+                })
+              }
+            />
+            <span className="mt-1 block text-xs font-normal text-muted-foreground">
+              New Cosmo calls stop for the day once everyone together has talked this long.
+            </span>
+          </label>
           {draft.provider === "deepgram" ? (
             <>
               <label className="text-sm font-medium">

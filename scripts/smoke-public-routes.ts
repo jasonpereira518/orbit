@@ -113,6 +113,7 @@ function main() {
     "/api/work-history/sweep",
     "/api/contacts/name-sweep",
     "/api/linkedin/timeline-events/backfill",
+    "/api/cron/tick",
     "/api/ops/sweep",
     "/api/ops/rollup",
     "/api/sync/run",

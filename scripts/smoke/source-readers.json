@@ -151,6 +151,9 @@
   "smoke-draft-prompts.ts": [
     "scripts/fixtures/draft-prompt-goldens.json"
   ],
+  "smoke-draft-times-threads.ts": [
+    "src/lib/outreach-send.ts"
+  ],
   "smoke-drive-picker-token.ts": [
     "src/actions/drive.ts",
     "src/actions/imports.ts",
@@ -430,7 +433,10 @@
   ],
   "smoke-schedules.ts": [
     "docs/RUNBOOK.md",
-    "src/app/api/imports/process-stalled/route.ts"
+    "scripts/qstash-schedules.ts",
+    "src/app/api/imports/process-stalled/route.ts",
+    "src/lib/public-routes.ts",
+    "src/lib/schedules.ts"
   ],
   "smoke-schema-ddl.ts": [
     "src/db/index.ts"

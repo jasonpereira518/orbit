@@ -70,10 +70,17 @@ function useAfterIdle(timeoutMs = 2_000) {
  * `starfield.tsx`). Off by default: the landing, pricing and docs skies are shared
  * with the warp stages' cross-fade and must stay exactly as they are.
  */
-export function LandingStarfield({ interactive = false }: { interactive?: boolean }) {
+export function LandingStarfield({
+  interactive = false,
+  intro = false,
+}: {
+  interactive?: boolean;
+  /** The landing page's first-visit warp (`lib/landing-intro.ts`). */
+  intro?: boolean;
+}) {
   const ready = useAfterIdle();
   if (!ready) return null;
-  return <Starfield interactive={interactive} />;
+  return <Starfield interactive={interactive} intro={intro} />;
 }
 
 export function LandingSolarSystem({

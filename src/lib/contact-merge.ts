@@ -37,6 +37,7 @@ import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { forgetDuplicateCount } from "@/lib/duplicate-count-memo";
 import { getDb, runAtomicWrite, type AtomicStatement, type AtomicWriter } from "@/db";
 import { contactMerges, contacts, duplicateSuggestions } from "@/db/schema";
+import { shouldReplaceName } from "@/lib/names/compare";
 import { deleteAvatarBlobs, isAvatarBlobUrl } from "@/lib/avatar-blob";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
@@ -151,6 +152,9 @@ export type MergeResult = { mergeId: string; winnerId: string; loserId: string }
  * `last_interaction_at` WIDEN with LEAST/GREATEST instead, because merging two records of
  * the same person can only ever grow the known interaction window.
  */
+/** `repointed` key holding the winner's name a merge replaced: [full, first, last, name_guess JSON]. */
+const WINNER_NAME_KEY = "contacts.winner_name";
+
 export async function mergeContacts(
   userId: string,
   winnerId: string,
@@ -162,12 +166,34 @@ export async function mergeContacts(
 
   const db = await getDb();
   const rows = await db
-    .select({ id: contacts.id, profileImageUrl: contacts.profileImageUrl })
+    .select({
+      id: contacts.id,
+      profileImageUrl: contacts.profileImageUrl,
+      fullName: contacts.fullName,
+      firstName: contacts.firstName,
+      lastName: contacts.lastName,
+      email: contacts.email,
+      nameGuess: contacts.nameGuess,
+    })
     .from(contacts)
     .where(and(eq(contacts.userId, userId), sql`${contacts.id} IN (${winnerId}::uuid, ${loserId}::uuid)`));
-  const present = new Set(rows.map((r) => r.id));
-  if (!present.has(winnerId)) throw new Error(`mergeContacts: winner ${winnerId} not found`);
-  if (!present.has(loserId)) throw new Error(`mergeContacts: loser ${loserId} not found`);
+  const winnerRow = rows.find((r) => r.id === winnerId);
+  const loserRow = rows.find((r) => r.id === loserId);
+  if (!winnerRow) throw new Error(`mergeContacts: winner ${winnerId} not found`);
+  if (!loserRow) throw new Error(`mergeContacts: loser ${loserId} not found`);
+
+  // The survivor is the OLDER row, which is often the worse-named one ("jsmith42" from a
+  // calendar invite, then "John Smith" from the address book). It takes the loser's name when
+  // that is the better name for the same person (`shouldReplaceName`), or when the person
+  // typed or confirmed the loser's name and not the winner's. The winner's old name is kept
+  // on the merge record so undo can put it back.
+  const winnerConfirmed = winnerRow.nameGuess?.source === "user";
+  const takeLoserName =
+    shouldReplaceName(winnerRow.fullName, loserRow.fullName, { confirmed: winnerConfirmed, email: winnerRow.email }) ||
+    (loserRow.nameGuess?.source === "user" && !winnerConfirmed && winnerRow.fullName !== loserRow.fullName);
+  const winnerName = takeLoserName
+    ? [winnerRow.fullName, winnerRow.firstName ?? "", winnerRow.lastName ?? "", JSON.stringify(winnerRow.nameGuess ?? null)]
+    : null;
 
   // Generated in JS so every pre-built statement in the batch can reference the archive row
   // it is writing into — nothing can read an id back mid-batch.
@@ -202,7 +228,7 @@ export async function mergeContacts(
           repointed, deleted, status, reason, confidence
         )
         SELECT ${mergeId}::uuid, c.user_id, ${winnerId}::uuid, c.id, to_jsonb(c),
-               ${JSON.stringify({ contact_merges: compressedIds })}::jsonb,
+               ${JSON.stringify({ contact_merges: compressedIds, ...(winnerName ? { [WINNER_NAME_KEY]: winnerName } : {}) })}::jsonb,
                '{}'::jsonb, 'in_progress', ${reason}::text, ${confidence}::real
           FROM contacts c
          WHERE c.id = ${loserId}::uuid AND c.user_id = ${userId}
@@ -224,8 +250,12 @@ export async function mergeContacts(
                website              = COALESCE(w.website, l.website),
                location             = COALESCE(w.location, l.location),
                school               = COALESCE(w.school, l.school),
-               first_name           = COALESCE(w.first_name, l.first_name),
-               last_name            = COALESCE(w.last_name, l.last_name),
+               ${takeLoserName
+                 ? sql`full_name = l.full_name, name_guess = l.name_guess,
+               first_name           = COALESCE(l.first_name, w.first_name),
+               last_name            = COALESCE(l.last_name, w.last_name),`
+                 : sql`first_name           = COALESCE(w.first_name, l.first_name),
+               last_name            = COALESCE(w.last_name, l.last_name),`}
                preferred_name       = COALESCE(w.preferred_name, l.preferred_name),
                profile_image_url    = COALESCE(w.profile_image_url, l.profile_image_url),
                -- The source travels with whichever photo survives.
@@ -896,6 +926,22 @@ export async function unmergeContacts(userId: string, mergeId: string): Promise<
         ON CONFLICT (id) DO NOTHING
       `)
     );
+
+    // 1b. The winner's own name, when the merge gave it the loser's — and only if nobody has
+    //     renamed it since (it still carries exactly the name the loser had).
+    const winnerName = repointed[WINNER_NAME_KEY];
+    if (winnerName?.length === 4 && typeof snapshot.full_name === "string") {
+      const [fullName, firstName, lastName, guess] = winnerName;
+      statements.push(
+        tx.execute(sql`
+          UPDATE contacts
+             SET full_name = ${fullName}, first_name = NULLIF(${firstName}, ''),
+                 last_name = NULLIF(${lastName}, ''), name_guess = NULLIF(${guess}::jsonb, 'null'::jsonb),
+                 embedding_stale_at = now(), updated_at = now()
+           WHERE id = ${winnerId}::uuid AND user_id = ${userId} AND full_name = ${snapshot.full_name}
+        `)
+      );
+    }
 
     // 2. Move the recorded rows back, each guarded on still belonging to the winner.
     for (const { table, column } of REPOINTED_TABLES) {

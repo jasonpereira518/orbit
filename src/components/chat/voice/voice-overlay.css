@@ -2,6 +2,10 @@
 .voice-orbit {
   --voice-input: 0;
   --voice-output: 0;
+}
+/* `.voice-orbit-slot` is the empty place Cosmo's one orb flies into (cosmo-orb.tsx). */
+.voice-orbit,
+.voice-orbit-slot {
   display: block;
   aspect-ratio: 1;
   width: auto;
@@ -9,6 +13,9 @@
   max-height: 100%;
 }
 /* Inline on a phone the composer and nav share the height: keep the controls on screen. */
-@media (max-width: 639.98px) { .voice-orbit { height: min(24dvh, 200px); } }
-.voice-stage[data-transcript] .voice-orbit { height: min(22dvh, 200px); }
+@media (max-width: 639.98px) { .voice-orbit, .voice-orbit-slot { height: min(24dvh, 200px); } }
+.voice-stage[data-transcript] .voice-orbit,
+.voice-stage[data-transcript] .voice-orbit-slot { height: min(22dvh, 200px); }
+/* The flying orb fills whatever box it was given. */
+.cosmo-orb .voice-orbit { height: 100%; max-height: none; }
 .voice-stage[data-compact] .voice-orbit { height: 52px; }

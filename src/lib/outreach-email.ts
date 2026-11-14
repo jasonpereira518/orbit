@@ -12,13 +12,17 @@ export function outreachEmailPayload(input: {
   subject: string | null | undefined;
   text: string;
   replyTo: string | null | undefined;
+  /** A sequence follow-up: the earlier email's Message-ID, so mail clients thread it. */
+  inReplyTo?: string | null;
 }) {
   const replyTo = input.replyTo?.trim();
+  const parent = input.inReplyTo?.trim();
   return {
     from: input.from,
     to: input.to,
     subject: input.subject?.trim() || "Hello",
     text: input.text,
     ...(replyTo ? { replyTo } : {}),
+    ...(parent ? { headers: { "In-Reply-To": parent, References: parent } } : {}),
   };
 }

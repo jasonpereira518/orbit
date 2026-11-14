@@ -29,6 +29,9 @@ import { whoToTalkTo } from "@/lib/events/who-to-talk-to";
 import { loadKnowledgeDossier } from "@/lib/knowledge-dossier";
 import { campaignMetricAggregates, metricsFromAggregates } from "@/lib/outreach-metrics-sql";
 import { listPendingRecommendations } from "@/lib/radar/store";
+import { loadRadarBriefing } from "@/lib/radar/page-data";
+import { loadNotificationPanel } from "@/lib/notification-panel";
+import { listConnectorConnections } from "@/lib/connectors/connections";
 import { listOpenOpportunities } from "@/lib/radar/opportunity-actions";
 import { LANE_OF_KIND, LANE_TITLES, leadReason } from "@/lib/radar/types";
 import { toolError } from "@/lib/tools/registry";
@@ -405,6 +408,92 @@ export const FEATURE_TOOLS: OrbitTool[] = [
   },
 
   /* ----------------------------------------------------------- outreach, recruiters ----- */
+  {
+    name: "what_needs_attention",
+    title: "What needs attention",
+    description:
+      "What's waiting for the user right now: reminders and follow-ups due, notes to review, " +
+      "replies to their feedback, and account problems (a disconnected mailbox, a missing AI key). " +
+      "The same list as the notification bell.",
+    inputSchema: { limit: z.number().int().min(1).max(15).default(8) },
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "items",
+    fields: { mcp: ["items", "dueCount", "problems"] },
+    async run(userId, args: { limit: number }) {
+      const panel = await loadNotificationPanel(userId, new Date(), { withAlerts: true });
+      return {
+        items: panel.items.slice(0, args.limit).map((item) => ({
+          kind: item.kind,
+          title: item.title,
+          detail: item.body,
+          due: item.dueAt,
+          urgency: item.urgency,
+          contactId: item.contactId ?? null,
+        })),
+        dueCount: panel.dueCount,
+        // Account health: things only the user can fix, in their own words.
+        problems: panel.alerts.map((alert) => ({ kind: alert.kind, title: alert.title })),
+      };
+    },
+  },
+
+  {
+    name: "radar_briefing",
+    title: "Radar briefing",
+    description:
+      "Radar's briefing in one call: how many people it suggests today and this week, the top few " +
+      "with why, and how many drafts are ready.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "briefing",
+    fields: { mcp: ["hasRun", "paused", "today", "total", "drafts", "top"] },
+    releasedSurface: "page.radar",
+    async run(userId) {
+      const briefing = await loadRadarBriefing(userId);
+      return {
+        hasRun: briefing.hasRun,
+        paused: briefing.paused,
+        today: briefing.today,
+        total: briefing.total,
+        drafts: briefing.drafts,
+        top: briefing.top.slice(0, 3).map((c) => ({
+          id: c.id,
+          contactId: c.contactId,
+          name: c.contactName,
+          company: c.company,
+          why: c.aiAngle ?? leadReason(c.reasons)?.label ?? null,
+        })),
+      };
+    },
+  },
+
+  {
+    name: "integration_status",
+    title: "Integration status",
+    description:
+      "Which apps the user has connected to Orbit (Notion, Granola and others), whether each is " +
+      "working or needs reconnecting, and when it last synced.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "integrations",
+    fields: { mcp: ["app", "status", "lastSyncedAt", "problem"] },
+    async run(userId) {
+      const connections = await listConnectorConnections(userId);
+      return connections.map((c) => ({
+        app: c.connectorId,
+        status: c.status,
+        lastSyncedAt: c.lastSyncedAt?.toISOString() ?? null,
+        problem: c.syncError ? c.syncError.slice(0, 160) : null,
+      }));
+    },
+  },
+
   {
     name: "list_campaigns",
     title: "Outreach campaigns",

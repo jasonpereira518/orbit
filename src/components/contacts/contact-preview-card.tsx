@@ -163,7 +163,7 @@ export function ContactAvatarPreview({
                 <p className="truncate text-sm font-medium leading-snug text-ink">
                   {displayName}
                 </p>
-                {contact.nameGuess ? (
+                {contact.nameGuess && contact.nameGuess.source !== "user" ? (
                   <p className="truncate text-2xs leading-snug text-muted-foreground">
                     {contact.nameGuess.source === "none" ? (
                       "Real name not known yet"

@@ -1,7 +1,7 @@
 /**
  * The continuous-sync scheduler's entry point.
  *
- * Driven by GitHub Actions (.github/workflows/ops.yml), the only scheduler. Self-continuation posts back to this same route rather than
+ * Driven by QStash (scripts/qstash-schedules.ts), the only scheduler. Self-continuation posts back to this same route rather than
  * a second path, which keeps `PUBLIC_ROUTES` small.
  *
  * `POST` because it mutates. Route Handlers are uncached by default and `POST` can never be

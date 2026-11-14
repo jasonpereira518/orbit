@@ -182,6 +182,8 @@ export const HeroPin = forwardRef<
 
             <motion.div
               ref={camWrapRef}
+              // The first-visit sky warp streams out of this box's centre (starfield.tsx).
+              data-sky-warp-origin
               // Below md the stage is sized against the viewport, not the
               // column. The outermost orbit ring paints ~0.57 x the stage
               // from centre (Neptune at 234 of 440 view units, widened by the

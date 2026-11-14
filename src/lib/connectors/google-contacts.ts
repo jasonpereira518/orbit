@@ -52,7 +52,8 @@ const PEOPLE_API = "https://people.googleapis.com/v1/people/me/connections";
  * feeds `ingestPeople`, which has nowhere to put a photo URL, and asking for a field nothing
  * reads is a larger response on every page of every sync.
  */
-const PERSON_FIELDS = "names,emailAddresses,organizations,phoneNumbers,metadata";
+// addresses + urls: same contacts.readonly scope. Only city/region and a LinkedIn profile link are kept.
+const PERSON_FIELDS = "names,emailAddresses,organizations,phoneNumbers,addresses,urls,metadata";
 
 /** The API's maximum for this endpoint, so a quiet address book finishes in one request. */
 const PAGE_SIZE = 1000;
@@ -69,6 +70,8 @@ type PeopleApiName = { displayName?: string; givenName?: string; familyName?: st
 type PeopleApiEmail = { value?: string; metadata?: { primary?: boolean } };
 type PeopleApiOrg = { name?: string; title?: string };
 type PeopleApiPhone = { value?: string; metadata?: { primary?: boolean } };
+type PeopleApiAddress = { city?: string; region?: string; country?: string; metadata?: { primary?: boolean } };
+type PeopleApiUrl = { value?: string };
 
 type PeopleApiPerson = {
   resourceName?: string;
@@ -76,6 +79,8 @@ type PeopleApiPerson = {
   emailAddresses?: PeopleApiEmail[];
   organizations?: PeopleApiOrg[];
   phoneNumbers?: PeopleApiPhone[];
+  addresses?: PeopleApiAddress[];
+  urls?: PeopleApiUrl[];
   metadata?: { deleted?: boolean };
 };
 
@@ -138,12 +143,21 @@ export function toPersonRecord(person: PeopleApiPerson): PersonRecord | null {
   if (!fullName) return null;
 
   const org = person.organizations?.[0];
+  const email = preferred(person.emailAddresses)?.value?.trim() || null;
+  const phone = preferred(person.phoneNumbers)?.value?.trim() || null;
+  const place = preferred(person.addresses);
   return {
     fullName,
-    email: preferred(person.emailAddresses)?.value?.trim() || null,
-    phone: preferred(person.phoneNumbers)?.value?.trim() || null,
+    email,
+    phone,
     company: org?.name?.trim() || null,
     title: org?.title?.trim() || null,
+    // A city, never a street: where they are is what the network map and Radar use.
+    location: [place?.city, place?.region].map((v) => v?.trim()).filter(Boolean).join(", ") || null,
+    linkedinUrl: person.urls?.map((u) => u.value?.trim()).find((u) => u && /linkedin\.com\/in\//i.test(u)) || null,
+    // Every other address and number is still theirs: kept as identifiers for matching.
+    otherEmails: (person.emailAddresses ?? []).map((e) => e.value?.trim()).filter((v): v is string => Boolean(v) && v !== email),
+    otherPhones: (person.phoneNumbers ?? []).map((e) => e.value?.trim()).filter((v): v is string => Boolean(v) && v !== phone),
   };
 }
 
