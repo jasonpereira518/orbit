@@ -16,6 +16,8 @@ export type SpeechAllowanceView = {
 export type SpeechAllowances = {
   meeting: SpeechAllowanceView;
   shortform: SpeechAllowanceView;
+  /** Talking with Cosmo; present only while Cosmo is released for this account. */
+  assistant?: SpeechAllowanceView;
 };
 
 export function formatMinutes(seconds: number): string {

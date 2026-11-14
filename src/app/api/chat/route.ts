@@ -10,6 +10,7 @@ import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
 import { normalizeDraftBlocks } from "@/lib/chat-draft-block";
+import { createDraftStreamScrubber } from "@/lib/message-format";
 import { rollBackApplied } from "@/lib/chat-auto-apply";
 import { answerDeadlineMs, answerWithLookups, type ChatMode } from "@/lib/chat-agent-loop";
 import { sanitizeAttachments } from "@/lib/chat-attachments";
@@ -323,9 +324,11 @@ export async function POST(request: Request) {
         // stored afterwards — see `createStreamRedactor`. (A scrub is recorded once the
         // stored copy is guarded, by `guardChatAnswer`; nothing is recorded here twice.)
         const redactor = createStreamRedactor();
+        // Then the house bans on draft blocks (dashes, "!"), so the editor starts from clean text.
+        const draftScrub = createDraftStreamScrubber();
         const deadlineSignal = AbortSignal.timeout(answerDeadlineMs(requestStartedAt, Date.now(), mode));
         const onDelta = (delta: string) => {
-          const safe = redactor.push(delta);
+          const safe = draftScrub.push(redactor.push(delta));
           if (safe) send({ type: "answer", delta: safe });
         };
         const result = await traced(
@@ -362,7 +365,7 @@ export async function POST(request: Request) {
             }),
           { userId }
         );
-        const tail = redactor.flush();
+        const tail = draftScrub.push(redactor.flush()) + draftScrub.flush();
         if (tail) send({ type: "answer", delta: tail });
         steps.done("answer", { label: "Wrote the answer" });
 

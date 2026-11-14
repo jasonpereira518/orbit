@@ -125,6 +125,7 @@ import type {
 import type { CaptureParseHints } from "@/lib/ai";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type { NameGuess } from "@/lib/contact-name-guess";
+import type { FieldSources } from "@/lib/contact-fields";
 
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -155,6 +156,15 @@ export const userSettings = pgTable("user_settings", {
    * redacts those by name).
    */
   writingInstructions: text("writing_instructions"),
+  /**
+   * How the user writes, distilled from their recent sent mail (`@/lib/writing-style-profile`):
+   * sentence length, greetings, sign-offs, words they use. Style only, never names or content;
+   * the raw mail is never stored. NULL = never built (built lazily); "" = the user cleared it,
+   * which also means "don't learn". Content like `writingInstructions`: a preferences purge
+   * clears it, and it takes no `_hash`/`_token`/`_secret` suffix.
+   */
+  writingStyleProfile: text("writing_style_profile"),
+  writingStyleProfileUpdatedAt: timestamp("writing_style_profile_updated_at", { withTimezone: true }),
   /** Appended to email sent from Orbit (direct email). Plain text, and a sanitized HTML twin. */
   emailSignatureText: text("email_signature_text"),
   emailSignatureHtml: text("email_signature_html"),
@@ -761,6 +771,11 @@ export const contacts = pgTable(
      * See `@/lib/contact-name-guess`.
      */
     nameGuess: jsonb("name_guess").$type<NameGuess>(),
+    /**
+     * Where each sourced field's value came from and when that fact was true (schema 240).
+     * Null or a missing key = written before sources existed. See `@/lib/contact-fields`.
+     */
+    fieldSources: jsonb("field_sources").$type<FieldSources>(),
     company: text("company"),
     companyId: uuid("company_id").references(() => companies.id, {
       onDelete: "set null",
@@ -1115,6 +1130,43 @@ export const duplicateSuggestions = pgTable(
     index("duplicate_suggestions_pending_idx")
       .on(t.userId, t.confidence.desc())
       .where(sql`status = 'pending'`),
+  ]
+);
+
+/**
+ * What Orbit changed on a contact, and what it would change if asked (schema 240): the
+ * "Changed by Orbit" list with undo, and field suggestions waiting for a yes. `kind` is
+ * "field" here; the names plan adds "rename" / "remove". Blank fills from imports and address
+ * books are not logged (import revert covers them).
+ */
+export const contactChanges = pgTable(
+  "contact_changes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").default("field").notNull(),
+    /** `FieldKey` for kind "field". */
+    field: text("field"),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    /** `FieldSource` that made or offered the change. */
+    source: text("source"),
+    status: text("status")
+      .$type<"applied" | "suggested" | "undone" | "accepted" | "dismissed">()
+      .default("applied")
+      .notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("contact_changes_user_idx").on(t.userId, t.createdAt.desc()),
+    uniqueIndex("contact_changes_open_suggestion_uidx")
+      .on(t.contactId, t.field)
+      .where(sql`status = 'suggested'`),
   ]
 );
 
@@ -2108,7 +2160,7 @@ export type CareerProfile = {
   profile?: { headline?: string; summary?: string; industry?: string; location?: string };
   role?: { title: string; company: string };
   skills?: string[];
-  /** Job titles from saved job alerts, de-duplicated. */
+  /** Job titles from saved job alerts and the export's job-seeker preferences, de-duplicated. */
   roleKeywords?: string[];
   /** What the person said they want, from the onboarding About you step. */
   aim?: {
@@ -2123,7 +2175,18 @@ export type CareerProfile = {
   city?: string;
   /** The hashtags the person uses most in their own LinkedIn posts (Shares.csv), at most 8. Imported, so "Remove imported details" clears it. */
   postTopics?: string[];
+  /** Certifications, honors, projects, volunteering, organizations, publications. Display only. */
+  background?: CareerBackgroundEntry[];
   importedAt?: string;
+};
+
+export type CareerBackgroundEntry = {
+  kind: "certification" | "honor" | "project" | "volunteering" | "organization" | "publication";
+  title: string;
+  org?: string;
+  /** As LinkedIn writes it: "Mar 2024". */
+  start?: string;
+  end?: string;
 };
 
 export type ProfileSkill = { name: string };
@@ -2670,7 +2733,26 @@ export type ChatConversationRowPayload = {
   sessions: { startAt: string; endAt: string; messageCount: number; direction: "in" | "out" | null; transcript: string }[];
 };
 
+/**
+ * One per-person note from a kept LinkedIn export (`import_type = 'linkedin_export'`): a
+ * connection-request message, a note the user wrote in LinkedIn, or a recommendation. Matched
+ * to someone already in Orbit and never creates anyone — see `linkedinSignalsAdapter`.
+ */
+export type LinkedInSignalRowPayload = {
+  kind: "linkedin_signal";
+  signal: "invitation_sent" | "invitation_received" | "note" | "recommendation_received" | "recommendation_given";
+  /** Stable across re-uploads of the same export; the interaction's dedupe key. */
+  externalKey: string;
+  date: string | null;
+  fullName: string;
+  linkedinUrl: string | null;
+  company: string | null;
+  title: string | null;
+  text: string;
+};
+
 export type ImportJobRowPayload =
+  | LinkedInSignalRowPayload
   | LinkedInImportRowPayload
   | GmailSenderRowPayload
   | OutlookSenderRowPayload
@@ -2807,6 +2889,13 @@ export type ImportRevertSnapshot = {
   dateMet: string | null;
   firstInteractionAt: string | null;
   lastInteractionAt: string | null;
+  /** The sourced fields merges may fill since schema 240. Absent on older snapshots = leave alone. */
+  location?: string | null;
+  school?: string | null;
+  xHandle?: string | null;
+  website?: string | null;
+  industry?: string | null;
+  fieldSources?: FieldSources | null;
 };
 
 export const calendarSubscriptions = pgTable(
@@ -3101,6 +3190,13 @@ export const outreachMessages = pgTable(
     errorMessage: text("error_message"),
     /** Resend's email id for an email send (Twilio's SID for SMS). The Resend webhook matches on it. */
     deliveryId: text("delivery_id"),
+    /**
+     * The sent email's RFC Message-ID when Orbit knows it (it sets its own for Gmail sends), and
+     * Gmail's thread id: a sequence's later steps reply to them so they land in the same thread.
+     * A Resend send keeps neither here; the follow-up asks Resend for it by `deliveryId`.
+     */
+    rfcMessageId: text("rfc_message_id"),
+    providerThreadId: text("provider_thread_id"),
     /**
      * Resend engagement for an email sent on Orbit's Resend account, from the webhook
      * (`email.delivered` / `email.opened` / `email.clicked`). First timestamp wins; NULL means
@@ -3940,6 +4036,12 @@ export const orbitVoiceSessions = pgTable("orbit_voice_sessions", {
   connectedAt: timestamp("connected_at", { withTimezone: true }),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   outcome: text("outcome").$type<"starting" | "connected" | "ended" | "failed">().default("starting").notNull(),
+  /** Started as a Cosmo call (feature.cosmo released for this person then): it may apply small changes. */
+  cosmo: boolean("cosmo").default(false).notNull(),
+  /** Why this call may not apply anything more (an injection signal in a lookup). Sticky. */
+  taintedBy: text("tainted_by"),
+  /** Changes this call applied without a click; capped by VOICE_AUTO_APPLY_CAP. */
+  autoApplied: integer("auto_applied").default(0).notNull(),
 }, (t) => [index("orbit_voice_sessions_user_idx").on(t.userId), index("orbit_voice_sessions_thread_idx").on(t.threadId)]);
 
 export const chatMessages = pgTable(

@@ -615,6 +615,15 @@ async function seed() {
     reason: "Same full name",
     confidence: 0.6,
   });
+  await db.insert(schema.contactChanges).values({
+    userId: USER,
+    contactId: contact.id,
+    field: "company",
+    before: "Analytical Engines",
+    after: "Babbage & Co",
+    source: "job_move",
+    status: "suggested",
+  });
   await db.insert(schema.contactMerges).values({
     userId: USER,
     winnerContactId: contact.id,

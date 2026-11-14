@@ -435,9 +435,18 @@
      wide enough to have room beside it (`dockLayoutFor`). */
   --orbit-dock-w: 0px;
 
+  /* Height Cosmo's orb (or its docked call bar) takes at the bottom of the corner, published
+     by `cosmo/cosmo-root.tsx`. 0px when Cosmo is off or hidden. */
+  --orbit-cosmo-height: 0px;
+
+  /* Where the job widget starts: above Cosmo. */
+  --orbit-stack-bottom: calc(
+    var(--orbit-corner-bottom) + var(--orbit-cosmo-height)
+  );
+
   /* Toasts stack ABOVE the job widget, never on it. */
   --orbit-toast-bottom: calc(
-    var(--orbit-corner-bottom) + var(--orbit-job-stack-height)
+    var(--orbit-stack-bottom) + var(--orbit-job-stack-height)
   );
 
   /* Vertical band the fixed mobile nav occupies, for content that must clear it.

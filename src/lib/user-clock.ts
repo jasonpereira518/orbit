@@ -77,3 +77,69 @@ export function startOfUserDay(tz: string, now: Date = new Date()): Date {
 /** What a draft may do with `promptNow`'s clock: fit the greeting, never quote it. */
 export const LOCAL_TIME_RULE =
   "Use the local day and time only to fit the greeting and sign-off (no \"good morning\" at night, \"have a good weekend\" on a Friday); never state the date or time itself.";
+
+const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+/** Days since the epoch for a "YYYY-MM-DD" — calendar arithmetic with no zone in it. */
+const dayNumber = (ymd: string) => {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return Math.round(Date.UTC(y, m - 1, d) / 86_400_000);
+};
+
+/**
+ * A date or time as a person says it, on the user's clock: "today at 3 PM", "tomorrow",
+ * "Friday", "next Monday at 10:30 AM", "yesterday", "last Thursday", "on December 4"
+ * (with the year when it isn't this one). Weeks run Monday to Sunday: a day later this week is
+ * just its name, a day in the following week is "next …". Null for anything not an ISO date.
+ * Voice reads these instead of raw timestamps (Cosmo).
+ */
+export function spokenWhen(value: string, tz: string, now: Date = new Date()): string | null {
+  const dayOnly = ISO_DAY.test(value);
+  if (!dayOnly && !ISO_TIME.test(value)) return null;
+  const at = dayOnly ? null : new Date(value);
+  if (at && Number.isNaN(at.getTime())) return null;
+  const ymd = dayOnly ? value : ymdInZone(at!, tz);
+  const today = ymdInZone(now, tz);
+  const diff = dayNumber(ymd) - dayNumber(today);
+  const weekday = WEEKDAYS[(((dayNumber(ymd) + 4) % 7) + 7) % 7]; // 1970-01-01 was a Thursday
+  // Monday-start weeks: the Monday of today's week, as a day number.
+  const todayDow = (((dayNumber(today) + 4) % 7) + 7) % 7;
+  const weekStart = dayNumber(today) - ((todayDow + 6) % 7);
+  const target = dayNumber(ymd);
+  const [y, m, d] = ymd.split("-").map(Number);
+  let day: string;
+  if (diff === 0) day = "today";
+  else if (diff === 1) day = "tomorrow";
+  else if (diff === -1) day = "yesterday";
+  else if (diff > 1 && target < weekStart + 7) day = weekday;
+  else if (diff > 1 && target < weekStart + 14) day = `next ${weekday}`;
+  else if (diff < -1 && target >= weekStart) day = `on ${weekday}`;
+  else if (diff < -1 && target >= weekStart - 7) day = `last ${weekday}`;
+  else day = `on ${MONTHS[m - 1]} ${d}${String(y) === today.slice(0, 4) ? "" : `, ${y}`}`;
+  if (!at) return day;
+  const clock = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" })
+    .format(at)
+    .replace(":00", "");
+  return `${day} at ${clock}`;
+}
+
+/**
+ * A tool result with a spoken twin beside every ISO date in it (`startIso` gains
+ * `startIso_spoken: "next Monday at 10 AM"`), so a voice model never reads out a timestamp.
+ * Bounded: objects six deep; arrays and plain values pass through otherwise unchanged.
+ */
+export function withSpokenDates(value: unknown, tz: string, now: Date = new Date(), depth = 0): unknown {
+  if (depth > 6 || !value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((v) => withSpokenDates(v, tz, now, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = withSpokenDates(v, tz, now, depth + 1);
+    if (typeof v === "string") {
+      const spoken = spokenWhen(v, tz, now);
+      if (spoken) out[`${k}_spoken`] = spoken;
+    }
+  }
+  return out;
+}

@@ -97,6 +97,9 @@ export const AI_OPERATIONS = {
   // thinking level: this file only sets one where the eval showed it loses nothing, and this
   // operation has not been through the eval yet.
   "chat.gather": { label: "Chat: looking things up", tier: "user" },
+  // scripts/eval-voice.ts --score only: Cosmo's prompt and orbit_tool, replayed on the account's
+  // own model to compare Deepgram's think models. Never called by the product.
+  "voice.eval": { label: "Cosmo test set (eval only)", tier: "user" },
   "chat.refine": { label: "Chat: rewriting a draft", tier: "fast", thinking: "minimal" },
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
@@ -146,6 +149,10 @@ export const AI_OPERATIONS = {
   // "Talking points" on a meeting's prep card: the user asked, so a foreground operation.
   "meeting.talking_points": { label: "Meeting: talking points", tier: "fast", thinking: "minimal" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },
+  // One call that reads ~20 recent sent emails and writes a short description of how the user
+  // writes (`@/lib/writing-style-profile`). Runs after a draft the user asked for, or on
+  // Refresh: foreground, on their own model, because the profile shapes every draft after it.
+  "style.profile": { label: "Writing style from sent mail", tier: "user" },
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },

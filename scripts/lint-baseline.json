@@ -1,7 +1,7 @@
 {
   "@next/next/no-img-element": 5,
   "@typescript-eslint/no-restricted-imports": 12,
-  "no-restricted-syntax": 194,
+  "no-restricted-syntax": 195,
   "react-hooks/exhaustive-deps": 2,
   "react-hooks/refs": 11,
   "react-hooks/set-state-in-effect": 34

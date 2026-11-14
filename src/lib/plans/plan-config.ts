@@ -119,8 +119,8 @@ export type PlanConfig = {
   contactLimit: number | null;
   /** Managed-AI credits granted each cycle, or null when AI runs only on the user's key. */
   monthlyCredits: number | null;
-  /** Deepgram audio seconds per month. */
-  speech: { meetingSeconds: number; shortformSeconds: number };
+  /** Deepgram audio seconds per month. `assistantSeconds`: time talking with Cosmo (a call's length). */
+  speech: { meetingSeconds: number; shortformSeconds: number; assistantSeconds: number };
   /** Contact enrichments per month on Orbit's own Apollo key. 0 on every plan: not offered. */
   hostedEnrichmentsPerMonth: number;
   /** Connected Google + Microsoft accounts. null = no limit. */
@@ -158,7 +158,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 0,
     contactLimit: FREE_CONTACT_LIMIT,
     monthlyCredits: 50,
-    speech: { meetingSeconds: 0, shortformSeconds: 1.5 * HOUR },
+    speech: { meetingSeconds: 0, shortformSeconds: 1.5 * HOUR, assistantSeconds: 10 * 60 },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: 1,
     mcpRateTier: "mcpFree",
@@ -189,7 +189,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 8999,
     contactLimit: null,
     monthlyCredits: 300,
-    speech: { meetingSeconds: 8 * HOUR, shortformSeconds: 8 * HOUR },
+    speech: { meetingSeconds: 8 * HOUR, shortformSeconds: 8 * HOUR, assistantSeconds: HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
@@ -202,7 +202,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 19999,
     contactLimit: null,
     monthlyCredits: 650,
-    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR },
+    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR, assistantSeconds: 3 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
@@ -216,7 +216,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: null,
     contactLimit: null,
     monthlyCredits: 150,
-    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR },
+    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR, assistantSeconds: 3 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",

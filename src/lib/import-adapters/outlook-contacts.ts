@@ -18,11 +18,13 @@ export const OUTLOOK_CONTACTS_IMPORT_TYPE = "outlook_contacts";
  * people on no stronger evidence.
  */
 export const outlookContactsAdapter: ImportAdapter<OutlookContactRowPayload> = {
+  fieldSource: "address_book",
   identity(payload) {
     if (!payload.fullName.trim()) return null;
     return {
       fullName: payload.fullName,
       email: payload.email,
+      phone: payload.phone,
       company: payload.company,
       title: payload.title,
     };

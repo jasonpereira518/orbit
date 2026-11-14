@@ -32,7 +32,13 @@ export function TourCursor({
   reduced,
   typing = false,
   onClick,
+  label = "Orbit",
+  tone = "brand",
 }: {
+  /** The name on the cursor's tag. */
+  label?: string;
+  /** `aurora` is Cosmo's: the voice orb's violet, so it reads as Cosmo's hand, not the tour's. */
+  tone?: "brand" | "aurora";
   /** Where the tip should be; null hides the cursor. */
   target: CursorPoint | null;
   mode: TourCursorMode;
@@ -181,15 +187,21 @@ export function TourCursor({
           {/* A rounded arrow with its tip at (1.5, 1.5), which sits on the target point. */}
           <path
             d="M2.6 1.9 20.3 9.6c.9.4.8 1.7-.1 2l-6.9 2.2a1.2 1.2 0 0 0-.8.8l-2.2 6.9c-.3.9-1.6 1-2 .1L1.9 2.6c-.3-.5.2-1 .7-.7Z"
-            className="fill-primary stroke-white"
+            className={tone === "aurora" ? "fill-violet-500 stroke-white" : "fill-primary stroke-white"}
             strokeWidth={1.5}
             strokeLinejoin="round"
             transform="translate(-0.4 -0.4)"
           />
         </svg>
         )}
-        <span className="absolute top-4 left-4 rounded-full bg-primary px-2 py-0.5 text-2xs font-semibold whitespace-nowrap text-primary-foreground shadow-sm md:top-5 md:left-5">
-          Orbit
+        <span
+          className={
+            tone === "aurora"
+              ? "absolute top-4 left-4 rounded-full bg-linear-to-r from-violet-500 to-cyan-500 px-2 py-0.5 text-2xs font-semibold whitespace-nowrap text-white shadow-sm md:top-5 md:left-5"
+              : "absolute top-4 left-4 rounded-full bg-primary px-2 py-0.5 text-2xs font-semibold whitespace-nowrap text-primary-foreground shadow-sm md:top-5 md:left-5"
+          }
+        >
+          {label}
         </span>
       </motion.div>
     </motion.div>

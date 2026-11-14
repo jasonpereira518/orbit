@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   ai_model text DEFAULT 'gemini-3.8-flash',
   ai_model_migrated_from text,
   writing_instructions text,
+  writing_style_profile text,
+  writing_style_profile_updated_at timestamptz,
   email_signature_text text,
   email_signature_html text,
   default_send_provider text,
@@ -179,6 +181,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   last_name text,
   preferred_name text,
   name_guess jsonb,
+  field_sources jsonb,
   company text,
   company_id uuid REFERENCES companies(id) ON DELETE SET NULL,
   title text,
@@ -911,6 +914,8 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
   last_action_at timestamptz,
   error_message text,
   delivery_id text,
+  rfc_message_id text,
+  provider_thread_id text,
   delivered_at timestamptz,
   opened_at timestamptz,
   clicked_at timestamptz,
@@ -2089,6 +2094,22 @@ CREATE TABLE IF NOT EXISTS contact_merges (
   confidence real,
   merged_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS contact_changes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  contact_id uuid NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  kind text NOT NULL DEFAULT 'field',
+  field text,
+  before jsonb,
+  after jsonb,
+  source text,
+  status text NOT NULL DEFAULT 'applied',
+  reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS contact_changes_user_idx ON contact_changes(user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS contact_changes_open_suggestion_uidx ON contact_changes(contact_id, field) WHERE status = 'suggested';
 CREATE TABLE IF NOT EXISTS duplicate_suggestions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3211,7 +3232,20 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 238 = the email photo pool (admin refresh plan, PR 2): email_avatars (global, keyed by sha256 of
 // the lowercased trimmed address; public Gravatar lookups only) and contacts_email_lower_idx.
 // Built as 236; renumbered to 238 on Nov 12 2026 when main reached 237 (reminder priority).
-export const SCHEMA_VERSION = 238;
+// 242 = Cosmo instant changes (Cosmo PR 9): orbit_voice_sessions.cosmo / tainted_by /
+// auto_applied. Scanned every remote ref on Nov 12 2026: main 238, radar-pr12b-drop 239, four
+// contact branches 240, recruiter-board-v2 241, so this takes 242.
+// 243 = field sources (contact-info accuracy plan, PR 1): contacts.field_sources (where each
+// sourced field's value came from, `@/lib/contact-fields`) and contact_changes ("Changed by
+// Orbit" + field suggestions; the names plan's PR3 adds its kinds to the same table). Scanned
+// every remote ref and local worktree on Nov 12 2026: claude/radar-pr12b-drop holds 239. Built as
+// 240; renumbered to 243 on Nov 13 2026 when main reached 242 (Cosmo).
+// 244 = writing style profile (message-format plan, PR 2): user_settings.writing_style_profile /
+// writing_style_profile_updated_at, learned from sent mail (`@/lib/writing-style-profile`).
+// Scanned every remote ref on Nov 13 2026: main and eight branches hold 243, so this takes 244.
+// 245 = sequence threading (message-format plan, PR 3): outreach_messages.rfc_message_id /
+// provider_thread_id, so a follow-up replies in step 1's thread. Stacked on 244 (PR 2).
+export const SCHEMA_VERSION = 245;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3440,6 +3474,9 @@ export const SCALE_DDL: string[] = [
   `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS connected_at timestamptz`,
   `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS last_seen_at timestamptz`,
   `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS outcome text NOT NULL DEFAULT 'starting'`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS cosmo boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS tainted_by text`,
+  `ALTER TABLE orbit_voice_sessions ADD COLUMN IF NOT EXISTS auto_applied integer NOT NULL DEFAULT 0`,
   `CREATE INDEX IF NOT EXISTS orbit_voice_sessions_user_idx ON orbit_voice_sessions(user_id)`,
   `CREATE INDEX IF NOT EXISTS orbit_voice_sessions_thread_idx ON orbit_voice_sessions(thread_id)`,
   // --- v62: meeting-notes workflow ---------------------------------------------------
@@ -4681,6 +4718,7 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "contacts", "bluesky_handle", "text");
   await ensureColumn(client, "contacts", "mastodon_acct", "text");
   await ensureColumn(client, "contacts", "name_guess", "jsonb");
+  await ensureColumn(client, "contacts", "field_sources", "jsonb");
   await ensureColumn(client, "meeting_sessions", "user_notes", "text");
   // v187: standard tracking — web vitals, last-touch attribution, Resend engagement.
   await ensureColumn(client, "page_views", "lcp_ms", "integer");
@@ -4694,6 +4732,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "outreach_messages", "delivered_at", "timestamptz");
   await ensureColumn(client, "outreach_messages", "opened_at", "timestamptz");
   await ensureColumn(client, "outreach_messages", "clicked_at", "timestamptz");
+  // v245: a sequence's follow-ups reply in the first email's thread.
+  await ensureColumn(client, "outreach_messages", "rfc_message_id", "text");
+  await ensureColumn(client, "outreach_messages", "provider_thread_id", "text");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -4709,6 +4750,9 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "email_signature_text", "text");
   await ensureColumn(client, "user_settings", "email_signature_html", "text");
   await ensureColumn(client, "user_settings", "default_send_provider", "text");
+  // v244: the writing style profile learned from sent mail.
+  await ensureColumn(client, "user_settings", "writing_style_profile", "text");
+  await ensureColumn(client, "user_settings", "writing_style_profile_updated_at", "timestamptz");
   // v182: which model made a stored vector.
   await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
   await ensureColumn(client, "memory_chunks", "embedding_model", "text");
@@ -5600,6 +5644,8 @@ const alters = [
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
   // Schema v185: a name read from a handle, and whether it is a weak guess (`@/lib/contact-name-guess`).
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS name_guess jsonb`,
+  // Schema v240: where each sourced contact field came from (`@/lib/contact-fields`).
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS field_sources jsonb`,
   // Schema v186: what the person typed during a recorded meeting, kept with it (/meetings).
   `ALTER TABLE meeting_sessions ADD COLUMN IF NOT EXISTS user_notes text`,
   // Schema v187: web vitals on the first view, last-touch attribution, Resend engagement.
@@ -5614,6 +5660,9 @@ const alters = [
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS delivered_at timestamptz`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS opened_at timestamptz`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS clicked_at timestamptz`,
+  // Schema v245: a sequence's follow-ups reply in the first email's thread.
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS rfc_message_id text`,
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS provider_thread_id text`,
   `CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS metrics_daily (day date NOT NULL, metric text NOT NULL, dim text NOT NULL DEFAULT '', value bigint NOT NULL, computed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (day, metric, dim))`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,
@@ -5647,6 +5696,9 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_text text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS email_signature_html text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS default_send_provider text`,
+  // Schema v244: the writing style profile learned from sent mail.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_style_profile text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_style_profile_updated_at timestamptz`,
   // Schema v147: the relationship engine. Tables are in the template; these are the columns
   // it adds to tables that older databases already have.
   `ALTER TABLE action_items ADD COLUMN IF NOT EXISTS owed_by text`,

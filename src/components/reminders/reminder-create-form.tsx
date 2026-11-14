@@ -10,6 +10,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 
 /**
  * "New reminder" in a popover. Controlled when `open` is passed, so the reminders queue's
@@ -47,6 +48,7 @@ export function ReminderCreateForm({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
+        {...tourAnchor("reminders.new")}
         type="button"
         aria-label="New reminder"
         title="New reminder (c)"

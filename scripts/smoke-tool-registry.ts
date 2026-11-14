@@ -90,6 +90,10 @@ const EXPECTED_MCP_TOOLS = [
   "list_opportunities",
   "list_radar_cards",
   "list_radar_finds",
+  // Cosmo PR 8: what needs attention, Radar's briefing and integration health, read-only.
+  "what_needs_attention",
+  "radar_briefing",
+  "integration_status",
   "list_campaigns",
   "list_my_recruiters",
   "get_dossier",

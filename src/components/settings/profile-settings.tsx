@@ -79,6 +79,17 @@ function careerRows(c: CareerProfile): CareerRow[] {
         }
       : null,
     c.roleKeywords?.length ? { icon: Target, label: "Job titles", chips: c.roleKeywords } : null,
+    // Certifications, honors, projects… from the kept export (#544).
+    c.background?.length
+      ? {
+          icon: Sparkles,
+          label: "Background",
+          chips: [
+            ...c.background.slice(0, SKILL_CHIPS).map((b) => b.title),
+            ...(c.background.length > SKILL_CHIPS ? [`+${c.background.length - SKILL_CHIPS} more`] : []),
+          ],
+        }
+      : null,
   ];
   return rows.filter((r): r is CareerRow => r !== null);
 }

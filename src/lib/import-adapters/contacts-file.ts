@@ -22,10 +22,8 @@ export const CONTACTS_FILE_IMPORT_TYPE = "contacts_file";
  * and it is what lets an address-book entry fold into the contact a LinkedIn import already
  * created for the same person.
  *
- * Phone is written but not probed — `findDuplicateCandidatesIndexed` has no phone tier, so an
- * existing contact that shares only a phone number with a card is not recognised here, exactly
- * as it isn't for the Google and Outlook imports. (Within one file, `parseContactsFile` does
- * collapse same-name-same-phone cards before any of this runs.)
+ * Phone is probed too (the "Same phone" tier, an identifier like email), so a card that shares
+ * only a phone number with an existing contact folds into them, as for Google and Outlook.
  */
 export const contactsFileAdapter: ImportAdapter<ContactsFileRowPayload> = {
   identity(payload) {
@@ -34,6 +32,7 @@ export const contactsFileAdapter: ImportAdapter<ContactsFileRowPayload> = {
       fullName: payload.fullName,
       email: payload.email,
       linkedinUrl: payload.linkedinUrl,
+      phone: payload.phone,
       company: payload.company,
       title: payload.title,
     };
