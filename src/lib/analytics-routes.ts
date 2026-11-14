@@ -52,9 +52,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   // Account states
   "/suspended",
   "/onboarding",
-  "/onboarding/wizard",
   "/settings",
-  "/settings/plan-activation-preview",
   // Product
   "/dashboard",
   "/capture",

@@ -101,7 +101,7 @@ const KNOWLEDGE: AppNavItem = {
   icon: BookOpen,
 };
 
-/** Primary sidebar destinations (above the "Coming soon" divider) */
+/** Primary sidebar destinations, in the code's default order (the operator's order and the "Coming soon" divider are applied in `AppSidebar`). */
 export const APP_NAV_CORE: AppNavItem[] = [
   DASHBOARD,
   RADAR,
@@ -116,12 +116,10 @@ export const APP_NAV_CORE: AppNavItem[] = [
 ];
 
 /**
- * Default-secondary destinations (Settings is rendered separately).
- *
- * The sidebar no longer treats this as "the group under the Coming soon divider": it merges
- * core and extras, applies the operator's order, and puts whatever is currently marked
- * coming soon below the divider (see `AppSidebar`). Kept as a separate list as the code's
- * default order.
+ * Destinations after the core list (Settings is rendered separately). It has no group of its
+ * own in the sidebar: `AppSidebar` merges core and extras, applies the operator's order, groups
+ * `APP_NAV_SPECIAL_HREFS` under "Special features", and puts whatever is currently marked
+ * coming soon below the divider.
  */
 export const APP_NAV_EXTRAS: AppNavItem[] = [OUTREACH];
 

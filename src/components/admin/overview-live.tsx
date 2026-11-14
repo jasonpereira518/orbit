@@ -128,24 +128,22 @@ function KpiLink({ href, children }: { href: string; children: React.ReactNode }
 }
 
 /**
- * One row of four linked numbers. Each tile is the door to the section that owns it, not a
+ * One row of linked numbers. Each tile is the door to the section that owns it, not a
  * summary of it — the detail lives there.
  */
 export function LiveKpiTiles({
   mrr,
   waiting,
-  aiByok,
   aiManaged,
 }: {
   mrr: string;
   waiting: number | null;
-  /** Formatted 30-day AI spend on users' own keys and on Orbit's; "—" when the read failed. */
-  aiByok: string;
+  /** Formatted 30-day AI spend on Orbit's keys; "—" when the read failed. */
   aiManaged: string;
 }) {
   const { activeLast7d, signupsLast7d } = useOverviewLive();
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       <KpiLink href="/admin/billing">
         <MetricTile label="MRR" value={mrr} hint="recurring, comps excluded" />
       </KpiLink>
@@ -161,14 +159,6 @@ export function LiveKpiTiles({
           value={waiting ?? "—"}
           tone={waiting == null ? "muted" : "default"}
           hint="on the waitlist"
-        />
-      </KpiLink>
-      <KpiLink href="/admin/billing/costs">
-        <MetricTile
-          label="AI spend on users' keys (BYOK)"
-          value={aiByok}
-          tone="muted"
-          hint="30 days · their bill, not Orbit's"
         />
       </KpiLink>
       <KpiLink href="/admin/billing/costs">

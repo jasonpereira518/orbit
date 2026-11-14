@@ -84,7 +84,7 @@ export const RADAR_STALE_MS = 24 * HOUR_MS;
  */
 export const RADAR_AI_BUDGET_MS = 25_000;
 /**
- * The editor's off switch. If `/admin/analytics/radar` shows cards it moved up are not
+ * The editor's off switch. If `/admin/growth/radar` shows cards it moved up are not
  * accepted more often than cards it moved down, it is noise: turn it off here, and the plan
  * keeps the scorer's order and reasons (a card's why can still be asked for on demand).
  */

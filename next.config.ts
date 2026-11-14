@@ -103,6 +103,8 @@ const nextConfig: NextConfig = {
       // is a real 307, so the browser keeps an old link's `#import-panel-*` hash (a page's
       // redirect lands after streaming starts and loses it). The query passes through.
       { source: "/imports", destination: "/capture?mode=imports", permanent: false },
+      // The setup wizard folded into /onboarding; old bookmarks still land there.
+      { source: "/onboarding/wizard", destination: "/onboarding", permanent: false },
     ];
   },
   async rewrites() {
