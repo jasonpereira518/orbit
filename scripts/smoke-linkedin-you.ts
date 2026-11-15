@@ -156,6 +156,31 @@ check(
   patch?.schools?.join("|")
 );
 
+console.log("\nthe history review (deep read)");
+const ENDED = "Company Name,Title,Description,Location,Started On,Finished On\nOld Co,Dev,,,Jan 2023,Aug 2024\n";
+const keysOf = (fs: { key: string }[]) => fs.map((f) => f.key).join();
+check("flag off: positions review is unchanged", keysOf(previewYou("linkedin_positions", HISTORY, none)) === "role");
+check("flag off: education review is unchanged", keysOf(previewYou("linkedin_education", EDU_HISTORY, none)) === "schools");
+const histFields = previewYou("linkedin_positions", HISTORY, none, { history: true });
+check("flag on: positions offers the history too", keysOf(histFields) === "role,positions", keysOf(histFields));
+check("flag on: the history item is ticked and counted", histFields[1]?.label === "Work history (3 roles)" && histFields[1]?.defaultOn === true, histFields[1]?.label);
+check("flag on: the history shows the first roles", histFields[1]?.after === "Staff Engineer at Acme, Dev at Old Co, Writer at Long Co", histFields[1]?.after);
+check("flag on: only ended roles still offers the history", keysOf(previewYou("linkedin_positions", ENDED, none, { history: true })) === "positions");
+check("flag off: only ended roles is still refused", throwsExport(() => previewYou("linkedin_positions", ENDED, none)));
+check("flag on: education offers degrees and dates", keysOf(previewYou("linkedin_education", EDU_HISTORY, none, { history: true })) === "schools,education");
+
+const NOW = new Date("2026-11-15T12:00:00Z");
+const both = patchYou("linkedin_positions", HISTORY, ["role", "positions"], none, NOW, { history: true });
+check("ticking both writes both", both?.career.role?.company === "Acme" && both?.career.positions?.length === 3, JSON.stringify(both?.career));
+const onlyHistory = patchYou("linkedin_positions", HISTORY, ["positions"], none, NOW, { history: true });
+check("unticking the role leaves the role key out", onlyHistory !== null && !("role" in onlyHistory.career) && onlyHistory.career.positions?.length === 3, JSON.stringify(onlyHistory?.career));
+const off = patchYou("linkedin_positions", HISTORY, ["role", "positions"], none, NOW);
+check("flag off: a positions key from the browser is ignored", off?.career.positions === undefined && off?.career.role?.company === "Acme");
+const eduOnly = patchYou("linkedin_education", EDU_HISTORY, ["education"], none, NOW, { history: true });
+check("ticking only degrees leaves the schools list alone", eduOnly?.schools === null && eduOnly?.career.education?.length === 2, JSON.stringify(eduOnly));
+const eduBoth = patchYou("linkedin_education", EDU_HISTORY, ["schools", "education"], none, NOW, { history: true });
+check("ticking both on education writes both", eduBoth?.schools?.join() === "State University,Night School" && eduBoth?.career.education?.length === 2);
+
 console.log(failures ? `\n${failures} check(s) failed` : "\nsmoke-linkedin-you: all checks passed");
 if (failures) process.exit(1);
 process.exit(0);
