@@ -147,7 +147,12 @@ export function parseLinkedInPositionHistoryCsv(text: string): CareerPosition[] 
     if (!title || !company) continue;
     const p: CareerPosition = { title, company };
     const start = parseLinkedInYearMonth(csvGet(row, "Started On"));
-    const end = parseLinkedInYearMonth(csvGet(row, "Finished On"));
+    const finished = csvGet(row, "Finished On").trim();
+    // A filled-in end date we cannot read still means the role ended (the current-role parser
+    // above reads it the same way); only an empty cell or "Present" is current. Unreadable, the
+    // end is the start, so no overlap is ever claimed for years nobody wrote down.
+    const end =
+      parseLinkedInYearMonth(finished) ?? (finished && !/^(present|current|now)$/i.test(finished) ? start : undefined);
     const location = cleanSingleLine(csvGet(row, "Location"), LINE_MAX);
     const description = cleanSingleLine(csvGet(row, "Description"), POSITION_DESCRIPTION_MAX);
     if (start) p.start = start;

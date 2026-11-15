@@ -21,6 +21,7 @@ import {
 } from "../src/lib/linkedin-you";
 import { patchYou, previewYou } from "../src/lib/career-profile";
 import { historyOverlaps } from "../src/lib/history-overlap";
+import { careerRows } from "../src/components/settings/profile-settings";
 import { LinkedInExportError } from "../src/lib/linkedin-connections";
 
 let failures = 0;
@@ -112,6 +113,15 @@ check("year-month: empty and junk give undefined", parseLinkedInYearMonth("") ==
 check("year-month: a foreign month keeps the year only", parseLinkedInYearMonth("mai 2026")?.year === 2026 && parseLinkedInYearMonth("mai 2026")?.month === undefined);
 check("year-month: a full month name reads", parseLinkedInYearMonth("September 2021")?.month === 9 && parseLinkedInYearMonth("September 2021")?.year === 2021);
 check("the wrong file is refused", throwsExport(() => parseLinkedInPositionHistoryCsv("Name\nGo\n")));
+const CONTROL = parseLinkedInPositionHistoryCsv(
+  "Company Name,Title,Description,Location,Started On,Finished On\n" + "Acme,Dev,a\u0000b\u0007c\u001bd,Ral\u0000eigh,Jan 2020,Mar 2021\n",
+);
+check("control characters never reach storage", CONTROL[0].description === "abcd" && CONTROL[0].location === "Raleigh", JSON.stringify(CONTROL[0]));
+const ODD_END = parseLinkedInPositionHistoryCsv(
+  "Company Name,Title,Description,Location,Started On,Finished On\n" + "Old Co,Dev,,,Jan 2020,5/24\n" + "Now Co,Dev,,,Jan 2025,Present\n",
+);
+check("an unreadable end date still means the role ended", ODD_END[0].end?.year === 2020, JSON.stringify(ODD_END[0]));
+check("'Present' still means current", ODD_END[1].end === undefined, JSON.stringify(ODD_END[1]));
 
 const EDU_HISTORY =
   "School Name,Start Date,End Date,Notes,Degree Name,Activities\n" +
@@ -181,6 +191,11 @@ const eduOnly = patchYou("linkedin_education", EDU_HISTORY, ["education"], none,
 check("ticking only degrees leaves the schools list alone", eduOnly?.schools === null && eduOnly?.career.education?.length === 2, JSON.stringify(eduOnly));
 const eduBoth = patchYou("linkedin_education", EDU_HISTORY, ["schools", "education"], none, NOW, { history: true });
 check("ticking both on education writes both", eduBoth?.schools?.join() === "State University,Night School" && eduBoth?.career.education?.length === 2);
+
+// Settings only shows the "From your LinkedIn" card (and its Remove button) when it has a row.
+const historyOnly = careerRows({ positions: hist, education: edu });
+check("Settings lists history-only imports, so they can be removed", historyOnly.map((r) => r.label).join() === "Work history,Education", historyOnly.map((r) => r.label).join());
+check("Settings counts what it lists", JSON.stringify(historyOnly).includes("3 roles") && JSON.stringify(historyOnly).includes("2 schools"), JSON.stringify(historyOnly));
 
 console.log("\nwhere your history meets a contact's (deep read)");
 const you = {

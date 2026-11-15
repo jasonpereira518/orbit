@@ -18,6 +18,8 @@ import { integrationHref } from "@/components/settings/sections";
 import {
   Briefcase,
   Building2,
+  GraduationCap,
+  History,
   MapPin,
   Quote,
   RefreshCw,
@@ -59,7 +61,7 @@ type CareerRow = { icon: LucideIcon; label: string } & (
 );
 
 /** The rows worth showing, skipping anything that was never imported. */
-function careerRows(c: CareerProfile): CareerRow[] {
+export function careerRows(c: CareerProfile): CareerRow[] {
   const rows: (CareerRow | null)[] = [
     // Word for word as LinkedIn has it; the About summary rides along on hover.
     c.profile?.headline
@@ -88,6 +90,21 @@ function careerRows(c: CareerProfile): CareerRow[] {
             ...c.background.slice(0, SKILL_CHIPS).map((b) => b.title),
             ...(c.background.length > SKILL_CHIPS ? [`+${c.background.length - SKILL_CHIPS} more`] : []),
           ],
+        }
+      : null,
+    // Deep read: the full history. Listed so a history-only import still gets the card and its Remove.
+    c.positions?.length
+      ? {
+          icon: History,
+          label: "Work history",
+          value: `${c.positions.length} ${c.positions.length === 1 ? "role" : "roles"}, latest ${c.positions[0].title} at ${c.positions[0].company}`,
+        }
+      : null,
+    c.education?.length
+      ? {
+          icon: GraduationCap,
+          label: "Education",
+          value: `${c.education.length} ${c.education.length === 1 ? "school" : "schools"}: ${c.education.map((e) => e.school).join(", ")}`,
         }
       : null,
   ];
