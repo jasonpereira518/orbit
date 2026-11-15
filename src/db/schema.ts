@@ -2177,8 +2177,27 @@ export type CareerProfile = {
   postTopics?: string[];
   /** Certifications, honors, projects, volunteering, organizations, publications. Display only. */
   background?: CareerBackgroundEntry[];
+  /** Every role in Positions.csv, in LinkedIn's order (newest first). Deep read only. */
+  positions?: CareerPosition[];
+  /** Every school in Education.csv with degree and years. Deep read only. */
+  education?: CareerEducation[];
   importedAt?: string;
 };
+
+/** A LinkedIn date cell: "May 2026" or "2020". `month` is 1–12. */
+export type CareerYearMonth = { year: number; month?: number };
+
+export type CareerPosition = {
+  title: string;
+  company: string;
+  start?: CareerYearMonth;
+  /** Absent means the role is current. */
+  end?: CareerYearMonth;
+  location?: string;
+  description?: string;
+};
+
+export type CareerEducation = { school: string; degree?: string; start?: CareerYearMonth; end?: CareerYearMonth };
 
 export type CareerBackgroundEntry = {
   kind: "certification" | "honor" | "project" | "volunteering" | "organization" | "publication";
