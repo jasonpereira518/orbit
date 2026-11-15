@@ -309,8 +309,9 @@ const FEATURES: Surface[] = [
     label: "Cloud notes (Drive & OneDrive)",
     description:
       "Finds meeting notes in Google Drive or OneDrive, offers to extract them, and adds the Drive & OneDrive tab on Capture.",
-    // Google's drive.readonly is restricted: until CASA passes only consent-screen test users can grant it.
-    comingSoon: true,
+    // Released for Google's verification review, which has to be able to test drive.readonly
+    // (restricted). Until Google approves it, a Google grant shows the unverified-app screen and
+    // counts toward the 100-user cap; a new connection is opt-in from Capture.
   },
   {
     key: NOTION_SURFACE_KEY,
