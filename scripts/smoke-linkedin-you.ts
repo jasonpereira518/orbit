@@ -20,6 +20,7 @@ import {
   parseLinkedInSkillsCsv,
 } from "../src/lib/linkedin-you";
 import { patchYou, previewYou } from "../src/lib/career-profile";
+import { historyOverlaps } from "../src/lib/history-overlap";
 import { LinkedInExportError } from "../src/lib/linkedin-connections";
 
 let failures = 0;
@@ -180,6 +181,37 @@ const eduOnly = patchYou("linkedin_education", EDU_HISTORY, ["education"], none,
 check("ticking only degrees leaves the schools list alone", eduOnly?.schools === null && eduOnly?.career.education?.length === 2, JSON.stringify(eduOnly));
 const eduBoth = patchYou("linkedin_education", EDU_HISTORY, ["schools", "education"], none, NOW, { history: true });
 check("ticking both on education writes both", eduBoth?.schools?.join() === "State University,Night School" && eduBoth?.career.education?.length === 2);
+
+console.log("\nwhere your history meets a contact's (deep read)");
+const you = {
+  positions: [
+    { title: "Staff Engineer", company: "Acme, Inc.", start: { year: 2024, month: 5 } },
+    { title: "Dev", company: "Old Co", start: { year: 2021 }, end: { year: 2022 } },
+  ],
+  education: [{ school: "State University", start: { year: 2016 }, end: { year: 2020 } }],
+  schools: ["Night School"],
+};
+const role = (organization: string, startYear: number | null, endYear: number | null, isCurrent = false) =>
+  ({ kind: "role" as const, organization, startYear, endYear, isCurrent });
+const school = (organization: string, startYear: number | null, endYear: number | null) =>
+  ({ kind: "education" as const, organization, startYear, endYear, isCurrent: false });
+
+const o1 = historyOverlaps(you, [role("acme inc", 2025, null, true)], 2026);
+check("same employer, different spelling, both current", o1.length === 1 && o1[0].kind === "work" && o1[0].together && o1[0].fromYear === 2025 && o1[0].toYear === 2026 && o1[0].organization === "Acme, Inc.", JSON.stringify(o1));
+const o2 = historyOverlaps(you, [role("Old Co", 2023, 2024)], 2026);
+check("same employer at different times is not 'together'", o2.length === 1 && !o2[0].together && o2[0].fromYear === null, JSON.stringify(o2));
+const o3 = historyOverlaps(you, [role("Old Co", null, null)], 2026);
+check("no years on their side: found, not 'together'", o3.length === 1 && !o3[0].together, JSON.stringify(o3));
+const o4 = historyOverlaps(you, [school("State University", 2018, 2022)], 2026);
+check("school years intersect", o4[0]?.kind === "school" && o4[0]?.together && o4[0]?.fromYear === 2018 && o4[0]?.toYear === 2020, JSON.stringify(o4));
+const o5 = historyOverlaps(you, [school("night school", 2010, 2012)], 2026);
+check("a school typed in Settings has no years but still matches", o5.length === 1 && !o5[0].together, JSON.stringify(o5));
+check("a role never matches a school", historyOverlaps(you, [role("State University", 2017, 2019)], 2026).length === 0);
+check("nothing in common", historyOverlaps(you, [role("Elsewhere", 2020, 2021)], 2026).length === 0);
+check("no history at all", historyOverlaps({}, [role("Acme", 2020, 2021)], 2026).length === 0);
+const o6 = historyOverlaps(you, [role("Old Co", 2021, 2021), role("Old Co", 2022, 2022)], 2026);
+check("one line per organization", o6.length === 1 && o6[0].together, JSON.stringify(o6));
+check("an empty organization never matches", historyOverlaps({ positions: [{ title: "X", company: "!!" }] }, [role("??", 2020, 2021)], 2026).length === 0);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nsmoke-linkedin-you: all checks passed");
 if (failures) process.exit(1);
