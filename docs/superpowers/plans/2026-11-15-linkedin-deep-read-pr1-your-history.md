@@ -208,7 +208,11 @@ check("Remove imported details clears the history", cleared?.positions === undef
 - [ ] **Step 5: Run both smokes again.** Expected: every line `ok`. Then `npx tsx scripts/smoke-import-detect.ts`: still passes untouched.
 - [ ] **Step 6: Commit** `feat(deep-read): review and save work and school history behind the flag`.
 
-### Task 4: Languages and courses
+### Task 4: Languages and courses — DROPPED (Nov 16)
+
+Not built. Jason's real export has no Languages.csv or Courses.csv, so their columns cannot be
+checked; see the spec's "Checked against a real export" section. The steps below are kept for
+the record only.
 
 **Files:**
 - Modify: `src/db/schema.ts` (`CareerBackgroundEntry.kind`), `src/lib/linkedin-export-extras.ts` (`parseExportBackground`), `src/lib/linkedin-export-apply.ts` (`applyExportExtras`)

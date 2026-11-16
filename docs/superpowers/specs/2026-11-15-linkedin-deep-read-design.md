@@ -92,8 +92,8 @@ on for his own account so the export can be measured before launch.
   capped. Education.csv: school, degree, start, end.
 - Store as new keys `career_profile.positions[]` and `career_profile.education[]`.
   `career_profile.role` and `user_settings.schools` keep working as they do now.
-- Start reading Languages.csv / Courses.csv into `career_profile.background`. They join
-  `PARSED` (the list that tells the user which files are read) at launch, not before.
+- Languages.csv / Courses.csv: dropped (Nov 16). Jason's real export has neither file, so
+  their columns cannot be checked and they add little.
 - Education.csv has no field-of-study column; the degree name is kept as LinkedIn writes it.
 - New pure function: overlap between your history and a contact's `contact_experiences`
   (fallback `contacts.company` / `contacts.school`), returning org + years. Computed on read,
@@ -229,6 +229,20 @@ You overlapped: UNC Chapel Hill, 2021 to 2025
 - Every new smoke is registered in the manifest.
 - Column names of the endorsement, languages and courses files must be checked against a real
   export before the parsers are written.
+
+## Checked against a real export (Nov 16, Jason's own, headers and counts only)
+
+- Positions.csv and Education.csv headers match the parsers. All 18 roles parse with a
+  "Mmm YYYY" start; 11 have no end (current). Education dates are mostly blank (1 of 6
+  schools has them) and use "Mmm YYYY", not a bare year. Expect school overlap without years
+  most of the time.
+- Not in this export: Endorsement_Received_Info.csv, Endorsement_Given_Info.csv,
+  Recommendations_Given.csv, Languages.csv, Courses.csv. PR 3 must not depend on
+  endorsements or given recommendations to rank anyone.
+- In this export and unused so far: Events.csv (`Event Name, Event Time, Status,
+  External Url`), the LinkedIn events you went to. PR 2 should pass the events near a
+  contact's first messages to the reader as context for "how you met". Learning.csv
+  (LinkedIn Learning videos) and Rich_Media.csv stay unread.
 
 ## Left to the builder
 
