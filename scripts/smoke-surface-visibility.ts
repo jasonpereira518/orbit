@@ -32,6 +32,7 @@ import {
   setSurfaceComingSoon,
   setSurfaceHidden,
   setSurfaceTiers,
+  invalidateHiddenSurfaceKeys,
 } from "../src/lib/surface-visibility";
 import {
   COMING_SOON_COMPANIONS,
@@ -56,6 +57,7 @@ import {
   SURFACE_FEATURE,
 } from "../src/lib/surfaces";
 import { SETTINGS_SECTIONS } from "../src/components/settings/sections";
+import { deepReadOn } from "../src/lib/deep-read";
 
 const ADMIN = "smoke-surface-admin";
 const USER = "smoke-surface-user";
@@ -173,6 +175,31 @@ async function tierChecks(db: Awaited<ReturnType<typeof getDb>>) {
   } finally {
     await db.delete(appSurfaceFlags).where(like(appSurfaceFlags.surfaceKey, "tiers:%"));
     await db.delete(userSettings).where(inArray(userSettings.userId, users));
+    if (priorAdmins === undefined) delete process.env.ADMIN_USER_IDS;
+    else process.env.ADMIN_USER_IDS = priorAdmins;
+    if (priorClerk === undefined) delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    else process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = priorClerk;
+  }
+}
+
+/** Deep read must answer with no request or cookie: the engine runs in background jobs. */
+async function deepReadChecks() {
+  const priorAdmins = process.env.ADMIN_USER_IDS;
+  const priorClerk = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  process.env.ADMIN_USER_IDS = ADMIN;
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke";
+  try {
+    check("deep read is off for an ordinary user while the surface is coming soon", (await deepReadOn(USER)) === false);
+    check("deep read is on for an admin with no request or cookie", (await deepReadOn(ADMIN)) === true);
+    // A feature is released in code, not from /admin/product; a live: row is what that release reads.
+    const db = await getDb();
+    await db.insert(appSurfaceFlags).values({ surfaceKey: `live:${LINKEDIN_DEEP_READ_SURFACE_KEY}`, hiddenBy: ADMIN }).onConflictDoNothing();
+    invalidateHiddenSurfaceKeys();
+    check("releasing the surface turns deep read on for everyone", (await deepReadOn(USER)) === true);
+  } finally {
+    const db = await getDb();
+    await db.delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, `live:${LINKEDIN_DEEP_READ_SURFACE_KEY}`));
+    invalidateHiddenSurfaceKeys();
     if (priorAdmins === undefined) delete process.env.ADMIN_USER_IDS;
     else process.env.ADMIN_USER_IDS = priorAdmins;
     if (priorClerk === undefined) delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -584,6 +611,7 @@ async function main() {
     check("an escape-hatch page cannot be marked coming soon", settingsRejected);
 
     await tierChecks(db);
+    await deepReadChecks();
 
     console.log("\nsidebar order");
     const navItems = [{ href: "/contacts" }, { href: "/capture" }, { href: "/chat" }, { href: "/x" }];
