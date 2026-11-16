@@ -256,12 +256,11 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         closenessTier: contact.closenessTier,
         notes: clip(contact.notes, noteCap),
         summary: contact.aiSummary,
-        // LinkedIn deep read: how you met, kind, overlap, topics. Chat (and Cosmo) only: an outside
-        // MCP client gets none of it until /privacy says so.
+        // LinkedIn deep read: how you met, kind, overlap, topics, on both surfaces (/privacy,
+        // "Assistants you connect yourself"). At most six short lines (`renderRelationshipBlock`).
         // Absent (not null) when there is nothing, so deep read off is today's shape; a failed
         // read never fails the tool.
         ...(await (async () => {
-          if (!wide) return {};
           const contexts = await loadRelationshipContexts(userId, [contact.id]).catch(() => null);
           const relationship = renderRelationshipBlock(contexts?.get(contact.id));
           return relationship ? { relationship } : {};
