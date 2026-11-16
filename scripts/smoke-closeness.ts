@@ -1204,4 +1204,24 @@ console.log("\n§ deep read: depth and overlap");
   check("overlap: none is zero", overlapAffinity([]).work === 0 && overlapAffinity([]).school === 0);
 }
 
+console.log("\n§ deep read: depth and overlap in the score");
+{
+  const base: ClosenessContact = { statedCloseness: null, relationshipScore: 2, hasLoggedInteraction: true, firstInteractionAt: daysAgoDate(2000) };
+  const oldFriend: ClosenessContact = { ...base, lastInteractionAt: daysAgoDate(400), depth: 1 };
+  const oneOff: ClosenessContact = { ...base, lastInteractionAt: daysAgoDate(30), depth: 0 };
+  check("deep: an old two-way friend outranks a recent one-off", computeRawCloseness(oldFriend, [], 0).raw > computeRawCloseness(oneOff, [], 1).raw,
+    `${computeRawCloseness(oldFriend, [], 0).raw} vs ${computeRawCloseness(oneOff, [], 1).raw}`);
+  check("deep off: the same contacts score as today", computeRawCloseness({ ...oldFriend, depth: undefined }, [], 0).raw === computeRawCloseness({ ...base, lastInteractionAt: daysAgoDate(400) }, [], 0).raw);
+  const cold: ClosenessContact = { ...base, hasLoggedInteraction: false, lastInteractionAt: null };
+  check("deep: no logged behaviour means depth is ignored", computeRawCloseness({ ...cold, depth: 1 }, [], 0).raw === computeRawCloseness(cold, [], 0).raw);
+  const rated = (s: number, depth: number) => computeRawCloseness({ ...base, lastInteractionAt: daysAgoDate(60), statedCloseness: s, depth }, [], 2).raw;
+  check("a stated rating moves a score more than depth can", rated(5, 0) - rated(1, 0) > rated(3, 1) - rated(3, 0), `${rated(5, 0) - rated(1, 0)} vs ${rated(3, 1) - rated(3, 0)}`);
+  const prior = (o?: { work: number; school: number }, company = 0) => computePrior({ firstInteractionAt: daysAgoDate(400), companyConcentration: company, historyOverlap: o });
+  check("overlap: a real shared employer lifts the prior", prior({ work: 1, school: 0 }) > prior({ work: 0, school: 0 }));
+  check("overlap: known history replaces the orbit-relative guess", prior({ work: 0, school: 0 }, 1) === prior({ work: 0, school: 0 }, 0));
+  check("overlap: no own history keeps today's prior", prior(undefined, 1) > prior(undefined, 0));
+  check("overlap: the prior stays in its band", prior({ work: 1, school: 1 }) <= PRIOR_MAX && prior({ work: 0, school: 0 }) >= PRIOR_MIN);
+  check("overlap reaches the score through the prior", computeRawCloseness({ ...cold, historyOverlap: { work: 1, school: 0 } }, [], 0).raw > computeRawCloseness(cold, [], 0).raw);
+}
+
 console.log("\nAll closeness smoke checks passed.\n");

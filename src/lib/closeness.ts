@@ -38,6 +38,13 @@ export type ClosenessContact = {
   keyFacts?: string[] | null;
   sharedInterests?: string[] | null;
   tags?: string[] | null;
+  /**
+   * LinkedIn deep read: how deep the exchange is (`depthComponent`), 0–1. Absent means not
+   * measured. Read only when the contact has logged behaviour, like recency and cadence.
+   */
+  depth?: number | null;
+  /** LinkedIn deep read: real overlap with the user's own history, for the prior (`computePrior`). */
+  historyOverlap?: { work: number; school: number } | null;
 };
 
 /** The absolute, per-contact half of the score. Knows nothing about other contacts. */
@@ -125,6 +132,16 @@ const WEIGHTS = {
   cadence: 0.25,
   goalRelevance: 0.15,
 } as const;
+
+/**
+ * LinkedIn deep read: depth's weight when it is measured. Pinned between two rules
+ * (scripts/smoke-closeness.ts, "deep read" section):
+ *   - above ~0.22, so five years of two-way messages outrank one recent one-off message;
+ *   - below 0.24 (= WEIGHTS.strength x 0.8, a rating moved from 1 to 5), so a stated rating
+ *     always moves a score more than depth can.
+ * Starting value; retune both checks together.
+ */
+const WEIGHT_DEPTH = 0.23;
 
 /** Rank has no meaning in a tiny orbit, so it fades in with network size. */
 const RELATIVE_MIN_N = 8;
@@ -343,16 +360,22 @@ export function computeRawCloseness(
     : NO_INTERACTION_RECENCY;
   const cadence = knowsBehaviour ? cadenceComponent(touchCount) : 0;
   const goalRelevance = hasGoals ? goalRelevanceComponent(contact, goals) : 0;
+  // Deep read: depth is a measurement only where there is behaviour to measure; without any, a
+  // bare connection keeps exactly today's score.
+  const hasDepth = knowsBehaviour && contact.depth != null;
+  const depth = hasDepth ? clamp01(contact.depth!) : 0;
 
   const knownWeighted =
     (hasStated ? WEIGHTS.strength * strength : 0) +
     (knowsBehaviour ? WEIGHTS.recency * recency + WEIGHTS.cadence * cadence : 0) +
-    (hasGoals ? WEIGHTS.goalRelevance * goalRelevance : 0);
+    (hasGoals ? WEIGHTS.goalRelevance * goalRelevance : 0) +
+    (hasDepth ? WEIGHT_DEPTH * depth : 0);
 
   const knownWeight =
     (hasStated ? WEIGHTS.strength : 0) +
     (knowsBehaviour ? WEIGHTS.recency + WEIGHTS.cadence : 0) +
-    (hasGoals ? WEIGHTS.goalRelevance : 0);
+    (hasGoals ? WEIGHTS.goalRelevance : 0) +
+    (hasDepth ? WEIGHT_DEPTH : 0);
 
   // Goal relevance drops out of the denominator entirely when no goals are
   // set — it is not unknown, it is not applicable, so the prior must not be
@@ -361,7 +384,8 @@ export function computeRawCloseness(
     WEIGHTS.strength +
     WEIGHTS.recency +
     WEIGHTS.cadence +
-    (hasGoals ? WEIGHTS.goalRelevance : 0);
+    (hasGoals ? WEIGHTS.goalRelevance : 0) +
+    (hasDepth ? WEIGHT_DEPTH : 0);
 
   const evidence = computeEvidence({
     hasStatedCloseness: hasStated,
@@ -378,6 +402,7 @@ export function computeRawCloseness(
     companyConcentration: contact.companyConcentration,
     schoolConcentration: contact.schoolConcentration,
     goalRelevance,
+    historyOverlap: contact.historyOverlap,
   });
 
   // Nothing measured: there is no evidenced score to report, and the prior is
