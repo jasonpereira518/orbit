@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { imports } from "../src/db/schema";
-import { MAX_STALL_RESUMES, resumeStalledImports } from "../src/lib/import-stall";
+import { MAX_STALL_RESUMES, resumeStalledImports, startJobInOwnInvocation } from "../src/lib/import-stall";
 
 const USER = "smoke-import-stall-user";
 const MIN = 60_000;
@@ -94,6 +94,20 @@ async function main() {
   check("import-stall does not import the inline runner", !/runImportJobById/.test(stallSrc));
   const routeSrc = readFileSync("src/app/api/imports/process-stalled/route.ts", "utf8");
   check("the route resumes captures by kicking them too", /runner: kickCaptureJob/.test(routeSrc) && !/runCaptureJobById/.test(routeSrc));
+
+  console.log("a job that throws on start is failed, not left processing");
+  // The callers used to `.catch(() => {})` the start, so a throw before the runner's own
+  // try/catch left the row "processing" with no message and nothing logged.
+  {
+    await db.delete(imports).where(eq(imports.userId, USER));
+    const startId = await seed({ updatedAt: new Date() });
+    // The kick has no CRON_SECRET / reachable app here, so it falls through to the inline run.
+    await startJobInOwnInvocation(startId, async () => { throw new Error("boom before the runner's try"); });
+    const row = await db.query.imports.findFirst({ where: eq(imports.id, startId) });
+    check("the start never rejects and the row is failed with a message", row?.status === "failed" && /boom/.test(row?.errorMessage ?? ""), JSON.stringify(row?.status));
+  }
+  const gmailActionSrc = readFileSync("src/actions/gmail.ts", "utf8");
+  check("the Gmail action no longer swallows the start", !/startJobInOwnInvocation\([^)]*\)\.catch\(\(\) => \{\}\)/.test(gmailActionSrc));
 
   await db.delete(imports).where(eq(imports.userId, USER));
   if (failures > 0) {

@@ -83,6 +83,9 @@ const VERDICT: RecruiterScanResult = {
   roleInterviewingFor: null, linkedinUrl: null,
 };
 
+/** Everyone who reached the LLM, by either route: a batch, or (a small scan) one call at a time. */
+const reachedLlm = (classified: string[], submitted: string[]) => [...new Set([...classified, ...submitted])].sort().join(",");
+
 function depsWith(decider: Decider | null, classified: string[], submitted: string[]): ScanDeps {
   return {
     getAccessToken: async () => "stub-token",
@@ -135,7 +138,7 @@ run(async () => {
     const rows = await candidates(importId);
     check("only keyword matches become candidates",
       rows.map((r) => r.email).sort().join(",") === "jo@agency.example,pat@vendor.example", rows.map((r) => r.email).join(","));
-    check("…and every one of them goes to the LLM", submitted.sort().join(",") === "jo@agency.example,pat@vendor.example", submitted.join(","));
+    check("…and every one of them goes to the LLM", reachedLlm(classified, submitted) === "jo@agency.example,pat@vendor.example", reachedLlm(classified, submitted));
   }
 
   console.log("\nWith a decider");
@@ -151,11 +154,10 @@ run(async () => {
     check("the newsletter does not", !emails.includes("news@digest.example"));
     check("the keyword matches still do", emails.includes("jo@agency.example") && emails.includes("pat@vendor.example"));
 
-    check("the vendor Jev rules out never reaches the LLM batch", !submitted.includes("pat@vendor.example"), submitted.join(","));
-    check("…nor the inline classifier", !classified.includes("pat@vendor.example"), classified.join(","));
-    check("…and is settled as a skipped row", rows.find((r) => r.email === "pat@vendor.example")?.status === "skipped");
+    check("the vendor Jev rules out never reaches the LLM", !reachedLlm(classified, submitted).includes("pat@vendor.example"), reachedLlm(classified, submitted));
+        check("…and is settled as a skipped row", rows.find((r) => r.email === "pat@vendor.example")?.status === "skipped");
     check("everyone else is classified as before",
-      submitted.sort().join(",") === "jo@agency.example,sam@startup.example", submitted.join(","));
+      reachedLlm(classified, submitted) === "jo@agency.example,sam@startup.example", reachedLlm(classified, submitted));
 
     const db = await getDb();
     const job = await db.query.imports.findFirst({ where: eq(imports.id, importId) });

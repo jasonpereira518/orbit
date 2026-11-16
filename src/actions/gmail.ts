@@ -420,7 +420,7 @@ export async function startGmailRecruiterScan(opts?: {
       })
       .returning();
 
-    after(() => startJobInOwnInvocation(row.id, runGmailRecruiterScanJob).catch(() => {}));
+    after(() => startJobInOwnInvocation(row.id, runGmailRecruiterScanJob));
     revalidatePath("/recruiters");
     return { importId: row.id };
   });
