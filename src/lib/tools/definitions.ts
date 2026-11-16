@@ -738,7 +738,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       const now = new Date();
       const today = ymdInZone(now, tz);
       const first = args.after && args.after > today ? args.after : today;
-      const last = [args.before ?? first, addDaysYmd(today, 14)].sort()[0]!;
+      const last = [args.before ?? first, addDaysYmd(today, 14)].sort()[0];
       if (last < first) return [];
       const rows = await listUpcomingEvents(userId, {
         from: new Date(dayBound(first, false)!.getTime() - 14 * 3_600_000),
@@ -1303,7 +1303,8 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       }
 
       // `skipRevalidate` for the same reason as create_contact: a tool call has no page.
-      await updateContactForUser(userId, contactId, patch, { skipRevalidate: true });
+      // The person's own assistant, acting on their say-so: their edit.
+      await updateContactForUser(userId, contactId, patch, { skipRevalidate: true, by: "user" });
       return { updated: true, contactId, fields: Object.keys(patch) };
     },
   },

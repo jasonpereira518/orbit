@@ -19,6 +19,7 @@ import { PeopleListShell } from "@/components/contacts/people-list-shell";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 
 export const metadata = { title: "Contacts" };
 
@@ -111,6 +112,7 @@ export default async function ContactsPage({
           </Suspense>
           <RefreshContactsButton />
           <Link
+            {...tourAnchor("contacts.add")}
             href="/contacts/new"
             className={cn(
               buttonVariants(),

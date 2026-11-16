@@ -1,13 +1,9 @@
 import type { OutreachChannel } from "@/lib/outreach-types";
+import { hypeHits } from "@/lib/message-format";
 
-/** Prospects Orbit invented because no Apollo key was available (`enrichment.demo`). */
-export function isDemoProspect(enrichment: unknown): boolean {
-  return Boolean(
-    enrichment &&
-      typeof enrichment === "object" &&
-      (enrichment as Record<string, unknown>).demo === true
-  );
-}
+// One definition (lib/outreach-channels.ts): a `demo-` externalId OR `enrichment.demo`.
+// Takes the prospect, not just its enrichment. Re-exported so quality callers keep their import.
+export { isDemoProspect } from "@/lib/outreach-channels";
 
 /**
  * Domains reserved so that nobody can receive mail there (RFC 2606, RFC 6761). Sample
@@ -62,7 +58,8 @@ export type QualityIssue = {
     | "missing_name"
     | "too_generic"
     | "demo_prospect"
-    | "contains_link";
+    | "contains_link"
+    | "hype_words";
   message: string;
 };
 
@@ -151,6 +148,19 @@ export function assessOutreachQuality(rows: QualityGateRow[]): {
         prospectName: row.prospectName,
         code: "too_generic",
         message: "Draft looks generic — add a specific hook",
+      });
+    }
+
+    // The house format bans flattery; a draft keeps a hype word only when its one retry did
+    // too (`draftWithFormat`), or the person typed it. A warning: their words are theirs.
+    const hype = body ? hypeHits(body) : [];
+    if (hype.length) {
+      issues.push({
+        messageId: row.messageId,
+        prospectId: row.prospectId,
+        prospectName: row.prospectName,
+        code: "hype_words",
+        message: `Draft reads as flattery (${hype.slice(0, 3).join(", ")}) — say something specific instead`,
       });
     }
   }

@@ -11,7 +11,7 @@
  */
 
 import { useId, useState } from "react";
-import { CalendarClock, ChevronDown, ChevronUp, Flame, Lightbulb, Sparkles, Star } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronUp, Flame, Lightbulb, Star } from "lucide-react";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatePickerButton } from "@/components/ui/date-picker";

@@ -270,13 +270,16 @@ export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
 export const CLOUD_NOTES_SURFACE_KEY = "feature.cloud-notes";
 /** Notion: the settings page, the Capture picker and the people-database sync. */
 export const NOTION_SURFACE_KEY = "feature.notion";
+/** Cosmo: the voice assistant orb on every page (docs/superpowers/specs/2026-11-12-cosmo-design.md). */
+export const COSMO_SURFACE_KEY = "feature.cosmo";
+/** Reading more of a LinkedIn export (docs/superpowers/specs/2026-11-15-linkedin-deep-read-design.md). */
+export const LINKEDIN_DEEP_READ_SURFACE_KEY = "feature.linkedin-deep-read";
 const FEATURES: Surface[] = [
   {
     key: COMPOSE_SURFACE_KEY,
     kind: "feature",
     label: "Compose email",
     description: "Write and send email to anyone from a contact's page or ⌘K, from your own mailbox.",
-    comingSoon: true,
   },
   {
     key: OUTLOOK_SEND_SURFACE_KEY,
@@ -291,8 +294,9 @@ const FEATURES: Surface[] = [
     kind: "feature",
     label: "Reply to inbox threads",
     description: "Compose can reply to the latest email with a contact found in your mailbox (Gmail read / Mail.Read).",
-    // Until the privacy page discloses this use of the read scopes (direct-email P5).
-    comingSoon: true,
+    // Released: /privacy now discloses it (the gmail.readonly row, "Replying in a thread"), and
+    // Google's verification review has to be able to test it. It reads only Message-ID, subject,
+    // date and thread, with read scopes the user already granted. Operators can still hide it.
   },
   {
     key: CHAT_IMPORTS_SURFACE_KEY,
@@ -308,8 +312,9 @@ const FEATURES: Surface[] = [
     label: "Cloud notes (Drive & OneDrive)",
     description:
       "Finds meeting notes in Google Drive or OneDrive, offers to extract them, and adds the Drive & OneDrive tab on Capture.",
-    // Google's drive.readonly is restricted: until CASA passes only consent-screen test users can grant it.
-    comingSoon: true,
+    // Released for Google's verification review, which has to be able to test drive.readonly
+    // (restricted). Until Google approves it, a Google grant shows the unverified-app screen and
+    // counts toward the 100-user cap; a new connection is opt-in from Capture.
   },
   {
     key: NOTION_SURFACE_KEY,
@@ -317,6 +322,21 @@ const FEATURES: Surface[] = [
     label: "Notion",
     description: "Connect Notion: pick pages to capture on Capture, and sync a people database into contacts.",
     // Until /privacy says what Orbit reads from Notion and the public integration is approved.
+    comingSoon: true,
+  },
+  {
+    key: COSMO_SURFACE_KEY,
+    kind: "feature",
+    label: "Cosmo",
+    description: "The voice assistant orb in the corner of every page: talk to Orbit from anywhere.",
+    // Hidden = the orb's off switch: no idle orb, and calls lose Cosmo's powers and metering.
+  },
+  {
+    key: LINKEDIN_DEEP_READ_SURFACE_KEY,
+    kind: "feature",
+    label: "LinkedIn deep read",
+    description: "Reads more of a LinkedIn export: your full history, how you met people, and who you are closest to.",
+    // Until /privacy describes it (deep read PR 5).
     comingSoon: true,
   },
 ];
@@ -541,7 +561,6 @@ export function orderNavItems<T extends { href: string }>(
  */
 export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
   "page.outreach": ["dashboard.outreach-performance", "settings.outreach"],
-  [COMPOSE_SURFACE_KEY]: ["settings.email"],
 };
 
 /** True when `href` is a page in `soon` (the effective set; defaults to the code defaults). */

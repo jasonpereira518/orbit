@@ -53,7 +53,7 @@ function eachValid<T extends z.ZodType>(item: T) {
     .transform((v) =>
       (v ?? []).flatMap((x) => {
         const r = item.safeParse(x);
-        return r.success ? [r.data as z.output<T>] : [];
+        return r.success ? [r.data] : [];
       })
     );
 }

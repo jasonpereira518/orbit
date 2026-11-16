@@ -21,23 +21,14 @@ const files = walk("src");
 const read = (f: string) => readFileSync(f, "utf8");
 
 const OUTREACH_ALLOWED = new Set(["src/actions/outreach.ts", "src/lib/outreach-send.ts"]);
-/**
- * Read-only consumers: they import `getOutreachSendConfig`/`countSendsToday` to REPORT on
- * sending — which credential is configured, how much of today's quota is left — and never
- * reach the send call itself. The rule this file enforces is that nothing else can send,
- * so the send symbol is checked separately below and this exemption cannot hide one.
- */
-const OUTREACH_READ_ONLY = new Set(["src/lib/outreach-readiness-server.ts"]);
 const resendUsers = files.filter(
   (f) =>
     /from "@\/lib\/outreach-send"/.test(read(f)) &&
-    !OUTREACH_ALLOWED.has(f) &&
-    !OUTREACH_READ_ONLY.has(f)
+    !OUTREACH_ALLOWED.has(f)
 );
 check("only Outreach campaigns import outreach-send", resendUsers.length === 0, resendUsers.join(", "));
-// Comments stripped first: both readiness modules discuss `sendOutreachMessage` at length
-// (what it throws, and when) without being able to call it, and a prose mention is not a
-// send path. What is left is code.
+// Comments stripped first: a prose mention of `sendOutreachMessage` is not a send path.
+// What is left is code.
 const codeOf = (f: string) =>
   read(f)
     .replace(/\/\*[\s\S]*?\*\//g, "")

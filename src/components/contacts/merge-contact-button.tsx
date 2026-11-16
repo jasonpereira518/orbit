@@ -12,7 +12,8 @@
  * The fold only ever fills blanks on the target, so nothing on either side is overwritten.
  */
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Merge, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -39,17 +40,23 @@ export function MergeContactButton({ id, name }: { id: string; name: string }) {
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<ContactPickerOption[]>([]);
   const [target, setTarget] = useState<ContactPickerOption | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [pending, startTransition] = useGuardedTransition();
   // Guards against an earlier, slower search overwriting a later one's results.
   const requestRef = useRef(0);
 
   useEffect(() => {
     if (!open) return;
     const token = ++requestRef.current;
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the async body catches its own errors; nothing can reject out of it
     const timer = setTimeout(async () => {
-      const rows = await searchContactsForPicker(query, 20);
-      if (token !== requestRef.current) return;
-      setOptions(rows.filter((row) => row.id !== id));
+      try {
+        const rows = await searchContactsForPicker(query, 20);
+        if (token !== requestRef.current) return;
+        setOptions(rows.filter((row) => row.id !== id));
+      } catch {
+        // best-effort: a failed typeahead keeps the previous options rather than throwing
+        // into the timer (an unhandled rejection with nothing on screen).
+      }
     }, 200);
     return () => clearTimeout(timer);
   }, [open, query, id]);

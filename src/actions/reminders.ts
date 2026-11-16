@@ -1149,11 +1149,9 @@ export async function listDueNotificationItems() {
     .slice(0, 12)
     .map((i) => {
       let title = i.title;
-      if (i.priority === "critical") {
-        title = `🔥 [Critical] ${i.title}`;
-      } else if (i.priority === "high") {
-        title = `⭐ [High Priority] ${i.title}`;
-      }
+      // Plain words, not emoji: the same label the bell's chip shows.
+      if (i.priority === "critical") title = `Critical: ${i.title}`;
+      else if (i.priority === "high") title = `High priority: ${i.title}`;
       const contextParts = [i.importanceReason || i.timingRationale, i.body].filter(Boolean);
       return {
         id: i.id,

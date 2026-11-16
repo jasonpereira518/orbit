@@ -19,6 +19,7 @@ import {
   markKeptNotificationsRead,
   useKeptNotifications,
 } from "@/lib/kept-notifications";
+import { panelDismissals, panelItemKey, radarKey } from "@/lib/panel-dismissals";
 import { useCornerShift } from "@/lib/corner-clearance";
 import {
   PANEL_CORNER_SHIFT_PX,
@@ -90,11 +91,26 @@ export function NotificationsPanelButton({
     () => kept.filter((entry) => !entry.read).length,
     [kept]
   );
-  const dueCount = data?.dueCount ?? 0;
+  // A feedback reply counts as due until it is cleared from the panel (`panel-dismissals.ts`).
+  const dismissedVersion = panelDismissals.useVersion();
+  const dueCount = useMemo(
+    () =>
+      data
+        ? data.items.filter(
+            (i) =>
+              i.urgency === "due" &&
+              !(i.kind === "feedback_reply" && panelDismissals.isDismissed(panelItemKey(i)))
+          ).length
+        : 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `dismissedVersion` is the signal that the device's list changed
+    [data, dismissedVersion]
+  );
   // Unread missed notifications count toward the badge — that is the whole
   // point of keeping them; a failure nobody saw should say so on the bell.
   // They stop counting once the panel has been opened, but stay in the list.
-  const badgeCount = dueCount + activeJobCount + unreadKeptCount;
+  // Radar's Today moments (things that won't keep) count until the row is cleared from the panel.
+  const radarToday = data?.radar && !panelDismissals.isDismissed(radarKey(data.radar)) ? (data.radar.today ?? 0) : 0;
+  const badgeCount = dueCount + radarToday + activeJobCount + unreadKeptCount;
   const [lastCount, setLastCount] = useState(badgeCount);
   if (badgeCount > 0 && badgeCount !== lastCount) setLastCount(badgeCount);
   const shownCount = badgeCount > 0 ? badgeCount : lastCount;
@@ -122,6 +138,7 @@ export function NotificationsPanelButton({
           dueCount + activeJobCount > 0
             ? `${dueCount + activeJobCount} due or in progress`
             : null,
+          radarToday > 0 ? `${radarToday} on Radar that won’t keep` : null,
           // Counted separately from the phrase above: a missed failure is not
           // "due", and rolling it into that number would misdescribe it to a
           // screen reader even though the badge shows the two added together.

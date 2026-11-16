@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
+
 import { formatDistanceToNow } from "date-fns";
 import { Handshake, Orbit, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -55,7 +56,7 @@ export function ContactProfileOverview({
   isRated: boolean;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   const recencyLabel = lastTouchAt
     ? formatDistanceToNow(new Date(lastTouchAt), { addSuffix: true })

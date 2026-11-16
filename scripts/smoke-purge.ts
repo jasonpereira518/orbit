@@ -103,6 +103,14 @@ async function seed() {
     byteSize: 5,
   });
 
+  // The conversation on it — every row carries the reporter's id, operator replies included.
+  await db.insert(schema.feedbackMessages).values({
+    feedbackId: feedbackRow.id,
+    userId: USER,
+    author: "operator",
+    body: "the operator's reply to them",
+  });
+
   await db.insert(schema.gateEvents).values({
     userId: USER,
     feature: "contacts",
@@ -492,13 +500,16 @@ async function seed() {
     action: "never",
   });
   await db.insert(schema.radarRuns).values({ userId: USER, trigger: "manual" });
+  await db.insert(schema.userProjects).values({ userId: USER, title: "Smoke project", detectedFrom: "manual" });
+  await db.insert(schema.radarOpportunities).values({ userId: USER, kind: "event", title: "Smoke meetup", dedupeKey: "smoke-purge-opportunity" });
+  await db.insert(schema.pushSubscriptions).values({ userId: USER, endpoint: "https://push.example.com/smoke-purge", p256dh: "smoke-key", auth: "smoke-auth" });
   await db.insert(schema.contactSignals).values({
     userId: USER,
     contactId: contact.id,
-    kind: "company_news",
+    kind: "linkedin_activity",
     occurredAt: new Date(),
-    source: "manual",
-    payload: { title: "Globex raises a Series B", company: "Globex" },
+    source: "linkedin",
+    payload: { excerpt: "Shipped our new API today", network: "linkedin", url: null },
     dedupeHash: "smoke-purge-signal",
   });
 
@@ -603,6 +614,15 @@ async function seed() {
     contactBId: contact.id < otherContact.id ? otherContact.id : contact.id,
     reason: "Same full name",
     confidence: 0.6,
+  });
+  await db.insert(schema.contactChanges).values({
+    userId: USER,
+    contactId: contact.id,
+    field: "company",
+    before: "Analytical Engines",
+    after: "Babbage & Co",
+    source: "job_move",
+    status: "suggested",
   });
   await db.insert(schema.contactMerges).values({
     userId: USER,
@@ -732,6 +752,10 @@ async function seed() {
     .insert(schema.chatThreads)
     .values({ userId: USER, title: "thread" })
     .returning();
+  await db.insert(schema.orbitVoiceSessions).values({
+    userId: USER, threadId: thread.id, expiresAt: new Date(Date.now() + 600000),
+    scope: { contacts: [[contact.id, "Ada Lovelace"]] },
+  });
   await db.insert(schema.chatMessages).values({
     threadId: thread.id,
     userId: USER,

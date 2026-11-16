@@ -1,3 +1,5 @@
+import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
+import { unreadRepliesFor } from "@/lib/feedback-thread";
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getDb, rowsOf } from "@/db";
@@ -68,6 +70,7 @@ export async function loadNotificationPanel(
     captureRows,
     radarRows,
     cloudNoteRows,
+    feedbackReplies,
   ] = await Promise.all([
     db.query.reminders.findMany({
       // Only what is allowed to alert: the user's own reminders, and generated ones about
@@ -146,14 +149,19 @@ export async function loadNotificationPanel(
       orderBy: (j, { desc: descOrder }) => [descOrder(j.updatedAt)],
       limit: 3,
     }),
-    // Radar's live list, as one summary line: how many and who's first. Never items, so
-    // never "due", so never a badge or a desktop notification (an unconfirmed guess must
-    // not reach either). One indexed read; empty for anyone Radar has never run for.
+    // Radar's live list, as one summary line: how many and who's first. Never items, so never
+    // a desktop notification (Radar's own alerts are push, `src/lib/radar/moments.ts`, with
+    // their own daily cap). Today's moments — the ones that won't keep — count on the bell's
+    // badge (Radar PR 9b); the rest of the week's plan never does. One indexed read; empty for
+    // anyone Radar has never run for.
     opts.radar
       ? db.execute(sql`
           SELECT count(*)::int AS n,
                  count(*) FILTER (WHERE r.draft ->> 'inputsHash' = r.inputs_hash)::int AS drafts,
-                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names
+                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names,
+                 count(*) FILTER (WHERE r.bucket = 'today')::int AS today,
+                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id)
+                    FILTER (WHERE r.bucket = 'today'))[1:2] AS today_names
             FROM recommendations r
             JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
            WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
@@ -181,13 +189,17 @@ export async function loadNotificationPanel(
           .orderBy(desc(cloudNoteFiles.modifiedAt))
           .limit(50)
       : [],
+    // The operator answered their feedback and they haven't opened it yet.
+    unreadRepliesFor(userId),
   ]);
-  const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
+  const radarRow = radarRows
+    ? rowsOf<{ n: number; drafts: number; names: string[] | null; today: number; today_names: string[] | null }>(radarRows)[0]
+    : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
 
   type PanelItem = {
     id: string;
-    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review" | "cloud_notes";
+    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review" | "cloud_notes" | "feedback_reply";
     title: string;
     body: string | null;
     url: string;
@@ -197,6 +209,8 @@ export async function loadNotificationPanel(
     suggestionId?: string;
     suggestedReminderId?: string;
     contactId?: string | null;
+    /** Feedback replies only: the reply carried a thank-you that's still wrapped. */
+    gift?: boolean;
     /** Follow-ups only: the contact's role and company, so the UI can tint the company. */
     contactTitle?: string | null;
     company?: string | null;
@@ -261,8 +275,8 @@ export async function loadNotificationPanel(
       urgency: isDue ? "due" : "upcoming",
       reminderId: r.id,
       contactId: r.contactId,
-      priority: r.priority as ReminderPriority,
-      category: r.category as ReminderCategory,
+      priority: r.priority,
+      category: r.category,
       timingRationale: r.timingRationale,
       importanceReason: r.importanceReason,
     });
@@ -289,7 +303,7 @@ export async function loadNotificationPanel(
 
   for (const s of suggestions) {
     const related = Array.isArray(s.relatedContactIds)
-      ? (s.relatedContactIds as string[])
+      ? (s.relatedContactIds)
       : [];
     items.push({
       id: `suggestion:${s.id}`,
@@ -324,8 +338,8 @@ export async function loadNotificationPanel(
       urgency: "info",
       suggestedReminderId: s.id,
       contactId: s.contactId,
-      priority: s.priority as ReminderPriority,
-      category: s.category as ReminderCategory,
+      priority: s.priority,
+      category: s.category,
       timingRationale: s.timingRationale,
       importanceReason: s.importanceReason,
     });
@@ -367,6 +381,26 @@ export async function loadNotificationPanel(
     });
   }
 
+  // "Due" so it counts on the badge and, for anyone with desktop notifications on, reaches the
+  // OS once — the id carries the message time, so a LATER reply notifies again rather than
+  // being deduped against the first by `desktop_notified_ids`.
+  for (const reply of feedbackReplies) {
+    const firstLine = reply.latest.split("\n")[0].slice(0, 120);
+    items.push({
+      id: `feedback-reply:${reply.feedbackId}:${reply.at.getTime()}`,
+      kind: "feedback_reply",
+      // A thank-you still waiting to be unwrapped is the headline; the reply comes with it.
+      title: reply.giftWaiting
+        ? `${FEEDBACK_RECIPIENT} sent you a thank-you`
+        : `${FEEDBACK_RECIPIENT} replied to your feedback`,
+      body: reply.giftWaiting ? `+${reply.thanksCredits} AI credits — open to unwrap` : firstLine,
+      gift: reply.giftWaiting,
+      url: `/feedback/${reply.feedbackId}`,
+      dueAt: reply.at.toISOString(),
+      urgency: "due",
+    });
+  }
+
   const urgencyRank = { due: 0, upcoming: 1, info: 2 } as const;
   const priorityRank = { critical: 0, high: 1, normal: 2, low: 3 } as const;
   items.sort((a, b) => {
@@ -397,7 +431,13 @@ export async function loadNotificationPanel(
      */
     radar:
       radarCount > 0
-        ? { count: radarCount, drafts: Number(radarRow?.drafts ?? 0), names: radarRow?.names ?? [] }
+        ? {
+            count: radarCount,
+            drafts: Number(radarRow?.drafts ?? 0),
+            names: radarRow?.names ?? [],
+            today: Number(radarRow?.today ?? 0),
+            todayNames: radarRow?.today_names ?? [],
+          }
         : undefined,
     /**
      * Account health, as a SIBLING of `items` and never an entry in it. That placement is

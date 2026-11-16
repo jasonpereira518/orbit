@@ -7,10 +7,9 @@ import { requireUserId } from "@/lib/auth";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
-import { resolveLinkedInPhotoCached, type ProfileImageSource } from "@/lib/shared-avatars";
+import { resolveGravatarCached, resolveLinkedInPhotoCached, type ProfileImageSource } from "@/lib/shared-avatars";
 import {
   downloadAndPersistAvatar,
-  fetchGravatarPhotoUrl,
   isDurableAvatarUrl,
   isUnusableAvatarUrl,
   AvatarSourceRateLimitError,
@@ -188,7 +187,11 @@ async function serve(req: Request, { params }: Params) {
       // Same ladder as the backfill: an email-only contact must resolve here too,
       // or on-demand rows would silently never fill in for them.
       if (!photoUrl && email) {
-        photoUrl = await fetchGravatarPhotoUrl(contactId, email);
+        const gravatar = await resolveGravatarCached(contactId, email);
+        if (gravatar && typeof gravatar === "object") {
+          return NextResponse.redirect(gravatar.sharedUrl);
+        }
+        photoUrl = gravatar;
         source = "gravatar";
       }
 

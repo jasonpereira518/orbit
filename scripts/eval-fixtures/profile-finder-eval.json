@@ -1,0 +1,16 @@
+{
+  "_note": "The profile finder (work-history research with no LinkedIn URL, src/lib/profile-match.ts). Public figures only, plus made-up people at made-up companies who must never get a profile written. The number that gates ORBIT_FIND_PROFILES=on is wrongWrites: it must be 0. Expected slugs are as of Nov 2026.",
+  "cases": [
+    { "id": "f-nadella", "contact": { "fullName": "Satya Nadella", "company": "Microsoft", "email": null, "school": null }, "expectSlug": "satyanadella" },
+    { "id": "f-hoffman", "contact": { "fullName": "Reid Hoffman", "company": "Greylock", "email": null, "school": null }, "expectSlug": "reidhoffman" },
+    { "id": "f-gates", "contact": { "fullName": "Bill Gates", "company": "Gates Foundation", "email": null, "school": null }, "expectSlug": "williamhgates" },
+    { "id": "f-collison", "contact": { "fullName": "Patrick Collison", "company": "Stripe", "email": null, "school": null }, "expectSlug": null },
+    { "id": "f-amodei", "contact": { "fullName": "Dario Amodei", "company": "Anthropic", "email": null, "school": null }, "expectSlug": null },
+    { "id": "n-smith-northwind", "contact": { "fullName": "John Smith", "company": "Northwind Traders", "email": null, "school": null }, "expectSlug": "none" },
+    { "id": "n-garcia-contoso", "contact": { "fullName": "Maria Garcia", "company": "Contoso Pharmaceuticals", "email": null, "school": null }, "expectSlug": "none" },
+    { "id": "n-lee-fabrikam", "contact": { "fullName": "David Lee", "company": null, "email": null, "school": "Fabrikam University" }, "expectSlug": "none" },
+    { "id": "n-chen-initech", "contact": { "fullName": "Sarah Chen", "company": "Initech", "email": null, "school": null }, "expectSlug": "none" },
+    { "id": "n-brown-globex", "contact": { "fullName": "James Brown", "company": "Globex Corporation", "email": "jbrown@globexcorp-example.com", "school": null }, "expectSlug": "none" },
+    { "id": "n-nadella-namesake", "contact": { "fullName": "Satya Nadella", "company": "Tidewater Plumbing", "email": null, "school": null }, "expectSlug": "none" }
+  ]
+}

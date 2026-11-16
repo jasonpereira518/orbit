@@ -95,7 +95,7 @@ const byId = Object.fromEntries(DIPPER_STARS.map((s) => [s.id, s]));
 export function dipperChainPath(chain: string[]): string {
   return chain
     .map((id, i) => {
-      const s = byId[id]!;
+      const s = byId[id];
       return `${i === 0 ? "M" : "L"} ${s.x} ${s.y}`;
     })
     .join(" ");

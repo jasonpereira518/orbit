@@ -2,16 +2,22 @@
  * Shared, cross-user LinkedIn photo cache (table `linkedin_avatars`), keyed by profile slug.
  * The key must equal the generated column `contacts.linkedin_slug` so reads can JOIN on it.
  * Fed only by public lookups (Unavatar, Microlink); an extension capture stays on its contact.
+ *
+ * Its email twin (`email_avatars`) is keyed by {@link sharedEmailKey} and fed only by Gravatar;
+ * a Google/Outlook mailbox photo stays on its contact.
  */
+import { createHash } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { linkedinAvatars } from "@/db/schema";
+import { emailAvatars, linkedinAvatars } from "@/db/schema";
 import { AVATAR_RECHECK_DAYS } from "@/lib/avatar-backfill";
 import { deleteSharedAvatarBlob } from "@/lib/avatar-blob";
 import {
   downloadAndPersistSharedAvatar,
+  fetchGravatarPhotoUrl,
   fetchLinkedInPhoto,
   fetchLinkedInPhotoUrl,
+  gravatarAvatarUrl,
   hasBlobStorage,
 } from "@/lib/contact-avatar";
 import { isLinkedInProfilePhoto } from "@/lib/contact-avatar-url";
@@ -215,4 +221,111 @@ export async function resolveLinkedInPhotoCached(
   // Negative rows name the first tier asked.
   await upsertSharedAvatar({ slug, imageUrl: null, source: "linkedin_direct" });
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The email pool (`email_avatars`).
+
+export type SharedEmailAvatarRow = typeof emailAvatars.$inferSelect;
+
+/** Printable ASCII only, so JS and Postgres agree on lower() and trim (no locale cases). */
+const SHAREABLE_EMAIL = /^[\x21-\x7e]+@[\x21-\x7e]+$/;
+const EMAIL_KEY = /^[0-9a-f]{64}$/;
+
+/**
+ * The pool key for an address: sha256 hex of the lowercased, trimmed address (Gravatar's own
+ * hash). Must equal `emailAvatarKeySql` in `contact-avatar-sql.ts`; null for an address the
+ * pool does not take. The address itself is never stored.
+ */
+export function sharedEmailKey(email: string | null | undefined): string | null {
+  const e = email?.trim().toLowerCase();
+  if (!e || !SHAREABLE_EMAIL.test(e)) return null;
+  return createHash("sha256").update(e, "utf8").digest("hex");
+}
+
+export async function getSharedEmailAvatar(emailHash: string): Promise<SharedEmailAvatarRow | null> {
+  const db = await getDb();
+  const [row] = await db.select().from(emailAvatars).where(eq(emailAvatars.emailHash, emailHash)).limit(1);
+  return row ?? null;
+}
+
+/**
+ * {@link upsertSharedAvatar} for the email pool, same rules: a blocked row is never written,
+ * "found nothing" never replaces a photo unless `refresh`. Refuses anything that is not a
+ * 64-hex key (a raw address can never land) and any image that is not https.
+ */
+export async function upsertSharedEmailAvatar(input: {
+  emailHash: string;
+  imageUrl: string | null;
+  source?: SharedEmailAvatarRow["source"];
+  refresh?: boolean;
+}): Promise<boolean> {
+  if (!EMAIL_KEY.test(input.emailHash)) return false;
+  if (input.imageUrl !== null && !input.imageUrl.startsWith("https://")) return false;
+  const db = await getDb();
+  const values = {
+    emailHash: input.emailHash,
+    imageUrl: input.imageUrl,
+    source: input.source ?? "gravatar",
+    resolvedAt: new Date(),
+  };
+  const rows = await db
+    .insert(emailAvatars)
+    .values(values)
+    .onConflictDoUpdate({
+      target: emailAvatars.emailHash,
+      set: { imageUrl: values.imageUrl, source: values.source, resolvedAt: values.resolvedAt },
+      setWhere: and(
+        isNull(emailAvatars.blockedAt),
+        input.imageUrl !== null || input.refresh ? undefined : isNull(emailAvatars.imageUrl)
+      ),
+    })
+    .returning();
+  return rows.length > 0;
+}
+
+/**
+ * The Gravatar step of every photo ladder, cache-first. A fresh row answers with no lookup
+ * (photo, "found nothing", or blocked). Otherwise Gravatar is asked once for the address and
+ * the answer goes to the pool, never the contact: Gravatar's `d=404` is authoritative, so a
+ * miss replaces a stale photo. Without a Blob store the pool keeps only misses and a hit goes
+ * on the contact as before. An address the pool does not take keeps the old per-contact path.
+ */
+export async function resolveGravatarCached(
+  contactId: string,
+  email: string
+): Promise<string | SharedLinkedInPhoto | null> {
+  const key = sharedEmailKey(email);
+  if (!key) return fetchGravatarPhotoUrl(contactId, email);
+
+  const row = await getSharedEmailAvatar(key);
+  if (row?.blockedAt) return null;
+  if (row && isSharedFresh(row)) return row.imageUrl ? { sharedUrl: row.imageUrl } : null;
+
+  if (!hasBlobStorage()) {
+    const own = await fetchGravatarPhotoUrl(contactId, email);
+    if (!own) await upsertSharedEmailAvatar({ emailHash: key, imageUrl: null, refresh: true });
+    return own;
+  }
+
+  return poolGravatarPhoto(key, row);
+}
+
+/**
+ * Ask Gravatar for the address behind `key` (its URL is built from the hash alone) and record
+ * the answer in the pool, photo or miss, replacing `previous`. Blob store required.
+ */
+export async function poolGravatarPhoto(
+  key: string,
+  previous: SharedEmailAvatarRow | null
+): Promise<SharedLinkedInPhoto | null> {
+  const stored = await downloadAndPersistSharedAvatar(key, gravatarAvatarUrl(key));
+  const written = await upsertSharedEmailAvatar({ emailHash: key, imageUrl: stored, refresh: true });
+  if (!written) {
+    // Lost a race with a takedown.
+    await deleteSharedAvatarBlob(stored);
+    return null;
+  }
+  if (previous?.imageUrl && previous.imageUrl !== stored) await deleteSharedAvatarBlob(previous.imageUrl);
+  return stored ? { sharedUrl: stored } : null;
 }

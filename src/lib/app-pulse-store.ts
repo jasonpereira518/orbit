@@ -38,11 +38,15 @@ function set(next: Partial<PulseSnapshot>) {
 export function refreshPulse(force = false): Promise<void> {
   if (inFlight && !force) return inFlight;
   const id = ++latest;
+  const startedAt = Date.now();
   set({ loading: true });
   const run = getAppPulse()
     .then((pulse) => {
       reportRequestOk();
-      if (id === latest) set({ pulse });
+      if (id !== latest) return;
+      // A read that set off before /radar's "opened" stamp landed still counts those cards
+      // as new; it must not bring the nav pulse back.
+      set({ pulse: startedAt < radarClearedAt + RADAR_STAMP_GRACE_MS ? { ...pulse, radarNew: 0 } : pulse });
     })
     .catch((err) => {
       // Network / auth blips: the next tick, the next page load, or `OfflineSync` on
@@ -83,6 +87,19 @@ function subscribe(listener: () => void) {
 
 function onVisible() {
   if (document.visibilityState === "visible" && !isOffline()) void refreshPulse();
+}
+
+/** /radar stamps "opened" after its response (`stampRadarOpened` in `after()`). */
+const RADAR_STAMP_GRACE_MS = 5_000;
+let radarClearedAt = 0;
+
+/**
+ * The person is looking at /radar: stop the nav's green pulse now, rather than at the next
+ * 90 s tick, and keep any read already under way from restarting it.
+ */
+export function clearRadarNew(): void {
+  radarClearedAt = Date.now();
+  if (snapshot.pulse && snapshot.pulse.radarNew > 0) set({ pulse: { ...snapshot.pulse, radarNew: 0 } });
 }
 
 const getSnapshot = () => snapshot;

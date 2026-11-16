@@ -1,3 +1,4 @@
+import { reportError } from "@/lib/report-error";
 import { clientIpFrom, ipBucketKey } from "@/lib/client-ip";
 import { RATE_LIMITS, bucketCount, consumeBucket, isRateLimitedError, softenedLimit } from "@/lib/rate-limit";
 
@@ -33,6 +34,6 @@ export async function recordUnsubscribeMiss(request: { headers: Headers }): Prom
     await consumeBucket(SCOPE, ipBucketKey(clientIpFrom(request.headers)), RATE_LIMITS.unsubscribeMiss);
   } catch (err) {
     // Over the limit is the expected way to fill the bucket; anything else is the limiter.
-    if (!isRateLimitedError(err)) console.error("[unsubscribe] miss counter failed", err);
+    if (!isRateLimitedError(err)) reportError(err, { where: "unsubscribe.miss-counter", level: "warning" });
   }
 }

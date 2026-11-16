@@ -73,9 +73,13 @@ export const PUBLIC_ROUTES = [
   "/api/work-history/sweep",
   "/api/email-intel/sweep",
   "/api/contacts/monthly-upkeep",
+  "/api/avatars/linkedin-queue",
   "/api/contacts/name-sweep",
   "/api/linkedin/timeline-events/backfill",
   "/api/relationships/run",
+  // The one scheduled call (a thirty-minute tick that starts every due job, src/lib/schedules.ts)
+  // — same CRON_SECRET gate as the jobs it starts.
+  "/api/cron/tick",
   "/api/ops/sweep",
   "/api/ops/speech-usage",
   "/api/ops/billing-reconcile",
@@ -85,11 +89,11 @@ export const PUBLIC_ROUTES = [
   "/api/ops/rollup",
   "/api/sync/run",
   "/api/jobs/feed/sweep",
-  // Radar's nightly pass, hourly news sweep and Monday email — same CRON_SECRET gate, same
+  // Radar's daily pass, weekly web pass and Monday email — same CRON_SECRET gate, same
   // reasons.
   "/api/radar/run",
+  "/api/radar/web",
   "/api/cloud-notes/run",
-  "/api/radar/feeds/sweep",
   "/api/radar/digest",
   // The credit emails, on the ten-minute schedule — same CRON_SECRET gate.
   "/api/credits/notices",

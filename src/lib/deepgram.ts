@@ -17,6 +17,7 @@ import { UserFacingError } from "@/lib/errors";
 const GRANT_URL = "https://api.deepgram.com/v1/auth/grant";
 const LISTEN_URL = "https://api.deepgram.com/v1/listen";
 const PROJECTS_URL = "https://api.deepgram.com/v1/projects";
+const SPEAK_URL = "https://api.deepgram.com/v1/speak";
 const DEFAULT_TTL_SECONDS = 30;
 const FILE_TIMEOUT_MS = 90_000;
 const USAGE_TIMEOUT_MS = 15_000;
@@ -57,6 +58,22 @@ export async function probeDeepgramKey(): Promise<"unconfigured" | "accepted" | 
 }
 
 /** The kill switch: `ORBIT_DEEPGRAM=off` reverts every surface to the Whisper/Gemini chain. */
+/**
+ * A few seconds of an Aura voice saying `text`, as MP3, for the admin voice picker. Lives here
+ * because this is the only file allowed to read the key or dial the host. Billed per character,
+ * so callers send a fixed short line, never user text.
+ */
+export async function speakSample(model: string, text: string): Promise<Uint8Array> {
+  const res = await fetch(`${SPEAK_URL}?model=${encodeURIComponent(model)}&encoding=mp3`, {
+    method: "POST",
+    headers: { Authorization: `Token ${requireKey()}`, "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Deepgram speak failed: ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 export function deepgramEnabled(): boolean {
   if (process.env.ORBIT_DEEPGRAM?.trim().toLowerCase() === "off") return false;
   return deepgramConfigured();

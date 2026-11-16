@@ -56,6 +56,7 @@ import { POST as cloudNotesRun } from "../src/app/api/cloud-notes/run/route";
 import { POST as syncRun } from "../src/app/api/sync/run/route";
 import { POST as speechUsage } from "../src/app/api/ops/speech-usage/route";
 import { POST as avatarsEncode } from "../src/app/api/avatars/encode/route";
+import { POST as avatarsLinkedinQueue } from "../src/app/api/avatars/linkedin-queue/route";
 
 const API_DIR = "src/app/api";
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
@@ -88,6 +89,10 @@ const INTENTIONALLY_OPEN: Record<string, { reason: string; mustContain?: RegExp 
   "extension/uninstalled#GET": { reason: "the browser opens it as the extension is removed, when its session is already gone; it accepts a bare version number, records no user, IP or user agent, is rate limited, and always answers 204" },
   "waitlist-poll/results#GET": { reason: "aggregate poll tallies, nothing about any one voter" },
   "v1/openapi.json#GET": { reason: "the static OpenAPI document" },
+  "mcp#OPTIONS": {
+    reason: "CORS preflight for browser MCP clients (Claude, ChatGPT); answers 204 with headers and touches nothing",
+    mustContain: /new Response\(null, \{ status: 204, headers: CORS \}\)/,
+  },
   "credits/email/unsubscribe#GET": {
     reason: "renders a confirmation button only; the POST does the work, behind the token",
     mustContain: /unsubscribeCreditEmail\(token\)/,
@@ -118,8 +123,9 @@ const COVERED_BY_INTERNAL_AUTH = new Set([
   "linkedin/timeline-events/backfill",
   "capture/jobs/[id]/run",
   "radar/run",
-  "radar/feeds/sweep",
+  "radar/web",
   "radar/digest",
+  "cron/tick",
 ]);
 
 type Handler = (req: Request) => Promise<Response>;
@@ -139,6 +145,7 @@ const DYNAMIC: Record<string, Handler> = {
   "ops/rollup": metricsRollup,
   "ops/weekly-digest": weeklyDigest,
   "avatars/encode": avatarsEncode,
+  "avatars/linkedin-queue": avatarsLinkedinQueue,
 };
 
 // --- Static analysis ---------------------------------------------------------------------------
@@ -434,6 +441,8 @@ run(async () => {
     t.check("control: relationships/run with the right bearer passes the gate (400: userId required)", rel.status === 400, String(rel.status));
     const enc = await avatarsEncode(cronRequest(`Bearer ${FAKE_SECRET}`, new Uint8Array(0)));
     t.check("control: avatars/encode with the right bearer passes the gate (422: empty image)", enc.status === 422, String(enc.status));
+    const lq = await avatarsLinkedinQueue(cronRequest(`Bearer ${FAKE_SECRET}`, JSON.stringify({})));
+    t.check("control: avatars/linkedin-queue with the right bearer passes the gate (400: runId required)", lq.status === 400, String(lq.status));
   } finally {
     globalThis.fetch = realFetch;
     for (const [k, v] of Object.entries(saved)) {

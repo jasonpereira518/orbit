@@ -5,8 +5,8 @@ import { productEvents } from "@/db/schema";
 import { isInternalUser } from "@/lib/analytics-internal";
 import { reportError } from "@/lib/report-error";
 import {
-  ACTORS,
-  SURFACES,
+  type ACTORS,
+  type SURFACES,
   eventSchemas,
   eventVersions,
   type EventName,
@@ -83,7 +83,7 @@ export function buildProductEvent<N extends EventName>(
     surface: options.surface ?? "web",
     actor: options.actor ?? "user",
     isInternal: isInternalUser(userId),
-    properties: parsed.data as Record<string, unknown>,
+    properties: parsed.data,
   };
 }
 

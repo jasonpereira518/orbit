@@ -1,0 +1,8 @@
+scripts/
+src/components/
+extension/
+e2e/
+latency/
+stress-tests/
+cost/
+analytics/

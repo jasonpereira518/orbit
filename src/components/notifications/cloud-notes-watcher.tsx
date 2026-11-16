@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { extractCloudNotes, markCloudNotesNotified, scanCloudNotesOnOpen } from "@/actions/cloud-notes";
 import { refreshPulse, useAppPulse } from "@/lib/app-pulse-store";
+import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
+import { TOAST_COPY } from "@/lib/toast-copy";
 
 const REVIEW_URL = "/capture?mode=cloud&review=1";
 /**
@@ -73,17 +75,22 @@ export function CloudNotesWatcher() {
         keep: false,
         action: {
           label: "Extract",
+          // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the async body catches its own errors; nothing can reject out of it
           onClick: async () => {
-            const res = await extractCloudNotes({
-              provider: doc.provider,
-              files: [{ id: doc.fileId, name: doc.name }],
-              batchGroupId: crypto.randomUUID(),
-            });
-            if (!res.ok) {
-              toast.error(res.error, { keep: false });
-              return;
+            try {
+              const res = await extractCloudNotes({
+                provider: doc.provider,
+                files: [{ id: doc.fileId, name: doc.name }],
+                batchGroupId: crypto.randomUUID(),
+              });
+              if (!res.ok) {
+                toast.error(res.error, { keep: false });
+                return;
+              }
+              router.push("/capture");
+            } catch (err) {
+              toast.error(friendlyError(err, TOAST_COPY.notesReadFailed), { keep: false });
             }
-            router.push("/capture");
           },
         },
       });

@@ -66,11 +66,12 @@ import {
   updateMeetingDetails,
 } from "@/lib/meeting-sessions";
 import { loadRadarAutopilot, setRadarAutopilotForUser } from "@/lib/radar/autopilot";
-import { KIND_LABELS, RECOMMENDATION_KINDS, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS, RADAR_DISMISS_REASONS, isRadarDismissReason, type RecommendationKind } from "@/lib/radar/types";
 import { requireReleasedSurface } from "@/lib/surface-visibility";
 import { addGoalForUser, deleteGoalForUser, MAX_GOAL_CHARS, restoreGoalForUser, type GoalSnapshot } from "@/lib/user-goals";
 import { isoDay, name, s, text, uuid, type ChatWrite, type UndoFn } from "@/lib/tools/chat-write-kit";
 import { addMemory, deleteMemory, MEMORY_MAX_CHARS } from "@/lib/chat-memory";
+import { HARD_BANS } from "@/lib/message-format";
 
 const opportunityKind = z.enum(OPPORTUNITY_KINDS.map((k) => k.value) as [OpportunityKind, ...OpportunityKind[]]);
 const opportunityStatus = z.enum(OPPORTUNITY_STATUSES.map((st) => st.value) as [OpportunityStatus, ...OpportunityStatus[]]);
@@ -298,14 +299,16 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
   {
     name: "dismiss_recommendation",
     title: "Dismiss a radar card",
-    description: "Propose dismissing one of radar's suggestions the user does not want to act on.",
-    inputSchema: { recommendationId: uuid },
+    description:
+      "Propose dismissing one of radar's suggestions the user does not want to act on. Pass the user's reason when they " +
+      "gave one: wrong_person, wrong_reason (radar picked the wrong thing to say), already_handled, or not_now (a week's snooze).",
+    inputSchema: { recommendationId: uuid, reason: z.enum(RADAR_DISMISS_REASONS).optional() },
     tier: "confirm",
     refs: (i) => ({ recommendations: [s(i.recommendationId)] }),
     preview: (i, sc) => `Dismiss the radar card for ${name(sc.recommendations, i.recommendationId, "this person")}`,
     async commit(userId, i) {
       await requireReleasedSurface(userId, "page.radar");
-      const out = await dismissRecommendationForUser(userId, s(i.recommendationId));
+      const out = await dismissRecommendationForUser(userId, s(i.recommendationId), isRadarDismissReason(i.reason) ? i.reason : null);
       if (!out.ok) throw new UserFacingError("That radar card has moved on — open radar to see it");
       return { resultId: null, href: "/radar", undo: { tool: "restore_recommendation", input: { recommendationId: s(i.recommendationId) } } };
     },
@@ -564,8 +567,15 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
     title: "Draft an email",
     description:
       "Propose an email to one of the user's contacts, in the user's voice: the text only. The card opens Orbit's send " +
-      "dialog with it prefilled — the user checks the address and subject there and presses Send themselves. Nothing is sent from here.",
-    inputSchema: { contactId: uuid, body: z.string().min(1).max(4000) },
+      "dialog with it prefilled — the user checks the address and subject there and presses Send themselves. Nothing is sent from here. " +
+      "Write it as a short email: \"Hi <first name>,\", one easy ask, then a sign-off and the user's full name. " +
+      HARD_BANS,
+    inputSchema: {
+      contactId: uuid,
+      body: z.string().min(1).max(4000),
+      // Optional: the send dialog (or a spoken "send it") falls back to Orbit's default subject.
+      subject: z.string().min(1).max(200).optional(),
+    },
     tier: "confirm",
     opensDialog: "gmail_send",
     refs: (i) => ({ contacts: [s(i.contactId)] }),
@@ -583,7 +593,7 @@ export const FEATURE_WRITES: readonly ChatWrite[] = [
     description:
       "Propose turning radar's autopilot on or off for one kind of card (prep, heads_up, follow_up, opportunity, reach_out, " +
       "reconnect). With it on, radar schedules a follow-up for that kind of card by itself. It never sends.",
-    inputSchema: { kind: z.enum(RECOMMENDATION_KINDS), on: z.boolean() },
+    inputSchema: { kind: z.enum(AUTOPILOT_KINDS), on: z.boolean() },
     tier: "confirm",
     refs: () => ({}),
     preview: (i) =>
@@ -616,7 +626,7 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
     await deleteOpportunityForUser(userId, s(input.opportunityId));
   },
   async restore_opportunity_fields(userId, input) {
-    const changed = await updateOpportunityForUser(userId, s(input.opportunityId), (input.patch ?? {}) as Record<string, string | null>);
+    const changed = await updateOpportunityForUser(userId, s(input.opportunityId), (input.patch ?? {}));
     if (!changed) throw new UserFacingError("That opportunity is gone — it may have been deleted");
   },
   async restore_opportunity(userId, input) {
@@ -627,7 +637,7 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
     if (!restored) throw new UserFacingError("Radar has a newer card for that person now");
   },
   async restore_campaign_wording(userId, input) {
-    const changed = await updateCampaignWordingForUser(userId, s(input.campaignId), (input.wording ?? {}) as CampaignWording);
+    const changed = await updateCampaignWordingForUser(userId, s(input.campaignId), (input.wording ?? {}));
     if (!changed) throw new UserFacingError("That campaign is gone — it may have been deleted");
   },
   async restore_outreach_draft(userId, input) {
@@ -642,7 +652,7 @@ export const FEATURE_UNDO: Record<string, UndoFn> = {
     await removeMyLinkForUser(userId, s(input.recruiterId));
   },
   async restore_recruiter_link(userId, input) {
-    const changed = await updateMyLinkForUser(userId, s(input.recruiterId), (input.patch ?? {}) as RecruiterLinkPatch);
+    const changed = await updateMyLinkForUser(userId, s(input.recruiterId), (input.patch ?? {}));
     if (!changed) throw new UserFacingError("You no longer have that recruiter logged");
   },
   async restore_meeting_title(userId, input) {

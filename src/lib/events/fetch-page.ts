@@ -53,7 +53,7 @@ const SIGN_IN_PATH = /\/(log-?in|sign-?in|sign-?up|auth|authenticate)(\/|$)/i;
  * ponytail: checks the pasted link only. A non-Luma short link that REDIRECTS to Luma is still
  * followed; refusing per hop needs a host hook in `guardedFetchText`, add it if one shows up.
  */
-function isLumaPage(url: string): boolean {
+export function isLumaPage(url: string): boolean {
   try {
     return /(^|\.)(lu\.ma|luma\.com)$/.test(new URL(url).hostname);
   } catch {

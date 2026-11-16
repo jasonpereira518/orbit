@@ -60,6 +60,11 @@
  *                    and the late semantic update; the search is cleared afterwards.
  *   cluster-click    a click on the cluster name nearest the centre from home; 1.5s of flight,
  *                    summary exit and star mounting.
+ * PAN SUITE (`--suite pan`) — drag-pans, scored per frame like the frame suite:
+ *   pan-home          at the home framing, a 240px-radius circle (the summary view on big skies).
+ *   pan-names         at zoom 0.3 (cluster names showing), 1,200px straight left.
+ *   pan-closeup       at zoom 0.5, 1,800px left: stars enter and leave the view throughout.
+ *   pan-closeup-back  straight on, 1,800px back right, over sky the first pass already drew.
  * Extra per-gesture metrics: each frame's main-thread cost (rAF → after paint): how many exceed
  * 8.33ms (a dropped frame at 120Hz) and 16.7ms, p50/p95/max; long
  * animation frames (LoAF, > 50ms, with the scripts that ran in them), and React commits (count,
@@ -101,6 +106,8 @@ const traceDir = flag("--trace-dir");
  */
 const suite = flag("--suite") ?? "open";
 const uncapped = argv.includes("--uncapped");
+/** `--headful`: a real Chrome window, paced by its display — on a ProMotion Mac, real 120Hz frames. */
+const headful = argv.includes("--headful");
 /** `--gestures a,b`: run only these gestures of the suite (for iterating on one fix). */
 const onlyGestures = flag("--gestures")?.split(",") ?? null;
 const base = flag("--base") ?? process.env.BENCH_URL ?? "https://localhost:3417/bench/constellation";
@@ -208,6 +215,9 @@ window.__ix = (() => {
       longestFrameMs: Math.round(longest * 10) / 10,
       p95FrameMs: Math.round(sorted[Math.floor(0.95 * (sorted.length - 1))] * 10) / 10,
       frames: d.length,
+      // Frame intervals that skipped a vsync: over 1.5 periods at 120Hz, and at 60Hz.
+      gaps120: d.filter((x) => x > 12.5).length,
+      gaps60: d.filter((x) => x > 25).length,
       endZoom: Math.round(zoomNow() * 1000) / 1000,
       stars: document.querySelectorAll(".react-flow__node-contact").length,
       over8: work.filter((x) => x > 1000 / 120).length,
@@ -435,8 +445,10 @@ async function runOnce(n, traced_, { label, base }) {
     width: 1440,
     height: 900,
     gpu: true,
+    headless: !headful,
     extraArgs: [
       "--ignore-certificate-errors",
+      ...(headful ? ["--window-position=0,0", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"] : []),
       ...(uncapped ? ["--disable-gpu-vsync", "--disable-frame-rate-limit"] : []),
     ],
   });
@@ -506,6 +518,13 @@ async function runOnce(n, traced_, { label, base }) {
       await evaluateWithin(cdp, `__ix.goHome()`);
       await cdp.sleep(1500);
       await measure("cluster-click", `void 0`, `__ix.record(1500, __ix.clusterClick())`);
+    } else if (suite === "pan") {
+      // Drag-pans scored against the 120Hz budget, at the three framings that draw differently:
+      // home (the summary view on big skies), cluster names (0.3), and close-up stars (0.5).
+      await measure("pan-home", `__ix.goHome()`, `__ix.record(${GESTURE_MS}, __ix.panCircle(240, ${GESTURE_MS}))`);
+      await measure("pan-names", `__ix.wheelTo(0.3)`, `__ix.record(${GESTURE_MS}, __ix.panLine(-1200, ${GESTURE_MS}))`);
+      await measure("pan-closeup", `__ix.wheelTo(${CLOSEUP_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.panLine(-1800, ${GESTURE_MS}))`);
+      await measure("pan-closeup-back", `void 0`, `__ix.record(${GESTURE_MS}, __ix.panLine(1800, ${GESTURE_MS}))`);
     } else {
       await measure("zoom-in", `__ix.wheelTo(${MIN_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.zoomCurve(${MIN_ZOOM}, ${MAX_ZOOM}, ${GESTURE_MS}))`);
       await measure("zoom-out", `__ix.wheelTo(${MAX_ZOOM})`, `__ix.record(${GESTURE_MS}, __ix.zoomCurve(${MAX_ZOOM}, ${MIN_ZOOM}, ${GESTURE_MS}))`);
@@ -554,7 +573,7 @@ for (const n of sizes) {
           `control ${r.controlFps} · TTI ${r.open.tti}ms ${JSON.stringify(r.open.stages)} lt ${r.open.longTasks} · ` +
             Object.entries(g)
               .map(([k, v]) =>
-                suite === "frame"
+                suite !== "open"
                   ? `${k} >8.3ms ${v.over8}/${v.frames} p95 ${v.workP95Ms}ms max ${v.workMaxMs} loaf ${v.loafs} commits ${v.commits}${v.commitsPerEvent !== null ? ` (${v.commitsPerEvent}/ev)` : ""}`
                   : `${k} ${v.avgFps}/${v.minFps}fps lt ${v.longTasks}`
               )

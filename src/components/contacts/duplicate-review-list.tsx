@@ -198,9 +198,12 @@ function PairCard({ pair }: { pair: DuplicatePair }) {
 export function DuplicateReviewList({
   proposed,
   recentMerges,
+  hideEmpty = false,
 }: {
   proposed: DuplicatePair[];
   recentMerges: RecentMerge[];
+  /** Another section on the page has something to review, so "Nothing to review" would be false. */
+  hideEmpty?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -216,7 +219,7 @@ export function DuplicateReviewList({
       }
     });
 
-  const nothingToDo = proposed.length === 0;
+  const nothingToDo = proposed.length === 0 && !hideEmpty;
 
   return (
     <div className="space-y-8">

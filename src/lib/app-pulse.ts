@@ -8,6 +8,8 @@ import { resolveSurfaceVisibility, isViewingAsUser } from "@/lib/surface-visibil
 import { CLOUD_NOTES_SURFACE_KEY } from "@/lib/surfaces";
 import type { Plan } from "@/lib/plan-limits";
 import { lastUnloggedEvent, lastUnloggedMeeting, nextKnownMeeting } from "@/lib/meeting-context";
+import { radarIsOn } from "@/lib/radar/run";
+import { countNewRadarSuggestions } from "@/lib/radar/store";
 
 /**
  * The one periodic read every authenticated tab makes.
@@ -47,6 +49,8 @@ export type AppPulse = {
   unloggedMeeting: Awaited<ReturnType<typeof lastUnloggedMeeting>>;
   /** An event that ended in the last 36 hours with nobody logged — "How was it?". */
   unloggedEvent: Awaited<ReturnType<typeof lastUnloggedEvent>>;
+  /** Radar suggestions created since /radar was last opened: the nav icon pulses while > 0. */
+  radarNew: number;
 };
 
 /** Far enough ahead that the prep card (15 minutes out) never waits a whole pulse for it. */
@@ -62,12 +66,13 @@ export async function loadAppPulse(
   const settings = loadedSettings ?? (await ensureUserSettings(userId));
   const entitlements = entitlementsFromSettings(userId, settings, await getEffectivePlanConfig());
   // One visibility read for every gated row (what `isSurfaceLive` checks, per key).
-  const livePromise = resolveSurfaceVisibility(userId).then(
+  const visibilityPromise = resolveSurfaceVisibility(userId);
+  const livePromise = visibilityPromise.then(
     ({ hidden, comingSoon }) =>
       (key: string) =>
         !hidden.has(key) && !comingSoon.has(key)
   );
-  const [rawPanel, canOpenAdmin, nextMeeting, rawUnloggedMeeting, rawUnloggedEvent, live] = await Promise.all([
+  const [rawPanel, canOpenAdmin, nextMeeting, rawUnloggedMeeting, rawUnloggedEvent, live, radarNew] = await Promise.all([
     livePromise.then((live) => {
       return loadNotificationPanel(userId, now, {
         withAlerts: true,
@@ -86,6 +91,16 @@ export async function loadAppPulse(
       .then((live) => (live("page.events") ? lastUnloggedEvent(userId, now) : null))
       .catch(() => null),
     livePromise,
+    // One count, and only for an account that has Radar on. Only someone who could open the
+    // page can have turned it on, so "coming soon" (operators previewing) still counts; a
+    // hidden page does not.
+    visibilityPromise
+      .then(({ hidden }) =>
+        !hidden.has("page.radar") && radarIsOn(settings.radarEnabledAt, settings.radarPaused)
+          ? countNewRadarSuggestions(userId, settings.radarOpenedAt ?? null, now)
+          : 0
+      )
+      .catch(() => 0),
   ]);
   const eventsLive = live("page.events");
   // A meeting that IS an event is one thing to log, not two cards: the meeting card opens the
@@ -103,11 +118,9 @@ export async function loadAppPulse(
     .slice(0, DESKTOP_BATCH)
     .map((i) => {
       let title = i.title;
-      if (i.priority === "critical") {
-        title = `🔥 [Critical] ${i.title}`;
-      } else if (i.priority === "high") {
-        title = `⭐ [High Priority] ${i.title}`;
-      }
+      // Plain words, not emoji: the same label the bell's chip shows.
+      if (i.priority === "critical") title = `Critical: ${i.title}`;
+      else if (i.priority === "high") title = `High priority: ${i.title}`;
       const contextParts = [i.importanceReason || i.timingRationale, i.body].filter(Boolean);
       return {
         id: i.id,
@@ -124,5 +137,6 @@ export async function loadAppPulse(
     nextMeeting,
     unloggedMeeting,
     unloggedEvent,
+    radarNew,
   };
 }

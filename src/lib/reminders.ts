@@ -222,7 +222,7 @@ async function buildOutreachSuggestions(userId: string) {
       return;
     }
     const existingPri =
-      AUTO_TYPE_PRIORITY[existing.suggestionType as keyof typeof AUTO_TYPE_PRIORITY] ?? 0;
+      AUTO_TYPE_PRIORITY[existing.suggestionType] ?? 0;
     const nextPri =
       AUTO_TYPE_PRIORITY[candidate.suggestionType] ?? 0;
     if (
@@ -1148,6 +1148,7 @@ export async function getDashboardData(
       preferredName: d.preferredName,
       company: light.company ?? null,
       title: d.title,
+      profileImageUrl: d.profileImageUrl,
       goalRelevance,
       reason,
       companyName,

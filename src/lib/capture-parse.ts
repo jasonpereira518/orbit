@@ -28,7 +28,6 @@ import {
   validateCadences,
   validateCommitments,
   emptyCommitmentResult,
-  type RejectedCounts,
 } from "@/lib/date-commitment-extract";
 import { normalizePastedCaptureText } from "@/lib/capture-ingest";
 import {
@@ -50,7 +49,8 @@ import {
   type LinkedInProfileRef,
 } from "@/lib/linkedin-paste";
 import { isSelf } from "@/lib/meeting-digest";
-import { collapseSamePeople, looksLikeOrganization } from "@/lib/capture/person-cleanup";
+import { collapseSamePeople } from "@/lib/capture/person-cleanup";
+import { isPersonName } from "@/lib/names/classify";
 import { companyFromEmail } from "@/lib/guest-profiles";
 import { lookUpNewPeople } from "@/lib/capture/web-lookup";
 import type { PersonResearcher } from "@/lib/web-research";
@@ -81,7 +81,6 @@ import {
   resolveSmartFollowUpTiming,
 } from "@/lib/smart-reminders-extract";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
-import { DEFAULT_FOLLOW_UP_WINDOW_DAYS, windowDueDate } from "@/lib/note-batches";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import type {
   BulkNotePersonPreview,
@@ -283,7 +282,7 @@ export async function runCaptureParse(
       engines: enginesP,
       background: opts.background,
     }).catch(
-      () => ({ commitments: [], cadences: [] }) as Awaited<ReturnType<typeof fetchRawCommitments>>
+      () => ({ commitments: [], cadences: [] })
     ),
     getDb().then((db) =>
       db.query.contacts.findMany({
@@ -297,6 +296,7 @@ export async function runCaptureParse(
             xHandle: true,
             company: true,
             title: true,
+            phone: true,
           } satisfies Record<keyof DuplicateSubject, true>),
           // For the loose first-name / nickname candidates only.
           preferredName: true,
@@ -320,7 +320,7 @@ export async function runCaptureParse(
       // user wrote, "Jason from Stripe" is somebody else.
       company: meeting ? null : p.company,
     })) return false;
-    if (looksLikeOrganization(p.name, p.company)) {
+    if (!isPersonName(p.name, { email: p.email, company: p.company })) {
       skippedNonPeople.push(p.name.trim());
       return false;
     }
@@ -577,8 +577,8 @@ export async function runCaptureParse(
       const again = candidatesFor(item.parsed);
       if (!again.length) continue;
       item.duplicates = toCardDuplicates(again);
-      if (again[0]!.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
-        item.suggestedMergeId = again[0]!.contact.id;
+      if (again[0].confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+        item.suggestedMergeId = again[0].contact.id;
         item.suggestedNew = undefined;
       }
     }
@@ -732,7 +732,9 @@ export async function runCaptureParse(
           title,
           description: null,
           rawDatePhrase: promise.due_phrase,
-          dueDateIso: timing.dueDateIso,
+          // A stated date is used exactly as resolved (main's behaviour); only an undated
+          // promise takes the timing rule's date.
+          dueDateIso: resolved ? isoDay(resolved) : timing.dueDateIso,
           yearInferred: false,
           personName: item.parsed.name,
           actionKind: inferReminderActionKind({
@@ -768,7 +770,7 @@ export async function runCaptureParse(
     sourceText: corpus,
     sourceHash,
     suggestedReminders: [...suggestedReminders, ...impliedReminders, ...promiseReminders],
-    suggestionsSkipped: commitmentResult.rejected as RejectedCounts,
+    suggestionsSkipped: commitmentResult.rejected,
     mentions,
     mentionedOnly,
     skippedNonPeople,
@@ -850,6 +852,7 @@ async function parsePastedLinkedInProfiles(
       xHandle: true,
       company: true,
       title: true,
+      phone: true,
     } satisfies Record<keyof DuplicateSubject, true>,
   });
   const duplicateIndex = buildDuplicateIndex(existing);
@@ -911,7 +914,7 @@ async function parsePastedLinkedInProfiles(
     sourceText,
     sourceHash: hashSourceNote(sourceText),
     suggestedReminders: [],
-    suggestionsSkipped: emptyCommitmentResult().rejected as RejectedCounts,
+    suggestionsSkipped: emptyCommitmentResult().rejected,
     mentions: [],
     mentionedOnly: [],
     linkedinLookup: {

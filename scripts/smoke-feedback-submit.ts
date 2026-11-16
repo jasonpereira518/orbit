@@ -69,6 +69,7 @@ async function main() {
   // otherwise a spread of validated input would quietly reinstate a spoofed plan.
   const hostile = feedbackSubmissionSchema.parse({
     text: "the graph is slow",
+    subject: "Slow graph",
     userId: "someone-else",
     plan: "lifetime",
     ip: "10.0.0.1",
@@ -78,6 +79,8 @@ async function main() {
   for (const key of ["userId", "plan", "ip", "serverRoute", "commit"]) {
     check(`the schema drops a client-supplied \`${key}\``, !(key in hostile));
   }
+  check("a new message needs a subject", !feedbackSubmissionSchema.safeParse({ text: "the graph is slow" }).success);
+  check("...a blank one doesn't count", !feedbackSubmissionSchema.safeParse({ text: "x", subject: "   " }).success);
 
   const decoded = decodeScreenshot(WEBP_DATA_URL);
   check("the fixture screenshot decodes", decoded !== null);
@@ -90,6 +93,7 @@ async function main() {
       const created = await createFeedbackSubmission({
         userId: USER,
         text: "the graph is slow on a big network",
+        subject: "Slow graph",
         area: "graph",
         category: "bug",
         context: { plan: "free", route: "/graph" },

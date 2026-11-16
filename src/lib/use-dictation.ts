@@ -35,6 +35,7 @@ import {
 } from "@/lib/dictation";
 import { EMPTY_FOLD, foldResults, type FoldState } from "@/lib/dictation-fold";
 import { openDeepgramLive, type LiveHandle, type LiveResult } from "@/lib/deepgram-live";
+import { getAudioContextCtor } from "@/lib/audio-context";
 import { listenParams } from "@/lib/deepgram-params";
 import { TARGET_SAMPLE_RATE, createDownsampler } from "@/lib/voice-recording";
 
@@ -43,14 +44,6 @@ type SpeechToken = { accessToken: string; keyterms?: string[]; tag?: string | nu
 
 const DEEPGRAM_WORKLET_URL = "/orbit-pcm-worklet.js";
 const DEEPGRAM_WORKLET_NAME = "orbit-pcm-recorder";
-
-type AudioContextCtor = typeof AudioContext;
-
-function getAudioContextCtor(): AudioContextCtor | null {
-  if (typeof window === "undefined") return null;
-  const w = window as Window & { webkitAudioContext?: AudioContextCtor };
-  return window.AudioContext ?? w.webkitAudioContext ?? null;
-}
 
 /**
  * Whether this browser can carry mic audio to Deepgram at all. Checked before spending a

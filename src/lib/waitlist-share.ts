@@ -15,6 +15,7 @@
  * Rate limited per IP (a loop would otherwise inflate the referral-loop numbers) and it never
  * throws: a share control must not be able to fail.
  */
+import { reportError } from "@/lib/report-error";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { interestListSignups } from "@/db/schema";
@@ -65,7 +66,7 @@ export async function recordWaitlistShareCore(input: {
     track("waitlist_shared", { signup_id: row.id, channel: input.channel });
     return true;
   } catch (err) {
-    console.error("[interest-list] share record failed", err);
+    reportError(err, { where: "interest.share.record", level: "error" });
     return false;
   }
 }

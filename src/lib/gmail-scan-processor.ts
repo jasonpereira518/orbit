@@ -16,7 +16,7 @@ import { failImport, truncateStoredError } from "@/lib/import-job-processor";
 import { isRealHumanName } from "@/lib/recruiter-detect";
 import {
   buildRecruiterQuery,
-  fetchGmailHeaders,
+  type fetchGmailHeaders,
   fetchGmailHeadersBatched,
   fetchGmailMessages,
   firmFromEmail,
@@ -54,6 +54,13 @@ const CHUNK_SIZE = 8;
  * trip however many requests it holds, and capped by what `submitAiBatch` accepts.
  */
 const SCAN_BATCH_SIZE = 50;
+/**
+ * Fewer senders than this are classified inline, never batched. A batch answers in minutes
+ * to a day and is only collected by the half-hourly sweep, so a small scan someone is
+ * watching sat at "Reading 0/N" for up to an hour. Half price on a handful of calls is
+ * pennies; a progress bar that never moves is not.
+ */
+export const BATCH_MIN_SENDERS = 10;
 /** Same headroom as the LinkedIn runner: stay under the 300s ceiling with room to hand off. */
 const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 const DISCOVERY_PAGE_SIZE = 200;
@@ -671,10 +678,10 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
       );
       const keys = await Promise.all(calls.map((c) => completionCacheKey(userId, c)));
       const known = await Promise.all(keys.map((k) => readAiResult<string>(userId, "recruiter.scan", k, RECRUITER_VERDICT_TTL_DAYS)));
-      const fresh = batchable.flatMap((b, i) => (known[i] === undefined ? [{ b, call: calls[i]!, key: keys[i]! }] : []));
+      const fresh = batchable.flatMap((b, i) => (known[i] === undefined ? [{ b, call: calls[i], key: keys[i] }] : []));
       batchable = fresh.map((f) => f.b);
 
-      if (batchable.length > 0) {
+      if (batchable.length >= BATCH_MIN_SENDERS) {
         const items = fresh.map(({ b, key }, i) => ({
           customId: `s${i}`,
           rowId: b.row.id,

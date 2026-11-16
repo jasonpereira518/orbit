@@ -9,6 +9,17 @@ import type { ImportAdapter, InteractionInsert } from "@/lib/import-engine";
 import { clampCodePoints } from "@/lib/conversations/clamp";
 import { sessionExternalId } from "@/lib/conversations/sessions";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
+import { displayNameFor } from "@/lib/names/from-identifier";
+
+/**
+ * The stored name for a chat participant. Only the contact's name is cleaned: the parser's
+ * `displayName` is also the conversation key hashed into `interactions.external_id`, so it
+ * must stay exactly as the export wrote it.
+ */
+function chatName(p: { participant: { displayName: string; email?: string | null } }): string {
+  return displayNameFor({ name: p.participant.displayName, email: p.participant.email });
+}
+
 
 export const WHATSAPP_CHAT_IMPORT_TYPE = "whatsapp_chat";
 export const IMESSAGE_CHAT_IMPORT_TYPE = "imessage_chat";
@@ -37,12 +48,12 @@ export function chatAdapter(source: "whatsapp" | "imessage"): ImportAdapter<Chat
     },
     identity(p) {
       if (!p.createIfUnmatched) return null;
-      return { fullName: p.participant.displayName, email: p.participant.email ?? undefined };
+      return { fullName: chatName(p), email: p.participant.email ?? undefined };
     },
     toCreate(p) {
       const { earliest, latest } = range(p);
       return {
-        fullName: p.participant.displayName,
+        fullName: chatName(p),
         phone: p.participant.phoneE164 ?? undefined,
         email: p.participant.email ?? undefined,
         source: `${source}_chat`,

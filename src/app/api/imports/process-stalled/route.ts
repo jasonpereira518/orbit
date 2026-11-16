@@ -19,11 +19,13 @@ import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { fillSharedAvatars, sweepOrphanedSharedAvatars } from "@/lib/shared-avatar-upkeep";
+import { isLinkedInPhotoQueueRunning, resumeLinkedInPhotoQueueIfDue } from "@/lib/linkedin-photo-queue";
 import { sweepPublicWorkHistory } from "@/lib/public-work-history";
 import { sweepEmailAttachments } from "@/lib/email/attachments";
 import { runRetentionSweeps } from "@/lib/retention";
 import { backfillInterestListTokens } from "@/lib/interest-list-tokens";
 import {
+  cronTrigger,
   finishCronRun,
   startCronRun,
   type CronRunStatus,
@@ -107,7 +109,7 @@ const ERROR_EVENT_RETENTION_DAYS = 30;
 const ROUTE_BUDGET_MS = 180_000;
 
 /**
- * The hourly backstop, scheduled by `.github/workflows/ops.yml` (the only scheduler):
+ * The hourly backstop, scheduled by `scripts/qstash-schedules.ts` (the only scheduler):
  * resumes server-owned import and capture jobs whose invocation died mid-run. The primary
  * resumption path is still each job's own self-continuation; this is the last resort.
  *
@@ -125,7 +127,7 @@ export async function GET(request: Request) {
     return new NextResponse(null, { status: 401 });
   }
 
-  const run = await startCronRun("imports.process-stalled");
+  const run = await startCronRun("imports.process-stalled", cronTrigger(request));
 
   let status: CronRunStatus = "ok";
   let error: unknown = null;
@@ -164,6 +166,8 @@ export async function GET(request: Request) {
     sharedAvatarsMissed: 0,
     sharedAvatarFillDeferred: false,
     sharedAvatarsSwept: 0,
+    /** The admin LinkedIn photo queue was kicked: its pause ended or its chain was lost. */
+    linkedinPhotoQueueResumed: false,
     publicWorkHistorySwept: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
@@ -458,10 +462,20 @@ export async function GET(request: Request) {
       reportError(err, { where: "job.process-stalled.relationship-kicks" });
     }
 
+    if (stage("linkedin-photo-queue")) try {
+      stats.linkedinPhotoQueueResumed = await resumeLinkedInPhotoQueueIfDue();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.linkedin-photo-queue" });
+    }
+
     if (stage("shared-avatar-fill")) try {
       // A little of the shared photo pool each hour, most-shared slugs first. Last, with the
       // orphan sweep: lookups are slow, and must never push the stages above past maxDuration.
-      const fill = await fillSharedAvatars();
+      // Skipped while the admin photo queue runs: it covers the same slugs and allowances.
+      const fill = (await isLinkedInPhotoQueueRunning())
+        ? { found: 0, missed: 0, deferred: false }
+        : await fillSharedAvatars();
       stats.sharedAvatarsFilled = fill.found;
       stats.sharedAvatarsMissed = fill.missed;
       stats.sharedAvatarFillDeferred = fill.deferred;

@@ -68,8 +68,16 @@ export async function kickImportContinuation(importId: string): Promise<void> {
 export async function startJobInOwnInvocation(importId: string, runHere: (importId: string) => Promise<void>): Promise<void> {
   try {
     await kickImportContinuation(importId);
-  } catch {
-    await runHere(importId);
+  } catch (kickErr) {
+    reportError(kickErr, { where: "job.import.start-kick", level: "warning", extra: { importId } });
+    try {
+      await runHere(importId);
+    } catch (err) {
+      // The callers used to `.catch(() => {})` this, so a throw before the runner's own
+      // try/catch left the row "processing" with nothing logged. Never rejects now: the
+      // row is failed (message + reference shown in the UI) and the error is reported.
+      await failImport(importId, err).catch(() => {});
+    }
   }
 }
 

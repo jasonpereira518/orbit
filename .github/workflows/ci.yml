@@ -119,6 +119,11 @@ jobs:
           npm run typecheck & tsc=$!
           npm run lint & lint=$!
           wait $tsc && wait $lint
+      # Ratchets (plan P0.5): the warning cap lives in the `lint` script, these two live here.
+      - name: circular imports (ratchet)
+        run: npm run check:cycles
+      - name: smoke source-reader manifest is current
+        run: npm run check:sources
       - name: Cache the Next.js compiler output
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -228,6 +233,28 @@ jobs:
     timeout-minutes: 5
     steps:
       - run: test "${{ needs.smoke.result }}" = success
+
+  # node:test unit tests (*.test.ts next to the code). Fast, one process per file; the ones that
+  # touch the database import scripts/smoke/_env first, so each gets a throwaway PGlite and no
+  # provider keys. The smoke suite keeps running unchanged.
+  unit:
+    name: unit tests (node:test)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - id: deps
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('.nvmrc', 'package-lock.json') }}
+      - if: steps.deps.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+      - run: npm run test:unit
 
   # The same suite again under c8, for coverage — on `main` and on demand, NOT on PRs, and
   # never as the gate. Instrumentation slows scripts several-fold, which is harmless for

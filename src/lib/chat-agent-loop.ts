@@ -115,15 +115,37 @@ const WEB_RULE =
   "Web lookups (research_person, research_company, find_people) are slow and paid: use at most one per answer, and only when the user asks about someone or something outside their records.";
 
 /**
- * `AGENT_RULES` as this answer should hear them. With web search switched off the web tools
- * are not offered at all, so the rule says so instead of naming tools the model cannot call.
+ * Why the web is the way it is for this answer, when "the person switched it off" is not the
+ * whole story (`decideWebForTurn` in `@/lib/chat-web-decision`): auto left it off because the
+ * question looks answerable from the records, auto turned it on, or it is wanted but cannot
+ * run (the admin pause, or no key that can search).
  */
-export function agentRulesFor(mode: ChatMode, web: boolean): string {
-  const webRule = !web
-    ? "The user has switched web search off for this question: you have no web lookups. Answer from their records, and when the question needs the public web, say that web search is off rather than guessing."
-    : mode === "deep"
-      ? WEB_RULE.replace("at most one per answer", `at most ${CHAT_MODES.deep.webLookups} per answer`)
-      : WEB_RULE;
+export type WebRuleNote = "auto-off" | "auto-on" | "paused" | "no_provider";
+
+const NO_WEB_TOOLS =
+  "you have no web lookups. Answer from their records, and when the question needs the public web, say that web search is off rather than guessing.";
+
+/**
+ * `AGENT_RULES` as this answer should hear them. With web search off the web tools are not
+ * offered at all, so the rule says so instead of naming tools the model cannot call.
+ */
+export function agentRulesFor(mode: ChatMode, web: boolean, note?: WebRuleNote): string {
+  let webRule: string;
+  if (!web) {
+    webRule =
+      note === "auto-off"
+        ? "Web search is not on for this question, because it looks answerable from the user's own records: you have no web lookups. Answer from their records. If it turns out to need the public web, say so in one sentence and tell them they can switch Web search on with the globe in the message box, rather than guessing."
+        : note === "paused" || note === "no_provider"
+          ? `Web search is unavailable right now (${note === "paused" ? "it is paused" : "their AI setup cannot search the web"}), so you have no web lookups. Answer from their records and say plainly that you could not check the web, rather than guessing.`
+          : `The user has switched web search off for this question: ${NO_WEB_TOOLS}`;
+  } else {
+    const base =
+      mode === "deep" ? WEB_RULE.replace("at most one per answer", `at most ${CHAT_MODES.deep.webLookups} per answer`) : WEB_RULE;
+    webRule =
+      note === "auto-on"
+        ? `${base} Web search was turned on for this question because it asks about the public web: check their records first for anyone named, then look it up rather than guessing. If a lookup is refused (a cap or a pause), say so and answer from their records.`
+        : base;
+  }
   const thorough =
     mode === "deep"
       ? " The user asked for a thorough answer and is willing to wait: check more than one place before you conclude, follow a promising lead with a second lookup, and cover the whole question. Still write only what the records and lookups support."
@@ -307,8 +329,10 @@ export async function answerWithLookups(
     steer?: SteerSource;
     /** How hard to work on it. See `ChatMode`. */
     mode?: ChatMode;
-    /** False when the person switched web search off: the web tools are not offered. */
+    /** False when web search is off for this question: the web tools are not offered. */
     web?: boolean;
+    /** Why `web` is what it is, when the person's switch is not the reason. */
+    webNote?: WebRuleNote;
     /** Test seam: builds a fake driver, handed the callback its rounds stream prose into. */
     driver?: (onText: (delta: string) => void) => ToolDriver;
     /** Test seam: a fake executor in place of the registry. */
@@ -326,7 +350,7 @@ export async function answerWithLookups(
   const mode = options.mode ?? "quick";
   const web = options.web !== false;
   const budget = CHAT_MODES[mode];
-  const system = `${prompt.systemCore}${agentRulesFor(mode, web)}${WRITE_RULES}${CHAT_STREAM_TAIL}`;
+  const system = `${prompt.systemCore}${agentRulesFor(mode, web, options.webNote)}${WRITE_RULES}${CHAT_STREAM_TAIL}`;
   options.onEvidence?.(prompt.evidence);
 
   // Auto-apply (`@/lib/chat-auto-apply`): off unless the person switched it on, and off for the

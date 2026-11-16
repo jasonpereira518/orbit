@@ -15,7 +15,7 @@ export { replySubject, stripReply } from "@/lib/email/reply-subject";
  *
  *   orbit:<sendId>          a thread Orbit sent (email_sends, status sent)
  *   logged:<interactionId>  a message the user BCC-logged (external_id mail:<Message-ID>:<contactId>)
- *   inbox:<provider>:<id>   the latest mailbox message (dark: feature.reply-inbox)
+ *   inbox:<provider>:<id>   the latest mailbox message (behind feature.reply-inbox)
  *   copy:<sendId>           a queued/failed row's own reply fields (Edit, Retry)
  */
 export type ReplySource = "orbit" | "logged" | "inbox";
@@ -41,7 +41,7 @@ let replyInboxOverride: boolean | null = null;
 export function setReplyInboxOverride(v: boolean | null) {
   replyInboxOverride = v;
 }
-/** Mailbox lookups ship dark until the privacy page discloses them (feature.reply-inbox). */
+/** Mailbox lookups follow the feature.reply-inbox surface, so an operator can still switch them off. */
 async function inboxLive(userId: string): Promise<boolean> {
   return replyInboxOverride ?? (await isSurfaceLive(userId, REPLY_INBOX_SURFACE_KEY));
 }

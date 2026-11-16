@@ -7,6 +7,8 @@
  * knows about Gmail's or Graph's wire shapes — it only reads generic from/subject/snippet
  * strings, which both providers' scan processors normalize their headers into first.
  */
+import { nameFromEmail } from "@/lib/names/from-identifier";
+import { formatPersonName } from "@/lib/names/parse";
 
 const RECRUITER_TITLE_RE =
   /\b(recruiter|talent\s*acquisition|sourcer|staffing|headhunter|talent\s*partner|technical\s*recruiter)\b/i;
@@ -32,10 +34,9 @@ export function parseFromHeader(from: string): { name: string; email: string } |
   const match = from.match(/^(?:"?([^"<]*)"?\s*)?<?([^\s<>]+@[^\s<>]+)>?$/);
   if (!match) return null;
   const email = match[2].trim().toLowerCase();
-  let name = (match[1] || "").trim().replace(/^"|"$/g, "");
-  if (!name) {
-    name = email.split("@")[0].replace(/[._]/g, " ");
-  }
+  const shown = (match[1] || "").trim().replace(/^"|"$/g, "");
+  // A display name is formatted ("DOE, JANE" → Jane Doe); none, the address is read.
+  const name = formatPersonName(shown)?.fullName || nameFromEmail(email)?.full || email.split("@")[0].replace(/[._]/g, " ");
   return { name, email };
 }
 

@@ -1,42 +1,12 @@
 /**
- * What the model returns as "people" before any of it becomes a review card. Two cleanups,
- * both pure so the smoke can drive them without a model:
+ * What the model returns as "people" before any of it becomes a review card. Pure, so the
+ * smoke can drive it without a model:
  *
- * - `looksLikeOrganization`: a company or team the model filed as a person.
+ * - Who is not a person at all (a company, a team, "the recruiter") is `isPersonName`'s call, in
+ *   `@/lib/names/classify`.
  * - `collapseSamePeople`: one person returned twice ("Sarah" and "Sarah Chen" in one note).
  */
-
-export function foldName(s: string | null | undefined): string {
-  return (s ?? "")
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^\p{L}\p{N}&'\s-]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-// ponytail: a word list, not a classifier. Widen it when a real miss shows up.
-const ORG_WORDS = new Set([
-  "inc", "llc", "ltd", "llp", "plc", "gmbh", "corp", "corporation", "company",
-  "labs", "lab", "group", "capital", "ventures", "partners", "holdings", "fund",
-  "university", "college", "school", "institute", "academy",
-  "team", "foundation", "bank", "technologies", "technology", "systems",
-  "solutions", "studio", "studios", "agency", "consulting", "media", "network",
-  "association", "club", "society", "hq", "committee", "department",
-]);
-
-/** True when a "person" name reads as a company, team, school or similar. */
-export function looksLikeOrganization(name: string | null | undefined, company?: string | null): boolean {
-  const raw = name?.trim();
-  if (!raw) return false;
-  if (/\d|&|@/.test(raw)) return true;
-  // "IBM", "AWS", "YC": a lone acronym is an organisation far more often than a person.
-  if (/^[A-Z]{3,6}$/.test(raw)) return true;
-  const folded = foldName(raw);
-  if (company && folded === foldName(company)) return true;
-  return folded.split(" ").some((w) => ORG_WORDS.has(w));
-}
+import { nameKey } from "@/lib/names/key";
 
 function isEmpty(v: unknown): boolean {
   return v == null || v === "" || (Array.isArray(v) && v.length === 0);
@@ -78,12 +48,12 @@ function keysFor(p: CollapsiblePerson): string[] {
   if (email) keys.push(`e:${email}`);
   const slug = p.linkedin_url?.match(/linkedin\.com\/in\/([^/?#\s]+)/i)?.[1]?.toLowerCase();
   if (slug) keys.push(`l:${slug}`);
-  const name = foldName(p.name);
+  const name = nameKey(p.name);
   if (name) keys.push(`n:${name}`);
   return keys;
 }
 
-const isSingleName = (p: CollapsiblePerson) => !foldName(p.name).includes(" ");
+const isSingleName = (p: CollapsiblePerson) => !nameKey(p.name).includes(" ");
 
 /**
  * One entry per person. Entries sharing an email, LinkedIn slug or full name merge; then a
@@ -107,11 +77,11 @@ export function collapseSamePeople<T extends CollapsiblePerson>(people: readonly
 
   const absorbed = new Set<number>();
   out.forEach((p, i) => {
-    const first = foldName(p.name);
+    const first = nameKey(p.name);
     if (!first || !isSingleName(p)) return;
     const fulls = out
       .map((q, j) => ({ q, j }))
-      .filter(({ q, j }) => j !== i && !absorbed.has(j) && !isSingleName(q) && foldName(q.name).split(" ")[0] === first);
+      .filter(({ q, j }) => j !== i && !absorbed.has(j) && !isSingleName(q) && nameKey(q.name).split(" ")[0] === first);
     if (fulls.length !== 1) return;
     const { q: target, j } = fulls[0];
     // A different email means a different person who shares a first name.

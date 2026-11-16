@@ -35,6 +35,7 @@ import {
   startBackgroundJob,
   updateBackgroundJob,
 } from "@/lib/background-jobs";
+import { sleep } from "@/lib/async";
 
 const POLL_INTERVAL_MS = 1500;
 
@@ -51,10 +52,6 @@ async function fetchImportJobStatus(importId: string): Promise<ImportJobStatus> 
   });
   if (!res.ok) throw new Error(`Import status poll failed (${res.status})`);
   return (await res.json()) as ImportJobStatus;
-}
-
-function sleep(ms: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 }
 
 export type ImportJobKind =

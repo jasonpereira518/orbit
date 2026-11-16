@@ -2,6 +2,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { TOUR_EXAMPLE_SOURCE } from "@/lib/onboarding-examples/marker";
 import { getDb, rowsOf } from "@/db";
 import { USAGE_EVENT_RETENTION_DAYS } from "@/lib/admin-health";
+import { num, toDate } from "@/lib/admin-metrics";
 import { internalAccountSql } from "@/lib/analytics-internal";
 import { ACTIVATION_WINDOW_DAYS, activatedSql, intentionalActionsSince } from "@/lib/activity";
 
@@ -154,15 +155,13 @@ const FEATURES = [
 
 type FeatureKey = (typeof FEATURES)[number]["key"] | "calendar";
 
-function toDate(value: Date | string | null | undefined): Date {
-  if (value instanceof Date) return value;
-  return new Date(String(value));
-}
-
-function num(value: string | number | null | undefined): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
+/**
+ * The shared guarded `toDate` (null for null/NaN), for the one site that is nullable. The
+ * bucket columns are typed `Date`, so they keep an Invalid Date for an unparseable value
+ * exactly as before; they were never reachable with a null in practice.
+ */
+function bucketDate(value: Date | string | null | undefined): Date {
+  return toDate(value) ?? new Date(NaN);
 }
 
 /** Grain is a closed set, never interpolated from a query string. */
@@ -259,7 +258,7 @@ export async function userTotalsTrend(
   `);
   return rowsOf<{ bucket_start: string; added: number; total: number }>(result).map(
     (r) => ({
-      bucketStart: toDate(r.bucket_start),
+      bucketStart: bucketDate(r.bucket_start),
       added: num(r.added),
       total: num(r.total),
     })
@@ -302,7 +301,7 @@ export async function viewersTrend(
   `);
   return rowsOf<{ bucket_start: string; viewers: number; views: number }>(result).map(
     (r) => ({
-      bucketStart: toDate(r.bucket_start),
+      bucketStart: bucketDate(r.bucket_start),
       viewers: num(r.viewers),
       views: num(r.views),
     })
@@ -351,7 +350,7 @@ export async function rollingActiveTrend(
   return rowsOf<{ bucket_start: string; dau: number; wau: number; mau: number }>(
     result
   ).map((r) => ({
-    bucketStart: toDate(r.bucket_start),
+    bucketStart: bucketDate(r.bucket_start),
     dau: num(r.dau),
     wau: num(r.wau),
     mau: num(r.mau),
@@ -472,7 +471,7 @@ export async function retentionCurves(
     elapsed: number;
     active: number;
   }>(result)) {
-    const start = toDate(r.cohort_start);
+    const start = bucketDate(r.cohort_start);
     const key = start.toISOString();
     const curve = curves.get(key) ?? { cohortStart: start, size: num(r.size), weeks: [] };
     // Only weeks the whole cohort has finished — see the docstring.
@@ -551,7 +550,7 @@ export async function depthTrend(
     chats: number;
     imports: number;
   }>(result).map((r) => ({
-    bucketStart: toDate(r.bucket_start),
+    bucketStart: bucketDate(r.bucket_start),
     active: num(r.active),
     captures: num(r.captures),
     notes: num(r.notes),
@@ -593,7 +592,7 @@ export async function consistentUsersTrend(buckets = 12): Promise<ConsistencyPoi
     ORDER BY spine.bucket_start
   `);
   return rowsOf<Record<string, string | number>>(result).map((r) => ({
-    bucketStart: toDate(r.bucket_start as string),
+    bucketStart: bucketDate(r.bucket_start as string),
     active: num(r.active),
     threeOfFour: num(r.three_of_four),
     allFour: num(r.all_four),
@@ -631,7 +630,7 @@ export async function aiWeeklyUsage(buckets = 12): Promise<AiWeekPoint[]> {
     ORDER BY spine.bucket_start
   `);
   return rowsOf<Record<string, string | number>>(result).map((r) => ({
-    bucketStart: toDate(r.bucket_start as string),
+    bucketStart: bucketDate(r.bucket_start as string),
     calls: num(r.calls),
     failures: num(r.failures),
     orbitMicros: num(r.orbit_micros),
@@ -718,7 +717,7 @@ export async function activationTrend(
     matured: number;
     activated: number;
   }>(result).map((r) => ({
-    bucketStart: toDate(r.bucket_start),
+    bucketStart: bucketDate(r.bucket_start),
     signed: num(r.signed),
     onboarded: num(r.onboarded),
     firstContact: num(r.first_contact),
@@ -794,7 +793,7 @@ export async function aiVolumeTrend(
   `);
   return rowsOf<{ bucket_start: string; n: number; failures: number }>(result).map(
     (r) => ({
-      bucketStart: toDate(r.bucket_start),
+      bucketStart: bucketDate(r.bucket_start),
       count: num(r.n),
       failures: num(r.failures),
     })

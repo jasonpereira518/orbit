@@ -1,4 +1,6 @@
 import { isLinkedInProfilePhoto } from "@/lib/contact-avatar-url";
+import { isPersonName } from "@/lib/names/classify";
+import { splitName } from "@/lib/names/parse";
 
 /**
  * Social crawler and browser User-Agents for fetching LinkedIn public profile metadata.
@@ -28,11 +30,14 @@ export type ScrapedLinkedInPhoto = {
 export class LinkedInDirectRateLimitError extends Error {
   readonly resetAt: number;
   readonly source = "linkedin_direct";
+  /** Why LinkedIn said no: its HTTP status (429, 999), 1 for an authwall redirect, 0 for our own cooldown. */
+  readonly status: number;
 
-  constructor(resetAt: number, message = "LinkedIn direct scrape rate limited") {
+  constructor(resetAt: number, message = "LinkedIn direct scrape rate limited", status = 0) {
     super(message);
     this.name = "LinkedInDirectRateLimitError";
     this.resetAt = resetAt;
+    this.status = status;
   }
 }
 
@@ -163,18 +168,15 @@ function cleanText(raw: unknown): string | null {
 }
 
 export function isLikelyPersonName(name: string | null): boolean {
-  if (!name) return false;
-  const trimmed = name.trim();
-  if (trimmed.length < 2 || trimmed.length > 80) return false;
+  const trimmed = name?.trim() ?? "";
+  if (trimmed.length > 80) return false;
   if (/^(linkedin|sign in|log in|join|profile|welcome)/i.test(trimmed)) return false;
-  return true;
+  return isPersonName(trimmed);
 }
 
 export function splitFullName(fullName: string | null): { first: string | null; last: string | null } {
-  if (!fullName) return { first: null, last: null };
-  const parts = fullName.trim().split(/\s+/);
-  if (parts.length <= 1) return { first: parts[0] || null, last: null };
-  return { first: parts[0]!, last: parts.slice(1).join(" ") };
+  const { firstName, lastName } = splitName(fullName);
+  return { first: firstName, last: lastName };
 }
 
 export function splitHeadline(headline: string | null): { title: string | null; company: string | null } {
@@ -340,7 +342,7 @@ export function extractLinkedInFullProfileFromHtml(html: string): LinkedInFullPr
         } else if (parts.length === 2) {
           if (isLikelyPersonName(parts[0])) {
             ogName = parts[0]!;
-            const headlineParsed = splitHeadline(parts[1]!);
+            const headlineParsed = splitHeadline(parts[1]);
             ogTitle = headlineParsed.title;
             ogCompany = headlineParsed.company;
             break;
@@ -452,7 +454,7 @@ export async function fetchLinkedInFullProfileDirect(
     if (res.status === 429 || res.status === 999) {
       const resetAt = Date.now() + 60_000;
       noteLinkedInDirectRateLimit(resetAt);
-      throw new LinkedInDirectRateLimitError(resetAt);
+      throw new LinkedInDirectRateLimitError(resetAt, undefined, res.status);
     }
 
     if (!res.ok) {
@@ -463,7 +465,7 @@ export async function fetchLinkedInFullProfileDirect(
     if (finalUrl.includes("/authwall") || finalUrl.includes("/checkpoint/")) {
       const resetAt = Date.now() + 30_000;
       noteLinkedInDirectRateLimit(resetAt);
-      throw new LinkedInDirectRateLimitError(resetAt, "LinkedIn authwall challenge");
+      throw new LinkedInDirectRateLimitError(resetAt, "LinkedIn authwall challenge", 1);
     }
 
     const html = await res.text();

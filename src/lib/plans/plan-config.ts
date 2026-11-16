@@ -79,9 +79,11 @@ export const PLAN_SHORT_LABELS: Record<Plan, string> = {
  * - `extraConnections`: a second Google or Microsoft account. Free keeps its first one.
  * - `hostedAi`: AI on Orbit's provider keys, metered in credits (every plan).
  * - `creditPacks`: buying a $5 top-up pack (every plan but Lifetime).
- * - `radar`, `events`, `findPeople`, `compose`, `cloudNotes`: features that ship coming soon.
- *   Each is enforced by its surface's own guards (`SURFACE_FEATURE` in `surfaces.ts`), and
- *   defaults to the paid plans — `COMING_SOON_UNLOCK_PLAN` promises them on Pro.
+ * - `radar`, `events`: on every plan (`radar` caps Free via `RADAR_PLAN_LIMITS`; `events` is the
+ *   "who did I meet" loop).
+ * - `findPeople`, `compose`, `cloudNotes`: features that ship coming soon. Each is enforced by its
+ *   surface's own guards (`SURFACE_FEATURE` in `surfaces.ts`), and defaults to the paid plans —
+ *   `COMING_SOON_UNLOCK_PLAN` promises them on Pro.
  *
  * Every flag here is a CODE DEFAULT: an operator can widen or narrow any of them per plan from
  * /admin/product/plans (`plan-overrides.ts`), so server gates read `getEffectivePlanConfig()`.
@@ -117,8 +119,8 @@ export type PlanConfig = {
   contactLimit: number | null;
   /** Managed-AI credits granted each cycle, or null when AI runs only on the user's key. */
   monthlyCredits: number | null;
-  /** Deepgram audio seconds per month. */
-  speech: { meetingSeconds: number; shortformSeconds: number };
+  /** Deepgram audio seconds per month. `assistantSeconds`: time talking with Cosmo (a call's length). */
+  speech: { meetingSeconds: number; shortformSeconds: number; assistantSeconds: number };
   /** Contact enrichments per month on Orbit's own Apollo key. 0 on every plan: not offered. */
   hostedEnrichmentsPerMonth: number;
   /** Connected Google + Microsoft accounts. null = no limit. */
@@ -156,7 +158,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 0,
     contactLimit: FREE_CONTACT_LIMIT,
     monthlyCredits: 50,
-    speech: { meetingSeconds: 0, shortformSeconds: 1.5 * HOUR },
+    speech: { meetingSeconds: 0, shortformSeconds: 1.5 * HOUR, assistantSeconds: 10 * 60 },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: 1,
     mcpRateTier: "mcpFree",
@@ -172,7 +174,8 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
       hostedAi: true,
       creditPacks: true,
       extraConnections: false,
-      radar: false,
+      // Flagship Radar is enabled on Free with limited, cost-effective caps
+      radar: true,
       // Every plan (Jason, Oct 25 2026): Events is the "who did I meet" loop, not an upsell.
       events: true,
       findPeople: false,
@@ -186,7 +189,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 8999,
     contactLimit: null,
     monthlyCredits: 300,
-    speech: { meetingSeconds: 8 * HOUR, shortformSeconds: 8 * HOUR },
+    speech: { meetingSeconds: 8 * HOUR, shortformSeconds: 8 * HOUR, assistantSeconds: HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
@@ -199,7 +202,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: 19999,
     contactLimit: null,
     monthlyCredits: 650,
-    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR },
+    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR, assistantSeconds: 3 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
@@ -213,7 +216,7 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
     annualPriceCents: null,
     contactLimit: null,
     monthlyCredits: 150,
-    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR },
+    speech: { meetingSeconds: 15 * HOUR, shortformSeconds: 15 * HOUR, assistantSeconds: 3 * HOUR },
     hostedEnrichmentsPerMonth: 0,
     googleMicrosoftConnections: null,
     mcpRateTier: "mcp",
@@ -226,18 +229,10 @@ export const PLAN_CONFIG: Record<Plan, PlanConfig> = {
  * arrives MONTHLY on an annual plan (see `creditPeriodFor`), never as one yearly lump.
  */
 export type BillingPeriod = "monthly" | "annual";
-export const BILLING_PERIODS: readonly BillingPeriod[] = ["monthly", "annual"];
-
 /** The recurring value of an annual plan per month, as MRR books it (Stripe's own rounding). */
 export function annualMonthlyEquivalentCents(plan: PurchasablePlan): number {
   return Math.round((PLAN_CONFIG[plan].annualPriceCents ?? 0) / 12);
 }
-
-/** What a year of the plan costs, in cents, for the period chosen. */
-export function planPriceCents(plan: PurchasablePlan, period: BillingPeriod): number {
-  return (period === "annual" ? PLAN_CONFIG[plan].annualPriceCents : PLAN_CONFIG[plan].monthlyPriceCents) ?? 0;
-}
-
 /** Whole percent saved by paying yearly, from Pro's prices (Max rounds to the same). */
 export const ANNUAL_SAVING_PERCENT = Math.round(
   (1 - (PLAN_CONFIG.orbit.annualPriceCents ?? 0) / ((PLAN_CONFIG.orbit.monthlyPriceCents ?? 1) * 12)) * 100
@@ -324,4 +319,82 @@ export function formatSpeechAllowance(seconds: number): string {
 /** Display money: 899 → "$8.99". */
 export function formatPlanPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+export type RadarPlanLimits = {
+  /** People in the weekly plan. Never padded: a quiet week shows fewer. */
+  planSize: number;
+  /** Today strip: expiring moments shown on top of the plan, at most this many. */
+  todayMax: number;
+  /** Connect-lane cards (introduce, ask, share) per week. */
+  connectPerWeek: number;
+  /** Web checks on people the person knows (role, posts, talks), per month. */
+  pulsePerMonth: number;
+  /** Web searches for events near the person, per month. */
+  eventSearchesPerMonth: number;
+  /** Web searches for new people to meet, per month. */
+  peopleSearchesPerMonth: number;
+  /** Web searches for programs and deadlines, per month. */
+  programSearchesPerMonth: number;
+  /** Drafts written ahead overnight, per week. 0 = drafts on demand only. */
+  draftsPerWeek: number;
+  /** The AI editor's pick and why-lines. Off = the deterministic scorer's order and reasons. */
+  aiExplanations: boolean;
+};
+
+/**
+ * Radar per plan (docs/superpowers/specs/2026-11-10-radar-analyst-design.md). Every plan gets
+ * the web side; Free gets a taste. Lifetime gets Pro's limits: its credit allowance cannot
+ * carry Max's web budget. Searches here are background work, capped again by
+ * `web-search-budget.ts` (300 a month per account, half of it for background).
+ */
+export const RADAR_PLAN_LIMITS: Record<Plan, RadarPlanLimits> = {
+  free: {
+    planSize: 3,
+    todayMax: 2,
+    connectPerWeek: 1,
+    pulsePerMonth: 2,
+    eventSearchesPerMonth: 1,
+    peopleSearchesPerMonth: 0,
+    programSearchesPerMonth: 0,
+    draftsPerWeek: 0,
+    aiExplanations: false,
+  },
+  orbit: {
+    planSize: 7,
+    todayMax: 3,
+    connectPerWeek: 2,
+    pulsePerMonth: 20,
+    eventSearchesPerMonth: 4,
+    peopleSearchesPerMonth: 4,
+    programSearchesPerMonth: 2,
+    draftsPerWeek: 3,
+    aiExplanations: true,
+  },
+  max: {
+    planSize: 10,
+    todayMax: 3,
+    connectPerWeek: 3,
+    pulsePerMonth: 48,
+    eventSearchesPerMonth: 8,
+    peopleSearchesPerMonth: 4,
+    programSearchesPerMonth: 4,
+    draftsPerWeek: 5,
+    aiExplanations: true,
+  },
+  lifetime: {
+    planSize: 7,
+    todayMax: 3,
+    connectPerWeek: 2,
+    pulsePerMonth: 20,
+    eventSearchesPerMonth: 4,
+    peopleSearchesPerMonth: 4,
+    programSearchesPerMonth: 2,
+    draftsPerWeek: 3,
+    aiExplanations: true,
+  },
+};
+
+export function getRadarLimitsForPlan(plan: Plan): RadarPlanLimits {
+  return RADAR_PLAN_LIMITS[plan] ?? RADAR_PLAN_LIMITS.free;
 }

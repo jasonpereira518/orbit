@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { tourAnchor } from "@/lib/tour/tour-anchors";
+import { useEffect, useRef, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
@@ -83,7 +85,7 @@ export function ReminderFormFields({
   onCancel?: () => void;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [title, setTitle] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -189,6 +191,7 @@ export function ReminderFormFields({
         className="space-y-2"
       >
         <Input
+          {...tourAnchor("reminders.title")}
           ref={titleRef}
           id={`${idPrefix}-title`}
           required
@@ -208,6 +211,7 @@ export function ReminderFormFields({
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-notes`}>Notes</Label>
         <Textarea
+          {...tourAnchor("reminders.notes")}
           id={`${idPrefix}-notes`}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -277,7 +281,7 @@ export function ReminderFormFields({
           <Label htmlFor={`${idPrefix}-kind`}>Action type</Label>
           <Select
             value={actionKind}
-            onValueChange={(v) => setActionKind((v ?? "auto") as ReminderActionKind | "auto")}
+            onValueChange={(v) => setActionKind((v ?? "auto"))}
             items={kindItems}
           >
             <SelectTrigger id={`${idPrefix}-kind`} className="h-8 w-full">
@@ -304,7 +308,7 @@ export function ReminderFormFields({
         >
           Cancel
         </Button>
-        <Button type="button" size="sm" disabled={pending} onClick={submit}>
+        <Button {...tourAnchor("reminders.save")} type="button" size="sm" disabled={pending} onClick={submit}>
           {pending
             ? "Saving…"
             : mode === "edit"

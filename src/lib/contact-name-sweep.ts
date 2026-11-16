@@ -20,6 +20,7 @@ import {
 } from "@/lib/contact-name-guess";
 import { updateContactForUser } from "@/lib/contact-writes";
 import { internalFetch } from "@/lib/internal-auth";
+import { contactNameGuessSchema } from "@/lib/ai-reply-schemas";
 import { reportError } from "@/lib/report-error";
 
 /** Contacts looked at per user per pass; more waits for the next pass. */
@@ -77,7 +78,7 @@ async function askAiForName(userId: string, c: Candidate): Promise<GuessedName |
       user: fields.join("\n"),
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
-    const parsed = parseAiJson<{ first?: unknown; last?: unknown } | null>(content);
+    const parsed = parseAiJson(contactNameGuessSchema, content);
     return sanitizeGuessedName(parsed?.first, parsed?.last);
   } catch {
     // No key, no credits, a timeout: the contact keeps its handle and gets the "?".

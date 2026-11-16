@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 
 /**
  * Cookieless visitor identity for traffic analytics.
@@ -54,7 +54,7 @@ function dailySalt(now: Date): string {
   if (!secret) {
     throw new Error("ANALYTICS_SALT is not set — refusing to hash without a salt.");
   }
-  return createHash("sha256").update(`${secret}:${dayKey(now)}`).digest("hex");
+  return sha256Hex(`${secret}:${dayKey(now)}`);
 }
 
 /**
@@ -67,9 +67,7 @@ export function hashVisitor(
   userAgent: string,
   now: Date = new Date()
 ): string {
-  return createHash("sha256")
-    .update(`${dailySalt(now)}:${ip}:${userAgent}`)
-    .digest("hex");
+  return sha256Hex(`${dailySalt(now)}:${ip}:${userAgent}`);
 }
 
 export type DeviceKind = "desktop" | "mobile" | "tablet";

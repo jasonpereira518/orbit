@@ -46,7 +46,7 @@ export function firstPendingIndex(
 ): number {
   const people = peopleDecisions(decisions);
   for (let i = 0; i < items.length; i++) {
-    if (!people[items[i]!.key]) return i;
+    if (!people[items[i].key]) return i;
   }
   return -1;
 }
@@ -197,8 +197,10 @@ export function defaultReminderKeys(
 ): string[] {
   return suggestions
     .filter((s) => {
-      // High-importance curation: when priority is known, only critical & high are pre-ticked
-      if (s.priority && s.priority !== "critical" && s.priority !== "high") {
+      // An implied next step (nobody said a date) is pre-ticked only when it rates critical or
+      // high, which keeps a long note's review list from arriving full of maybes. A commitment
+      // someone actually stated keeps main's rule: a missed promise costs more than a click.
+      if (s.origin === "implied" && s.priority && s.priority !== "critical" && s.priority !== "high") {
         return false;
       }
       return s.origin === "implied"

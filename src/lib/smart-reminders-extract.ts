@@ -13,7 +13,7 @@
  * 4. Provides human-readable timing and importance rationales for full transparency.
  */
 
-import type { ReminderActionKind, ReminderPriority, ReminderCategory } from "@/db/schema";
+import type { ReminderPriority, ReminderCategory } from "@/db/schema";
 import { atLocalNoon } from "@/lib/interaction-date";
 
 export type { ReminderPriority, ReminderCategory };
@@ -233,12 +233,13 @@ export function resolveSmartFollowUpTiming(args: {
 }): SmartTimingResolution {
   const { anchorDate, rawDatePhrase, resolvedDueDate, noteContext, category, priority } = args;
 
-  // 1. If an explicit resolved due date was already parsed and verified from notes:
+  // 1. A date the note actually stated is kept exactly as stated, weekend or not: "see you at
+  //    the game Saturday" is a Saturday reminder. Only dates Orbit picks itself (below) are
+  //    moved off weekends.
   if (resolvedDueDate) {
-    const aligned = alignToBusinessDay(resolvedDueDate);
     return {
-      dueDate: aligned,
-      dueDateIso: toIsoDay(aligned),
+      dueDate: resolvedDueDate,
+      dueDateIso: resolvedDueDate.toISOString().slice(0, 10),
       timingRationale: rawDatePhrase ? `Verbatim date stated in note: "${rawDatePhrase}"` : "Scheduled on stated date",
       isCustomEventAnchor: false,
     };

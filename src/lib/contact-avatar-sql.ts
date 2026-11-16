@@ -6,21 +6,31 @@ import { NO_PHOTO_PREFIX } from "@/lib/contact-avatar-url";
 export const LINKEDIN_HOST_RE = "^(https?://)?([a-z0-9-]+\\.)*linkedin\\.com/";
 
 /**
- * The shared (cross-user) LinkedIn photo for a contact row, or NULL. THE one rule every photo
- * reader uses: precedence is manual upload > shared > the contact's own photo, so a contact
- * whose `profile_image_source` is 'upload' never gets one; a blocked or "found nothing" row
- * never matches. A scalar subquery (a primary-key lookup per row) rather than a JOIN so it
- * drops into relational `extras`, raw SQL and plain selects alike without adding a statement.
- * `contacts.linkedin_slug` has no host check of its own, hence the regex on the URL. Only an
- * `https://` shared image is ever used (defence in depth: writers validate too).
- * Inner columns are literal `la.*` so drizzle can never strip their qualifier.
+ * `sharedEmailKey` (`src/lib/shared-avatars.ts`) in SQL: sha256 hex of the lowercased, trimmed
+ * address. JS refuses non-ASCII addresses, so the two agree on every key that can exist.
  */
-export const sharedAvatarUrlSql = sql<string | null>`(CASE WHEN ${contacts.profileImageSource} IS DISTINCT FROM 'upload' THEN (
+export const emailAvatarKeySql = sql<string>`encode(sha256(convert_to(lower(btrim(${contacts.email})), 'UTF8')), 'hex')`;
+
+/**
+ * The shared (cross-user) photo for a contact row, or NULL. THE one rule every photo reader
+ * uses: precedence is manual upload > LinkedIn pool > email pool > the contact's own photo, so
+ * a contact whose `profile_image_source` is 'upload' never gets one; a blocked or "found
+ * nothing" row never matches. Scalar subqueries (a primary-key lookup per row) rather than
+ * JOINs so it drops into relational `extras`, raw SQL and plain selects alike without adding a
+ * statement. `contacts.linkedin_slug` has no host check of its own, hence the regex on the
+ * URL. Only an `https://` shared image is ever used (defence in depth: writers validate too).
+ * Inner columns are literal `la.*` / `ea.*` so drizzle can never strip their qualifier.
+ */
+export const sharedAvatarUrlSql = sql<string | null>`(CASE WHEN ${contacts.profileImageSource} IS DISTINCT FROM 'upload' THEN coalesce((
   SELECT la.image_url FROM linkedin_avatars la
    WHERE la.slug = ${contacts.linkedinSlug}
      AND la.blocked_at IS NULL AND la.image_url LIKE 'https://%'
      AND ${contacts.linkedinUrl} ~* ${LINKEDIN_HOST_RE}
-) END)`;
+), CASE WHEN ${contacts.email} IS NOT NULL THEN (
+  SELECT ea.image_url FROM email_avatars ea
+   WHERE ea.email_hash = ${emailAvatarKeySql}
+     AND ea.blocked_at IS NULL AND ea.image_url LIKE 'https://%'
+) END) END)`;
 
 /**
  * `clientContactAvatarUrl()` expressed in SQL, so list scans can return a browser-safe

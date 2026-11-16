@@ -38,6 +38,7 @@ const TOC: readonly TocItem[] = [
   { id: "use", label: "How it's used" },
   { id: "google", label: "Google user data" },
   { id: "recruiters", label: "Recruiter scan & directory" },
+  { id: "radar", label: "Radar" },
   { id: "third-parties", label: "Who else sees it" },
   { id: "ai", label: "AI processing" },
   { id: "payments", label: "Payments" },
@@ -52,32 +53,34 @@ const TOC: readonly TocItem[] = [
   { id: "contact", label: "Questions" },
 ];
 
-/** Every service that receives personal data, verified against the code on 2026-10-13. */
+/** Every service that receives personal data, verified against the code on 2026-11-12. */
 const PROCESSORS = [
   { name: "Clerk", badge: "Required", body: "Sign-in, sessions and account lifecycle. Holds your sign-in identity and records when you accepted these terms." },
   { name: "Vercel", badge: "Required", body: "Hosting, and file storage for contact photos, capture photos, feedback screenshots and files you attach to email. Also runs Web Analytics and Speed Insights, which receive page addresses with ids and tokens removed, and BotID, which checks forms for automated traffic." },
   { name: "Neon", badge: "Required", body: "The Postgres database that holds your Orbit data." },
   { name: "Sentry", badge: "Required", body: "Error reports: the error, where in the code it happened, the page and browser. Configured not to attach IP addresses or cookies, and with session replay off." },
-  { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names, error messages with email addresses and keys removed, and a short excerpt of any feedback you send. An error message can occasionally include a value it was processing." },
+  { name: "Slack", badge: "Required", body: "Operational alerts to the operator: job status, route names, error messages with email addresses and keys removed, and each piece of feedback you send: its text (up to 1,000 characters), your email address, plan, how long you have had your account, the page you were on, how many screenshots you attached, and the one-line summary described under Feedback below. An error message can occasionally include a value it was processing." },
   { name: "Better Stack", badge: "Required", body: "Uptime heartbeat. Receives a ping, no personal data." },
   { name: "unavatar.io", badge: "Automatic", body: "Looks up a public profile photo for contacts with a LinkedIn URL. Receives the LinkedIn username only." },
   { name: "Microlink", badge: "Automatic", body: "When unavatar.io has no photo, fetches the public preview image of the contact's LinkedIn profile URL." },
   { name: "Gravatar", badge: "Automatic", body: "Checks for a public avatar for a contact's email. Receives a one-way hash of the address, not the address." },
   { name: "Wikidata and Google's favicon service", badge: "Automatic", body: "Brand colors for the companies and schools in your network, and company logos on your meetings. Receives an organization's name or website domain only. A domain may come from a contact's or meeting guest's work email address; the address itself is never sent." },
-  { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours." },
+  { name: "Deepgram", badge: "Always", body: "Speech-to-text for voice notes, meetings and the chat microphone. Receives your audio and a list of your recent contact names so it spells them correctly. Every request sets Deepgram's zero-retention flag, which Deepgram documents as not storing your audio, text, transcripts or synthesized audio after the response is returned. Each request also carries a label so Orbit can check its own bill: a recording's own id for a meeting, and for everything else a random value Orbit generated for your account — not your name, your email or your account id. Labels sit in Deepgram's usage records, which the zero-retention flag does not cover; deleting your data in Settings replaces yours. Deepgram also runs Cosmo, Orbit's voice assistant: during a call it receives your speech and Cosmo's instructions (your name, role and goals, a short summary of what needs your attention, the recent conversation, and the page you are on described in Orbit's own words) plus the Orbit records Cosmo looks up to answer you, and its voice agent passes the text of the conversation, not the audio, to OpenAI to write each reply. The zero-retention flag above covers transcription requests; how long Deepgram keeps a call is set by its own terms." },
+  { name: "ElevenLabs", badge: "Optional", body: "An alternative voice provider for Cosmo, used only if Orbit switches calls to it. During a call it receives what Deepgram would: your speech, Cosmo's instructions and the records Cosmo looks up." },
   { name: "Stripe", badge: "Optional", body: "Orbit Pro, Orbit Max and credit pack payments. Card details go to Stripe directly; Orbit stores a customer reference." },
-  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link. Looking up a meeting guest who is not yet a contact, when you press Look up, runs the same search by their name and the company named by their email domain — never the address. When you review the people a capture found, each one who would be added as a new contact is looked up the same way, by their name with the company, role, place you met and city your note gives — never an email address or phone number." },
+  { name: "Google Gemini, OpenAI, Anthropic", badge: "Optional", body: "AI features: notes, chat, drafts, search indexing, transcription and reading pages you scan. Also reading feedback you send, for the operator, on Orbit's account (see Feedback below). On the provider you choose in Settings: on your own key, or (for the Free Plan’s allowance and included AI on Orbit Pro, Orbit Max and Orbit Lifetime) on Orbit's account with that provider. Keeping a contact's work history current runs a web search through that same provider, by the contact's name, employer and public profile link. Looking up a meeting guest who is not yet a contact, when you press Look up, runs the same search by their name and the company named by their email domain — never the address. When you review the people a capture found, each one who would be added as a new contact is looked up the same way, by their name with the company, role, place you met and city your note gives — never an email address or phone number." },
   { name: "OpenRouter", badge: "Optional", body: "The same AI features, routed through OpenRouter, only if you connect your own OpenRouter account in Settings." },
-  { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Only if you add your own TypeSafe key in Settings." },
+  { name: "TypeSafe", badge: "Optional", body: "Jev, a decision model, for yes-or-no and ranking steps: spotting recruiters during a mail scan you start, choosing which contacts a chat answer draws on, telling two contact records apart before they are merged, reading captured notes, judging which calendar events were meetings with people, and deciding whether a note or message has anything in it worth sending to your chat model. Those run only if you add your own TypeSafe key in Settings. On every account, Orbit's own TypeSafe account also decides whether keeping a contact's work history current needs another web search: it reads the job history Orbit already has for that contact, when it was last checked, and short summaries of your notes and messages about them since — never the notes themselves, an email address or a phone number — and, when a search was unsure it found the right person, the public answer that search found." },
   { name: "Google", badge: "Optional", body: "Gmail, Contacts and Calendar, one permission per feature you turn on. See Google user data." },
   { name: "Apple iCloud", badge: "Optional", body: "Your iCloud calendars, if you connect them with an app-specific password, which Orbit stores encrypted. Used to log meetings with people you know and for the meeting features described under Connected accounts." },
-  { name: "Bluesky and Mastodon", badge: "Optional", body: "For contacts whose Bluesky or Mastodon handle you added, a nightly read of their public posts for Radar. Each request carries only that public handle, to the server that hosts it." },
   { name: "Microsoft", badge: "Optional", body: "Outlook, one permission per feature you turn on: your contacts to import, your calendar to log meetings with people you know and for meeting prep, reminders and Chat, your mail for the recruiter scan you start, and sending the email you write from your own address, and your OneDrive files for cloud notes. See What Orbit collects and The recruiter scan." },
+  { name: "Web push services (Google, Apple, Mozilla)", badge: "Optional", body: "Deliver Radar's push notifications to devices where you turned push on. Each receives the device's push address and an encrypted message it cannot read." },
+  { name: "Event websites", badge: "Optional", body: "With Radar on, Orbit's server may open the public page of an event a search found, to check its date and place. The site sees a request from Orbit, with nothing about you." },
   { name: "Eventbrite", badge: "Optional", body: "Guest lists of events you host, through Eventbrite sign-in." },
   { name: "Luma", badge: "Optional", body: "Guest lists of events you host (with your Luma API key), your personal Luma calendar link if you paste it, and the guest list you have open on an event page when you save it from the browser extension." },
   { name: "Partiful", badge: "Optional", body: "Your personal Partiful calendar link, if you paste it, to list events you are going to, and the guest list you have open on an event page when you save it from the browser extension." },
   { name: "Apollo", badge: "Optional", body: "People search and contact enrichment, with your own Apollo key. Orbit does not run it on an Apollo account of its own." },
-  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead. Resend reports back when a message bounces or is marked as spam and, for outreach sent through Orbit's Resend account, when it was delivered, first opened and first clicked. See Cookies, storage & analytics." },
+  { name: "Resend", badge: "Optional", body: "Email Orbit sends on its own behalf: the waitlist confirmation, Radar's Monday and same-day emails, and outreach campaigns you send from Orbit. Email you write to a person goes from your own Gmail or Outlook instead. Resend reports back when a message bounces or is marked as spam and, for outreach sent through Orbit's Resend account, when it was delivered, first opened and first clicked. See Cookies, storage & analytics." },
   { name: "Twilio", badge: "Optional", body: "SMS outreach you send, through the Twilio account you connect." },
 ] as const;
 
@@ -131,11 +134,13 @@ export default function PrivacyPage() {
               stored; photos from a capture you never save are deleted after 24 hours.
             </li>
             <li>
-              <strong>Contact photos</strong> — shared photos come only from public LinkedIn profile
-              photos found by a public lookup on the web: one is added to a shared set once and shown
-              to any Orbit user who has that person. Photos from Google or Outlook contacts, photos the
-              Orbit browser extension captures, and Gravatar and Apollo photos are never shared: they
-              stay with your account.
+              <strong>Contact photos</strong> — shared photos come only from public lookups: public
+              LinkedIn profile photos found on the web, and public Gravatar photos found by a
+              contact&rsquo;s email address. One is added to a shared set once and shown to any Orbit
+              user who has that person. A photo found by email is kept under a one-way hash of the
+              address, never the address itself. Photos from Google or Outlook contacts, photos the
+              Orbit browser extension captures, Apollo photos and photos you upload are never shared:
+              they stay with your account.
             </li>
             <li>
               <strong>Contact work history</strong> — when a web search finds a contact&rsquo;s work
@@ -150,6 +155,21 @@ export default function PrivacyPage() {
               <strong>Voice and meetings</strong> — audio you record is sent to be transcribed and is
               not kept. The transcript is: a voice note becomes the text of your note, and a meeting
               keeps its transcript until you delete the meeting.
+            </li>
+            <li>
+              <strong>Talking with Cosmo</strong> — Cosmo, the voice assistant in the corner of each
+              page, listens only after you click it, and a call ends when you end it or after a quiet
+              minute. What you and Cosmo say is saved as that day&rsquo;s Cosmo chat, which you can
+              delete like any chat. To know where you are, Cosmo is told the page&rsquo;s name, the id
+              of the record you have open and the names of Orbit&rsquo;s own buttons on screen, never
+              the text on the page or a screenshot. It can make small changes you ask for at once,
+              each with Undo; it sends an email only after you say &ldquo;send it&rdquo; or click.
+              When you ask, it can also open pages, press Orbit&rsquo;s own buttons and type into
+              Orbit&rsquo;s fields for you, with its cursor showing where; it never presses save,
+              send or delete itself, and leaves those to you.
+              Minutes are counted per account from when each call connects. Whether you turned
+              captions on, where you moved Cosmo and which suggestions you dismissed stay in your
+              browser.
             </li>
             <li>
               <strong>Connected accounts</strong> — if you connect Google, Orbit reads only what the
@@ -171,7 +191,8 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Your calendar</strong> — from a Google, Outlook or iCloud calendar you
-              connect, Orbit keeps the meetings from two days ago to two weeks ahead (title, time,
+              connect (on Google, the calendars you tick, your primary calendar by default), Orbit
+              keeps the meetings from two days ago to two weeks ahead (title, time,
               call link, agenda, and the guests&rsquo; names and addresses), refreshes them while
               you use Orbit, and deletes a meeting once it leaves that window or your calendar. It
               uses them to suggest recording a call, remind you to prepare and follow up, show a
@@ -179,8 +200,10 @@ export default function PrivacyPage() {
               schedule in Chat. Guests&rsquo; addresses are used only to recognise people you
               already know; they are never sent to an AI provider. Disconnecting a calendar
               deletes these meetings and the prep reminders made for meetings still to come. A
-              past meeting with people you know is also logged to their history, with the
-              meeting&rsquo;s title, location and the first 500 characters of its description.
+              meeting from 90 days ago to 60 days ahead with people you know is also matched to
+              them: a past one is logged to their history, with the meeting&rsquo;s title, location
+              and the first 500 characters of its description, and a follow-up reminder may be
+              suggested.
               When an invite is for a Luma, Partiful or Eventbrite event Orbit already holds, the
               prep card and Chat also show that event&rsquo;s hosts, guest count and the guests
               worth finding — by name and role, never their addresses.
@@ -204,7 +227,14 @@ export default function PrivacyPage() {
               people you connected with at one of your events: it sends Orbit only the names,
               profile links and headlines of the connections you tick, when you press Log, and they
               are added to that event&rsquo;s guest list. None becomes a contact until you review
-              and save them in Orbit.
+              and save them in Orbit. With Radar&rsquo;s &ldquo;Save LinkedIn posts from the
+              extension&rdquo; setting on, you can save the post you have open to Radar, or press{" "}
+              <strong>Scan</strong> on your LinkedIn feed or someone&rsquo;s activity page. A scan reads
+              only the posts already on your screen, at most 25. It first sends Orbit just the
+              authors&rsquo; profile links; Orbit answers which of them are your contacts and keeps
+              none of the links. Only those contacts&rsquo; posts (their text and link) are then sent
+              and kept, as Radar activity for that contact. Posts by anyone else never leave your
+              browser.
             </li>
             <li>
               <strong>Secrets you provide</strong> — API keys for AI, enrichment, email, SMS and
@@ -321,6 +351,14 @@ export default function PrivacyPage() {
               bodies, and it does not use this mail to train models or for advertising.
             </p>
             <p>
+              In those same messages, when the sender is already one of your contacts, Orbit reads
+              the signature at the end of their own text by rule, with no AI, and copies their
+              role, company, phone number and LinkedIn link into any of those fields that are
+              empty on their contact. It never changes a field that already has a value, and each
+              one it fills is listed under &ldquo;Changed by Orbit&rdquo; on the Duplicates page,
+              where you can undo it.
+            </p>
+            <p>
               The notes it keeps can appear as reasons on your Radar cards, in the short lines
               and drafts Radar writes with your AI provider, and in your in-app briefing. They
               are never put in Radar&rsquo;s Monday email.
@@ -342,6 +380,23 @@ export default function PrivacyPage() {
             <p>
               Turning it off stops the checking; disconnecting Gmail, or deleting your insights
               in Settings, removes what it recorded.
+            </p>
+          </DocCallout>
+          <DocCallout title="Matching your writing style">
+            <p>
+              So the messages Orbit drafts for you sound like you, Orbit reads about twenty of
+              your recent sent emails from Gmail or Outlook, once, after your first draft (and
+              again when you press Refresh). It removes quoted replies, signatures, email
+              addresses, links and phone numbers, and sends what is left, each email cut to 1,200
+              characters, to the AI provider that runs your account&rsquo;s AI features.
+            </p>
+            <p>
+              The model writes a short description of how you write: greetings, sign-offs,
+              length, tone and the words you tend to use, with no names, companies or details of
+              what the emails were about. Orbit keeps only that description (at most 600
+              characters) and never stores the emails themselves. You can read, edit or turn it
+              off under &ldquo;How I like things written&rdquo; in Chat; turning it off deletes it and stops
+              Orbit reading your sent mail for this. Deleting your preferences deletes it too.
             </p>
           </DocCallout>
         </DocSection>
@@ -385,7 +440,70 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="third-parties" index={6} title="Who else touches your data">
+        <DocSection id="radar" index={6} title="Radar">
+          <p>
+            Radar suggests who to reach out to and why. It is off until you turn it on, and while it
+            is off it reads nothing and runs no searches. With it on:
+          </p>
+          <ul>
+            <li>
+              <strong>What it reads.</strong> Your contacts, notes, meetings, reminders, the email
+              insights you turned on, the goals, projects and city you give Orbit, the LinkedIn posts
+              you save or scan with the browser extension, and, if you uploaded your LinkedIn export,
+              the hashtags you use most in your own posts. Every
+              suggestion shows what it rests on: a quote from your own notes or messages, a record in
+              Orbit such as a meeting or a job change, or a link a web search returned. A suggestion
+              whose proof doesn&rsquo;t check out is dropped.
+            </li>
+            <li>
+              <strong>Links between people you know.</strong> To suggest an introduction or an ask,
+              Radar compares a recent note about one person with notes about other people you have
+              met, and sends the matching passages to your AI provider to judge whether the link is
+              real. A draft introduction never quotes one person&rsquo;s note to the other.
+            </li>
+            <li>
+              <strong>Web searches about people you know.</strong> When Orbit re-checks where a
+              contact works (see <em>Contact work history</em> above), Radar also asks the same search
+              for that person&rsquo;s recent public posts, talks and news. This happens only for
+              people you have met, at most a set number of times a month for your plan, and costs no
+              extra search. The search sends the person&rsquo;s name and the details Orbit uses to
+              recognize them: LinkedIn URL, title, company, location and school. Orbit keeps a result
+              only if the search itself returned its link. It keeps it as a short excerpt and that
+              link, in your account only. Unlike work history, it is never shared with other Orbit
+              users.
+            </li>
+            <li>
+              <strong>Web searches for opportunities.</strong> About once a week Radar searches the
+              web for events in your city, people who could help with your goals, and programs with
+              deadlines. The search sends your city, up to five of your goals and up to eight of the
+              hashtags you use most, and nothing about your contacts. To check an event&rsquo;s date and place, Orbit&rsquo;s server may open
+              the event&rsquo;s public page; it never opens lu.ma pages. A person it finds is shown
+              only when someone you know works or used to work where they work, and stays in Radar until you choose{" "}
+              <strong>Save person</strong>: nothing is added to your contacts on its own. Finds you
+              don&rsquo;t save are deleted 30 days after they end or expire.
+            </li>
+            <li>
+              <strong>Alerts.</strong> When something on Radar&rsquo;s Today list won&rsquo;t keep,
+              Radar can send a push notification to each device where you turned push on, and an
+              email, at most one a day. A push travels through your browser&rsquo;s push service
+              (Google, Apple or Mozilla, depending on the browser), encrypted so that service
+              can&rsquo;t read it, and never includes anyone&rsquo;s name. Radar&rsquo;s emails (the
+              Monday email and the same-day email) do name the people on your list. They are sent
+              through Resend, and each has its own one-click unsubscribe.
+            </li>
+            <li>
+              <strong>Learning.</strong> When you hide a suggestion and say why, Radar uses your
+              answer to adjust future suggestions for your account. It is not used for anyone
+              else&rsquo;s.
+            </li>
+          </ul>
+          <p>
+            You can turn Radar off, and each of its emails and push, in Radar&rsquo;s settings at any
+            time. Deleting your data or your account deletes everything Radar keeps.
+          </p>
+        </DocSection>
+
+        <DocSection id="third-parties" index={7} title="Who else touches your data">
           <p>
             Orbit relies on the processors and integrations below. &ldquo;Required&rdquo; ones handle
             every account; &ldquo;Automatic&rdquo; ones run without a setting (photo lookups for
@@ -418,7 +536,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="ai" index={7} title="AI processing">
+        <DocSection id="ai" index={8} title="AI processing">
           <p>
             When you use an AI feature, the content it needs — notes, contact context, chat prompts,
             photos of pages you scan, recruiter emails when you run the scan — is sent to an AI
@@ -458,6 +576,24 @@ export default function PrivacyPage() {
             nothing.
           </p>
           <p>
+            Separately, on every account and on Orbit&rsquo;s own TypeSafe account, Jev decides
+            whether keeping a contact&rsquo;s work history current needs another web search. It
+            reads the job history Orbit already holds for that contact, when it was last checked,
+            and short summaries of your notes and messages about them since then &mdash; never the
+            notes themselves, an email address or a phone number. When a search was unsure it had
+            found the right person, Jev also reads that search&rsquo;s public answer and may decide
+            it is someone else, in which case nothing is saved. Either way it can only skip a
+            search; it never changes a contact.
+          </p>
+          <p>
+            With Radar on, some of its work runs in the background on your plan&rsquo;s monthly
+            allowance: a weekly pass that picks and words your plan, the check for links between
+            people you know, drafts written ahead, and the web searches described under{" "}
+            <a href="#radar">Radar</a>. Web searches run through your AI provider&rsquo;s own search,
+            so the provider sees the text of each search. Background work on Orbit&rsquo;s accounts
+            pauses once half a month&rsquo;s credits or fewer remain.
+          </p>
+          <p>
             Some AI work runs in the background. Search indexing runs when contacts change, so search
             understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
             the people you talked with most. Deriving timeline events from imported LinkedIn
@@ -478,7 +614,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="payments" index={8} title="Payments">
+        <DocSection id="payments" index={9} title="Payments">
           <p>
             The Free Plan needs no payment details. Orbit Pro, Orbit Max and credit packs are sold
             through Stripe. Orbit Lifetime is no longer sold.
@@ -490,7 +626,7 @@ export default function PrivacyPage() {
             id removed. Pricing is on the <Link href="/pricing">pricing page</Link>.
           </p>
         </DocSection>
-        <DocSection id="cookies" index={9} title="Cookies, local storage, and analytics">
+        <DocSection id="cookies" index={10} title="Cookies, local storage, and analytics">
           <p>
             Orbit uses Clerk session cookies to keep you signed in. When you
             first arrive from another site or a link with campaign tags, it also
@@ -505,7 +641,9 @@ export default function PrivacyPage() {
             preferences on your device in <code>localStorage</code> —
             theme flash helpers, saved graph layout positions, and per-device
             notification opt-in. Delivered notification history and account
-            preferences live with your account instead.
+            preferences live with your account instead. If you turn on push, Orbit stores your
+            browser&rsquo;s push address and keys so it can reach that device; they are deleted when
+            you turn push off.
           </p>
           <p>
             Orbit counts its own traffic, and does it{" "}
@@ -593,7 +731,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="controls" index={10} title="Your controls">
+        <DocSection id="controls" index={11} title="Your controls">
           <p>
             In Settings, under <Link href="/settings">Data and privacy</Link>, on every plan
             including Free:
@@ -622,7 +760,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="retention" index={11} title="How long data is kept">
+        <DocSection id="retention" index={12} title="How long data is kept">
           <p>
             Your Orbit data is kept while your account is active, until you delete it with the
             controls above. Downgrading never deletes anything: contacts added while you were
@@ -638,6 +776,12 @@ export default function PrivacyPage() {
             you were signed in, keeping only the anonymous count.
           </p>
           <p>
+            Radar&rsquo;s suggestions you acted on, hid or let expire are kept as history while your
+            account exists. Finds you didn&rsquo;t save (events, people and programs from its web
+            searches) are deleted 30 days after they end or expire. A push subscription is deleted
+            when you turn push off or the push service reports it gone.
+          </p>
+          <p>
             Records of AI calls (which operation ran, on which model, whether it worked, never what
             you sent or got back) are deleted after 180 days, and error records after 30. Product
             events, described under cookies and analytics, are deleted after 400 days and with your
@@ -648,7 +792,7 @@ export default function PrivacyPage() {
             your account.
           </p>
           <p>
-            A shared LinkedIn photo or shared work history is deleted within a day once no Orbit
+            A shared photo or shared work history is deleted within a day once no Orbit
             account has that person, and a shared work history after 90 days at most. To have one
             removed sooner, email us through the <Link href="/contact">contact page</Link>.
           </p>
@@ -664,7 +808,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="security" index={12} title="Security">
+        <DocSection id="security" index={13} title="Security">
           <p>
             Traffic runs over HTTPS, every database query is scoped to your account, and API keys and
             account tokens are encrypted at rest (AES-256-GCM). Sign-in is handled by Clerk, and card
@@ -677,7 +821,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="operator-access" index={13} title="Operator access">
+        <DocSection id="operator-access" index={14} title="Operator access">
           <p>
             Running Orbit means occasionally looking at how it is doing, and at one account when
             something goes wrong for it. There is an internal operator console for that. This is what
@@ -704,7 +848,11 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Feedback you send</strong> through the in-app feedback button, including any
-              screenshot you attach, is read by the operator.
+              screenshot you attach, is read by the operator. Its text, the area of Orbit it is
+              about and the page you were on are also read by an AI model on Orbit&rsquo;s own
+              account with Google Gemini, OpenAI or Anthropic, which writes a one-line summary,
+              sorts it by kind and urgency, and notes when it repeats an earlier report. This
+              never uses your AI credits or your own key, and screenshots are not sent.
             </li>
           </ul>
           <p>
@@ -720,7 +868,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="transfers" index={14} title="Where data is processed">
+        <DocSection id="transfers" index={15} title="Where data is processed">
           <p>
             Orbit&rsquo;s hosting, database, payment and AI providers operate globally, so your data
             may be processed outside the country you live in — most often the United States. Where
@@ -729,7 +877,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="children" index={15} title="Children">
+        <DocSection id="children" index={16} title="Children">
           <p>
             Orbit is not directed at children under 13, and we do not knowingly collect personal
             information from them. If you believe a child has provided information to Orbit, get in
@@ -737,7 +885,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="changes" index={16} title="Changes to this policy">
+        <DocSection id="changes" index={17} title="Changes to this policy">
           <p>
             This policy will change as the product does. The <strong>Last updated</strong> date at
             the top is revised whenever it happens, and material changes are called out in the app.
@@ -745,7 +893,7 @@ export default function PrivacyPage() {
           </p>
         </DocSection>
 
-        <DocSection id="contact" index={17} title="Questions">
+        <DocSection id="contact" index={18} title="Questions">
           <p>
             Questions about this policy, or about what Orbit holds on you, can go to the operator
             through the <Link href="/contact">contact page</Link>. For routine export or deletion,

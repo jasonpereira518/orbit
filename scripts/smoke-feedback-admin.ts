@@ -75,7 +75,10 @@ function textOf(node: unknown, out: string[] = []): string[] {
       key === "alt" ||
       key === "src" ||
       key === "status" ||
-      key === "id"
+      key === "id" ||
+      // The conversation's opening bubble is the report: the detail page hands it to the
+      // client-rendered FeedbackConversation as `initial` rather than printing it again.
+      key === "initial"
     ) {
       textOf(value, out);
     }

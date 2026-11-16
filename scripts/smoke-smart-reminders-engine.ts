@@ -77,6 +77,17 @@ console.log("Starting smart reminders engine smoke tests...\n");
 
   const anchor = new Date(2026, 8, 14, 12, 0, 0, 0); // Monday Sept 14, 2026
 
+  // A date the note stated is kept, even on a weekend (only dates Orbit picks avoid weekends).
+  const statedSat = new Date(Date.UTC(2026, 8, 19, 12, 0, 0));
+  const kept = resolveSmartFollowUpTiming({
+    anchorDate: new Date(2026, 8, 14, 12, 0, 0, 0),
+    rawDatePhrase: "Saturday",
+    resolvedDueDate: statedSat,
+    category: "action_item",
+    priority: "normal",
+  });
+  check("a stated Saturday stays a Saturday", kept.dueDate.getTime() === statedSat.getTime() && kept.dueDateIso === "2026-09-19", kept.dueDateIso);
+
   // Business day alignment: Saturday -> Monday
   const saturday = new Date(2026, 8, 19, 12, 0, 0, 0); // Saturday Sept 19
   const alignedSat = alignToBusinessDay(saturday);
@@ -151,20 +162,19 @@ console.log("Starting smart reminders engine smoke tests...\n");
     shouldAutoCheckReminder({ priority: "low", confidenceScore: 60 }) === false
   );
 
-  // Default reminder keys in review-reducer
+  // Default reminder keys in review-reducer: priority curbs implied steps only; a commitment
+  // someone stated keeps main's confidence rule, whatever its priority.
   const reviewSuggestions = [
-    { key: "item-critical", priority: "critical" as const, confidenceScore: 90 },
-    { key: "item-high", priority: "high" as const, confidenceScore: 75 },
-    { key: "item-normal", priority: "normal" as const, confidenceScore: 70 },
-    { key: "item-low", priority: "low" as const, confidenceScore: 50 },
+    { key: "implied-critical", origin: "implied" as const, priority: "critical" as const, confidenceScore: 95 },
+    { key: "implied-high", origin: "implied" as const, priority: "high" as const, confidenceScore: 95 },
+    { key: "implied-normal", origin: "implied" as const, priority: "normal" as const, confidenceScore: 95 },
+    { key: "stated-normal", origin: "explicit" as const, priority: "normal" as const, confidenceScore: 95 },
+    { key: "stated-low", origin: "explicit" as const, priority: "low" as const, confidenceScore: 95 },
   ];
 
   const autoChecked = defaultReminderKeys(reviewSuggestions);
-  check("Review reducer auto-ticks only critical and high", autoChecked.length === 2);
-  check("Contains item-critical", autoChecked.includes("item-critical"));
-  check("Contains item-high", autoChecked.includes("item-high"));
-  check("Does NOT contain item-normal", !autoChecked.includes("item-normal"));
-  check("Does NOT contain item-low", !autoChecked.includes("item-low"));
+  check("implied steps: only critical and high are pre-ticked", autoChecked.includes("implied-critical") && autoChecked.includes("implied-high") && !autoChecked.includes("implied-normal"), autoChecked.join());
+  check("a stated commitment is pre-ticked whatever its priority", autoChecked.includes("stated-normal") && autoChecked.includes("stated-low"), autoChecked.join());
 }
 
 console.log("\nAll smart reminders engine smoke tests passed! 🚀");

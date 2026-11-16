@@ -21,7 +21,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
-  Globe,
   History,
   Loader2,
   Mail,
@@ -35,6 +34,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { ChatThreadProvider } from "@/components/chat/chat-thread-context";
+import { ComposerTip } from "@/components/chat/composer-tip";
 import { DraftEditor } from "@/components/chat/draft-editor";
 import { GmailSendDialog } from "@/components/chat/gmail-send-dialog";
 import { WritingInstructionsField } from "@/components/chat/writing-instructions-field";
@@ -59,7 +59,9 @@ import {
 import { CAPTURE_FILE_ACCEPT } from "@/lib/capture/ingest-client";
 import { useCaptureIngest } from "@/lib/capture/use-capture-ingest";
 import { readRailOpen, writeRailOpen } from "@/lib/chat-rail-pref";
-import { readChatDeep, readChatWeb, writeChatDeep, writeChatWeb } from "@/lib/chat-mode-pref";
+import { readChatDeep, readChatWebChoice, writeChatDeep, writeChatWebChoice } from "@/lib/chat-mode-pref";
+import { WebSearchControl } from "@/components/chat/web-search-control";
+import type { WebChoice } from "@/lib/chat-web-decision";
 import { ScanControls } from "@/components/scan/scan-controls";
 import {
   COMPOSER_TEXT_BOX,
@@ -82,7 +84,8 @@ import {
 } from "@/components/chat/suggestion-cards";
 import { useChatSuggestions } from "@/components/chat/use-chat-suggestions";
 import { DictationButton } from "@/components/chat/dictation-button";
-import { ComposerSendButton } from "@/components/chat/composer-send-button";
+import { OrbitVoiceEntry } from "@/components/chat/voice-entry";
+import { onVoiceEnded, setVoiceSlot, useVoiceDock } from "@/lib/voice/dock-store";
 import { CHAT_QUESTION_MAX_CHARS } from "@/lib/chat-question";
 import { chatAsMarkdown, chatExportFileName, downloadMarkdown } from "@/lib/chat-export";
 import { CHAT_ATTACH_ACCEPT, readAttachment } from "@/lib/chat-attach-client";
@@ -90,6 +93,8 @@ import { CHAT_ATTACHMENTS_MAX, type ChatAttachment } from "@/lib/chat-attachment
 import { notifyAnswerLanded } from "@/lib/chat-answer-notify";
 import { afterTurn, enqueue, setSteering, steeredId, type QueuedMessage } from "@/lib/chat-queue";
 import { ChatMarkdown } from "@/components/chat/chat-markdown";
+import { DraftBlock, type DraftSegment } from "@/components/chat/draft-block";
+import { replaceDraftBlock } from "@/lib/chat-draft-block";
 import { ChatActivity } from "@/components/chat/chat-activity";
 import { OrbitMark } from "@/components/chat/orbit-mark";
 import { AnswerActions } from "@/components/chat/answer-actions";
@@ -439,11 +444,23 @@ export function ChatPanel({
   // The composer's two switches, remembered per browser. Refs mirror them so the send
   // callbacks read the current value without being rebuilt on every toggle.
   const [deep, setDeep] = useState(readChatDeep);
-  const [web, setWeb] = useState(readChatWeb);
+  // Web search is a choice per chat: auto (the default — the question decides, server-side),
+  // on, or off. The chat's stored choice is read whenever the open chat changes.
+  const [web, setWeb] = useState<WebChoice>("auto");
   const modeRef = useRef({ deep, web });
   useEffect(() => {
     modeRef.current = { deep, web };
   }, [deep, web]);
+  useEffect(() => {
+    setWeb(readChatWebChoice(threadId));
+  }, [threadId]);
+  const chooseWeb = useCallback(
+    (next: WebChoice) => {
+      setWeb(next);
+      writeChatWebChoice(threadId, next);
+    },
+    [threadId]
+  );
   // Files attached to the question being written. See `@/lib/chat-attach-client`.
   const [fileChips, setFileChips] = useState<FileChip[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -456,6 +473,13 @@ export function ChatPanel({
   const listRef = useRef<HTMLDivElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // A live Orbit Voice call (held by VoiceDock in the layout) takes the message list's place.
+  const voiceCall = useVoiceDock().call;
+  const voiceThreadOnMount = useRef(voiceCall?.threadId ?? null);
+  // The call takes the message list's place only in its OWN thread. Any other thread (or a new
+  // chat) shows normally while the call stays docked, so the composer and ask_chat can never
+  // write to different threads under one title.
+  const voiceHere = Boolean(voiceCall?.threadId && voiceCall.threadId === threadId);
   /** The `+` menu is outside the field, so it reaches the splice through here. */
   const composerRef = useRef<MentionComposerHandle | null>(null);
   const stickToBottomRef = useRef(true);
@@ -796,6 +820,8 @@ export function ChatPanel({
   const ensureThread = useCallback(async () => {
     if (threadId) return threadId;
     const created = await createChatThread();
+    // A choice made before the chat had an id belongs to this chat.
+    writeChatWebChoice(created.id, modeRef.current.web);
     setThreadId(created.id);
     setThreadTitle(created.title);
     setThreads((prev) => [
@@ -985,6 +1011,36 @@ export function ChatPanel({
       if (seq === loadSeqRef.current) setLoadingThread(false);
     }
   }, [applyThread, threadPrefetch]);
+
+  // Back on Chat mid-call: open the call's thread so the call docks beside its own history.
+  useEffect(() => {
+    const id = voiceThreadOnMount.current;
+    voiceThreadOnMount.current = null;
+    if (id) queueMicrotask(() => void loadThread(id));
+  }, [loadThread]);
+  // The call ended (here or on another page): show what it saved, then hand back the keyboard.
+  // The focus waits for an effect that sees the composer enabled: the field is disabled while a
+  // thread loads, and a `requestAnimationFrame` right after the load can run before React has
+  // committed "loaded", when `focus()` on a disabled field does nothing and is never retried.
+  const wantComposerFocusRef = useRef(false);
+  const [composerFocusTick, setComposerFocusTick] = useState(0);
+  useEffect(
+    () =>
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the callback is async by design; failures are handled inside it
+      onVoiceEnded(async (id) => {
+        threadPrefetch.forget(id);
+        // The call's thread is now named (nameVoiceThread), so Recents shows it under that name.
+        await Promise.all([loadThread(id), refreshThreads()]);
+        wantComposerFocusRef.current = true;
+        setComposerFocusTick((n) => n + 1);
+      }),
+    [loadThread, refreshThreads, threadPrefetch],
+  );
+  useEffect(() => {
+    if (!wantComposerFocusRef.current || loadingThread || voiceCall) return;
+    wantComposerFocusRef.current = false;
+    textareaRef.current?.focus();
+  }, [composerFocusTick, loadingThread, voiceCall]);
 
   const saveContext = useCallback(async () => {
     setContextSaving(true);
@@ -1201,7 +1257,7 @@ export function ChatPanel({
             turnId,
             attachments: attachments.length ? attachments : undefined,
             mode: asDeep ? "deep" : undefined,
-            web: withWeb ? undefined : false,
+            web: withWeb === "auto" ? undefined : withWeb,
           },
           {
             onAnswer: (delta) => smoother.push(delta),
@@ -1436,7 +1492,7 @@ export function ChatPanel({
             threadId,
             versionOf: { assistantMessageId, question: newQuestion },
             mode: modeRef.current.deep ? "deep" : undefined,
-            web: modeRef.current.web ? undefined : false,
+            web: modeRef.current.web === "auto" ? undefined : modeRef.current.web,
           },
           {
             onAnswer: (delta) => smoother.push(delta),
@@ -1629,66 +1685,69 @@ export function ChatPanel({
    * field about eighty pixels wide. Tailwind picks which is shown, so it is right on the first
    * paint; the hidden copy is `display: none` and out of the accessibility tree.
    */
+  // What auto did on the latest answer (the step trail's own line), so the web button can show it.
+  const lastWebStep = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === "assistant") return m.steps?.find((step) => step.kind === "web") ?? null;
+    }
+    return null;
+  }, [messages]);
   const composerExtras = {
     attach: (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        className="size-9 shrink-0 rounded-full text-muted-foreground"
-        aria-label="Attach a file"
-        title="Attach a photo, PDF or text file. Reading a photo or PDF uses AI credits."
-        disabled={loadingThread || fileChips.length >= CHAT_ATTACHMENTS_MAX}
-        onClick={() => fileInputRef.current?.click()}
+      <ComposerTip
+        label="Attach a file"
+        hint="A photo, PDF or text file. Reading a photo or PDF uses AI credits."
+        trigger={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-9 shrink-0 rounded-full text-muted-foreground"
+            aria-label="Attach a file"
+            disabled={loadingThread || fileChips.length >= CHAT_ATTACHMENTS_MAX}
+            onClick={() => fileInputRef.current?.click()}
+          />
+        }
       >
         <Paperclip className="size-4" />
-      </Button>
+      </ComposerTip>
     ),
     deep: (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-pressed={deep}
-        aria-label="Deep research"
-        title={
-          deep
-            ? "Deep research is on: a thorough answer that can take a few minutes and uses more AI credits"
-            : "Deep research: a thorough answer that can take a few minutes and uses more AI credits"
+      <ComposerTip
+        label={deep ? "Deep research: on" : "Deep research"}
+        hint="A thorough answer that can take a few minutes and uses more AI credits."
+        trigger={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-pressed={deep}
+            aria-label="Deep research"
+            disabled={loadingThread}
+            onClick={() => {
+              setDeep(!deep);
+              writeChatDeep(!deep);
+            }}
+            className={cn(
+              "size-9 shrink-0 rounded-full",
+              deep ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
+            )}
+          />
         }
-        disabled={loadingThread}
-        onClick={() => {
-          setDeep(!deep);
-          writeChatDeep(!deep);
-        }}
-        className={cn(
-          "size-9 shrink-0 rounded-full",
-          deep ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
-        )}
       >
         <Telescope className="size-4" />
-      </Button>
+      </ComposerTip>
     ),
     web: (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-pressed={web}
-        aria-label="Web search"
-        title={web ? "Web search is on: answers may look things up on the public web" : "Web search is off: answers use only your own records"}
+      <WebSearchControl
+        choice={web}
+        onChange={chooseWeb}
+        autoOn={lastWebStep?.id === "web:auto"}
+        blocked={lastWebStep?.id === "web:blocked"}
+        note={lastWebStep?.label ?? null}
         disabled={loadingThread}
-        onClick={() => {
-          setWeb(!web);
-          writeChatWeb(!web);
-        }}
-        className={cn(
-          "size-9 shrink-0 rounded-full",
-          web ? "bg-primary/15 text-primary ring-1 ring-inset ring-primary/30 hover:bg-primary/20 hover:text-primary" : "text-muted-foreground"
-        )}
-      >
-        <Globe className="size-4" />
-      </Button>
+      />
     ),
   };
 
@@ -1762,6 +1821,16 @@ export function ChatPanel({
               ? { ...m, proposedActions: (m.proposedActions ?? []).map((a) => (a.id === actionId ? next : a)) }
               : m
           )
+        ),
+      // A saved edit to a draft block, folded into the message in memory so copy, export and a
+      // remount all read the edited words.
+      draftSaved: (messageId: string, index: number, edit: { subject: string; body: string }) =>
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== messageId || m.role !== "assistant") return m;
+            const answer = replaceDraftBlock(m.answer, index, edit);
+            return answer === null || answer === m.answer ? m : { ...m, answer };
+          })
         ),
       switchVersion: async (version: number) => {
         const { threadId: tid, versionSlot: slot, loadThread: load } = bubbleLive.current;
@@ -1978,7 +2047,8 @@ export function ChatPanel({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {/* `relative` so the jump button can sit on the scroller's bottom edge — above the
               composer, but not inside the scrolling content, where it would scroll away. */}
-          <div className="relative flex min-h-0 flex-1 flex-col">
+          {voiceHere && <div ref={setVoiceSlot} className="flex min-h-0 flex-1 flex-col" />}
+          <div className={cn("relative flex min-h-0 flex-1 flex-col", voiceHere && "hidden")}>
           <div
             ref={listRef}
             onScroll={onListScroll}
@@ -2040,6 +2110,7 @@ export function ChatPanel({
                         retryLabel={isLastAssistant ? "Regenerate" : "Ask again"}
                         onFollowUp={bubbleHandlers.followUp}
                         onActionSettled={bubbleHandlers.actionSettled}
+                        onDraftSaved={bubbleHandlers.draftSaved}
                         versions={isLastAssistant ? versions : EMPTY_VERSIONS}
                         onSwitchVersion={isLastAssistant ? bubbleHandlers.switchVersion : undefined}
                       />
@@ -2308,21 +2379,18 @@ export function ChatPanel({
                     if (source === "pointer") textareaRef.current?.focus();
                   }}
                 />
-                <ComposerSendButton
-                  mode={question.trim() ? "send" : "recall"}
+                <OrbitVoiceEntry
+                  hasText={Boolean(question.trim())}
                   busy={busy}
                   disabled={
                     busy ||
-                    loadingThread ||
-                    (!question.trim() && !lastUserQuery)
+                    loadingThread
                   }
                   onStop={stopStreaming}
-                  onClick={() => {
-                    if (!question.trim()) {
-                      fillMostRecentUserMessage();
-                      return;
-                    }
-                    sendQuestion(question);
+                  onSend={() => sendQuestion(question)}
+                  prepare={async () => {
+                    dictation.stop();
+                    return ensureThread();
                   }}
                 />
               </div>
@@ -2566,6 +2634,7 @@ const AssistantBubble = memo(function AssistantBubble({
   retryLabel,
   onFollowUp,
   onActionSettled,
+  onDraftSaved,
   versions = [],
   onSwitchVersion,
 }: {
@@ -2577,6 +2646,8 @@ const AssistantBubble = memo(function AssistantBubble({
   retryLabel?: string;
   onFollowUp?: (question: string) => void;
   onActionSettled?: (messageId: string, actionId: string, next: StoredProposedAction) => void;
+  /** A draft block's edit was saved (the message id is this bubble's). */
+  onDraftSaved?: (messageId: string, index: number, edit: { subject: string; body: string }) => void;
   /** Every version of this turn, when it is the last one. Otherwise empty — no switcher. */
   versions?: VersionRow[];
   onSwitchVersion?: (version: number) => void;
@@ -2661,6 +2732,15 @@ const AssistantBubble = memo(function AssistantBubble({
     });
     return recs.length ? <div className="grid gap-2 sm:grid-cols-2">{recs.map(renderCard)}</div> : null;
   };
+  const renderDraft = (draft: DraftSegment) => (
+    <DraftBlock
+      draft={draft}
+      streaming={Boolean(msg.streaming || msg.stopped || msg.failed)}
+      messageId={msg.persisted ? msg.id : undefined}
+      name={draft.contactId ? nameById.get(draft.contactId) ?? msg.blocks?.people[draft.contactId]?.name ?? null : null}
+      onSaved={(index, edit) => onDraftSaved?.(msg.id, index, edit)}
+    />
+  );
   const gridRecs = msg.recommendations.filter((r) => !r.contact_id || !inlineIds.has(r.contact_id));
   const copyText = useMemo(
     () =>
@@ -2690,6 +2770,7 @@ const AssistantBubble = memo(function AssistantBubble({
               // a half-written directive or citation at its end off the screen.
               streaming={Boolean(msg.streaming || msg.stopped || msg.failed)}
               renderPeople={renderPeople}
+              renderDraft={renderDraft}
             >
               {msg.answer}
             </ChatMarkdown>
@@ -2761,12 +2842,12 @@ function VersionSwitcher({
 }) {
   const index = versions.findIndex((v) => v.assistantMessageId === currentId);
   if (index === -1) return null;
-  const current = versions[index]!;
+  const current = versions[index];
   return (
     <div className="flex items-center gap-0.5 text-xs text-muted-foreground" role="group" aria-label="Answer version">
       <button
         type="button"
-        onClick={() => onSwitch?.(versions[index - 1]!.version)}
+        onClick={() => onSwitch?.(versions[index - 1].version)}
         disabled={index === 0}
         aria-label="Previous version"
         className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
@@ -2778,7 +2859,7 @@ function VersionSwitcher({
       </span>
       <button
         type="button"
-        onClick={() => onSwitch?.(versions[index + 1]!.version)}
+        onClick={() => onSwitch?.(versions[index + 1].version)}
         disabled={index === versions.length - 1}
         aria-label="Next version"
         className="relative flex size-6 tap-target items-center justify-center rounded transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"

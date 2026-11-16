@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Lock, Sparkles } from "lucide-react";
 import { unlockRecruiterContact } from "@/actions/recruiters";
@@ -18,7 +19,7 @@ export function RecruiterUnlockButton({
   hasLinkedin?: boolean;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [error, setError] = useState<string | null>(null);
 
   function handleUnlock() {

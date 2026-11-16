@@ -8,7 +8,7 @@
  *     until the deadline. This is also the backfill for contacts that predate the sweep.
  */
 import { NextResponse, after } from "next/server";
-import { finishCronRun, startCronRun } from "@/lib/cron-runs";
+import { cronTrigger, finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { kickNameSweep, runNameSweep, usersWithNameCandidates } from "@/lib/contact-name-sweep";
 import { reportError } from "@/lib/report-error";
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
 
   const started = Date.now();
   const deadline = started + START_DEADLINE_MS;
-  const handle = await startCronRun("contacts.name-sweep");
+  const handle = await startCronRun("contacts.name-sweep", cronTrigger(request));
   try {
     const users = await usersWithNameCandidates(USERS_PER_RUN);
     const totals = { users: 0, checked: 0, renamed: 0, weak: 0, none: 0 };

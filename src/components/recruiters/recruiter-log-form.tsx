@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { logRecruiter } from "@/actions/recruiters";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/field";
@@ -41,7 +42,7 @@ export function RecruiterLogForm({
   className?: string;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   // A refused save stays by the button until the next attempt.
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -53,7 +54,7 @@ export function RecruiterLogForm({
     linkedinUrl: initial?.linkedinUrl || "",
     phone: initial?.phone || "",
     notes: initial?.notes || "",
-    status: (initial?.status || "planned") as RecruiterLinkStatus,
+    status: (initial?.status || "planned"),
     personalRating: initial?.personalRating
       ? String(initial.personalRating)
       : "",

@@ -27,14 +27,14 @@ export function companyFromEmail(email: string | null | undefined): string | nul
   const domain = email?.split("@")[1]?.trim().toLowerCase();
   if (!domain || !domain.includes(".") || publicEmailDomain(domain)) return null;
   const parts = domain.split(".");
-  const tld = parts[parts.length - 1]!;
-  const sld = parts[parts.length - 2]!;
-  const label = tld.length === 2 && SECOND_LEVEL.has(sld) && parts.length >= 3 ? parts[parts.length - 3]! : sld;
+  const tld = parts[parts.length - 1];
+  const sld = parts[parts.length - 2];
+  const label = tld.length === 2 && SECOND_LEVEL.has(sld) && parts.length >= 3 ? parts[parts.length - 3] : sld;
   if (!label || label.length < 2 || publicEmailDomain(`${label}.${tld}`)) return null;
   return label
     .split(/[-_]+/)
     .filter(Boolean)
-    .map((w) => w[0]!.toUpperCase() + w.slice(1))
+    .map((w) => w[0].toUpperCase() + w.slice(1))
     .join(" ");
 }
 

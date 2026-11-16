@@ -195,8 +195,11 @@ export type AvatarBatchDeps = {
     contactId: string,
     linkedinUrl: string
   ) => Promise<string | SharedLinkedInPhoto | null>;
-  /** Resolve a photo from Gravatar by email; null when the address has none. */
-  resolveGravatar: (contactId: string, email: string) => Promise<string | null>;
+  /**
+   * Resolve a photo from Gravatar by email; null when the address has none. `{ sharedUrl }`
+   * means the email pool holds it (`resolveGravatarCached`): nothing is saved onto the contact.
+   */
+  resolveGravatar: (contactId: string, email: string) => Promise<string | SharedLinkedInPhoto | null>;
   /**
    * Apollo people/match as the last resort for a LinkedIn headshot — it costs a credit,
    * so it only runs once every free source above has already come up empty. Optional
@@ -372,6 +375,16 @@ export async function runAvatarBackfillBatch(
         }
       }
 
+      if (!shared && !photoUrl && contact.email) {
+        const gravatar = await deps.resolveGravatar(contact.id, contact.email);
+        if (typeof gravatar === "string") {
+          photoUrl = gravatar;
+          source = "gravatar";
+        } else if (gravatar) {
+          shared = true;
+        }
+      }
+
       if (shared) {
         // The contact already shows the shared photo. Its cooldown takes it out of the
         // backlog; the next look after that is one cached read.
@@ -379,11 +392,6 @@ export async function runAvatarBackfillBatch(
         saved += 1;
         savedIds.push(contact.id);
         continue;
-      }
-
-      if (!photoUrl && contact.email) {
-        photoUrl = await deps.resolveGravatar(contact.id, contact.email);
-        if (photoUrl) source = "gravatar";
       }
 
       if (!photoUrl && contact.linkedinUrl && deps.resolveApollo) {

@@ -17,6 +17,8 @@ import {
   Clock,
   FileText,
   Loader2,
+  Gift,
+  MessageSquareText,
   NotebookPen,
   Radar,
   Shield,
@@ -37,9 +39,11 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { companyBrandText } from "@/lib/company-brand";
 import { playDing } from "@/lib/ding";
+import { FEEDBACK_ANCHOR_FALLBACK, requestFeedbackOpen } from "@/lib/feedback-events";
 import { ExtensionPromo } from "@/components/notifications/extension-promo";
 import { AccountAlerts } from "@/components/notifications/account-alerts";
 import { RowBubble } from "@/components/notifications/row-bubble";
+import { panelDismissals, panelItemKey, radarKey } from "@/lib/panel-dismissals";
 import {
   dismissBackgroundJob,
   useBackgroundJobs,
@@ -73,20 +77,32 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
   const [showAllDue, setShowAllDue] = useState(false);
   const jobs = useBackgroundJobs();
   const kept = useKeptNotifications();
+  // Re-renders when a row is cleared; `isDismissed` itself reads the device's list.
+  const dismissedVersion = panelDismissals.useVersion();
   const dueItems = useMemo(
-    () => data?.items.filter((i) => i.urgency === "due") ?? [],
+    // A feedback reply is "due" for the badge but lives under "Waiting on you": there is
+    // nothing to mark done or snooze, only a conversation to open.
+    () => data?.items.filter((i) => i.urgency === "due" && i.kind !== "feedback_reply") ?? [],
     [data]
   );
   // Captured notes waiting for review (or that failed) are the one "info" item worth a
-  // slot here: the user has to act on them, and nothing else will surface them.
+  // slot here: the user has to act on them, and nothing else will surface them. Until they
+  // clear it, which hides that row (`panel-dismissals.ts`) and nothing else.
   const captureItems = useMemo(
-    () => data?.items.filter((i) => i.kind === "capture_review" || i.kind === "cloud_notes") ?? [],
-    [data]
+    () =>
+      data?.items.filter(
+        (i) =>
+          (i.kind === "feedback_reply" || i.kind === "capture_review" || i.kind === "cloud_notes") &&
+          !panelDismissals.isDismissed(panelItemKey(i))
+      ) ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `dismissedVersion` is the signal that the device's list changed
+    [data, dismissedVersion]
   );
   const alerts = data?.alerts ?? [];
   // Radar's list as one line, never an item: a suggestion is not something due, so it
   // neither counts toward the badge nor lives under "Due now".
-  const radar = data?.radar ?? null;
+  const radar =
+    data?.radar && !panelDismissals.isDismissed(radarKey(data.radar)) ? data.radar : null;
   // Account alerts deliberately do NOT count here. They live in the pinned footer, so an
   // alert-only account should still see the scroll area say there is nothing due rather
   // than render an empty region with no explanation.
@@ -98,6 +114,19 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
     kept.length > 0;
 
   const refresh = () => refreshPanel(true);
+
+  // Everything that is not pressing clears: missed toasts, finished jobs, and the rows that
+  // are only waiting to be looked at (captures, found notes, replies, Radar's line). What
+  // stays is what is being asked of you now: due reminders and follow-ups (clearing one would
+  // mean marking it done), running jobs, and account alerts.
+  const finishedJobs = jobs.filter((j) => j.status !== "running");
+  const clearable = kept.length + finishedJobs.length + captureItems.length + (radar ? 1 : 0) > 0;
+  function clearAll() {
+    clearKeptNotifications();
+    for (const j of finishedJobs) dismissBackgroundJob(j.id);
+    for (const i of captureItems) panelDismissals.dismiss(panelItemKey(i));
+    if (radar) panelDismissals.dismiss(radarKey(radar));
+  }
 
   function markDone(reminderId: string) {
     start(() =>
@@ -146,6 +175,18 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
     <>
     <div className="min-h-[7rem] flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3 [scrollbar-width:thin]">
       {data && <ExtensionPromo />}
+
+      {clearable && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={clearAll}
+          >
+            Clear notifications
+          </button>
+        </div>
+      )}
 
       {loading && !data ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -212,7 +253,14 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
 
           <Section title="Radar" count={radar ? 1 : 0}>
             {radar && (
-              <RadarRow count={radar.count} drafts={radar.drafts} names={radar.names} onNavigate={onClose} />
+              <RadarRow
+                count={radar.count}
+                drafts={radar.drafts}
+                names={radar.names}
+                today={radar.today ?? 0}
+                todayNames={radar.todayNames ?? []}
+                onNavigate={onClose}
+              />
             )}
           </Section>
 
@@ -238,15 +286,6 @@ export function NotificationsPanelBody({ onClose }: { onClose: () => void }) {
                 }}
               />
             ))}
-            {kept.length > 1 && (
-              <button
-                type="button"
-                className="px-0.5 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() => clearKeptNotifications()}
-              >
-                Clear all
-              </button>
-            )}
           </Section>
         </div>
       )}
@@ -476,18 +515,29 @@ function RadarRow({
   count,
   drafts,
   names,
+  today,
+  todayNames,
   onNavigate,
 }: {
   count: number;
   /** Today's cards with a message already written. Leads the line when there are any. */
   drafts: number;
   names: string[];
+  /** Today's moments, the ones that won't keep: they lead the row and count on the badge. */
+  today: number;
+  todayNames: string[];
   onNavigate: () => void;
 }) {
   const shown = names.slice(0, 3);
   const rest = count - shown.length;
-  const headline = `${drafts > 0 ? `${drafts} ${drafts === 1 ? "draft" : "drafts"} ready · ` : ""}${count} ${count === 1 ? "person" : "people"} worth a message`;
-  const detail = `${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}`;
+  const headline =
+    today > 0
+      ? `Won’t keep: ${todayNames.join(", ")}${today > todayNames.length ? ` and ${today - todayNames.length} more` : ""}`
+      : `${drafts > 0 ? `${drafts} ${drafts === 1 ? "draft" : "drafts"} ready · ` : ""}${count} ${count === 1 ? "person" : "people"} worth a message`;
+  const detail =
+    today > 0
+      ? `${count > today ? `Plus ${count - today} more on this week’s plan` : "On Radar today"}${drafts > 0 ? ` · ${drafts} ${drafts === 1 ? "draft" : "drafts"} ready` : ""}`
+      : `${shown.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}`;
   return (
     <div className={cn(ROW, "bg-popover")}>
       <IconDisc>
@@ -517,6 +567,16 @@ function NotificationRow({
   onSnooze?: () => void;
   onNavigate: () => void;
 }) {
+  // A feedback reply opens in the feedback side panel, over the page you're on, rather than
+  // taking you away from it. The href stays for a new tab or a modifier-click.
+  const openItem = (e: React.MouseEvent) => {
+    if (item.kind === "feedback_reply" && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+      e.preventDefault();
+      const id = item.url.split("/").pop();
+      if (id) requestFeedbackOpen(FEEDBACK_ANCHOR_FALLBACK, { view: "thread", id });
+    }
+    onNavigate();
+  };
   const Icon =
     item.kind === "follow_up"
       ? UserRound
@@ -524,7 +584,11 @@ function NotificationRow({
         ? NotebookPen
         : item.kind === "cloud_notes"
           ? FileText
-          : Bell;
+          : item.kind === "feedback_reply"
+            ? item.gift
+              ? Gift
+              : MessageSquareText
+            : Bell;
   const when = item.dueAt
     ? formatDistanceToNow(new Date(item.dueAt), { addSuffix: true })
     : item.kind === "capture_review" || item.kind === "cloud_notes"
@@ -545,7 +609,7 @@ function NotificationRow({
       </IconDisc>
       <RowBubble
         lines={[item.title, detail]}
-        render={<Link href={item.url} onClick={onNavigate} className="min-w-0 flex-1 hover:underline" />}
+        render={<Link href={item.url} onClick={(e) => openItem(e)} className="min-w-0 flex-1 hover:underline" />}
       >
         <span className="flex items-center gap-1.5 truncate text-sm font-medium text-ink">
           {item.priority === "critical" && (

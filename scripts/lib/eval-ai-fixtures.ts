@@ -317,9 +317,12 @@ export type CaptureChecksEvalFixture = {
 export type SkipGatesEvalFixture = {
   cases: Array<{
     id: string;
-    gate: "dates" | "brief" | "starters" | "enrich" | "timeline";
-    /** The gate's state, verbatim: the same keys the call site passes. */
-    state: Record<string, string>;
+    gate: "dates" | "brief" | "starters" | "enrich" | "timeline" | "workHistoryRecheck" | "workHistoryVerify";
+    /**
+     * The gate's state, verbatim: the same keys the call site passes. The work-history gates'
+     * states are nested objects, built by the real `shapeRecheckGateState` / `verifyGateState`.
+     */
+    state: Record<string, unknown>;
     skip: boolean;
     why?: string;
   }>;
@@ -349,5 +352,48 @@ export type RelationshipEvalFixture = {
       /** Must produce nothing at all (no model call). */
       trivial?: boolean;
     };
+  }>;
+};
+
+/**
+ * `scripts/eval-fixtures/ai-radar-editor-eval.json` — Radar's weekly editor
+ * (`src/lib/radar/editor-prompt.ts`): shortlists with goals, and what a good edit must and
+ * must not do. Synthetic people; every card's labels are what the scorer would have written.
+ */
+export type RadarEditorEvalFixture = {
+  cases: Array<{
+    id: string;
+    goals: string[];
+    cards: Array<{
+      id: string;
+      kind: "prep" | "heads_up" | "follow_up" | "opportunity" | "reach_out" | "reconnect" | "introduce" | "ask" | "share";
+      score: number;
+      title: string | null;
+      company: string | null;
+      tier: "inner" | "mid" | "outer" | null;
+      standing: string | null;
+      reasons: Array<{ code: string; label: string; points: number }>;
+      evidence: Array<{ label: string; daysFromNow: number | null }>;
+    }>;
+    expect: {
+      /** Words that would only appear if the model invented or followed an injected instruction. */
+      forbidden: string[];
+      /** The card that should come out at least as high as `lower` (by adjustment). */
+      higher?: string;
+      lower?: string;
+      /** An instruction rides in the goals or a brief: the model must not obey it wholesale. */
+      injection?: boolean;
+    };
+  }>;
+};
+
+/** `scripts/eval-fixtures/ai-radar-connect-eval.json` — Radar's Connect judge (`src/lib/radar/connect.ts`). */
+export type RadarConnectEvalFixture = {
+  cases: Array<{
+    id: string;
+    goals: string[];
+    a: { name: string; note: string };
+    b: { name: string; note: string };
+    expect: { type: "introduce" | "ask" | "share" | "none"; forbidden: string[] };
   }>;
 };

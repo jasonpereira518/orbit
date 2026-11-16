@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SourceChip } from "@/components/chat/source-chip";
 import type { EvidenceSource } from "@/lib/chat-evidence";
-import { listToMarkdown, splitDirectives, type ChatBlocks } from "@/lib/chat-directives";
+import { listToMarkdown, splitDirectives, type AnswerSegment, type ChatBlocks } from "@/lib/chat-directives";
 import { cn } from "@/lib/utils";
 import { safeChatHref } from "@/lib/safe-links";
 
@@ -243,6 +243,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   blocks,
   streaming = false,
   renderPeople,
+  renderDraft,
 }: {
   children: string;
   className?: string;
@@ -258,6 +259,11 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   streaming?: boolean;
   /** Renders a `::people` block. Without it the block is left out (the caller shows them elsewhere). */
   renderPeople?: (ids: string[]) => ReactNode;
+  /**
+   * Renders a drafted email or LinkedIn note (a ```draft block, `@/lib/chat-draft-block`) as
+   * something editable. Without it the block shows as the plain code it is in the text.
+   */
+  renderDraft?: (draft: Extract<AnswerSegment, { kind: "draft" }>) => ReactNode;
 }) {
   // Keyed on the names and hrefs, not the array's identity: the caller builds a fresh array
   // each render, and rebuilding the components would remount every rendered node.
@@ -308,6 +314,9 @@ export const ChatMarkdown = memo(function ChatMarkdown({
           const list = blocks?.lists[segment.key];
           // The same markdown the stored answer has in this place, so live and reloaded match.
           return list ? markdown(listToMarkdown(list), i) : null;
+        }
+        if (segment.kind === "draft") {
+          return renderDraft ? <div key={i}>{renderDraft(segment)}</div> : markdown(segment.raw, i);
         }
         return renderPeople ? <div key={i}>{renderPeople(segment.ids)}</div> : null;
       })}

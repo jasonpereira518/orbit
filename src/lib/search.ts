@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { getDb, isPgvectorAvailable, rowsOf } from "@/db";
 import { contactEmbeddings, contacts } from "@/db/schema";
@@ -8,7 +8,7 @@ import { createEmbedding, createEmbeddingsBatch, currentEmbeddingModel } from "@
 import { formatVectorLiteral } from "@/lib/pgvector";
 
 export function computeContentHash(content: string): string {
-  return createHash("sha256").update(content).digest("hex");
+  return sha256Hex(content);
 }
 
 /**
@@ -515,7 +515,7 @@ export async function rebuildContactEmbeddingsBatch(
   if (toInsert.length > 0) {
     const inserted = await db.insert(contactEmbeddings).values(toInsert).returning();
     for (const row of inserted) {
-      vectorRows.push({ id: row.id, embedding: row.embedding as number[] });
+      vectorRows.push({ id: row.id, embedding: row.embedding });
     }
   }
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { ExternalLink } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { clearDecisionKey, getSettings, saveDecisionKey } from "@/actions/settings";
@@ -27,7 +28,7 @@ export function DecisionModelSettings({ initialSettings }: { initialSettings: Se
   }
   const [apiKey, setApiKey] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   // Without Jev each step runs exactly as it did before: some on your chat model, some on
   // Orbit's own rules (keyword filters, name matching). So the copy says "as before", not

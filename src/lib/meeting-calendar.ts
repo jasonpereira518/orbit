@@ -8,7 +8,8 @@
  *
  * Nothing in here is stored: a suggestion exists for as long as the setup card is on screen.
  */
-import { counterpartsOf, nameFromEmail } from "@/lib/calendar-classify";
+import { counterpartsOf } from "@/lib/calendar-classify";
+import { displayNameFor } from "@/lib/names/from-identifier";
 import {
   agendaFrom,
   conferenceOf,
@@ -53,7 +54,7 @@ const MAX_ATTENDEES = 50;
 function prettyName(name: string, email: string): string {
   const clean = name.trim();
   if (clean && !(email && clean === email.split("@")[0])) return clean;
-  return nameFromEmail(email) || clean;
+  return displayNameFor({ email }) || clean;
 }
 
 /**

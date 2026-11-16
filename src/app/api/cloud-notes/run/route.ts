@@ -1,7 +1,7 @@
 /**
  * Cloud notes: every 30 minutes, check each watched Drive/OneDrive for new meeting notes.
  *
- * Driven by GitHub Actions (.github/workflows/ops.yml), the only scheduler. Self-continues
+ * Driven by QStash (scripts/qstash-schedules.ts), the only scheduler. Self-continues
  * when a claim came back full or the budget ran out, the same shape as `/api/radar/run`. An
  * operator hiding the surface stands the pass down. While it is coming-soon only people who
  * could reach the tab hold a watched drive at all (the grant is asked for from inside it).

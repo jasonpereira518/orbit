@@ -259,7 +259,7 @@ export const ReminderRow = memo(function ReminderRow({
                 </span>
               )}
               {item.timingRationale && (
-                <span className="hidden sm:inline-block text-3xs italic text-muted-foreground/80">
+                <span className="hidden sm:inline-block text-3xs italic text-muted-foreground-subtle">
                   {due && <span aria-hidden className="mr-1.5 text-border">·</span>}
                   {item.timingRationale}
                 </span>

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import Link from "next/link";
 import {
   Building2,
@@ -101,7 +102,7 @@ export function FindProspectsSearch({
   className?: string;
 }) {
   const [mode, setMode] = useState<SearchMode>("description");
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   // Search Criteria States
   const [descriptionQuery, setDescriptionQuery] = useState("");

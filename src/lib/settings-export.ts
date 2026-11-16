@@ -6,7 +6,7 @@
  * the one guarantee it makes was unverifiable. `scripts/smoke-settings-export.ts` now drives
  * it from the schema, the way `smoke-purge.ts` drives purge coverage.
  */
-import { userSettings } from "@/db/schema";
+import { type userSettings } from "@/db/schema";
 
 /**
  * Every credential column on `user_settings`, by name.

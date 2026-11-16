@@ -54,6 +54,8 @@ const DELIBERATE: Record<string, string> = {
   "duplicate_suggestions.contact_b_id": "pairs naming the loser cascade by design (merge step 4f)",
   // The loser's digest cascades; the winner's watermark is reset so the next pass re-reads.
   "relationship_digests.contact_id": "re-derived after the merge; winner's watermark is cleared",
+  // The loser's field log describes values the merge itself just reconciled (winner wins).
+  "contact_changes.contact_id": "the loser's change log and open suggestions cascade; the winner's stay",
 };
 
 /**
@@ -65,6 +67,7 @@ const REQUIRED: Record<string, string> = {
   "job_posting_matches.contact_id": "smoke-merge-children (was cascade-deleted)",
   "agent_send_requests.contact_id": "smoke-merge-children (was set null)",
   "email_sends.contact_ids": "smoke-merge-email-sends (was a stale jsonb id)",
+  "radar_opportunities.related_contact_ids": "smoke-merge-radar-opportunities (uuid[] with no foreign key)",
 };
 
 /** Not handled, and known. */

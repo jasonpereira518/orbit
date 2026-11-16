@@ -101,7 +101,7 @@ export async function logRecruiterForUser(userId: string, input: LogRecruiterInp
   } else {
     const created = await upsertCanonicalRecruiter(
       {
-        fullName: fullName!,
+        fullName: fullName,
         firm: input.firm,
         specialty: input.specialty,
         email: input.email,
@@ -120,7 +120,7 @@ export async function logRecruiterForUser(userId: string, input: LogRecruiterInp
 
   const { created } = await ensureUserLink({
     userId,
-    recruiterId: recruiterId!,
+    recruiterId: recruiterId,
     status: input.status || "planned",
     roleInterviewingFor: input.roleInterviewingFor,
     email: input.email,
@@ -132,9 +132,9 @@ export async function logRecruiterForUser(userId: string, input: LogRecruiterInp
   });
 
   if (rating !== null) {
-    await recomputeRecruiterRating(recruiterId!);
+    await recomputeRecruiterRating(recruiterId);
   }
-  return { id: recruiterId!, linkCreated: created };
+  return { id: recruiterId, linkCreated: created };
 }
 
 export type RecruiterLinkPatch = {

@@ -384,6 +384,30 @@ export const SKIP_GATES = {
       false: "No meeting, call or get-together is proposed, scheduled or confirmed.",
     },
   ),
+  /**
+   * In front of the sweep's periodic "where do they work now?" web search. A confident
+   * "no move" skips that one search; the contact is checked again next cycle, and never
+   * skipped twice in a row (work-history-research.ts).
+   */
+  workHistoryRecheck: noul(
+    "Has the person in `contact` changed employer or role since `last_checked`?",
+    {
+      true: "`since_last_check` states or strongly implies a new employer, a new role, or leaving a job — or the current role has run so long that a move is likely.",
+      false: "Nothing in `since_last_check` points to a move, and the current role is recent or consistent with everything seen since.",
+    },
+  ),
+  /**
+   * In front of the SECOND (verify) search, when the first was unsure it found the right
+   * person. A confident "different person" stops there and writes nothing; any other
+   * answer runs the verify search as before.
+   */
+  workHistoryVerify: noul(
+    "Is the person described in `first_answer` the same person as `contact`?",
+    {
+      true: "The same individual: the same name or an obvious short form, and nothing that contradicts it. A job change or a missing field is normal for one person; if `moved_to` is present, a match at `moved_to` is the same person.",
+      false: "A different person who shares or resembles the name: a different employer or role held at the same time, a different school or city, or facts that cannot both be true of one person.",
+    },
+  ),
 } as const;
 
 export const SKIP_GATE_TUNING = {
@@ -409,7 +433,17 @@ export const SKIP_GATE_TUNING = {
    *             that quietly stops updating — is high. The wiring and the fixture cases
    *             stay so a later model version can be re-measured by flipping this number.
    */
-  skipAtOrBelow: { dates: 0.4, brief: null, starters: 0.45, enrich: 0.35, timeline: 0.15 } as Record<
+  //   workHistoryRecheck, workHistoryVerify  OFF until the eval shows 0 wrong skips
+  //             (recheck) / 0 vetoes of a true match (verify) — spec 2026-11-10.
+  skipAtOrBelow: {
+    dates: 0.4,
+    brief: null,
+    starters: 0.45,
+    enrich: 0.35,
+    timeline: 0.15,
+    workHistoryRecheck: null,
+    workHistoryVerify: null,
+  } as Record<
     keyof typeof SKIP_GATES,
     number | null
   >,

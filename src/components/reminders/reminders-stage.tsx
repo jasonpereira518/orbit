@@ -122,6 +122,7 @@ export function RemindersStage({
   filters: urlFilters,
   suggested,
   openCreate = false,
+  createDefaults = null,
   calendar,
 }: {
   target: RailTarget;
@@ -133,6 +134,8 @@ export function RemindersStage({
   suggested: SuggestedReminderRow[] | null;
   /** Arrived from the palette's "New reminder". */
   openCreate?: boolean;
+  /** What the palette read out of a typed sentence, to pre-fill the form with. */
+  createDefaults?: { title: string | null; due: string | null } | null;
   calendar?: CalendarSyncSummary;
 }) {
   const router = useRouter();
@@ -612,7 +615,9 @@ export function RemindersStage({
   const groups = groupItems(items, today, isDoneView);
   const empty =
     EMPTY_COPY[target.kind === "list" ? "list" : target.view] ?? EMPTY_COPY.today;
-  const defaultDue = target.kind === "view" && target.view === "today" ? today : null;
+  // A date the palette read out of what was typed beats the Today view's own default.
+  const defaultDue =
+    createDefaults?.due ?? (target.kind === "view" && target.view === "today" ? today : null);
   const total = page.total ?? items.length;
 
   const detailPane = detailItem ? (
@@ -691,6 +696,7 @@ export function RemindersStage({
                 }}
                 compactTrigger
                 defaultDue={defaultDue}
+                defaultTitle={createDefaults?.title ?? null}
               />
             </div>
             {!isSuggested && (

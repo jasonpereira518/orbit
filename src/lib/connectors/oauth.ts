@@ -340,7 +340,7 @@ async function postToken(
     refreshToken: json.refresh_token ?? null,
     expiresAt: json.expires_in ? new Date(Date.now() + json.expires_in * 1000) : null,
     scopes: json.scope ?? null,
-    raw: json as Record<string, unknown>,
+    raw: json,
   };
 }
 

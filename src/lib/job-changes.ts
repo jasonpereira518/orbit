@@ -376,7 +376,15 @@ export async function recordJobChanges(
       userId,
       contactId,
       { company: current.toOrg, ...(current.toTitle ? { title: current.toTitle } : {}) },
-      { skipRevalidate: true, skipEmbedding: true, skipSummary: true }
+      // A move only replaces what Orbit guessed; against a company the person typed it becomes
+      // a suggestion, dated by when the new role started (`@/lib/contact-fields`).
+      {
+        skipRevalidate: true,
+        skipEmbedding: true,
+        skipSummary: true,
+        by: "job_move",
+        at: current.startedYear ? new Date(Date.UTC(current.startedYear, (current.startedMonth ?? 1) - 1, 1)) : now,
+      }
     ).catch(() => null);
   }
 

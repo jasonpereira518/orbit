@@ -41,26 +41,9 @@ import { enrichmentKeyFacts, takeawaysToSummary } from "@/lib/capture/person-enr
 import { identityKeysFor } from "@/lib/duplicates";
 import { findIdentityOwners } from "@/lib/contact-identity";
 import { isHandle } from "@/lib/contact-name-guess";
+import { shouldReplaceName } from "@/lib/names/compare";
+import { splitName } from "@/lib/names/parse";
 
-/**
- * Whether a note's name for someone should replace the one on file. Only when it says more:
- * "Sarah" must never shrink "Sarah Chen", and "Mike Torres" must not replace "Michael
- * Torres". A handle or an empty name on file is always replaced.
- */
-export function nameUpgrades(current: string | null | undefined, incoming: string | null | undefined): boolean {
-  const next = incoming?.trim();
-  if (!next) return false;
-  const now = current?.trim();
-  if (!now || isHandle(now)) return true;
-  return next.split(/\s+/).length > now.split(/\s+/).length;
-}
-
-/** "Ada King Lovelace" → first "Ada", last "Lovelace". One word is a first name only. */
-function splitName(name: string): { firstName?: string; lastName?: string } {
-  const parts = name.trim().split(/\s+/);
-  if (!parts[0]) return {};
-  return parts.length > 1 ? { firstName: parts[0], lastName: parts[parts.length - 1] } : { firstName: parts[0] };
-}
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
@@ -432,7 +415,7 @@ export async function saveNoteBatch(
           const IDENTITY = ["company", "title", "location", "email", "linkedinUrl", "howMet", "aiSummary"] as const;
           const kept = { ...restAll } as Record<string, unknown>;
           for (const key of IDENTITY) {
-            if (typeof current[key] === "string" && current[key]!.trim()) delete kept[key];
+            if (typeof current[key] === "string" && current[key].trim()) delete kept[key];
           }
           rest = kept as typeof restAll;
         }
@@ -453,7 +436,7 @@ export async function saveNoteBatch(
             // Unattended runs only fill a blank (or a bare handle) name; the rest may upgrade a partial one.
             ...((p.fillOnly
               ? !current?.fullName?.trim() || isHandle(current.fullName.trim())
-              : nameUpgrades(current?.fullName, parsed.name)) && parsed.name
+              : shouldReplaceName(current?.fullName, parsed.name)) && parsed.name
               ? { fullName: parsed.name }
               : {}),
             ...rest,
@@ -462,7 +445,8 @@ export async function saveNoteBatch(
             ...gaps,
             ...(addedFacts.length ? { keyFacts: [...priorFacts, ...addedFacts] } : {}),
           },
-          WRITE_OPTS
+          // A reviewed card is the person's own record; an unattended run is a kept one.
+          { ...WRITE_OPTS, by: p.fillOnly ? "unattended_capture" : "capture" }
         );
         // Added, never replaced, and without reading the current list first (audit M-13).
         if (tagNames?.length) await addTagsForUser(userId, contactId, tagNames);
@@ -473,7 +457,8 @@ export async function saveNoteBatch(
           userId,
           {
             fullName: parsed.name,
-            ...splitName(parsed.name),
+            firstName: splitName(parsed.name).firstName ?? undefined,
+            lastName: splitName(parsed.name).lastName ?? undefined,
             ...fields,
             dateMet: p.interactionDate?.trim() || parsed.interaction_date?.trim() || input.anchorIso,
             source: "ai_capture",
@@ -519,7 +504,7 @@ export async function saveNoteBatch(
         const inserted = await insertOpportunities(
           userId,
           p.opportunities.map((o) => ({
-            contactId: contactId!,
+            contactId: contactId,
             kind: o.kind,
             label: o.label,
             direction: o.direction,
@@ -530,7 +515,7 @@ export async function saveNoteBatch(
             rawDatePhrase: o.rawDatePhrase,
             confidenceScore: o.confidenceScore,
             createdBy: "ai" as const,
-            itemHash: buildOpportunityItemHash(input.sourceHash, contactId!, o.kind, o.label),
+            itemHash: buildOpportunityItemHash(input.sourceHash, contactId, o.kind, o.label),
           }))
         );
         // `emptyNoteBatchResult` always seeds this, but the field is optional on the type so
@@ -539,7 +524,7 @@ export async function saveNoteBatch(
         for (const r of inserted) {
           opportunityResults.push({
             id: r.id,
-            contactId: contactId!,
+            contactId: contactId,
             kind: r.kind,
             label: r.label,
             dueIso: r.dueDate ? isoDay(new Date(r.dueDate)) : null,
@@ -824,10 +809,10 @@ export async function saveNoteBatch(
       for (const r of landed) {
         result.reminders.push({
           id: r.id, contactId: r.contactId, title: r.title, dueIso: isoDay(new Date(r.dueDate!)),
-          dateBasis: (r.dateBasis ?? "window") as NoteBatchResult["reminders"][number]["dateBasis"],
+          dateBasis: (r.dateBasis ?? "window"),
           rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
-          priority: r.priority as ReminderPriority,
-          category: r.category as ReminderCategory,
+          priority: r.priority,
+          category: r.category,
           timingRationale: r.timingRationale,
           importanceReason: r.importanceReason,
         });

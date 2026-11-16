@@ -19,13 +19,14 @@ import { join } from "node:path";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
-export async function launch({ width = 1280, height = 800, mobile = false, reduceMotion = false, gpu = false, extraArgs = [] } = {}) {
+export async function launch({ width = 1280, height = 800, mobile = false, reduceMotion = false, gpu = false, headless = true, extraArgs = [] } = {}) {
   const port = 9300 + Math.floor(Math.random() * 500);
   const profile = mkdtempSync(join(tmpdir(), "orbit-cdp-"));
   const args = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`,
-    "--headless=new",
+    // `headless: false` opens a real window, paced by the display it lands on (120Hz on ProMotion).
+    ...(headless ? ["--headless=new"] : []),
     "--no-first-run",
     "--no-default-browser-check",
     // Software raster by default (deterministic screenshots). Frame-rate measurements pass

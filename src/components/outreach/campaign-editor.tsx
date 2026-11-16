@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition, type ReactElement, type ReactNode } from "react";
+import { useEffect, useState, type ReactElement, type ReactNode } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/lib/toast";
@@ -67,7 +68,7 @@ export function CampaignEditor({
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   const [name, setName] = useState(campaign.name);
   const [audienceQuery, setAudienceQuery] = useState(campaign.audienceQuery || "");
@@ -215,7 +216,7 @@ export function CampaignEditor({
               <Select
                 value={channel}
                 onValueChange={(v) => {
-                  if (v) setChannel(v as OutreachChannel);
+                  if (v) setChannel(v);
                 }}
                 items={CHANNEL_OPTIONS}
               >

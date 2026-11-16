@@ -18,7 +18,7 @@ import { scheduleContactFollowUpForUser } from "@/lib/reminder-writes";
 import { reportUnlessQuiet } from "@/lib/report-error";
 import { recordFeedback } from "@/lib/radar/store";
 import {
-  RECOMMENDATION_KINDS,
+  AUTOPILOT_KINDS,
   type RadarAutopilot,
   type RadarAutopilotAction,
   type RadarEvidence,
@@ -32,7 +32,7 @@ const DAY_MS = 86_400_000;
 
 export function enabledAutopilotKinds(settings: RadarAutopilot | null | undefined): RecommendationKind[] {
   if (!settings) return [];
-  return RECOMMENDATION_KINDS.filter((k) => settings[k] === true);
+  return AUTOPILOT_KINDS.filter((k) => settings[k] === true);
 }
 
 /**
@@ -104,7 +104,7 @@ export async function applyAutopilot(userId: string, settings: RadarAutopilot, n
     try {
       const result = await scheduleContactFollowUpForUser(userId, t.contact_id, days);
       const action: RadarAutopilotAction = {
-        reminderId: result.reminder!.id,
+        reminderId: result.reminder.id,
         dueDate: result.dueDate,
         at: now.toISOString(),
       };

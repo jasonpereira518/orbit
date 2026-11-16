@@ -220,7 +220,7 @@ window.__kit = (() => {
   function dom() {
     return {
       contactNodes: document.querySelectorAll(".react-flow__node-contact").length,
-    summary: Boolean(document.querySelector(".react-flow__node-starDust")),
+    summary: [...document.querySelectorAll(".react-flow__node-starDust")].some((e) => e.style.visibility !== "hidden"),
       allNodes: document.querySelectorAll(".react-flow__node").length,
       edges: document.querySelectorAll(".react-flow__edge").length,
       elements: document.getElementsByTagName("*").length,

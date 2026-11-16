@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
 import { joinInterestList, recordPassCheckAction, saveInterestListName } from "@/actions/interest-list";
+import { ensureBotId } from "@/lib/botid-client";
 import { readPageviewSessionId } from "@/lib/pageview-session";
 import { BoardingPass } from "@/components/interest/boarding-pass";
 import { PlanetArt } from "@/components/interest/planet-art";
@@ -108,6 +109,9 @@ export function InterestHero({
   const readyAt = useRef(0);
   useEffect(() => {
     readyAt.current = Date.now();
+    // Waitlist join POSTs need BotID proofs; start here rather than on every app/landing
+    // cold load (`src/instrumentation-client.ts` used to pay this on `/` and `/dashboard`).
+    ensureBotId();
   }, []);
 
   const buttonRef = useRef<HTMLButtonElement>(null);

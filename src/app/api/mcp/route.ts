@@ -14,6 +14,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+  "access-control-allow-headers": "*",
+};
+
 export async function POST(request: Request) {
   return handleMcpRequest(request);
 }
@@ -24,4 +30,8 @@ export async function GET(request: Request) {
 
 export async function DELETE(request: Request) {
   return handleMcpRequest(request);
+}
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS });
 }

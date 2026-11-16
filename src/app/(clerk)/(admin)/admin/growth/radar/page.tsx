@@ -21,9 +21,9 @@ export const metadata = { title: "Admin · Growth · Radar" };
 
 /**
  * Is Radar working? Every figure is read from rows Radar already keeps (see
- * `src/lib/radar/metrics.ts` for the definitions). The rerank panel is the one to watch:
- * if cards the AI moved up are not accepted more often than cards it moved down, the rerank
- * is noise and `RADAR_RERANK_ENABLED` should go off.
+ * `src/lib/radar/metrics.ts` for the definitions). The rerank panel (the weekly editor's
+ * nudges) is the one to watch: if cards the AI moved up are not accepted more often than cards
+ * it moved down, the editor is noise and `RADAR_EDITOR_ENABLED` should go off.
  */
 export default async function AdminRadarPage({
   searchParams,

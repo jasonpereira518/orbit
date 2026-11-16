@@ -38,8 +38,8 @@ import {
 
 /**
  * Compile-time proof that the JSONB shape declared in `schema.ts` still matches the real
- * breakdown. `schema.ts` cannot import from the lib layer — drizzle-kit loads it directly
- * and cannot resolve the `@/` alias — so the type is declared twice, and this is what stops
+ * breakdown. `schema.ts` cannot import from the lib layer — drizzle-kit (since removed) loaded it
+ * directly and could not resolve the `@/` alias — so the type is declared twice, and this is what stops
  * the copies drifting.
  */
 const _breakdownShapeCheck: StoredClosenessBreakdown = null as unknown as ClosenessBreakdown;

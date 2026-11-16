@@ -1,14 +1,14 @@
 /**
  * The continuous-sync scheduler's entry point.
  *
- * Driven by GitHub Actions (.github/workflows/ops.yml), the only scheduler. Self-continuation posts back to this same route rather than
+ * Driven by QStash (scripts/qstash-schedules.ts), the only scheduler. Self-continuation posts back to this same route rather than
  * a second path, which keeps `PUBLIC_ROUTES` small.
  *
  * `POST` because it mutates. Route Handlers are uncached by default and `POST` can never be
  * cached, so no cache configuration is needed here.
  */
 import { NextResponse, after } from "next/server";
-import { finishCronRun, startCronRun } from "@/lib/cron-runs";
+import { cronTrigger, finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { internalFetch, isInternalRequest } from "@/lib/internal-auth";
 import { runSyncPass } from "@/lib/sync-scheduler";
 import { reportAndContinue, reportError } from "@/lib/report-error";
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const handle = await startCronRun("sync.run");
+  const handle = await startCronRun("sync.run", cronTrigger(request));
   try {
     const stats = await runSyncPass();
 
