@@ -529,7 +529,8 @@ export default function PrivacyPage() {
             text into their chat window. That includes your upcoming meetings (titles, times and
             guests&rsquo; names, never their addresses) and when you are free, if you ask it to look.
             For a person it asks about, that also includes Orbit&rsquo;s short description of the
-            relationship: how you met, the kind of relationship, what you talk about, what is still open,
+            relationship: how you met, the kind of relationship, what you talk about, what they are working on,
+            what is still open,
             and where your histories overlap.
             Orbit sends nothing on its own: a connected assistant
             can draft a message, but it waits for you to read and approve it before anything

@@ -102,7 +102,9 @@ const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLow
  * Writes `positions[]` / `education[]` from the kept export, with no new review, only when the
  * person already applied that file's own details: the role on their profile is the one the file
  * gives, or every school in the file is on their schools list. (`role` alone is not proof:
- * onboarding can set it from a web lookup.) Always stamps `historyCheckedAt`, so each person is
+ * onboarding can set it from a web lookup.) Both also need `career.importedAt`: every apply sets
+ * it and "Remove imported details" drops it, while the schools list (not part of career_profile)
+ * survives a Remove. Always stamps `historyCheckedAt`, so each person is
  * looked at once, and "Remove imported details" (which keeps the stamp) is never undone.
  */
 export async function catchUpHistory(userId: string, now: Date = new Date()): Promise<{ positions: number; education: number }> {
@@ -114,7 +116,7 @@ export async function catchUpHistory(userId: string, now: Date = new Date()): Pr
 
   const positionsText = kept?.texts.get("positions.csv");
   const role = you.career?.role;
-  if (positionsText && role && !you.career?.positions?.length) {
+  if (positionsText && role && you.career?.importedAt && !you.career?.positions?.length) {
     try {
       const current = parseLinkedInPositionsCsv(positionsText);
       if (current && same(current.title, role.title) && same(current.company, role.company)) {
@@ -126,7 +128,7 @@ export async function catchUpHistory(userId: string, now: Date = new Date()): Pr
     }
   }
   const educationText = kept?.texts.get("education.csv");
-  if (educationText && !you.career?.education?.length) {
+  if (educationText && you.career?.importedAt && !you.career?.education?.length) {
     try {
       const schools = parseLinkedInEducationCsv(educationText);
       if (schools.every((s) => you.schools.some((mine) => same(mine, s)))) {

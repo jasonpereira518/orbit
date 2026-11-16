@@ -38,7 +38,8 @@ import { ensureUserSettings } from "../src/lib/user-settings";
 const U1 = "smoke-catch-up-u1";
 const U2 = "smoke-catch-up-u2";
 const U3 = "smoke-catch-up-u3";
-const USERS = [U1, U2, U3];
+const U4 = "smoke-catch-up-u4";
+const USERS = [U1, U2, U3, U4];
 const LIVE = `live:${LINKEDIN_DEEP_READ_SURFACE_KEY}`;
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -79,7 +80,13 @@ async function keepExport(userId: string, files: Record<string, string>): Promis
 
 const career = async (userId: string) => (await loadYouCurrent(userId)).career;
 const setRole = (userId: string, title: string, company: string) =>
-  saveCareerPatch(userId, { career: { role: { title, company } }, senderBio: null, schools: null, message: "" });
+  // What applying Positions.csv from Imports writes: the role and an import stamp.
+  saveCareerPatch(userId, { career: { role: { title, company }, importedAt: new Date().toISOString() }, senderBio: null, schools: null, message: "" });
+/** What applying Education.csv writes: the schools list and an import stamp. */
+const applySchools = async (userId: string, schools: string[]) => {
+  await setSchools(userId, schools);
+  await saveCareerPatch(userId, { career: { importedAt: new Date().toISOString() }, senderBio: null, schools: null, message: "" });
+};
 /** The engine revalidates paths when a job ends, which only a request can do. */
 const runJob = async (importId: string) => {
   try {
@@ -106,12 +113,16 @@ async function main() {
   console.log("\nyour history");
   await setRole(U1, "Engineer", "Acme");
   await setRole(U2, "Founder", "Other");
-  await setSchools(U3, ["UNC Chapel Hill"]);
+  await applySchools(U3, ["UNC Chapel Hill"]);
+  // Applied their schools before the stamp existed, then pressed "Remove imported details":
+  // the schools list stays (it is not career_profile), the import stamp is gone.
+  await setSchools(U4, ["UNC Chapel Hill"]);
   const u1Import = await keepExport(U1, { "Positions.csv": POSITIONS, "Invitations.csv": INVITATIONS });
   await keepExport(U2, { "Positions.csv": POSITIONS });
   await keepExport(U3, { "Education.csv": EDUCATION });
+  await keepExport(U4, { "Education.csv": EDUCATION });
 
-  check("all three are owed a look", (await usersNeedingHistory(25, null)).sort().join() === [...USERS].sort().join());
+  check("all four are owed a look", (await usersNeedingHistory(25, null)).sort().join() === [...USERS].sort().join());
   check("a scope narrows it", (await usersNeedingHistory(25, [U3])).join() === U3);
   check("an empty scope is nobody", (await usersNeedingHistory(25, [])).length === 0);
 
@@ -129,6 +140,9 @@ async function main() {
 
   const r3 = await catchUpHistory(U3);
   check("schools already imported from this export: degrees and dates are written", r3.education === 1 && (await career(U3))?.education?.[0]?.school === "UNC Chapel Hill", JSON.stringify(r3));
+
+  const r4 = await catchUpHistory(U4);
+  check("schools left behind by Remove imported details: nothing is written", r4.education === 0 && (await career(U4))?.education === undefined, JSON.stringify(r4));
 
   await clearCareerProfile(U1);
   const cleared = await career(U1);

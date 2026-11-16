@@ -109,6 +109,7 @@ check("the retired timeline cap is quoted nowhere", !privacy.includes("TIMELINE_
 check("the LinkedIn deep read is described", privacy.includes("Your LinkedIn export: what Orbit reads"));
 check("the way to remove a relationship kind is named", privacy.includes("Not right?"));
 check("connected assistants are said to get the relationship description", privacy.includes("how you met, the kind of relationship"));
+check("…including what they are working on (the block sends it)", privacy.includes("what they are working on"));
 check("no Undo is promised for the LinkedIn read", !/LinkedIn[^.]*\bUndo\b/.test(privacy));
 check("the date comes from legal.ts", privacy.includes("LEGAL_LAST_UPDATED"));
 
