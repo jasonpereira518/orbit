@@ -494,7 +494,7 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     relationship,
     updatedAt: now,
   };
-  await db.insert(relationshipDigests).values(values).onConflictDoUpdate({ target: relationshipDigests.contactId, set: values });
+  await saveDigest(values);
 
   // 5. Run counters (not again for a replayed window).
   if (!replay) await db
@@ -511,6 +511,24 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     .where(eq(relationshipRuns.id, runId));
 
   return result;
+}
+
+/**
+ * The digest upsert. `values.relationship` comes from a row read earlier in the pass, so a
+ * "Not right?" landing in between must not be written over: a removed kind already on the row stays.
+ */
+export async function saveDigest(values: typeof relationshipDigests.$inferInsert): Promise<void> {
+  const db = await getDb();
+  await db
+    .insert(relationshipDigests)
+    .values(values)
+    .onConflictDoUpdate({
+      target: relationshipDigests.contactId,
+      set: {
+        ...values,
+        relationship: sql`CASE WHEN ${relationshipDigests.relationship}->>'removed' = 'true' THEN ${relationshipDigests.relationship} ELSE excluded.relationship END`,
+      },
+    });
 }
 
 /** A trivial thread: nothing to learn, but the watermark must move or it stays pending forever. */
