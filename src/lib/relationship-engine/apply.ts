@@ -26,7 +26,7 @@ import {
 } from "@/db/schema";
 import { actionItemHash } from "@/lib/action-items";
 import { emptyNoteBatchResult } from "@/lib/note-batches";
-import { MESSAGE_INTERACTION_SQL } from "@/lib/relationship-engine/pending";
+import { messageRowSql } from "@/lib/relationship-engine/pending";
 import { undoNoteBatchForUser } from "@/lib/note-batch-save";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { buildSuggestionItemHash, isoDay } from "@/lib/suggested-reminder-utils";
@@ -45,6 +45,8 @@ export type ApplyInput = {
   validated: ValidatedDigest;
   plan: DigestWritePlan;
   now?: Date;
+  /** LinkedIn deep read: the pass read invitation/recommendation rows too, and writes origin, kind and events. */
+  deepRead?: boolean;
 };
 
 export type ApplyResult = {
@@ -271,7 +273,7 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
          AND a.contact_id = ${contactId}::uuid
          AND a.status = 'open'
          AND a.created_at >= ${runRow.createdAt.toISOString()}::timestamptz
-         AND ${MESSAGE_INTERACTION_SQL}
+         AND ${messageRowSql({ deepRead: input.deepRead ?? false, signals: "trigger" })}
     `);
     const sweptRows = rowsOf<{ id: string; text: string; reminderId: string | null }>(swept);
     const have = new Set(batchAdd.actionItems.map((x) => x.id));
