@@ -6,6 +6,8 @@ import { getActiveCaptureJob, getActiveCaptureJobs } from "@/actions/capture-job
 import { getCloudNotesState } from "@/actions/cloud-notes";
 import { countIgnoredPeople } from "@/actions/ignored-people";
 import { getPlanOverview, getSettings } from "@/actions/settings";
+import { StaleDraftNotice } from "@/components/capture/capture-resume-notice";
+import { shouldAutoOpenJob } from "@/lib/capture/job-staleness";
 import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
 import { CaptureHistory, CaptureHistorySkeleton } from "@/components/capture/capture-history";
 import { ImportsTabBar } from "@/components/capture/capture-tabs";
@@ -171,8 +173,18 @@ export default async function CapturePage({
     : null;
   const { usage } = await planPromise;
   const { canUseSync } = await getEntitlements(userId);
-  const job = await jobPromise;
-  const jobs = await jobsPromise;
+  const found = await jobPromise;
+  // A days-old unsaved draft is offered as a notice instead of taking the whole page.
+  const stale =
+    found &&
+    !shouldAutoOpenJob(
+      { status: found.status, updatedAt: new Date(found.updatedAt), itemCount: found.result?.items?.length ?? 0 },
+      { explicitJobParam: Boolean(params.job), now: new Date() },
+    )
+      ? found
+      : null;
+  const job = stale ? null : found;
+  const jobs = (await jobsPromise).filter((j) => j.id !== stale?.id);
   const ignoredCount = await ignoredPromise;
   const cloudNotes = await cloudNotesPromise;
   const showImports = await importsLivePromise;
@@ -187,6 +199,14 @@ export default async function CapturePage({
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
       <CaptureHeader contactName={contactName} debrief={Boolean(initialMeeting && "eventId" in initialMeeting)} />
+      {stale && (
+        <StaleDraftNotice
+          jobId={stale.id}
+          kind={stale.sourceKind === "meeting" ? "meeting" : "notes"}
+          updatedAt={stale.updatedAt}
+          path="/capture"
+        />
+      )}
       <CaptureFlowLazy
         // The toast's and the bell's Review link to this same page: a client navigation would
         // keep the flow's tab state and never open the dialog, so a review link remounts it.

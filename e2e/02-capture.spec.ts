@@ -22,3 +22,47 @@ test("a pasted note becomes a review card, and keeping it adds the contact", asy
   await page.goto("/contacts");
   await expect(page.getByText("Ada Lovelace").first()).toBeVisible();
 });
+
+// A saved meeting draft with no people. Fresh ones still reopen by themselves; one left for
+// days must not take over the page (Task 2 of the UX walkthrough fixes).
+async function seedMeetingDraft(page: import("@playwright/test").Page, ageMs: number): Promise<string> {
+  const res = await page.request.post("/api/e2e/seed-capture-job", { data: { ageMs } });
+  expect(res.ok()).toBe(true);
+  return (await res.json()).id;
+}
+const DAY = 24 * 60 * 60 * 1000;
+
+test("stale draft shows a notice, not the whole page", async ({ page }) => {
+  await ensureOnboarded(page);
+  await seedMeetingDraft(page, 4 * DAY);
+
+  await page.goto("/capture");
+  await expect(page.getByLabel("Your notes")).toBeVisible({ timeout: 90_000 });
+  const notice = page.getByText(/Unsaved meeting from/);
+  await expect(notice).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ready to save" })).toHaveCount(0);
+
+  await page.goto("/meetings");
+  await expect(page.getByRole("heading", { name: "Past meetings" })).toBeInViewport({ timeout: 90_000 });
+  await expect(page.getByText(/Unsaved meeting from/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Resume" }).click();
+  await expect(page.getByRole("heading", { name: "Ready to save" })).toBeVisible({ timeout: 30_000 });
+});
+
+test("stale draft can be discarded from the notice", async ({ page }) => {
+  await ensureOnboarded(page);
+  await seedMeetingDraft(page, 4 * DAY);
+  await page.goto("/capture");
+  await expect(page.getByText(/Unsaved meeting from/)).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("button", { name: "Discard" }).click();
+  await expect(page.getByText(/Unsaved meeting from/)).toHaveCount(0);
+});
+
+test("a fresh draft still opens straight to the summary", async ({ page }) => {
+  await ensureOnboarded(page);
+  await seedMeetingDraft(page, 5 * 60 * 1000);
+  await page.goto("/capture");
+  await expect(page.getByRole("heading", { name: "Ready to save" })).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByText(/Unsaved meeting from/)).toHaveCount(0);
+});

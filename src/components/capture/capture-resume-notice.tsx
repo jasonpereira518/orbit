@@ -6,7 +6,12 @@
  * thing to do next, and a paste box under them would invite starting something else.
  */
 import { motion } from "motion/react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { discardCaptureJob } from "@/actions/capture-jobs";
 import { Button } from "@/components/ui/button";
+import { friendlyError } from "@/lib/errors";
+import { toast } from "@/lib/toast";
 import { DUR, EASE_HOUSE } from "@/lib/motion";
 import { PlanetBadge } from "@/components/capture/review/planet-badge";
 
@@ -56,5 +61,56 @@ export function CaptureResumeNotice({
         </Button>
       </div>
     </motion.div>
+  );
+}
+
+/**
+ * A draft left for days: offered, never opened for you. Resume goes to `<path>?job=<id>`,
+ * which the pages treat as an explicit ask (`shouldAutoOpenJob`), so it opens the summary.
+ */
+export function StaleDraftNotice({
+  jobId,
+  kind,
+  updatedAt,
+  path,
+}: {
+  jobId: string;
+  kind: "meeting" | "notes";
+  /** ISO time the draft was last touched. */
+  updatedAt: string;
+  path: "/capture" | "/meetings";
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const date = new Date(updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  async function discard() {
+    setBusy(true);
+    try {
+      const res = await discardCaptureJob(jobId);
+      if (!res.ok) {
+        toast.error(res.error);
+        setBusy(false);
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t discard that draft — try again?"));
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/[0.04] px-4 py-3">
+      <p className="text-sm text-ink">
+        Unsaved {kind} from {date}
+      </p>
+      <div className="flex gap-2">
+        <Button size="sm" disabled={busy} onClick={() => router.push(`${path}?job=${jobId}`)}>
+          Resume
+        </Button>
+        <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={busy} onClick={() => void discard()}>
+          Discard
+        </Button>
+      </div>
+    </div>
   );
 }
