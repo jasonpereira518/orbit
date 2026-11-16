@@ -25,8 +25,8 @@ test("a pasted note becomes a review card, and keeping it adds the contact", asy
 
 // A saved meeting draft with no people. Fresh ones still reopen by themselves; one left for
 // days must not take over the page (Task 2 of the UX walkthrough fixes).
-async function seedMeetingDraft(page: import("@playwright/test").Page, ageMs: number): Promise<string> {
-  const res = await page.request.post("/api/e2e/seed-capture-job", { data: { ageMs } });
+async function seedMeetingDraft(page: import("@playwright/test").Page, ageMs: number, people = 0): Promise<string> {
+  const res = await page.request.post("/api/e2e/seed-capture-job", { data: { ageMs, people } });
   expect(res.ok()).toBe(true);
   return (await res.json()).id;
 }
@@ -64,5 +64,18 @@ test("a fresh draft still opens straight to the summary", async ({ page }) => {
   await seedMeetingDraft(page, 5 * 60 * 1000);
   await page.goto("/capture");
   await expect(page.getByRole("heading", { name: "Ready to save" })).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByText(/Unsaved meeting from/)).toHaveCount(0);
+});
+
+test("discarding a stale draft that has people asks first", async ({ page }) => {
+  await ensureOnboarded(page);
+  await seedMeetingDraft(page, 4 * DAY, 2);
+  await page.goto("/capture");
+  await expect(page.getByText(/Unsaved meeting from .* · 2 people/)).toBeVisible({ timeout: 90_000 });
+  await page.getByRole("button", { name: "Discard" }).click();
+  await page.getByRole("button", { name: "Keep it" }).click();
+  await expect(page.getByText(/Unsaved meeting from/)).toBeVisible();
+  await page.getByRole("button", { name: "Discard" }).click();
+  await page.getByRole("button", { name: "Yes, discard" }).click();
   await expect(page.getByText(/Unsaved meeting from/)).toHaveCount(0);
 });

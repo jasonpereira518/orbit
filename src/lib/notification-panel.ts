@@ -357,7 +357,7 @@ export async function loadNotificationPanel(
         ? "Couldn’t read your notes"
         : captureBellTitle(n),
       body: isFailed ? job.error : "From your last capture — pick up where you left off.",
-      url: "/capture",
+      url: `/capture?job=${job.id}`,
       dueAt: null,
       urgency: "info",
     });

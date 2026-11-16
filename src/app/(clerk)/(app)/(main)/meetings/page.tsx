@@ -86,7 +86,7 @@ export default async function MeetingsPage({
         </p>
       </div>
 
-      {stale && <StaleDraftNotice jobId={stale.id} kind="meeting" updatedAt={stale.updatedAt} path="/meetings" />}
+      {stale && <StaleDraftNotice jobId={stale.id} kind="meeting" updatedAt={stale.updatedAt} itemCount={stale.result?.items?.length ?? 0} path="/meetings" />}
 
       <CaptureFlowLazy
         // Resume (`?job=`) remounts the flow so it opens that draft, as on /capture.

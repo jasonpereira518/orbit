@@ -29,4 +29,8 @@ t.check("reviewing 10 min ago opens", open(job("reviewing", 10 * MIN, 3)));
 t.check("ready, 0 items, 4 days old does not open", !open(job("ready", 4 * DAY)));
 t.check("reviewing, 3 items, 4 days old does not open", !open(job("reviewing", 4 * DAY, 3)));
 
+for (const s of ["failed", "saved", "discarded"] as const) {
+  t.check(`terminal ${s} at 5 days old opens (not a draft)`, open(job(s, 5 * DAY)));
+}
+
 t.done("capture-job-staleness");

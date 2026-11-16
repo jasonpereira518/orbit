@@ -204,6 +204,7 @@ export default async function CapturePage({
           jobId={stale.id}
           kind={stale.sourceKind === "meeting" ? "meeting" : "notes"}
           updatedAt={stale.updatedAt}
+          itemCount={stale.result?.items?.length ?? 0}
           path="/capture"
         />
       )}

@@ -1,14 +1,17 @@
 "use client";
 
 /**
- * The state /capture opens in when a job is waiting on you: extracted but not reviewed.
- * Deliberately a full card rather than a banner above the input UI — the cards are the
- * thing to do next, and a paste box under them would invite starting something else.
+ * `CaptureResumeNotice`: the state /capture opens in when a fresh job is waiting on you:
+ * extracted but not reviewed. Deliberately a full card rather than a banner above the input
+ * UI — the cards are the thing to do next, and a paste box under them would invite starting
+ * something else. `StaleDraftNotice` (bottom of the file) is the opposite: a slim banner for
+ * a draft left for days, shown above the normal input UI.
  */
 import { motion } from "motion/react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { discardCaptureJob } from "@/actions/capture-jobs";
+import { useEffect, useState } from "react";
+import { discardStaleDraft } from "@/actions/capture-jobs";
+import { clearCaptureJob, useCaptureJob } from "@/lib/capture/job-store";
 import { Button } from "@/components/ui/button";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
@@ -72,26 +75,38 @@ export function StaleDraftNotice({
   jobId,
   kind,
   updatedAt,
+  itemCount,
   path,
 }: {
   jobId: string;
   kind: "meeting" | "notes";
   /** ISO time the draft was last touched. */
   updatedAt: string;
+  /** People already pulled out of it; more than 0 makes Discard ask first. */
+  itemCount: number;
   path: "/capture" | "/meetings";
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const date = new Date(updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  // The app-wide job store may still hold this draft from another page; it must not bring
+  // the old review back over the input form.
+  const { job: stored } = useCaptureJob();
+  useEffect(() => {
+    if (stored?.id === jobId) clearCaptureJob();
+  }, [stored?.id, jobId]);
   async function discard() {
     setBusy(true);
     try {
-      const res = await discardCaptureJob(jobId);
+      const res = await discardStaleDraft(jobId);
       if (!res.ok) {
         toast.error(res.error);
         setBusy(false);
         return;
       }
+      if (!res.discarded) toast.info("That draft was already saved");
+      clearCaptureJob();
       router.refresh();
     } catch (err) {
       toast.error(friendlyError(err, "Couldn’t discard that draft — try again?"));
@@ -102,14 +117,34 @@ export function StaleDraftNotice({
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/[0.04] px-4 py-3">
       <p className="text-sm text-ink" suppressHydrationWarning>
         Unsaved {kind} from {date}
+        {itemCount > 0 ? ` · ${itemCount} ${itemCount === 1 ? "person" : "people"}` : ""}
       </p>
       <div className="flex gap-2">
-        <Button size="sm" disabled={busy} onClick={() => router.push(`${path}?job=${jobId}`)}>
-          Resume
-        </Button>
-        <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={busy} onClick={() => void discard()}>
-          Discard
-        </Button>
+        {confirming ? (
+          <>
+            <Button size="sm" variant="destructive" disabled={busy} onClick={() => void discard()}>
+              Yes, discard
+            </Button>
+            <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={busy} onClick={() => setConfirming(false)}>
+              Keep it
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button size="sm" disabled={busy} onClick={() => router.push(`${path}?job=${jobId}`)}>
+              Resume
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-muted-foreground"
+              disabled={busy}
+              onClick={() => (itemCount > 0 ? setConfirming(true) : void discard())}
+            >
+              Discard
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

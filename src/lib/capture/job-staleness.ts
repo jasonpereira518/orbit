@@ -25,7 +25,7 @@ export function shouldAutoOpenJob(
   return opts.now.getTime() - job.updatedAt.getTime() <= STALE_DRAFT_MS;
 }
 
-/** The bell row's title for a ready capture job: a job with nothing to review still has the meeting to save. */
+/** The bell row's title for a ready capture job: a job with nothing to review still has something to save. */
 export function captureBellTitle(n: number): string {
-  return n === 0 ? "Finish saving your meeting" : `${n} ${n === 1 ? "person" : "people"} ready to review`;
+  return n === 0 ? "Finish saving your capture" : `${n} ${n === 1 ? "person" : "people"} ready to review`;
 }
