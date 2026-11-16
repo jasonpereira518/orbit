@@ -1,5 +1,6 @@
 import type { ContactsFileRowPayload } from "@/db/schema";
 import type { ImportAdapter } from "@/lib/import-engine";
+import { HOW_MET_LABEL } from "@/lib/contact-fields";
 
 /**
  * The `imports.import_type` value address-book file imports (vCard / contacts CSV) carry.
@@ -56,7 +57,7 @@ export const contactsFileAdapter: ImportAdapter<ContactsFileRowPayload> = {
       // No statedCloseness and no relationshipScore, same as the LinkedIn adapter: nobody has
       // rated these people, and an address book of plumbers and old classmates is the last
       // place to guess. `contactInsertValues` still coalesces the legacy column to 2.
-      howMet: "Address book",
+      howMet: HOW_MET_LABEL.addressBook,
       // No metContext either. Google/Outlook say "online", which is at least where their
       // data lives; a phone's address book says nothing about where two people met.
       tagNames: ["address-book"],

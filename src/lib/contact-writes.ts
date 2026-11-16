@@ -1349,6 +1349,11 @@ export async function updateContactForUser(
       }
     }
   }
+  // How you met, when the person sets it: the LinkedIn deep read never writes over it
+  // (`canReplaceMet`). Not a FieldKey, so no merge tier reads this stamp.
+  if (by === "user" && (input.howMet !== undefined || input.dateMet !== undefined || input.metContext !== undefined)) {
+    stamps = { ...stamps, met: { s: "user", at: staleAt.toISOString() } };
+  }
 
   const companyPatch =
     input.company !== undefined

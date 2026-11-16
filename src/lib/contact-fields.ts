@@ -37,6 +37,21 @@ export const FIELD_SOURCE_TIER = {
 
 export type FieldSource = keyof typeof FIELD_SOURCE_TIER;
 
+/**
+ * The "how met" every importer writes, in one place. The deep read replaces only these (or a
+ * blank), never words a person or a capture wrote (`canReplaceMet` in relationship-engine/apply).
+ */
+export const HOW_MET_LABEL = {
+  linkedinConnection: "LinkedIn connection",
+  linkedinMessages: "LinkedIn messages",
+  whatsapp: "WhatsApp messages",
+  imessage: "iMessage messages",
+  addressBook: "Address book",
+  googleContacts: "Google Contacts",
+  outlookContacts: "Outlook Contacts",
+} as const;
+export const HOW_MET_IMPORT_LABELS: ReadonlySet<string> = new Set(Object.values(HOW_MET_LABEL));
+
 /** The contact fields that carry a source. Keys are `ContactInput` keys. */
 export const FIELD_KEYS = [
   "company",

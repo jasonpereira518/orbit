@@ -66,7 +66,7 @@ const jobChange = z.object({ company: requiredLine(200), title: line(200), excer
 function oneOrNull<T extends z.ZodType>(item: T) {
   return z.unknown().optional().transform((v) => {
     const r = item.safeParse(v);
-    return r.success ? (r.data as z.infer<T>) : null;
+    return r.success ? r.data : null;
   });
 }
 const dateText = z.string().nullish().transform((v) => v?.trim() ?? "");

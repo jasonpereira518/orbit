@@ -1,5 +1,6 @@
 import type { OutlookContactRowPayload } from "@/db/schema";
 import type { ImportAdapter } from "@/lib/import-engine";
+import { HOW_MET_LABEL } from "@/lib/contact-fields";
 
 /**
  * The `imports.import_type` value Outlook Contacts import jobs carry.
@@ -44,7 +45,7 @@ export const outlookContactsAdapter: ImportAdapter<OutlookContactRowPayload> = {
       // ?? 2` to the same value — this task changes plumbing only, not the semantics of
       // this field.
       relationshipScore: 2,
-      howMet: "Outlook Contacts",
+      howMet: HOW_MET_LABEL.outlookContacts,
       metContext: "online",
       tagNames: ["outlook-contacts"],
     };
@@ -57,7 +58,7 @@ export const outlookContactsAdapter: ImportAdapter<OutlookContactRowPayload> = {
       email: payload.email || undefined,
       phone: payload.phone || undefined,
       source: "outlook_contacts",
-      howMet: "Outlook Contacts",
+      howMet: HOW_MET_LABEL.outlookContacts,
       metContext: "online",
     };
   },

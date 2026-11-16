@@ -23,6 +23,7 @@ import type { ValidatedDigest } from "../src/lib/relationship-engine/types";
 import { pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
 import { actionItemHash } from "../src/lib/action-items";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { updateContactForUser } from "../src/lib/contact-writes";
 
 const USER = "smoke-rel-apply-user";
 const NOW = new Date();
@@ -210,6 +211,72 @@ async function main() {
   await db.delete(noteBatches).where(eq(noteBatches.id, b2));
   const b3 = await ensureRunNoteBatch(USER, run2.id);
   check("deleted batch → fresh batch", b3 !== b2 && Boolean(await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, b3) })));
+
+  console.log("\ndeep read: how you met");
+  await reset();
+  const [run3] = await db.insert(relationshipRuns).values({ userId: USER, status: "running" }).returning();
+  const connected = new Date("2023-10-03T12:00:00Z");
+  async function person(name: string, howMet: string | null, dateMet: Date | null) {
+    const [p] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: name, source: "linkedin", howMet, dateMet, metContext: howMet ? "online" : null, firstInteractionAt: dateMet })
+      .returning();
+    const [m] = await db
+      .insert(interactions)
+      .values({ userId: USER, contactId: p.id, interactionType: "linkedin_message", interactionDate: new Date("2022-09-20T15:00:00Z"), source: "linkedin_messages", externalId: `li-msg:${name}`, rawNotes: "so good meeting you at HackNC last weekend!", topics: [], direction: "in" as const })
+      .returning();
+    const w = (await loadMessageWindows(USER, [p.id], { deepRead: true })).get(p.id)!;
+    return { id: p.id, msg: m, window: w };
+  }
+  const deepValidated = (interactionId: string, over: Partial<ValidatedDigest> = {}): ValidatedDigest => ({
+    whatTheyDo: null, workingOn: null, summary: "Met at HackNC.", topics: [], facts: [], dated: [], undated: [], closedKeys: [], jobChange: null,
+    origin: { text: "Met at HackNC", date: "2022-09-01", precision: "month", context: "event", excerpt: "so good meeting you at HackNC", interactionId },
+    relationship: { kind: "friend", excerpt: "so good meeting you at HackNC", interactionId },
+    events: [],
+    ...over,
+  });
+  const planOf = (v: ValidatedDigest, contactId: string) =>
+    planDigestWrites(v, { contactId, contactFirstName: "X", now: NOW, closeness: null, cadenceDays: null, existingThreads: [], remindersLeftInRun: 25 });
+  type P = Awaited<ReturnType<typeof person>>;
+  const deepApply = (p: P, v: ValidatedDigest = deepValidated(p.msg.id), deepRead = true) =>
+    applyDigestPlan({ userId: USER, runId: run3.id, contactId: p.id, window: p.window, validated: v, plan: planOf(v, p.id), deepRead });
+  const get = async (id: string) => (await db.query.contacts.findFirst({ where: eq(contacts.id, id) }))!;
+  const dig = (id: string) => db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, id) });
+  const asUser = { by: "user" as const, skipRevalidate: true, skipSummary: true, skipCloseness: true };
+
+  const A = await person("Ada A", "LinkedIn connection", connected);
+  const B = await person("Ben B", "Met at Priya's dinner", null);
+  const C = await person("Cy C", "LinkedIn connection", connected);
+  await updateContactForUser(USER, C.id, { howMet: "LinkedIn connection" }, asUser);
+  const D = await person("Di D", "LinkedIn connection", connected);
+  const OFF = await person("Off O", "LinkedIn connection", connected);
+  const R = await person("Ro R", "LinkedIn connection", connected);
+  await db.insert(relationshipDigests).values({ contactId: R.id, userId: USER, relationship: { kind: "recruiter", excerpt: "x y z", interactionId: R.msg.id, removed: true } });
+  for (const p of [A, B, C, D, R]) await deepApply(p);
+  await deepApply(OFF, deepValidated(OFF.msg.id), false);
+
+  const a = await get(A.id);
+  check("an import label is replaced by the quoted origin", a.howMet === "Met at HackNC" && a.metContext === "event", `${a.howMet}/${a.metContext}`);
+  check("a month origin never writes the day-level date_met", a.dateMet?.toISOString().startsWith("2023-10-03") === true, a.dateMet?.toISOString());
+  check("a month origin widens first contact to that month's end", a.firstInteractionAt! <= new Date("2022-09-30T23:59:59.999Z") && a.firstInteractionAt! >= new Date("2022-09-30T00:00:00Z"), a.firstInteractionAt?.toISOString());
+  const dA = await dig(A.id);
+  check("the digest keeps the origin, its run and what it replaced", dA?.origin?.text === "Met at HackNC" && dA.origin.runId === run3.id && dA.origin.replaced?.howMet === "LinkedIn connection", JSON.stringify(dA?.origin));
+  check("the digest keeps the relationship kind", dA?.relationship?.kind === "friend");
+  check("what a capture wrote is never replaced", (await get(B.id)).howMet === "Met at Priya's dinner" && (await dig(B.id))?.origin?.replaced === null);
+  check("what the user typed is never replaced", (await get(C.id)).howMet === "LinkedIn connection" && (await dig(C.id))?.origin?.replaced === null);
+  check("flag off: no met field changes and no origin stored", (await get(OFF.id)).howMet === "LinkedIn connection" && ((await dig(OFF.id))?.origin ?? null) === null);
+  await deepApply(A, deepValidated(A.msg.id, { origin: { text: "Met online", date: null, precision: null, context: "online", excerpt: "so good meeting you at HackNC", interactionId: A.msg.id } }));
+  check("a later pass never replaces the first origin", (await dig(A.id))?.origin?.text === "Met at HackNC" && (await get(A.id)).howMet === "Met at HackNC");
+  const dR = await dig(R.id);
+  check("a removed relationship kind is never set again", dR?.relationship?.removed === true && dR.relationship.kind === "recruiter", JSON.stringify(dR?.relationship));
+
+  await updateContactForUser(USER, D.id, { howMet: "Met at the alumni mixer" }, asUser);
+  await undoRelationshipRun(USER, run3.id);
+  const a2 = await get(A.id);
+  check("Undo restores the import values", a2.howMet === "LinkedIn connection" && a2.metContext === "online" && a2.dateMet?.toISOString().startsWith("2023-10-03") === true, `${a2.howMet}/${a2.metContext}`);
+  check("Undo clears the run's origin", ((await dig(A.id))?.origin ?? null) === null);
+  check("Undo never undoes the user's later edit", (await get(D.id)).howMet === "Met at the alumni mixer");
+  check("Undo leaves the relationship kind", (await dig(B.id))?.relationship?.kind === "friend");
 
   await reset();
   console.log("\nsmoke-relationship-apply: all checks passed");

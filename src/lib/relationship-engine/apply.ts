@@ -21,10 +21,13 @@ import {
   relationshipRuns,
   reminders,
   type NoteBatchResult,
+  type RelationshipKindRecord,
   type RelationshipOpenThread,
+  type RelationshipOrigin,
   type RelationshipTopic,
 } from "@/db/schema";
 import { actionItemHash } from "@/lib/action-items";
+import { HOW_MET_IMPORT_LABELS, type FieldSources } from "@/lib/contact-fields";
 import { emptyNoteBatchResult } from "@/lib/note-batches";
 import { messageRowSql } from "@/lib/relationship-engine/pending";
 import { undoNoteBatchForUser } from "@/lib/note-batch-save";
@@ -127,6 +130,25 @@ export async function loadPreviousDigest(
         }
       : null;
   return { previous, threads, openKeys: new Set(openItems.map((o) => o.key)) };
+}
+
+/**
+ * Whether the deep read may write how you met over what a contact holds: only over a blank or
+ * an importer's label (`HOW_MET_IMPORT_LABELS`), and never once the person set it themselves
+ * (`field_sources.met`, stamped by `updateContactForUser`). Words a capture wrote are neither,
+ * so they hold too.
+ */
+export function canReplaceMet(c: { howMet: string | null; fieldSources: FieldSources | null }): boolean {
+  if (c.fieldSources?.met?.s === "user") return false;
+  const howMet = c.howMet?.trim() ?? "";
+  return !howMet || HOW_MET_IMPORT_LABELS.has(howMet);
+}
+
+/** Noon UTC, so no timezone shows the day before. */
+const noonOf = (day: string) => new Date(`${day}T12:00:00Z`);
+function endOfMonth(firstOfMonth: string): Date {
+  const d = new Date(`${firstOfMonth}T00:00:00Z`);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - 1);
 }
 
 function mergeTopics(existing: RelationshipTopic[], labels: string[], at: Date): RelationshipTopic[] {
@@ -338,8 +360,37 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     }
   }
 
-  // 4. Digest + watermark, last.
+  // 3b. Deep read: how you met. The first origin found wins; the contact's met fields take it
+  // only over an import label or a blank (`canReplaceMet`), and what they held is kept for Undo.
   const previous = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, contactId) });
+  let origin: RelationshipOrigin | null = previous?.origin ?? null;
+  let relationship: RelationshipKindRecord | null = previous?.relationship ?? null;
+  if (input.deepRead) {
+    const found = validated.origin ?? null;
+    if (found && !origin) {
+      const row = await db.query.contacts.findFirst({
+        where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+        columns: { howMet: true, dateMet: true, metContext: true, fieldSources: true, firstInteractionAt: true },
+      });
+      let replaced: RelationshipOrigin["replaced"] = null;
+      if (row && canReplaceMet(row)) {
+        replaced = { howMet: row.howMet ?? null, dateMet: row.dateMet?.toISOString() ?? null, metContext: row.metContext ?? null };
+        const patch: Partial<typeof contacts.$inferInsert> = { howMet: found.text, updatedAt: now };
+        if (found.context) patch.metContext = found.context;
+        // A month or a year is not a day: date_met (shown as a day everywhere) takes days only.
+        if (found.precision === "day" && found.date) patch.dateMet = noonOf(found.date);
+        const widen =
+          found.date && found.precision === "day" ? noonOf(found.date) : found.date && found.precision === "month" ? endOfMonth(found.date) : null;
+        if (widen && (!row.firstInteractionAt || widen < row.firstInteractionAt)) patch.firstInteractionAt = widen;
+        await db.update(contacts).set(patch).where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+      }
+      origin = { ...found, runId, replaced };
+    }
+    const kind = validated.relationship ?? null;
+    if (kind && !relationship?.removed) relationship = { kind: kind.kind, excerpt: kind.excerpt, interactionId: kind.interactionId };
+  }
+
+  // 4. Digest + watermark, last.
   const topics = mergeTopics(previous?.topics ?? [], validated.topics, window.last.at);
   // Same newest message as the stored watermark: this window was already counted.
   const replay = previous?.watermarkInteractionId === window.last.interactionId;
@@ -362,6 +413,8 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     batchJobId: null,
     batchPendingUntil: null,
     runId,
+    origin,
+    relationship,
     updatedAt: now,
   };
   await db.insert(relationshipDigests).values(values).onConflictDoUpdate({ target: relationshipDigests.contactId, set: values });
@@ -431,6 +484,7 @@ export async function undoRelationshipRun(
   const run = await db.query.relationshipRuns.findFirst({ where: and(eq(relationshipRuns.id, runId), eq(relationshipRuns.userId, userId)) });
   if (!run) throw new Error("Run not found");
   if (run.status === "undone" || !run.noteBatchId) {
+    if (run.status !== "undone") await undoRunOrigins(userId, runId);
     await db.update(relationshipRuns).set({ status: "undone" }).where(eq(relationshipRuns.id, runId));
     return { remindersDismissed: 0, actionItemsRemoved: 0 };
   }
@@ -445,8 +499,36 @@ export async function undoRelationshipRun(
       .returning();
     actionItemsRemoved = removed.length;
   }
+  await undoRunOrigins(userId, runId);
   await db.update(relationshipRuns).set({ status: "undone", finishedAt: new Date() }).where(eq(relationshipRuns.id, runId));
   return { remindersDismissed, actionItemsRemoved };
+}
+
+/**
+ * Deep read: take back every origin this run wrote. A contact's met fields go back to what they
+ * held, but only while how_met still reads what the run wrote: a later edit by the person wins.
+ */
+async function undoRunOrigins(userId: string, runId: string): Promise<void> {
+  const db = await getDb();
+  const rows = await db
+    .select({ contactId: relationshipDigests.contactId, origin: relationshipDigests.origin })
+    .from(relationshipDigests)
+    .where(and(eq(relationshipDigests.userId, userId), sql`${relationshipDigests.origin}->>'runId' = ${runId}`));
+  for (const r of rows) {
+    const o = r.origin;
+    if (o?.replaced) {
+      await db
+        .update(contacts)
+        .set({
+          howMet: o.replaced.howMet,
+          metContext: o.replaced.metContext,
+          dateMet: o.replaced.dateMet ? new Date(o.replaced.dateMet) : null,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(contacts.id, r.contactId), eq(contacts.userId, userId), eq(contacts.howMet, o.text)));
+    }
+    await db.update(relationshipDigests).set({ origin: null }).where(eq(relationshipDigests.contactId, r.contactId));
+  }
 }
 
 /** Exported for tests that need a run without the runner. */

@@ -25,6 +25,7 @@ import {
 } from "@/lib/duplicates";
 import { parseConnectedOn, parseLinkedInConnectionsCsv, type LinkedInConnectionRow } from "@/lib/linkedin-connections";
 import { gunzipExportFile } from "@/lib/linkedin-export-store";
+import { HOW_MET_LABEL } from "@/lib/contact-fields";
 
 /** Most contacts one pass looks at; the rest wait for the next import or upload. */
 const MAX_CONTACTS = 5000;
@@ -107,7 +108,7 @@ export async function fillFromStoredExport(userId: string, contactIds?: string[]
         company: row.company || undefined,
         title: row.position || undefined,
         // Fill-only in the merge: a where-met the person kept stays.
-        howMet: "LinkedIn connection",
+        howMet: HOW_MET_LABEL.linkedinConnection,
         dateMet: connectedOn ?? undefined,
         firstInteractionAt: connectedOn ?? undefined,
       },
