@@ -211,10 +211,10 @@ function registryChecks() {
     "outlook send ships coming-soon",
     DEFAULT_COMING_SOON_KEYS.has(OUTLOOK_SEND_SURFACE_KEY) && getSurface(OUTLOOK_SEND_SURFACE_KEY)?.kind === "feature"
   );
-  // Reply-to-inbox reads mail (gmail.readonly, restricted): it stays dark until CASA passes.
+  // Reply-to-inbox is released: /privacy discloses it and Google's reviewers have to be able to test it.
   check(
-    "reply-to-inbox ships coming-soon",
-    DEFAULT_COMING_SOON_KEYS.has(REPLY_INBOX_SURFACE_KEY) && getSurface(REPLY_INBOX_SURFACE_KEY)?.kind === "feature"
+    "reply-to-inbox is released (not coming-soon by default)",
+    !DEFAULT_COMING_SOON_KEYS.has(REPLY_INBOX_SURFACE_KEY) && getSurface(REPLY_INBOX_SURFACE_KEY)?.kind === "feature"
   );
 
   const widgets = surfacesOfKind("widget");
