@@ -165,6 +165,16 @@ run(async () => {
   // What the messages importer stamps; inserting interaction rows directly does not.
   await dbx.update(contacts).set({ firstInteractionAt: new Date(Date.UTC(2019, 5, 1)), lastInteractionAt: new Date(Date.UTC(2022, 8, 1)) }).where(eq(contacts.id, friend));
   await dbx.update(contacts).set({ firstInteractionAt: new Date(Date.now() - 20 * 86_400_000), lastInteractionAt: new Date(Date.now() - 20 * 86_400_000) }).where(eq(contacts.id, oneOff));
+  // Someone you only meet in person, and a connection whose only row is their invitation note.
+  const inPerson = await addContact("In Person", null);
+  for (const d of [3, 10, 17, 24]) await log(inPerson, "meeting", d);
+  await dbx.update(contacts).set({ statedCloseness: 5, lastInteractionAt: new Date(Date.now() - 3 * 86_400_000) }).where(eq(contacts.id, inPerson));
+  const invitedOnly = await addContact("Invited Only", null);
+  await dbx.insert(interactions).values({
+    userId: USER, contactId: invitedOnly, interactionType: "note", source: "linkedin_export",
+    interactionDate: new Date(Date.UTC(2023, 1, 1)), externalId: `li-export:invitation_received:k2:${invitedOnly}`, rawNotes: "Their LinkedIn connection request:\nHi!",
+  });
+  await dbx.update(contacts).set({ lastInteractionAt: new Date(Date.UTC(2023, 1, 1)) }).where(eq(contacts.id, invitedOnly));
   const acme = await addContact("Acme Colleague", "Acme");
   await addContact("Stranger", "Globex");
 
@@ -179,11 +189,18 @@ run(async () => {
     `${deep.byId.get(friend)!.raw} vs ${deep.byId.get(oneOff)!.raw}`);
   check("deep read: a real shared employer lifts a never-messaged colleague's prior", deep.byId.get(acme)!.prior > off1.byId.get(acme)!.prior,
     `${deep.byId.get(acme)!.prior} vs ${off1.byId.get(acme)!.prior}`);
+  for (const [label, id] of [["an in-person friend", inPerson], ["an invitation-only connection", invitedOnly]] as const) {
+    check(`deep read leaves ${label} where they were`, Math.abs(deep.byId.get(id)!.raw - off1.byId.get(id)!.raw) < 1e-9,
+      `${deep.byId.get(id)!.raw} vs ${off1.byId.get(id)!.raw}`);
+  }
   const snap = await dbx.query.closenessCohorts.findFirst({ where: eq(closenessCohorts.userId, USER) });
   check("the stored snapshot says deep read was on", snap?.snapshot.deepRead === true);
   const before = (await stored(friend))!.raw;
   await rescoreContact(USER, friend);
   check("a single rescore agrees with the cohort", Math.abs((await stored(friend))!.raw - before) < 1e-9, `${(await stored(friend))?.raw} vs ${before}`);
+  const acmeBefore = (await stored(acme))!.raw;
+  await rescoreContact(USER, acme);
+  check("a single rescore agrees with the cohort on overlap too", Math.abs((await stored(acme))!.raw - acmeBefore) < 1e-9);
   const off2 = await recalibrateCloseness(USER, { deepRead: false });
   check("deep read off gives today's scores again", Math.abs(off2.byId.get(friend)!.raw - offFriend) < 1e-9);
   await rescoreContact(USER, friend);

@@ -4,12 +4,12 @@
  * score two ways. Its own file because closeness-cohort.ts already imports from
  * closeness-materialize.ts: either of them holding this would be an import cycle.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, like, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactExperiences, interactions } from "@/db/schema";
 import { loadYouCurrent } from "@/lib/career-profile-server";
-import { depthComponent, overlapAffinity, type DepthSignals } from "@/lib/closeness-depth";
-import { historyOverlaps, type OverlapExperience } from "@/lib/history-overlap";
+import { depthComponent, depthMeasured, overlapAffinity, type DepthSignals } from "@/lib/closeness-depth";
+import { historyOverlaps, orgKey, type OverlapExperience } from "@/lib/history-overlap";
 import { EXCHANGE_TOUCH_TYPES, sqlList } from "@/lib/touch-kinds";
 
 const EXCHANGE_TYPES = sql.raw(sqlList(EXCHANGE_TOUCH_TYPES));
@@ -21,24 +21,34 @@ const EXCHANGE_TYPES = sql.raw(sqlList(EXCHANGE_TOUCH_TYPES));
 export const depthAggregates = {
   depthInbound: sql<number>`count(*) filter (where ${interactions.interactionType} in ${EXCHANGE_TYPES} and ${interactions.direction} = 'in')::int`,
   depthOutbound: sql<number>`count(*) filter (where ${interactions.interactionType} in ${EXCHANGE_TYPES} and ${interactions.direction} = 'out')::int`,
-  exchangeYears: sql<number>`count(distinct extract(year from ${interactions.interactionDate})) filter (where ${interactions.interactionType} in ${EXCHANGE_TYPES})::int`,
+  // The years each side wrote in; depthSignalsOf intersects them (a year needs both).
+  inYears: sql<number[]>`array_agg(distinct extract(year from ${interactions.interactionDate})::int) filter (where ${interactions.interactionType} in ${EXCHANGE_TYPES} and ${interactions.direction} = 'in')`,
+  outYears: sql<number[]>`array_agg(distinct extract(year from ${interactions.interactionDate})::int) filter (where ${interactions.interactionType} in ${EXCHANGE_TYPES} and ${interactions.direction} = 'out')`,
   recommendations: sql<number>`count(*) filter (where ${interactions.externalId} like 'li-export:recommendation%')::int`,
 };
 
-export type DepthAggregateRow = { [K in keyof typeof depthAggregates]?: number | string | null };
+export type DepthAggregateRow = {
+  depthInbound?: number | string | null;
+  depthOutbound?: number | string | null;
+  inYears?: Array<number | string> | null;
+  outYears?: Array<number | string> | null;
+  recommendations?: number | string | null;
+};
 
 export function depthSignalsOf(row: DepthAggregateRow | undefined): DepthSignals {
+  const outYears = new Set((row?.outYears ?? []).map(Number));
   return {
     inbound: Number(row?.depthInbound ?? 0) || 0,
     outbound: Number(row?.depthOutbound ?? 0) || 0,
-    exchangeYears: Number(row?.exchangeYears ?? 0) || 0,
+    reciprocalYears: new Set((row?.inYears ?? []).map(Number).filter((y) => outYears.has(y))).size,
     recommendations: Number(row?.recommendations ?? 0) || 0,
   };
 }
 
-export type DeepClosenessFields = { depth: number; historyOverlap: { work: number; school: number } | null };
+/** `depth` is null when there is nothing to measure (`depthMeasured`). */
+export type DeepClosenessFields = { depth: number | null; historyOverlap: { work: number; school: number } | null };
 
-/** Above this many contacts, read every experience row of the user rather than an IN list. */
+/** Above this many contacts, filter experience rows by organization only, not by an IN list. */
 const IN_LIST_MAX = 500;
 
 /**
@@ -58,9 +68,19 @@ export async function deepClosenessInputs(
   const hasHistory = Boolean(mine.positions?.length || mine.education?.length || mine.schools.length);
 
   const theirs = new Map<string, OverlapExperience[]>();
-  if (hasHistory && people.length) {
+  // Only rows that can match: organizations starting with one of the user's own (the same key
+  // `historyOverlaps` matches on, so "Acme, Inc." still finds "acme"). Keys are [a-z0-9 ] only.
+  const keys = [
+    ...new Set(
+      [...(mine.positions ?? []).map((p) => p.company), ...(mine.education ?? []).map((e) => e.school), ...mine.schools]
+        .map(orgKey)
+        .filter(Boolean)
+    ),
+  ];
+  if (hasHistory && keys.length && people.length) {
     const db = await getDb();
     const ids = people.map((p) => p.id);
+    const orgMatch = or(...keys.map((k) => like(contactExperiences.organizationNormalized, `${k}%`)));
     const rows = await db
       .select({
         contactId: contactExperiences.contactId,
@@ -73,8 +93,8 @@ export async function deepClosenessInputs(
       .from(contactExperiences)
       .where(
         ids.length <= IN_LIST_MAX
-          ? and(eq(contactExperiences.userId, userId), inArray(contactExperiences.contactId, ids))
-          : eq(contactExperiences.userId, userId)
+          ? and(eq(contactExperiences.userId, userId), inArray(contactExperiences.contactId, ids), orgMatch)
+          : and(eq(contactExperiences.userId, userId), orgMatch)
       );
     for (const { contactId, ...e } of rows) {
       const list = theirs.get(contactId) ?? [];
@@ -88,8 +108,9 @@ export async function deepClosenessInputs(
   const out = new Map<string, DeepClosenessFields>();
   for (const p of people) {
     const them = theirs.get(p.id) ?? [...plain("role", p.company), ...plain("education", p.school)];
+    const s = signals.get(p.id) ?? depthSignalsOf(undefined);
     out.set(p.id, {
-      depth: depthComponent(signals.get(p.id) ?? depthSignalsOf(undefined)),
+      depth: depthMeasured(s) ? depthComponent(s) : null,
       historyOverlap: hasHistory ? overlapAffinity(historyOverlaps(mine, them, now.getUTCFullYear())) : null,
     });
   }

@@ -577,7 +577,8 @@ async function buildCohortResult(
 ): Promise<ClosenessCohortResult> {
   const db = await getDb();
   // LinkedIn deep read: depth and real overlap join the formula (closeness-deep-inputs.ts).
-  const deepRead = opts.deepRead ?? (await deepReadOn(userId));
+  // A failed gate read means today's formula, never a failed recalibration for everyone.
+  const deepRead = opts.deepRead ?? (await deepReadOn(userId).catch(() => false));
   const since = new Date(
     Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
   );

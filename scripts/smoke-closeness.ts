@@ -1192,13 +1192,14 @@ console.log("\n19. Triage pays off: a rating outranks everything it replaces");
 
 console.log("\n§ deep read: depth and overlap");
 {
-  const none = { inbound: 0, outbound: 0, exchangeYears: 0, recommendations: 0 };
+  const none = { inbound: 0, outbound: 0, reciprocalYears: 0, recommendations: 0 };
   check("depth: nothing is 0", depthComponent(none) === 0);
-  check("depth: one-way messages are not reciprocal", depthComponent({ ...none, inbound: 9, exchangeYears: 1 }) === 0);
-  check("depth: both sides wrote", Math.abs(depthComponent({ ...none, inbound: 1, outbound: 1, exchangeYears: 1 }) - 0.35) < 1e-9);
-  check("depth: four years of exchange saturates the span", Math.abs(depthComponent({ inbound: 1, outbound: 1, exchangeYears: 4, recommendations: 0 }) - 0.7) < 1e-9);
-  check("depth: ten years is no more than four", depthComponent({ inbound: 1, outbound: 1, exchangeYears: 10, recommendations: 0 }) === depthComponent({ inbound: 1, outbound: 1, exchangeYears: 4, recommendations: 0 }));
-  check("depth: everything is 1", Math.abs(depthComponent({ inbound: 3, outbound: 3, exchangeYears: 6, recommendations: 1 }) - 1) < 1e-9);
+  check("depth: one-way messages are no depth, however many years", depthComponent({ ...none, inbound: 40, reciprocalYears: 0 }) === 0);
+  check("depth: both sides wrote, one year", Math.abs(depthComponent({ ...none, inbound: 1, outbound: 1, reciprocalYears: 1 }) - 0.5) < 1e-9);
+  check("depth: four two-way years is full depth", Math.abs(depthComponent({ inbound: 4, outbound: 4, reciprocalYears: 4, recommendations: 0 }) - 1) < 1e-9);
+  check("depth: ten two-way years is no more than four", depthComponent({ inbound: 9, outbound: 9, reciprocalYears: 10, recommendations: 0 }) === 1);
+  check("depth: a recommendation alone counts", Math.abs(depthComponent({ ...none, recommendations: 1 }) - 0.3) < 1e-9);
+  check("depth: a recommendation never takes it past 1", depthComponent({ inbound: 3, outbound: 3, reciprocalYears: 6, recommendations: 2 }) === 1);
   check("overlap: together beats same place", overlapAffinity([{ kind: "work", organization: "Acme", together: false, fromYear: null, toYear: null }, { kind: "work", organization: "Beta", together: true, fromYear: 2021, toYear: 2022 }]).work === 1);
   check("overlap: same school, no shared years, is half", overlapAffinity([{ kind: "school", organization: "State", together: false, fromYear: null, toYear: null }]).school === 0.5);
   check("overlap: none is zero", overlapAffinity([]).work === 0 && overlapAffinity([]).school === 0);
@@ -1207,15 +1208,19 @@ console.log("\n§ deep read: depth and overlap");
 console.log("\n§ deep read: depth and overlap in the score");
 {
   const base: ClosenessContact = { statedCloseness: null, relationshipScore: 2, hasLoggedInteraction: true, firstInteractionAt: daysAgoDate(2000) };
-  const oldFriend: ClosenessContact = { ...base, lastInteractionAt: daysAgoDate(400), depth: 1 };
-  const oneOff: ClosenessContact = { ...base, lastInteractionAt: daysAgoDate(30), depth: 0 };
+  // Five two-way years, no recommendation (depth 1), quiet for 500 days; against one message 20 days ago.
+  const oldFriend: ClosenessContact = { ...base, lastInteractionAt: daysAgoDate(500), depth: 1 };
+  const oneOff: ClosenessContact = { ...base, lastInteractionAt: daysAgoDate(20), depth: 0 };
   check("deep: an old two-way friend outranks a recent one-off", computeRawCloseness(oldFriend, [], 0).raw > computeRawCloseness(oneOff, [], 1).raw,
     `${computeRawCloseness(oldFriend, [], 0).raw} vs ${computeRawCloseness(oneOff, [], 1).raw}`);
-  check("deep off: the same contacts score as today", computeRawCloseness({ ...oldFriend, depth: undefined }, [], 0).raw === computeRawCloseness({ ...base, lastInteractionAt: daysAgoDate(400) }, [], 0).raw);
+  check("deep off: the same contacts score as today", computeRawCloseness({ ...oldFriend, depth: undefined }, [], 0).raw === computeRawCloseness({ ...base, lastInteractionAt: daysAgoDate(500) }, [], 0).raw);
   const cold: ClosenessContact = { ...base, hasLoggedInteraction: false, lastInteractionAt: null };
   check("deep: no logged behaviour means depth is ignored", computeRawCloseness({ ...cold, depth: 1 }, [], 0).raw === computeRawCloseness(cold, [], 0).raw);
-  const rated = (s: number, depth: number) => computeRawCloseness({ ...base, lastInteractionAt: daysAgoDate(60), statedCloseness: s, depth }, [], 2).raw;
-  check("a stated rating moves a score more than depth can", rated(5, 0) - rated(1, 0) > rated(3, 1) - rated(3, 0), `${rated(5, 0) - rated(1, 0)} vs ${rated(3, 1) - rated(3, 0)}`);
+  // Someone you only meet in person: no message rows, so depth is not measured (null).
+  const inPerson: ClosenessContact = { ...base, lastInteractionAt: daysAgoDate(7), statedCloseness: 5, depth: null };
+  check("deep: an in-person friend you rated 5 scores the same on and off", computeRawCloseness(inPerson, [], 6).raw === computeRawCloseness({ ...inPerson, depth: undefined }, [], 6).raw);
+  const rated = (s: number, depth: number | undefined) => computeRawCloseness({ ...base, lastInteractionAt: daysAgoDate(60), statedCloseness: s, depth }, [], 2).raw;
+  check("depth never changes a contact you rated", rated(1, 1) === rated(1, undefined) && rated(5, 0) === rated(5, undefined));
   const prior = (o?: { work: number; school: number }, company = 0) => computePrior({ firstInteractionAt: daysAgoDate(400), companyConcentration: company, historyOverlap: o });
   check("overlap: a real shared employer lifts the prior", prior({ work: 1, school: 0 }) > prior({ work: 0, school: 0 }));
   check("overlap: known history replaces the orbit-relative guess", prior({ work: 0, school: 0 }, 1) === prior({ work: 0, school: 0 }, 0));

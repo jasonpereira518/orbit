@@ -134,14 +134,12 @@ const WEIGHTS = {
 } as const;
 
 /**
- * LinkedIn deep read: depth's weight when it is measured. Pinned between two rules
- * (scripts/smoke-closeness.ts, "deep read" section):
- *   - above ~0.22, so five years of two-way messages outrank one recent one-off message;
- *   - below 0.24 (= WEIGHTS.strength x 0.8, a rating moved from 1 to 5), so a stated rating
- *     always moves a score more than depth can.
- * Starting value; retune both checks together.
+ * LinkedIn deep read: depth's weight when it is measured. As heavy as a rating, because it is
+ * how an unrated network (most of an imported one) tells a five-year two-way friend from a
+ * stranger who wrote once last month (scripts/smoke-closeness.ts, "deep read"). It never touches
+ * a contact you rated: your word replaces the inference. Starting value.
  */
-const WEIGHT_DEPTH = 0.23;
+const WEIGHT_DEPTH = 0.3;
 
 /** Rank has no meaning in a tiny orbit, so it fades in with network size. */
 const RELATIVE_MIN_N = 8;
@@ -360,9 +358,10 @@ export function computeRawCloseness(
     : NO_INTERACTION_RECENCY;
   const cadence = knowsBehaviour ? cadenceComponent(touchCount) : 0;
   const goalRelevance = hasGoals ? goalRelevanceComponent(contact, goals) : 0;
-  // Deep read: depth is a measurement only where there is behaviour to measure; without any, a
-  // bare connection keeps exactly today's score.
-  const hasDepth = knowsBehaviour && contact.depth != null;
+  // Deep read: depth is a measurement only where there is behaviour to measure (a bare
+  // connection keeps exactly today's score), and only for someone you have not rated: a stated
+  // closeness is the user's answer, and the inference must not move it.
+  const hasDepth = knowsBehaviour && !hasStated && contact.depth != null;
   const depth = hasDepth ? clamp01(contact.depth!) : 0;
 
   const knownWeighted =
