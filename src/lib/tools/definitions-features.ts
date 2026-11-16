@@ -43,6 +43,7 @@ import {
 } from "@/lib/hybrid-search";
 import { INTERACTION_GROUPS, queryInteractions } from "@/lib/interaction-queries";
 import type { OrbitTool } from "@/lib/tools/registry";
+import { loadRelationshipContexts, renderRelationshipBlock } from "@/lib/relationship-context";
 
 const BOTH = ["mcp", "chat"] as const;
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
@@ -630,10 +631,16 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     scope: "read",
     resultLabel: "dossier",
     releasedSurface: "page.knowledge",
-    fields: { chat: ["contact", "brief", "goals", "stale"], mcp: ["contact", "brief", "goals", "stale"] },
-    async run(userId, args: { contactId: string }) {
+    // `relationship` (LinkedIn deep read) is chat-only: MCP clients are outside services.
+    fields: { chat: ["contact", "brief", "goals", "stale", "relationship"], mcp: ["contact", "brief", "goals", "stale"] },
+    async run(userId, args: { contactId: string }, ctx) {
       const dossier = await loadKnowledgeDossier(userId, args.contactId);
-      return dossier ?? toolError("No contact with that id.");
+      if (!dossier) return toolError("No contact with that id.");
+      const relationship =
+        ctx?.surface === "chat"
+          ? renderRelationshipBlock((await loadRelationshipContexts(userId, [args.contactId])).get(args.contactId))
+          : null;
+      return { ...dossier, relationship };
     },
   },
 

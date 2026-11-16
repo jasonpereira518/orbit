@@ -63,6 +63,7 @@ import { isPaywallError } from "@/lib/entitlements";
 import { requirePlanForSurface, requireReleasedSurface } from "@/lib/surface-visibility";
 import { discoverPeople, researchCompany, researchPerson } from "@/lib/web-research";
 import { LookupStillRunning, lookupKeepingLate } from "@/lib/web-research-late";
+import { loadRelationshipContexts, renderRelationshipBlock } from "@/lib/relationship-context";
 
 const BOTH = ["mcp", "chat"] as const;
 const MCP_ONLY = ["mcp"] as const;
@@ -255,6 +256,11 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         closenessTier: contact.closenessTier,
         notes: clip(contact.notes, noteCap),
         summary: contact.aiSummary,
+        // LinkedIn deep read: how you met, kind, overlap, topics. Chat (and Cosmo) only: an outside
+        // MCP client gets none of it until /privacy says so.
+        ...(wide
+          ? { relationship: renderRelationshipBlock((await loadRelationshipContexts(userId, [contact.id])).get(contact.id)) }
+          : {}),
         interactions: recent.map((i) => ({
           type: i.interactionType,
           at: i.interactionDate ? new Date(i.interactionDate).toISOString() : null,

@@ -243,6 +243,14 @@ async function main() {
     const dossier = await run<{ contact?: { fullName: string } }>("get_dossier", { contactId: stripe0.id });
     check("get_dossier: one relationship's brief", dossier.contact?.fullName === "Stripe 0", JSON.stringify(dossier).slice(0, 200));
     check("…not someone else's contact", isToolError(await runToolAs("get_dossier", { contactId: stripe0.id }, OTHER)));
+    // Deep read: the relationship block reaches chat (and Cosmo), never an outside MCP client.
+    check("get_dossier on chat carries the relationship key", "relationship" in (dossier as object), Object.keys(dossier as object).join());
+    const dossierTool = ORBIT_TOOLS.find((t) => t.name === "get_dossier")!;
+    const dossierMcp = (await runTool(dossierTool, USER, { contactId: stripe0.id }, { surface: "mcp", scopes: ["read"] })) as object;
+    check("get_dossier over MCP has no relationship key", !("relationship" in dossierMcp), Object.keys(dossierMcp).join());
+    const contactMcp = (await runTool(ORBIT_TOOLS.find((t) => t.name === "get_contact")!, USER, { contactId: stripe0.id }, { surface: "mcp", scopes: ["read"] })) as object;
+    const contactChat = await run<object>("get_contact", { contactId: stripe0.id });
+    check("get_contact: relationship on chat only", "relationship" in contactChat && !("relationship" in contactMcp));
   }
 
   console.log("\nRead-only, and shaped for MCP by its own allowlist");
