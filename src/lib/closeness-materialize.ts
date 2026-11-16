@@ -8,6 +8,7 @@ import type {
 } from "@/db/schema";
 import { isCoveredByConnectedSource } from "@/lib/closeness-evidence";
 import { settle, unwrap } from "@/lib/settled";
+import { deepClosenessInputs, depthAggregates, depthSignalsOf } from "@/lib/closeness-deep-inputs";
 import {
   applyClosenessCohort,
   computeRawCloseness,
@@ -87,6 +88,8 @@ export function buildSnapshot(
     mailConnected: boolean;
     /** Optional to match the persisted type — see `ClosenessCohortSnapshot.calendarConnected`. */
     calendarConnected?: boolean;
+    /** See `ClosenessCohortSnapshot.deepRead`. */
+    deepRead?: boolean;
   }
 ): ClosenessCohortSnapshot {
   return {
@@ -339,6 +342,9 @@ export async function rescoreContact(
   if (!cohortRow || !isUsableSnapshot(cohortRow.snapshot)) return false;
 
   const snapshot = cohortRow.snapshot;
+  // The distribution's own setting, never a fresh gate check: a write path must not pay for it,
+  // and the contact must be scored the way the rest of the cohort was.
+  const deepRead = snapshot.deepRead ?? false;
   const since = new Date(
     Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
   );
@@ -355,6 +361,7 @@ export async function rescoreContact(
       .select({
         recent: sql<number>`count(*) filter (where ${interactions.interactionDate} >= ${since})::int`,
         total: sql<number>`count(*)::int`,
+        ...(deepRead ? depthAggregates : {}),
       })
       .from(interactions)
       .where(
@@ -394,6 +401,9 @@ export async function rescoreContact(
 
   const recent = Number(touchRows[0]?.recent ?? 0);
   const total = Number(touchRows[0]?.total ?? 0);
+  const deep = deepRead
+    ? (await deepClosenessInputs(userId, [contact], new Map([[contact.id, depthSignalsOf(touchRows[0])]]))).get(contact.id)
+    : undefined;
   const contactDomain = contact.email?.trim().toLowerCase().split("@")[1] ?? null;
 
   const raw = computeRawCloseness(
@@ -413,6 +423,7 @@ export async function rescoreContact(
         ? Number(schoolRows[0]?.n ?? 0) / Math.max(1, snapshot.maxSchool)
         : 0,
       coveredByConnectedSource: isCoveredByConnectedSource(snapshot, contact),
+      ...(deep ?? {}),
     },
     goalRows.map((g) => g.text),
     recent

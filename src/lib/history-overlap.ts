@@ -37,7 +37,7 @@ const SUFFIXES = new Set(["inc", "incorporated", "llc", "ltd", "limited", "corp"
  * `normalizeCompanyKey` with trailing legal forms dropped, so "Acme, Inc." meets "Acme".
  * ponytail: suffixes only; aliases ("UNC" vs "University of North Carolina") need a lookup table.
  */
-function orgKey(name: string): string {
+export function orgKey(name: string): string {
   const words = normalizeCompanyKey(name).split(" ").filter(Boolean);
   while (words.length > 1 && SUFFIXES.has(words[words.length - 1])) words.pop();
   return words.length === 1 && SUFFIXES.has(words[0]) ? "" : words.join(" ");
