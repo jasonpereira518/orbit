@@ -14,6 +14,7 @@ import { getDb } from "../src/db";
 import { contacts, relationshipDigests, userSettings } from "../src/db/schema";
 import {
   formatOriginWhen,
+  relationshipFactLines,
   loadRelationshipContexts,
   renderRelationshipBlock,
   type RelationshipContext,
@@ -63,6 +64,9 @@ run(async () => {
   check("one part renders one line", renderRelationshipBlock({ ...empty, workingOn: "Hiring" }) === "Working on: Hiring");
   const long = renderRelationshipBlock({ ...empty, topics: ["a\nb" + "x".repeat(1000)] }) ?? "";
   check("a long, multi-line part is one capped line", !long.includes("\n") && long.length <= 240, String(long.length));
+
+  check("Radar takes only how you met and the overlap", relationshipFactLines(FULL).join("|") === "How you met: Met at HackNC (Sep 2022)|You overlapped: You both went to State University, 2018 to 2020");
+  check("Radar takes nothing from an empty context", relationshipFactLines(empty).length === 0 && relationshipFactLines(undefined).length === 0);
 
   console.log("\ndrafts");
   const row = { fullName: "Maya Chen", preferredName: null, title: "PM", company: "Stripe", location: null, metContext: null, dateMet: null, howMet: null, aiSummary: null, notes: null, keyFacts: ["Has two kids"] } as unknown as Parameters<typeof buildProfileBlock>[0];

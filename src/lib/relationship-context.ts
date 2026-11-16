@@ -128,3 +128,14 @@ export async function loadRelationshipContexts(
   }
   return out;
 }
+
+/**
+ * The two lines a Radar note can use: how you met and where you overlapped. Topics and open
+ * threads are left out on purpose: a Radar note is one sentence about why to reach out now.
+ */
+export function relationshipFactLines(ctx: RelationshipContext | null | undefined): string[] {
+  if (!ctx) return [];
+  return (renderRelationshipBlock({ ...ctx, kind: null, topics: [], workingOn: null, openThreads: [] }) ?? "")
+    .split("\n")
+    .filter(Boolean);
+}
