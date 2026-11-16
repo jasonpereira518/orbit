@@ -29,6 +29,15 @@ export const MESSAGE_INTERACTION_SQL: SQL = sql`(
 const TRIGGER_SIGNALS_SQL: SQL = sql`(m.external_id LIKE 'li-export:invitation%' OR m.external_id LIKE 'li-export:recommendation%')`;
 const CONTEXT_SIGNALS_SQL: SQL = sql`(${TRIGGER_SIGNALS_SQL} OR m.external_id LIKE 'li-export:note:%')`;
 
+/** A LinkedIn-export signal row with text, of any kind (the origin pass reads them all). */
+export const SIGNAL_ROW_SQL: SQL = sql`m.source = 'linkedin_export' AND ${CONTEXT_SIGNALS_SQL} AND btrim(coalesce(m.raw_notes, '')) <> ''`;
+
+/**
+ * A value in relationship_digests.sources: this contact's opening and signals were read for how
+ * you met, by a deep first pass or by the one-time origin pass (origin-pass.ts).
+ */
+export const ORIGIN_CHECKED = "origin-checked";
+
 /** The row predicate for one pass. Without the deep read it is exactly `MESSAGE_INTERACTION_SQL`. */
 export function messageRowSql(opts: { deepRead: boolean; signals: "trigger" | "context" }): SQL {
   if (!opts.deepRead) return MESSAGE_INTERACTION_SQL;

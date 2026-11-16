@@ -32,7 +32,7 @@ import { stableHash } from "@/lib/linkedin-timeline-events";
 import { AI_DERIVED_SOURCE } from "@/lib/touch-kinds";
 import { HOW_MET_IMPORT_LABELS, type FieldSources } from "@/lib/contact-fields";
 import { emptyNoteBatchResult } from "@/lib/note-batches";
-import { messageRowSql } from "@/lib/relationship-engine/pending";
+import { ORIGIN_CHECKED, messageRowSql } from "@/lib/relationship-engine/pending";
 import { undoNoteBatchForUser } from "@/lib/note-batch-save";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { buildSuggestionItemHash, isoDay } from "@/lib/suggested-reminder-utils";
@@ -471,7 +471,9 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
   const topics = mergeTopics(previous?.topics ?? [], validated.topics, window.last.at);
   // Same newest message as the stored watermark: this window was already counted.
   const replay = previous?.watermarkInteractionId === window.last.interactionId;
-  const sources = [...new Set([...(previous?.sources ?? []), ...window.sources])];
+  // A deep first pass read the opening and the signals, so the one-time origin pass owes nothing.
+  const firstDeep = Boolean(input.deepRead) && !previous?.watermarkAt;
+  const sources = [...new Set([...(previous?.sources ?? []), ...window.sources, ...(firstDeep ? [ORIGIN_CHECKED] : [])])];
   const values = {
     contactId,
     userId,
@@ -546,7 +548,7 @@ export async function advanceWatermarkOnly(
     contactId: window.contactId,
     userId,
     messageCount: (previous?.messageCount ?? 0) + window.messages.length,
-    sources: [...new Set([...(previous?.sources ?? []), ...window.sources])],
+    sources: [...new Set([...(previous?.sources ?? []), ...window.sources, ...(opts.deepRead && !previous?.watermarkAt ? [ORIGIN_CHECKED] : [])])],
     watermarkAt: window.last.at,
     watermarkInteractionId: window.last.interactionId,
     attempts: 0,
