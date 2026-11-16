@@ -6,7 +6,8 @@ import { useGuardedTransition } from "@/lib/single-flight";
 import { formatDistanceToNow } from "date-fns";
 import { Handshake, Orbit, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
-import { regenerateContactSummary } from "@/actions/contacts";
+import { regenerateContactSummary, removeContactRelationshipKind } from "@/actions/contacts";
+import type { RelationshipContext } from "@/lib/relationship-context";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -31,6 +32,7 @@ export function ContactProfileOverview({
   hasLoggedInteraction,
   frequencyLabel,
   howMetSummary,
+  relationship = null,
   isRated,
 }: {
   contactId: string;
@@ -44,6 +46,8 @@ export function ContactProfileOverview({
   hasLoggedInteraction: boolean;
   frequencyLabel: string;
   howMetSummary: string | null;
+  /** LinkedIn deep read: how you met (quoted), the kind and where you overlapped. Null when off. */
+  relationship?: RelationshipContext | null;
   /**
    * Whether a human has actually rated this person 1-5.
    *
@@ -215,7 +219,7 @@ export function ContactProfileOverview({
           </CardContent>
         </Card>
 
-        {howMetSummary ? (
+        {howMetSummary || relationship?.origin || relationship?.kind || relationship?.overlaps.length ? (
           <Card className="border-border/70 shadow-none">
             <CardHeader>
               <CardTitle as="h2">How you met</CardTitle>
@@ -228,9 +232,53 @@ export function ContactProfileOverview({
                 >
                   <Handshake className="size-8 stroke-[1.5]" />
                 </div>
-                <p className="min-w-0 flex-1 text-sm leading-relaxed text-primary">
-                  {howMetSummary}
-                </p>
+                <div className="min-w-0 flex-1 space-y-2 text-sm leading-relaxed">
+                  {/* What the person typed (or an import wrote) leads; the deep read adds to it. */}
+                  {howMetSummary ? <p className="text-primary">{howMetSummary}</p> : null}
+                  {relationship?.origin && !(howMetSummary ?? "").includes(relationship.origin.text) ? (
+                    <p className={howMetSummary ? "text-muted-foreground" : "text-primary"}>
+                      {relationship.origin.text}
+                      {relationship.origin.when ? ` · ${relationship.origin.when}` : ""}
+                    </p>
+                  ) : null}
+                  {relationship?.origin?.excerpt ? (
+                    <p className="text-xs text-muted-foreground">
+                      From your messages: “{relationship.origin.excerpt}”
+                    </p>
+                  ) : null}
+                  {relationship?.overlaps.map((line) => (
+                    <p key={line} className="text-muted-foreground">
+                      {line}
+                    </p>
+                  ))}
+                  {relationship?.kind ? (
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-primary/8 px-2.5 py-0.5 text-xs font-medium capitalize text-primary">
+                        {relationship.kind}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs text-muted-foreground"
+                        disabled={pending}
+                        aria-label={`Not right: remove “${relationship.kind}”`}
+                        onClick={() =>
+                          start(async () => {
+                            try {
+                              await removeContactRelationshipKind(contactId);
+                              router.refresh();
+                            } catch (err) {
+                              toast.error(friendlyError(err, TOAST_COPY.summaryFailed));
+                            }
+                          })
+                        }
+                      >
+                        Not right?
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </CardContent>
           </Card>

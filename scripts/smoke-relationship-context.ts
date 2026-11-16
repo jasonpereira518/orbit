@@ -21,6 +21,7 @@ import {
 } from "../src/lib/relationship-context";
 import { ensureUserSettings } from "../src/lib/user-settings";
 import { buildProfileBlock } from "../src/lib/follow-up-drafts";
+import { removeRelationshipKind } from "../src/lib/relationship-engine/apply";
 import { run } from "./smoke/_env";
 
 const USER = "smoke-rel-context-user";
@@ -101,6 +102,15 @@ run(async () => {
   const o = got.get(old.id);
   check("a digest from before the deep read shows what it has", o?.origin === null && o?.kind === null && o?.topics.join() === "hiring" && o?.workingOn === "Hiring a designer", JSON.stringify(o));
   check("deep read off: nothing is loaded", (await loadRelationshipContexts(USER, [removed.id], { deepRead: false })).size === 0);
+
+  console.log("\nremoving a wrong kind");
+  const [kept] = await db.insert(contacts).values({ userId: USER, fullName: "Kept Kind" }).returning();
+  await db.insert(relationshipDigests).values({ contactId: kept.id, userId: USER, relationship: { kind: "friend", excerpt: "x y z", interactionId: kept.id } });
+  check("another account cannot remove it", (await removeRelationshipKind("someone-else", kept.id)) === false);
+  check("removing it hides it", (await removeRelationshipKind(USER, kept.id)) === true && (await loadRelationshipContexts(USER, [kept.id], { deepRead: true })).get(kept.id)?.kind === null);
+  const stored = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, kept.id) });
+  check("it is marked removed, so a later pass never sets it again", stored?.relationship?.removed === true && stored.relationship.kind === "friend");
+  check("a contact with no kind has nothing to remove", (await removeRelationshipKind(USER, old.id)) === false);
 
   await db.delete(relationshipDigests).where(eq(relationshipDigests.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
