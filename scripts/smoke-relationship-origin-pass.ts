@@ -15,17 +15,21 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { actionItems, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings } from "../src/db/schema";
 import type { BatchRequest, submitAiBatch } from "../src/lib/ai-batch";
+import { estimateCostMicros } from "../src/lib/ai-pricing";
 import { advanceWatermarkOnly, applyDigestPlan, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
 import { DIGEST_MAX_OUTPUT_TOKENS } from "../src/lib/relationship-engine/extract";
 import { pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
 import { loadMessageWindows } from "../src/lib/relationship-engine/gather";
 import {
   ORIGIN_CHECKED,
+  ORIGIN_TYPICAL_OUTPUT_TOKENS,
   applyOriginBatch,
   buildOriginWindow,
   claimOriginContacts,
   loadOriginWindows,
+  originPassEstimate,
   originPendingCount,
+  previewOriginPass,
   releaseOriginBatch,
   runOriginPass,
   usersWithOriginWork,
@@ -75,8 +79,23 @@ function pure() {
   check("nothing to read is no window", buildOriginWindow("c", [], []) === null);
 }
 
+function estimate() {
+  console.log("\nthe cost estimate");
+  const M = "gemini-3.5-flash";
+  const prompts = [{ system: "s".repeat(3_000), user: "u".repeat(1_000) }, { system: "s".repeat(3_000), user: "u".repeat(1_000) }];
+  const e = originPassEstimate(prompts, M);
+  check("two prompts of 8,000 characters are a million input tokens per 1,000", e.contacts === 2 && e.inputTokensPer1000 === 1_000_000, JSON.stringify(e));
+  check("typical output is 400 tokens each", ORIGIN_TYPICAL_OUTPUT_TOKENS === 400 && e.outputTokensPer1000 === 400_000);
+  check("priced at the batch rate", e.microsPer1000 !== null && e.microsPer1000 === estimateCostMicros({ model: M, inputTokens: 1_000_000, outputTokens: 400_000, batch: true }), String(e.microsPer1000));
+  check("the worst case is every answer at the output cap", e.microsPer1000Max === estimateCostMicros({ model: M, inputTokens: 1_000_000, outputTokens: 1_000 * DIGEST_MAX_OUTPUT_TOKENS, batch: true }) && DIGEST_MAX_OUTPUT_TOKENS === 2_000);
+  const none = originPassEstimate([], M);
+  check("nothing to send costs nothing", none.contacts === 0 && none.microsPer1000 === 0 && none.microsPer1000Max === 0, JSON.stringify(none));
+  check("an unpriced model has no cost, not a wrong one", originPassEstimate(prompts, "totally-made-up").microsPer1000 === null);
+}
+
 async function main() {
   pure();
+  estimate();
   await reset();
   const db = await getDb();
 
@@ -177,6 +196,9 @@ async function main() {
   await db.insert(interactions).values({ userId: USER, contactId: P.id, interactionType: "linkedin_message", interactionDate: new Date(T.getTime() + 86_400_000), source: "linkedin_messages", externalId: "li-msg:p-after", rawNotes: "can you send the deck by Friday for the board review", topics: [], direction: "in" as const });
   const before = await digestOf(P.id);
 
+  const preview = await previewOriginPass(USER);
+  check("the preview lists what would be sent, and claims nothing", preview.owed === 1 && preview.sampled === 1 && preview.trivial === 0 && preview.prompts.length === 1 && preview.prompts[0].user.includes("HackNC") && (await digestOf(P.id)).batchJobId === null, JSON.stringify({ ...preview, prompts: preview.prompts.length }));
+
   const off = await runOriginPass(USER, { deepRead: false, submit: stub(randomUUID()) });
   check("deep read off: nothing is claimed or sent", JSON.stringify(off) === JSON.stringify({ claimed: 0, trivial: 0, submitted: 0, remaining: 0 }) && calls.length === 0 && (await digestOf(P.id)).batchJobId === null, JSON.stringify(off));
 
@@ -188,6 +210,7 @@ async function main() {
 
   const JOB = randomUUID();
   const ran = await runOriginPass(USER, { deepRead: true, submit: stub(JOB) });
+  check("the pass sends exactly the prompt the preview measured", calls[0]?.requests[0]?.user === preview.prompts[0].user && calls[0].requests[0].system === preview.prompts[0].system);
   check("one batch under its own operation", calls.length === 1 && calls[0].op === "relationship.origin" && calls[0].requests.length === 1 && calls[0].requests[0].user.includes("HackNC"));
   check("the same prompt the eval measures (deep read keys asked for)", calls[0].requests[0].system.includes("origin") && calls[0].requests[0].maxOutputTokens === DIGEST_MAX_OUTPUT_TOKENS);
   check("the pass reports it", JSON.stringify(ran) === JSON.stringify({ claimed: 1, trivial: 0, submitted: 1, remaining: 0 }), JSON.stringify(ran));

@@ -16,6 +16,7 @@ import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, relationshipDigests, relationshipRuns, userSettings } from "@/db/schema";
 import { BATCH_STALE_HOURS, MAX_BATCH_REQUESTS, submitAiBatch, type AiBatchJobRow, type BatchOutcome, type BatchRequest } from "@/lib/ai-batch";
+import { estimateCostMicros } from "@/lib/ai-pricing";
 import { loadYouCurrent } from "@/lib/career-profile-server";
 import { deepReadOn } from "@/lib/deep-read";
 import { reportError } from "@/lib/report-error";
@@ -193,6 +194,97 @@ export async function usersWithOriginWork(limit: number, onlyUsers: string[] | n
 export type OriginBatchPayload = { runId: string; items: Array<{ customId: string; contactId: string }> };
 export type OriginPassResult = { claimed: number; trivial: number; submitted: number; remaining: number };
 
+type OriginPrompt = { contactId: string; system: string; user: string };
+
+/**
+ * The windows and prompts for these contacts, exactly as the pass sends them. `trivial` are the
+ * contacts with nothing to read (no window, or only pleasantries): no model call.
+ */
+async function buildOriginPrompts(
+  userId: string,
+  ids: string[],
+  you: Awaited<ReturnType<typeof loadYouCurrent>>,
+  now: Date
+): Promise<{ trivial: string[]; prompts: OriginPrompt[] }> {
+  const db = await getDb();
+  const [windows, people] = await Promise.all([
+    loadOriginWindows(userId, ids),
+    ids.length
+      ? db.select({ id: contacts.id, fullName: contacts.fullName }).from(contacts).where(and(eq(contacts.userId, userId), inArray(contacts.id, ids)))
+      : Promise.resolve([]),
+  ]);
+  const nameOf = new Map(people.map((p) => [p.id, p.fullName]));
+  const trivial: string[] = [];
+  const prompts: OriginPrompt[] = [];
+  for (const contactId of ids) {
+    const window = windows.get(contactId);
+    if (!window || isTrivialWindow(window, { deepRead: true })) {
+      trivial.push(contactId);
+      continue;
+    }
+    // ponytail: reuses the full digest prompt and throws most of the answer away. A three-key
+    // prompt would cut output tokens; write it (and an eval variant) if the measured cost
+    // (scripts/measure-origin-pass.ts) says it matters.
+    const prompt = buildDigestPrompt({
+      contactName: nameOf.get(contactId) ?? "Contact",
+      window,
+      previous: null,
+      deepRead: true,
+      context: await overlapContext(userId, contactId, you, now),
+    });
+    prompts.push({ contactId, ...prompt });
+  }
+  return { trivial, prompts };
+}
+
+/**
+ * What the pass would send for this user, without claiming or writing anything: up to `sample`
+ * owed contacts (the order the pass takes them in), the ones that need no model call, and the
+ * prompts for the rest. For scripts/measure-origin-pass.ts.
+ */
+export async function previewOriginPass(
+  userId: string,
+  opts: { sample?: number; now?: Date } = {}
+): Promise<{ owed: number; sampled: number; trivial: number; prompts: Array<{ system: string; user: string }> }> {
+  const now = opts.now ?? new Date();
+  const db = await getDb();
+  const ids = rowsOf<{ contact_id: string }>(
+    await db.execute(sql`
+      SELECT d.contact_id FROM relationship_digests d
+       WHERE d.user_id = ${userId} AND ${owedSql(now)}
+       ORDER BY d.message_count DESC, d.contact_id
+       LIMIT ${opts.sample ?? 300}
+    `)
+  ).map((r) => r.contact_id);
+  const { trivial, prompts } = await buildOriginPrompts(userId, ids, await loadYouCurrent(userId), now);
+  return { owed: await originPendingCount(userId, now), sampled: ids.length, trivial: trivial.length, prompts: prompts.map(({ system, user }) => ({ system, user })) };
+}
+
+/** What a typical answer runs to; the cap (`DIGEST_MAX_OUTPUT_TOKENS`) is the worst case. */
+export const ORIGIN_TYPICAL_OUTPUT_TOKENS = 400;
+
+/**
+ * No model call. Input tokens are characters / 4, as `estimateBatchMicros` counts them, at the
+ * batch price. Costs are null for a model with no known price.
+ */
+export function originPassEstimate(
+  prompts: Array<{ system: string; user: string }>,
+  model: string
+): { contacts: number; inputTokensPer1000: number; outputTokensPer1000: number; microsPer1000: number | null; microsPer1000Max: number | null } {
+  const contacts = prompts.length;
+  if (!contacts) return { contacts: 0, inputTokensPer1000: 0, outputTokensPer1000: 0, microsPer1000: 0, microsPer1000Max: 0 };
+  const chars = prompts.reduce((n, p) => n + p.system.length + p.user.length, 0);
+  const inputTokensPer1000 = Math.round((chars / 4 / contacts) * 1_000);
+  const outputTokensPer1000 = ORIGIN_TYPICAL_OUTPUT_TOKENS * 1_000;
+  return {
+    contacts,
+    inputTokensPer1000,
+    outputTokensPer1000,
+    microsPer1000: estimateCostMicros({ model, inputTokens: inputTokensPer1000, outputTokens: outputTokensPer1000, batch: true }),
+    microsPer1000Max: estimateCostMicros({ model, inputTokens: inputTokensPer1000, outputTokens: DIGEST_MAX_OUTPUT_TOKENS * 1_000, batch: true }),
+  };
+}
+
 /** Hand back everything still held under `holder` (a claim id or a job id), unmarked. */
 async function releaseHeld(userId: string, holder: string): Promise<void> {
   const db = await getDb();
@@ -233,36 +325,21 @@ export async function runOriginPass(
     result.claimed += ids.length;
     left -= ids.length;
 
-    const [windows, people] = await Promise.all([
-      loadOriginWindows(userId, ids),
-      db.select({ id: contacts.id, fullName: contacts.fullName }).from(contacts).where(and(eq(contacts.userId, userId), inArray(contacts.id, ids))),
-    ]);
-    const nameOf = new Map(people.map((p) => [p.id, p.fullName]));
+    const { trivial, prompts } = await buildOriginPrompts(userId, ids, you, now);
     const runId = randomUUID();
-    const requests: BatchRequest[] = [];
-    const items: OriginBatchPayload["items"] = [];
-    for (const contactId of ids) {
-      const window = windows.get(contactId);
-      if (!window || isTrivialWindow(window, { deepRead: true })) {
-        // Nothing to understand: checked, with no model call.
-        await applyOriginOnly({ userId, runId, contactId, validated: null, now });
-        result.trivial += 1;
-        continue;
-      }
-      // ponytail: reuses the full digest prompt and throws most of the answer away. A three-key
-      // prompt would cut output tokens; write it (and an eval variant) if the measured cost
-      // (scripts/measure-origin-pass.ts) says it matters.
-      const prompt = buildDigestPrompt({
-        contactName: nameOf.get(contactId) ?? "Contact",
-        window,
-        previous: null,
-        deepRead: true,
-        context: await overlapContext(userId, contactId, you, now),
-      });
-      const customId = `o${items.length}`;
-      requests.push({ customId, ...prompt, temperature: 0.1, maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS });
-      items.push({ customId, contactId });
+    for (const contactId of trivial) {
+      // Nothing to understand: checked, with no model call.
+      await applyOriginOnly({ userId, runId, contactId, validated: null, now });
+      result.trivial += 1;
     }
+    const items: OriginBatchPayload["items"] = prompts.map((p, n) => ({ customId: `o${n}`, contactId: p.contactId }));
+    const requests: BatchRequest[] = prompts.map((p, n) => ({
+      customId: `o${n}`,
+      system: p.system,
+      user: p.user,
+      temperature: 0.1,
+      maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS,
+    }));
 
     if (requests.length) {
       const payload: OriginBatchPayload = { runId, items };
