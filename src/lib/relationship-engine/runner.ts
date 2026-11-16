@@ -13,7 +13,11 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { contacts, relationshipDigests, relationshipRuns, userSettings, type RelationshipRunRow } from "@/db/schema";
+import { contactExperiences, contacts, relationshipDigests, relationshipRuns, userSettings, type RelationshipRunRow } from "@/db/schema";
+import type { YouCurrent } from "@/lib/career-profile";
+import { loadYouCurrent } from "@/lib/career-profile-server";
+import { deepReadOn } from "@/lib/deep-read";
+import { historyOverlaps, type HistoryOverlap, type OverlapExperience } from "@/lib/history-overlap";
 import { BATCH_STALE_HOURS, MAX_BATCH_REQUESTS, submitAiBatch, type AiBatchJobRow, type BatchOutcome } from "@/lib/ai-batch";
 import { isAiAccessError } from "@/lib/ai-access";
 import { classifyAiError, isMissingAiApiKeyError } from "@/lib/errors";
@@ -52,6 +56,8 @@ export type RunnerOptions = {
   extract?: typeof extractRelationshipDigest;
   submit?: typeof submitAiBatch;
   importId?: string | null;
+  /** LinkedIn deep read for this pass. Defaults to `deepReadOn(userId)`. */
+  deepRead?: boolean;
 };
 
 export type PassResult = {
@@ -66,6 +72,8 @@ export type PassResult = {
 export type RelationshipBatchPayload = {
   runId: string;
   items: Array<{ customId: string; contactId: string; lastAt: string; lastInteractionId: string }>;
+  /** The deep read the prompts were built with. The applier reads this, never the live flag. */
+  deepRead?: boolean;
 };
 
 /** The key or the account is the problem, not this contact: pause the run, burn no attempts. */
@@ -132,7 +140,8 @@ export async function processDigestAnswer(
   contactId: string,
   window: MessageWindow,
   answer: RelationshipDigestAnswer,
-  now: Date
+  now: Date,
+  deepRead = false
 ): Promise<void> {
   const db = await getDb();
   const [{ threads, openKeys }, contact] = await Promise.all([
@@ -143,7 +152,7 @@ export async function processDigestAnswer(
     }),
   ]);
   if (!contact) return;
-  const validated = validateDigest(answer, window, openKeys);
+  const validated = validateDigest(answer, window, openKeys, { deepRead });
   const plan = planDigestWrites(validated, {
     contactId,
     contactFirstName: contact.fullName.trim().split(/\s+/)[0] || contact.fullName,
@@ -153,16 +162,46 @@ export async function processDigestAnswer(
     existingThreads: threads,
     remindersLeftInRun: await remindersLeft(runId),
   });
-  await applyDigestPlan({ userId, runId, contactId, window, validated, plan, now });
+  await applyDigestPlan({ userId, runId, contactId, window, validated, plan, now, deepRead });
 }
 
-async function promptFor(userId: string, contactId: string, window: MessageWindow) {
+/** "You both worked at Acme, 2021 to 2023": known context for the deep read's "how you met". */
+function overlapLine(o: HistoryOverlap): string {
+  const years = o.together ? (o.fromYear === o.toYear ? `${o.fromYear}` : `${o.fromYear} to ${o.toYear}`) : null;
+  return `You both ${o.kind === "work" ? "worked at" : "went to"} ${o.organization}${years ? `, ${years}` : ""}`;
+}
+
+/**
+ * Where the user's own history (PR 1, `career_profile`) meets this contact's: their
+ * `contact_experiences`, or, when they have none, the company and school on the contact.
+ */
+async function overlapContext(userId: string, contactId: string, you: YouCurrent, now: Date): Promise<string[]> {
   const db = await getDb();
-  const [{ previous }, contact] = await Promise.all([
+  const [contact, rows] = await Promise.all([
+    db.query.contacts.findFirst({ where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)), columns: { company: true, school: true } }),
+    db.query.contactExperiences.findMany({
+      where: and(eq(contactExperiences.userId, userId), eq(contactExperiences.contactId, contactId)),
+      columns: { kind: true, organization: true, startYear: true, endYear: true, isCurrent: true },
+    }),
+  ]);
+  const plain = (kind: OverlapExperience["kind"], organization: string | null | undefined): OverlapExperience[] =>
+    organization ? [{ kind, organization, startYear: null, endYear: null, isCurrent: false }] : [];
+  const them: OverlapExperience[] = rows.length ? rows : [...plain("role", contact?.company), ...plain("education", contact?.school)];
+  return historyOverlaps(
+    { positions: you.career?.positions, education: you.career?.education, schools: you.schools },
+    them,
+    now.getUTCFullYear()
+  ).map(overlapLine);
+}
+
+async function promptFor(userId: string, contactId: string, window: MessageWindow, deep: { you: YouCurrent; now: Date } | null) {
+  const db = await getDb();
+  const [{ previous }, contact, context] = await Promise.all([
     loadPreviousDigest(userId, contactId),
     db.query.contacts.findFirst({ where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)), columns: { fullName: true } }),
+    deep ? overlapContext(userId, contactId, deep.you, deep.now) : Promise.resolve([]),
   ]);
-  return buildDigestPrompt({ contactName: contact?.fullName ?? "Contact", window, previous });
+  return buildDigestPrompt({ contactName: contact?.fullName ?? "Contact", window, previous, deepRead: Boolean(deep), context });
 }
 
 export async function runRelationshipPass(userId: string, opts: RunnerOptions = {}): Promise<PassResult> {
@@ -178,12 +217,16 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
     where: eq(userSettings.userId, userId),
     columns: { relationshipEngineEnabled: true },
   });
+  const deepRead = opts.deepRead ?? (await deepReadOn(userId));
+  const pending = { deepRead };
   if ((settings?.relationshipEngineEnabled ?? 1) !== 1) {
-    return { ...result, status: "disabled", remaining: await pendingRelationshipContactCount(userId, now) };
+    return { ...result, status: "disabled", remaining: await pendingRelationshipContactCount(userId, now, pending) };
   }
 
   const claim = await claimRun(userId, opts.importId ?? null, now);
-  if (!claim) return { ...result, status: "busy", remaining: await pendingRelationshipContactCount(userId, now) };
+  if (!claim) return { ...result, status: "busy", remaining: await pendingRelationshipContactCount(userId, now, pending) };
+  // Deep read: the user's own history, read once per pass for every contact's overlap context.
+  const deep = deepRead ? { you: await loadYouCurrent(userId), now } : null;
   const { run, token } = claim;
   let inlineUsed = run.inlineUsed;
   const attempted = new Set<string>();
@@ -195,7 +238,7 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
   const attemptInline = async (contactId: string, window: MessageWindow, prompt: { system: string; user: string }): Promise<boolean> => {
     try {
       const answer = await extract(userId, prompt);
-      await processDigestAnswer(userId, run.id, contactId, window, answer, now);
+      await processDigestAnswer(userId, run.id, contactId, window, answer, now, deepRead);
       inlineUsed += 1;
       result.processed += 1;
       return false;
@@ -218,6 +261,7 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
     if (slice.length === 0) return false;
     const payload: RelationshipBatchPayload = {
       runId: run.id,
+      deepRead,
       items: slice.map((q, n) => ({
         customId: `r${n}`,
         contactId: q.contactId,
@@ -254,7 +298,7 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
   const keyPaused = async (): Promise<PassResult> => ({
     ...result,
     status: "waiting_key",
-    remaining: await pendingRelationshipContactCount(userId, now),
+    remaining: await pendingRelationshipContactCount(userId, now, pending),
   });
 
   try {
@@ -263,20 +307,20 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
     await ensureRunNoteBatch(userId, run.id);
 
     claiming: while (!overBudget()) {
-      const ids = await claimPendingContacts(userId, CLAIM_SIZE, attempted, now);
+      const ids = await claimPendingContacts(userId, CLAIM_SIZE, attempted, now, pending);
       if (ids.length === 0) break;
-      const windows = await loadMessageWindows(userId, ids);
+      const windows = await loadMessageWindows(userId, ids, { deepRead });
       for (const contactId of ids) {
         if (overBudget()) break claiming;
         attempted.add(contactId);
         const window = windows.get(contactId);
         if (!window) continue;
         if (isTrivialWindow(window)) {
-          await advanceWatermarkOnly(userId, run.id, window);
+          await advanceWatermarkOnly(userId, run.id, window, { deepRead });
           result.skipped += 1;
           continue;
         }
-        const prompt = await promptFor(userId, contactId, window);
+        const prompt = await promptFor(userId, contactId, window, deep);
         if (inlineUsed < INLINE_PER_RUN || batchUnavailable) {
           if (await attemptInline(contactId, window, prompt)) return await keyPaused();
           continue;
@@ -288,7 +332,7 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
     }
     if (await flushQueue()) return await keyPaused();
 
-    result.remaining = await pendingRelationshipContactCount(userId, now);
+    result.remaining = await pendingRelationshipContactCount(userId, now, pending);
     const out = await db.query.relationshipDigests.findFirst({
       where: and(eq(relationshipDigests.userId, userId), eq(relationshipDigests.runId, run.id), sql`${relationshipDigests.batchPendingUntil} > ${now.toISOString()}::timestamptz`),
       columns: { contactId: true },
@@ -328,6 +372,8 @@ export async function applyRelationshipBatch(
 ): Promise<void> {
   const db = await getDb();
   const payload = job.payload as unknown as RelationshipBatchPayload;
+  // What the prompts were built with, not what the flag says now.
+  const deepRead = payload.deepRead ?? false;
   const byCustomId = new Map(payload.items.map((i) => [i.customId, i]));
   const now = new Date();
   const contactIds = outcomes.map((o) => byCustomId.get(o.customId)?.contactId).filter((id): id is string => Boolean(id));
@@ -349,7 +395,7 @@ export async function applyRelationshipBatch(
     if (watermarkReached(d.watermarkAt, d.watermarkInteractionId, bound)) continue;
     live.set(item.contactId, bound);
   }
-  const windows = await loadMessageWindows(job.userId, [...live.keys()], { until: live });
+  const windows = await loadMessageWindows(job.userId, [...live.keys()], { until: live, deepRead });
   for (const outcome of outcomes) {
     const contactId = byCustomId.get(outcome.customId)?.contactId;
     if (!contactId || !live.has(contactId)) continue;
@@ -357,7 +403,7 @@ export async function applyRelationshipBatch(
     try {
       if (!window) continue;
       if (!outcome.text) throw new Error(outcome.error ?? "batch request failed");
-      await processDigestAnswer(job.userId, payload.runId, contactId, window, parseDigestAnswer(outcome.text), now);
+      await processDigestAnswer(job.userId, payload.runId, contactId, window, parseDigestAnswer(outcome.text), now, deepRead);
     } catch (err) {
       await recordDigestFailure(job.userId, contactId, err);
       await db.update(relationshipRuns).set({ failed: sql`${relationshipRuns.failed} + 1` }).where(eq(relationshipRuns.id, payload.runId));
