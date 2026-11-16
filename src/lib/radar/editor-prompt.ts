@@ -73,6 +73,8 @@ export type EditorCandidate = RadarPick & {
   tier: "inner" | "mid" | "outer" | null;
   /** The contact brief's one-line standing, if there is one. */
   standing: string | null;
+  /** LinkedIn deep read: how you met and where you overlapped (`relationshipFactLines`, joined). */
+  relationship?: string | null;
 };
 
 export type EditorPrompt = {
@@ -108,8 +110,10 @@ export function buildEditorPrompt(candidates: readonly EditorCandidate[], goals:
     idToKey.set(id, recommendationKey(c.contactId, c.kind));
     const facts = factsOf(c.reasons, c.evidence);
     const context = cleanSingleLine(c.standing, 200);
+    const howYouMet = cleanSingleLine(c.relationship, 300);
     allFacts.push(...facts);
     if (context) allFacts.push(context);
+    if (howYouMet) allFacts.push(howYouMet);
     return {
       id,
       recommendation: KIND_LABELS[c.kind],
@@ -118,6 +122,8 @@ export function buildEditorPrompt(candidates: readonly EditorCandidate[], goals:
       closeness: c.tier,
       reasons: facts,
       context,
+      // Absent, not null, when there is none: a prompt without the deep read is byte-for-byte today's.
+      ...(howYouMet ? { howYouMet } : {}),
     };
   });
   const goalLines = goals
@@ -146,7 +152,12 @@ export function editorCacheKey(candidates: readonly EditorCandidate[], goals: re
   const hash = (s: string | null) => (s ? createHash("sha256").update(s).digest("hex").slice(0, 16) : null);
   return {
     v: 2,
-    shortlist: ordered(candidates).map((c) => [recommendationKey(c.contactId, c.kind), c.inputsHash, hash(c.standing)]),
+    shortlist: ordered(candidates).map((c) => [
+      recommendationKey(c.contactId, c.kind),
+      c.inputsHash,
+      hash(c.standing),
+      ...(c.relationship ? [hash(c.relationship)] : []),
+    ]),
     goals: goals.slice(0, GOALS_MAX).map((g) => g.trim()),
   };
 }

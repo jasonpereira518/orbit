@@ -627,6 +627,27 @@ async function undoRunOrigins(userId: string, runId: string): Promise<void> {
   }
 }
 
+/**
+ * The person says the relationship kind is wrong ("Not right?" on the contact page). Marked
+ * `removed`, not deleted: the deep read keeps a removed kind and never sets one again (see the
+ * relationship rule in applyDigestPlan). False when this user has no kind on that contact.
+ */
+export async function removeRelationshipKind(userId: string, contactId: string): Promise<boolean> {
+  const db = await getDb();
+  const done = await db
+    .update(relationshipDigests)
+    .set({ relationship: sql`${relationshipDigests.relationship} || '{"removed": true}'::jsonb` })
+    .where(
+      and(
+        eq(relationshipDigests.userId, userId),
+        eq(relationshipDigests.contactId, contactId),
+        sql`${relationshipDigests.relationship} IS NOT NULL`
+      )
+    )
+    .returning();
+  return done.length > 0;
+}
+
 /** Exported for tests that need a run without the runner. */
 export function newClaimToken(): string {
   return randomUUID();

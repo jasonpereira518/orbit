@@ -17,7 +17,7 @@ import { contactExperiences, contacts, relationshipDigests, relationshipRuns, us
 import type { YouCurrent } from "@/lib/career-profile";
 import { loadYouCurrent } from "@/lib/career-profile-server";
 import { deepReadOn } from "@/lib/deep-read";
-import { historyOverlaps, type HistoryOverlap, type OverlapExperience } from "@/lib/history-overlap";
+import { historyOverlaps, overlapLine, type OverlapExperience } from "@/lib/history-overlap";
 import { BATCH_STALE_HOURS, MAX_BATCH_REQUESTS, submitAiBatch, type AiBatchJobRow, type BatchOutcome } from "@/lib/ai-batch";
 import { isAiAccessError } from "@/lib/ai-access";
 import { classifyAiError, isMissingAiApiKeyError } from "@/lib/errors";
@@ -165,11 +165,6 @@ export async function processDigestAnswer(
   await applyDigestPlan({ userId, runId, contactId, window, validated, plan, now, deepRead });
 }
 
-/** "You both worked at Acme, 2021 to 2023": known context for the deep read's "how you met". */
-function overlapLine(o: HistoryOverlap): string {
-  const years = o.together ? (o.fromYear === o.toYear ? `${o.fromYear}` : `${o.fromYear} to ${o.toYear}`) : null;
-  return `You both ${o.kind === "work" ? "worked at" : "went to"} ${o.organization}${years ? `, ${years}` : ""}`;
-}
 
 /**
  * Where the user's own history (PR 1, `career_profile`) meets this contact's: their

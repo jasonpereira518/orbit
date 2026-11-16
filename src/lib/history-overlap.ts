@@ -108,3 +108,9 @@ function better(a: HistoryOverlap, b: HistoryOverlap): boolean {
   if (!a.together) return false;
   return a.toYear! - a.fromYear! > b.toYear! - b.fromYear!;
 }
+
+/** "You both worked at Acme, 2021 to 2023" / "You both went to State University". */
+export function overlapLine(o: HistoryOverlap): string {
+  const years = o.together ? (o.fromYear === o.toYear ? `${o.fromYear}` : `${o.fromYear} to ${o.toYear}`) : null;
+  return `You both ${o.kind === "work" ? "worked at" : "went to"} ${o.organization}${years ? `, ${years}` : ""}`;
+}
