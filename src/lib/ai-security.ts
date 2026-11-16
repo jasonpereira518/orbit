@@ -370,6 +370,8 @@ export function cleanSingleLine(value: string | null | undefined, max: number): 
   if (typeof value !== "string") return null;
   const cleaned = sanitizeAgentText(value)
     .replace(/[\r\n\t]+/g, " ")
+    // Every other control byte: a NUL fails Postgres' jsonb cast, the rest ride into prompts.
+    .replace(/[\u0000-\u001f\u007f]/g, "")
     .replace(/ {2,}/g, " ")
     .trim()
     .slice(0, max)

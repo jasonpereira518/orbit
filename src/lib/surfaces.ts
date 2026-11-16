@@ -272,6 +272,8 @@ export const CLOUD_NOTES_SURFACE_KEY = "feature.cloud-notes";
 export const NOTION_SURFACE_KEY = "feature.notion";
 /** Cosmo: the voice assistant orb on every page (docs/superpowers/specs/2026-11-12-cosmo-design.md). */
 export const COSMO_SURFACE_KEY = "feature.cosmo";
+/** Reading more of a LinkedIn export (docs/superpowers/specs/2026-11-15-linkedin-deep-read-design.md). */
+export const LINKEDIN_DEEP_READ_SURFACE_KEY = "feature.linkedin-deep-read";
 const FEATURES: Surface[] = [
   {
     key: COMPOSE_SURFACE_KEY,
@@ -327,6 +329,14 @@ const FEATURES: Surface[] = [
     label: "Cosmo",
     description: "The voice assistant orb in the corner of every page: talk to Orbit from anywhere.",
     // Hidden = the orb's off switch: no idle orb, and calls lose Cosmo's powers and metering.
+  },
+  {
+    key: LINKEDIN_DEEP_READ_SURFACE_KEY,
+    kind: "feature",
+    label: "LinkedIn deep read",
+    description: "Reads more of a LinkedIn export: your full history, how you met people, and who you are closest to.",
+    // Until /privacy describes it (deep read PR 5).
+    comingSoon: true,
   },
 ];
 
