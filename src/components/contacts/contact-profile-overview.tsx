@@ -240,6 +240,10 @@ export function ContactProfileOverview({
                       {relationship.origin.text}
                       {relationship.origin.when ? ` · ${relationship.origin.when}` : ""}
                     </p>
+                  ) : relationship?.origin?.when && !/\d{4}/.test(howMetSummary ?? "") ? (
+                    // The deep read wrote how_met itself; a month or year never goes into date_met,
+                    // so the summary has no date. Show it here.
+                    <p className="text-muted-foreground">{relationship.origin.when}</p>
                   ) : null}
                   {relationship?.origin?.excerpt ? (
                     <p className="text-xs text-muted-foreground">
@@ -262,14 +266,19 @@ export function ContactProfileOverview({
                         size="sm"
                         className="h-6 px-2 text-xs text-muted-foreground"
                         disabled={pending}
-                        aria-label={`Not right: remove “${relationship.kind}”`}
+                        aria-label={`Not right? Remove “${relationship.kind}”`}
                         onClick={() =>
                           start(async () => {
                             try {
-                              await removeContactRelationshipKind(contactId);
+                              const res = await removeContactRelationshipKind(contactId);
+                              if (!res.ok) {
+                                toast.error(TOAST_COPY.relationshipKindFailed);
+                                return;
+                              }
+                              toast.success(TOAST_COPY.relationshipKindRemoved);
                               router.refresh();
                             } catch (err) {
-                              toast.error(friendlyError(err, TOAST_COPY.summaryFailed));
+                              toast.error(friendlyError(err, TOAST_COPY.relationshipKindFailed));
                             }
                           })
                         }
