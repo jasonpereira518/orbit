@@ -19,6 +19,7 @@ import {
   type RelationshipContext,
 } from "../src/lib/relationship-context";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { buildProfileBlock } from "../src/lib/follow-up-drafts";
 import { run } from "./smoke/_env";
 
 const USER = "smoke-rel-context-user";
@@ -62,6 +63,12 @@ run(async () => {
   check("one part renders one line", renderRelationshipBlock({ ...empty, workingOn: "Hiring" }) === "Working on: Hiring");
   const long = renderRelationshipBlock({ ...empty, topics: ["a\nb" + "x".repeat(1000)] }) ?? "";
   check("a long, multi-line part is one capped line", !long.includes("\n") && long.length <= 240, String(long.length));
+
+  console.log("\ndrafts");
+  const row = { fullName: "Maya Chen", preferredName: null, title: "PM", company: "Stripe", location: null, metContext: null, dateMet: null, howMet: null, aiSummary: null, notes: null, keyFacts: ["Has two kids"] } as unknown as Parameters<typeof buildProfileBlock>[0];
+  const today = buildProfileBlock(row);
+  check("a draft's profile block ends with the relationship block", buildProfileBlock(row, "How you met: Met at HackNC (Sep 2022)") === `${today}\nHow you met: Met at HackNC (Sep 2022)`);
+  check("without one it is today's block", buildProfileBlock(row, null) === today && today.endsWith("Key facts: Has two kids"));
 
   console.log("\nloading");
   const db = await getDb();
