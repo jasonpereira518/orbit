@@ -100,7 +100,7 @@ export function StaleDraftNotice({
   }
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/[0.04] px-4 py-3">
-      <p className="text-sm text-ink">
+      <p className="text-sm text-ink" suppressHydrationWarning>
         Unsaved {kind} from {date}
       </p>
       <div className="flex gap-2">

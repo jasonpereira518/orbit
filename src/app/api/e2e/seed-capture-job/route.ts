@@ -17,6 +17,8 @@ export async function POST(request: Request) {
   // eslint-disable-next-line no-restricted-syntax -- test-only switch, deliberately outside env.ts
   if (process.env.ORBIT_E2E_SEED !== "1") return new NextResponse(null, { status: 404 });
   const { ageMs } = (await request.json()) as { ageMs: number };
+  if (typeof ageMs !== "number" || !Number.isFinite(ageMs)) return NextResponse.json({ error: "ageMs must be a number" }, { status: 400 });
+  // Deletes ALL of the caller's capture jobs; only runs behind ORBIT_E2E_SEED=1.
   const userId = await requireUserId();
   const db = await getDb();
   await db.delete(captureJobs).where(eq(captureJobs.userId, userId));
