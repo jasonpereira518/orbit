@@ -217,6 +217,13 @@ export const AI_OPERATIONS = {
     thinking: "minimal",
     background: true,
   },
+  // LinkedIn deep read, launch catch-up: one read of each already-summarised conversation's opening.
+  "relationship.origin": {
+    label: "Relationship analysis (how you met, one-time)",
+    tier: "fast",
+    thinking: "minimal",
+    background: true,
+  },
 } as const satisfies Record<string, OperationSpec>;
 
 export type AiOperationId = keyof typeof AI_OPERATIONS;

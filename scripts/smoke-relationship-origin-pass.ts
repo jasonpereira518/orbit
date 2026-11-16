@@ -13,16 +13,23 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-origin";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, userSettings } from "../src/db/schema";
-import { advanceWatermarkOnly, applyDigestPlan } from "../src/lib/relationship-engine/apply";
+import { actionItems, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings } from "../src/db/schema";
+import type { BatchRequest, submitAiBatch } from "../src/lib/ai-batch";
+import { advanceWatermarkOnly, applyDigestPlan, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { DIGEST_MAX_OUTPUT_TOKENS } from "../src/lib/relationship-engine/extract";
+import { pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
 import { loadMessageWindows } from "../src/lib/relationship-engine/gather";
 import {
   ORIGIN_CHECKED,
+  applyOriginBatch,
   buildOriginWindow,
   claimOriginContacts,
   loadOriginWindows,
   originPendingCount,
+  releaseOriginBatch,
+  runOriginPass,
   usersWithOriginWork,
+  type OriginBatchPayload,
 } from "../src/lib/relationship-engine/origin-pass";
 import { planDigestWrites } from "../src/lib/relationship-engine/rules";
 import type { ValidatedDigest, WindowMessage } from "../src/lib/relationship-engine/types";
@@ -41,7 +48,7 @@ function check(label: string, condition: boolean, detail?: string) {
 async function reset() {
   const db = await getDb();
   for (const u of [USER, OTHER]) {
-    for (const t of [relationshipDigests, relationshipRuns, noteBatches, interactions, contacts, userSettings]) await db.delete(t).where(eq(t.userId, u));
+    for (const t of [relationshipDigests, relationshipRuns, reminders, actionItems, noteBatches, interactions, contacts, userSettings]) await db.delete(t).where(eq(t.userId, u));
     await ensureUserSettings(u);
   }
 }
@@ -74,18 +81,18 @@ async function main() {
   const db = await getDb();
 
   console.log("\nwho is owed");
-  const person = async (userId: string, name: string, digest: Partial<typeof relationshipDigests.$inferInsert> | null) => {
+  const OPENING = ["Great meeting you at HackNC!", "Likewise, let us keep in touch about the robotics project", "Sounds good, talk soon about the project"];
+  const person = async (userId: string, name: string, digest: Partial<typeof relationshipDigests.$inferInsert> | null, texts: string[] = OPENING) => {
     const [c] = await db.insert(contacts).values({ userId, fullName: name, source: "linkedin", howMet: "LinkedIn connection", metContext: "online" }).returning();
-    const texts = ["Great meeting you at HackNC!", "Likewise, let us keep in touch about the robotics project", "Sounds good, talk soon about the project"];
     const msgs = await db.insert(interactions).values(texts.map((rawNotes, i) => ({
-      userId, contactId: c.id, interactionType: "linkedin_message", interactionDate: new Date(T.getTime() - (3 - i) * 86_400_000), source: "linkedin_messages",
+      userId, contactId: c.id, interactionType: "linkedin_message", interactionDate: new Date(T.getTime() - (texts.length - i) * 86_400_000), source: "linkedin_messages",
       externalId: `li-msg:${name}:${i}`, rawNotes, topics: [], direction: i % 2 ? ("out" as const) : ("in" as const),
     }))).returning();
-    msgs[2].interactionDate = T;
-    await db.update(interactions).set({ interactionDate: T }).where(eq(interactions.id, msgs[2].id));
+    const lastMsg = msgs[msgs.length - 1];
+    await db.update(interactions).set({ interactionDate: T }).where(eq(interactions.id, lastMsg.id));
     if (digest) {
       await db.insert(relationshipDigests).values({
-        contactId: c.id, userId, summary: "old summary", messageCount: 3, sources: ["linkedin"], watermarkAt: T, watermarkInteractionId: msgs[2].id, ...digest,
+        contactId: c.id, userId, summary: "old summary", messageCount: 3, sources: ["linkedin"], watermarkAt: T, watermarkInteractionId: lastMsg.id, ...digest,
       });
     }
     return { id: c.id, msgs };
@@ -145,6 +152,112 @@ async function main() {
   const aWindow = (await loadMessageWindows(USER, [A.id], { deepRead: true })).get(A.id)!;
   await advanceWatermarkOnly(USER, run.id, aWindow, { deepRead: true });
   check("a later pass over an old contact leaves it owed", (await originPendingCount(USER)) === 2);
+
+  console.log("\nrunning it");
+  await reset();
+  const digestOf = async (id: string) => (await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, id) }))!;
+  const contactOf = async (id: string) => (await db.query.contacts.findFirst({ where: eq(contacts.id, id) }))!;
+  const runsOf = () => db.query.relationshipRuns.findMany({ where: eq(relationshipRuns.userId, USER) });
+  const calls: Array<{ op: string; requests: BatchRequest[]; payload: OriginBatchPayload }> = [];
+  const stub = (jobId: string | null) =>
+    (async (_user: string, op: string, requests: BatchRequest[], payload: Record<string, unknown>) => {
+      calls.push({ op, requests, payload: payload as unknown as OriginBatchPayload });
+      return jobId;
+    }) as typeof submitAiBatch;
+  const outcome = (customId: string, text: string | null) => ({ customId, text, error: text ? null : "failed", usage: { inputTokens: 0, outputTokens: 0 } as never });
+  const ANSWER = JSON.stringify({
+    summary: "IGNORED",
+    facts: [{ text: "IGNORED FACT", excerpt: "Great meeting you at HackNC!" }],
+    origin: { text: "Met at HackNC", date: "2022-09-17", context: "event", excerpt: "Great meeting you at HackNC!" },
+    relationship: { kind: "classmate", excerpt: "Great meeting you at HackNC!" },
+    events: [],
+  });
+
+  const P = await person(USER, "Maya P", {});
+  await db.insert(interactions).values({ userId: USER, contactId: P.id, interactionType: "linkedin_message", interactionDate: new Date(T.getTime() + 86_400_000), source: "linkedin_messages", externalId: "li-msg:p-after", rawNotes: "can you send the deck by Friday for the board review", topics: [], direction: "in" as const });
+  const before = await digestOf(P.id);
+
+  const off = await runOriginPass(USER, { deepRead: false, submit: stub(randomUUID()) });
+  check("deep read off: nothing is claimed or sent", JSON.stringify(off) === JSON.stringify({ claimed: 0, trivial: 0, submitted: 0, remaining: 0 }) && calls.length === 0 && (await digestOf(P.id)).batchJobId === null, JSON.stringify(off));
+
+  const none = await runOriginPass(USER, { deepRead: true, submit: stub(null) });
+  const afterNone = await digestOf(P.id);
+  check("no batch available: nothing submitted, the claim is handed back, no run row", none.submitted === 0 && calls.length === 1 && afterNone.batchJobId === null && afterNone.batchPendingUntil === null && !afterNone.sources.includes(ORIGIN_CHECKED) && (await runsOf()).length === 0, JSON.stringify(none));
+  check("…and the contact is still owed", none.remaining === 1);
+  calls.length = 0;
+
+  const JOB = randomUUID();
+  const ran = await runOriginPass(USER, { deepRead: true, submit: stub(JOB) });
+  check("one batch under its own operation", calls.length === 1 && calls[0].op === "relationship.origin" && calls[0].requests.length === 1 && calls[0].requests[0].user.includes("HackNC"));
+  check("the same prompt the eval measures (deep read keys asked for)", calls[0].requests[0].system.includes("origin") && calls[0].requests[0].maxOutputTokens === DIGEST_MAX_OUTPUT_TOKENS);
+  check("the pass reports it", JSON.stringify(ran) === JSON.stringify({ claimed: 1, trivial: 0, submitted: 1, remaining: 0 }), JSON.stringify(ran));
+  check("the contact is in flight under the job", (await digestOf(P.id)).batchJobId === JOB);
+  const runs = await runsOf();
+  check("a finished run row backs the origins", runs.length === 1 && runs[0].status === "done" && runs[0].id === calls[0].payload.runId && runs[0].finishedAt !== null);
+
+  const payloadP = calls[0].payload;
+  await applyOriginBatch({ id: JOB, userId: USER, payload: payloadP as never }, [outcome(payloadP.items[0].customId, ANSWER)]);
+  const after = await digestOf(P.id);
+  check("origin and kind are written", after.origin?.text === "Met at HackNC" && after.origin.precision === "day" && after.relationship?.kind === "classmate", JSON.stringify(after.origin));
+  check("the contact is marked checked and no longer in flight", after.sources.includes(ORIGIN_CHECKED) && after.batchJobId === null && after.batchPendingUntil === null);
+  check("the watermark, count, attempts, updated_at and summary are untouched",
+    after.watermarkAt?.getTime() === T.getTime() && after.watermarkInteractionId === before.watermarkInteractionId && after.messageCount === before.messageCount &&
+    after.attempts === 0 && after.updatedAt.getTime() === before.updatedAt.getTime() && after.summary === "old summary" && after.runId === before.runId);
+  const pContact = await contactOf(P.id);
+  check("no fact is written", !(pContact.keyFacts ?? []).includes("IGNORED FACT"));
+  check("how you met replaces the import label", pContact.howMet === "Met at HackNC", String(pContact.howMet));
+  check("the newer message still waits for the normal pass", (await pendingRelationshipContactCount(USER)) === 1);
+  check("no reminders or action items", (await db.query.reminders.findMany({ where: eq(reminders.userId, USER) })).length === 0 && (await db.query.actionItems.findMany({ where: eq(actionItems.userId, USER) })).length === 0);
+
+  const Q = await person(USER, "Typed Q", {});
+  await db.update(contacts).set({ howMet: "At my sister's wedding", fieldSources: { met: { s: "user", t: new Date().toISOString() } } as never }).where(eq(contacts.id, Q.id));
+  const R = await person(USER, "Removed R", { relationship: { kind: "friend", excerpt: "x", interactionId: P.msgs[0].id, removed: true } });
+  const N = await person(USER, "Garbled N", {});
+  const Z = await person(USER, "Failed Z", {});
+  calls.length = 0;
+  const JOB2 = randomUUID();
+  const ran2 = await runOriginPass(USER, { deepRead: true, submit: stub(JOB2) });
+  check("four more go out in one batch", ran2.submitted === 4 && calls[0].requests.length === 4, JSON.stringify(ran2));
+  const payload2 = calls[0].payload;
+  const customOf = (id: string) => payload2.items.find((i) => i.contactId === id)!.customId;
+  await applyOriginBatch({ id: JOB2, userId: USER, payload: payload2 as never }, [outcome(customOf(Q.id), ANSWER), outcome(customOf(R.id), ANSWER), outcome(customOf(N.id), "not json"), outcome(customOf(Z.id), null)]);
+  const q = await digestOf(Q.id);
+  check("what the person typed stays; the digest keeps the origin with nothing replaced", (await contactOf(Q.id)).howMet === "At my sister's wedding" && q.origin?.text === "Met at HackNC" && q.origin.replaced === null);
+  const r = await digestOf(R.id);
+  check("a removed kind stays removed", r.relationship?.removed === true && r.relationship.kind === "friend");
+  for (const [label, id] of [["an answer that does not parse", N.id], ["a request that failed", Z.id]] as const) {
+    const d = await digestOf(id);
+    check(`${label} still marks the contact checked, once`, d.sources.includes(ORIGIN_CHECKED) && d.origin === null && d.attempts === 0 && d.batchJobId === null);
+  }
+  check("nothing is owed now", (await originPendingCount(USER)) === 0);
+
+  const S = await person(USER, "Stale S", {});
+  calls.length = 0;
+  const JOB3 = randomUUID();
+  await runOriginPass(USER, { deepRead: true, submit: stub(JOB3) });
+  await releaseOriginBatch({ id: JOB3, userId: USER });
+  const s1 = await digestOf(S.id);
+  check("a batch that never answers hands its contacts back unmarked", s1.batchJobId === null && !s1.sources.includes(ORIGIN_CHECKED));
+  check("…so they are claimed again", (await claimOriginContacts(USER, 10, randomUUID())).join() === S.id);
+  await db.update(relationshipDigests).set({ batchJobId: null, batchPendingUntil: null, sources: ["linkedin", ORIGIN_CHECKED] }).where(eq(relationshipDigests.contactId, S.id));
+
+  const V = await person(USER, "Trivial V", {}, ["Thanks for connecting!"]);
+  calls.length = 0;
+  const ran3 = await runOriginPass(USER, { deepRead: true, submit: stub(randomUUID()) });
+  const v = await digestOf(V.id);
+  check("a thread with nothing in it costs no model call and is marked", ran3.trivial === 1 && ran3.submitted === 0 && calls.length === 0 && v.sources.includes(ORIGIN_CHECKED) && v.batchJobId === null, JSON.stringify(ran3));
+
+  const L1 = await person(USER, "Limit One", {});
+  const L2 = await person(USER, "Limit Two", {});
+  calls.length = 0;
+  const capped = await runOriginPass(USER, { deepRead: true, limit: 1, submit: stub(randomUUID()) });
+  check("limit caps the contacts in all", capped.claimed === 1 && capped.submitted === 1 && capped.remaining === 1 && calls[0].requests.length === 1, JSON.stringify(capped));
+  void L1; void L2;
+
+  await undoRelationshipRun(USER, payloadP.runId);
+  const undone = await digestOf(P.id);
+  check("undoing the origin run puts how you met back and takes the origin off", (await contactOf(P.id)).howMet === "LinkedIn connection" && undone.origin === null);
+  check("…the contact is not read again", undone.sources.includes(ORIGIN_CHECKED));
 
   await reset();
   console.log("\nsmoke-relationship-origin-pass: all checks passed");

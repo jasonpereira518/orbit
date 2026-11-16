@@ -170,7 +170,7 @@ export async function processDigestAnswer(
  * Where the user's own history (PR 1, `career_profile`) meets this contact's: their
  * `contact_experiences`, or, when they have none, the company and school on the contact.
  */
-async function overlapContext(userId: string, contactId: string, you: YouCurrent, now: Date): Promise<string[]> {
+export async function overlapContext(userId: string, contactId: string, you: YouCurrent, now: Date): Promise<string[]> {
   const db = await getDb();
   const [contact, rows] = await Promise.all([
     db.query.contacts.findFirst({ where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)), columns: { company: true, school: true } }),

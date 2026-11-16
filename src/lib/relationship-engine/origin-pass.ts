@@ -11,9 +11,19 @@
  * `batch_pending_until`), so a claimed contact is also out of the normal pending set until its
  * batch lands. It never writes the watermark, the summary, facts, reminders or attempts.
  */
-import { sql, type SQL } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { BATCH_STALE_HOURS } from "@/lib/ai-batch";
+import { contacts, relationshipDigests, relationshipRuns, userSettings } from "@/db/schema";
+import { BATCH_STALE_HOURS, MAX_BATCH_REQUESTS, submitAiBatch, type AiBatchJobRow, type BatchOutcome, type BatchRequest } from "@/lib/ai-batch";
+import { loadYouCurrent } from "@/lib/career-profile-server";
+import { deepReadOn } from "@/lib/deep-read";
+import { reportError } from "@/lib/report-error";
+import { applyOriginOnly } from "@/lib/relationship-engine/apply";
+import { DIGEST_MAX_OUTPUT_TOKENS, buildDigestPrompt, isTrivialWindow, parseDigestAnswer } from "@/lib/relationship-engine/extract";
+import { overlapContext } from "@/lib/relationship-engine/runner";
+import type { ValidatedDigest } from "@/lib/relationship-engine/types";
+import { validateDigest } from "@/lib/relationship-engine/validate";
 import { formatMessageLine, signalSpeaker, speakerFor } from "@/lib/relationship-engine/gather";
 import { MESSAGE_INTERACTION_SQL, ORIGIN_CHECKED, SIGNAL_ROW_SQL } from "@/lib/relationship-engine/pending";
 import type { MessageWindow, WindowMessage } from "@/lib/relationship-engine/types";
@@ -178,4 +188,149 @@ export async function usersWithOriginWork(limit: number, onlyUsers: string[] | n
      LIMIT ${limit}
   `);
   return rowsOf<{ user_id: string }>(result).map((r) => r.user_id);
+}
+
+export type OriginBatchPayload = { runId: string; items: Array<{ customId: string; contactId: string }> };
+export type OriginPassResult = { claimed: number; trivial: number; submitted: number; remaining: number };
+
+/** Hand back everything still held under `holder` (a claim id or a job id), unmarked. */
+async function releaseHeld(userId: string, holder: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(relationshipDigests)
+    .set({ batchJobId: null, batchPendingUntil: null })
+    .where(and(eq(relationshipDigests.userId, userId), eq(relationshipDigests.batchJobId, holder)));
+}
+
+/**
+ * Claim owed contacts, mark the ones with nothing to read, and send the rest as half-price
+ * batches. Batch only: when no batch can be submitted (no key, credits low, OpenRouter) the claim
+ * is handed back and the next hourly kick tries again. A catch-up is not worth full price.
+ * `limit` caps the contacts in all (the pre-launch sample).
+ */
+export async function runOriginPass(
+  userId: string,
+  opts: { budgetMs?: number; limit?: number; now?: Date; submit?: typeof submitAiBatch; deepRead?: boolean } = {}
+): Promise<OriginPassResult> {
+  const result: OriginPassResult = { claimed: 0, trivial: 0, submitted: 0, remaining: 0 };
+  if (!(opts.deepRead ?? (await deepReadOn(userId)))) return result;
+  const db = await getDb();
+  const settings = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId), columns: { relationshipEngineEnabled: true } });
+  if ((settings?.relationshipEngineEnabled ?? 1) !== 1) return result;
+
+  const now = opts.now ?? new Date();
+  const submit = opts.submit ?? submitAiBatch;
+  const budgetMs = opts.budgetMs ?? 60_000;
+  const start = Date.now();
+  let left = opts.limit ?? Number.POSITIVE_INFINITY;
+  const you = await loadYouCurrent(userId);
+
+  while (left > 0 && Date.now() - start < budgetMs) {
+    const size = Math.min(MAX_BATCH_REQUESTS, left);
+    const claimId = randomUUID();
+    const ids = await claimOriginContacts(userId, size, claimId, now);
+    if (!ids.length) break;
+    result.claimed += ids.length;
+    left -= ids.length;
+
+    const [windows, people] = await Promise.all([
+      loadOriginWindows(userId, ids),
+      db.select({ id: contacts.id, fullName: contacts.fullName }).from(contacts).where(and(eq(contacts.userId, userId), inArray(contacts.id, ids))),
+    ]);
+    const nameOf = new Map(people.map((p) => [p.id, p.fullName]));
+    const runId = randomUUID();
+    const requests: BatchRequest[] = [];
+    const items: OriginBatchPayload["items"] = [];
+    for (const contactId of ids) {
+      const window = windows.get(contactId);
+      if (!window || isTrivialWindow(window, { deepRead: true })) {
+        // Nothing to understand: checked, with no model call.
+        await applyOriginOnly({ userId, runId, contactId, validated: null, now });
+        result.trivial += 1;
+        continue;
+      }
+      // ponytail: reuses the full digest prompt and throws most of the answer away. A three-key
+      // prompt would cut output tokens; write it (and an eval variant) if the measured cost
+      // (scripts/measure-origin-pass.ts) says it matters.
+      const prompt = buildDigestPrompt({
+        contactName: nameOf.get(contactId) ?? "Contact",
+        window,
+        previous: null,
+        deepRead: true,
+        context: await overlapContext(userId, contactId, you, now),
+      });
+      const customId = `o${items.length}`;
+      requests.push({ customId, ...prompt, temperature: 0.1, maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS });
+      items.push({ customId, contactId });
+    }
+
+    if (requests.length) {
+      const payload: OriginBatchPayload = { runId, items };
+      const jobId = await submit(userId, "relationship.origin", requests, payload).catch((err) => {
+        reportError(err, { where: "job.relationships.origin.submit", userId, level: "warning" });
+        return null;
+      });
+      if (!jobId) {
+        await releaseHeld(userId, claimId);
+        break;
+      }
+      // A real run row, so origin.runId points at something `undoRelationshipRun` can take back.
+      await db.insert(relationshipRuns).values({ id: runId, userId, status: "done", finishedAt: now });
+      await db
+        .update(relationshipDigests)
+        .set({ batchJobId: jobId })
+        .where(and(eq(relationshipDigests.userId, userId), eq(relationshipDigests.batchJobId, claimId)));
+      result.submitted += requests.length;
+    }
+    if (ids.length < size) break;
+  }
+  result.remaining = await originPendingCount(userId, now);
+  return result;
+}
+
+/**
+ * A landed origin batch. Only contacts still held by this job are touched; each is read once:
+ * an answer that fails to parse or validate (or a request the provider failed) still marks the
+ * contact checked. Everything in the answer except origin, relationship and events is discarded.
+ */
+export async function applyOriginBatch(job: Pick<AiBatchJobRow, "id" | "userId" | "payload">, outcomes: BatchOutcome[]): Promise<void> {
+  const db = await getDb();
+  const payload = job.payload as unknown as OriginBatchPayload;
+  const items = payload.items ?? [];
+  if (!items.length) return;
+  const held = new Set(
+    (
+      await db
+        .select({ contactId: relationshipDigests.contactId })
+        .from(relationshipDigests)
+        .where(and(eq(relationshipDigests.userId, job.userId), eq(relationshipDigests.batchJobId, job.id)))
+    ).map((r) => r.contactId)
+  );
+  const contactOf = new Map(items.map((i) => [i.customId, i.contactId]));
+  const windows = await loadOriginWindows(job.userId, [...held]);
+  const now = new Date();
+  for (const outcome of outcomes) {
+    const contactId = contactOf.get(outcome.customId);
+    if (!contactId || !held.has(contactId)) continue;
+    const window = windows.get(contactId);
+    let validated: ValidatedDigest | null = null;
+    try {
+      if (window && outcome.text) validated = validateDigest(parseDigestAnswer(outcome.text), window, new Set(), { deepRead: true });
+    } catch {
+      validated = null;
+    }
+    try {
+      await applyOriginOnly({ userId: job.userId, runId: payload.runId, contactId, validated, now });
+      held.delete(contactId);
+    } catch (err) {
+      reportError(err, { where: "job.ai-batch.apply.origin", userId: job.userId, level: "warning", extra: { contactId } });
+    }
+  }
+  // Missing from the outcomes, or the write failed: handed back unmarked, so it is tried again.
+  await releaseHeld(job.userId, job.id);
+}
+
+/** The batch will never answer: its contacts are owed again. */
+export async function releaseOriginBatch(job: Pick<AiBatchJobRow, "id" | "userId">): Promise<void> {
+  await releaseHeld(job.userId, job.id);
 }
