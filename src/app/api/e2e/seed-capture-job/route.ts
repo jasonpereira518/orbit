@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureJobs } from "@/db/schema";
+import { sameOriginGuard } from "@/lib/api/same-origin";
 import { requireUserId } from "@/lib/auth";
 import type { CaptureJobResult } from "@/lib/capture/types";
 
@@ -16,8 +17,11 @@ export const maxDuration = 10;
 export async function POST(request: Request) {
   // eslint-disable-next-line no-restricted-syntax -- test-only switch, deliberately outside env.ts
   if (process.env.ORBIT_E2E_SEED !== "1" || process.env.VERCEL_ENV) return new NextResponse(null, { status: 404 });
+  const refused = sameOriginGuard(request);
+  if (refused) return refused;
   const { ageMs, people = 0 } = (await request.json()) as { ageMs: number; people?: number };
   if (typeof ageMs !== "number" || !Number.isFinite(ageMs)) return NextResponse.json({ error: "ageMs must be a number" }, { status: 400 });
+  if (!Number.isInteger(people) || people < 0 || people > 50) return NextResponse.json({ error: "people must be 0-50" }, { status: 400 });
   // Deletes ALL of the caller's capture jobs; only runs behind ORBIT_E2E_SEED=1.
   const userId = await requireUserId();
   const db = await getDb();
