@@ -167,17 +167,16 @@ baseline before and after the prompt change.
 
 ### PR 3: Closeness from LinkedIn evidence (no AI, no DDL expected)
 
-Endorsement_Received_Info.csv and Endorsement_Given_Info.csv are first read in this PR, not
-PR 1. Every saved `interactions` row that is not AI-derived counts as a touch today
-(`interaction-provenance.ts`), so an endorsement saved the way invitations are would raise
-closeness by accident. How endorsements are stored is decided here, together with their
-weight, and they must not count as touches.
+Endorsements are not read (decided Nov 16): Jason's export has no endorsement files, so their
+columns cannot be checked. Recommendations carry that weight instead. Built as `depth`
+(both sides wrote 0.35, years in touch 0.35, a recommendation 0.3) at weight 0.23, and real
+overlap in the prior at 0.2 / 0.1; see `src/lib/closeness-depth.ts`.
 
 New counted inputs to the cohort builder:
 
 - both sides wrote (direction is already aggregated at `closeness-cohort.ts:97-116`)
 - number of distinct years with an exchange
-- a recommendation written either way (strong), an endorsement either way (weak)
+- a recommendation written either way
 - real overlap with your own employers and schools, replacing the orbit-relative
   company/school concentration guess where your history is known
 
