@@ -113,9 +113,12 @@ export const relationshipDigestSchema = z.object({
   events: eachValid(event).transform((v) => v.slice(0, 10)),
 });
 
-export type RelationshipDigestAnswer = z.infer<typeof relationshipDigestSchema>;
+export type ParsedDigestAnswer = z.infer<typeof relationshipDigestSchema>;
+/** The deep-read keys are optional: a parsed answer always has them, a hand-built one may not. */
+export type RelationshipDigestAnswer = Omit<ParsedDigestAnswer, "origin" | "relationship" | "events"> &
+  Partial<Pick<ParsedDigestAnswer, "origin" | "relationship" | "events">>;
 
-export function parseDigestAnswer(raw: string): RelationshipDigestAnswer {
+export function parseDigestAnswer(raw: string): ParsedDigestAnswer {
   return relationshipDigestSchema.parse(parseAiJson(raw));
 }
 
