@@ -26,6 +26,7 @@ import {
   publicEmailDomain,
 } from "../src/lib/closeness-evidence";
 import { selectTriageCandidates } from "../src/lib/triage-candidates";
+import { depthComponent, overlapAffinity } from "../src/lib/closeness-depth";
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) {
@@ -1187,6 +1188,20 @@ console.log("\n19. Triage pays off: a rating outranks everything it replaces");
   if (!isCoveredByConnectedSource({ mailConnected: true, calendarConnected: undefined }, withEmail)) {
     throw new Error("an older snapshot without the key must keep its mail coverage");
   }
+}
+
+console.log("\n§ deep read: depth and overlap");
+{
+  const none = { inbound: 0, outbound: 0, exchangeYears: 0, recommendations: 0 };
+  check("depth: nothing is 0", depthComponent(none) === 0);
+  check("depth: one-way messages are not reciprocal", depthComponent({ ...none, inbound: 9, exchangeYears: 1 }) === 0);
+  check("depth: both sides wrote", Math.abs(depthComponent({ ...none, inbound: 1, outbound: 1, exchangeYears: 1 }) - 0.35) < 1e-9);
+  check("depth: four years of exchange saturates the span", Math.abs(depthComponent({ inbound: 1, outbound: 1, exchangeYears: 4, recommendations: 0 }) - 0.7) < 1e-9);
+  check("depth: ten years is no more than four", depthComponent({ inbound: 1, outbound: 1, exchangeYears: 10, recommendations: 0 }) === depthComponent({ inbound: 1, outbound: 1, exchangeYears: 4, recommendations: 0 }));
+  check("depth: everything is 1", Math.abs(depthComponent({ inbound: 3, outbound: 3, exchangeYears: 6, recommendations: 1 }) - 1) < 1e-9);
+  check("overlap: together beats same place", overlapAffinity([{ kind: "work", organization: "Acme", together: false, fromYear: null, toYear: null }, { kind: "work", organization: "Beta", together: true, fromYear: 2021, toYear: 2022 }]).work === 1);
+  check("overlap: same school, no shared years, is half", overlapAffinity([{ kind: "school", organization: "State", together: false, fromYear: null, toYear: null }]).school === 0.5);
+  check("overlap: none is zero", overlapAffinity([]).work === 0 && overlapAffinity([]).school === 0);
 }
 
 console.log("\nAll closeness smoke checks passed.\n");
