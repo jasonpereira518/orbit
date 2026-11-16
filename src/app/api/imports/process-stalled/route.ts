@@ -44,6 +44,8 @@ import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 import { usersWithPendingRelationshipWork } from "@/lib/relationship-engine/pending";
+import { deepReadLaunched } from "@/lib/deep-read";
+import { runDeepReadCatchUp } from "@/lib/deep-read-catch-up";
 
 export const maxDuration = 300;
 
@@ -179,6 +181,12 @@ export async function GET(request: Request) {
     timelineBackfillsKicked: 0,
     /** Users handed to the relationship engine runner (the cron backstop). */
     relationshipKicks: 0,
+    /** LinkedIn deep read catch-up (`runDeepReadCatchUp`): users whose kept export was checked
+     *  for their history, export notes staged, cohorts marked for a redraw, origin-pass kicks. */
+    deepHistoryCaughtUp: 0,
+    deepSignalsRestaged: 0,
+    deepCohortsMarked: 0,
+    deepOriginKicks: 0,
     /** Deletion runs picked up, finished, still failing, and given up after 5 attempts. */
     purgesFound: 0,
     purgesFinished: 0,
@@ -353,6 +361,16 @@ export async function GET(request: Request) {
       status = "partial";
     }
 
+    if (stage("deep-read-catch-up")) try {
+      // LinkedIn deep read: what people who imported before it are owed (their history, the
+      // export's notes, closeness marked for the redraw just below, origin-pass kicks).
+      // Admins only until the surface is released.
+      Object.assign(stats, await runDeepReadCatchUp());
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.deep-read-catch-up" });
+    }
+
     if (stage("recalibrate")) try {
       // Redraw closeness for users whose ranking has been drifting.
       //
@@ -453,7 +471,8 @@ export async function GET(request: Request) {
     if (stage("relationship-kicks")) try {
       // Backstop only — import finalize and the batch applier kick the runner directly. This
       // catches lost kicks, expired leases, and runs parked in waiting_key whose key came back.
-      for (const pendingUser of await usersWithPendingRelationshipWork(TIMELINE_BACKFILL_USERS)) {
+      const pendingUsers = await usersWithPendingRelationshipWork(TIMELINE_BACKFILL_USERS, new Date(), { deepRead: await deepReadLaunched() });
+      for (const pendingUser of pendingUsers) {
         await kickRelationshipRun(pendingUser);
         stats.relationshipKicks += 1;
       }

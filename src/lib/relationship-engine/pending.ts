@@ -125,10 +125,16 @@ export async function claimPendingContacts(
 }
 
 /** Users with pending work and the engine switched on — the cron backstop's input. */
-export async function usersWithPendingRelationshipWork(limit: number, now: Date = new Date()): Promise<string[]> {
+export async function usersWithPendingRelationshipWork(
+  limit: number,
+  now: Date = new Date(),
+  /** After launch: a contact with only an invitation note or a recommendation is pending too. */
+  opts: { deepRead?: boolean } = {}
+): Promise<string[]> {
   const db = await getDb();
+  const rows = messageRowSql({ deepRead: opts.deepRead ?? false, signals: "trigger" });
   const result = await db.execute(sql`
-    SELECT DISTINCT c.user_id ${pendingFrom(now)}
+    SELECT DISTINCT c.user_id ${pendingFrom(now, rows)}
       AND EXISTS (
         SELECT 1 FROM user_settings us
          WHERE us.user_id = c.user_id AND us.relationship_engine_enabled = 1

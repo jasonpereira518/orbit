@@ -81,6 +81,10 @@ async function main() {
   await clearCareerProfile(USER);
   const cleared = (await loadYouCurrent(USER)).career;
   check("Remove imported details clears the history", cleared?.positions === undefined && cleared?.education === undefined, JSON.stringify(cleared));
+  await saveCareerPatch(USER, { career: { positions: histPatch!.career.positions, historyCheckedAt: NOW.toISOString() }, senderBio: null, schools: null, message: "" });
+  await clearCareerProfile(USER);
+  const stamped = (await loadYouCurrent(USER)).career;
+  check("…and keeps the catch-up's stamp, so the history is not written back", stamped?.positions === undefined && stamped?.historyCheckedAt === NOW.toISOString(), JSON.stringify(stamped));
 
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   console.log(failures ? `\n${failures} check(s) failed` : "\nsmoke-linkedin-you-db: all checks passed");

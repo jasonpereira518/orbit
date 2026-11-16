@@ -2220,6 +2220,8 @@ export type CareerProfile = {
   /** Every school in Education.csv with degree and years. Deep read only. */
   education?: CareerEducation[];
   importedAt?: string;
+  /** The deep read's launch catch-up looked at this person's kept export for their history (deep-read-catch-up.ts). Kept by "Remove imported details", so the catch-up never writes it back. */
+  historyCheckedAt?: string;
 };
 
 /** A LinkedIn date cell: "May 2026" or "2020". `month` is 1–12. */
