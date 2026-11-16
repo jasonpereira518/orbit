@@ -111,7 +111,10 @@
     "dateAccuracy": { "maxDrop": 0 },
     "inventedItems": { "maxRise": 0 },
     "silentOnTrivial": { "maxDrop": 0 },
-    "planAccuracy": { "maxDrop": 0.05 }
+    "planAccuracy": { "maxDrop": 0.05 },
+    "originAccuracy": { "maxDrop": 0.1 },
+    "kindAccuracy": { "maxDrop": 0.1 },
+    "eventAccuracy": { "maxDrop": 0.1 }
   },
   "radar-editor": {
     "replyUsable": { "maxDrop": 0 },

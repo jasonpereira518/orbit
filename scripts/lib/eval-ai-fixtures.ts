@@ -339,6 +339,8 @@ export type RelationshipEvalFixture = {
      * so the window speaker is "Chat" and the source a chat app, not a named person.
      */
     chat?: boolean;
+    /** LinkedIn deep read case: the deep prompt and validator run, and origin/kind/events are scored. */
+    deepRead?: boolean;
     /** Phrases no fact, `whatTheyDo` or `workingOn` may mention (someone else's detail). */
     forbiddenFacts?: string[];
     messages: Array<{ at: string; from: "me" | "them"; text: string }>;
@@ -351,6 +353,12 @@ export type RelationshipEvalFixture = {
       openThreads: number;
       /** Must produce nothing at all (no model call). */
       trivial?: boolean;
+      /** Deep read: the origin's text must mention `phrase` (and match `precision` when given); null = none. Absent = not scored. */
+      origin?: { phrase: string; precision?: "day" | "month" | "year" | null } | null;
+      /** Deep read: the relationship kind, or null for none. Absent = not scored. */
+      kind?: string | null;
+      /** Deep read: how many events. Absent = not scored. */
+      events?: number;
     };
   }>;
 };
