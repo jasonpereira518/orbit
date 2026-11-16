@@ -54,7 +54,11 @@ export const FIELD_KEYS = [
 export type FieldKey = (typeof FIELD_KEYS)[number];
 
 export type FieldStamp = { s: FieldSource; at: string };
-export type FieldSources = Partial<Record<FieldKey, FieldStamp>>;
+/**
+ * `met` is not a `FieldKey`: no merge tier reads it. It records that the user set how you met
+ * (any of how_met, date_met, met_context), which the deep read never writes over.
+ */
+export type FieldSources = Partial<Record<FieldKey, FieldStamp>> & { met?: FieldStamp };
 
 /** Fields an automated source may replace. Every other field is fill-only. */
 const REPLACEABLE = new Set<FieldKey>(["company", "title", "location"]);
