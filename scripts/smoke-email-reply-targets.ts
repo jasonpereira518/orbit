@@ -146,6 +146,8 @@ async function main() {
       return new Response("nope", { status: 404 });
     }) as typeof fetch;
     try {
+      // Released by default; an operator hiding the surface is what "dark" means now.
+      setReplyInboxOverride(false);
       const dark = await listReplyTargets(USER, maya!.id);
       check("dark: no mailbox call and no inbox target", !dark.some((t) => t.source === "inbox") && seen.length === 0);
       check("dark: an inbox key does not resolve", (await resolveReplyTarget(USER, "inbox:gmail:g-1")) === null && seen.length === 0);
@@ -164,6 +166,8 @@ async function main() {
       check("an Outlook key resolves by headers alone", or?.rfcMessageId === "<o1@outlook.com>" && or.thread === null && or.subject === "Dinner", JSON.stringify(or));
       check("an unknown provider does not resolve", (await resolveReplyTarget(USER, "inbox:yahoo:1")) === null);
       check("a missing message does not resolve", (await resolveReplyTarget(USER, "inbox:gmail:nope")) === null);
+      setReplyInboxOverride(null);
+      check("by default the surface is live: the mailbox hit is offered", (await listReplyTargets(USER, maya!.id)).some((t) => t.source === "inbox"));
 
       await db.update(schema.gmailConnections).set({ scopes: GOOGLE_SCOPES.gmailSend }).where(eq(schema.gmailConnections.userId, USER));
       await db.update(schema.outlookConnections).set({ scopes: MICROSOFT_SCOPES.mailSend }).where(eq(schema.outlookConnections.userId, USER));

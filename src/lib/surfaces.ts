@@ -294,8 +294,9 @@ const FEATURES: Surface[] = [
     kind: "feature",
     label: "Reply to inbox threads",
     description: "Compose can reply to the latest email with a contact found in your mailbox (Gmail read / Mail.Read).",
-    // Until the privacy page discloses this use of the read scopes (direct-email P5).
-    comingSoon: true,
+    // Released: /privacy now discloses it (the gmail.readonly row, "Replying in a thread"), and
+    // Google's verification review has to be able to test it. It reads only Message-ID, subject,
+    // date and thread, with read scopes the user already granted. Operators can still hide it.
   },
   {
     key: CHAT_IMPORTS_SURFACE_KEY,
