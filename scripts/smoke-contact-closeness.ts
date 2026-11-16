@@ -15,7 +15,8 @@ import "./smoke/_env";
 
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, interactions, userSettings } from "../src/db/schema";
+import { closenessCohorts, contacts, interactions, userSettings } from "../src/db/schema";
+import { rescoreContact } from "../src/lib/closeness-materialize";
 import {
   getClosenessCohort,
   getClosenessCohortSlim,
@@ -135,6 +136,59 @@ run(async () => {
     fallback.byId.size > 1 && fallback.byId.has(late),
     `byId size ${fallback.byId.size}`
   );
+
+  console.log("\ndeep read: closeness from LinkedIn evidence");
+  await reset();
+  const dbx = await getDb();
+  await dbx.update(userSettings).set({
+    careerProfile: { positions: [{ title: "Engineer", company: "Acme", start: { year: 2021 }, end: { year: 2023 } }] },
+  }).where(eq(userSettings.userId, USER));
+  const friend = await addContact("Old Friend", null);
+  let k = 0;
+  for (const year of [2019, 2020, 2021, 2022]) {
+    for (const direction of ["in", "out"] as const) {
+      await dbx.insert(interactions).values({
+        userId: USER, contactId: friend, interactionType: "linkedin_message", direction,
+        interactionDate: new Date(Date.UTC(year, 5, 1 + k)), externalId: `deep-close-${k++}`, rawNotes: "hello",
+      });
+    }
+  }
+  await dbx.insert(interactions).values({
+    userId: USER, contactId: friend, interactionType: "note", source: "linkedin_export",
+    interactionDate: new Date(Date.UTC(2022, 8, 1)), externalId: `li-export:recommendation_received:k1:${friend}`, rawNotes: "Recommended you on LinkedIn:\nGreat engineer.",
+  });
+  const oneOff = await addContact("One Off", null);
+  await dbx.insert(interactions).values({
+    userId: USER, contactId: oneOff, interactionType: "linkedin_message", direction: "in",
+    interactionDate: new Date(Date.now() - 20 * 86_400_000), externalId: `deep-close-${k++}`, rawNotes: "hi there",
+  });
+  // What the messages importer stamps; inserting interaction rows directly does not.
+  await dbx.update(contacts).set({ firstInteractionAt: new Date(Date.UTC(2019, 5, 1)), lastInteractionAt: new Date(Date.UTC(2022, 8, 1)) }).where(eq(contacts.id, friend));
+  await dbx.update(contacts).set({ firstInteractionAt: new Date(Date.now() - 20 * 86_400_000), lastInteractionAt: new Date(Date.now() - 20 * 86_400_000) }).where(eq(contacts.id, oneOff));
+  const acme = await addContact("Acme Colleague", "Acme");
+  await addContact("Stranger", "Globex");
+
+  const stored = async (id: string) => {
+    const row = await dbx.query.contacts.findFirst({ where: eq(contacts.id, id), columns: { closenessRaw: true } });
+    return row ? { raw: row.closenessRaw ?? Number.NaN } : null;
+  };
+  const off1 = await recalibrateCloseness(USER, { deepRead: false });
+  const offFriend = off1.byId.get(friend)!.raw;
+  const deep = await recalibrateCloseness(USER, { deepRead: true });
+  check("deep read: the old two-way friend outranks the recent one-off", deep.byId.get(friend)!.raw > deep.byId.get(oneOff)!.raw,
+    `${deep.byId.get(friend)!.raw} vs ${deep.byId.get(oneOff)!.raw}`);
+  check("deep read: a real shared employer lifts a never-messaged colleague's prior", deep.byId.get(acme)!.prior > off1.byId.get(acme)!.prior,
+    `${deep.byId.get(acme)!.prior} vs ${off1.byId.get(acme)!.prior}`);
+  const snap = await dbx.query.closenessCohorts.findFirst({ where: eq(closenessCohorts.userId, USER) });
+  check("the stored snapshot says deep read was on", snap?.snapshot.deepRead === true);
+  const before = (await stored(friend))!.raw;
+  await rescoreContact(USER, friend);
+  check("a single rescore agrees with the cohort", Math.abs((await stored(friend))!.raw - before) < 1e-9, `${(await stored(friend))?.raw} vs ${before}`);
+  const off2 = await recalibrateCloseness(USER, { deepRead: false });
+  check("deep read off gives today's scores again", Math.abs(off2.byId.get(friend)!.raw - offFriend) < 1e-9);
+  await rescoreContact(USER, friend);
+  // closeness_raw is a float4: compared with a full-precision number, it agrees to ~7 digits.
+  check("a single rescore after an off pass gives the off score", Math.abs((await stored(friend))!.raw - offFriend) < 1e-6, `${(await stored(friend))?.raw} vs ${offFriend}`);
 
   await reset();
 });

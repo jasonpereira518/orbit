@@ -89,6 +89,12 @@ export type ClosenessCohortSnapshot = {
    * recalibrated. Making it required would break every stored cohort at once.
    */
   calendarConnected?: boolean;
+  /**
+   * LinkedIn deep read was on when this distribution was built, so a single-contact rescore
+   * scores with depth and overlap too (`rescoreContact`). Optional for the same reason as
+   * `calendarConnected`; absent reads as off.
+   */
+  deepRead?: boolean;
 };
 
 /**
