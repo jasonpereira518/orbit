@@ -1,4 +1,5 @@
 import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
+import { captureBellTitle } from "@/lib/capture/job-staleness";
 import { unreadRepliesFor } from "@/lib/feedback-thread";
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
@@ -354,7 +355,7 @@ export async function loadNotificationPanel(
       kind: "capture_review",
       title: isFailed
         ? "Couldn’t read your notes"
-        : `${n} ${n === 1 ? "person" : "people"} ready to review`,
+        : captureBellTitle(n),
       body: isFailed ? job.error : "From your last capture — pick up where you left off.",
       url: "/capture",
       dueAt: null,

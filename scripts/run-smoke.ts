@@ -148,6 +148,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-last-touch": "pure",
   "smoke-capture-draft": "pure",
   "smoke-capture-job-staleness": "pure",
+  "smoke-capture-bell-title": "pure",
   "smoke-capture-file-date": "pure",
   "smoke-capture-fanout": "pure",
   "smoke-capture-fanout-hook": "pure",
