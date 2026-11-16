@@ -116,6 +116,7 @@
 @source "../lib/account-audit.ts";
 @source "../lib/action-items.ts";
 @source "../lib/admin-audit.ts";
+@source "../lib/admin-ids.ts";
 @source "../lib/admin.ts";
 @source "../lib/ai-access-copy.ts";
 @source "../lib/ai-access.ts";

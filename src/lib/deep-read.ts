@@ -7,7 +7,7 @@
  * closed, even for an admin. Admins are known by user id (env), which needs no request, so they
  * get deep read everywhere before launch; everyone else gets it once the surface is released.
  */
-import { isAdminUser } from "@/lib/admin";
+import { isAdminUser } from "@/lib/admin-ids";
 import { isSurfaceReleased } from "@/lib/surface-visibility";
 import { LINKEDIN_DEEP_READ_SURFACE_KEY } from "@/lib/surfaces";
 
