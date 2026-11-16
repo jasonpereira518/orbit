@@ -16,6 +16,7 @@ import { getDb, rowsOf } from "@/db";
 import {
   actionItems,
   contacts,
+  interactions,
   noteBatches,
   relationshipDigests,
   relationshipRuns,
@@ -27,6 +28,8 @@ import {
   type RelationshipTopic,
 } from "@/db/schema";
 import { actionItemHash } from "@/lib/action-items";
+import { stableHash } from "@/lib/linkedin-timeline-events";
+import { AI_DERIVED_SOURCE } from "@/lib/touch-kinds";
 import { HOW_MET_IMPORT_LABELS, type FieldSources } from "@/lib/contact-fields";
 import { emptyNoteBatchResult } from "@/lib/note-batches";
 import { messageRowSql } from "@/lib/relationship-engine/pending";
@@ -149,6 +152,72 @@ const noonOf = (day: string) => new Date(`${day}T12:00:00Z`);
 function endOfMonth(firstOfMonth: string): Date {
   const d = new Date(`${firstOfMonth}T00:00:00Z`);
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - 1);
+}
+
+/**
+ * Deep read: the events the reader quoted, as `ai_derived` timeline rows, and on a contact's
+ * first pass the old reader's rule-based first reach-out, under the very id the old reader wrote
+ * (`li-event:<contactId>:reach_out:<hash>`), so nobody it already covered gets a second one.
+ * The old reader's event ids hash its own wording, so a new event is also skipped when the
+ * contact already has an ai_derived row of that type on that day.
+ */
+async function writeDeepReadTimeline(
+  userId: string,
+  contactId: string,
+  events: NonNullable<ValidatedDigest["events"]>,
+  firstPass: boolean
+): Promise<void> {
+  const db = await getDb();
+  const rows: (typeof interactions.$inferInsert)[] = [];
+  if (events.length) {
+    const have = await db.query.interactions.findMany({
+      where: and(eq(interactions.userId, userId), eq(interactions.contactId, contactId), eq(interactions.source, AI_DERIVED_SOURCE)),
+      columns: { interactionType: true, interactionDate: true },
+    });
+    const seen = new Set(have.map((h) => `${h.interactionType}|${h.interactionDate.toISOString().slice(0, 10)}`));
+    for (const e of events) {
+      const key = `${e.type}|${e.day}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        userId,
+        contactId,
+        interactionType: e.type,
+        interactionDate: noonOf(e.day),
+        source: AI_DERIVED_SOURCE,
+        externalId: `li-event:${contactId}:${e.type}:${e.day}`,
+        rawNotes: e.excerpt.slice(0, 500),
+        aiSummary: e.summary,
+        topics: [],
+      });
+    }
+  }
+  if (firstPass) {
+    const [first] = rowsOf<{ raw_notes: string; interaction_date: Date | string }>(
+      await db.execute(sql`
+        SELECT raw_notes, interaction_date FROM interactions
+         WHERE user_id = ${userId} AND contact_id = ${contactId}::uuid
+           AND interaction_type = 'linkedin_message' AND btrim(coalesce(raw_notes, '')) <> ''
+         ORDER BY interaction_date ASC, id ASC
+         LIMIT 1
+      `)
+    );
+    const content = first?.raw_notes.trim();
+    if (content) {
+      rows.push({
+        userId,
+        contactId,
+        interactionType: "reach_out",
+        interactionDate: new Date(first.interaction_date),
+        source: AI_DERIVED_SOURCE,
+        externalId: `li-event:${contactId}:reach_out:${stableHash(content.slice(0, 80))}`,
+        rawNotes: content,
+        aiSummary: `Initial LinkedIn reach-out: ${content.slice(0, 140)}`,
+        topics: [],
+      });
+    }
+  }
+  if (rows.length) await db.insert(interactions).values(rows).onConflictDoNothing();
 }
 
 function mergeTopics(existing: RelationshipTopic[], labels: string[], at: Date): RelationshipTopic[] {
@@ -389,6 +458,7 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     const kind = validated.relationship ?? null;
     if (kind && !relationship?.removed) relationship = { kind: kind.kind, excerpt: kind.excerpt, interactionId: kind.interactionId };
   }
+  if (input.deepRead) await writeDeepReadTimeline(userId, contactId, validated.events ?? [], !previous?.watermarkAt);
 
   // 4. Digest + watermark, last.
   const topics = mergeTopics(previous?.topics ?? [], validated.topics, window.last.at);
@@ -437,9 +507,16 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
 }
 
 /** A trivial thread: nothing to learn, but the watermark must move or it stays pending forever. */
-export async function advanceWatermarkOnly(userId: string, runId: string, window: MessageWindow): Promise<void> {
+export async function advanceWatermarkOnly(
+  userId: string,
+  runId: string,
+  window: MessageWindow,
+  opts: { deepRead?: boolean; firstPass?: boolean } = {}
+): Promise<void> {
   const db = await getDb();
   const previous = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, window.contactId) });
+  // Deep read: a one-message thread still gets its first reach-out, with no model call.
+  if (opts.deepRead) await writeDeepReadTimeline(userId, window.contactId, [], opts.firstPass ?? !previous?.watermarkAt);
   const values = {
     contactId: window.contactId,
     userId,

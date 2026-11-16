@@ -15,7 +15,8 @@ import { getDb } from "../src/db";
 import {
   actionItems, contactCareerMoves, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
-import { applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { advanceWatermarkOnly, applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { stableHash } from "../src/lib/linkedin-timeline-events";
 import { undoNoteBatchForUser } from "../src/lib/note-batch-save";
 import { loadMessageWindows } from "../src/lib/relationship-engine/gather";
 import { planDigestWrites } from "../src/lib/relationship-engine/rules";
@@ -277,6 +278,42 @@ async function main() {
   check("Undo clears the run's origin", ((await dig(A.id))?.origin ?? null) === null);
   check("Undo never undoes the user's later edit", (await get(D.id)).howMet === "Met at the alumni mixer");
   check("Undo leaves the relationship kind", (await dig(B.id))?.relationship?.kind === "friend");
+
+  console.log("\ndeep read: events and the first reach-out");
+  const [run4] = await db.insert(relationshipRuns).values({ userId: USER, status: "running" }).returning();
+  const timelineOf = async (id: string) =>
+    db.query.interactions.findMany({ where: and(eq(interactions.contactId, id), eq(interactions.source, "ai_derived")) });
+  const E1 = { type: "meeting" as const, summary: "Coffee at Joe's", day: "2022-09-24", excerpt: "so good meeting you at HackNC", interactionId: "" };
+  const applyEvents = (p: P, deepRead = true, runId = run4.id) => {
+    const v = deepValidated(p.msg.id, { origin: null, relationship: null, events: [{ ...E1, interactionId: p.msg.id }] });
+    return applyDigestPlan({ userId: USER, runId, contactId: p.id, window: p.window, validated: v, plan: planOf(v, p.id), deepRead });
+  };
+  const EV = await person("Eve E", "LinkedIn connection", connected);
+  await applyEvents(EV);
+  let tl = await timelineOf(EV.id);
+  const meetings = tl.filter((t) => t.interactionType === "meeting");
+  check("an event becomes one ai_derived meeting on its day", meetings.length === 1 && meetings[0].interactionDate.toISOString().startsWith("2022-09-24") && meetings[0].aiSummary === "Coffee at Joe's", JSON.stringify(meetings));
+  const first80 = "so good meeting you at HackNC last weekend!".slice(0, 80);
+  const reach = tl.filter((t) => t.interactionType === "reach_out");
+  check("a first pass writes the old reader's reach-out, same id", reach.length === 1 && reach[0].externalId === `li-event:${EV.id}:reach_out:${stableHash(first80)}`, JSON.stringify(reach.map((r) => r.externalId)));
+  await applyEvents(EV);
+  tl = await timelineOf(EV.id);
+  check("applying the same answer twice leaves one of each", tl.filter((t) => t.interactionType === "meeting").length === 1 && tl.filter((t) => t.interactionType === "reach_out").length === 1);
+
+  const OLD = await person("Old O", "LinkedIn connection", connected);
+  await db.insert(interactions).values({ userId: USER, contactId: OLD.id, interactionType: "meeting", interactionDate: new Date("2022-09-24T18:00:00Z"), source: "ai_derived", externalId: `li-event:${OLD.id}:meeting:oldhash`, rawNotes: "x", aiSummary: "Coffee", topics: [] });
+  await applyEvents(OLD);
+  check("an old-reader meeting on the same day blocks a second one", (await timelineOf(OLD.id)).filter((t) => t.interactionType === "meeting").length === 1);
+
+  const ONE = await person("One O", "LinkedIn connection", connected);
+  await advanceWatermarkOnly(USER, run4.id, ONE.window, { deepRead: true, firstPass: true });
+  check("a trivial one-message thread still gets its reach-out, with no AI call", (await timelineOf(ONE.id)).filter((t) => t.interactionType === "reach_out").length === 1);
+
+  const NOPE = await person("Nope N", "LinkedIn connection", connected);
+  await applyEvents(NOPE, false);
+  const NOPE2 = await person("Nope Two", "LinkedIn connection", connected);
+  await advanceWatermarkOnly(USER, run4.id, NOPE2.window);
+  check("flag off writes neither", (await timelineOf(NOPE.id)).length === 0 && (await timelineOf(NOPE2.id)).length === 0);
 
   await reset();
   console.log("\nsmoke-relationship-apply: all checks passed");
