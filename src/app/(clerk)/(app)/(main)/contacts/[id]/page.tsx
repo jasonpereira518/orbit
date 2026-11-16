@@ -146,6 +146,10 @@ export default async function ContactDetailPage({
   const healthPromise = userIdPromise
     .then((u) => getRelationshipHealth(u, id))
     .catch(() => null);
+  // LinkedIn deep read, started with the other reads. An empty map when it is off or fails.
+  const relationshipPromise = userIdPromise
+    .then((u) => loadRelationshipContexts(u, [id]))
+    .catch(() => new Map<string, RelationshipContext>());
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
@@ -268,8 +272,7 @@ export default async function ContactDetailPage({
     howMet: contact.howMet,
   });
   // LinkedIn deep read: how you met (quoted), the kind, where you overlapped. Null when it is off.
-  const relationship =
-    (await loadRelationshipContexts(await userIdPromise, [id]).catch(() => new Map<string, RelationshipContext>())).get(id) ?? null;
+  const relationship = (await relationshipPromise).get(id) ?? null;
 
   const displayName = contact.preferredName || contact.fullName;
   // The rows are the newest first, so a logged touch among them is the newest one overall;

@@ -41,6 +41,7 @@ import {
   snoozeRecommendationForUser,
 } from "../src/lib/radar/actions-core";
 import { capturedQueries, startQueryCount, stopQueryCount } from "../src/lib/query-counter";
+import { deepReadOn } from "../src/lib/deep-read";
 import {
   claimRadarLease,
   claimRadarUsers,
@@ -231,6 +232,9 @@ run(async () => {
   check("a claimed one cannot be claimed twice", !(await claimRadarLease(USER, NOW)));
 
   console.log("\nthe first run");
+  // The deep-read gate reads the surface switches once per process (cached after), so warm it:
+  // otherwise the first measured run counts one statement the later ones do not.
+  await deepReadOn(USER);
   startQueryCount();
   const first = await runRadarForUser(USER, { mode: "weekly", trigger: "manual", now: NOW, ai: false });
   const statements = stopQueryCount();
