@@ -291,6 +291,7 @@
     "src/lib/outlook-scan-type.ts"
   ],
   "smoke-import-stall.ts": [
+    "src/actions/gmail.ts",
     "src/app/api/imports/process-stalled/route.ts",
     "src/lib/import-stall.ts"
   ],
