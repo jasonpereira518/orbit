@@ -1351,8 +1351,20 @@ export async function updateContactForUser(
   }
   // How you met, when the person sets it: the LinkedIn deep read never writes over it
   // (`canReplaceMet`). Not a FieldKey, so no merge tier reads this stamp.
+  // Only on a real change: the contact form sends all three on every save.
   if (by === "user" && (input.howMet !== undefined || input.dateMet !== undefined || input.metContext !== undefined)) {
-    stamps = { ...stamps, met: { s: "user", at: staleAt.toISOString() } };
+    const [was] = await (await getDb())
+      .select({ howMet: contacts.howMet, dateMet: contacts.dateMet, metContext: contacts.metContext })
+      .from(contacts)
+      .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
+      .limit(1);
+    const text = (v: string | null | undefined) => (v ?? "").trim();
+    const day = (v: string | Date | null | undefined) => safeTimestamp(v)?.toISOString().slice(0, 10) ?? "";
+    const changed =
+      (input.howMet !== undefined && text(input.howMet) !== text(was?.howMet)) ||
+      (input.dateMet !== undefined && day(input.dateMet) !== day(was?.dateMet)) ||
+      (input.metContext !== undefined && (normalizeMetContext(input.metContext) ?? "") !== text(was?.metContext));
+    if (changed) stamps = { ...stamps, met: { s: "user", at: staleAt.toISOString() } };
   }
 
   const companyPatch =

@@ -97,6 +97,9 @@ check("an event dated before its message keeps its date", dv({ events: [{ ...E, 
 check("an event dated after its message takes the message's day", dv({ events: [{ ...E, date: "2023-02-01" }] }).events?.[0]?.day === "2023-01-10");
 check("an event of an unknown type is dropped", dv({ events: [{ ...E, type: "party" }] }).events?.length === 0);
 check("an unquoted event is dropped", dv({ events: [{ ...E, excerpt: "we had dinner together" }] }).events?.length === 0);
+check("an origin with an implausible year keeps its text but no date", dv({ origin: { ...O, date: "1000-01-01" } }).origin?.date === null && dv({ origin: { ...O, date: "1000-01-01" } }).origin?.text === "Met at HackNC");
+const multi = dv({ origin: { ...O, excerpt: "so good meeting\nyou at HackNC" }, relationship: { kind: "friend", excerpt: "so good meeting\nyou at HackNC" } });
+check("stored excerpts are one capped line", Boolean(multi.origin && multi.relationship) && !/\n/.test(multi.origin!.excerpt + multi.relationship!.excerpt) && multi.origin!.excerpt.length <= 300, JSON.stringify(multi.origin));
 check("flag off: no events", (validateDigest(answer({ events: [E] }), W2, new Set()).events ?? []).length === 0);
 
 console.log("\nsmoke-relationship-validate: all checks passed");

@@ -248,12 +248,22 @@ async function main() {
   const A = await person("Ada A", "LinkedIn connection", connected);
   const B = await person("Ben B", "Met at Priya's dinner", null);
   const C = await person("Cy C", "LinkedIn connection", connected);
-  await updateContactForUser(USER, C.id, { howMet: "LinkedIn connection" }, asUser);
+  // A real edit of the met fields (here the date) locks them; saving the same values does not (F).
+  await updateContactForUser(USER, C.id, { dateMet: "2023-11-11" }, asUser);
   const D = await person("Di D", "LinkedIn connection", connected);
   const OFF = await person("Off O", "LinkedIn connection", connected);
   const R = await person("Ro R", "LinkedIn connection", connected);
   await db.insert(relationshipDigests).values({ contactId: R.id, userId: USER, relationship: { kind: "recruiter", excerpt: "x y z", interactionId: R.msg.id, removed: true } });
-  for (const p of [A, B, C, D, R]) await deepApply(p);
+  // F: a form save that leaves the met fields as they were (the form always sends them).
+  const F = await person("Fi F", "LinkedIn connection", connected);
+  await updateContactForUser(USER, F.id, { howMet: "LinkedIn connection", dateMet: "2023-10-03", metContext: "online", phone: "+1 555 0100" }, asUser);
+  // G: no how-met text, but a date and context someone typed at creation (no stamp exists).
+  const G = await person("Gi G", null, null);
+  await db.update(contacts).set({ dateMet: new Date("2021-05-05T12:00:00Z"), metContext: "school" }).where(eq(contacts.id, G.id));
+  // H: written by the run, then the user corrects only the date.
+  const H = await person("Hal H", "LinkedIn connection", connected);
+  for (const p of [A, B, C, D, R, F, H]) await deepApply(p);
+  await deepApply(G, deepValidated(G.msg.id, { origin: { text: "Met at HackNC", date: "2022-09-17", precision: "day", context: "event", excerpt: "so good meeting you at HackNC", interactionId: G.msg.id } }));
   await deepApply(OFF, deepValidated(OFF.msg.id), false);
 
   const a = await get(A.id);
@@ -271,12 +281,19 @@ async function main() {
   const dR = await dig(R.id);
   check("a removed relationship kind is never set again", dR?.relationship?.removed === true && dR.relationship.kind === "recruiter", JSON.stringify(dR?.relationship));
 
+  check("a form save that changed nothing about how you met does not lock it", (await get(F.id)).howMet === "Met at HackNC");
+  const g = await get(G.id);
+  check("with no how-met text, a typed date and context are kept", g.howMet === "Met at HackNC" && g.dateMet?.toISOString().startsWith("2021-05-05") === true && g.metContext === "school", `${g.dateMet?.toISOString()}/${g.metContext}`);
+  await updateContactForUser(USER, H.id, { dateMet: "2020-01-15" }, asUser);
   await updateContactForUser(USER, D.id, { howMet: "Met at the alumni mixer" }, asUser);
   await undoRelationshipRun(USER, run3.id);
   const a2 = await get(A.id);
   check("Undo restores the import values", a2.howMet === "LinkedIn connection" && a2.metContext === "online" && a2.dateMet?.toISOString().startsWith("2023-10-03") === true, `${a2.howMet}/${a2.metContext}`);
   check("Undo clears the run's origin", ((await dig(A.id))?.origin ?? null) === null);
   check("Undo never undoes the user's later edit", (await get(D.id)).howMet === "Met at the alumni mixer");
+  const h2 = await get(H.id);
+  check("Undo never undoes a later date-only edit", h2.dateMet?.toISOString().startsWith("2020-01-15") === true && h2.howMet === "Met at HackNC", `${h2.howMet}/${h2.dateMet?.toISOString()}`);
+  check("Undo puts first contact back too", (await get(A.id)).firstInteractionAt?.toISOString().startsWith("2023-10-03") === true, (await get(A.id)).firstInteractionAt?.toISOString());
   check("Undo leaves the relationship kind", (await dig(B.id))?.relationship?.kind === "friend");
 
   console.log("\ndeep read: events and the first reach-out");

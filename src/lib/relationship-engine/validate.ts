@@ -66,6 +66,8 @@ function realDay(y: number, m: number, d: number): boolean {
 /** A model date by its shape only: YYYY-MM-DD, YYYY-MM or YYYY. Coarser dates are stored as their 1st. */
 export function readModelDate(raw: string): { date: string; precision: DatePrecision } | null {
   const s = raw.trim();
+  // Nobody's "how we met" predates 1900; a year like that is a model artifact, not a date.
+  if (+s.slice(0, 4) < 1900) return null;
   let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (m) return realDay(+m[1], +m[2], +m[3]) ? { date: s, precision: "day" } : null;
   m = /^(\d{4})-(\d{2})$/.exec(s);
@@ -75,6 +77,9 @@ export function readModelDate(raw: string): { date: string; precision: DatePreci
 }
 
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
+
+/** An excerpt kept on the digest is re-read by later prompts and shown on the contact page: one capped line. */
+const storedExcerpt = (excerpt: string) => cleanSingleLine(excerpt, 300) ?? "";
 
 export function validateDigest(
   answer: RelationshipDigestAnswer,
@@ -180,7 +185,7 @@ export function validateDigest(
             date: when?.date ?? null,
             precision: when?.precision ?? null,
             context: o.context && isMetContext(o.context) ? o.context : null,
-            excerpt: o.excerpt,
+            excerpt: storedExcerpt(o.excerpt),
             interactionId: oMsg.interactionId,
           };
         }
@@ -188,7 +193,7 @@ export function validateDigest(
     }
     const r = answer.relationship ?? null;
     const rMsg = r && KINDS.has(r.kind) ? locateExcerpt(window, r.excerpt) : null;
-    if (r && rMsg) relationship = { kind: r.kind as RelationshipKind, excerpt: r.excerpt, interactionId: rMsg.interactionId };
+    if (r && rMsg) relationship = { kind: r.kind as RelationshipKind, excerpt: storedExcerpt(r.excerpt), interactionId: rMsg.interactionId };
     for (const e of answer.events ?? []) {
       if (!EVENT_TYPES.has(e.type as ValidatedEvent["type"])) continue;
       const msg = locateExcerpt(window, e.excerpt);
@@ -197,7 +202,7 @@ export function validateDigest(
       const said = readModelDate(e.date);
       const msgDay = dayOf(msg.at);
       const day = said?.precision === "day" && said.date <= msgDay ? said.date : msgDay;
-      events.push({ type: e.type as ValidatedEvent["type"], summary, day, excerpt: e.excerpt, interactionId: msg.interactionId });
+      events.push({ type: e.type as ValidatedEvent["type"], summary, day, excerpt: storedExcerpt(e.excerpt), interactionId: msg.interactionId });
     }
   }
 

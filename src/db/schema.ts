@@ -2089,7 +2089,14 @@ export type RelationshipOrigin = {
   interactionId: string;
   runId: string;
   /** What the contact's met fields held before this run wrote them; null when it wrote nothing. */
-  replaced: { howMet: string | null; dateMet: string | null; metContext: string | null } | null;
+  replaced: {
+    howMet: string | null;
+    dateMet: string | null;
+    metContext: string | null;
+    /** Set only when the run moved first_interaction_at: what it was, and what the run set. */
+    firstInteractionAt?: string | null;
+    widenedTo?: string;
+  } | null;
 };
 export type RelationshipKindRecord = { kind: RelationshipKind; excerpt: string; interactionId: string; removed?: true };
 

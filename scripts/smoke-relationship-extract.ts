@@ -183,6 +183,12 @@ const a = parseDigestAnswer(JSON.stringify({
 check("new keys parse", a.origin?.date === "2022-09" && a.relationship?.kind === "friend" && a.events.length === 1, JSON.stringify(a));
 check("an old-shape answer still parses", parseDigestAnswer(JSON.stringify({ summary: "s" })).origin === null && parseDigestAnswer(JSON.stringify({ summary: "s" })).events.length === 0);
 check("a malformed origin is null, not a failure", parseDigestAnswer(JSON.stringify({ summary: "s", origin: "HackNC" })).origin === null);
+const NOTE = "Their LinkedIn connection request:\nGreat meeting you at HackNC last weekend! Let's keep in touch.";
+check("deep read: an invitation note about meeting is worth a read", !isTrivialWindow(w([NOTE]), { deepRead: true }));
+check("without deep read that note stays trivial", isTrivialWindow(w([NOTE])));
+check("deep read: thanks for connecting is still trivial", isTrivialWindow(w(["Thanks for connecting!", "Likewise!"]), { deepRead: true }));
+check("deep read: nice to meet you alone is still trivial", isTrivialWindow(w(["Nice to meet you!"]), { deepRead: true }));
+check("deep read: an introduction is worth a read", !isTrivialWindow(w(["Priya introduced us, glad to connect"]), { deepRead: true }));
 check("events are capped at 10", parseDigestAnswer(JSON.stringify({ summary: "s", events: Array.from({ length: 14 }, () => ({ type: "call", summary: "c", date: "", excerpt: "x y z" })) })).events.length === 10);
 
 console.log("\nsmoke-relationship-extract: all checks passed");

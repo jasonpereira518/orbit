@@ -315,7 +315,7 @@ export async function runRelationshipPass(userId: string, opts: RunnerOptions = 
         attempted.add(contactId);
         const window = windows.get(contactId);
         if (!window) continue;
-        if (isTrivialWindow(window)) {
+        if (isTrivialWindow(window, { deepRead })) {
           await advanceWatermarkOnly(userId, run.id, window, { deepRead });
           result.skipped += 1;
           continue;

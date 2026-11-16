@@ -445,12 +445,19 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
       if (row && canReplaceMet(row)) {
         replaced = { howMet: row.howMet ?? null, dateMet: row.dateMet?.toISOString() ?? null, metContext: row.metContext ?? null };
         const patch: Partial<typeof contacts.$inferInsert> = { howMet: found.text, updatedAt: now };
-        if (found.context) patch.metContext = found.context;
+        // Over an import label the three were all the importer's; over a blank how-met, a date
+        // or context already there was someone's own, so those only fill in.
+        const imported = Boolean(row.howMet?.trim());
+        if (found.context && (imported || !row.metContext)) patch.metContext = found.context;
         // A month or a year is not a day: date_met (shown as a day everywhere) takes days only.
-        if (found.precision === "day" && found.date) patch.dateMet = noonOf(found.date);
+        if (found.precision === "day" && found.date && (imported || !row.dateMet)) patch.dateMet = noonOf(found.date);
         const widen =
           found.date && found.precision === "day" ? noonOf(found.date) : found.date && found.precision === "month" ? endOfMonth(found.date) : null;
-        if (widen && (!row.firstInteractionAt || widen < row.firstInteractionAt)) patch.firstInteractionAt = widen;
+        if (widen && (!row.firstInteractionAt || widen < row.firstInteractionAt)) {
+          patch.firstInteractionAt = widen;
+          replaced.firstInteractionAt = row.firstInteractionAt?.toISOString() ?? null;
+          replaced.widenedTo = widen.toISOString();
+        }
         await db.update(contacts).set(patch).where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
       }
       origin = { ...found, runId, replaced };
@@ -593,16 +600,28 @@ async function undoRunOrigins(userId: string, runId: string): Promise<void> {
     .where(and(eq(relationshipDigests.userId, userId), sql`${relationshipDigests.origin}->>'runId' = ${runId}`));
   for (const r of rows) {
     const o = r.origin;
-    if (o?.replaced) {
+    const c = o?.replaced
+      ? await db.query.contacts.findFirst({
+          where: and(eq(contacts.id, r.contactId), eq(contacts.userId, userId)),
+          columns: { howMet: true, fieldSources: true, firstInteractionAt: true },
+        })
+      : null;
+    // Hands off once the person touched how you met after the run wrote it: any edit of the
+    // three stamps `met`, and how_met no longer reading the run's text says the same.
+    if (o?.replaced && c && c.howMet === o.text && c.fieldSources?.met?.s !== "user") {
+      const back = o.replaced;
       await db
         .update(contacts)
         .set({
-          howMet: o.replaced.howMet,
-          metContext: o.replaced.metContext,
-          dateMet: o.replaced.dateMet ? new Date(o.replaced.dateMet) : null,
+          howMet: back.howMet,
+          metContext: back.metContext,
+          dateMet: back.dateMet ? new Date(back.dateMet) : null,
+          ...(back.widenedTo && c.firstInteractionAt?.toISOString() === back.widenedTo
+            ? { firstInteractionAt: back.firstInteractionAt ? new Date(back.firstInteractionAt) : null }
+            : {}),
           updatedAt: new Date(),
         })
-        .where(and(eq(contacts.id, r.contactId), eq(contacts.userId, userId), eq(contacts.howMet, o.text)));
+        .where(and(eq(contacts.id, r.contactId), eq(contacts.userId, userId)));
     }
     await db.update(relationshipDigests).set({ origin: null }).where(eq(relationshipDigests.contactId, r.contactId));
   }

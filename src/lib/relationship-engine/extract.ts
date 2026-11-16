@@ -146,11 +146,16 @@ function bodiesOf(m: { speaker: string; text: string }): string[] {
     .map((l) => l.replace(TRANSCRIPT_STAMP_RE, "").trim());
 }
 
+/** Words that say how two people met; under the deep read they make a short thread worth a read. */
+const MEET_CUE_RE = /\b(met|meeting you|meet you at|introduced|intro|ran into)\b/i;
+
 /** No model call for a thread with nothing in it to understand. */
-export function isTrivialWindow(window: MessageWindow): boolean {
+export function isTrivialWindow(window: MessageWindow, opts: { deepRead?: boolean } = {}): boolean {
   const texts = window.messages.flatMap(bodiesOf).filter(Boolean);
   if (texts.length === 0) return true;
   if (texts.every((t) => PLEASANTRY_RE.test(t))) return true;
+  // "Great meeting you at HackNC!" alone is how-you-met, the deep read's whole point.
+  if (opts.deepRead && texts.some((t) => MEET_CUE_RE.test(t))) return false;
   if (texts.some((t) => SUBSTANCE_RE.test(t))) return false;
   const chars = texts.reduce((n, t) => n + t.length, 0);
   return texts.length < 3 && chars < 200;
