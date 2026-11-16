@@ -1,6 +1,7 @@
 import type { LinkedInImportRowPayload } from "@/db/schema";
 import type { ImportAdapter } from "@/lib/import-engine";
 import { parseConnectedOn } from "@/lib/linkedin-connections";
+import { HOW_MET_LABEL } from "@/lib/contact-fields";
 
 /** Defined in a leaf module so the every-page LinkedIn reminder can read it cheaply. */
 export { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
@@ -39,7 +40,7 @@ export const linkedinConnectionsAdapter: ImportAdapter<LinkedInImportRowPayload>
       // treat a 2 as an assessment.
       firstInteractionAt: connectedOn ?? undefined,
       dateMet: connectedOn,
-      howMet: "LinkedIn connection",
+      howMet: HOW_MET_LABEL.linkedinConnection,
       metContext: "online",
       tagNames: ["linkedin"],
     };
@@ -56,7 +57,7 @@ export const linkedinConnectionsAdapter: ImportAdapter<LinkedInImportRowPayload>
       lastName: payload.lastName || undefined,
       source: "linkedin",
       dateMet: connectedOn || undefined,
-      howMet: "LinkedIn connection",
+      howMet: HOW_MET_LABEL.linkedinConnection,
       metContext: "online",
     };
   },

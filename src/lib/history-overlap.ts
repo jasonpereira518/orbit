@@ -30,6 +30,19 @@ export type HistoryOverlap = {
   toYear: number | null;
 };
 
+/** Legal-form words that say nothing about which organization it is. */
+const SUFFIXES = new Set(["inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation", "co", "company", "plc", "gmbh", "ag", "sa", "llp", "lp"]);
+
+/**
+ * `normalizeCompanyKey` with trailing legal forms dropped, so "Acme, Inc." meets "Acme".
+ * ponytail: suffixes only; aliases ("UNC" vs "University of North Carolina") need a lookup table.
+ */
+function orgKey(name: string): string {
+  const words = normalizeCompanyKey(name).split(" ").filter(Boolean);
+  while (words.length > 1 && SUFFIXES.has(words[words.length - 1])) words.pop();
+  return words.length === 1 && SUFFIXES.has(words[0]) ? "" : words.join(" ");
+}
+
 type Range = { from: number; to: number } | null;
 type Side = { kind: HistoryOverlap["kind"]; organization: string; key: string; range: Range };
 
@@ -50,22 +63,22 @@ export function historyOverlaps(
     ...(you.positions ?? []).map((p) => ({
       kind: "work" as const,
       organization: p.company,
-      key: normalizeCompanyKey(p.company),
+      key: orgKey(p.company),
       range: rangeOf(p.start?.year, p.end?.year, nowYear),
     })),
     ...(you.education ?? []).map((e) => ({
       kind: "school" as const,
       organization: e.school,
-      key: normalizeCompanyKey(e.school),
+      key: orgKey(e.school),
       range: rangeOf(e.start?.year, e.end?.year, null),
     })),
     // Schools typed in Settings carry no years.
-    ...(you.schools ?? []).map((s) => ({ kind: "school" as const, organization: s, key: normalizeCompanyKey(s), range: null })),
+    ...(you.schools ?? []).map((s) => ({ kind: "school" as const, organization: s, key: orgKey(s), range: null })),
   ].filter((s) => s.key);
 
   const best = new Map<string, HistoryOverlap>();
   for (const t of them) {
-    const key = normalizeCompanyKey(t.organization);
+    const key = orgKey(t.organization);
     if (!key) continue;
     const kind = t.kind === "role" ? "work" : "school";
     const theirs = rangeOf(t.startYear, t.endYear, t.isCurrent ? nowYear : null);

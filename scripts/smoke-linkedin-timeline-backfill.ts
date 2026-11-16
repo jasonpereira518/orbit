@@ -161,6 +161,16 @@ async function testDrainAndPendingPredicate() {
     `count ${await pendingTimelineContactCount(DRAIN_USER)}`
   );
 
+  // Deep read on: the relationship engine reads these threads now, so the old reader does nothing.
+  seen.length = 0;
+  const off = await runLinkedInTimelineBackfill(DRAIN_USER, stubExtract, undefined, { deepRead: true });
+  check(
+    "deep read on: the old reader makes no call and writes nothing",
+    seen.length === 0 && off.contactsProcessed === 0 && off.eventsCreated === 0 && off.remaining === 0 &&
+      (await pendingTimelineContactCount(DRAIN_USER)) === 1,
+    JSON.stringify(off)
+  );
+
   const first = await runLinkedInTimelineBackfill(DRAIN_USER, stubExtract);
   check(
     "first pass processes exactly the pending contact",

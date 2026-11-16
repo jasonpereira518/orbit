@@ -83,8 +83,9 @@ All five PRs sit behind a new surface key `feature.linkedin-deep-read` (pattern:
 server, per user, and it covers everything that changes what Orbit reads, infers or stores:
 the new file parsers, the new prompt outputs, the new writes and the new closeness inputs.
 With the gate off a user gets exactly today's behaviour, including the old timeline reader.
-With it on, the old reader is no longer kicked for that user. Jason's preview access turns it
-on for his own account so the export can be measured before launch.
+With it on, the old reader is no longer kicked for that user. Before launch it is on for admins
+(by user id, `deepReadOn` in `src/lib/deep-read.ts`), so it works in background jobs, which
+have no browser cookie, and Jason's own export can be measured before launch.
 
 ### PR 1: Your history (no AI, no DDL)
 
@@ -126,8 +127,8 @@ Reading changes:
   opening stretch and the newest stretch and cut the middle, with one line in the window
   saying what was skipped. `history_truncated_before` keeps its meaning.
 - **Read the signals.** Invitation notes, your LinkedIn notes and recommendations join the
-  window in date order. The signals adapter starts writing `direction`
-  (sent = out, received = in) so the speaker is right.
+  window in date order. Who said each one is read from the row's existing `external_id`
+  (`li-export:invitation_sent:…` and so on), so rows imported before this PR need no backfill.
 - **Which signals earn a read on their own.** An invitation note or a recommendation with
   text makes a contact pending even with no message thread (widen `MESSAGE_INTERACTION_SQL`,
   which the claim, count, cron sweep and Undo sweep all share). The existing trivial-thread
@@ -240,8 +241,8 @@ You overlapped: UNC Chapel Hill, 2021 to 2025
   Recommendations_Given.csv, Languages.csv, Courses.csv. PR 3 must not depend on
   endorsements or given recommendations to rank anyone.
 - In this export and unused so far: Events.csv (`Event Name, Event Time, Status,
-  External Url`), the LinkedIn events you went to. PR 2 should pass the events near a
-  contact's first messages to the reader as context for "how you met". Learning.csv
+  External Url`), the LinkedIn events you went to. Not used in PR 2 (decided Nov 16): the
+  export has two events and their dates are ranges, so a parser is not worth it yet. Learning.csv
   (LinkedIn Learning videos) and Rich_Media.csv stay unread.
 
 ## Left to the builder

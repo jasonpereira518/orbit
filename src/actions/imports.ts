@@ -41,8 +41,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { patchYou, previewYou } from "@/lib/career-profile";
 import { clearCareerProfile, loadYouCurrent, saveCareerPatch } from "@/lib/career-profile-server";
-import { isSurfaceReleased } from "@/lib/surface-visibility";
-import { LINKEDIN_DEEP_READ_SURFACE_KEY } from "@/lib/surfaces";
+import { deepReadOn } from "@/lib/deep-read";
 import { isYouTarget, type YouTarget } from "@/lib/linkedin-you-shape";
 import { REVERT_REFUSAL_MESSAGE, describeRevert } from "@/lib/import-revert-policy";
 import { revertImport } from "@/lib/import-revert";
@@ -249,7 +248,7 @@ export async function previewLinkedInYou(target: YouTarget, text: string) {
     return refusal("That file isn’t one Orbit can read for your profile.");
   }
   try {
-    const history = await isSurfaceReleased(userId, LINKEDIN_DEEP_READ_SURFACE_KEY);
+    const history = await deepReadOn(userId);
     return { fields: previewYou(target, text, await loadYouCurrent(userId), { history }) };
   } catch (err) {
     return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin-you"));
@@ -268,7 +267,7 @@ export async function applyLinkedInYou(input: { target: YouTarget; text: string;
   }
   let patch: ReturnType<typeof patchYou>;
   try {
-    const history = await isSurfaceReleased(userId, LINKEDIN_DEEP_READ_SURFACE_KEY);
+    const history = await deepReadOn(userId);
     patch = patchYou(input.target, input.text, input.keys, await loadYouCurrent(userId), new Date(), { history });
   } catch (err) {
     return refusal(await linkedInExportErrorMessage(err, "imports.apply-linkedin-you"));
