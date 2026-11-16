@@ -15,7 +15,6 @@ import {
 import type { TocItem } from "@/components/marketing/doc-toc";
 import { ScrollRegion } from "@/components/ui/scroll-region";
 import { GOOGLE_LIMITED_USE, GOOGLE_SCOPE_DISCLOSURES, LEGAL_LAST_UPDATED } from "@/lib/legal";
-import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -27,7 +26,7 @@ const LAST_UPDATED = LEGAL_LAST_UPDATED;
 
 const HIGHLIGHTS: readonly Highlight[] = [
   { icon: ShieldCheck, title: "Your network isn't a product", body: "Orbit doesn't sell personal information or run ad pixels, and its traffic analytics set no cookies." },
-  { icon: Sparkles, title: "AI runs on your key or Orbit’s", body: "You choose the provider, and can supply your own key; the Free Plan, Orbit Pro, Orbit Max and Orbit Lifetime include AI on Orbit’s accounts. Most AI features run only when you use them; a few, like deriving LinkedIn timeline events, run automatically in the background on the same key or account. Settings shows what the last 30 days cost." },
+  { icon: Sparkles, title: "AI runs on your key or Orbit’s", body: "You choose the provider, and can supply your own key; the Free Plan, Orbit Pro, Orbit Max and Orbit Lifetime include AI on Orbit’s accounts. Most AI features run only when you use them; a few, like reading the LinkedIn messages you import, run automatically in the background on the same key or account. Settings shows what the last 30 days cost." },
   { icon: Download, title: "Export on demand", body: "One control in Settings produces a JSON download of your core Orbit data, on every plan including Free." },
   { icon: Trash2, title: "Deletion is real deletion", body: "Delete some or all of your data from Settings, or delete your account — which erases your data, keys and sign-in and cancels any subscription." },
 ];
@@ -529,6 +528,9 @@ export default function PrivacyPage() {
             provider under their privacy policy, not ours — the same as if you had copied the
             text into their chat window. That includes your upcoming meetings (titles, times and
             guests&rsquo; names, never their addresses) and when you are free, if you ask it to look.
+            For a person it asks about, that also includes Orbit&rsquo;s short description of the
+            relationship: how you met, the kind of relationship, what you talk about, what is still open,
+            and where your histories overlap.
             Orbit sends nothing on its own: a connected assistant
             can draft a message, but it waits for you to read and approve it before anything
             leaves. You can disconnect an assistant from its own settings, and revoke any API
@@ -595,15 +597,61 @@ export default function PrivacyPage() {
           </p>
           <p>
             Some AI work runs in the background. Search indexing runs when contacts change, so search
-            understands meaning. Importing LinkedIn messages writes a short summary for up to 40 of
-            the people you talked with most. Deriving timeline events from imported LinkedIn
-            conversations happens automatically, on the AI provider and key described
-            above: a thread with a single message gets a rule-based note and no AI
-            call, and the cap of{" "}
-            {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the conversations that
-            reach the model. When no AI is available to you, Orbit falls back to simple keyword
-            matching instead. Settings → Integrations → AI provider shows every call
+            understands meaning. Reading the LinkedIn messages you import also runs in the background;
+            the next paragraphs say what it reads and keeps. Settings → Integrations → AI provider shows every call
             from the last 30 days and its estimated cost.
+          </p>
+          <p>
+            <strong>Your LinkedIn export: what Orbit reads.</strong> When you import LinkedIn
+            messages or a whole LinkedIn export, Orbit reads it with the AI provider and key
+            described above. For each person, it reads your conversation with them, the notes on
+            connection requests either of you sent, recommendations either of you wrote, and any
+            notes you kept about them on LinkedIn. A thread with nothing in it to understand, such
+            as a lone &ldquo;thanks for connecting&rdquo;, gets no AI call. From the export Orbit
+            also keeps your own work and school history: every role and school, with dates. It uses
+            that as context about you in chat and Cosmo, and to work out where your path and a
+            contact&rsquo;s crossed.
+          </p>
+          <p>
+            <strong>What it keeps about each person.</strong> A short summary of where things
+            stand, what they do and are working on, the topics you talk about, follow-ups still
+            open, memorable details, and reminders for some of the things either of you said you
+            would do. It also keeps how you first met, with a date when a message gives one; the
+            kind of relationship, such as classmate, coworker or recruiter; and dated things that
+            happened between you, such as a call or a meeting, which are added to that
+            person&rsquo;s timeline. How you met, the kind and each event are kept only with a
+            quote copied from one of your messages. What the AI cannot quote is dropped. Where your
+            history and theirs overlap is worked out each time it is shown and is not stored.
+          </p>
+          <p>
+            <strong>What it changes on a contact.</strong> How you met, the date and the setting
+            are written onto a contact only when that field is empty or holds an import&rsquo;s own
+            label, such as &ldquo;LinkedIn connection&rdquo;. What you typed stays: once you set how
+            you met yourself, Orbit does not replace it, and you can edit it at any time. A date is
+            written only when a message gives the exact day. &ldquo;September 2022&rdquo; is shown
+            as that and is never turned into a day. A relationship kind has a &ldquo;Not right?&rdquo; button
+            on the contact&rsquo;s page. Press it and the kind is removed and is not set again.
+          </p>
+          <p>
+            <strong>How it affects closeness.</strong> Whether you both wrote, how many years you
+            have been in touch, whether one of you recommended the other, and whether you worked or
+            studied at the same place count toward how close Orbit ranks a person. The AI&rsquo;s
+            reading of the relationship does not.
+          </p>
+          <p>
+            <strong>Where it is used.</strong> In Orbit&rsquo;s chat and Cosmo, in drafts Orbit
+            writes for you, in Radar&rsquo;s notes, in a contact&rsquo;s brief and meeting talking
+            points, and on the contact&rsquo;s page. If you have connected an outside assistant, it
+            receives the same short description when it asks about that person; see{" "}
+            <a href="#third-parties">Assistants you connect yourself</a>. &ldquo;Remove imported
+            details&rdquo; in Settings removes your own history.
+          </p>
+          <p>
+            <strong>If you imported before this was added.</strong> Orbit catches up once, in the
+            background: it adds your full history from the export you already uploaded if you had
+            already imported your role or schools from it, and it re-reads the opening of each
+            conversation it has already summarised to find how you met. That second read does not
+            create reminders or change a summary.
           </p>
           <p>
             <strong>

@@ -47,6 +47,8 @@ const PARSED = new Set([
   "volunteering.csv",
   "organizations.csv",
   "publications.csv",
+  // Radar's topics from your own posts (linkedin-shares.ts).
+  "shares.csv",
 ]);
 
 /**

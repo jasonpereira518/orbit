@@ -83,8 +83,15 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // emails from Gmail or Outlook, cleaned of quotes, signatures and contact details, go to your AI
 // provider once to describe how you write; only that description (600 characters) is kept.
 // First claimed .3; renumbered when main took .3 (Cosmo revision).
-export const TERMS_VERSION = "2026-11-13.4";
-export const LEGAL_LAST_UPDATED = "November 13, 2026 (revision 4)";
+// 2026-11-16 (LinkedIn deep read, launch PR): what Orbit reads from a LinkedIn import (the
+// conversation, connection-request notes, recommendations, your LinkedIn notes, and your own
+// work and school history); what it keeps per person (summary, how you met, the kind of
+// relationship, dated events, each with a quote); what it writes onto a contact and what it
+// never overwrites; what counts toward closeness; where it is used, including the short
+// relationship description a connected assistant receives; and the one-time catch-up for
+// earlier imports. The old timeline reader's daily-cap sentence is retired from both pages.
+export const TERMS_VERSION = "2026-11-16";
+export const LEGAL_LAST_UPDATED = "November 16, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
