@@ -677,6 +677,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-eval-radar-editor-task": "pglite",
   "smoke-agent-sends": "pglite",
   "smoke-dashboard-aggregates": "pglite",
+  "smoke-due-counts": "pglite",
   "smoke-dashboard-parity": "pglite",
   "smoke-migration-guards": "pglite", // the pure half is here too: both guards belong in one place
   "smoke-outreach-guards": "pglite",

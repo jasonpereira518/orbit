@@ -22,6 +22,8 @@ import {
 } from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
 import { alertableContactSql, alertableReminderSql } from "@/lib/met-contact";
+import { getDueCounts } from "@/lib/due-counts";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 
 /** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
 const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
@@ -51,7 +53,7 @@ const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 export async function loadNotificationPanel(
   userId: string,
   now: Date,
-  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
+  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean; tz?: string } & Partial<AccountHealthContext> = { withAlerts: true }
 ) {
   const db = await getDb();
   const context: AccountHealthContext | undefined = opts.settings
@@ -72,6 +74,7 @@ export async function loadNotificationPanel(
     radarRows,
     cloudNoteRows,
     feedbackReplies,
+    due,
   ] = await Promise.all([
     db.query.reminders.findMany({
       // Only what is allowed to alert: the user's own reminders, and generated ones about
@@ -192,6 +195,8 @@ export async function loadNotificationPanel(
       : [],
     // The operator answered their feedback and they haven't opened it yet.
     unreadRepliesFor(userId),
+    // The one count of what is due (reminders + follow-ups); the lists above only draw rows.
+    (opts.tz ? Promise.resolve(opts.tz) : viewerTimeZone(userId)).then((tz) => getDueCounts(userId, tz, now)),
   ]);
   const radarRow = radarRows
     ? rowsOf<{ n: number; drafts: number; names: string[] | null; today: number; today_names: string[] | null }>(radarRows)[0]
@@ -416,11 +421,14 @@ export async function loadNotificationPanel(
     return aTime - bTime;
   });
 
-  const dueCount = items.filter((i) => i.urgency === "due").length;
+  // Reminders and follow-ups come from `getDueCounts` (the rows above are capped and drawn, not
+  // counted); the only other "due" rows are feedback replies.
+  const dueCount = due.total + items.filter((i) => i.urgency === "due" && i.kind === "feedback_reply").length;
 
   return {
     items,
     dueCount,
+    dueBreakdown: { reminders: due.reminders, followUps: due.followUps },
     totalCount: items.length,
     // Drives the extension promo in the panel: paid plans get an install link,
     // everyone else gets the pitch and a route to the plans page.

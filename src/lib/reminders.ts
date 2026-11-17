@@ -22,6 +22,8 @@ import {
   getDashboardCounts,
   getGoalAlignedContactIds,
 } from "@/lib/dashboard-aggregates";
+import { getDueCounts } from "@/lib/due-counts";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { ensureStoredScoresCurrent, type ClosenessScalars } from "@/lib/closeness-cohort";
 import {
   closenessScalarExtras,
@@ -910,7 +912,7 @@ export async function getDashboardData(
   userId: string,
   // userName may be a promise so the Clerk profile fetch can run concurrently
   // with the DB queries below (its only consumer is graphPreview.summary).
-  options?: { userName?: string | Promise<string | undefined> }
+  options?: { userName?: string | Promise<string | undefined>; tz?: string }
 ) {
   const db = await getDb();
 
@@ -941,6 +943,7 @@ export async function getDashboardData(
     suggestions,
     goals,
     counts,
+    due,
     goalAlignedIds,
     clusterTallies,
     chartGroups,
@@ -957,6 +960,7 @@ export async function getDashboardData(
     // Aggregates Postgres answers better than a pass over the network would. See
     // dashboard-aggregates.ts.
     getDashboardCounts(userId),
+    (options?.tz ? Promise.resolve(options.tz) : viewerTimeZone(userId)).then((tz) => getDueCounts(userId, tz, now)),
     getGoalAlignedContactIds(userId, GOAL_ALIGNED_CAP),
     loadClusterTallies(userId),
     // Who may be drawn, grouped by what their cluster depends on. Eligibility is decided in
@@ -1227,9 +1231,11 @@ export async function getDashboardData(
       totalContacts: counts.totalContacts,
       // The count of everyone due, not the length of the capped list below — the stat and
       // the card answer different questions and the card only ever showed twelve.
-      dueFollowUps: counts.dueFollowUpCount,
+      dueFollowUps: due.followUps,
       strongConnections: strongTies,
       pendingReminders: pendingReminders.total,
+      // Due, not all pending: the tile says "Due reminders" and agrees with the rail and the bell.
+      dueReminders: due.reminders,
       topCompany: null as { name: string; count: number } | null,
     },
     recentContacts,
