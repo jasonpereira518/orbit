@@ -65,10 +65,11 @@ test("the first call asks before any voice request, then never again", async ({ 
 
 test("the chip and the keyboard pass through the same gate", async ({ page }) => {
   const starts = await setup(page);
-  // A reminder due today makes the "N due" chip.
+  // A reminder due today makes the "N due" chip. Unique per run, and cleared at the end.
+  const title = `First-call chip check ${Date.now()}`;
   await page.goto("/reminders", { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "New reminder" }).first().click();
-  await page.getByPlaceholder("Call Alex about intro").fill("First-call chip check");
+  await page.getByPlaceholder("Call Alex about intro").fill(title);
   await page.getByRole("button", { name: "Add reminder" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
@@ -84,4 +85,22 @@ test("the chip and the keyboard pass through the same gate", async ({ page }) =>
   await page.keyboard.press("Enter");
   await expect(page.getByRole("dialog", { name: "Talk to Cosmo?" })).toBeVisible();
   expect(starts).toHaveLength(0);
+
+  await page.keyboard.press("Escape");
+  await page.goto("/reminders", { waitUntil: "domcontentloaded" });
+  const row = page.getByText(title).first().locator('xpath=ancestor::*[.//*[@data-tour="reminders.row-done"]][1]');
+  await row.locator('[data-tour="reminders.row-done"]').first().click();
+});
+
+test("denying the microphone after confirming still shows the error", async ({ page }) => {
+  await setup(page);
+  await page.evaluate(() => {
+    navigator.mediaDevices.getUserMedia = async () => {
+      throw new DOMException("Denied", "NotAllowedError");
+    };
+  });
+  const orb = page.getByRole("button", { name: "Talk to Cosmo" });
+  await orb.click();
+  await page.getByRole("button", { name: "Start call" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Microphone access was denied" })).toBeVisible();
 });

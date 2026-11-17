@@ -20,5 +20,10 @@ t.check(
 let threw = false;
 try { markCallStarted({ setItem: () => { throw new Error("denied"); } }); } catch { threw = true; }
 t.check("marking in private mode does not throw", !threw);
+// Blocked storage: the bare `localStorage` global throws (no window here, same effect).
+t.check("default storage unavailable: not started, no throw", hasStartedCall() === false);
+let defaultThrew = false;
+try { markCallStarted(); } catch { defaultThrew = true; }
+t.check("default storage unavailable: marking does not throw", !defaultThrew);
 
 t.done("cosmo first-call smoke tests");

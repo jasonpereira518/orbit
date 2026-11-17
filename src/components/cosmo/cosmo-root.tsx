@@ -98,7 +98,7 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
   const [confirming, setConfirming] = useState(false);
   const start = () => state && openVoice(dayThread(), state, "cosmo", nudge?.id);
   // The orb and the chip both come through here: the first call on a browser asks first.
-  const talk = () => (hasStartedCall(localStorage) ? start() : setConfirming(true));
+  const talk = () => (hasStartedCall() ? start() : setConfirming(true));
 
   useEffect(() => {
     let alive = true;
@@ -230,7 +230,7 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
         open={confirming}
         onCancel={() => setConfirming(false)}
         onStart={() => {
-          markCallStarted(localStorage);
+          markCallStarted();
           setConfirming(false);
           start();
         }}
