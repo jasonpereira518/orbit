@@ -205,6 +205,7 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await page.evaluate(() => {
     localStorage.removeItem("orbit:cosmo-thread");
     localStorage.removeItem("orbit:cosmo-nudges");
+    localStorage.setItem("orbit:cosmo-first-call", "1"); // past the first-call question
   });
 
   const orb = page.getByRole("button", { name: "Talk to Cosmo" });

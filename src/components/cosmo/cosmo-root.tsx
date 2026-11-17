@@ -18,6 +18,8 @@ import { openVoice, setVoiceHandoff, updateVoiceState, useVoiceDock } from "@/li
 import { useVoiceCall, voiceActions } from "@/lib/voice/call-store";
 import type { VoicePublicState } from "@/lib/voice/contracts";
 import { useAppPulse } from "@/lib/app-pulse-store";
+import { hasStartedCall, markCallStarted } from "@/lib/cosmo/first-call";
+import { CosmoFirstCallConfirm } from "./cosmo-first-call-confirm";
 import { nudgeInput, pickNudge } from "@/lib/cosmo/nudge";
 import "@/components/chat/voice/voice-overlay.css";
 import "./cosmo.css";
@@ -93,7 +95,10 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
       /* Private mode: dismissed for this page view only. */
     }
   };
-  const talk = () => state && openVoice(dayThread(), state, "cosmo", nudge?.id);
+  const [confirming, setConfirming] = useState(false);
+  const start = () => state && openVoice(dayThread(), state, "cosmo", nudge?.id);
+  // The orb and the chip both come through here: the first call on a browser asks first.
+  const talk = () => (hasStartedCall(localStorage) ? start() : setConfirming(true));
 
   useEffect(() => {
     let alive = true;
@@ -221,6 +226,15 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
     );
   return (
     <>
+      <CosmoFirstCallConfirm
+        open={confirming}
+        onCancel={() => setConfirming(false)}
+        onStart={() => {
+          markCallStarted(localStorage);
+          setConfirming(false);
+          start();
+        }}
+      />
       {landing && (
         <div
           aria-hidden
