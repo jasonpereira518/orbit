@@ -299,8 +299,8 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
           subtitle="Close + warm"
         />
         <StatCard
-          label="Reminders"
-          value={data.stats.pendingReminders}
+          label="Due reminders"
+          value={data.stats.dueReminders}
           icon={<Bell className="h-4 w-4" />}
           href="/reminders"
         />
