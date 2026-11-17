@@ -71,4 +71,35 @@ const notTheirs = validateDigest(
 );
 check("job change: excerpt from Me → dropped", notTheirs.jobChange === null);
 
+console.log("\ndeep read");
+const W2 = buildWindow("c2", [
+  { interactionId: "00000000-0000-4000-8000-0000000000a1", at: new Date("2022-09-20T15:00:00Z"), direction: "in", speaker: "Maya", text: "so good meeting you at HackNC last weekend!" },
+  { interactionId: "00000000-0000-4000-8000-0000000000a2", at: new Date("2023-01-10T15:00:00Z"), direction: "in", speaker: "Maya", text: "the coffee yesterday was great, thanks" },
+], ["linkedin"])!;
+const answer = (over: object) => parseDigestAnswer(JSON.stringify({ summary: "s", ...over }));
+const O = { text: "Met at HackNC", date: "2022-09", context: "event", excerpt: "so good meeting you at HackNC" };
+const deep = { deepRead: true };
+const dv = (over: object) => validateDigest(answer(over), W2, new Set(), deep);
+const o1 = dv({ origin: O }).origin;
+check("a quoted origin keeps its month", o1?.date === "2022-09-01" && o1?.precision === "month" && o1?.context === "event" && o1?.interactionId === "00000000-0000-4000-8000-0000000000a1", JSON.stringify(o1));
+check("a day origin keeps its day", dv({ origin: { ...O, date: "2022-09-17" } }).origin?.precision === "day");
+check("a year origin keeps its year", dv({ origin: { ...O, date: "2022" } }).origin?.date === "2022-01-01" && dv({ origin: { ...O, date: "2022" } }).origin?.precision === "year");
+check("an origin with no date keeps its text", dv({ origin: { ...O, date: "" } }).origin?.date === null && dv({ origin: { ...O, date: "" } }).origin?.text === "Met at HackNC");
+check("flag off: no origin even when the model sent one", validateDigest(answer({ origin: O }), W2, new Set()).origin === null);
+check("an origin dated after its message is dropped", dv({ origin: { ...O, date: "2023-05" } }).origin === null);
+check("an unquoted origin is dropped", dv({ origin: { ...O, excerpt: "we met at a conference" } }).origin === null);
+check("an unknown context becomes null, the origin stays", dv({ origin: { ...O, context: "party" } }).origin?.context === null && dv({ origin: { ...O, context: "party" } }).origin !== null);
+check("a quoted relationship kind is kept", dv({ relationship: { kind: "friend", excerpt: O.excerpt } }).relationship?.kind === "friend");
+check("an unknown relationship kind is dropped", dv({ relationship: { kind: "bestie", excerpt: O.excerpt } }).relationship === null);
+const E = { type: "meeting", summary: "Coffee", date: "", excerpt: "the coffee yesterday was great" };
+check("an event with no date takes its message's day", dv({ events: [E] }).events?.[0]?.day === "2023-01-10");
+check("an event dated before its message keeps its date", dv({ events: [{ ...E, date: "2023-01-09" }] }).events?.[0]?.day === "2023-01-09");
+check("an event dated after its message takes the message's day", dv({ events: [{ ...E, date: "2023-02-01" }] }).events?.[0]?.day === "2023-01-10");
+check("an event of an unknown type is dropped", dv({ events: [{ ...E, type: "party" }] }).events?.length === 0);
+check("an unquoted event is dropped", dv({ events: [{ ...E, excerpt: "we had dinner together" }] }).events?.length === 0);
+check("an origin with an implausible year keeps its text but no date", dv({ origin: { ...O, date: "1000-01-01" } }).origin?.date === null && dv({ origin: { ...O, date: "1000-01-01" } }).origin?.text === "Met at HackNC");
+const multi = dv({ origin: { ...O, excerpt: "so good meeting\nyou at HackNC" }, relationship: { kind: "friend", excerpt: "so good meeting\nyou at HackNC" } });
+check("stored excerpts are one capped line", Boolean(multi.origin && multi.relationship) && !/\n/.test(multi.origin!.excerpt + multi.relationship!.excerpt) && multi.origin!.excerpt.length <= 300, JSON.stringify(multi.origin));
+check("flag off: no events", (validateDigest(answer({ events: [E] }), W2, new Set()).events ?? []).length === 0);
+
 console.log("\nsmoke-relationship-validate: all checks passed");

@@ -6,7 +6,8 @@
  * Run: npx tsx scripts/smoke-relationship-extract.ts
  */
 import "./smoke/_env";
-import { buildDigestPrompt, isTrivialWindow, parseDigestAnswer } from "../src/lib/relationship-engine/extract";
+import { DIGEST_SYSTEM, buildDigestPrompt, isTrivialWindow, parseDigestAnswer } from "../src/lib/relationship-engine/extract";
+import { RELATIONSHIP_KINDS } from "../src/db/schema";
 import { buildWindow } from "../src/lib/relationship-engine/gather";
 import type { WindowMessage } from "../src/lib/relationship-engine/types";
 import { AI_OPERATIONS } from "../src/lib/ai-operations";
@@ -163,5 +164,31 @@ check(
   "prompt: attribution line rule stated",
   prompt.system.includes("# This contact appears as") && /appears under the name given in that line/.test(prompt.system),
 );
+
+console.log("\ndeep read");
+const W = w(["so good meeting you at HackNC last weekend!", "the coffee yesterday was great, thanks"]);
+const base = buildDigestPrompt({ contactName: "Maya", window: W, previous: null });
+const deep = buildDigestPrompt({ contactName: "Maya", window: W, previous: null, deepRead: true, context: ["You both went to State University, 2018 to 2020"] });
+check("flag off: the prompt is today's", base.system === DIGEST_SYSTEM && !base.user.includes("KNOWNCONTEXT"));
+check("flag on: asks for origin, relationship and events", ['"origin"', '"relationship"', '"events"'].every((k) => deep.system.includes(k)));
+check("flag on: lists every relationship kind", RELATIONSHIP_KINDS.every((k) => deep.system.includes(k)));
+check("flag on: context is fenced", fenced(deep.user, "KNOWNCONTEXT").includes("State University"));
+check("flag on with no context: no context block", !buildDigestPrompt({ contactName: "Maya", window: W, previous: null, deepRead: true }).user.includes("KNOWNCONTEXT"));
+const a = parseDigestAnswer(JSON.stringify({
+  summary: "s",
+  origin: { text: "Met at HackNC", date: "2022-09", context: "event", excerpt: "so good meeting you at HackNC" },
+  relationship: { kind: "friend", excerpt: "so good meeting you at HackNC" },
+  events: [{ type: "meeting", summary: "Coffee", date: "", excerpt: "the coffee yesterday was great" }],
+}));
+check("new keys parse", a.origin?.date === "2022-09" && a.relationship?.kind === "friend" && a.events.length === 1, JSON.stringify(a));
+check("an old-shape answer still parses", parseDigestAnswer(JSON.stringify({ summary: "s" })).origin === null && parseDigestAnswer(JSON.stringify({ summary: "s" })).events.length === 0);
+check("a malformed origin is null, not a failure", parseDigestAnswer(JSON.stringify({ summary: "s", origin: "HackNC" })).origin === null);
+const NOTE = "Their LinkedIn connection request:\nGreat meeting you at HackNC last weekend! Let's keep in touch.";
+check("deep read: an invitation note about meeting is worth a read", !isTrivialWindow(w([NOTE]), { deepRead: true }));
+check("without deep read that note stays trivial", isTrivialWindow(w([NOTE])));
+check("deep read: thanks for connecting is still trivial", isTrivialWindow(w(["Thanks for connecting!", "Likewise!"]), { deepRead: true }));
+check("deep read: nice to meet you alone is still trivial", isTrivialWindow(w(["Nice to meet you!"]), { deepRead: true }));
+check("deep read: an introduction is worth a read", !isTrivialWindow(w(["Priya introduced us, glad to connect"]), { deepRead: true }));
+check("events are capped at 10", parseDigestAnswer(JSON.stringify({ summary: "s", events: Array.from({ length: 14 }, () => ({ type: "call", summary: "c", date: "", excerpt: "x y z" })) })).events.length === 10);
 
 console.log("\nsmoke-relationship-extract: all checks passed");

@@ -226,6 +226,8 @@ check("nothing in common", historyOverlaps(you, [role("Elsewhere", 2020, 2021)],
 check("no history at all", historyOverlaps({}, [role("Acme", 2020, 2021)], 2026).length === 0);
 const o6 = historyOverlaps(you, [role("Old Co", 2021, 2021), role("Old Co", 2022, 2022)], 2026);
 check("one line per organization", o6.length === 1 && o6[0].together, JSON.stringify(o6));
+check("a company suffix does not stop a match", historyOverlaps(you, [role("Acme", 2025, null, true)], 2026).length === 1 && historyOverlaps({ positions: [{ title: "X", company: "Old Co" }] }, [role("Old Co LLC", null, null)], 2026).length === 1);
+check("a suffix alone is not a company", historyOverlaps({ positions: [{ title: "X", company: "Inc." }] }, [role("LLC", 2020, 2021)], 2026).length === 0);
 check("an empty organization never matches", historyOverlaps({ positions: [{ title: "X", company: "!!" }] }, [role("??", 2020, 2021)], 2026).length === 0);
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nsmoke-linkedin-you: all checks passed");

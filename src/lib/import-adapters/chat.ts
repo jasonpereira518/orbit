@@ -10,6 +10,7 @@ import { clampCodePoints } from "@/lib/conversations/clamp";
 import { sessionExternalId } from "@/lib/conversations/sessions";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 import { displayNameFor } from "@/lib/names/from-identifier";
+import { HOW_MET_LABEL } from "@/lib/contact-fields";
 
 /**
  * The stored name for a chat participant. Only the contact's name is cleaned: the parser's
@@ -23,8 +24,6 @@ function chatName(p: { participant: { displayName: string; email?: string | null
 
 export const WHATSAPP_CHAT_IMPORT_TYPE = "whatsapp_chat";
 export const IMESSAGE_CHAT_IMPORT_TYPE = "imessage_chat";
-
-const LABEL = { whatsapp: "WhatsApp", imessage: "iMessage" } as const;
 
 function range(p: ChatConversationRowPayload) {
   const starts = p.sessions.map((s) => s.startAt).sort();
@@ -58,7 +57,7 @@ export function chatAdapter(source: "whatsapp" | "imessage"): ImportAdapter<Chat
         email: p.participant.email ?? undefined,
         source: `${source}_chat`,
         relationshipScore: 2,
-        howMet: `${LABEL[source]} messages`,
+        howMet: HOW_MET_LABEL[source],
         metContext: "online",
         tagNames: [source],
         firstInteractionAt: earliest ?? undefined,

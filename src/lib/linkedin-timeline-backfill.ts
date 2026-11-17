@@ -86,6 +86,7 @@ import {
   utcDayKey,
 } from "@/lib/timeline-cost";
 import { reportError } from "@/lib/report-error";
+import { deepReadOn } from "@/lib/deep-read";
 
 /** Contacts claimed per pass. */
 const CLAIM_SIZE = 100;
@@ -152,7 +153,9 @@ const PENDING_TIMELINE_CONTACTS = sql`
  * hundred contacts can outlive that invocation many times over. Best-effort — the daily
  * cron re-kicks anything still pending.
  */
-export async function kickLinkedInTimelineBackfill(userId: string) {
+export async function kickLinkedInTimelineBackfill(userId: string, opts: { deepRead?: boolean } = {}) {
+  // LinkedIn deep read: the relationship engine logs these events now, in its one call.
+  if (opts.deepRead ?? (await deepReadOn(userId))) return;
   try {
     await internalFetch("/api/linkedin/timeline-events/backfill", {
       method: "POST",
@@ -379,7 +382,7 @@ export async function runLinkedInTimelineBackfill(
   userId: string,
   extract: typeof extractLinkedInTimelineEvents = extractLinkedInTimelineEvents,
   budgetMs: number = TIME_BUDGET_MS,
-  opts: { dailyCap?: number; now?: Date; submit?: typeof submitAiBatch; engines?: Engines } = {}
+  opts: { dailyCap?: number; now?: Date; submit?: typeof submitAiBatch; engines?: Engines; deepRead?: boolean } = {}
 ): Promise<{
   contactsProcessed: number;
   eventsCreated: number;
@@ -387,6 +390,11 @@ export async function runLinkedInTimelineBackfill(
   capped: boolean;
   enabled: boolean;
 }> {
+  // LinkedIn deep read: the relationship engine reads these threads and logs their events in
+  // its one call, so this reader stops. `remaining: 0` keeps the route from re-kicking itself.
+  if (opts.deepRead ?? (await deepReadOn(userId))) {
+    return { contactsProcessed: 0, eventsCreated: 0, remaining: 0, capped: false, enabled: false };
+  }
   const db = await getDb();
   const submit = opts.submit ?? submitAiBatch;
   const start = Date.now();

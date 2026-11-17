@@ -537,6 +537,8 @@ CREATE TABLE IF NOT EXISTS relationship_digests (
   batch_job_id uuid,
   batch_pending_until timestamptz,
   run_id uuid,
+  origin jsonb,
+  relationship jsonb,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS relationship_digests_user_idx ON relationship_digests(user_id);
@@ -3166,8 +3168,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // never selects them. Irreversible: the news cache and any discovery metadata are gone.
 // Built as 239 (Nov 12 2026); renumbered to 246 on Nov 14 2026 when main and production reached
 // 245 (a database stamped above 239 would never run a 239). Scanned every remote ref: none above 245.
+// 247 = LinkedIn deep read PR 2 (reader upgrade): relationship_digests.origin and .relationship
+// (jsonb, nullable), the quoted "how you met" and relationship kind. Scanned every remote ref on
+// Nov 16 2026: main and five branches hold 246, none higher.
 // 248 = smart opportunities table for cross-contact note synthesis aligned with personal goals & progress.
-// Scanned remote refs on Nov 15 2026: linkedin-deep-read-pr2 holds 247, so this takes 248.
+// Scanned remote refs on Nov 17 2026: main holds 247, none higher.
 export const SCHEMA_VERSION = 248;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
@@ -5697,6 +5702,9 @@ const alters = [
   `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS progress text`,
   `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS category text`,
   `ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`,
+  // LinkedIn deep read PR 2 (schema 247): how you met and the kind of relationship, each quoted.
+  `ALTER TABLE relationship_digests ADD COLUMN IF NOT EXISTS origin jsonb`,
+  `ALTER TABLE relationship_digests ADD COLUMN IF NOT EXISTS relationship jsonb`,
   // Schema v248: smart opportunities from cross-contact note synthesis and goal progress
   `CREATE TABLE IF NOT EXISTS smart_opportunities (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

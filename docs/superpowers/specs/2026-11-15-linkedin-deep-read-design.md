@@ -83,8 +83,9 @@ All five PRs sit behind a new surface key `feature.linkedin-deep-read` (pattern:
 server, per user, and it covers everything that changes what Orbit reads, infers or stores:
 the new file parsers, the new prompt outputs, the new writes and the new closeness inputs.
 With the gate off a user gets exactly today's behaviour, including the old timeline reader.
-With it on, the old reader is no longer kicked for that user. Jason's preview access turns it
-on for his own account so the export can be measured before launch.
+With it on, the old reader is no longer kicked for that user. Before launch it is on for admins
+(by user id, `deepReadOn` in `src/lib/deep-read.ts`), so it works in background jobs, which
+have no browser cookie, and Jason's own export can be measured before launch.
 
 ### PR 1: Your history (no AI, no DDL)
 
@@ -126,8 +127,8 @@ Reading changes:
   opening stretch and the newest stretch and cut the middle, with one line in the window
   saying what was skipped. `history_truncated_before` keeps its meaning.
 - **Read the signals.** Invitation notes, your LinkedIn notes and recommendations join the
-  window in date order. The signals adapter starts writing `direction`
-  (sent = out, received = in) so the speaker is right.
+  window in date order. Who said each one is read from the row's existing `external_id`
+  (`li-export:invitation_sent:…` and so on), so rows imported before this PR need no backfill.
 - **Which signals earn a read on their own.** An invitation note or a recommendation with
   text makes a contact pending even with no message thread (widen `MESSAGE_INTERACTION_SQL`,
   which the claim, count, cron sweep and Undo sweep all share). The existing trivial-thread
@@ -166,17 +167,16 @@ baseline before and after the prompt change.
 
 ### PR 3: Closeness from LinkedIn evidence (no AI, no DDL expected)
 
-Endorsement_Received_Info.csv and Endorsement_Given_Info.csv are first read in this PR, not
-PR 1. Every saved `interactions` row that is not AI-derived counts as a touch today
-(`interaction-provenance.ts`), so an endorsement saved the way invitations are would raise
-closeness by accident. How endorsements are stored is decided here, together with their
-weight, and they must not count as touches.
+Endorsements are not read (decided Nov 16): Jason's export has no endorsement files, so their
+columns cannot be checked. Recommendations carry that weight instead. Built as `depth`
+(both sides wrote 0.35, years in touch 0.35, a recommendation 0.3) at weight 0.23, and real
+overlap in the prior at 0.2 / 0.1; see `src/lib/closeness-depth.ts`.
 
 New counted inputs to the cohort builder:
 
 - both sides wrote (direction is already aggregated at `closeness-cohort.ts:97-116`)
 - number of distinct years with an exchange
-- a recommendation written either way (strong), an endorsement either way (weak)
+- a recommendation written either way
 - real overlap with your own employers and schools, replacing the orbit-relative
   company/school concentration guess where your history is known
 
@@ -240,8 +240,8 @@ You overlapped: UNC Chapel Hill, 2021 to 2025
   Recommendations_Given.csv, Languages.csv, Courses.csv. PR 3 must not depend on
   endorsements or given recommendations to rank anyone.
 - In this export and unused so far: Events.csv (`Event Name, Event Time, Status,
-  External Url`), the LinkedIn events you went to. PR 2 should pass the events near a
-  contact's first messages to the reader as context for "how you met". Learning.csv
+  External Url`), the LinkedIn events you went to. Not used in PR 2 (decided Nov 16): the
+  export has two events and their dates are ranges, so a parser is not worth it yet. Learning.csv
   (LinkedIn Learning videos) and Rich_Media.csv stay unread.
 
 ## Left to the builder

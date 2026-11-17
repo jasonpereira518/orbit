@@ -32,6 +32,8 @@ export const TOAST_COPY = {
   loadContactsFailed: "Couldn’t load your contacts — try again?",
   draftFollowUpFailed: "Couldn’t draft that follow-up — try again?",
   summaryFailed: "Couldn’t write a summary — try again?",
+  relationshipKindRemoved: "Removed — Orbit won’t suggest it again",
+  relationshipKindFailed: "Couldn’t remove that — try again?",
   copyFailed: "Couldn’t copy — select it and copy by hand",
   copied: "Copied",
   chatFailed: "Couldn’t get an answer — try again?",

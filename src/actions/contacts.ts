@@ -119,6 +119,7 @@ import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/e
 import { trackSearchPerformed } from "@/lib/search-events";
 import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
 import { deferStyleProfileBuild } from "@/lib/style-profile-defer";
+import { removeRelationshipKind } from "@/lib/relationship-engine/apply";
 
 export type { ContactInput } from "@/lib/contact-writes";
 
@@ -1056,6 +1057,15 @@ export async function reorderSameDayInteractions(
 
   revalidatePath(`/contacts/${contactId}`);
   return { ok: true as const };
+}
+
+/** "Not right?" on a contact's relationship kind (LinkedIn deep read): hide it for good. */
+export async function removeContactRelationshipKind(contactId: string) {
+  const userId = await requirePageUser("page.contacts");
+  if (!/^[0-9a-f-]{36}$/i.test(contactId)) return { ok: false as const };
+  const ok = await removeRelationshipKind(userId, contactId);
+  revalidatePath(`/contacts/${contactId}`);
+  return { ok };
 }
 
 export async function regenerateContactSummary(contactId: string) {

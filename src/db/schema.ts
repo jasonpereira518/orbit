@@ -89,6 +89,12 @@ export type ClosenessCohortSnapshot = {
    * recalibrated. Making it required would break every stored cohort at once.
    */
   calendarConnected?: boolean;
+  /**
+   * LinkedIn deep read was on when this distribution was built, so a single-contact rescore
+   * scores with depth and overlap too (`rescoreContact`). Optional for the same reason as
+   * `calendarConnected`; absent reads as off.
+   */
+  deepRead?: boolean;
 };
 
 /**
@@ -2123,6 +2129,34 @@ export type RelationshipRunFlag = {
 
 export type RelationshipRunStatus = "queued" | "running" | "waiting_key" | "done" | "failed" | "undone";
 
+export const RELATIONSHIP_KINDS = [
+  "coworker", "classmate", "friend", "family", "mentor", "mentee",
+  "recruiter", "client", "investor", "collaborator", "acquaintance",
+] as const;
+export type RelationshipKind = (typeof RELATIONSHIP_KINDS)[number];
+export type DatePrecision = "day" | "month" | "year";
+/** How you met, from one quoted message. `date` is YYYY-MM-DD; for month/year precision it is the 1st. */
+export type RelationshipOrigin = {
+  text: string;
+  date: string | null;
+  precision: DatePrecision | null;
+  /** One of the six `met_context` values, or null. */
+  context: string | null;
+  excerpt: string;
+  interactionId: string;
+  runId: string;
+  /** What the contact's met fields held before this run wrote them; null when it wrote nothing. */
+  replaced: {
+    howMet: string | null;
+    dateMet: string | null;
+    metContext: string | null;
+    /** Set only when the run moved first_interaction_at: what it was, and what the run set. */
+    firstInteractionAt?: string | null;
+    widenedTo?: string;
+  } | null;
+};
+export type RelationshipKindRecord = { kind: RelationshipKind; excerpt: string; interactionId: string; removed?: true };
+
 /**
  * The relationship engine's memory of one relationship. "Pending" is NOT stored here: a
  * contact is pending when it has message interactions newer than the watermark (see
@@ -2149,6 +2183,10 @@ export const relationshipDigests = pgTable(
     batchJobId: uuid("batch_job_id"),
     batchPendingUntil: timestamp("batch_pending_until", { withTimezone: true }),
     runId: uuid("run_id"),
+    /** Deep read: how you met, from one quoted message. The first one found wins. */
+    origin: jsonb("origin").$type<RelationshipOrigin>(),
+    /** Deep read: the kind of relationship, quoted. `removed` sticks. */
+    relationship: jsonb("relationship").$type<RelationshipKindRecord>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("relationship_digests_user_idx").on(t.userId)]

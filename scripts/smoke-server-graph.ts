@@ -28,8 +28,11 @@ const LAYOUT = "src/app/(clerk)/(app)/layout.tsx";
  * imports beyond each other) replaced copies inside `duplicates.ts`, net +2 → 106; raised to 108.
  * Nov 12 2026: names PR2's write paths decide name replacement with `names/compare.ts` (pure,
  * imports only its siblings), +1 → 109.
+ * Nov 16 2026: `admin-ids.ts` split out of `admin.ts` (the id check, importing only
+ * `demo-account.ts`) so surface visibility and the deep-read gate no longer reach Clerk auth:
+ * it broke three import cycles. Same code in two files, +1 → 110.
  */
-const LAYOUT_MAX_FILES = 109;
+const LAYOUT_MAX_FILES = 110;
 /** Modules that must never load on every page: heavy, and needed only by specific actions. */
 const LAYOUT_BANNED = [
   "src/lib/ai.ts",
