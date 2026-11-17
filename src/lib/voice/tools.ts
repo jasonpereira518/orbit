@@ -154,6 +154,11 @@ async function aboutTheUser(userId: string): Promise<string> {
   const parts: string[] = [];
   if (career?.role) parts.push(`Works as ${clip(career.role.title, 80)} at ${clip(career.role.company, 80)}.`);
   else if (career?.profile?.headline) parts.push(`Headline: ${clip(career.profile.headline, 160)}.`);
+  // LinkedIn deep read (PR 1 history): up to three past roles and two schools.
+  const past = (career?.positions ?? []).filter((p) => p.end).slice(0, 3).map((p) => `${clip(p.title, 80)} at ${clip(p.company, 80)}`);
+  if (past.length) parts.push(`Previously: ${past.join(", ")}.`);
+  const studied = (career?.education ?? []).slice(0, 2).map((e) => (e.degree ? `${clip(e.degree, 80)} at ` : "") + clip(e.school, 80));
+  if (studied.length) parts.push(`Studied: ${studied.join(", ")}.`);
   // The raw aim, spelled out here: importing about-you's labels (also used by onboarding's client
   // step) into this server-action module sends next dev's /onboarding into a reload loop.
   if (career?.aim) parts.push(`Looking for: ${career.aim.kind.replace(/_/g, " ")}${career.aim.field ? ` in ${career.aim.field}` : ""}.`);

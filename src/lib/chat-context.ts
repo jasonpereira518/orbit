@@ -75,6 +75,7 @@ import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadRecruitersForChat } from "@/actions/recruiters";
 import { loadWritingInstructions, writingInstructionsFromRow } from "@/lib/writing-instructions-store";
 import { sanitizeDraft } from "@/lib/chat-draft";
+import { loadRelationshipContexts, renderRelationshipBlock, type RelationshipContext } from "@/lib/relationship-context";
 
 /**
  * Everything the model is shown for one question, assembled with the independent lookups
@@ -119,6 +120,24 @@ export function renderAboutUser(
     ? [career.role.title, career.role.company].map((v) => sanitizeProfileLine(v ?? "")).filter(Boolean).join(" at ")
     : "";
   if (role) parts.push(`current role: ${role}`);
+  // LinkedIn deep read (PR 1 history): up to three past roles and two schools.
+  const years = (a?: { year: number }, b?: { year: number }) =>
+    a ? (b && b.year !== a.year ? `${a.year}–${b.year}` : `${a.year}`) : "";
+  const past = (career?.positions ?? [])
+    .filter((p) => p.end)
+    .slice(0, 3)
+    .map((p) => {
+      const what = [p.title, p.company].map((v) => sanitizeProfileLine(v ?? "")).filter(Boolean).join(" at ");
+      const when = years(p.start, p.end);
+      return what ? `${what}${when ? ` (${when})` : ""}` : "";
+    })
+    .filter(Boolean);
+  if (past.length) parts.push(`previously: ${past.join(", ")}`);
+  const studied = (career?.education ?? [])
+    .slice(0, 2)
+    .map((e) => [e.degree, e.school].map((v) => sanitizeProfileLine(v ?? "")).filter(Boolean).join(" at "))
+    .filter(Boolean);
+  if (studied.length) parts.push(`studied: ${studied.join(", ")}`);
   for (const [label, value] of [
     ["headline", career?.profile?.headline],
     ["based in", career?.profile?.location],
@@ -1130,7 +1149,7 @@ export async function prepareChatContext(
   if (retrievedIds.length) {
     steps.start("read", `Reading notes on ${plural(retrievedIds.length, "person", "people")}`);
   }
-  const [snippets, careerLines, moveLines, focusMsgs, focusProfileData, focusReminders, focusBrief] = await Promise.all([
+  const [snippets, careerLines, moveLines, focusMsgs, focusProfileData, focusReminders, focusBrief, focusDeep] = await Promise.all([
     loadRecentInteractions(userId, retrievedIds),
     getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
     getRecentMoveLines(userId, retrievedIds).catch(() => new Map<string, string>()),
@@ -1167,6 +1186,10 @@ export async function prepareChatContext(
           .catch(() => [])
       : Promise.resolve([]),
     focusContactId ? getContactBrief(userId, focusContactId).catch(() => null) : Promise.resolve(null),
+    // LinkedIn deep read: how you met, kind, overlap, topics. Empty when it is off.
+    focusContactId
+      ? loadRelationshipContexts(userId, [focusContactId]).catch(() => new Map<string, RelationshipContext>())
+      : Promise.resolve(new Map<string, RelationshipContext>()),
   ]);
   if (retrievedIds.length) {
     // Count the people who actually had something written about them, not the page size —
@@ -1192,6 +1215,7 @@ export async function prepareChatContext(
   const focusProfile =
     [
       renderFocusRelationship(focusRelationship, focusReminders, focusBrief),
+      focusContactId ? renderRelationshipBlock(focusDeep.get(focusContactId)) : null,
       renderFocusProfile(focusProfileData),
     ]
       .filter((block): block is string => Boolean(block))

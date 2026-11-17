@@ -52,6 +52,7 @@ import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { loadRelationshipContexts, type RelationshipContext } from "@/lib/relationship-context";
 
 /**
  * Above the (main) layout's 60: "Find work history" runs a web search inside its server
@@ -266,6 +267,9 @@ export default async function ContactDetailPage({
     dateMet: contact.dateMet,
     howMet: contact.howMet,
   });
+  // LinkedIn deep read: how you met (quoted), the kind, where you overlapped. Null when it is off.
+  const relationship =
+    (await loadRelationshipContexts(await userIdPromise, [id]).catch(() => new Map<string, RelationshipContext>())).get(id) ?? null;
 
   const displayName = contact.preferredName || contact.fullName;
   // The rows are the newest first, so a logged touch among them is the newest one overall;
@@ -424,6 +428,7 @@ export default async function ContactDetailPage({
           hasLoggedInteraction={hasLoggedInteraction}
           frequencyLabel={frequencyLabel}
           howMetSummary={howMetSummary}
+          relationship={relationship}
         />
       </div>
 

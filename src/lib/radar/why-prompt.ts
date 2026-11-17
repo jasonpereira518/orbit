@@ -45,6 +45,8 @@ export function radarWhyInputs(rec: {
   kind: RecommendationKind;
   reasons: readonly RadarReason[];
   evidence: readonly RadarEvidence[];
+  /** LinkedIn deep read: how you met and where you overlapped (`relationshipFactLines`). */
+  relationship?: readonly string[];
 }): RadarWhyInputs {
   const facts = [
     ...rec.reasons
@@ -52,6 +54,7 @@ export function radarWhyInputs(rec: {
       .filter((r) => !PENALTY_CODES.has(r.code))
       .map((r) => r.label),
     ...rec.evidence.map((e) => e.label),
+    ...(rec.relationship ?? []),
   ]
     .map((line) => cleanSingleLine(line, 200))
     .filter((line): line is string => Boolean(line));

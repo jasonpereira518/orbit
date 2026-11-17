@@ -18,6 +18,7 @@ import { formatHowMetSummary } from "@/lib/met-context";
 import { withWritingPreferences } from "@/lib/writing-instructions";
 import { auditUntrustedWrite, fenceUntrusted, guardModelOutput, recordAiSecurityEvent } from "@/lib/ai-security";
 import { freeWindows } from "@/lib/calendar-free-windows";
+import { loadRelationshipContexts, renderRelationshipBlock } from "@/lib/relationship-context";
 
 const draftSchema = z.object({
   body: z.string().min(1),
@@ -171,7 +172,8 @@ Conversation history (newest first):
 ${parts.transcript ? fenceUntrusted("HISTORY", parts.transcript) : "(no interactions logged yet)"}`;
 }
 
-export function buildProfileBlock(contact: ContactRow) {
+/** `relationshipBlock`: the LinkedIn deep read's lines (`renderRelationshipBlock`), appended last. */
+export function buildProfileBlock(contact: ContactRow, relationshipBlock?: string | null) {
   const howMet = formatHowMetSummary({
     metContext: contact.metContext,
     dateMet: contact.dateMet,
@@ -194,6 +196,7 @@ export function buildProfileBlock(contact: ContactRow) {
     contact.keyFacts?.length
       ? `Key facts: ${contact.keyFacts.join("; ")}`
       : null,
+    relationshipBlock || null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -238,7 +241,9 @@ async function draftFromContext(input: {
     await consumeBucket(scope, input.userId, RATE_LIMITS[scope]);
   }
   const contactName = input.contact.preferredName || input.contact.fullName;
-  const profileBlock = buildProfileBlock(input.contact);
+  // LinkedIn deep read: how you met, kind, overlap, topics, open threads. Nothing when it is off.
+  const deep = await loadRelationshipContexts(input.userId, [input.contact.id]).catch(() => new Map());
+  const profileBlock = buildProfileBlock(input.contact, renderRelationshipBlock(deep.get(input.contact.id)));
   const transcript = buildConversationTranscript(input.recent);
   const operation = input.operation ?? "followup.draft";
   // Tripwire, never a block: the history is other people's mail, DMs and calendar invites.

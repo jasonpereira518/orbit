@@ -2095,7 +2095,8 @@
           "contact",
           "brief",
           "goals",
-          "stale"
+          "stale",
+          "relationship"
         ],
         "mcp": [
           "contact",
