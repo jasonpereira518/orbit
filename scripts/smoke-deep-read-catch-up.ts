@@ -40,7 +40,15 @@ const U2 = "smoke-catch-up-u2";
 const U3 = "smoke-catch-up-u3";
 const U4 = "smoke-catch-up-u4";
 const USERS = [U1, U2, U3, U4];
-const LIVE = `live:${LINKEDIN_DEEP_READ_SURFACE_KEY}`;
+/** Hiding the surface is the kill switch once it is released: the catch-up goes back to admins only. */
+const HIDDEN = LINKEDIN_DEEP_READ_SURFACE_KEY;
+
+async function hide(on: boolean) {
+  const db = await getDb();
+  if (on) await db.insert(appSurfaceFlags).values({ surfaceKey: HIDDEN, hiddenBy: "smoke-catch-up" }).onConflictDoNothing();
+  else await db.delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, HIDDEN));
+  invalidateHiddenSurfaceKeys();
+}
 
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
@@ -63,7 +71,7 @@ async function reset() {
   for (const t of [relationshipDigests, interactions, importJobRows, importFiles, imports, targetCompanies, contacts, closenessCohorts, userSettings]) {
     await db.delete(t).where(inArray(t.userId, USERS));
   }
-  await db.delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, LIVE));
+  await db.delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, HIDDEN));
   invalidateHiddenSurfaceKeys();
   for (const u of USERS) await ensureUserSettings(u);
 }
@@ -103,12 +111,10 @@ async function main() {
   delete process.env.ADMIN_USER_IDS;
 
   console.log("launched?");
-  check("not while the surface is coming soon", (await deepReadLaunched()) === false);
-  await db.insert(appSurfaceFlags).values({ surfaceKey: LIVE, hiddenBy: U1 }).onConflictDoNothing();
-  invalidateHiddenSurfaceKeys();
-  check("yes once it is released", (await deepReadLaunched()) === true);
-  await db.delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, LIVE));
-  invalidateHiddenSurfaceKeys();
+  check("yes: the surface is released", (await deepReadLaunched()) === true);
+  await hide(true);
+  check("no once the surface is hidden (the kill switch)", (await deepReadLaunched()) === false);
+  await hide(false);
 
   console.log("\nyour history");
   await setRole(U1, "Engineer", "Acme");
@@ -184,12 +190,14 @@ async function main() {
   await db.insert(relationshipDigests).values({ contactId: con.id, userId: U1, summary: "s", messageCount: 2, sources: ["linkedin"], watermarkAt: new Date("2024-01-01T00:00:00Z") });
   const kicked: string[] = [];
   const kick = async (u: string) => void kicked.push(u);
+  await hide(true);
   const dark = await runDeepReadCatchUp({ kick, run: runJob });
   check("dark with no admins: nothing at all", JSON.stringify(dark) === JSON.stringify({ deepHistoryCaughtUp: 0, deepSignalsRestaged: 0, deepCohortsMarked: 0, deepOriginKicks: 0 }) && kicked.length === 0, JSON.stringify(dark));
   process.env.ADMIN_USER_IDS = U1;
   const admin = await runDeepReadCatchUp({ kick, run: runJob });
   check("dark with an admin: only the admin is kicked", admin.deepOriginKicks === 1 && kicked.join() === U1, JSON.stringify(admin));
   delete process.env.ADMIN_USER_IDS;
+  await hide(false);
 
   console.log("\nsignal-only contacts and the backstop");
   const [sig] = await db.insert(contacts).values({ userId: U3, fullName: "Signal Only", source: "linkedin" }).returning();

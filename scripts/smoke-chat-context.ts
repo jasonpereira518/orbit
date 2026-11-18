@@ -27,6 +27,7 @@ import { ymdInZone } from "../src/lib/reminder-due-bucket";
 import { factLane } from "../src/lib/chat-lanes";
 import { fallbackParsedQuery } from "../src/lib/chat-retrieval";
 import { NULL_STEPS } from "../src/lib/chat-steps";
+import { withDeepReadOff } from "./smoke/deep-read";
 
 const USER = "smoke-chat-context-user";
 
@@ -162,7 +163,7 @@ async function main() {
     if (prior.ids === undefined) delete process.env.ADMIN_USER_IDS; else process.env.ADMIN_USER_IDS = prior.ids;
     if (prior.clerk === undefined) delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY; else process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = prior.clerk;
     check("deep read: the focus profile says how you met", deepFocus.focusProfile?.includes("How you met: Met at HackNC (Sep 2022)") === true, deepFocus.focusProfile ?? "null");
-    const offFocus = await prepareChatContext(USER, "what did she work on?", { focusContactId: profiledId });
+    const offFocus = await withDeepReadOff(() => prepareChatContext(USER, "what did she work on?", { focusContactId: profiledId }));
     check("deep read off: the focus profile has no relationship block", offFocus.focusProfile?.includes("How you met: Met at HackNC") === false);
     await db2.delete(relationshipDigests).where(eq(relationshipDigests.contactId, profiledId));
   }
