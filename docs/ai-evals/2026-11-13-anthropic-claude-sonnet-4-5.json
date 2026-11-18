@@ -1,0 +1,38 @@
+{
+  "label": "anthropic-claude-sonnet-4-5",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "date": "2026-11-13T18:22:55.723Z",
+  "commit": "c346f6d9e",
+  "fixtures": "735d1bdaab2b",
+  "runs": 1,
+  "decisions": null,
+  "network": null,
+  "tasks": {
+    "profile-finder": {
+      "cases": 11,
+      "metrics": {
+        "wrongWrites": 0,
+        "found": 1
+      },
+      "misses": [],
+      "p50LatencyMs": 3242,
+      "costMicros": 128438,
+      "costPerCaseMicros": 11676.181818181818,
+      "usage": [
+        {
+          "operation": "contact.work_history",
+          "model": "claude-haiku-5-5",
+          "calls": 11,
+          "failures": 0,
+          "inputTokens": 150060,
+          "outputTokens": 6863,
+          "cachedInputTokens": 0,
+          "costMicros": 128438,
+          "unpriced": 0,
+          "p50Ms": 3233
+        }
+      ]
+    }
+  }
+}

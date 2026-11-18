@@ -112,7 +112,7 @@ async function ownedContact(userId: string, contactId: string) {
   const db = await getDb();
   return db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-    columns: { id: true, fullName: true, email: true },
+    columns: { id: true, fullName: true, email: true, notes: true },
   });
 }
 
@@ -1263,7 +1263,7 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
       location: z.string().max(200).optional(),
       email: z.string().email().optional(),
       linkedinUrl: z.string().max(500).optional(),
-      notes: z.string().max(5000).optional().describe("Replaces the existing notes."),
+      notes: z.string().max(5000).optional().describe("Added to the end of their notes, dated; existing notes are kept."),
       howMet: z.string().max(500).optional(),
     },
     annotations: { destructiveHint: false, idempotentHint: true },
@@ -1305,7 +1305,14 @@ export const ORBIT_TOOLS: readonly OrbitTool[] = [
         ...(fields.location !== undefined ? { location: fields.location } : {}),
         ...(fields.email !== undefined ? { email: fields.email } : {}),
         ...(fields.linkedinUrl !== undefined ? { linkedinUrl: fields.linkedinUrl } : {}),
-        ...(fields.notes !== undefined ? { notes: fields.notes } : {}),
+        // Appended, dated, like Orbit's own chat tool: an agent's note never erases the user's.
+        ...(fields.notes?.trim()
+          ? {
+              notes: existing.notes?.trim()
+                ? `${existing.notes.trimEnd()}\n\n[${new Date().toISOString().slice(0, 10)}] ${fields.notes.trim()}`
+                : `[${new Date().toISOString().slice(0, 10)}] ${fields.notes.trim()}`,
+            }
+          : {}),
         ...(fields.howMet !== undefined ? { howMet: fields.howMet } : {}),
       };
       if (Object.keys(patch).length === 0) {

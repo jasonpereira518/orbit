@@ -56,9 +56,27 @@ async function storedConnections(userId: string) {
  * that has no LinkedIn URL yet. Returns how many contacts a row was written onto.
  */
 export async function fillFromStoredExport(userId: string, contactIds?: string[]): Promise<number> {
-  if (contactIds && contactIds.length === 0) return 0;
+  const plan = await planFromStoredExport(userId, contactIds);
+  if (!plan?.merges.length) return 0;
+  await bulkMergeContactsForUser(userId, plan.merges, await createCompanyResolver(userId), {
+    source: "linkedin_export",
+    at: plan.uploadedAt,
+  });
+  return plan.merges.length;
+}
+
+/**
+ * What `fillFromStoredExport` would hand the merge, without writing: which contact matched
+ * which export row. The field rule still decides what lands (scripts/contact-fill-dry-run.ts
+ * runs it over this plan to report fills, replacements and suggestions).
+ */
+export async function planFromStoredExport(
+  userId: string,
+  contactIds?: string[]
+): Promise<{ merges: Array<{ contactId: string; input: Partial<ContactInput> }>; uploadedAt: Date } | null> {
+  if (contactIds && contactIds.length === 0) return null;
   const stored = await storedConnections(userId);
-  if (!stored?.rows.length) return 0;
+  if (!stored?.rows.length) return null;
 
   const subjects: DuplicateSubject[] = stored.rows.map((r, i) => ({
     id: String(i),
@@ -114,10 +132,5 @@ export async function fillFromStoredExport(userId: string, contactIds?: string[]
       },
     });
   }
-  if (!merges.length) return 0;
-  await bulkMergeContactsForUser(userId, merges, await createCompanyResolver(userId), {
-    source: "linkedin_export",
-    at: stored.uploadedAt,
-  });
-  return merges.length;
+  return { merges, uploadedAt: stored.uploadedAt };
 }
