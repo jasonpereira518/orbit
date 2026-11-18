@@ -3728,6 +3728,12 @@ export type ProviderSyncCursor = {
   } | null;
   /** Google: when the contacts lane last finished a pass, for the Google page's "synced X ago". */
   contactsSyncedAt?: string | null;
+  /**
+   * Google: when the Email activity pass last STARTED and finished cleanly. Its own key because
+   * `last_synced_at` is stamped by the calendar/contacts lane before the mailbox pass runs, so
+   * reading it there made every pass search for mail newer than "right now" and find none.
+   */
+  mailboxSyncedAt?: string | null;
   /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
   luma?: EventProviderSyncCursor | null;
   eventbrite?: EventProviderSyncCursor | null;

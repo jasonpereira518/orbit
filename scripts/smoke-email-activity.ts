@@ -30,7 +30,7 @@ import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contactIdentities, contacts, interactions, userSettings } from "../src/db/schema";
+import { contactIdentities, contacts, gmailConnections, interactions, userSettings } from "../src/db/schema";
 import {
   MAX_EMAIL_PARTICIPANTS,
   emailEventsFrom,
@@ -39,7 +39,10 @@ import {
   parseAddressList,
 } from "../src/lib/email-activity";
 import {
+  EMAIL_ACTIVITY_FIRST_SYNC_DAYS,
   buildActivityQuery,
+  emailActivitySince,
+  markEmailActivitySynced,
   syncEmailActivity,
 } from "../src/lib/email-activity-server";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -329,6 +332,31 @@ async function dbChecks() {
     !called,
     "no address in the network can match, so the request would be answered and thrown away"
   );
+
+  section("Where the mailbox pass resumes from");
+  // The calendar/contacts lane stamps `last_synced_at` BEFORE the mailbox pass runs, so a pass
+  // that resumed from it searched for mail newer than "now" and logged nothing, ever.
+  await db.insert(gmailConnections).values({
+    userId: USER,
+    emailAddress: ME,
+    accessTokenEncrypted: "x",
+    lastSyncedAt: new Date(),
+  });
+  const day = 24 * 60 * 60 * 1000;
+  const neverPassed = await emailActivitySince(USER);
+  check(
+    "a connection that has never had a mailbox pass reaches back the full first window",
+    Math.abs(Date.now() - neverPassed.getTime() - EMAIL_ACTIVITY_FIRST_SYNC_DAYS * day) < 60_000,
+    `got ${neverPassed.toISOString()}`
+  );
+  const passStart = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  await markEmailActivitySynced(USER, passStart);
+  const next = await emailActivitySince(USER);
+  check("after a pass, the next one resumes from when that pass started", next.getTime() === passStart.getTime(), `got ${next.toISOString()}`);
+  await markEmailActivitySynced(USER, new Date(Date.now() - 400 * day));
+  const stale = await emailActivitySince(USER);
+  check("an idle connection never replays more than the first window", Date.now() - stale.getTime() <= (EMAIL_ACTIVITY_FIRST_SYNC_DAYS * day) + 60_000);
+  await db.delete(gmailConnections).where(eq(gmailConnections.userId, USER));
 
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
