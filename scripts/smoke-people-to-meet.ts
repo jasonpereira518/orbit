@@ -7,10 +7,11 @@
  * Run: npx tsx scripts/smoke-people-to-meet.ts
  */
 import "./smoke/_env";
-import { eq, like } from "drizzle-orm";
+import { eq, like, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { aiResultCache, contacts, rateLimitBuckets, userSettings } from "../src/db/schema";
 import { loadPeopleToMeet } from "../src/lib/people-to-meet";
+import { addTargetCompany } from "../src/lib/events/target-companies";
 import type { DiscoveryResearcher } from "../src/lib/web-research";
 
 const USER = "smoke-people-to-meet-user";
@@ -58,6 +59,9 @@ async function reset(settings: { schools?: string[] } = { schools: ["UNC"] }) {
     schools: settings.schools ?? [],
     socialLinks: { linkedin: "https://www.linkedin.com/in/ada-tester" },
   });
+  await db.execute(sql`DELETE FROM target_companies WHERE user_id = ${USER}`);
+  // A school alone is no reason to meet anyone; a target company is.
+  if (settings.schools?.length) await addTargetCompany(USER, "Acme Robotics");
   await db.insert(contacts).values([
     { userId: USER, fullName: "Grace Hopper", company: "Stripe" },
     { userId: USER, fullName: "L. Slug", company: "Somewhere", linkedinUrl: "https://www.linkedin.com/in/Linus-Slug/" },
