@@ -27,6 +27,7 @@ import { AiKeyNotice } from "@/components/ai-key-notice";
 import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { recordDraftOutcome } from "@/actions/settings";
 
 export function FollowUpDraftSheet({
   open,
@@ -169,6 +170,12 @@ export function FollowUpDraftSheet({
     });
   }
 
+  /** Orbit's draft next to the text used, to learn edits made again and again. */
+  function recordUse() {
+    if (!aiDraft || !draft.trim()) return;
+    void recordDraftOutcome({ surface: "follow_up", kind: channel ?? "other", aiText: aiDraft, finalText: draft }).catch(() => {});
+  }
+
   function finishAndClose(message: string) {
     toast.success(message);
     onOpenChange(false);
@@ -185,6 +192,7 @@ export function FollowUpDraftSheet({
           toast.error(res.message);
           return;
         }
+        recordUse();
         showUndoSendToast({
           sendId: res.sendId,
           recipientLabel: contactName,
@@ -203,6 +211,7 @@ export function FollowUpDraftSheet({
   }
 
   function markSent(channel: "email" | "linkedin_message" | "note") {
+    recordUse();
     startMark(async () => {
       try {
         await completeFollowUpWithTouch(contactId, {
@@ -282,6 +291,7 @@ export function FollowUpDraftSheet({
             marking={marking}
             onCopy={async () => {
               if (!draft.trim()) return;
+              recordUse();
               if (await copyText(draft)) toast.success(TOAST_COPY.copied);
               else toast.error(TOAST_COPY.copyFailed);
             }}
@@ -290,6 +300,7 @@ export function FollowUpDraftSheet({
             onOpenLinkedIn={(url) => {
               // The tab opens inside the click (popup blockers); the toast waits on the copy.
               const copied = draft.trim() ? copyText(draft) : null;
+              recordUse();
               window.open(url, "_blank", "noopener,noreferrer");
               void copied?.then((ok) =>
                 ok ? toast.success(TOAST_COPY.copied) : toast.error(TOAST_COPY.copyFailed)

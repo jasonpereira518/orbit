@@ -70,7 +70,8 @@ import { asActionResult, classifyAiError, UserFacingError } from "@/lib/errors";
 import { logMessageOutcomeForUser, updateOutreachDraftForUser } from "@/lib/outreach-writes";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { actionFailure } from "@/lib/action-failure";
-import { deferStyleProfileBuild } from "@/lib/style-profile-defer";
+import { deferEditLearning, deferStyleProfileBuild } from "@/lib/style-profile-defer";
+import { recordDraftEdit } from "@/lib/draft-edits";
 
 /** Due follow-ups one call drafts, and how long it keeps starting new ones. */
 const DUE_FOLLOWUPS_PER_CALL = 15;
@@ -753,6 +754,7 @@ async function upsertMessageForProspect(
       .set({
         subject: draft.subject,
         body: draft.body,
+        aiBody: draft.body,
         status: options?.status ?? "generated",
         parentMessageId: options?.parentMessageId ?? existing.parentMessageId,
         scheduledFor: options?.scheduledFor ?? existing.scheduledFor,
@@ -770,6 +772,7 @@ async function upsertMessageForProspect(
       channel,
       subject: draft.subject,
       body: draft.body,
+      aiBody: draft.body,
       status: options?.status ?? "generated",
       stepIndex,
       parentMessageId: options?.parentMessageId ?? null,
@@ -827,6 +830,7 @@ async function upsertFirstStepMessages(
         channel,
         subject: draft.subject,
         body: draft.body,
+        aiBody: draft.body,
         status: "generated",
         stepIndex: 0,
         parentMessageId: null,
@@ -849,6 +853,7 @@ async function upsertFirstStepMessages(
           UPDATE outreach_messages AS m
              SET subject = v.subject,
                  body = v.body,
+                 ai_body = v.body,
                  status = 'generated',
                  updated_at = ${updatedAt}
             FROM (VALUES ${sql.join(updates, sql`, `)}) AS v(id, subject, body)
@@ -1365,6 +1370,7 @@ export async function generateDueFollowUps(campaignId: string) {
       .set({
         subject: draft.subject,
         body: draft.body,
+        aiBody: draft.body,
         status: "generated",
         updatedAt: now,
       })
@@ -1401,6 +1407,20 @@ async function threadOf(parentMessageId: string | null): Promise<OutreachThread 
   if (!parent || parent.channel !== "email" || parent.status !== "sent") return null;
   const known = Boolean(parent.rfcMessageId || parent.providerThreadId);
   return { rfcMessageId: parent.rfcMessageId, threadId: parent.providerThreadId, resendId: known ? null : parent.deliveryId };
+}
+
+/**
+ * A sent campaign message whose text was edited from what Orbit drafted: kept to learn the edits
+ * made again and again (`@/lib/draft-edits`). Never throws; the send already happened.
+ */
+async function recordOutreachEdit(userId: string, aiBody: string | null, body: string, channel: OutreachChannel) {
+  if (!aiBody) return;
+  try {
+    const kind = channel === "email" ? "email" : channel === "linkedin" ? "linkedin" : "other";
+    if (await recordDraftEdit(userId, { surface: "outreach", kind, aiText: aiBody, finalText: body })) deferEditLearning(userId);
+  } catch {
+    // Learning is a bonus; a failed record costs nothing the person can see.
+  }
 }
 
 /** The send itself. Throws; `bulkSendOutreach` catches per message. */
@@ -1480,6 +1500,7 @@ async function sendOutreachMessageNow(messageId: string) {
       })
       .where(eq(outreachMessages.id, messageId))
       .returning();
+    await recordOutreachEdit(userId, message.aiBody, message.body, channel);
 
     await db
       .update(outreachProspects)
@@ -2048,6 +2069,8 @@ export async function bulkSendMailMergeAction(input: {
           updatedAt: now,
         })
         .where(eq(outreachMessages.id, message.id));
+      // The stored body, not the mail-merged one: a template fill is not the user's edit.
+      if (!input.templateBody) await recordOutreachEdit(userId, message.aiBody, message.body, message.channel as OutreachChannel);
 
       await db
         .update(outreachProspects)
