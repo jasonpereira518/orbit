@@ -601,13 +601,16 @@ function proofAndFollowUp() {
 function registration() {
   console.log("\nthe page is registered everywhere a route must be");
   check("the surface registry maps /radar to page.radar", surfaceForPathname("/radar")?.key === "page.radar");
-  check("it ships as coming-soon", DEFAULT_COMING_SOON_KEYS.has("page.radar"));
+  check("it is released (not coming-soon by default)", !DEFAULT_COMING_SOON_KEYS.has("page.radar"));
   check("the sidebar lists it", APP_NAV.some((item) => item.href === "/radar"));
   check("first after Dashboard in the default order", APP_NAV_CORE[1]?.href === "/radar", APP_NAV_CORE.map((i) => i.href).join(" "));
   // The sidebar's own split (AppSidebar): anything coming soon drops below the divider.
   const belowDivider = [...APP_NAV_CORE, ...APP_NAV_EXTRAS].filter((i) => isHrefComingSoon(i.href, DEFAULT_COMING_SOON_KEYS));
-  check("so while it is coming soon the sidebar puts it below the divider", belowDivider.some((i) => i.href === "/radar"), belowDivider.map((i) => i.href).join(" "));
-  check("so does the phone's More menu", MOBILE_MORE_NAV.some((item) => item.href === "/radar"));
+  check("so the sidebar keeps it above the divider", !belowDivider.some((i) => i.href === "/radar"), belowDivider.map((i) => i.href).join(" "));
+  // While it is coming soon the sidebar splits it out; the same list serves the phone's More menu.
+  const soon = new Set(["page.radar"]);
+  check("if it goes back to coming soon the sidebar puts it below the divider again", isHrefComingSoon("/radar", soon));
+  check("the phone's More menu lists it", MOBILE_MORE_NAV.some((item) => item.href === "/radar"));
   check("analytics tracks it as a pattern", ROUTE_PATTERNS.includes("/radar"));
   check("feedback from it is filed under Radar", featureAreaForPath("/radar") === "radar");
 }
