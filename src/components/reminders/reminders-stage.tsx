@@ -57,6 +57,7 @@ import type {
   ReminderRow as ReminderRowData,
   RemindersPage,
 } from "@/lib/reminders-page";
+import { UserFacingError } from "@/lib/errors";
 import { isQueuedOffline } from "@/lib/offline-queue-store";
 import { runToastAction } from "@/lib/toast";
 import type { TriageCommand } from "@/lib/triage-keys";
@@ -467,7 +468,7 @@ export function RemindersStage({
       const res = await runToastAction({
         run: async () => {
           const result = await bulkReminderAction(ids, op);
-          if (!result.ok) throw new Error(result.error);
+          if (!result.ok) throw new UserFacingError(result.error);
           return result.value;
         },
         success: (v) => success(v.count),
@@ -488,7 +489,10 @@ export function RemindersStage({
     void runToastAction({
       run: async () => {
         const result = await snoozeOverdueFromNotes({ toYmd });
-        if (!result.ok) throw new Error(result.error);
+        if (!result.ok) throw new UserFacingError(result.error);
+        if (result.value.partial && result.value.count === 0) {
+          throw new UserFacingError("Couldn’t snooze those — try again?");
+        }
         return result.value;
       },
       success: (v) =>

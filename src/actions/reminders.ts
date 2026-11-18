@@ -15,6 +15,7 @@ import {
 import { listActiveGoalTexts } from "@/actions/goals";
 import { requireAuthenticatedUser, requireUserId, getDisplayProfile } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
+import { reportError } from "@/lib/report-error";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
@@ -1140,8 +1141,9 @@ export async function snoozeOverdueFromNotes(input: { toYmd: string }) {
       const results = await mapPooled(ids, async (id) => {
         try {
           return await snoozeReminderTo(userId, id, due);
-        } catch {
+        } catch (err) {
           partial = true;
+          reportError(err, { where: "action.snooze-overdue-from-notes", userId, level: "warning", extra: { reminderId: id } });
           return null;
         }
       });

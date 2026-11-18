@@ -132,11 +132,17 @@ async function main() {
     const ordered = await db.select({ id: reminders.id }).from(reminders).where(eq(reminders.userId, USER)).orderBy(reminders.dueDate, reminders.id);
     // Row 250 sits in the second batch of 200; its write fails.
     await db.update(reminders).set({ title: "boom" }).where(eq(reminders.id, ordered[250].id));
+    await db.execute(sql`drop trigger if exists boom_guard_t on reminders`);
     await db.execute(sql`create or replace function boom_guard() returns trigger as $$ begin
       if new.title = 'boom' and new.due_date is distinct from old.due_date then raise exception 'boom'; end if; return new; end $$ language plpgsql`);
     await db.execute(sql`create trigger boom_guard_t before update on reminders for each row execute function boom_guard()`);
-    const broken = await snoozeOverdueFromNotes({ toYmd: target });
-    await db.execute(sql`drop trigger boom_guard_t on reminders`);
+    let broken: Awaited<ReturnType<typeof snoozeOverdueFromNotes>>;
+    try {
+      broken = await snoozeOverdueFromNotes({ toYmd: target });
+    } finally {
+      await db.execute(sql`drop trigger if exists boom_guard_t on reminders`);
+      await db.execute(sql`drop function if exists boom_guard()`);
+    }
     t.check("a failing batch returns partial with a token", broken.ok && broken.value.partial && broken.value.count >= 200 && broken.value.count < 450,
       broken.ok ? String(broken.value.count) : broken.error);
     const moved = (await db.query.reminders.findMany({ where: eq(reminders.userId, USER) })).filter((r) => ymd(r.dueDate) === target);
