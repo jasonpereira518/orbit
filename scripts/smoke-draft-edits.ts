@@ -61,7 +61,8 @@ async function main() {
   console.log("what counts as an edit");
   check("identical is not an edit", !isMeaningfulEdit(AI, AI));
   check("whitespace only is not an edit", !isMeaningfulEdit(AI, AI.replace(/\n\n/g, "\n")));
-  check("a one-letter typo fix is not an edit", !isMeaningfulEdit("Would Tuesday wrok?", "Would Tuesday work?"));
+  check("Hi to Hey is an edit (two characters, and exactly the habit to learn)", isMeaningfulEdit(AI, AI.replace(/^Hi\b/, "Hey")));
+  check("a typo fix counts too (it just never repeats into a rule)", isMeaningfulEdit("Would Tuesday wrok?", "Would Tuesday work?"));
   check("a real rewrite is an edit", isMeaningfulEdit(AI, EDITED));
   check("an empty side is not an edit", !isMeaningfulEdit("", EDITED) && !isMeaningfulEdit(AI, "  "));
 
@@ -101,7 +102,9 @@ async function main() {
   check("unsupported rules dropped", !/Seen only twice|do not exist|same pair/.test(learned ?? ""));
   const after = await db.select().from(draftEdits).where(eq(draftEdits.userId, USER));
   check("every pair read is marked learned", after.every((r) => r.learnedAt instanceof Date));
-  check("the next edit is not due on its own", (await recordDraftEdit(USER, { ...pair, finalText: `${EDITED} new` })) === false);
+  check("the next edit is not due on its own (a pass just ran)", (await recordDraftEdit(USER, { ...pair, finalText: `${EDITED} new` })) === false);
+  await db.update(userSettings).set({ writingEditLessonsUpdatedAt: new Date(Date.now() - 25 * 3_600_000) }).where(eq(userSettings.userId, USER));
+  check("a straggler is due once the last pass is a day old", (await recordDraftEdit(USER, { ...pair, finalText: `${EDITED} later` })) === true);
   check("drafts are told the rules", ((await loadWritingInstructions(USER)) ?? "").includes("- Use Hey instead of Hi"));
 
   console.log("\nturned off");
