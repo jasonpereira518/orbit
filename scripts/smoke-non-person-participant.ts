@@ -7,13 +7,14 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 
 import { randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts, interactions, reminders } from "../src/db/schema";
 import { listContactsPage } from "../src/lib/contacts-page-query";
 import { calendarExternalIdBase } from "../src/lib/ingest/external-id";
 import { ingestEvents, openIngestContext } from "../src/lib/ingest/events";
-import { isNonPersonParticipant, nonPersonContactSql } from "../src/lib/non-person-participant";
+import { isNonPersonName } from "../src/lib/names/classify";
+import { isNonPersonParticipant, nonPersonNameSql, nonPersonContactSql } from "../src/lib/non-person-participant";
 import { deleteNonPersonContacts, findNonPersonContacts } from "./cleanup-non-person-contacts";
 import { checker } from "./smoke/check";
 
@@ -48,6 +49,9 @@ const CASES: [string, string | null, boolean][] = [
 ];
 
 run(async () => {
+  for (const [name, want] of [["ScoutBook @DoNotReply", true], ["essarr@gmail.com", true], ["Acme no-reply", true], ["Mom", false], ["Dad", false], ["Jason Pereira", false], ["Priya Support", false]] as const) {
+    t.check(`name "${name}" → ${want ? "not a person" : "person"}`, isNonPersonName(name) === want);
+  }
   for (const [name, email, want] of CASES) {
     t.check(`TS: "${name}" <${email ?? ""}> → ${want ? "not a person" : "person"}`, isNonPersonParticipant(name, email) === want);
   }
@@ -71,6 +75,16 @@ run(async () => {
     page.items.length === CASES.filter((c) => !c[2]).length && page.total === page.items.length,
     `${page.items.length} shown, total ${page.total}`
   );
+
+  // Name-only junk (no email on the row) is hidden from the list too, and never reaches the cleanup.
+  const NAMES = `smoke-nonperson-names-${randomUUID()}`;
+  for (const fullName of ["ScoutBook @DoNotReply", "essarr@gmail.com", "Mom", "Priya Support"]) await db.insert(contacts).values({ userId: NAMES, fullName });
+  const shown = (await listContactsPage(NAMES, { limit: 50 })).items.map((i) => i.fullName).sort();
+  t.check("the People list hides not-a-person names only", shown.join() === "Mom,Priya Support", shown.join());
+  const twin = (await db.select({ n: contacts.fullName }).from(contacts).where(eq(contacts.userId, NAMES))).length;
+  const sqlNames = (await db.select({ n: contacts.fullName }).from(contacts).where(sql`${contacts.userId} = ${NAMES} AND ${nonPersonNameSql()}`)).length;
+  t.check("the SQL name twin matches the two junk names", twin === 4 && sqlNames === 2, String(sqlNames));
+  t.check("the cleanup script does not reach name-only junk", !(await findNonPersonContacts()).some((m) => m.userId === NAMES));
 
   // Ingest: the group calendar is not created; the person on the same invite is.
   const INGEST = `smoke-nonperson-ingest-${randomUUID()}`;
