@@ -249,6 +249,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-command-palette": "pure",
   "smoke-command-palette-coverage": "pure",
   "smoke-nav-parity": "pure",
+  "smoke-ux-copy": "pure",
   "smoke-guess-gender": "pure",
   "smoke-single-flight": "pure",
   "smoke-reminder-phrase": "pure",

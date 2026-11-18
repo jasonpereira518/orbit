@@ -874,6 +874,7 @@ const ContactRow = memo(function ContactRow({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={`Open ${c.fullName} on LinkedIn`}
+                  title={`Open ${c.fullName} on LinkedIn`}
                   className="tap-target relative shrink-0 text-muted-foreground"
                   onClick={(e: MouseEvent<HTMLButtonElement>) => {
                     e.preventDefault();
@@ -1306,6 +1307,7 @@ function DeleteRowButton({
       size="icon-sm"
       disabled={disabled}
       aria-label={`Delete ${name}`}
+      title={`Delete ${name}`}
       onClick={(e: MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
