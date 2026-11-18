@@ -488,7 +488,10 @@ async function main() {
   const suggestionCount = stopQueryCount();
   const suggestionScans = contactScans(capturedQueries());
   console.log(`  statements: ${suggestionCount}`);
-  check("suggestions issue ≤ 12 statements", suggestionCount <= 12, `got ${suggestionCount}`);
+  // Thirteen with Radar released: getAttentionBrief then also reads the user's pending Radar
+  // cards (`listPendingRecommendations`, one bounded read over their own slice, empty for an
+  // account that never turned Radar on). Twelve while Radar was coming soon.
+  check("suggestions issue ≤ 13 statements", suggestionCount <= 13, `got ${suggestionCount}`);
   check(
     "suggestions do not pull notes as a bare column — the emptiness test belongs in the predicate",
     suggestionScans.every((s) => !selectsBare(s, "notes")),
