@@ -7,6 +7,8 @@
  */
 import {
   LINKEDIN_NOTE_MAX,
+  channelFromHistory,
+  channelFromWords,
   createDraftStreamScrubber,
   draftWithFormat,
   formatRules,
@@ -97,6 +99,17 @@ async function main() {
   check("draftWithFormat applies it to emails", named.body.endsWith("Best,\nJason Pereira"));
   const dm = await draftWithFormat("linkedin_dm", async () => ({ body: "Good seeing you.\nJason" }), { senderFullName: "Jason Pereira" });
   check("but not to a DM", dm.body.endsWith("\nJason"));
+
+  console.log("channel cues");
+  check("words: email", channelFromWords(["Email Priya about the role"]) === "email");
+  check("words: LinkedIn spellings", ["send a LinkedIn note", "DM him", "a connection request", "an InMail", "linked in message"].every((t) => channelFromWords([t]) === "linkedin"));
+  check("words: the last mention in a text wins", channelFromWords(["not on LinkedIn, email her"]) === "email" && channelFromWords(["no email, just DM her"]) === "linkedin");
+  check("words: the newest text wins over an older one", channelFromWords(["email her", "LinkedIn reminder"]) === "email");
+  check("words: an older text still counts when the newest says nothing", channelFromWords(["say congrats", "Reminder: LinkedIn follow-up"]) === "linkedin");
+  check("words: no cue is null", channelFromWords(["Say hi", null, undefined]) === null);
+  check("words: 'emailing' and 'e-mail' count; 'Gmailer' does not", channelFromWords(["e-mailing"]) === "email" && channelFromWords(["Gmailer"]) === null);
+  check("history: the newest written channel wins", channelFromHistory(["meeting", "linkedin_message", "email"]) === "linkedin");
+  check("history: meetings and notes say nothing", channelFromHistory(["meeting", "note", "call"]) === null);
 
   console.log("rules");
   const cold = formatRules("email_cold", { senderFullName: "Jason Pereira" });
