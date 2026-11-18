@@ -1136,16 +1136,19 @@ export async function listNotificationPanel() {
 export async function listDueNotificationItems() {
   const { getDesktopNotifiedIds } = await import("@/actions/notifications");
   const { userId, settings } = await requireAuthenticatedUser();
+  const now = new Date();
   const [notifiedIds, panel] = await Promise.all([
     getDesktopNotifiedIds(),
-    loadNotificationPanel(userId, new Date(), { withAlerts: false, settings }),
+    loadNotificationPanel(userId, now, { withAlerts: false, settings, dueCounts: false }),
   ]);
   const notified = new Set(notifiedIds);
 
   // `panel.items` only — account alerts live beside it and must never fire an OS
   // notification, for the same reason `suggested_reminder` is pinned to "info" above.
   return panel.items
-    .filter((i) => i.urgency === "due" && !notified.has(i.id))
+    // `dueAt <= now`: a reminder due later today is "due" in the bell but must not raise an OS
+    // notification at the start of the day.
+    .filter((i) => i.urgency === "due" && (!i.dueAt || new Date(i.dueAt) <= now) && !notified.has(i.id))
     .slice(0, 12)
     .map((i) => {
       let title = i.title;

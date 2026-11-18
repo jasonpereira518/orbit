@@ -31,7 +31,6 @@ import {
   type RemindersPage,
   type RemindersPageFilters,
 } from "@/lib/reminders-page";
-import { getDueCounts } from "@/lib/due-counts";
 import { isUuid } from "@/lib/input/ids";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
@@ -323,10 +322,11 @@ export async function queryReminderRailCounts(
   const dueDay = dueDaySql(opts.tz);
   const pending = sql`${reminders.status} = 'pending'`;
 
-  const [viewRows, listRows, suggestedRows, due] = await Promise.all([
+  const [viewRows, listRows, suggestedRows] = await Promise.all([
     db
       .select({
         all: sql<number>`count(*) filter (where ${pending})::int`,
+        today: sql<number>`count(*) filter (where ${pending} and ${dueDay} <= ${today}::date)::int`,
         overdue: sql<number>`count(*) filter (where ${pending} and ${dueDay} < ${today}::date)::int`,
         upcoming: sql<number>`count(*) filter (where ${pending} and ${dueDay} > ${today}::date)::int`,
         anytime: sql<number>`count(*) filter (where ${pending} and ${reminders.dueDate} is null)::int`,
@@ -345,7 +345,6 @@ export async function queryReminderRailCounts(
       .where(
         and(eq(suggestedReminders.userId, userId), eq(suggestedReminders.status, "pending"))
       ),
-    getDueCounts(userId, opts.tz, opts.now, db),
   ]);
 
   const pendingByList = new Map<string, number>();
@@ -359,7 +358,7 @@ export async function queryReminderRailCounts(
   return {
     counts: {
       all: Number(v?.all ?? 0),
-      today: due.reminders,
+      today: Number(v?.today ?? 0),
       overdue: Number(v?.overdue ?? 0),
       upcoming: Number(v?.upcoming ?? 0),
       anytime: Number(v?.anytime ?? 0),

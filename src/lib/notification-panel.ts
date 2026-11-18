@@ -24,6 +24,7 @@ import type { AccountAlert } from "@/lib/account-alerts";
 import { alertableContactSql, alertableReminderSql } from "@/lib/met-contact";
 import { getDueCounts } from "@/lib/due-counts";
 import { viewerTimeZone } from "@/lib/viewer-time-zone";
+import { dueDayOf, ymdInZone } from "@/lib/reminder-due-bucket";
 
 /** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
 const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
@@ -53,7 +54,7 @@ const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 export async function loadNotificationPanel(
   userId: string,
   now: Date,
-  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean; tz?: string } & Partial<AccountHealthContext> = { withAlerts: true }
+  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean; tz?: string; dueCounts?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
 ) {
   const db = await getDb();
   const context: AccountHealthContext | undefined = opts.settings
@@ -63,6 +64,7 @@ export async function loadNotificationPanel(
       }
     : undefined;
 
+  const tzPromise = opts.tz ? Promise.resolve(opts.tz) : viewerTimeZone(userId);
   const [
     pendingReminders,
     contactRows,
@@ -74,6 +76,7 @@ export async function loadNotificationPanel(
     radarRows,
     cloudNoteRows,
     feedbackReplies,
+    tz,
     due,
   ] = await Promise.all([
     db.query.reminders.findMany({
@@ -196,7 +199,11 @@ export async function loadNotificationPanel(
     // The operator answered their feedback and they haven't opened it yet.
     unreadRepliesFor(userId),
     // The one count of what is due (reminders + follow-ups); the lists above only draw rows.
-    (opts.tz ? Promise.resolve(opts.tz) : viewerTimeZone(userId)).then((tz) => getDueCounts(userId, tz, now)),
+    tzPromise,
+    // Skipped by the desktop poll (`dueCounts: false`), which reads only `items`.
+    opts.dueCounts === false
+      ? Promise.resolve({ reminders: 0, followUps: 0, total: 0 })
+      : tzPromise.then((z) => getDueCounts(userId, z, now)),
   ]);
   const radarRow = radarRows
     ? rowsOf<{ n: number; drafts: number; names: string[] | null; today: number; today_names: string[] | null }>(radarRows)[0]
@@ -263,7 +270,9 @@ export async function loadNotificationPanel(
     const dueAt = r.dueDate ? new Date(r.dueDate) : null;
     // An undated reminder is not overdue work. It used to count as "due now", so a note
     // captured without a date went straight into the bell's due count.
-    const isDue = dueAt !== null && dueAt <= now;
+    // The whole-day rule (the same one `getDueCounts` and the Reminders page use): a reminder due
+    // later today is due today. The OS-notification poll still waits for `dueAt <= now`.
+    const isDue = dueAt !== null && (dueDayOf(dueAt, tz) ?? "") <= ymdInZone(now, tz);
     items.push({
       // Scoped by due date, exactly as the follow-up id below is.
       //

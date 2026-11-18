@@ -212,7 +212,8 @@ export function NotificationsPanelButton({
                   {data.dueBreakdown.reminders + data.dueBreakdown.followUps} due
                 </span>
                 {" · "}
-                {data.dueBreakdown.reminders} reminders · {data.dueBreakdown.followUps} follow-ups
+                {data.dueBreakdown.reminders} {data.dueBreakdown.reminders === 1 ? "reminder" : "reminders"} ·{" "}
+                {data.dueBreakdown.followUps} {data.dueBreakdown.followUps === 1 ? "follow-up" : "follow-ups"}
               </p>
             )}
           </SheetHeader>

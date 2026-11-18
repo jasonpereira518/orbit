@@ -15,6 +15,13 @@ import { alertableContactSql, alertableReminderSql } from "@/lib/met-contact";
  *   - `followUps`: contacts whose clock has run out (`next_follow_up_at <= now()`) and that may
  *     alert (`alertableContactSql`).
  *
+ * Reminders use the whole-day rule (anything due today counts, even later today); follow-ups use
+ * `<= now` (the clock has run out), as the brief says.
+ *
+ * The paired contact must itself be alertable, as in the bell's own pairing
+ * (`loadNotificationPanel`): otherwise a reminder would be dropped here while its follow-up row
+ * is not counted either, and the work would be counted nowhere.
+ *
  * Because the pairing is removed from `reminders`, `total = reminders + followUps` never counts
  * one piece of work twice.
  */
@@ -40,6 +47,7 @@ export async function getDueCounts(
               select 1 from contacts due
                where due.id = reminders.contact_id
                  and due.user_id = ${userId}
+                 and ${alertableContactSql(sql`due.id`, userId)}
                  and date_trunc('milliseconds', due.next_follow_up_at) <= ${now.toISOString()}::timestamptz
                  and (
                    reminders.reminder_type = 'generated'
