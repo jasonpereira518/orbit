@@ -90,7 +90,7 @@ function escapeLike(q: string) {
   return q.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-function sourceCondition(source: ReminderSource): SQL | undefined {
+export function sourceCondition(source: ReminderSource): SQL | undefined {
   switch (source) {
     case "manual":
       return and(eq(reminders.reminderType, "manual"), isNull(reminders.noteBatchId));
@@ -367,4 +367,33 @@ export async function queryReminderRailCounts(
     },
     pendingByList,
   };
+}
+
+/**
+ * The backlog the "snooze them all" cleanup acts on: pending, overdue by the bucket rule
+ * (`dueDaySql`), from notes (the same predicate as the "From notes" filter), and not
+ * critical or high. One WHERE shared by the page's banner count and the action, so the
+ * number the banner promises is the number the button moves.
+ */
+export function overdueFromNotesWhere(userId: string, tz: string, today: string): SQL {
+  return and(
+    eq(reminders.userId, userId),
+    eq(reminders.status, "pending"),
+    sql`${dueDaySql(tz)} < ${today}::date`,
+    sourceCondition("notes"),
+    inArray(reminders.priority, ["normal", "low"])
+  ) as SQL;
+}
+
+export async function countOverdueFromNotes(
+  db: Db,
+  userId: string,
+  opts: { tz: string; now?: Date }
+): Promise<number> {
+  const today = ymdInZone(opts.now ?? new Date(), opts.tz);
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(reminders)
+    .where(overdueFromNotesWhere(userId, opts.tz, today));
+  return Number(rows[0]?.n ?? 0);
 }

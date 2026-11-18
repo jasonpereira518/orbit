@@ -752,6 +752,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-follow-up-actions": "pglite",
   "smoke-token-refresh": "pglite",
   "smoke-toast-undo": "pglite",
+  "smoke-reminders-snooze-backlog": "pglite",
   "smoke-feedback-admin": "pglite",
   "smoke-feedback-submit": "pglite",
   "smoke-feedback-thread": "pglite",

@@ -61,9 +61,11 @@ import {
   type RemindersPageFilters,
 } from "@/lib/reminders-page";
 import {
+  overdueFromNotesWhere,
   queryReminderRailCounts,
   queryRemindersPage,
 } from "@/lib/reminders-page-query";
+import { ymdInZone } from "@/lib/reminder-due-bucket";
 import {
   completeReminder,
   ensureOutreachSuggestions,
@@ -1098,6 +1100,59 @@ export async function undoBulkReminderAction(snapshot: BulkReminderSnapshot) {
   revalidatePathIfRequestScoped("/contacts");
   revalidatePathIfRequestScoped("/graph");
   return { restored: restored > 0 };
+}
+
+/**
+ * Snooze every overdue reminder that came from notes (not critical or high) to one day, in
+ * BULK_LIMIT batches through the same per-row helper `bulkReminderAction` uses. The undo
+ * token is the batches' own `BulkReminderSnapshot`s, replayed by `undoSnoozeOverdueFromNotes`
+ * through `undoBulkReminderAction`; there is no second undo mechanism.
+ */
+export async function snoozeOverdueFromNotes(input: { toYmd: string }) {
+  const userId = await requireUserId();
+  const tz = await viewerTimeZone(userId);
+  const due = dayToDue(input.toYmd);
+  if (input.toYmd <= ymdInZone(new Date(), tz)) {
+    throw new UserFacingError("Pick a day after today");
+  }
+  const db = await getDb();
+  const rows = await db
+    .select({ id: reminders.id })
+    .from(reminders)
+    .where(overdueFromNotesWhere(userId, tz, ymdInZone(new Date(), tz)))
+    .orderBy(reminders.id);
+
+  const batches: BulkReminderSnapshot[] = [];
+  let count = 0;
+  for (let i = 0; i < rows.length; i += BULK_LIMIT) {
+    const ids = rows.slice(i, i + BULK_LIMIT).map((r) => r.id);
+    const items = (await mapPooled(ids, (id) => snoozeReminderTo(userId, id, due))).filter(
+      (x): x is SnoozeSnapshot => Boolean(x)
+    );
+    count += items.length;
+    batches.push({ op: "snooze", items });
+  }
+
+  revalidateReminderPaths();
+  revalidatePathIfRequestScoped("/contacts");
+  revalidatePathIfRequestScoped("/graph");
+  return { count, undoToken: JSON.stringify(batches) };
+}
+
+/** Undo for `snoozeOverdueFromNotes`: each batch goes back through `undoBulkReminderAction`. */
+export async function undoSnoozeOverdueFromNotes(undoToken: string) {
+  let batches: unknown;
+  try {
+    batches = JSON.parse(undoToken);
+  } catch {
+    return { restored: false };
+  }
+  if (!Array.isArray(batches)) return { restored: false };
+  let any = false;
+  for (const batch of batches) {
+    if ((await undoBulkReminderAction(batch as BulkReminderSnapshot)).restored) any = true;
+  }
+  return { restored: any };
 }
 
 /** Full inbox for the in-app notifications panel. */
