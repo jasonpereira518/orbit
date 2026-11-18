@@ -488,7 +488,7 @@ export function RemindersStage({
     setBusy(true);
     void runToastAction({
       run: async () => {
-        const result = await snoozeOverdueFromNotes({ toYmd });
+        const result = await snoozeOverdueFromNotes(toYmd);
         if (!result.ok) throw new UserFacingError(result.error);
         if (result.value.partial && result.value.count === 0) {
           throw new UserFacingError("Couldn’t snooze those — try again?");

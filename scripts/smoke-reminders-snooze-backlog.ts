@@ -66,7 +66,7 @@ async function main() {
   ] as never);
 
   const target = day(6).toISOString().slice(0, 10);
-  const res = await snoozeOverdueFromNotes({ toYmd: target });
+  const res = await snoozeOverdueFromNotes(target);
   if (!res.ok) throw new Error(res.error);
   const result = res.value;
   t.check("count is 250", result.count === 250, String(result.count));
@@ -94,7 +94,7 @@ async function main() {
 
   // ---- Undo does not resurrect a reminder completed after the snooze. ----
   {
-    const one = await snoozeOverdueFromNotes({ toYmd: target });
+    const one = await snoozeOverdueFromNotes(target);
     t.check("one row snoozed", one.ok && one.value.count >= 1);
     const row = await db.query.reminders.findFirst({ where: eq(reminders.title, "n-normal-0") });
     await db.update(reminders).set({ status: "done" }).where(eq(reminders.id, row!.id));
@@ -123,7 +123,7 @@ async function main() {
   {
     await db.delete(reminders).where(eq(reminders.userId, USER));
     await db.insert(reminders).values(notes("normal", 1005) as never);
-    const capped = await snoozeOverdueFromNotes({ toYmd: target });
+    const capped = await snoozeOverdueFromNotes(target);
     t.check("one call moves at most 1000, and says 5 are left", capped.ok && capped.value.count === 1000 && capped.value.left === 5,
       capped.ok ? `${capped.value.count}/${capped.value.left}` : capped.error);
 
@@ -138,7 +138,7 @@ async function main() {
     await db.execute(sql`create trigger boom_guard_t before update on reminders for each row execute function boom_guard()`);
     let broken: Awaited<ReturnType<typeof snoozeOverdueFromNotes>>;
     try {
-      broken = await snoozeOverdueFromNotes({ toYmd: target });
+      broken = await snoozeOverdueFromNotes(target);
     } finally {
       await db.execute(sql`drop trigger if exists boom_guard_t on reminders`);
       await db.execute(sql`drop function if exists boom_guard()`);

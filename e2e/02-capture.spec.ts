@@ -56,6 +56,7 @@ test("stale draft can be discarded from the notice", async ({ page }) => {
   await page.goto("/capture");
   await expect(page.getByText(/Unsaved meeting from/)).toBeVisible({ timeout: 90_000 });
   await page.getByRole("button", { name: "Discard" }).click();
+  await page.getByRole("button", { name: "Yes, discard" }).click();
   await expect(page.getByText(/Unsaved meeting from/)).toHaveCount(0);
 });
 
@@ -67,7 +68,7 @@ test("a fresh draft still opens straight to the summary", async ({ page }) => {
   await expect(page.getByText(/Unsaved meeting from/)).toHaveCount(0);
 });
 
-test("discarding a stale draft that has people asks first", async ({ page }) => {
+test("discarding a stale draft asks first", async ({ page }) => {
   await ensureOnboarded(page);
   await seedMeetingDraft(page, 4 * DAY, 2);
   await page.goto("/capture");

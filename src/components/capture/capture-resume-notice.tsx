@@ -105,7 +105,7 @@ export function StaleDraftNotice({
         setBusy(false);
         return;
       }
-      if (!res.discarded) toast.info("That draft was already saved");
+      if (!res.discarded) toast.info("That draft has already moved on");
       clearCaptureJob();
       router.refresh();
     } catch (err) {
@@ -139,7 +139,7 @@ export function StaleDraftNotice({
               variant="ghost"
               className="text-muted-foreground"
               disabled={busy}
-              onClick={() => (itemCount > 0 ? setConfirming(true) : void discard())}
+              onClick={() => setConfirming(true)}
             >
               Discard
             </Button>

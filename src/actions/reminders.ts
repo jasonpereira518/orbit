@@ -1114,13 +1114,13 @@ const BACKLOG_MAX_ROWS = 1000;
  * second undo mechanism. A failing row stops the run after its batch, and what landed still
  * gets a token (`partial`).
  */
-export async function snoozeOverdueFromNotes(input: { toYmd: string }) {
+export async function snoozeOverdueFromNotes(toYmd: string) {
   return asActionResult(async () => {
     const userId = await requireUserId();
     const tz = await viewerTimeZone(userId);
-    const due = dayToDue(input.toYmd);
+    const due = dayToDue(toYmd);
     const today = ymdInZone(new Date(), tz);
-    if (input.toYmd <= today) throw new UserFacingError("Pick a day after today");
+    if (toYmd <= today) throw new UserFacingError("Pick a day after today");
     const db = await getDb();
     const where = overdueFromNotesWhere(userId, tz, today);
     const [rows, totals] = await Promise.all([

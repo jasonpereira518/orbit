@@ -133,9 +133,9 @@ export function NetworkDepthChart({
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Close is a closeness score of {Math.round(ABSOLUTE_TIER_CUTOFFS.inner * 100)}% or more,
+            Close means an absolute score of {Math.round(ABSOLUTE_TIER_CUTOFFS.inner * 100)}% or more,
             Warm {Math.round(ABSOLUTE_TIER_CUTOFFS.mid * 100)}–{Math.round(ABSOLUTE_TIER_CUTOFFS.inner * 100) - 1}%,
-            Cool below that. Scores combine strength, recency, cadence, and goal fit.
+            Cool below that. Each contact&apos;s own percentage is also weighed against the rest of your network. Scores combine strength, recency, cadence, and goal fit.
           </p>
         </div>
 
