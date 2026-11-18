@@ -13,7 +13,7 @@
  * messages to other people. `user_settings.writing_edit_lessons`: NULL = nothing learned yet,
  * "" = turned off (pairs are no longer recorded or read), text = the rules.
  */
-import { and, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { draftEdits, userSettings } from "@/db/schema";
@@ -28,24 +28,26 @@ export type DraftEditKind = "email" | "linkedin" | "other";
 export const DRAFT_EDITS_KEPT = 30;
 /** Unread pairs that start a learning pass, and the fewest drafts a change must show up in. */
 export const LEARN_AFTER = 3;
+/**
+ * A pass also runs for fewer unread pairs once this long has passed since the last one. Found
+ * in the app: a pass after the 2nd of 3 identical edits rightly learned nothing, and the 3rd
+ * edit then waited for 3 MORE before anyone looked again.
+ */
+const RELEARN_AFTER_MS = 24 * 3_600_000;
 const TEXT_MAX = 4000;
 
 const norm = (t: string) => t.replace(/\s+/g, " ").trim();
 
 /**
- * Whether the user's text is a real edit of the draft: not identical once whitespace is folded,
- * and not a change of a character or two (a typo fix teaches nothing).
+ * Whether the user changed the draft at all, beyond whitespace. Small changes count: "Hi" to
+ * "Hey" is two characters and exactly the kind of habit this learns. (A first version ignored
+ * changes under 3 characters as typo fixes, and so dropped that one.) A one-off typo fix is
+ * harmless to keep: a rule needs the same change in 3 drafts, and typos do not repeat.
  */
 export function isMeaningfulEdit(aiText: string, finalText: string): boolean {
   const a = norm(aiText);
   const b = norm(finalText);
-  if (!a || !b || a === b) return false;
-  // Length of the common prefix and suffix: what is left in between is what changed.
-  let start = 0;
-  while (start < a.length && start < b.length && a[start] === b[start]) start++;
-  let end = 0;
-  while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
-  return Math.max(a.length, b.length) - start - end >= 3;
+  return Boolean(a && b && a !== b);
 }
 
 /**
@@ -63,7 +65,7 @@ export async function recordDraftEdit(
   const db = await getDb();
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
-    columns: { writingEditLessons: true },
+    columns: { writingEditLessons: true, writingEditLessonsUpdatedAt: true },
   });
   if (settings?.writingEditLessons === "") return false;
   await db.insert(draftEdits).values({ userId, surface: input.surface, kind: input.kind, aiText, finalText });
@@ -75,11 +77,19 @@ export async function recordDraftEdit(
     .orderBy(desc(draftEdits.createdAt))
     .limit(DRAFT_EDITS_KEPT);
   await db.delete(draftEdits).where(and(eq(draftEdits.userId, userId), notInArray(draftEdits.id, keep)));
-  const [unread] = await db
-    .select({ n: sql<number>`count(*)::int` })
+  const [counts] = await db
+    .select({
+      unread: sql<number>`count(*) filter (where ${draftEdits.learnedAt} is null)::int`,
+      total: sql<number>`count(*)::int`,
+    })
     .from(draftEdits)
-    .where(and(eq(draftEdits.userId, userId), isNull(draftEdits.learnedAt)));
-  return (unread?.n ?? 0) >= LEARN_AFTER;
+    .where(eq(draftEdits.userId, userId));
+  const unread = counts?.unread ?? 0;
+  const total = counts?.total ?? 0;
+  if (unread >= LEARN_AFTER) return true;
+  // A straggler: something new, enough on record, and no pass for a day.
+  const last = settings?.writingEditLessonsUpdatedAt?.getTime() ?? 0;
+  return unread >= 1 && total >= LEARN_AFTER && Date.now() - last >= RELEARN_AFTER_MS;
 }
 
 /**
