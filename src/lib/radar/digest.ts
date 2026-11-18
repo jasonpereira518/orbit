@@ -462,3 +462,8 @@ export async function sendRadarDigests(
   }
   return stats;
 }
+
+/** Radar is on once switched on and not paused. Same rule as `radarIsOn` (radar/run.ts, too heavy for the layout's graph); smoke-radar-is-on-parity keeps them equal. */
+export function radarIsOnFromSettings(enabledAt: Date | string | null | undefined, paused: number | null | undefined): boolean {
+  return enabledAt != null && paused !== 1;
+}

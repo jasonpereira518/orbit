@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { COMET_DORMANT_DAYS } from "@/lib/comet";
-import { alertableContactSql } from "@/lib/met-contact";
 
 /**
  * The dashboard's whole-network counts, computed by Postgres instead of by loading the
@@ -38,13 +37,6 @@ export type DashboardCounts = {
   totalContacts: number;
   dormantCount: number;
   overdueCount: number;
-  /**
-   * `<= now()`, where `overdueCount` is `< now()`. The two predicates differ and both are
-   * kept, because the JavaScript they replace used `<=` for the stat and `<` for the chart
-   * and quietly reporting one number for both would be a behaviour change smuggled in as a
-   * refactor.
-   */
-  dueFollowUpCount: number;
 };
 
 export type DashboardVocabularies = {
@@ -99,24 +91,19 @@ export async function getDashboardCounts(userId: string): Promise<DashboardCount
       )::int as dormant,
       count(*) filter (
         where next_follow_up_at is not null and next_follow_up_at < now()
-      )::int as overdue,
-      count(*) filter (
-        where next_follow_up_at is not null and next_follow_up_at <= now()
-          and ${alertableContactSql(sql`contacts.id`, userId)}
-      )::int as due
+      )::int as overdue
     from contacts
     where user_id = ${userId}
   `);
 
   const row = rowsOf<{
-    total: number; dormant: number; overdue: number; due: number;
+    total: number; dormant: number; overdue: number;
   }>(result)[0];
 
   return {
     totalContacts: Number(row?.total ?? 0),
     dormantCount: Number(row?.dormant ?? 0),
     overdueCount: Number(row?.overdue ?? 0),
-    dueFollowUpCount: Number(row?.due ?? 0),
   };
 }
 

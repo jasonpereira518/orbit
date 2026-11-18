@@ -1,4 +1,5 @@
 import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
+import { captureBellTitle } from "@/lib/capture/job-staleness";
 import { unreadRepliesFor } from "@/lib/feedback-thread";
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
@@ -21,9 +22,47 @@ import {
 } from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
 import { alertableContactSql, alertableReminderSql } from "@/lib/met-contact";
+import { getDueCounts } from "@/lib/due-counts";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
+import { dueDayOf, ymdInZone } from "@/lib/reminder-due-bucket";
 
 /** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
 const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+/**
+ * The panel rows that may raise an OS notification now: due, not already notified, and past
+ * their due TIME. A row's urgency "due" follows the whole-day rule (a reminder due at 5pm is
+ * due all day in the bell), so the clock is checked here or it would notify, and spend its id,
+ * at the start of the day. Shared by the app pulse and the desktop poll.
+ */
+export function desktopNotificationItems(
+  items: ReadonlyArray<{
+    id: string;
+    urgency: string;
+    dueAt: string | null;
+    title: string;
+    body: string | null;
+    url: string;
+    priority?: ReminderPriority;
+    importanceReason?: string | null;
+    timingRationale?: string | null;
+  }>,
+  now: Date,
+  notified: ReadonlySet<string>,
+  limit: number
+) {
+  return items
+    .filter((i) => i.urgency === "due" && (!i.dueAt || new Date(i.dueAt) <= now) && !notified.has(i.id))
+    .slice(0, limit)
+    .map((i) => {
+      let title = i.title;
+      // Plain words, not emoji: the same label the bell's chip shows.
+      if (i.priority === "critical") title = `Critical: ${i.title}`;
+      else if (i.priority === "high") title = `High priority: ${i.title}`;
+      const contextParts = [i.importanceReason || i.timingRationale, i.body].filter(Boolean);
+      return { id: i.id, title, body: contextParts.join(" · ") || undefined, url: i.url };
+    });
+}
 
 /** Upcoming follow-ups are shown this far ahead; further out is noise. */
 const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
@@ -50,7 +89,7 @@ const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 export async function loadNotificationPanel(
   userId: string,
   now: Date,
-  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
+  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean; tz?: string; dueCounts?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
 ) {
   const db = await getDb();
   const context: AccountHealthContext | undefined = opts.settings
@@ -60,6 +99,7 @@ export async function loadNotificationPanel(
       }
     : undefined;
 
+  const tzPromise = opts.tz ? Promise.resolve(opts.tz) : viewerTimeZone(userId);
   const [
     pendingReminders,
     contactRows,
@@ -71,6 +111,8 @@ export async function loadNotificationPanel(
     radarRows,
     cloudNoteRows,
     feedbackReplies,
+    tz,
+    due,
   ] = await Promise.all([
     db.query.reminders.findMany({
       // Only what is allowed to alert: the user's own reminders, and generated ones about
@@ -191,6 +233,12 @@ export async function loadNotificationPanel(
       : [],
     // The operator answered their feedback and they haven't opened it yet.
     unreadRepliesFor(userId),
+    // The one count of what is due (reminders + follow-ups); the lists above only draw rows.
+    tzPromise,
+    // Skipped by the desktop poll (`dueCounts: false`), which reads only `items`.
+    opts.dueCounts === false
+      ? Promise.resolve({ reminders: 0, followUps: 0, total: 0 })
+      : tzPromise.then((z) => getDueCounts(userId, z, now)),
   ]);
   const radarRow = radarRows
     ? rowsOf<{ n: number; drafts: number; names: string[] | null; today: number; today_names: string[] | null }>(radarRows)[0]
@@ -257,7 +305,9 @@ export async function loadNotificationPanel(
     const dueAt = r.dueDate ? new Date(r.dueDate) : null;
     // An undated reminder is not overdue work. It used to count as "due now", so a note
     // captured without a date went straight into the bell's due count.
-    const isDue = dueAt !== null && dueAt <= now;
+    // The whole-day rule (the same one `getDueCounts` and the Reminders page use): a reminder due
+    // later today is due today. The OS-notification poll still waits for `dueAt <= now`.
+    const isDue = dueAt !== null && (dueDayOf(dueAt, tz) ?? "") <= ymdInZone(now, tz);
     items.push({
       // Scoped by due date, exactly as the follow-up id below is.
       //
@@ -354,9 +404,9 @@ export async function loadNotificationPanel(
       kind: "capture_review",
       title: isFailed
         ? "Couldn’t read your notes"
-        : `${n} ${n === 1 ? "person" : "people"} ready to review`,
+        : captureBellTitle(n),
       body: isFailed ? job.error : "From your last capture — pick up where you left off.",
-      url: "/capture",
+      url: `/capture?job=${job.id}`,
       dueAt: null,
       urgency: "info",
     });
@@ -415,11 +465,14 @@ export async function loadNotificationPanel(
     return aTime - bTime;
   });
 
-  const dueCount = items.filter((i) => i.urgency === "due").length;
+  // Reminders and follow-ups come from `getDueCounts` (the rows above are capped and drawn, not
+  // counted); the only other "due" rows are feedback replies.
+  const dueCount = due.total + items.filter((i) => i.urgency === "due" && i.kind === "feedback_reply").length;
 
   return {
     items,
     dueCount,
+    dueBreakdown: { reminders: due.reminders, followUps: due.followUps },
     totalCount: items.length,
     // Drives the extension promo in the panel: paid plans get an install link,
     // everyone else gets the pitch and a route to the plans page.

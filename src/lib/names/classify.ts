@@ -71,6 +71,18 @@ export function isRoomName(name: string | null | undefined): boolean {
   return jsRe(ROOM_PHRASE).test(n) || (jsRe(CALENDAR_WORD).test(n) && jsRe(CALENDAR_CONTEXT).test(n));
 }
 
+export const NOREPLY_NAME = "(do[-_]?not[-_]?reply|no[-_]?reply)";
+export const BARE_EMAIL_NAME = "^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$";
+
+/**
+ * A display name that is a machine's: it carries a no-reply handle ("ScoutBook @DoNotReply") or is
+ * only an email address ("essarr@gmail.com"). Used by the People list alone, never to delete.
+ */
+export function isNonPersonName(fullName: string | null | undefined): boolean {
+  const n = (fullName ?? "").trim();
+  return jsRe(NOREPLY_NAME).test(n) || jsRe(BARE_EMAIL_NAME).test(n);
+}
+
 /** The local part of an address without its `+tag`: `ada+github@x.com` is still Ada. */
 export function mailboxLocal(email: string | null | undefined): string {
   return (email ?? "").trim().toLowerCase().split("@")[0].split("+")[0];

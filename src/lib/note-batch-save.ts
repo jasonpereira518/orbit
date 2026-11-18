@@ -9,7 +9,7 @@
  *   undo          — marks reminders `dismissed`, never deletes, so the hash keeps blocking
  *   delete        — undo first, then the batch row itself; the hashes still block
  */
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionItems, captureJobs, contactOpportunities, contacts, ignoredPeople, interactionMentions, interactions, meetingSessions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin, type ReminderPriority, type ReminderCategory } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
@@ -25,6 +25,7 @@ import {
   DEFAULT_FOLLOW_UP_WINDOW_DAYS,
   dropSupersededWindowDrafts,
   emptyNoteBatchResult,
+  isNearDuplicateReminder,
   noteInteractionExternalId,
   titlesCollide,
   windowDueDate,
@@ -749,7 +750,33 @@ export async function saveNoteBatch(
     //    one yields to a dated commitment for the same contact that says the same thing
     //    (see `dropSupersededWindowDrafts`), so one follow-up never becomes two reminders.
     //    The review's Save button counts with the same function (`planReminders`).
-    const kept = dropSupersededWindowDrafts(drafts, (d) => d.contactId);
+    const windowKept = dropSupersededWindowDrafts(drafts, (d) => d.contactId);
+
+    //    Across batches: a person's pending reminder from an earlier note already says it.
+    //    Only window-dated drafts (a date Orbit chose) yield; a draft with a date the note
+    //    stated is kept, since it may move the date. This batch's own rows are skipped so a
+    //    resumed save keeps what it already wrote.
+    const contactsWithDrafts = [...new Set(windowKept.map((d) => d.contactId).filter((id): id is string => !!id))];
+    const pendingTitles = new Map<string, string[]>();
+    if (contactsWithDrafts.length) {
+      const pending = await db
+        .select({ contactId: reminders.contactId, title: reminders.title })
+        .from(reminders)
+        .where(
+          and(
+            eq(reminders.userId, userId),
+            eq(reminders.status, "pending"),
+            inArray(reminders.contactId, contactsWithDrafts),
+            or(isNull(reminders.noteBatchId), ne(reminders.noteBatchId, batchId))
+          )
+        );
+      for (const r of pending) {
+        if (r.contactId) pendingTitles.set(r.contactId, [...(pendingTitles.get(r.contactId) ?? []), r.title]);
+      }
+    }
+    const kept = windowKept.filter(
+      (d) => d.dateBasis !== "window" || !d.contactId || !(pendingTitles.get(d.contactId) ?? []).some((t) => isNearDuplicateReminder(t, d.title))
+    );
 
     // 5. Insert reminders, idempotent through itemHash. An action-item draft hashes its
     //    own item id rather than its title: two participants in one batch can share the

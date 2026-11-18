@@ -874,6 +874,7 @@ const ContactRow = memo(function ContactRow({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={`Open ${c.fullName} on LinkedIn`}
+                  title={`Open ${c.fullName} on LinkedIn`}
                   className="tap-target relative shrink-0 text-muted-foreground"
                   onClick={(e: MouseEvent<HTMLButtonElement>) => {
                     e.preventDefault();
@@ -1192,9 +1193,8 @@ function ClosenessChip({
         {label}
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-[240px] text-left leading-snug">
-        Closeness combines relationship strength, how recently you’ve
-        interacted, how often you’re in touch, and fit with your goals — scored
-        relative to everyone else in your orbit{tierHint}.
+        Closeness: how close Orbit thinks you are, from how recently and how often
+        you talk, plus relationship strength and fit with your goals{tierHint}.
       </TooltipContent>
     </Tooltip>
   );
@@ -1307,6 +1307,7 @@ function DeleteRowButton({
       size="icon-sm"
       disabled={disabled}
       aria-label={`Delete ${name}`}
+      title={`Delete ${name}`}
       onClick={(e: MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();

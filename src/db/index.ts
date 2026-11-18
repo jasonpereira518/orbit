@@ -3236,7 +3236,10 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 248 = learned edits (draft-edit learning, PR 2 of the channel/edits plan): draft_edits (AI draft
 // vs what was sent, newest 30 per user), user_settings.writing_edit_lessons(+_updated_at) and
 // outreach_messages.ai_body. Scanned every remote ref on Nov 18 2026: main and all branches <= 247.
-export const SCHEMA_VERSION = 248;
+// 249 = contacts.sort_key ignores parenthesised text, so "Briana (Simmons) Medley" sorts under M
+// (UX walkthrough Task 19). Scanned every remote ref on Nov 18 2026: main (merged draft_edits, 248)
+// is the highest, so this takes 249.
+export const SCHEMA_VERSION = 249;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3267,15 +3270,18 @@ export function linkedinSlugNeedsRewrite(stored: string | null): boolean {
   return normalizeGeneratedExpression(stored) !== normalizeGeneratedExpression(LINKEDIN_SLUG_EXPRESSION);
 }
 
+/** `contacts.sort_key` strips "(maiden)" text before taking the last word; the DROP below runs only until it does. */
+export const DROP_SORT_KEY_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS sort_key";
+
 /** The stored expression, null when there is no such column, undefined when unreadable. */
-async function storedLinkedinSlugExpression(run: StatementRunner): Promise<string | null | undefined> {
+async function storedLinkedinSlugExpression(run: StatementRunner, column = "linkedin_slug"): Promise<string | null | undefined> {
   try {
     const result = await run(
       `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
          FROM pg_attribute a
          JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
         WHERE a.attrelid = to_regclass(\'public.contacts\')
-          AND a.attname = \'linkedin_slug\'
+          AND a.attname = \'${column}\'
           AND NOT a.attisdropped`
     );
     return rowsOf<{ expr: string | null }>(result)[0]?.expr ?? null;
@@ -3520,9 +3526,17 @@ export const SCALE_DDL: string[] = [
   // `src/actions/contacts.ts` and `lastNameOf` in `contacts-list.tsx` both derived this in
   // JavaScript, and a page boundary that disagrees with the sort silently drops or repeats
   // contacts. Both of those are deleted in favour of this column.
+  // Text in parentheses is dropped first: "Briana (Simmons) Medley" files under M, not "(simmons)".
+  // A drop-and-add (the old expression is baked into the column), run only while the stored
+  // expression lacks the strip — see `applyScaleSchema`. The index below is rebuilt after it.
+  DROP_SORT_KEY_STATEMENT,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sort_key text
      GENERATED ALWAYS AS (
-       lower(coalesce(nullif(trim(last_name), ''), split_part(trim(full_name), ' ', -1)))
+       lower(coalesce(
+         nullif(trim(last_name), ''),
+         nullif(split_part(trim(regexp_replace(full_name, '\\([^)]*\\)', '', 'g')), ' ', -1), ''),
+         split_part(trim(full_name), ' ', -1)
+       ))
      ) STORED`,
 
   // Normalized LinkedIn slug — the identity two accounts are matched on, so mutual-contact
@@ -4042,7 +4056,11 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
   // old unconditional behaviour is the safe default).
   const stored = await storedLinkedinSlugExpression(run);
   const rewriteSlug = stored === undefined || linkedinSlugNeedsRewrite(stored);
-  const statements = rewriteSlug ? SCALE_DDL : SCALE_DDL.filter((s) => s !== DROP_LINKEDIN_SLUG_STATEMENT);
+  const storedSort = await storedLinkedinSlugExpression(run, "sort_key");
+  const rewriteSort = storedSort === undefined || (storedSort !== null && !storedSort.includes("regexp_replace"));
+  const statements = SCALE_DDL.filter(
+    (s) => (rewriteSlug || s !== DROP_LINKEDIN_SLUG_STATEMENT) && (rewriteSort || s !== DROP_SORT_KEY_STATEMENT)
+  );
   await runStatements(run, statements, "scale DDL", failed);
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see

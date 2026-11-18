@@ -957,7 +957,7 @@ export const contacts = pgTable(
      * the weight classes and why the config is 'simple'.
      */
     sortKey: text("sort_key").generatedAlwaysAs(
-      sql`lower(coalesce(nullif(trim(last_name), ''), split_part(trim(full_name), ' ', -1)))`
+      sql`lower(coalesce(nullif(trim(last_name), ''), nullif(split_part(trim(regexp_replace(full_name, '\\([^)]*\\)', '', 'g')), ' ', -1), ''), split_part(trim(full_name), ' ', -1)))`
     ),
     linkedinSlug: text("linkedin_slug").generatedAlwaysAs(
       sql`lower(nullif(split_part(split_part(split_part(split_part(coalesce(linkedin_url, ''), '/in/', 2), '?', 1), '#', 1), '/', 1), ''))`

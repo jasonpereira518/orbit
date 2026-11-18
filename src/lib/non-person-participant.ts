@@ -18,7 +18,9 @@ import { contacts } from "@/db/schema";
 import {
   CALENDAR_CONTEXT,
   CALENDAR_DOMAIN,
+  BARE_EMAIL_NAME,
   CALENDAR_WORD,
+  NOREPLY_NAME,
   classifyMailbox,
   isRoomName,
   MACHINE_LOCAL_PARTS,
@@ -46,4 +48,10 @@ export function nonPersonContactSql() {
       OR split_part(${local}, '+', 1) IN (${machine})))
     OR ${name} ~* ${ROOM_PHRASE}
     OR (${name} ~* ${CALENDAR_WORD} AND ${name} ~ ${CALENDAR_CONTEXT}))`;
+}
+
+/** SQL twin of `isNonPersonName`. Kept apart from `nonPersonContactSql` so the cleanup script never reaches these rows. */
+export function nonPersonNameSql() {
+  const name = sql`trim(${contacts.fullName})`;
+  return sql`(${name} ~* ${NOREPLY_NAME} OR ${name} ~* ${BARE_EMAIL_NAME})`;
 }

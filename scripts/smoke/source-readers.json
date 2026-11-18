@@ -527,6 +527,12 @@
     "src/app/api/radar/digest/unsubscribe/route.ts",
     "src/lib/unsubscribe-guard.ts"
   ],
+  "smoke-ux-copy.ts": [
+    "src/components/contacts/contact-form.tsx",
+    "src/components/contacts/contacts-list.tsx",
+    "src/components/recruiters/gmail-import-panel.tsx",
+    "src/components/recruiters/outlook-import-panel.tsx"
+  ],
   "smoke-vercel-ignore-build.ts": [
     "docs/RUNBOOK.md",
     "docs/x.md",

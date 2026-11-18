@@ -423,3 +423,20 @@ export async function discardCaptureJob(jobId: string, opts?: { stopping?: boole
     return { ok: false, error: await actionFailure(err, "Couldn’t clear that capture — try again?", "capture-jobs.discard-capture-job") };
   }
 }
+
+/**
+ * Discard from the stale-draft notice. Only a draft nobody is working on (`ready` or
+ * `reviewing`): a save running in another tab (`saving`) must not be killed from here.
+ * `discarded: false` means it had already moved on.
+ */
+export async function discardStaleDraft(jobId: string): Promise<{ ok: true; discarded: boolean } | Fail> {
+  try {
+    const userId = await requireUserId();
+    if (!JOB_ID.test(jobId)) return { ok: false, error: "That draft is no longer here" };
+    const discarded = await discardCaptureJobRow(userId, jobId, { onlyStatuses: ["ready", "reviewing"] });
+    revalidatePath("/capture");
+    return { ok: true, discarded };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t discard that draft — try again?", "capture-jobs.discard-stale-draft") };
+  }
+}
