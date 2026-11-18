@@ -1192,9 +1192,8 @@ function ClosenessChip({
         {label}
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-[240px] text-left leading-snug">
-        Closeness combines relationship strength, how recently you’ve
-        interacted, how often you’re in touch, and fit with your goals — scored
-        relative to everyone else in your orbit{tierHint}.
+        Closeness: how close Orbit thinks you are, from how recently and how often
+        you talk, plus relationship strength and fit with your goals{tierHint}.
       </TooltipContent>
     </Tooltip>
   );
