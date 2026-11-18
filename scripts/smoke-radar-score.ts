@@ -489,6 +489,10 @@ function main() {
     check("a new fact does",
       key !== radarNoteKey({ ...base, reasons: [...base.reasons, { code: "target_company", label: "Works at Acme", points: 14 }] }));
     check("so does a change to who they are", key !== radarNoteKey({ ...base, title: "CTO" }));
+    const met = ["How you met: Met at HackNC (Sep 2022)"];
+    check("no relationship lines leave every existing key as it was", radarNoteKey({ ...base, relationship: [] }) === key);
+    check("how you met moves the key", radarNoteKey({ ...base, relationship: met }) !== key);
+    check("the same relationship lines give the same key", radarNoteKey({ ...base, relationship: met }) === radarNoteKey({ ...base, relationship: [...met] }));
     check("the model is told not to count days", /Never state a number of days/.test(prompt.system));
     check("the system prompt forbids invention", /Never invent/.test(prompt.system));
   }

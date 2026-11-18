@@ -141,10 +141,11 @@ jobs:
         run: node scripts/check-bundle-budget.mjs
 
       # Supply chain and secrets, folded in here (23s, off the critical path) rather than
-      # a runner of its own. npm audit: high/critical prod advisories. Dependency review (PRs):
+      # a runner of its own. npm audit: high/critical prod advisories, minus the reasoned
+      # allowlist in scripts/audit-gate.mjs. Dependency review (PRs):
       # does THIS PR add a high advisory. gitleaks: does any NEW commit add a secret.
       - name: npm audit (production dependencies)
-        run: npm audit --omit=dev --audit-level=high
+        run: node scripts/audit-gate.mjs
       # Needs Settings → Code security → Dependency graph, which is off on this repository
       # (the action errors out without it, failing every PR). Turn the graph on, then set the
       # repository variable DEPENDENCY_REVIEW=true to start enforcing this step.

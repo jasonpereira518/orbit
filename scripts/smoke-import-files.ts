@@ -10,6 +10,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { importFiles, imports } from "../src/db/schema";
 import { gzipBase64 } from "../src/lib/imports/export-upload";
+import { linkedInExportRole } from "../src/lib/imports/linkedin-export-files";
 import {
   appendExportFiles,
   beginExport,
@@ -83,6 +84,8 @@ async function main() {
     listed.map((f) => `${f.path}:${f.role}`).join(",") === "Company Follows.csv:stored,Invitations.csv:parsed",
     listed.map((f) => `${f.path}:${f.role}`).join(","),
   );
+  check("Shares.csv is read (Radar's hashtags), so it is listed as read", linkedInExportRole("Shares.csv") === "parsed");
+  check("a file Orbit only keeps stays listed as stored", linkedInExportRole("Events.csv") === "stored");
   const texts = await readExportTexts(USER, first.importId);
   check("read back byte for byte (quoted multi-line message intact)", texts.get("invitations.csv") === INVITES);
   check("the uncompressed size is kept", listed.find((f) => f.path === "Invitations.csv")?.byteSize === Buffer.byteLength(INVITES));

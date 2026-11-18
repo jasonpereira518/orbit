@@ -15,7 +15,9 @@ import { getDb } from "../src/db";
 import {
   actionItems, contactCareerMoves, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
-import { advanceWatermarkOnly, applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { readFileSync } from "node:fs";
+import { isUuid } from "../src/lib/ids";
+import { advanceWatermarkOnly, applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, saveDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
 import { stableHash } from "../src/lib/linkedin-timeline-events";
 import { undoNoteBatchForUser } from "../src/lib/note-batch-save";
 import { loadMessageWindows } from "../src/lib/relationship-engine/gather";
@@ -331,6 +333,27 @@ async function main() {
   const NOPE2 = await person("Nope Two", "LinkedIn connection", connected);
   await advanceWatermarkOnly(USER, run4.id, NOPE2.window);
   check("flag off writes neither", (await timelineOf(NOPE.id)).length === 0 && (await timelineOf(NOPE2.id)).length === 0);
+
+  // A "Not right?" that lands while a pass is mid-apply: the pass read the row before the removal,
+  // so its final upsert carries a kind. The removed one must win.
+  const [gone, kept] = await db.insert(contacts).values([
+    { userId: USER, fullName: "Gone G", source: "linkedin_messages" },
+    { userId: USER, fullName: "Kept K", source: "linkedin_messages" },
+  ]).returning();
+  const iid = msgs[0].id;
+  await db.insert(relationshipDigests).values([
+    { contactId: gone.id, userId: USER, relationship: { kind: "friend", excerpt: "x", interactionId: iid, removed: true } },
+    { contactId: kept.id, userId: USER, relationship: { kind: "friend", excerpt: "x", interactionId: iid } },
+  ]);
+  for (const c2 of [gone, kept]) await saveDigest({ contactId: c2.id, userId: USER, summary: "s", relationship: { kind: "coworker", excerpt: "y", interactionId: iid } });
+  const afterSave = await db.query.relationshipDigests.findMany({ where: eq(relationshipDigests.userId, USER) });
+  const goneRow = afterSave.find((d) => d.contactId === gone.id)!;
+  check("a removed kind survives a pass that read it before the removal", goneRow.relationship?.kind === "friend" && goneRow.relationship?.removed === true && goneRow.summary === "s");
+  check("a kind that was not removed is replaced", afterSave.find((d) => d.contactId === kept.id)?.relationship?.kind === "coworker");
+
+  check("isUuid refuses 36 dashes", isUuid("------------------------------------") === false);
+  check("isUuid refuses a non-hex id", isUuid("00000000-0000-0000-0000-00000000000g") === false);
+  check("the Not right? action validates with isUuid", !readFileSync("src/actions/contacts.ts", "utf8").includes("[0-9a-f-]{36}"));
 
   await reset();
   console.log("\nsmoke-relationship-apply: all checks passed");

@@ -32,7 +32,7 @@ import { stableHash } from "@/lib/linkedin-timeline-events";
 import { AI_DERIVED_SOURCE } from "@/lib/touch-kinds";
 import { HOW_MET_IMPORT_LABELS, type FieldSources } from "@/lib/contact-fields";
 import { emptyNoteBatchResult } from "@/lib/note-batches";
-import { messageRowSql } from "@/lib/relationship-engine/pending";
+import { ORIGIN_CHECKED, messageRowSql } from "@/lib/relationship-engine/pending";
 import { undoNoteBatchForUser } from "@/lib/note-batch-save";
 import { getInboxListId } from "@/lib/reminder-lists";
 import { buildSuggestionItemHash, isoDay } from "@/lib/suggested-reminder-utils";
@@ -238,6 +238,96 @@ async function appendBatchResult(batchId: string, add: Pick<NoteBatchResult, "re
   `);
 }
 
+/**
+ * Deep read: how you met and the kind of relationship, for one contact. The first origin found
+ * wins; the contact's met fields take it only over an import label or a blank (`canReplaceMet`),
+ * and what they held is kept for Undo. A removed kind is never set again. Returns what the
+ * digest should now hold; the caller writes the digest. Shared by the normal pass and the
+ * one-time origin pass.
+ */
+export async function writeOriginAndKind(input: {
+  userId: string;
+  contactId: string;
+  runId: string;
+  validated: Pick<ValidatedDigest, "origin" | "relationship">;
+  previous: { origin: RelationshipOrigin | null; relationship: RelationshipKindRecord | null };
+  now: Date;
+}): Promise<{ origin: RelationshipOrigin | null; relationship: RelationshipKindRecord | null }> {
+  const { userId, contactId, runId, validated, now } = input;
+  const db = await getDb();
+  let { origin, relationship } = input.previous;
+  const found = validated.origin ?? null;
+  if (found && !origin) {
+    const row = await db.query.contacts.findFirst({
+      where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
+      columns: { howMet: true, dateMet: true, metContext: true, fieldSources: true, firstInteractionAt: true },
+    });
+    let replaced: RelationshipOrigin["replaced"] = null;
+    if (row && canReplaceMet(row)) {
+      replaced = { howMet: row.howMet ?? null, dateMet: row.dateMet?.toISOString() ?? null, metContext: row.metContext ?? null };
+      const patch: Partial<typeof contacts.$inferInsert> = { howMet: found.text, updatedAt: now };
+      // Over an import label the three were all the importer's; over a blank how-met, a date
+      // or context already there was someone's own, so those only fill in.
+      const imported = Boolean(row.howMet?.trim());
+      if (found.context && (imported || !row.metContext)) patch.metContext = found.context;
+      // A month or a year is not a day: date_met (shown as a day everywhere) takes days only.
+      if (found.precision === "day" && found.date && (imported || !row.dateMet)) patch.dateMet = noonOf(found.date);
+      const widen =
+        found.date && found.precision === "day" ? noonOf(found.date) : found.date && found.precision === "month" ? endOfMonth(found.date) : null;
+      if (widen && (!row.firstInteractionAt || widen < row.firstInteractionAt)) {
+        patch.firstInteractionAt = widen;
+        replaced.firstInteractionAt = row.firstInteractionAt?.toISOString() ?? null;
+        replaced.widenedTo = widen.toISOString();
+      }
+      await db.update(contacts).set(patch).where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
+    }
+    origin = { ...found, runId, replaced };
+  }
+  const kind = validated.relationship ?? null;
+  if (kind && !relationship?.removed) relationship = { kind: kind.kind, excerpt: kind.excerpt, interactionId: kind.interactionId };
+  return { origin, relationship };
+}
+
+/** A removed kind already on the row stays, whatever a pass that read the row earlier carries. */
+const KEEP_REMOVED_KIND = sql`CASE WHEN ${relationshipDigests.relationship}->>'removed' = 'true' THEN ${relationshipDigests.relationship} ELSE excluded.relationship END`;
+
+/**
+ * The one-time origin pass's only write to a digest: origin, kind (never over a removed one),
+ * the checked marker, and the in-flight marker cleared. Events and the first reach-out go to
+ * the timeline. `validated` null = nothing usable came back (or nothing was asked): the contact
+ * is still marked, so it is read once. Never the watermark, the count, attempts, updated_at,
+ * the summary, facts or reminders.
+ */
+export async function applyOriginOnly(input: {
+  userId: string;
+  runId: string;
+  contactId: string;
+  validated: ValidatedDigest | null;
+  now?: Date;
+}): Promise<void> {
+  const { userId, runId, contactId, validated } = input;
+  const db = await getDb();
+  const mine = and(eq(relationshipDigests.contactId, contactId), eq(relationshipDigests.userId, userId));
+  const previous = await db.query.relationshipDigests.findFirst({ where: mine });
+  if (!previous) return;
+  let next = { origin: previous.origin ?? null, relationship: previous.relationship ?? null };
+  if (validated) {
+    next = await writeOriginAndKind({ userId, contactId, runId, validated, previous: next, now: input.now ?? new Date() });
+  }
+  // These contacts' first deep pass: the reach-out id matches the old reader's, so nobody gets a second.
+  await writeDeepReadTimeline(userId, contactId, validated?.events ?? [], true);
+  await db
+    .update(relationshipDigests)
+    .set({
+      origin: next.origin,
+      relationship: sql`CASE WHEN ${relationshipDigests.relationship}->>'removed' = 'true' THEN ${relationshipDigests.relationship} ELSE ${next.relationship ? JSON.stringify(next.relationship) : null}::jsonb END`,
+      sources: sql`CASE WHEN ${relationshipDigests.sources} @> ${JSON.stringify([ORIGIN_CHECKED])}::jsonb THEN ${relationshipDigests.sources} ELSE ${relationshipDigests.sources} || ${JSON.stringify([ORIGIN_CHECKED])}::jsonb END`,
+      batchJobId: null,
+      batchPendingUntil: null,
+    })
+    .where(mine);
+}
+
 export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
   const { userId, runId, contactId, window, validated, plan } = input;
   const now = input.now ?? new Date();
@@ -429,41 +519,12 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     }
   }
 
-  // 3b. Deep read: how you met. The first origin found wins; the contact's met fields take it
-  // only over an import label or a blank (`canReplaceMet`), and what they held is kept for Undo.
+  // 3b. Deep read: how you met and the kind of relationship (`writeOriginAndKind`).
   const previous = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, contactId) });
   let origin: RelationshipOrigin | null = previous?.origin ?? null;
   let relationship: RelationshipKindRecord | null = previous?.relationship ?? null;
   if (input.deepRead) {
-    const found = validated.origin ?? null;
-    if (found && !origin) {
-      const row = await db.query.contacts.findFirst({
-        where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
-        columns: { howMet: true, dateMet: true, metContext: true, fieldSources: true, firstInteractionAt: true },
-      });
-      let replaced: RelationshipOrigin["replaced"] = null;
-      if (row && canReplaceMet(row)) {
-        replaced = { howMet: row.howMet ?? null, dateMet: row.dateMet?.toISOString() ?? null, metContext: row.metContext ?? null };
-        const patch: Partial<typeof contacts.$inferInsert> = { howMet: found.text, updatedAt: now };
-        // Over an import label the three were all the importer's; over a blank how-met, a date
-        // or context already there was someone's own, so those only fill in.
-        const imported = Boolean(row.howMet?.trim());
-        if (found.context && (imported || !row.metContext)) patch.metContext = found.context;
-        // A month or a year is not a day: date_met (shown as a day everywhere) takes days only.
-        if (found.precision === "day" && found.date && (imported || !row.dateMet)) patch.dateMet = noonOf(found.date);
-        const widen =
-          found.date && found.precision === "day" ? noonOf(found.date) : found.date && found.precision === "month" ? endOfMonth(found.date) : null;
-        if (widen && (!row.firstInteractionAt || widen < row.firstInteractionAt)) {
-          patch.firstInteractionAt = widen;
-          replaced.firstInteractionAt = row.firstInteractionAt?.toISOString() ?? null;
-          replaced.widenedTo = widen.toISOString();
-        }
-        await db.update(contacts).set(patch).where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
-      }
-      origin = { ...found, runId, replaced };
-    }
-    const kind = validated.relationship ?? null;
-    if (kind && !relationship?.removed) relationship = { kind: kind.kind, excerpt: kind.excerpt, interactionId: kind.interactionId };
+    ({ origin, relationship } = await writeOriginAndKind({ userId, contactId, runId, validated, previous: { origin, relationship }, now }));
   }
   if (input.deepRead) await writeDeepReadTimeline(userId, contactId, validated.events ?? [], !previous?.watermarkAt);
 
@@ -471,7 +532,9 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
   const topics = mergeTopics(previous?.topics ?? [], validated.topics, window.last.at);
   // Same newest message as the stored watermark: this window was already counted.
   const replay = previous?.watermarkInteractionId === window.last.interactionId;
-  const sources = [...new Set([...(previous?.sources ?? []), ...window.sources])];
+  // A deep first pass read the opening and the signals, so the one-time origin pass owes nothing.
+  const firstDeep = Boolean(input.deepRead) && !previous?.watermarkAt;
+  const sources = [...new Set([...(previous?.sources ?? []), ...window.sources, ...(firstDeep ? [ORIGIN_CHECKED] : [])])];
   const values = {
     contactId,
     userId,
@@ -494,7 +557,7 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
     relationship,
     updatedAt: now,
   };
-  await db.insert(relationshipDigests).values(values).onConflictDoUpdate({ target: relationshipDigests.contactId, set: values });
+  await saveDigest(values);
 
   // 5. Run counters (not again for a replayed window).
   if (!replay) await db
@@ -513,6 +576,24 @@ export async function applyDigestPlan(input: ApplyInput): Promise<ApplyResult> {
   return result;
 }
 
+/**
+ * The digest upsert. `values.relationship` comes from a row read earlier in the pass, so a
+ * "Not right?" landing in between must not be written over: a removed kind already on the row stays.
+ */
+export async function saveDigest(values: typeof relationshipDigests.$inferInsert): Promise<void> {
+  const db = await getDb();
+  await db
+    .insert(relationshipDigests)
+    .values(values)
+    .onConflictDoUpdate({
+      target: relationshipDigests.contactId,
+      set: {
+        ...values,
+        relationship: KEEP_REMOVED_KIND,
+      },
+    });
+}
+
 /** A trivial thread: nothing to learn, but the watermark must move or it stays pending forever. */
 export async function advanceWatermarkOnly(
   userId: string,
@@ -528,7 +609,7 @@ export async function advanceWatermarkOnly(
     contactId: window.contactId,
     userId,
     messageCount: (previous?.messageCount ?? 0) + window.messages.length,
-    sources: [...new Set([...(previous?.sources ?? []), ...window.sources])],
+    sources: [...new Set([...(previous?.sources ?? []), ...window.sources, ...(opts.deepRead && !previous?.watermarkAt ? [ORIGIN_CHECKED] : [])])],
     watermarkAt: window.last.at,
     watermarkInteractionId: window.last.interactionId,
     attempts: 0,
