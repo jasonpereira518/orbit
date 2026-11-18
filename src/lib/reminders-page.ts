@@ -98,6 +98,8 @@ export type ReminderRailCounts = {
   anytime: number;
   done: number;
   suggested: number;
+  /** Pending, overdue, from notes, not critical/high: what the backlog banner would snooze. */
+  overdueFromNotes: number;
 };
 
 export type ReminderListSummary = {

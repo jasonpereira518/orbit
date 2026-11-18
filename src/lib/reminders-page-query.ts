@@ -331,6 +331,7 @@ export async function queryReminderRailCounts(
         upcoming: sql<number>`count(*) filter (where ${pending} and ${dueDay} > ${today}::date)::int`,
         anytime: sql<number>`count(*) filter (where ${pending} and ${reminders.dueDate} is null)::int`,
         done: sql<number>`count(*) filter (where ${inArray(reminders.status, DONE_STATUSES)})::int`,
+        overdueFromNotes: sql<number>`count(*) filter (where ${overdueFromNotesWhere(userId, opts.tz, today)})::int`,
       })
       .from(reminders)
       .where(eq(reminders.userId, userId)),
@@ -364,6 +365,7 @@ export async function queryReminderRailCounts(
       anytime: Number(v?.anytime ?? 0),
       done: Number(v?.done ?? 0),
       suggested: Number(suggestedRows[0]?.n ?? 0),
+      overdueFromNotes: Number(v?.overdueFromNotes ?? 0),
     },
     pendingByList,
   };
@@ -383,17 +385,4 @@ export function overdueFromNotesWhere(userId: string, tz: string, today: string)
     sourceCondition("notes"),
     inArray(reminders.priority, ["normal", "low"])
   ) as SQL;
-}
-
-export async function countOverdueFromNotes(
-  db: Db,
-  userId: string,
-  opts: { tz: string; now?: Date }
-): Promise<number> {
-  const today = ymdInZone(opts.now ?? new Date(), opts.tz);
-  const rows = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(reminders)
-    .where(overdueFromNotesWhere(userId, opts.tz, today));
-  return Number(rows[0]?.n ?? 0);
 }

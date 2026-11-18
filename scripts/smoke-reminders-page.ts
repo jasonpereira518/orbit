@@ -64,6 +64,7 @@ type Seeded = {
   contactId: string | null;
   contactNames: string[];
   noteBatchId: string | null;
+  priority: string;
   createdAtText: string;
 };
 
@@ -127,6 +128,8 @@ async function main() {
       listId: i % 3 === 0 ? work.id : i % 3 === 1 ? inbox.id : null,
       contactId: contact?.id ?? null,
       noteBatchId: i % 11 === 0 ? "00000000-0000-4000-8000-000000000001" : null,
+      // Some high/critical so the banner count has something to skip.
+      priority: (i % 7 === 0 ? "high" : i % 13 === 0 ? "critical" : "normal") as "high" | "critical" | "normal",
     });
   }
   const inserted = await db.insert(schema.reminders).values(values).returning();
@@ -170,6 +173,7 @@ async function main() {
       return c ? [c.fullName, c.preferredName ?? ""].filter(Boolean) : [];
     })(),
     noteBatchId: r.noteBatchId,
+    priority: r.priority,
     createdAtText: createdText.get(r.id) ?? "",
   }));
 
@@ -312,6 +316,10 @@ async function main() {
       anytime: pend.filter((s) => s.dueDate === null).length,
       done: seeded.filter(isDone).length,
       suggested: 0,
+      overdueFromNotes: pend.filter((s) => {
+        const d = dueDayOf(s.dueDate, tz);
+        return d !== null && d < today && sourceMatch(s, "notes") && (s.priority === "normal" || s.priority === "low");
+      }).length,
     };
     check(`rail counts`, JSON.stringify(counts) === JSON.stringify(want),
       `got ${JSON.stringify(counts)}\n       want ${JSON.stringify(want)}`);
