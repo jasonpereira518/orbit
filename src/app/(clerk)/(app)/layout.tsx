@@ -26,7 +26,7 @@ import { OfflineSync } from "@/components/layout/offline-sync";
 import { MeetingSessionProvider } from "@/components/capture/meeting-session";
 import { VoiceDock } from "@/components/chat/voice/voice-dock";
 import { captureAttribution } from "@/lib/attribution-capture";
-import { captureRadarTimeZone } from "@/lib/radar/digest";
+import { captureRadarTimeZone, radarIsOnFromSettings } from "@/lib/radar/digest";
 import { TZ_COOKIE, isValidTimeZone } from "@/lib/reminder-due-bucket";
 import {
   bootstrapAuthenticatedUser,
@@ -217,8 +217,7 @@ export default async function AppLayout({
       viewingAsUser={visibility.viewingAsUser}
       linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
       creditsIntroDue={creditsIntroDue}
-      // Same rule as `radarIsOn` (radar/run.ts), inline: that module is too heavy for this graph.
-      radarOn={settings.radarEnabledAt != null && settings.radarPaused !== 1}
+      radarOn={radarIsOnFromSettings(settings.radarEnabledAt, settings.radarPaused)}
       tour={{
         active: tourRailVisible(settings),
         stop: settings.tourStop,

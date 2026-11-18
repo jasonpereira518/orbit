@@ -103,6 +103,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-cosmo-nudge": "pure",
   "smoke-cosmo-first-call": "pure",
   "smoke-ask-bar-visibility": "pure",
+  "smoke-radar-is-on-parity": "pure",
   "smoke-voice-minutes": "pure",
   "smoke-voice-tool-input": "pure",
   "smoke-cosmo-actions": "pure",

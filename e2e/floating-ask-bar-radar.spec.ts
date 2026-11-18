@@ -25,4 +25,12 @@ test("Ask bar is absent on /radar until Radar is on, present elsewhere", async (
 
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
   await expect(bar).toBeVisible({ timeout: 90_000 });
+
+  // Leave the shared e2e account as found: Radar off, so the Turn on screen is back.
+  await page.goto("/radar", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Settings" }).click();
+  const radarSwitch = page.getByRole("switch", { name: "Radar on" });
+  await radarSwitch.click();
+  // Switching off re-renders the page back to the Turn on screen.
+  await expect(page.getByRole("button", { name: "Turn on Radar" })).toBeVisible({ timeout: 90_000 });
 });
