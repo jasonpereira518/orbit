@@ -20,6 +20,7 @@ import { INLINE_PER_RUN, runRelationshipPass } from "../src/lib/relationship-eng
 import { ensureAllowance, creditPeriodFor, placeHold, getCreditBalance, BATCH_HOLD_TTL_MS } from "../src/lib/credits/ledger";
 import { settleBatchJob } from "../src/lib/ai-batch";
 import { creditGrants, creditHolds } from "../src/db/schema";
+import { withDeepReadOff } from "./smoke/deep-read";
 
 const USER = "smoke-ai-batch-user";
 const MANAGED = "smoke-ai-batch-managed";
@@ -433,7 +434,7 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
+withDeepReadOff(main).catch((err) => {
   console.error(err);
   process.exit(1);
 });

@@ -336,8 +336,6 @@ const FEATURES: Surface[] = [
     kind: "feature",
     label: "LinkedIn deep read",
     description: "Reads more of a LinkedIn export: your full history, how you met people, and who you are closest to.",
-    // Until /privacy describes it (deep read PR 5).
-    comingSoon: true,
   },
 ];
 
