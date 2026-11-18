@@ -777,10 +777,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
   preferences: {
     exports: [own(userSettings), own(draftEdits)],
     counts: [],
-    run: async (db, userId) => {
-      // Orbit's drafts next to what was sent (`@/lib/draft-edits`): writing preferences, and
-      // messages to other people, so they go with the preferences.
-      await db.delete(draftEdits).where(eq(draftEdits.userId, userId));
+    run: async () => {
       // Handled by `purgeUserSettings` at the end of `purgeUserData`, not here: what survives
       // depends on `keepSettings`, which is a property of the caller rather than of the
       // category. Kept in the map so `Record<DataCategory, CategoryStep>` still forces
@@ -914,6 +911,9 @@ const PRESERVED_SETTINGS_COLUMNS = {
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
+  // Orbit's drafts next to what was sent (`@/lib/draft-edits`): learned writing preferences, and
+  // messages to other people, so they always go with the preferences, kept settings or not.
+  await db.delete(draftEdits).where(eq(draftEdits.userId, userId));
   const preserved = keepSettings
     ? await db.query.userSettings.findFirst({
         where: eq(userSettings.userId, userId),
