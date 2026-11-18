@@ -217,6 +217,8 @@ export default async function AppLayout({
       viewingAsUser={visibility.viewingAsUser}
       linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
       creditsIntroDue={creditsIntroDue}
+      // Same rule as `radarIsOn` (radar/run.ts), inline: that module is too heavy for this graph.
+      radarOn={settings.radarEnabledAt != null && settings.radarPaused !== 1}
       tour={{
         active: tourRailVisible(settings),
         stop: settings.tourStop,
