@@ -171,6 +171,14 @@ export const userSettings = pgTable("user_settings", {
    */
   writingStyleProfile: text("writing_style_profile"),
   writingStyleProfileUpdatedAt: timestamp("writing_style_profile_updated_at", { withTimezone: true }),
+  /**
+   * Changes the user keeps making to Orbit's drafts, as short rules ("cuts the closing
+   * pleasantry"), distilled from `draft_edits` (`@/lib/draft-edits`). Same states as the style
+   * profile: NULL = none learned yet, "" = turned off (never relearned on its own), text = rules.
+   * Content: a preferences purge clears it.
+   */
+  writingEditLessons: text("writing_edit_lessons"),
+  writingEditLessonsUpdatedAt: timestamp("writing_edit_lessons_updated_at", { withTimezone: true }),
   /** Appended to email sent from Orbit (direct email). Plain text, and a sanitized HTML twin. */
   emailSignatureText: text("email_signature_text"),
   emailSignatureHtml: text("email_signature_html"),
@@ -1145,6 +1153,29 @@ export const duplicateSuggestions = pgTable(
  * "field" here; the names plan adds "rename" / "remove". Blank fills from imports and address
  * books are not logged (import revert covers them).
  */
+/**
+ * What Orbit drafted next to what the user actually sent or copied, so the changes they keep
+ * making can be learned (`@/lib/draft-edits`). Only pairs that differ are kept, and only the
+ * newest 30 per user: these are messages to other people. A preferences purge deletes them.
+ */
+export const draftEdits = pgTable(
+  "draft_edits",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Where the draft was edited: chat | compose | follow_up | outreach. */
+    surface: text("surface").notNull(),
+    /** email | linkedin | other. */
+    kind: text("kind").notNull(),
+    aiText: text("ai_text").notNull(),
+    finalText: text("final_text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    /** Set once a learning pass has read it; unread pairs are what triggers the next pass. */
+    learnedAt: timestamp("learned_at", { withTimezone: true }),
+  },
+  (t) => [index("draft_edits_user_idx").on(t.userId, t.createdAt.desc())]
+);
+
 export const contactChanges = pgTable(
   "contact_changes",
   {
@@ -3250,6 +3281,8 @@ export const outreachMessages = pgTable(
      * A Resend send keeps neither here; the follow-up asks Resend for it by `deliveryId`.
      */
     rfcMessageId: text("rfc_message_id"),
+    /** The body as Orbit drafted it, before any edit: a send compares against it (`draft_edits`). */
+    aiBody: text("ai_body"),
     providerThreadId: text("provider_thread_id"),
     /**
      * Resend engagement for an email sent on Orbit's Resend account, from the webhook

@@ -14,6 +14,7 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import { INBOX_IGNORED_CONTEXT } from "@/lib/email-intel/types";
 import { getDb, rowsOf } from "@/db";
 import {
+  draftEdits,
   actionItems,
   aiSuggestions,
   apiIdempotencyKeys,
@@ -774,9 +775,12 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   preferences: {
-    exports: [own(userSettings)],
+    exports: [own(userSettings), own(draftEdits)],
     counts: [],
-    run: async () => {
+    run: async (db, userId) => {
+      // Orbit's drafts next to what was sent (`@/lib/draft-edits`): writing preferences, and
+      // messages to other people, so they go with the preferences.
+      await db.delete(draftEdits).where(eq(draftEdits.userId, userId));
       // Handled by `purgeUserSettings` at the end of `purgeUserData`, not here: what survives
       // depends on `keepSettings`, which is a property of the caller rather than of the
       // category. Kept in the map so `Record<DataCategory, CategoryStep>` still forces
