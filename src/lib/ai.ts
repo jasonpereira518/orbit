@@ -2684,6 +2684,10 @@ line of its own and nothing else on that line:
   alone, at most ${LINKEDIN_NOTE_MAX} characters, and a closing \`\`\`. The id is the [id=…] of the person it is for
   (leave "to=<id>" out if you are not sure). Write it in the user's voice with no [placeholders],
   one block per message, and say in one line before it what you wrote — do not repeat the text.
+  Pick email or LinkedIn the way the user would: what they asked for, or said earlier in this
+  conversation ("email her", "a connection note", "DM him"), wins; when they named neither, use
+  how they last wrote to that person (an email in their Recent interactions means email, a
+  LinkedIn message means LinkedIn); with no cue at all, an email.
   Every draft follows the house format. An email: a subject of 3 to 7 words specific to the
   person (never "Following up" or "Quick question"); "Hi <first name>,"; when the user has no
   history with them, the first sentence says who the user is, otherwise open with what you

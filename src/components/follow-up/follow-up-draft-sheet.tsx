@@ -66,6 +66,10 @@ export function FollowUpDraftSheet({
   const [aiError, setAiError] = useState<string | null>(null);
   const [purpose, setPurpose] = useState("");
   const [pickedPurpose, setPickedPurpose] = useState("");
+  // Which channel the draft was written for: picked by Orbit from the intent and the history
+  // (`channelFromWords` / `channelFromHistory`), or switched here. Null: no cue, a short DM.
+  const [channel, setChannel] = useState<"email" | "linkedin" | null>(null);
+  const [draftSubject, setDraftSubject] = useState("");
   // Set when the person edits the purpose; cleared when they empty it or the sheet reopens.
   const [purposeOverridden, setPurposeOverridden] = useState(false);
   const [sendOptions, setSendOptions] =
@@ -85,6 +89,8 @@ export function FollowUpDraftSheet({
     setPickedPurpose("");
     setPurposeOverridden(false);
     setSendOptions(null);
+    setChannel(null);
+    setDraftSubject("");
 
     start(async () => {
       // Two independent reads, each shown as soon as it lands. They used to share one
@@ -122,6 +128,8 @@ export function FollowUpDraftSheet({
               setAiDraft(result.body);
               setPurpose(result.purpose);
               setPickedPurpose(result.purpose);
+              setChannel(result.channel === "sms" ? null : result.channel);
+              setDraftSubject(result.subject);
             },
             report
           );
@@ -132,10 +140,15 @@ export function FollowUpDraftSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contactId]);
 
-  function regenerate() {
+  /** A fresh draft; `to` switches the channel, otherwise the current one is kept. */
+  function regenerate(to?: "email" | "linkedin") {
     start(async () => {
       try {
-        const result = await draftContactFollowUp(contactId, { intent, purpose: editedPurpose(purpose, purposeOverridden) });
+        const result = await draftContactFollowUp(contactId, {
+          intent,
+          purpose: editedPurpose(purpose, purposeOverridden),
+          channel: to ?? channel ?? undefined,
+        });
         if (!result.ok) {
           setAiError(result.error);
           return;
@@ -145,6 +158,8 @@ export function FollowUpDraftSheet({
         setAiDraft(result.body);
         setPurpose(result.purpose);
         setPickedPurpose(result.purpose);
+        setChannel(result.channel === "sms" ? null : result.channel);
+        setDraftSubject(result.subject);
         toast.success("Draft ready");
       } catch (err) {
         toast.error(
@@ -164,7 +179,8 @@ export function FollowUpDraftSheet({
     if (!draft.trim()) return;
     startSend(async () => {
       try {
-        const res = await sendContactFollowUpEmail(contactId, draft, subject);
+        // A subject handed in wins; otherwise the one the email draft wrote for itself.
+        const res = await sendContactFollowUpEmail(contactId, draft, subject ?? (draftSubject.trim() || undefined));
         if (!res.ok) {
           toast.error(res.message);
           return;
@@ -217,13 +233,29 @@ export function FollowUpDraftSheet({
           </SheetDescription>
         </SheetHeader>
         <div className="flex flex-1 flex-col gap-4 px-4 pb-6">
-          <div className="flex justify-end">
+          <div className="flex items-center justify-between gap-2">
+            <div role="group" aria-label="Write it as" className="flex items-center gap-1 text-xs">
+              <span className="mr-1 text-muted-foreground">Write it as</span>
+              {(["email", "linkedin"] as const).map((c) => (
+                <Button
+                  key={c}
+                  type="button"
+                  size="sm"
+                  variant={channel === c ? "secondary" : "ghost"}
+                  aria-pressed={channel === c}
+                  disabled={pending}
+                  onClick={() => channel !== c && regenerate(c)}
+                >
+                  {c === "email" ? "Email" : "LinkedIn"}
+                </Button>
+              ))}
+            </div>
             <Button
               type="button"
               variant="outline"
               size="sm"
               disabled={pending}
-              onClick={regenerate}
+              onClick={() => regenerate()}
             >
               <RefreshCw className={`size-3.5 ${pending ? "animate-spin" : ""}`} />
               {pending ? "Drafting…" : draft ? "Regenerate" : "Generate"}
