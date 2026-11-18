@@ -16,6 +16,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { actionItems, contacts, interactionMentions, interactions, noteBatches, reminders, userSettings } from "../src/db/schema";
 import { dismissNoteReminderForUser, saveNoteBatch, undoNoteBatchForUser, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
+import { isNearDuplicateReminder } from "../src/lib/note-batches";
 import { hashSourceNote, isoDay } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
@@ -392,6 +393,31 @@ async function main() {
       JSON.stringify(after?.keyFacts) === JSON.stringify(["Personal: two kids", "Personal: Training for a marathon", "Team: ML"]),
       JSON.stringify(after?.keyFacts)
     );
+  }
+
+  // 9. Near-duplicate reminders across notes: a person with a pending "Check in with Wes: chat"
+  //    does not get "chat" or the same line again from a later note; a different task stays.
+  {
+    check("near-dup: bare title matches the prefixed one", isNearDuplicateReminder("Check in with Wes: chat", "chat"));
+    check("near-dup: case, punctuation and the prefix are ignored", isNearDuplicateReminder("Check in with Wes: Chat!", "Check in with Wes: chat"));
+    check("near-dup: a different task is not a duplicate", !isNearDuplicateReminder("Check in with Wes: chat", "Send contact info"));
+    check("near-dup: an empty title never matches", !isNearDuplicateReminder("Check in with Wes:", "Check in with Wes:"));
+    await db.insert(reminders).values({ userId: USER, contactId: devId, title: "Check in with Wes: chat", dueDate: new Date("2026-09-20T12:00:00Z"), status: "pending", reminderType: "manual" });
+    const dupNote = "Spoke with Dev Patel again — Wes stuff.";
+    const dup = await saveNoteBatch(USER, {
+      sourceText: dupNote,
+      sourceHash: hashSourceNote(dupNote),
+      anchorIso: "2026-09-01",
+      anchorBasis: "note",
+      entryPoint: "capture",
+      participants: [
+        { notes: dupNote, parsed: parsed("Dev Patel", null, ["chat", "Check in with Wes: chat", "Send contact info"], null), mergeContactId: devId, createReminder: false, relationshipScore: 2, tagNames: [] },
+      ],
+      commitments: [],
+      skipped: { relative: 0, unverifiable: 0, past: 0 },
+    });
+    const dupRems = await db.query.reminders.findMany({ where: and(eq(reminders.userId, USER), eq(reminders.noteBatchId, dup.batchId)) });
+    check("near-dup: only the new task is created", dupRems.length === 1 && dupRems[0].title === "Send contact info", dupRems.map((r) => r.title).join(" | "));
   }
 
   await reset();
