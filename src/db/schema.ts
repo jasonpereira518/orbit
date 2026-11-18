@@ -803,14 +803,6 @@ export const contacts = pgTable(
     /** Bare X/Twitter handle, no leading "@" — see normalizeXHandle in lib/duplicates. */
     xHandle: text("x_handle"),
     website: text("website"),
-    /**
-     * Public social handles the person chose to add, for Radar's post signals. Plain columns
-     * rather than `contact_identities` kinds: the identity sync releases every kind it does not
-     * derive itself, so a kind added only here would be wiped on the next edit.
-     * `blueskyHandle` is a bare handle ("name.bsky.social"); `mastodonAcct` is "user@host".
-     */
-    blueskyHandle: text("bluesky_handle"),
-    mastodonAcct: text("mastodon_acct"),
     profileImageUrl: text("profile_image_url"),
     /**
      * When we last tried, and failed, to find a photo for this contact.

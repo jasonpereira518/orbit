@@ -2,7 +2,6 @@
   "contacts": [
     {
       "aiSummary": null,
-      "blueskyHandle": null,
       "cadenceDays": null,
       "cadencePhrase": null,
       "cadenceSetAt": null,
@@ -47,7 +46,6 @@
       "linkedinSlug": "alan-turing-e2e",
       "linkedinUrl": "https://www.linkedin.com/in/alan-turing-e2e",
       "location": null,
-      "mastodonAcct": null,
       "metContext": "online",
       "nameGuess": null,
       "nextFollowUpAt": null,
@@ -78,7 +76,6 @@
     },
     {
       "aiSummary": null,
-      "blueskyHandle": null,
       "cadenceDays": null,
       "cadencePhrase": null,
       "cadenceSetAt": null,
@@ -123,7 +120,6 @@
       "linkedinSlug": null,
       "linkedinUrl": null,
       "location": null,
-      "mastodonAcct": null,
       "metContext": "online",
       "nameGuess": null,
       "nextFollowUpAt": null,
@@ -154,7 +150,6 @@
     },
     {
       "aiSummary": null,
-      "blueskyHandle": null,
       "cadenceDays": null,
       "cadencePhrase": null,
       "cadenceSetAt": null,
@@ -199,7 +194,6 @@
       "linkedinSlug": "grace-hopper-e2e",
       "linkedinUrl": "https://www.linkedin.com/in/grace-hopper-e2e",
       "location": null,
-      "mastodonAcct": null,
       "metContext": "online",
       "nameGuess": null,
       "nextFollowUpAt": null,
@@ -230,7 +224,6 @@
     },
     {
       "aiSummary": null,
-      "blueskyHandle": null,
       "cadenceDays": null,
       "cadencePhrase": null,
       "cadenceSetAt": null,
@@ -275,7 +268,6 @@
       "linkedinSlug": "grace-hopper-e2e",
       "linkedinUrl": "https://www.linkedin.com/in/grace-hopper-e2e",
       "location": null,
-      "mastodonAcct": null,
       "metContext": "online",
       "nameGuess": null,
       "nextFollowUpAt": null,
@@ -306,7 +298,6 @@
     },
     {
       "aiSummary": null,
-      "blueskyHandle": null,
       "cadenceDays": null,
       "cadencePhrase": null,
       "cadenceSetAt": null,
@@ -351,7 +342,6 @@
       "linkedinSlug": "katherine-johnson-e2e",
       "linkedinUrl": "https://www.linkedin.com/in/katherine-johnson-e2e",
       "location": null,
-      "mastodonAcct": null,
       "metContext": "online",
       "nameGuess": null,
       "nextFollowUpAt": null,
@@ -382,7 +372,6 @@
     },
     {
       "aiSummary": null,
-      "blueskyHandle": null,
       "cadenceDays": null,
       "cadencePhrase": null,
       "cadenceSetAt": null,
@@ -423,7 +412,6 @@
       "linkedinSlug": null,
       "linkedinUrl": null,
       "location": null,
-      "mastodonAcct": null,
       "metContext": "online",
       "nameGuess": null,
       "nextFollowUpAt": null,

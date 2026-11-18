@@ -193,8 +193,6 @@ CREATE TABLE IF NOT EXISTS contacts (
   linkedin_url text,
   x_handle text,
   website text,
-  bluesky_handle text,
-  mastodon_acct text,
   profile_image_url text,
   profile_image_checked_at timestamp,
   profile_image_source text,
@@ -3239,7 +3237,11 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 249 = contacts.sort_key ignores parenthesised text, so "Briana (Simmons) Medley" sorts under M
 // (UX walkthrough Task 19). Scanned every remote ref on Nov 18 2026: main (merged draft_edits, 248)
 // is the highest, so this takes 249.
-export const SCHEMA_VERSION = 249;
+// 250 = drops contacts.bluesky_handle and mastodon_acct (edit contact panel redesign, PR 1).
+// Nothing has read them since Radar PR 1 removed the polling; the form was their last writer.
+// Irreversible: any handles typed in are gone. Scanned every remote ref on Nov 18 2026: main
+// and two branches hold 249, none higher.
+export const SCHEMA_VERSION = 250;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4724,8 +4726,6 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   await ensureColumn(client, "user_settings", "radar_digest_tz", "text");
   await ensureColumn(client, "user_settings", "radar_digest_last_week", "text");
   await ensureColumn(client, "user_settings", "radar_digest_unsub_token_hash", "text");
-  await ensureColumn(client, "contacts", "bluesky_handle", "text");
-  await ensureColumn(client, "contacts", "mastodon_acct", "text");
   await ensureColumn(client, "contacts", "name_guess", "jsonb");
   await ensureColumn(client, "contacts", "field_sources", "jsonb");
   await ensureColumn(client, "meeting_sessions", "user_notes", "text");
@@ -5653,8 +5653,6 @@ const alters = [
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_tz text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_last_week text`,
   `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_digest_unsub_token_hash text`,
-  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS bluesky_handle text`,
-  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mastodon_acct text`,
   // Schema v185: a name read from a handle, and whether it is a weak guess (`@/lib/contact-name-guess`).
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS name_guess jsonb`,
   // Schema v240: where each sourced contact field came from (`@/lib/contact-fields`).
@@ -5794,6 +5792,10 @@ const alters = [
   // LinkedIn deep read PR 2 (schema 247): how you met and the kind of relationship, each quoted.
   `ALTER TABLE relationship_digests ADD COLUMN IF NOT EXISTS origin jsonb`,
   `ALTER TABLE relationship_digests ADD COLUMN IF NOT EXISTS relationship jsonb`,
+  // Schema v250: contacts.bluesky_handle and mastodon_acct. Radar stopped polling them (PR 1) and
+  // the edit form no longer offers them, so the deployment still serving never selects them.
+  `ALTER TABLE contacts DROP COLUMN IF EXISTS bluesky_handle`,
+  `ALTER TABLE contacts DROP COLUMN IF EXISTS mastodon_acct`,
 ];
 
 /**
