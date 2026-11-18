@@ -29,6 +29,7 @@ import {
   usersWithPendingTimelineEvents,
 } from "../src/lib/linkedin-timeline-backfill";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { withDeepReadOff } from "./smoke/deep-read";
 
 const DRAIN_USER = "smoke-li-timeline-drain-user";
 const SKIP_USER = "smoke-li-timeline-skip-user";
@@ -501,7 +502,7 @@ async function main() {
   console.log("\nTimeline backfill checks passed.");
 }
 
-main()
+withDeepReadOff(main)
   .then(() => process.exit(0))
   .catch(async (e) => {
     console.error("\nFAILED:", e);

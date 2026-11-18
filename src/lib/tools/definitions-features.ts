@@ -631,14 +631,13 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     scope: "read",
     resultLabel: "dossier",
     releasedSurface: "page.knowledge",
-    // `relationship` (LinkedIn deep read) is chat-only: MCP clients are outside services.
-    fields: { chat: ["contact", "brief", "goals", "stale", "relationship"], mcp: ["contact", "brief", "goals", "stale"] },
-    async run(userId, args: { contactId: string }, ctx) {
+    // `relationship` (LinkedIn deep read) goes to connected assistants too; /privacy says so.
+    fields: { chat: ["contact", "brief", "goals", "stale", "relationship"], mcp: ["contact", "brief", "goals", "stale", "relationship"] },
+    async run(userId, args: { contactId: string }) {
       const dossier = await loadKnowledgeDossier(userId, args.contactId);
       if (!dossier) return toolError("No contact with that id.");
       // Absent (not null) when there is nothing, so deep read off is today's shape; a failed read
       // never fails the dossier.
-      if (ctx?.surface !== "chat") return dossier;
       const contexts = await loadRelationshipContexts(userId, [args.contactId]).catch(() => null);
       const relationship = renderRelationshipBlock(contexts?.get(args.contactId));
       return relationship ? { ...dossier, relationship } : dossier;

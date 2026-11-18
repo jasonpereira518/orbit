@@ -83,8 +83,23 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // emails from Gmail or Outlook, cleaned of quotes, signatures and contact details, go to your AI
 // provider once to describe how you write; only that description (600 characters) is kept.
 // First claimed .3; renumbered when main took .3 (Cosmo revision).
-export const TERMS_VERSION = "2026-11-13.4";
-export const LEGAL_LAST_UPDATED = "November 13, 2026 (revision 4)";
+// 2026-11-16 (LinkedIn deep read, launch PR): what Orbit reads from a LinkedIn import (the
+// conversation, connection-request notes, recommendations, your LinkedIn notes, and your own
+// work and school history); what it keeps per person (summary, how you met, the kind of
+// relationship, dated events, each with a quote); what it writes onto a contact and what it
+// never overwrites; what counts toward closeness; where it is used, including the short
+// relationship description a connected assistant receives; and the one-time catch-up for
+// earlier imports. The old timeline reader's daily-cap sentence is retired from both pages.
+// 2026-11-17 (Google verification): the Google scope table now names two uses that were true
+// and unsaid — Contacts sync (new and changed Google contacts come in on a schedule unless you
+// switch it off, and Match photos) and Email activity (sender, recipients, subject and date of
+// recent mail, logged only against people already in your network) — and lists the writing-style
+// and signature reads under gmail.readonly, which the page already described further down.
+// 2026-11-18 (draft-edit learning): Orbit keeps your newest 30 edited drafts (its draft next to
+// what you sent) and has your AI provider write down changes you made in at least three, as up
+// to five rules future drafts follow; turning it off deletes both.
+export const TERMS_VERSION = "2026-11-18";
+export const LEGAL_LAST_UPDATED = "November 18, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.
@@ -149,14 +164,14 @@ export const GOOGLE_SCOPE_DISCLOSURES: readonly {
   {
     scope: GOOGLE_SCOPES.contacts,
     permission: "See your contacts (contacts.readonly)",
-    use: "Lists your Google Contacts so you can pick who to import. Only the people you select are saved: name, company, title, email, phone and photo. A Google photo is saved for your account only and is never shared with other Orbit users.",
+    use: "Lists your Google Contacts so you can pick who to import. Only the people you select are saved: name, company, title, email, phone and photo. A Google photo is saved for your account only and is never shared with other Orbit users. Contacts sync, on unless you switch it off in Settings → Google: new and changed Google contacts are read on a schedule, or when you press Sync now, and added to your network with their name, company, title, email and phone, only the city and region of an address, and a LinkedIn link if they have one. Match photos: fills a missing contact photo from the Google contact with the same email address.",
     askedWhen: "Connect Google on Imports → Google Contacts",
   },
   {
     scope: GOOGLE_SCOPES.gmailRead,
     permission: "Read your email (gmail.readonly)",
-    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Email insights: reads the sender, subject and Gmail’s short preview of new job and hiring-process threads, and for hiring conversations the text of the latest messages, which it sends to your AI provider to note the company, role, stage, dates and people. The notes can appear on your Radar cards, which can also offer to add people an email names to your contacts when you press Add. Your chat assistant can search the notes too. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Message bodies are never stored.",
-    askedWhen: "Connect Gmail on Recruiters, or turn on Email insights in Settings",
+    use: "Recruiter scan: finds recruiting conversations and summarizes each with your AI key or Orbit's included AI. Email insights: reads the sender, subject and Gmail’s short preview of new job and hiring-process threads, and for hiring conversations the text of the latest messages, which it sends to your AI provider to note the company, role, stage, dates and people. The notes can appear on your Radar cards, which can also offer to add people an email names to your contacts when you press Add. Your chat assistant can search the notes too. Replying in a thread: when you compose an email to a contact, finds your latest message with them so you can reply in that conversation, reading only its Message-ID, subject, date and thread. Sending: checks your Sent folder so a retried send is never delivered twice. Email activity, an optional switch in Settings → Google: reads who a message is from and to, its subject and its date, starting with the last 90 days and then new mail as it arrives, only to log it against people already in your network; it reads no message text or preview and never creates contacts. Matching your writing style: reads about twenty recent sent emails once to describe how you write, as explained under that heading below. Signatures: when a contact's message has a signature, fills a blank role, company, phone or LinkedIn link on that contact. Message bodies are never stored.",
+    askedWhen: "Connect Gmail on Recruiters, turn on Email insights or Email activity in Settings, or ask for a first draft",
   },
   {
     scope: GOOGLE_SCOPES.gmailSend,

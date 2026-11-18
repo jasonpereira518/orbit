@@ -577,6 +577,18 @@ export async function mergeContacts(
          WHERE user_id = ${userId} AND contact_id = ${winnerId}::uuid
       `)
     );
+    // A relationship kind the person removed ("Not right?") on the loser stays removed on the
+    // winner, or the next pass would set a kind again. Not archived, like the reset above.
+    statements.push(
+      tx.execute(sql`
+        INSERT INTO relationship_digests (contact_id, user_id, relationship)
+        SELECT ${winnerId}::uuid, user_id, relationship
+          FROM relationship_digests
+         WHERE contact_id = ${loserId}::uuid AND user_id = ${userId} AND relationship->>'removed' = 'true'
+        ON CONFLICT (contact_id) DO UPDATE SET relationship = excluded.relationship
+         WHERE coalesce(relationship_digests.relationship->>'removed', '') <> 'true'
+      `)
+    );
 
     // contact_profiles is unique on (user_id, contact_id) and only one may survive. Move
     // the loser's only if the winner has none; otherwise the winner's stands.

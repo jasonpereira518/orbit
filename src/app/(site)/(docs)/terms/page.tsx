@@ -15,7 +15,6 @@ import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS, FOUNDING_AMOUNT_OFF_CENTS, FOUNDING_MONTHS } from "@/lib/stripe-config";
 import { PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
 import { LEGAL_LAST_UPDATED } from "@/lib/legal";
-import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -268,11 +267,9 @@ export default function TermsPage() {
           </p>
           <p>
             Some AI work runs in the background: search indexing, and — after
-            a LinkedIn import — deriving timeline events from the imported
-            conversations, without you turning anything on first. The cap of{" "}
-            {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the
-            conversations that reach the model; a thread with a single message
-            gets a rule-based note instead, with no AI call. On every plan, background AI
+            a LinkedIn import — reading the imported conversations, without you
+            turning anything on first. A thread with nothing in it to understand
+            gets no AI call. On every plan, background AI
             work on Orbit&apos;s accounts uses credits too, and pauses once
             half a month&apos;s credits or fewer remain, so what you ask for
             yourself comes first. Settings shows the last 30 days of AI usage

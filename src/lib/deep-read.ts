@@ -8,9 +8,18 @@
  * get deep read everywhere before launch; everyone else gets it once the surface is released.
  */
 import { isAdminUser } from "@/lib/admin-ids";
-import { isSurfaceReleased } from "@/lib/surface-visibility";
+import { getComingSoonKeys, getHiddenSurfaceKeys, isSurfaceReleased } from "@/lib/surface-visibility";
 import { LINKEDIN_DEEP_READ_SURFACE_KEY } from "@/lib/surfaces";
 
 export async function deepReadOn(userId: string): Promise<boolean> {
   return isAdminUser(userId) || (await isSurfaceReleased(userId, LINKEDIN_DEEP_READ_SURFACE_KEY));
+}
+
+/**
+ * For jobs that work across users (no user, no cookie): true once the surface is neither coming
+ * soon nor hidden, which is when `deepReadOn` is true for everyone.
+ */
+export async function deepReadLaunched(): Promise<boolean> {
+  const [soon, hidden] = await Promise.all([getComingSoonKeys(), getHiddenSurfaceKeys()]);
+  return !soon.has(LINKEDIN_DEEP_READ_SURFACE_KEY) && !hidden.has(LINKEDIN_DEEP_READ_SURFACE_KEY);
 }

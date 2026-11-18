@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   writing_instructions text,
   writing_style_profile text,
   writing_style_profile_updated_at timestamptz,
+  writing_edit_lessons text,
+  writing_edit_lessons_updated_at timestamptz,
   email_signature_text text,
   email_signature_html text,
   default_send_provider text,
@@ -880,6 +882,7 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
   delivery_id text,
   rfc_message_id text,
   provider_thread_id text,
+  ai_body text,
   delivered_at timestamptz,
   opened_at timestamptz,
   clicked_at timestamptz,
@@ -2058,6 +2061,17 @@ CREATE TABLE IF NOT EXISTS contact_merges (
   confidence real,
   merged_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS draft_edits (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  surface text NOT NULL,
+  kind text NOT NULL,
+  ai_text text NOT NULL,
+  final_text text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  learned_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS draft_edits_user_idx ON draft_edits(user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS contact_changes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3219,6 +3233,9 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 247 = LinkedIn deep read PR 2 (reader upgrade): relationship_digests.origin and .relationship
 // (jsonb, nullable), the quoted "how you met" and relationship kind. Scanned every remote ref on
 // Nov 16 2026: main and five branches hold 246, none higher.
+// 248 = learned edits (draft-edit learning, PR 2 of the channel/edits plan): draft_edits (AI draft
+// vs what was sent, newest 30 per user), user_settings.writing_edit_lessons(+_updated_at) and
+// outreach_messages.ai_body. Scanned every remote ref on Nov 18 2026: main and all branches <= 247.
 // 249 = contacts.sort_key ignores parenthesised text, so "Briana (Simmons) Medley" sorts under M
 // (UX walkthrough Task 19). Scanned every remote ref on Nov 18 2026: main (merged draft_edits, 248)
 // is the highest, so this takes 249.
@@ -4727,6 +4744,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v245: a sequence's follow-ups reply in the first email's thread.
   await ensureColumn(client, "outreach_messages", "rfc_message_id", "text");
   await ensureColumn(client, "outreach_messages", "provider_thread_id", "text");
+  // v248: learning the edits a user keeps making (draft_edits is in the DDL above).
+  await ensureColumn(client, "outreach_messages", "ai_body", "text");
+  await ensureColumn(client, "user_settings", "writing_edit_lessons", "text");
+  await ensureColumn(client, "user_settings", "writing_edit_lessons_updated_at", "timestamptz");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -5655,6 +5676,10 @@ const alters = [
   // Schema v245: a sequence's follow-ups reply in the first email's thread.
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS rfc_message_id text`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS provider_thread_id text`,
+  // Schema v248: learning the edits a user keeps making (draft_edits is in the DDL template).
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS ai_body text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_edit_lessons text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_edit_lessons_updated_at timestamptz`,
   `CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS metrics_daily (day date NOT NULL, metric text NOT NULL, dim text NOT NULL DEFAULT '', value bigint NOT NULL, computed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (day, metric, dim))`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,

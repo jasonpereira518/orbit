@@ -2102,7 +2102,8 @@
           "contact",
           "brief",
           "goals",
-          "stale"
+          "stale",
+          "relationship"
         ]
       },
       "surfaceKey": null,

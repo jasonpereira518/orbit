@@ -424,6 +424,9 @@
     "src/lib/recruiter-drafts.ts",
     "src/lib/reminder-writes.ts"
   ],
+  "smoke-relationship-apply.ts": [
+    "src/actions/contacts.ts"
+  ],
   "smoke-report-error.ts": [
     "src/app/global-error.tsx",
     "src/components/error-fallback.tsx",

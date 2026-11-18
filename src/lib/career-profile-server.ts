@@ -100,14 +100,16 @@ export async function setPostTopics(userId: string, topics: readonly string[]): 
 
 /**
  * Forget what was imported. Leaves `sender_bio` and everything else the person typed alone,
- * including `aim`: that came from the onboarding About you step, not from an export.
+ * including `aim`: that came from the onboarding About you step, not from an export. The deep
+ * read's `historyCheckedAt` stamp stays too, or its catch-up would write the history back.
  */
 export async function clearCareerProfile(userId: string): Promise<void> {
   const db = await getDb();
   await db.execute(sql`
     UPDATE user_settings SET
       career_profile = NULLIF(jsonb_strip_nulls(jsonb_build_object(
-        'aim', career_profile->'aim', 'majors', career_profile->'majors', 'city', career_profile->'city')), '{}'::jsonb),
+        'aim', career_profile->'aim', 'majors', career_profile->'majors', 'city', career_profile->'city',
+        'historyCheckedAt', career_profile->'historyCheckedAt')), '{}'::jsonb),
       updated_at = now()
     WHERE user_id = ${userId}
   `);

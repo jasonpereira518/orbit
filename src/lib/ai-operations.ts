@@ -153,6 +153,10 @@ export const AI_OPERATIONS = {
   // writes (`@/lib/writing-style-profile`). Runs after a draft the user asked for, or on
   // Refresh: foreground, on their own model, because the profile shapes every draft after it.
   "style.profile": { label: "Writing style from sent mail", tier: "user" },
+  // Reads up to 30 pairs (Orbit's draft, what the user sent) and writes down the changes they
+  // made in at least 3 (`@/lib/draft-edits`). Fast tier: a comparison, not writing; one call
+  // per 3 edited drafts, after the send that triggered it.
+  "style.edits": { label: "Learning from your edits", tier: "fast", thinking: "minimal" },
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },
@@ -213,6 +217,13 @@ export const AI_OPERATIONS = {
   },
   "relationship.digest": {
     label: "Relationship analysis (conversations)",
+    tier: "fast",
+    thinking: "minimal",
+    background: true,
+  },
+  // LinkedIn deep read, launch catch-up: one read of each already-summarised conversation's opening.
+  "relationship.origin": {
+    label: "Relationship analysis (how you met, one-time)",
     tier: "fast",
     thinking: "minimal",
     background: true,
