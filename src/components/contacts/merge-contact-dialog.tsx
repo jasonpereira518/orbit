@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
-import { Merge, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,9 +34,19 @@ import { cn } from "@/lib/utils";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
 
-export function MergeContactButton({ id, name }: { id: string; name: string }) {
+/** Controlled, with no trigger of its own: the edit sheet's ⋯ menu opens it. */
+export function MergeContactDialog({
+  id,
+  name,
+  open,
+  onOpenChange: setOpen,
+}: {
+  id: string;
+  name: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<ContactPickerOption[]>([]);
   const [target, setTarget] = useState<ContactPickerOption | null>(null);
@@ -78,11 +88,6 @@ export function MergeContactButton({ id, name }: { id: string; name: string }) {
 
   return (
     <>
-      {/* This dialog has no DialogTrigger: the ui/dialog wrapper does not re-export one. */}
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <Merge className="h-4 w-4" aria-hidden />
-        Merge into…
-      </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>

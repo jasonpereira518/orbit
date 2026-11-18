@@ -212,6 +212,8 @@ function StickyMiniBar({
         <ContactEditSheet
           contactId={contactId}
           name={displayName}
+          firstName={firstName}
+          profileImageUrl={profileImageUrl}
           initial={formInitial}
         />
       </div>
@@ -401,6 +403,8 @@ export function ContactProfileHero({
           <ContactEditSheet
             contactId={contactId}
             name={displayName}
+            firstName={firstName}
+            profileImageUrl={profileImageUrl}
             initial={formInitial}
           />
         </div>

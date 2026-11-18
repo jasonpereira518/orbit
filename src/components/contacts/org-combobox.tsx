@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Autocomplete } from "@base-ui/react/autocomplete";
-import { Building2, Plus } from "lucide-react";
+import { Building2, GraduationCap, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useFieldControl } from "@/components/ui/field";
+import { lookupCuratedBrandByName } from "@/lib/brand-colors";
 import { companyBrandColor } from "@/lib/company-brand";
 import type { OrgKind, OrgSuggestion } from "@/lib/org-suggest";
 import { cn } from "@/lib/utils";
@@ -48,6 +50,47 @@ export function OrgLogo({ name, domain, className }: { name: string; domain: str
   );
 }
 
+/** `/api/orgs/suggest` as the person types: debounced, each keystroke aborting the last. */
+function useOrgSearch() {
+  const [suggestions, setSuggestions] = useState<OrgSuggestion[]>([]);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inflight = useRef<AbortController | null>(null);
+
+  function cancel() {
+    if (timer.current) clearTimeout(timer.current);
+    inflight.current?.abort();
+  }
+
+  useEffect(() => cancel, []);
+
+  function search(q: string) {
+    cancel();
+    if (q.trim().length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    timer.current = setTimeout(() => {
+      const controller = new AbortController();
+      inflight.current = controller;
+      fetch(`/api/orgs/suggest?q=${encodeURIComponent(q.trim())}`, { signal: controller.signal })
+        .then((r) => (r.ok ? (r.json() as Promise<{ suggestions?: OrgSuggestion[] }>) : null))
+        .then((res) => {
+          if (!controller.signal.aborted) setSuggestions(res?.suggestions ?? []);
+        })
+        .catch(() => {
+          // Aborted by the next keystroke, or offline: what was typed still stands.
+        });
+    }, DEBOUNCE_MS);
+  }
+
+  function reset() {
+    cancel();
+    setSuggestions([]);
+  }
+
+  return { suggestions, search, reset };
+}
+
 type Row = (OrgSuggestion & { add?: false }) | { add: true; name: string };
 
 /**
@@ -69,48 +112,15 @@ export function OrgCombobox({
   className?: string;
 }) {
   const [text, setText] = useState("");
-  const [suggestions, setSuggestions] = useState<OrgSuggestion[]>([]);
+  const { suggestions, search, reset } = useOrgSearch();
   const highlighted = useRef<Row | undefined>(undefined);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inflight = useRef<AbortController | null>(null);
-
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-      inflight.current?.abort();
-    },
-    [],
-  );
-
-  function search(q: string) {
-    if (timer.current) clearTimeout(timer.current);
-    inflight.current?.abort();
-    if (q.trim().length < 2) {
-      setSuggestions([]);
-      return;
-    }
-    timer.current = setTimeout(() => {
-      const controller = new AbortController();
-      inflight.current = controller;
-      fetch(`/api/orgs/suggest?q=${encodeURIComponent(q.trim())}`, { signal: controller.signal })
-        .then((r) => (r.ok ? (r.json() as Promise<{ suggestions?: OrgSuggestion[] }>) : null))
-        .then((res) => {
-          if (!controller.signal.aborted) setSuggestions(res?.suggestions ?? []);
-        })
-        .catch(() => {
-          // Aborted by the next keystroke, or offline: the "Add" row still works.
-        });
-    }, DEBOUNCE_MS);
-  }
 
   function pick(org: PickedOrg) {
     const name = org.name.trim();
     if (!name) return;
     onPick({ name, domain: org.domain });
     setText("");
-    setSuggestions([]);
-    if (timer.current) clearTimeout(timer.current);
-    inflight.current?.abort();
+    reset();
   }
 
   const typed = text.trim();
@@ -203,6 +213,125 @@ export function OrgCombobox({
                       </span>
                     </>
                   )}
+                </Autocomplete.Item>
+              )}
+            </Autocomplete.List>
+          </Autocomplete.Popup>
+        </Autocomplete.Positioner>
+      </Autocomplete.Portal>
+    </Autocomplete.Root>
+  );
+}
+
+/**
+ * One organization as a form field (the contact form's Company and School): the box holds
+ * the value, and the same suggestions as `OrgCombobox` drop down under it as the person types.
+ * Arrow to a match and press Enter, or keep typing — free text always stands.
+ *
+ * `localNames` are the person's own values for this field (their contacts' schools), matched
+ * client-side and listed first; the server's "yours" only reads saved company names.
+ */
+export function OrgField({
+  value,
+  onChange,
+  onPick,
+  kind,
+  localNames = [],
+  placeholder,
+  id,
+}: {
+  value: string;
+  onChange: (name: string) => void;
+  /** A suggestion was chosen (not merely typed). */
+  onPick?: (org: PickedOrg) => void;
+  kind: "company" | "school";
+  localNames?: readonly string[];
+  placeholder?: string;
+  id?: string;
+}) {
+  const { suggestions, search, reset } = useOrgSearch();
+  const [pickedDomain, setPickedDomain] = useState<string | null>(null);
+  const control = useFieldControl({ id });
+
+  const q = value.trim().toLowerCase();
+  const local: OrgSuggestion[] =
+    q.length < 2
+      ? []
+      : localNames
+          .filter((n) => n.toLowerCase().includes(q) && n.toLowerCase() !== q)
+          .slice(0, 3)
+          .map((name) => ({ name, domain: null, kind, source: "yours" as const }));
+  const seen = new Set(local.map((r) => r.name.toLowerCase()));
+  const rows = [
+    ...local,
+    // Stable sort: the field's own kind first, so "Stanford" in School isn't a company row.
+    ...[...suggestions]
+      .filter((r) => !seen.has(r.name.toLowerCase()) && r.name.toLowerCase() !== q)
+      .sort((a, b) => Number(b.kind === kind) - Number(a.kind === kind)),
+  ];
+
+  const domain = value.trim()
+    ? (pickedDomain ?? lookupCuratedBrandByName(value, kind)?.domain ?? null)
+    : null;
+  const Icon = kind === "school" ? GraduationCap : Building2;
+
+  function pick(row: OrgSuggestion) {
+    onChange(row.name);
+    setPickedDomain(row.domain);
+    onPick?.({ name: row.name, domain: row.domain });
+    reset();
+  }
+
+  return (
+    <Autocomplete.Root
+      items={rows}
+      value={value}
+      mode="list"
+      filter={null}
+      itemToStringValue={(row: OrgSuggestion) => row.name}
+      onValueChange={(next, details) => {
+        if (details.reason === "item-press") return; // the item's onClick picks it
+        onChange(next);
+        setPickedDomain(null);
+        search(next);
+      }}
+    >
+      <Autocomplete.InputGroup data-slot="org-field" className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent pl-2 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30">
+        {value.trim() ? (
+          <OrgLogo name={value} domain={domain} className="size-5" />
+        ) : (
+          <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        )}
+        <Autocomplete.Input
+          {...control}
+          placeholder={placeholder}
+          autoComplete="off"
+          dir="auto"
+          className="h-full min-w-0 flex-1 bg-transparent pr-2.5 text-base outline-none placeholder:text-muted-foreground md:text-sm"
+          onKeyDown={(e) => {
+            // A highlighted row picks itself; otherwise Enter just closes the list. It never
+            // submits the whole form from a half-typed name (⌘↵ saves).
+            if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) e.preventDefault();
+          }}
+        />
+      </Autocomplete.InputGroup>
+
+      <Autocomplete.Portal hidden={rows.length === 0}>
+        <Autocomplete.Positioner className="isolate z-50 outline-none" sideOffset={6} align="start">
+          <Autocomplete.Popup className="max-h-(--available-height) w-(--anchor-width) max-w-(--available-width) min-w-56 overflow-y-auto overscroll-contain rounded-xl bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10">
+            <Autocomplete.List>
+              {(row: OrgSuggestion) => (
+                <Autocomplete.Item
+                  key={`${row.source}:${row.name}`}
+                  value={row}
+                  onClick={() => pick(row)}
+                  className="flex cursor-default items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+                >
+                  <OrgLogo name={row.name} domain={row.domain} className="size-6" />
+                  <span className="min-w-0 flex-1 truncate">{row.name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {row.source === "yours" ? "In your orbit" : KIND_LABELS[row.kind]}
+                  </span>
                 </Autocomplete.Item>
               )}
             </Autocomplete.List>

@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Briefcase, AtSign, Sparkles, HeartHandshake, NotebookPen, type LucideIcon } from "lucide-react";
 import { useGuardedTransition } from "@/lib/single-flight";
 import { toast } from "@/lib/toast";
 import {
@@ -15,8 +16,10 @@ import {
 import { queueContactWorkHistory } from "@/actions/contact-profile";
 import { MET_CONTEXTS, MET_CONTEXT_LABELS, type MetContext } from "@/lib/met-context";
 import { SuggestInput } from "@/components/contacts/suggest-input";
+import { OrgField } from "@/components/contacts/org-combobox";
+import { ChoicePills, StrengthDots, TagInput } from "@/components/contacts/contact-form-controls";
 import { Button } from "@/components/ui/button";
-import { Field, FormError, useFieldControl } from "@/components/ui/field";
+import { Field, FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -51,6 +54,8 @@ export function ContactForm({
   onSuccess,
   redirectOnSuccess = true,
   compact = false,
+  renderHeader,
+  pinnedActions = false,
 }: {
   initial?: Partial<ContactInput> & { tags?: string[] };
   contactId?: string;
@@ -63,6 +68,10 @@ export function ContactForm({
    * has to fit one screen. Everything else is on the profile afterwards.
    */
   compact?: boolean;
+  /** Drawn first inside the form, from the live values (the edit sheet's brand header). */
+  renderHeader?: (live: { fullName: string; title: string; company: string }) => ReactNode;
+  /** Pin the save row to the bottom of the scrolling container (the edit sheet). */
+  pinnedActions?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useGuardedTransition();
@@ -97,7 +106,7 @@ export function ContactForm({
     sharedInterests: (initial?.sharedInterests || []).join("\n"),
     relationshipScore: initial?.relationshipScore ?? 2,
     priorityLevel: initial?.priorityLevel ?? 0,
-    tagNames: (initial?.tagNames || initial?.tags || []).join(", "),
+    tagNames: initial?.tagNames || initial?.tags || [],
   });
 
   /**
@@ -226,6 +235,15 @@ export function ContactForm({
         "space-y-4 rounded-2xl border border-border/70 bg-card p-6",
         className
       )}
+      onKeyDown={(e) => {
+        // ⌘↵ / Ctrl+↵ saves from any field. Blurring first lets a half-typed tag land as a
+        // chip; the submit waits a tick so it reads the state that blur just set.
+        if (e.key !== "Enter" || !(e.metaKey || e.ctrlKey)) return;
+        e.preventDefault();
+        const formEl = e.currentTarget;
+        (document.activeElement as HTMLElement | null)?.blur();
+        setTimeout(() => formEl.requestSubmit(), 0);
+      }}
       onSubmit={(e) => {
         e.preventDefault();
         setFormError(null);
@@ -261,10 +279,7 @@ export function ContactForm({
                   }
                 : {}),
               priorityLevel: Number(form.priorityLevel),
-              tagNames: form.tagNames
-                .split(",")
-                .map((t) => t.trim())
-                .filter(Boolean),
+              tagNames: form.tagNames,
             };
             if (contactId) {
               await updateContact(contactId, payload);
@@ -349,230 +364,281 @@ export function ContactForm({
         </>
       ) : (
         <>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Full name" required>
-            <Input
-              autoComplete="off"
-              required
-              value={form.fullName}
-              onChange={(e) => set("fullName", e.target.value)}
-              placeholder="Full name"
-            />
-          </Field>
-          <Field label="Preferred name">
-            <Input
-              autoComplete="off"
-              value={form.preferredName}
-              onChange={(e) => set("preferredName", e.target.value)}
-              placeholder="Preferred name"
-            />
-          </Field>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="LinkedIn URL"
-            description={
-              lookingUp
-                ? "Looking up profile…"
-                : "Paste a profile URL to autofill role"
-            }
-          >
-            <Input
-              autoComplete="off"
-              type="url"
-              value={form.linkedinUrl}
-              onChange={(e) => {
-                lastLookupUrl.current = "";
-                set("linkedinUrl", e.target.value);
-              }}
-              onBlur={(e) => {
-                void autofillFromLinkedIn(e.target.value);
-              }}
-              placeholder="https://linkedin.com/in/..."
-              disabled={lookingUp}
-            />
-          </Field>
-          <Field label="Website">
-            <Input
-              autoComplete="off"
-              type="url"
-              value={form.website}
-              onChange={(e) => set("website", e.target.value)}
-              placeholder="https://jasonpereira.live"
-            />
-          </Field>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Company">
-            <Input
-              autoComplete="off"
-              value={form.company}
-              onChange={(e) => set("company", e.target.value)}
-              placeholder="Company"
-            />
-          </Field>
-          <Field label="Role" description="Autofills from LinkedIn when available">
-            <Input
-              autoComplete="off"
-              value={form.title}
-              onChange={(e) => set("title", e.target.value)}
-              placeholder="Role"
-            />
-          </Field>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Location">
-            <SuggestInput
-              value={form.location}
-              onChange={(v) => set("location", v)}
-              onSelect={selectLocation}
-              suggestions={suggestions.locations}
-              placeholder="New York, NY"
-            />
-          </Field>
-          <Field label="School">
-            <SuggestInput
-              value={form.school}
-              onChange={(v) => set("school", v)}
-              onSelect={selectSchool}
-              suggestions={suggestions.schools}
-              placeholder="School"
-            />
-          </Field>
-        </div>
-        <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
-          <div>
-            <p className="text-sm font-medium text-ink">How you met</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Context, when it happened, and any details you want to remember.
-            </p>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Context">
-              <FieldSelect
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                value={form.metContext}
-                onChange={(e) =>
-                  set("metContext", e.target.value as MetContext | "")
-                }
-              >
-                <option value="">Select…</option>
-                {MET_CONTEXTS.map((value) => (
-                  <option key={value} value={value}>
-                    {MET_CONTEXT_LABELS[value]}
-                  </option>
-                ))}
-              </FieldSelect>
-            </Field>
-            <Field label="Date met">
+          {renderHeader?.({ fullName: form.fullName, title: form.title, company: form.company })}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Full name" required>
               <Input
                 autoComplete="off"
-                type="date"
-                value={form.dateMet}
-                onChange={(e) => set("dateMet", e.target.value)}
+                required
+                value={form.fullName}
+                onChange={(e) => set("fullName", e.target.value)}
+                placeholder="Full name"
+              />
+            </Field>
+            <Field label="Preferred name">
+              <Input
+                autoComplete="off"
+                value={form.preferredName}
+                onChange={(e) => set("preferredName", e.target.value)}
+                placeholder="What they go by"
               />
             </Field>
           </div>
-          <Field label="Details">
-            <Textarea
-              rows={2}
-              value={form.howMet}
-              onChange={(e) => set("howMet", e.target.value)}
-              placeholder="Google NYC event, introduced by Alex, coffee chat about internships…"
+
+          <Section tone="work" icon={Briefcase} title="Work and school">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Company">
+                <OrgField
+                  kind="company"
+                  value={form.company}
+                  onChange={(v) => set("company", v)}
+                  placeholder="Search companies"
+                />
+              </Field>
+              <Field label="Role" description={lookingUp ? "Looking up LinkedIn…" : undefined}>
+                <Input
+                  autoComplete="off"
+                  value={form.title}
+                  onChange={(e) => set("title", e.target.value)}
+                  placeholder="Role"
+                />
+              </Field>
+              <Field label="School">
+                <OrgField
+                  kind="school"
+                  value={form.school}
+                  onChange={(v) => set("school", v)}
+                  onPick={(org) => selectSchool(org.name)}
+                  localNames={suggestions.schools}
+                  placeholder="Search schools"
+                />
+              </Field>
+              <Field label="Location">
+                <SuggestInput
+                  value={form.location}
+                  onChange={(v) => set("location", v)}
+                  onSelect={selectLocation}
+                  suggestions={suggestions.locations}
+                  placeholder="New York, NY"
+                />
+              </Field>
+            </div>
+          </Section>
+
+          <Section tone="reach" icon={AtSign} title="Reach">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Email">
+                <Input
+                  autoComplete="off"
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => set("email", e.target.value)}
+                  placeholder="name@company.com"
+                />
+              </Field>
+              <Field label="Phone">
+                <Input
+                  autoComplete="off"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => set("phone", e.target.value)}
+                  placeholder="+1 555 123 4567"
+                />
+              </Field>
+              <Field label="LinkedIn" description="Paste a profile to fill their role">
+                <Input
+                  autoComplete="off"
+                  type="url"
+                  value={form.linkedinUrl}
+                  onChange={(e) => {
+                    lastLookupUrl.current = "";
+                    set("linkedinUrl", e.target.value);
+                  }}
+                  onBlur={(e) => {
+                    void autofillFromLinkedIn(e.target.value);
+                  }}
+                  placeholder="linkedin.com/in/…"
+                  disabled={lookingUp}
+                />
+              </Field>
+              <Field label="Website">
+                <Input
+                  autoComplete="off"
+                  type="url"
+                  value={form.website}
+                  onChange={(e) => set("website", e.target.value)}
+                  placeholder="https://…"
+                />
+              </Field>
+            </div>
+          </Section>
+
+          <Section tone="met" icon={Sparkles} title="How you met">
+            <ChoicePills
+              label="Where"
+              options={MET_CONTEXTS.map((value) => ({ value, label: MET_CONTEXT_LABELS[value] }))}
+              value={form.metContext || null}
+              onChange={(v) => set("metContext", v ?? "")}
+              selectedClassName={SECTION_TONES.met.solid}
+              allowClear
             />
-          </Field>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Email">
-            <Input
-              autoComplete="off"
-              type="email"
-              value={form.email}
-              onChange={(e) => set("email", e.target.value)}
-              placeholder="jason@orbit.com"
+            <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
+              <Field label="When">
+                <Input
+                  autoComplete="off"
+                  type="date"
+                  value={form.dateMet}
+                  onChange={(e) => set("dateMet", e.target.value)}
+                />
+              </Field>
+              <Field label="Details">
+                <Textarea
+                  rows={2}
+                  value={form.howMet}
+                  onChange={(e) => set("howMet", e.target.value)}
+                  placeholder="Google NYC event, introduced by Alex…"
+                />
+              </Field>
+            </div>
+          </Section>
+
+          <Section tone="relationship" icon={HeartHandshake} title="Relationship">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <StrengthDots
+                value={strengthRated ? form.relationshipScore : null}
+                onChange={(v) => {
+                  setStrengthRated(true);
+                  set("relationshipScore", v);
+                }}
+                dotClassName={SECTION_TONES.relationship.dot}
+              />
+              <ChoicePills
+                label="Priority"
+                options={PRIORITY_OPTIONS}
+                value={form.priorityLevel}
+                onChange={(v) => set("priorityLevel", v ?? 0)}
+                selectedClassName={SECTION_TONES.relationship.solid}
+              />
+            </div>
+            <TagInput
+              value={form.tagNames}
+              onChange={(v) => set("tagNames", v)}
+              chipClassName={SECTION_TONES.relationship.chip}
+              placeholder="fintech, mentor…"
             />
-          </Field>
-          <Field label="Phone">
-            <Input
-              autoComplete="off"
-              type="tel"
-              value={form.phone}
-              onChange={(e) => set("phone", e.target.value)}
-              placeholder="+1 555 123 4567"
-            />
-          </Field>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Strength (1–5)">
-            <Input
-              autoComplete="off"
-              type="number"
-              min={1}
-              max={5}
-              value={form.relationshipScore}
-              onChange={(e) => {
-                setStrengthRated(true);
-                set("relationshipScore", Number(e.target.value));
-              }}
-            />
-          </Field>
-          <Field label="Priority (0–3)">
-            <Input
-              autoComplete="off"
-              type="number"
-              min={0}
-              max={3}
-              value={form.priorityLevel}
-              onChange={(e) => set("priorityLevel", Number(e.target.value))}
-            />
-          </Field>
-        </div>
-        <Field label="Industry">
-          <Input
-            autoComplete="off"
-            value={form.industry}
-            onChange={(e) => set("industry", e.target.value)}
-            placeholder="Cloud computing, venture capital…"
-          />
-        </Field>
-        <Field label="Shared interests (one per line)">
-          <Textarea
-            rows={3}
-            value={form.sharedInterests}
-            onChange={(e) => set("sharedInterests", e.target.value)}
-            placeholder={"AI agents\nClimbing\nStartups"}
-          />
-        </Field>
-        <Field label="Tags (comma-separated)">
-          <Input
-            autoComplete="off"
-            value={form.tagNames}
-            onChange={(e) => set("tagNames", e.target.value)}
-            placeholder="AI, OpenAI, internship"
-          />
-        </Field>
-        <Field label="Notes">
-          <Textarea
-            rows={4}
-            value={form.notes}
-            onChange={(e) => set("notes", e.target.value)}
-          />
-        </Field>
+          </Section>
+
+          <Section tone="about" icon={NotebookPen} title="About">
+            <Field label="Industry">
+              <Input
+                autoComplete="off"
+                value={form.industry}
+                onChange={(e) => set("industry", e.target.value)}
+                placeholder="Cloud computing, venture capital…"
+              />
+            </Field>
+            <Field label="Shared interests" description="One per line">
+              <Textarea
+                rows={2}
+                value={form.sharedInterests}
+                onChange={(e) => set("sharedInterests", e.target.value)}
+                placeholder={"AI agents\nClimbing"}
+              />
+            </Field>
+            <Field label="Notes">
+              <Textarea
+                rows={4}
+                value={form.notes}
+                onChange={(e) => set("notes", e.target.value)}
+              />
+            </Field>
+          </Section>
         </>
       )}
-      <FormError>{formError}</FormError>
-      <Button
-        type="submit"
-        disabled={pending || lookingUp}
-        className="bg-primary text-primary-foreground hover:bg-primary/90"
+      <div
+        className={cn(
+          "space-y-2",
+          pinnedActions &&
+            "sticky bottom-0 z-10 -mx-4 border-t border-border/60 bg-popover/95 px-4 py-3 supports-backdrop-filter:bg-popover/80 supports-backdrop-filter:backdrop-blur-md",
+        )}
       >
-        {pending ? "Saving…" : contactId ? "Save changes" : "Create contact"}
-      </Button>
+        <FormError>{formError}</FormError>
+        <div className="flex items-center gap-3">
+          {compact ? null : (
+            <span className="hidden text-xs text-muted-foreground sm:inline">
+              <kbd className="font-sans">⌘↵</kbd> to save
+            </span>
+          )}
+          <Button
+            type="submit"
+            disabled={pending || lookingUp}
+            className={cn("bg-primary text-primary-foreground hover:bg-primary/90", !compact && "ml-auto")}
+          >
+            {pending ? "Saving…" : contactId ? "Save changes" : "Create contact"}
+          </Button>
+        </div>
+      </div>
     </form>
   );
 }
 
-/** A native <select> labelled by the enclosing `Field`. */
-function FieldSelect(props: React.ComponentProps<"select">) {
-  return <select {...useFieldControl(props)} />;
+const PRIORITY_OPTIONS = [
+  { value: 0, label: "None" },
+  { value: 1, label: "Low" },
+  { value: 2, label: "Medium" },
+  { value: 3, label: "High" },
+] as const;
+
+/**
+ * Each group's tint. `box` is the card, `title` its heading (700 on light, 300 on dark, the
+ * same pairing the app's status pills use), `solid` a selected pill, `dot`/`chip` the
+ * relationship marks. Literal strings so Tailwind's scanner sees every class.
+ */
+const SECTION_TONES = {
+  work: { box: "bg-teal-500/8 ring-teal-600/15", title: "text-teal-700 dark:text-teal-300" },
+  reach: { box: "bg-sky-500/8 ring-sky-600/15", title: "text-sky-700 dark:text-sky-300" },
+  met: {
+    box: "bg-amber-500/10 ring-amber-600/20",
+    title: "text-amber-800 dark:text-amber-300",
+    solid: "bg-amber-600 text-white dark:bg-amber-500 dark:text-amber-950",
+  },
+  relationship: {
+    box: "bg-rose-500/8 ring-rose-600/15",
+    title: "text-rose-700 dark:text-rose-300",
+    solid: "bg-rose-600 text-white dark:bg-rose-500 dark:text-rose-950",
+    dot: "bg-rose-500",
+    chip: "bg-rose-500/12 text-rose-800 dark:text-rose-200",
+  },
+  about: { box: "bg-muted/50 ring-border/70", title: "text-muted-foreground" },
+} as const;
+
+function Section({
+  tone,
+  icon: Icon,
+  title,
+  children,
+}: {
+  tone: keyof typeof SECTION_TONES;
+  icon: LucideIcon;
+  title: string;
+  children: ReactNode;
+}) {
+  const t = SECTION_TONES[tone];
+  return (
+    <section
+      aria-label={title}
+      className={cn(
+        "space-y-3 rounded-2xl p-3.5 ring-1",
+        // Fields sit on the card colour so they stand off the tint.
+        "[&_[data-slot=input]]:bg-card [&_[data-slot=org-field]]:bg-card [&_[data-slot=textarea]]:bg-card",
+        t.box,
+      )}
+    >
+      <h3 className={cn("flex items-center gap-1.5 text-xs font-semibold tracking-wide", t.title)}>
+        <Icon className="size-3.5" aria-hidden />
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
 }

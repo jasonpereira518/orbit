@@ -47,7 +47,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { OrgCombobox, OrgLogo, type PickedOrg } from "@/components/onboarding/org-combobox";
+import { OrgCombobox, OrgLogo, type PickedOrg } from "@/components/contacts/org-combobox";
 import {
   AIM_KINDS,
   AIM_LABELS,

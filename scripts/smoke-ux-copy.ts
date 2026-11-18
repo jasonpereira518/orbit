@@ -22,7 +22,8 @@ const form = read("src/components/contacts/contact-form.tsx");
 for (const real of ["Jason Pereira", "Amazon Web Services (AWS)", "Solutions Architect intern", "Columbia University"]) {
   check(`add-contact form has no placeholder "${real}"`, !form.includes(`placeholder="${real}"`));
 }
-for (const generic of ["Full name", "Company", "Role", "School"]) {
+// Company and School are search-and-pick fields in the full form (edit panel redesign).
+for (const generic of ["Full name", "Company", "Role", "Search companies", "Search schools"]) {
   check(`add-contact form has placeholder "${generic}"`, form.includes(`placeholder="${generic}"`));
 }
 

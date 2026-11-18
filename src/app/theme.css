@@ -1154,21 +1154,6 @@
   }
 }
 
-@keyframes trash-wiggle {
-  0%,
-  100% {
-    transform: translateY(-2px) rotate(0deg) scale(1.1);
-  }
-  25% {
-    transform: translateY(-2px) rotate(-12deg) scale(1.1);
-  }
-  50% {
-    transform: translateY(-2px) rotate(10deg) scale(1.1);
-  }
-  75% {
-    transform: translateY(-2px) rotate(-6deg) scale(1.1);
-  }
-}
 
 @keyframes delete-confirm-pulse {
   0%,

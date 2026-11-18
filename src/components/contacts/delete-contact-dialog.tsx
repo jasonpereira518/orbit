@@ -1,7 +1,6 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 import { useGuardedTransition } from "@/lib/single-flight";
 import { Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
@@ -15,72 +14,43 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
 import { CONTACT_DELETE_EXPLAINER } from "@/lib/contact-delete-copy";
 
-export function DeleteContactButton({
+/**
+ * "Delete {name}?" — the confirm dialog, opened by the edit sheet's ⋯ menu. Controlled, with
+ * no trigger of its own, so the menu item that opens it can close without unmounting it.
+ */
+export function DeleteContactDialog({
   id,
   name,
+  open,
+  onOpenChange,
 }: {
   id: string;
   name?: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [leaving, setLeaving] = useState(false);
   const [pending, start] = useGuardedTransition();
+  const setOpen = onOpenChange;
 
   function handleDelete() {
-    setOpen(false);
-    setLeaving(true);
-
-    window.setTimeout(() => {
-      start(async () => {
-        try {
-          await deleteContact(id);
-          toast.success(
-            name ? `${name} deleted` : "Contact deleted"
-          );
-          router.push("/contacts");
-          router.refresh();
-        } catch {
-          setLeaving(false);
-          toast.error("Couldn’t delete that contact — try again?");
-        }
-      });
-    }, 280);
+    start(async () => {
+      try {
+        await deleteContact(id);
+        setOpen(false);
+        toast.success(name ? `${name} deleted` : "Contact deleted");
+        router.push("/contacts");
+        router.refresh();
+      } catch {
+        toast.error("Couldn’t delete that contact — try again?");
+      }
+    });
   }
 
   return (
     <>
-      <Button
-        variant="outline"
-        disabled={pending || leaving}
-        className={cn(
-          "delete-contact-btn group/trash text-destructive",
-          "transition-[color,background-color,border-color,opacity,scale] duration-base",
-          "hover:border-destructive/40 hover:bg-destructive/10",
-          leaving && "pointer-events-none scale-95 opacity-0"
-        )}
-        onClick={() => setOpen(true)}
-      >
-        <Trash2
-          className={cn(
-            "size-3.5 transition-transform duration-base ease-out",
-            "group-hover/trash:-translate-y-0.5 group-hover/trash:scale-110",
-            "group-hover/trash:animate-[trash-wiggle_0.45s_ease-in-out]"
-          )}
-        />
-        <span
-          className={cn(
-            "transition-[opacity,translate] duration-base",
-            leaving && "translate-x-1 opacity-0"
-          )}
-        >
-          {pending || leaving ? "Deleting…" : "Delete"}
-        </span>
-      </Button>
-
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent showCloseButton={false} className="sm:max-w-md">
           <DialogHeader>
