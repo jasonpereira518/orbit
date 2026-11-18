@@ -1415,9 +1415,13 @@ export async function unsnoozeReminder(
 
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)),
-    columns: { dueDate: true },
+    columns: { dueDate: true, status: true },
   });
   if (!reminder || reminder.dueDate?.getTime() !== snoozedTo) {
+    return { restored: false };
+  }
+  // A reminder finished since the snooze must not come back to life.
+  if (snap.previousStatus === "pending" && reminder.status !== "pending") {
     return { restored: false };
   }
 

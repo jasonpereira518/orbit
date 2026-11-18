@@ -753,7 +753,9 @@ export async function saveNoteBatch(
     const windowKept = dropSupersededWindowDrafts(drafts, (d) => d.contactId);
 
     //    Across batches: a person's pending reminder from an earlier note already says it.
-    //    This batch's own rows are skipped so a resumed save keeps what it already wrote.
+    //    Only window-dated drafts (a date Orbit chose) yield; a draft with a date the note
+    //    stated is kept, since it may move the date. This batch's own rows are skipped so a
+    //    resumed save keeps what it already wrote.
     const contactsWithDrafts = [...new Set(windowKept.map((d) => d.contactId).filter((id): id is string => !!id))];
     const pendingTitles = new Map<string, string[]>();
     if (contactsWithDrafts.length) {
@@ -773,7 +775,7 @@ export async function saveNoteBatch(
       }
     }
     const kept = windowKept.filter(
-      (d) => !d.contactId || !(pendingTitles.get(d.contactId) ?? []).some((t) => isNearDuplicateReminder(t, d.title))
+      (d) => d.dateBasis !== "window" || !d.contactId || !(pendingTitles.get(d.contactId) ?? []).some((t) => isNearDuplicateReminder(t, d.title))
     );
 
     // 5. Insert reminders, idempotent through itemHash. An action-item draft hashes its

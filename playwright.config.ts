@@ -59,7 +59,7 @@ export default defineConfig({
         OPENAI_API_KEY: "",
         ANTHROPIC_API_KEY: "",
         NEXT_TELEMETRY_DISABLED: "1",
-        // Lets e2e seed capture jobs (src/app/api/e2e/seed-capture-job).
+        // Lets e2e seed capture jobs and reminders (src/app/api/e2e/seed-capture-job, seed-reminders).
         ORBIT_E2E_SEED: "1",
         // From the shell only, never a checkout's .env.local, so a local run renders /upgrade
         // exactly as CI does. Export test-mode keys to run the Checkout flow.

@@ -486,8 +486,17 @@ export function RemindersStage({
     const toYmd = snoozePresets(today).nextWeek;
     setBusy(true);
     void runToastAction({
-      run: () => snoozeOverdueFromNotes({ toYmd }),
-      success: (v) => `Snoozed ${plural(v.count)} until ${shortDayLabel(toYmd)}`,
+      run: async () => {
+        const result = await snoozeOverdueFromNotes({ toYmd });
+        if (!result.ok) throw new Error(result.error);
+        return result.value;
+      },
+      success: (v) =>
+        v.partial
+          ? `Snoozed ${plural(v.count)}, but some couldn’t be snoozed. You can undo these`
+          : v.left > 0
+            ? `Snoozed ${plural(v.count)} until ${shortDayLabel(toYmd)}, ${v.left} left`
+            : `Snoozed ${plural(v.count)} until ${shortDayLabel(toYmd)}`,
       failure: "Couldn’t snooze those — try again?",
       refresh,
       undo: (v) => (v.count > 0 ? () => undoSnoozeOverdueFromNotes(v.undoToken) : null),

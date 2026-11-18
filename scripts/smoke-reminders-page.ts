@@ -65,6 +65,7 @@ type Seeded = {
   contactNames: string[];
   noteBatchId: string | null;
   priority: string;
+  createdBy: string;
   createdAtText: string;
 };
 
@@ -128,6 +129,7 @@ async function main() {
       listId: i % 3 === 0 ? work.id : i % 3 === 1 ? inbox.id : null,
       contactId: contact?.id ?? null,
       noteBatchId: i % 11 === 0 ? "00000000-0000-4000-8000-000000000001" : null,
+      createdBy: i % 5 === 0 ? "calendar_sync" : i % 3 === 0 ? "user" : "ai",
       // Some high/critical so the banner count has something to skip.
       priority: (i % 7 === 0 ? "high" : i % 13 === 0 ? "critical" : "normal") as "high" | "critical" | "normal",
     });
@@ -174,6 +176,7 @@ async function main() {
     })(),
     noteBatchId: r.noteBatchId,
     priority: r.priority,
+    createdBy: r.createdBy,
     createdAtText: createdText.get(r.id) ?? "",
   }));
 
@@ -318,7 +321,7 @@ async function main() {
       suggested: 0,
       overdueFromNotes: pend.filter((s) => {
         const d = dueDayOf(s.dueDate, tz);
-        return d !== null && d < today && sourceMatch(s, "notes") && (s.priority === "normal" || s.priority === "low");
+        return d !== null && d < today && sourceMatch(s, "notes") && !["pre_meeting", "post_meeting"].includes(s.reminderType) && s.createdBy === "ai" && (s.priority === "normal" || s.priority === "low");
       }).length,
     };
     check(`rail counts`, JSON.stringify(counts) === JSON.stringify(want),

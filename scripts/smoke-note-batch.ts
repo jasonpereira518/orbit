@@ -418,6 +418,24 @@ async function main() {
     });
     const dupRems = await db.query.reminders.findMany({ where: and(eq(reminders.userId, USER), eq(reminders.noteBatchId, dup.batchId)) });
     check("near-dup: only the new task is created", dupRems.length === 1 && dupRems[0].title === "Send contact info", dupRems.map((r) => r.title).join(" | "));
+    // A draft whose date the note stated is not a near-duplicate: it is kept.
+    const datedNote = "Dev Patel — chat on Sept 24.";
+    const dated = await saveNoteBatch(USER, {
+      sourceText: datedNote,
+      sourceHash: hashSourceNote(datedNote),
+      anchorIso: "2026-09-01",
+      anchorBasis: "note",
+      entryPoint: "capture",
+      participants: [
+        { notes: datedNote, parsed: parsed("Dev Patel", null, [], null), mergeContactId: devId, createReminder: false, relationshipScore: 2, tagNames: [] },
+      ],
+      commitments: [
+        { title: "chat", description: null, rawDatePhrase: "Sept 24", dueDateIso: "2026-09-24", yearInferred: true, personName: "Dev Patel", actionKind: "meet", confidenceScore: 90, sourceExcerpt: "chat on Sept 24.", dateBasis: "absolute", anchorIso: "2026-09-01" },
+      ],
+      skipped: { relative: 0, unverifiable: 0, past: 0 },
+    });
+    const datedRems = await db.query.reminders.findMany({ where: and(eq(reminders.userId, USER), eq(reminders.noteBatchId, dated.batchId)) });
+    check("near-dup: a dated draft is kept even beside an old one", datedRems.some((r) => r.title === "chat"), datedRems.map((r) => r.title).join(" | "));
   }
 
   await reset();
