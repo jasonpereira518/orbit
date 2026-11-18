@@ -39,6 +39,8 @@ check(
   more.length === 0 || MOBILE_BOTTOM_NAV.some((item) => "id" in item && item.id === "more")
 );
 
+check("Reminders leads the phone More sheet", more[0] === "/reminders", String(more[0]));
+
 // /constellation is the old name for the page that lives at /graph.
 check(
   "next.config redirects /constellation to /graph",
