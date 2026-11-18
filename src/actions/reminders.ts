@@ -22,7 +22,7 @@ import {
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
 import { normalizeCadence } from "@/lib/keep-in-touch";
-import { loadNotificationPanel } from "@/lib/notification-panel";
+import { desktopNotificationItems, loadNotificationPanel } from "@/lib/notification-panel";
 import { traced } from "@/lib/perf-trace";
 import {
   revalidatePathIfRequestScoped,
@@ -1145,24 +1145,7 @@ export async function listDueNotificationItems() {
 
   // `panel.items` only — account alerts live beside it and must never fire an OS
   // notification, for the same reason `suggested_reminder` is pinned to "info" above.
-  return panel.items
-    // `dueAt <= now`: a reminder due later today is "due" in the bell but must not raise an OS
-    // notification at the start of the day.
-    .filter((i) => i.urgency === "due" && (!i.dueAt || new Date(i.dueAt) <= now) && !notified.has(i.id))
-    .slice(0, 12)
-    .map((i) => {
-      let title = i.title;
-      // Plain words, not emoji: the same label the bell's chip shows.
-      if (i.priority === "critical") title = `Critical: ${i.title}`;
-      else if (i.priority === "high") title = `High priority: ${i.title}`;
-      const contextParts = [i.importanceReason || i.timingRationale, i.body].filter(Boolean);
-      return {
-        id: i.id,
-        title,
-        body: contextParts.join(" · ") || undefined,
-        url: i.url,
-      };
-    });
+  return desktopNotificationItems(panel.items, now, notified, 12);
 }
 
 /** Mark a suggestion dismissed. Returns whether it moved (false: already dismissed or not this user's). */

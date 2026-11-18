@@ -19,7 +19,7 @@ import { getDb } from "../src/db";
 import { contacts, interactions, reminders } from "../src/db/schema";
 import { getDueCounts } from "../src/lib/due-counts";
 import { getDashboardData } from "../src/lib/reminders";
-import { loadNotificationPanel } from "../src/lib/notification-panel";
+import { desktopNotificationItems, loadNotificationPanel } from "../src/lib/notification-panel";
 import { queryReminderRailCounts, queryRemindersPage } from "../src/lib/reminders-page-query";
 import { allNudges, nudgeInput } from "../src/lib/cosmo/nudge";
 import { checker } from "./smoke/check";
@@ -33,7 +33,13 @@ async function main() {
   await db.delete(reminders).where(eq(reminders.userId, USER));
   await db.delete(contacts).where(eq(contacts.userId, USER));
 
+  // Noon UTC of the real UTC day, so the seed rows sit on fixed sides of "now" (10:30 before it,
+  // 23:30 after it) whatever the wall clock says. Only the dashboard read still uses the real
+  // clock, and it judges by day, so it agrees except in the first minutes after UTC midnight.
   const now = new Date();
+  now.setUTCHours(12, 0, 0, 0);
+  const dayStart = new Date(now);
+  dayStart.setUTCHours(0, 5, 0, 0);
   const day = 24 * 60 * 60 * 1000;
   const at = (offsetDays: number) => {
     const d = new Date(now.getTime() + offsetDays * day);
@@ -56,7 +62,7 @@ async function main() {
   for (const name of ["Ada Due", "Grace Due"]) {
     const [c] = await db
       .insert(contacts)
-      .values({ userId: USER, fullName: name, nextFollowUpAt: new Date(now.getTime() - 60 * 60 * 1000) })
+      .values({ userId: USER, fullName: name, nextFollowUpAt: dayStart })
       .returning();
     people.push({ id: c.id, name, due: c.nextFollowUpAt! });
     // Met people may alert (met-contact.ts).
@@ -94,6 +100,13 @@ async function main() {
   t.check("bell dueCount = 8", panel.dueCount === 8, String(panel.dueCount));
   const dueRows = panel.items.filter((i) => i.urgency === "due").length;
   t.check('the bell\'s "Due now" rows = the breakdown total', dueRows === panel.dueBreakdown.reminders + panel.dueBreakdown.followUps, `${dueRows} rows`);
+
+  // A reminder due at 23:30 counts as due today in the bell, but must not raise an OS notification
+  // at noon (and spend its id); one due at 10:30 may.
+  const desktop = desktopNotificationItems(panel.items, now, new Set(), 50);
+  t.check("a reminder due later today is not in the desktop list", !desktop.some((i) => i.title === "later today"), JSON.stringify(desktop.map((i) => i.title)));
+  t.check("a reminder already past its time is", desktop.some((i) => i.title === "today 1"));
+  t.check("the later reminder still counts in the bell", panel.items.some((i) => i.title === "later today" && i.urgency === "due"));
 
   const chip = allNudges(nudgeInput({ nextMeeting: null, unloggedMeeting: null, radarNew: 0, panel }), now.getTime()).find((n) => n.kind === "due");
   t.check('chip says "8 things due"', chip?.chip === "8 things due", chip?.chip ?? "none");

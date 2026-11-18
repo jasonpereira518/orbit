@@ -29,6 +29,41 @@ import { dueDayOf, ymdInZone } from "@/lib/reminder-due-bucket";
 /** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
 const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
+/**
+ * The panel rows that may raise an OS notification now: due, not already notified, and past
+ * their due TIME. A row's urgency "due" follows the whole-day rule (a reminder due at 5pm is
+ * due all day in the bell), so the clock is checked here or it would notify, and spend its id,
+ * at the start of the day. Shared by the app pulse and the desktop poll.
+ */
+export function desktopNotificationItems(
+  items: ReadonlyArray<{
+    id: string;
+    urgency: string;
+    dueAt: string | null;
+    title: string;
+    body: string | null;
+    url: string;
+    priority?: ReminderPriority;
+    importanceReason?: string | null;
+    timingRationale?: string | null;
+  }>,
+  now: Date,
+  notified: ReadonlySet<string>,
+  limit: number
+) {
+  return items
+    .filter((i) => i.urgency === "due" && (!i.dueAt || new Date(i.dueAt) <= now) && !notified.has(i.id))
+    .slice(0, limit)
+    .map((i) => {
+      let title = i.title;
+      // Plain words, not emoji: the same label the bell's chip shows.
+      if (i.priority === "critical") title = `Critical: ${i.title}`;
+      else if (i.priority === "high") title = `High priority: ${i.title}`;
+      const contextParts = [i.importanceReason || i.timingRationale, i.body].filter(Boolean);
+      return { id: i.id, title, body: contextParts.join(" · ") || undefined, url: i.url };
+    });
+}
+
 /** Upcoming follow-ups are shown this far ahead; further out is noise. */
 const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 

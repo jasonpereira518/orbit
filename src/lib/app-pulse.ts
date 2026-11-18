@@ -1,6 +1,6 @@
 import { entitlementsFromSettings } from "@/lib/entitlements";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
-import { loadNotificationPanel } from "@/lib/notification-panel";
+import { desktopNotificationItems, loadNotificationPanel } from "@/lib/notification-panel";
 import type { AccountHealthContext } from "@/lib/account-health";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { isAdminUser } from "@/lib/admin";
@@ -113,22 +113,7 @@ export async function loadAppPulse(
     rawUnloggedEvent && rawUnloggedEvent.eventId !== unloggedMeeting?.debriefEventId ? rawUnloggedEvent : null;
   const panel = { ...rawPanel, canOpenAdmin };
   const notified = new Set(settings.desktopNotifiedIds ?? []);
-  const dueItems = panel.items
-    .filter((i) => i.urgency === "due" && !notified.has(i.id))
-    .slice(0, DESKTOP_BATCH)
-    .map((i) => {
-      let title = i.title;
-      // Plain words, not emoji: the same label the bell's chip shows.
-      if (i.priority === "critical") title = `Critical: ${i.title}`;
-      else if (i.priority === "high") title = `High priority: ${i.title}`;
-      const contextParts = [i.importanceReason || i.timingRationale, i.body].filter(Boolean);
-      return {
-        id: i.id,
-        title,
-        body: contextParts.join(" · ") || undefined,
-        url: i.url,
-      };
-    });
+  const dueItems = desktopNotificationItems(panel.items, now, notified, DESKTOP_BATCH);
   return {
     panel,
     dueItems,
