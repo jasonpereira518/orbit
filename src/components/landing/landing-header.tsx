@@ -1,11 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useReducedMotionPreference } from "@/lib/use-prefers-reduced-motion";
 import { LandingAuthControls } from "@/components/landing/landing-auth-controls";
 import { LandingSectionNav } from "@/components/landing/landing-section-nav";
+import { LandingTrailer } from "@/components/landing/landing-trailer";
 import { useActiveLandingSection } from "@/components/landing/use-active-landing-section";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { cn } from "@/lib/utils";
@@ -121,19 +121,7 @@ export function LandingHeader({
               : "justify-between px-8 py-5 md:px-10"
           )}
         >
-          <Link
-            href="/"
-            className="flex shrink-0 items-center gap-2 sm:gap-2.5"
-            aria-label="Orbit, back to top"
-            onClick={(e) => {
-              if (window.scrollY <= 0) return;
-              e.preventDefault();
-              window.scrollTo({
-                top: 0,
-                behavior: reduced ? "auto" : "smooth",
-              });
-            }}
-          >
+          <LandingTrailer reducedMotion={reduced}>
             <OrbitLogo size="md" priority />
             <span
               className={cn(
@@ -143,7 +131,7 @@ export function LandingHeader({
             >
               Orbit
             </span>
-          </Link>
+          </LandingTrailer>
 
           <AnimatePresence initial={false}>
             {showSectionNav ? (

@@ -81,6 +81,7 @@
 @source "../components/landing/landing-scenes.tsx";
 @source "../components/landing/landing-section-nav.tsx";
 @source "../components/landing/landing-sections.ts";
+@source "../components/landing/landing-trailer.tsx";
 @source "../components/landing/landing-visuals.tsx";
 @source "../components/landing/scene-features.tsx";
 @source "../components/landing/starfield.tsx";
@@ -103,6 +104,7 @@
 @source "../components/settings/sections.ts";
 @source "../components/theme-provider.tsx";
 @source "../components/ui/button.tsx";
+@source "../components/ui/dialog.tsx";
 @source "../components/ui/loading-region.tsx";
 @source "../components/ui/scroll-region.tsx";
 @source "../components/ui/skeleton.tsx";
