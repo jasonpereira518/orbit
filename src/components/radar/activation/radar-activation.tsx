@@ -85,16 +85,16 @@ export function RadarActivation({ faces }: { faces: SceneFace[] }) {
       </div>
       <div className="space-y-3 px-6 py-6 text-center">
         <h2 id="radar-activation-title" className="font-heading text-xl text-ink">
-          Radar watches your network so you don’t have to
+          Get a weekly follow-up plan
         </h2>
         <p className="mx-auto max-w-md text-sm text-muted-foreground">
-          Turn it on and Radar reads your notes, checks who’s moved, and builds a short plan each week of who to reach
-          out to and why.
+          Radar uses your Orbit notes and changes in your network to suggest who to contact each week and why.
           {small && " Radar gets sharper as you add people."}
         </p>
         <Button
           type="button"
           size="lg"
+          data-cosmo-avoid
           onClick={turnOn}
           disabled={phase !== "off"}
           className="bg-[#f2c94c] text-[#0B1220] hover:bg-[#f5d36b] active:scale-[0.97]"

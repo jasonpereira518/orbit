@@ -60,6 +60,7 @@ import { ContactName } from "@/components/contacts/contact-name";
 import { openNameGuess } from "@/lib/contact-name-guess";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { cn } from "@/lib/utils";
+import { relativeLabel } from "@/lib/relative-date";
 import { LIST_INTENT_DELAY_MS, useIntentPrefetchHandlers } from "@/lib/intent-prefetch";
 import {
   markImportPersonSeen,
@@ -143,9 +144,7 @@ function lastTouchLabel(lastInteractionAt?: string | Date | null) {
   if (!lastInteractionAt) return null;
   const d = new Date(lastInteractionAt);
   if (Number.isNaN(d.getTime())) return null;
-  const days = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
-  if (days <= 0) return "Last touch today";
-  return `Last touch ${days}d ago`;
+  return `Last in touch ${relativeLabel(d, new Date(), "long")}`;
 }
 
 function overdueFollowUpLabel(nextFollowUpAt?: string | Date | null) {
@@ -1156,7 +1155,7 @@ function ClosenessChip({
 }) {
   const label =
     typeof closeness === "number"
-      ? `${Math.round(closeness * 100)}%`
+      ? `Closeness ${Math.round(closeness * 100)}%`
       : `Score ${relationshipScore}`;
 
   const chipClass =
@@ -1171,7 +1170,7 @@ function ClosenessChip({
   // and a speech-input user says what they see.
   const accessibleLabel =
     typeof closeness === "number"
-      ? `${label} closeness${tierHint}. Show what this means.`
+      ? `${label}${tierHint}. Show what this means.`
       : `${label}, relationship strength${tierHint}. Show what this means.`;
 
   return (

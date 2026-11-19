@@ -1,4 +1,6 @@
+import { getDueAttentionCounts } from "@/lib/due-attention-counts";
 import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
+import { captureBellTitle } from "@/lib/capture/job-staleness";
 import { unreadRepliesFor } from "@/lib/feedback-thread";
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
@@ -71,6 +73,7 @@ export async function loadNotificationPanel(
     radarRows,
     cloudNoteRows,
     feedbackReplies,
+    dueBreakdown,
   ] = await Promise.all([
     db.query.reminders.findMany({
       // Only what is allowed to alert: the user's own reminders, and generated ones about
@@ -191,6 +194,7 @@ export async function loadNotificationPanel(
       : [],
     // The operator answered their feedback and they haven't opened it yet.
     unreadRepliesFor(userId),
+    getDueAttentionCounts(userId, now),
   ]);
   const radarRow = radarRows
     ? rowsOf<{ n: number; drafts: number; names: string[] | null; today: number; today_names: string[] | null }>(radarRows)[0]
@@ -354,9 +358,9 @@ export async function loadNotificationPanel(
       kind: "capture_review",
       title: isFailed
         ? "Couldn’t read your notes"
-        : `${n} ${n === 1 ? "person" : "people"} ready to review`,
+        : captureBellTitle(n),
       body: isFailed ? job.error : "From your last capture — pick up where you left off.",
-      url: "/capture",
+      url: `/capture?job=${job.id}`,
       dueAt: null,
       urgency: "info",
     });
@@ -415,11 +419,12 @@ export async function loadNotificationPanel(
     return aTime - bTime;
   });
 
-  const dueCount = items.filter((i) => i.urgency === "due").length;
+  const dueCount = dueBreakdown.reminders + dueBreakdown.followUps;
 
   return {
     items,
     dueCount,
+    dueBreakdown,
     totalCount: items.length,
     // Drives the extension promo in the panel: paid plans get an install link,
     // everyone else gets the pitch and a route to the plans page.

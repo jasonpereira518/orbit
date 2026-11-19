@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 type Sort = "recent" | "fit" | "name";
 
 const SORTS: { id: Sort; label: string }[] = [
-  { id: "recent", label: "Recent" },
+  { id: "recent", label: "Summaries first" },
   { id: "fit", label: "Goal fit" },
   { id: "name", label: "A–Z" },
 ];
@@ -115,7 +115,9 @@ export function PeopleIndex({
         where: h.where,
       });
     }
-    if (sort === "recent") return entries; // the server's order, then the extras
+    if (sort === "recent") {
+      return needle ? entries : [...entries].sort((a, b) => Number(Boolean(b.row.gist)) - Number(Boolean(a.row.gist)));
+    }
     const sorted = [...entries];
     if (sort === "name") sorted.sort((a, b) => a.row.fullName.localeCompare(b.row.fullName));
     // Most goals first; ties keep the server's recency order (Array.sort is stable).

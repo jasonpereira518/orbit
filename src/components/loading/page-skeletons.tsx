@@ -139,6 +139,10 @@ export function DashboardCardSkeleton({ className }: { className?: string }) {
 export function DashboardBodySkeleton() {
   return (
     <div className="space-y-8">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <DashboardCardSkeleton className="h-64" />
+        <DashboardCardSkeleton className="h-64" />
+      </div>
       <DashboardStatRowSkeleton />
       <div className="flex flex-col gap-6 lg:flex-row">
         <DashboardCardSkeleton className="h-80 min-w-0 lg:flex-1" />

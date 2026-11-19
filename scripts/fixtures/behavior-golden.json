@@ -21,6 +21,7 @@
     "stats": {
       "totalContacts": 25,
       "dueFollowUps": 5,
+      "dueReminders": 3,
       "strongConnections": 19,
       "pendingReminders": 8,
       "topCompany": null
@@ -2946,6 +2947,10 @@
       }
     ],
     "dueCount": 8,
+    "dueBreakdown": {
+      "followUps": 5,
+      "reminders": 3
+    },
     "totalCount": 23,
     "canUseExtension": true,
     "alerts": [],
@@ -6561,6 +6566,7 @@
     "stats": {
       "totalContacts": 27,
       "dueFollowUps": 4,
+      "dueReminders": 2,
       "strongConnections": 20,
       "pendingReminders": 11,
       "topCompany": null

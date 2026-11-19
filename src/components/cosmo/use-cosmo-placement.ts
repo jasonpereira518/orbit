@@ -111,6 +111,7 @@ export function useCosmoPlacement(
     const observer = new MutationObserver(schedule);
     observer.observe(document.body, { childList: true });
     window.addEventListener("resize", schedule);
+    document.addEventListener("scroll", schedule, { capture: true, passive: true });
     document.addEventListener("focusin", onFocus);
     document.addEventListener("focusout", onFocus);
     document.addEventListener("click", schedule, true);
@@ -120,6 +121,7 @@ export function useCosmoPlacement(
       window.clearTimeout(timer);
       observer.disconnect();
       window.removeEventListener("resize", schedule);
+      document.removeEventListener("scroll", schedule, true);
       document.removeEventListener("focusin", onFocus);
       document.removeEventListener("focusout", onFocus);
       document.removeEventListener("click", schedule, true);

@@ -235,6 +235,9 @@ async function main() {
       }
       const ad = dueDayOf(a.dueDate, f.tz) ?? "9999-99-99";
       const bd = dueDayOf(b.dueDate, f.tz) ?? "9999-99-99";
+      if (!f.listId && (f.view ?? "today") === "today" && (ad === today) !== (bd === today)) {
+        return ad === today ? -1 : 1;
+      }
       if (ad !== bd) return ad < bd ? -1 : 1;
       const at = a.dueDate?.getTime() ?? Infinity;
       const bt = b.dueDate?.getTime() ?? Infinity;

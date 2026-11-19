@@ -1,5 +1,7 @@
 "use client";
 
+import { refreshPulse } from "@/lib/app-pulse-store";
+
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -212,8 +214,10 @@ export function RemindersStage({
     urlFilters.contact?.id ?? "",
   ].join("|");
   const [viewKeySeen, setViewKeySeen] = useState(viewKey);
+  const [overdueExpanded, setOverdueExpanded] = useState(false);
   if (viewKeySeen !== viewKey) {
     setViewKeySeen(viewKey);
+    setOverdueExpanded(false);
     setSelected(new Set());
     setAnchorId(null);
     setFocusedId(null);
@@ -221,7 +225,12 @@ export function RemindersStage({
     setExiting(new Set());
   }
 
-  const visible = useMemo(() => items.filter((i) => !exiting.has(i.id)), [items, exiting]);
+  const isTodayView = target.kind === "view" && target.view === "today";
+  const filtered = Boolean(urlFilters.q || urlFilters.kinds.length || urlFilters.sources.length || urlFilters.contact);
+  const collapseOverdue = isTodayView && !filtered;
+  const overdueClosed = collapseOverdue && !overdueExpanded;
+  const visible = useMemo(() => items.filter((i) => !exiting.has(i.id) &&
+    (!overdueClosed || bucketForDay(i.dueDay, today) !== "overdue")), [items, exiting, overdueClosed, today]);
   const detailItem = detailId ? items.find((i) => i.id === detailId) ?? null : null;
   const listOptions = useMemo(
     () => lists.map((l) => ({ id: l.id, name: l.name, icon: l.icon, color: l.color, isInbox: l.isInbox })),
@@ -307,11 +316,12 @@ export function RemindersStage({
     }
   }, [cursor, loadingMore, loadError, isSuggested, target, currentListId, urlFilters]);
 
+  const showLoadMore = Boolean(cursor && (!overdueClosed || bucketForDay(items.at(-1)?.dueDay ?? null, today) !== "overdue"));
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = sentinelRef.current;
     const root = scrollerRef.current;
-    if (!el || !root || !cursor) return;
+    if (!el || !root || !showLoadMore) return;
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) void loadMore();
@@ -320,7 +330,7 @@ export function RemindersStage({
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [cursor, loadMore]);
+  }, [showLoadMore, loadMore]);
 
   // ── Focus. ──
   const focusRow = useCallback((id: string | null) => {
@@ -379,7 +389,10 @@ export function RemindersStage({
     }, DUR_MS.slow);
   }
 
-  const refresh = () => router.refresh();
+  const refresh = () => {
+    router.refresh();
+    void refreshPulse(true);
+  };
 
   function leavesOnSnooze(ymd: string) {
     if (target.kind === "list") return false;
@@ -610,8 +623,6 @@ export function RemindersStage({
     target.kind === "list"
       ? lists.find((l) => l.id === target.id)?.name ?? "List"
       : VIEW_TITLES[target.view];
-  const filtered =
-    Boolean(urlFilters.q) || urlFilters.kinds.length > 0 || urlFilters.sources.length > 0 || Boolean(urlFilters.contact);
   const groups = groupItems(items, today, isDoneView);
   const empty =
     EMPTY_COPY[target.kind === "list" ? "list" : target.view] ?? EMPTY_COPY.today;
@@ -773,7 +784,27 @@ export function RemindersStage({
                 ) : (
                   groups.map((group, groupIndex) => (
                     <div key={group.bucket ?? "all"}>
-                      {group.bucket && (
+                      {group.bucket === "overdue" && collapseOverdue ? (
+                        <h3 id="bucket-overdue">
+                          <button
+                            type="button"
+                            className="flex min-h-11 w-full items-center gap-2 border-b border-border/50 px-4 text-left text-sm font-medium text-amber-800 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:text-warning"
+                            aria-expanded={overdueExpanded}
+                            onClick={() => {
+                              if (overdueExpanded && detailItem && bucketForDay(detailItem.dueDay, today) === "overdue") {
+                                setDetailId(null);
+                                setPaneSnoozeOpen(false);
+                              }
+                              setOverdueExpanded(!overdueExpanded);
+                              setFocusedId(null);
+                              setAnchorId(null);
+                              setSelected(new Set());
+                            }}
+                          >
+                            {overdueExpanded ? "Hide overdue" : "Show overdue"} ({counts.overdue})
+                          </button>
+                        </h3>
+                      ) : group.bucket && (
                         <h3
                           id={`bucket-${group.bucket}`}
                           className={cn(
@@ -781,7 +812,7 @@ export function RemindersStage({
                             group.bucket === "overdue" ? "text-amber-700 dark:text-warning" : "text-muted-foreground"
                           )}
                         >
-                          {DUE_BUCKET_LABELS[group.bucket]}
+                          {isTodayView && group.bucket === "today" ? "Due today" : DUE_BUCKET_LABELS[group.bucket]}
                           <span className="tabular-nums opacity-70">
                             {group.items.length}
                             {/* Only what's loaded so far; the last group may continue on the
@@ -793,35 +824,37 @@ export function RemindersStage({
                       {/* A one-column grid, not a plain list: each row is focusable and
                           selectable, and a screen reader needs to hear both ("row, selected").
                           Not a listbox, whose options may not hold the row's own menu buttons. */}
-                      <ul
-                        role="grid"
-                        aria-multiselectable="true"
-                        aria-labelledby={group.bucket ? `bucket-${group.bucket}` : undefined}
-                        aria-label={group.bucket ? undefined : "Reminders"}
-                        aria-keyshortcuts="j k ArrowDown ArrowUp x e s m # Delete Enter Escape"
-                        className="divide-y divide-border/40"
-                      >
-                        {group.items.map((item) => (
-                          <ReminderRow
-                            key={item.id}
-                            item={item}
-                            today={today}
-                            lists={listOptions}
-                            selected={selected.has(item.id)}
-                            focused={focusedId ? focusedId === item.id : item.id === visible[0]?.id}
-                            active={detailId === item.id}
-                            exiting={exiting.has(item.id)}
-                            snoozeOpen={snoozeFor === item.id}
-                            moreOpen={moreFor === item.id}
-                            handlers={handlers}
-                            registerRow={registerRow}
-                          />
-                        ))}
-                      </ul>
+                      {(!overdueClosed || group.bucket !== "overdue") && (
+                        <ul
+                          role="grid"
+                          aria-multiselectable="true"
+                          aria-labelledby={group.bucket ? `bucket-${group.bucket}` : undefined}
+                          aria-label={group.bucket ? undefined : "Reminders"}
+                          aria-keyshortcuts="j k ArrowDown ArrowUp x e s m # Delete Enter Escape"
+                          className="divide-y divide-border/40"
+                        >
+                          {group.items.map((item) => (
+                            <ReminderRow
+                              key={item.id}
+                              item={item}
+                              today={today}
+                              lists={listOptions}
+                              selected={selected.has(item.id)}
+                              focused={focusedId ? focusedId === item.id : item.id === visible[0]?.id}
+                              active={detailId === item.id}
+                              exiting={exiting.has(item.id)}
+                              snoozeOpen={snoozeFor === item.id}
+                              moreOpen={moreFor === item.id}
+                              handlers={handlers}
+                              registerRow={registerRow}
+                            />
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   ))
                 )}
-                {cursor && (
+                {showLoadMore && (
                   <div ref={sentinelRef} className="flex justify-center py-4">
                     {loadError ? (
                       <Button variant="outline" size="sm" onClick={() => { setLoadError(false); void loadMore(); }}>

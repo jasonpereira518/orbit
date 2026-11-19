@@ -74,7 +74,7 @@ export function GmailImportPanel({
               : connection.connected && connection.canRead
                 ? `Connected as ${connection.emailAddress}. Orbit scans your emails since the start of your recruiting cycle to extract recruiters, roles you're interviewing for, and LinkedIn profiles.`
                 : connection.connected
-                  ? `Connected as ${connection.emailAddress}, without permission to read mail. Allow mail access to scan for recruiters.`
+                  ? `Google account connected as ${connection.emailAddress}. Allow Gmail access to scan for recruiters.`
                   : "Search your emails since the beginning of your recruiting cycle (July / January) for recruiters and interview threads."}
           </p>
           {connection.status === "disarmed" ? (

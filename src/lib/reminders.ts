@@ -1,3 +1,4 @@
+import { getDueAttentionCounts } from "@/lib/due-attention-counts";
 import { and, asc, desc, eq, getTableColumns, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite, type AtomicStatement } from "@/db";
 import { awaitingReplies, awaitingReplyDescription } from "@/lib/awaiting-reply";
@@ -938,6 +939,7 @@ export async function getDashboardData(
   const [
     rescored,
     pendingReminders,
+    dueAttention,
     suggestions,
     goals,
     counts,
@@ -949,6 +951,7 @@ export async function getDashboardData(
     // Filtered, capped and counted in SQL — see the two loaders. Both judge "due" against
     // the same `now` as the due follow-ups below.
     loadDashboardReminders(userId, now),
+    getDueAttentionCounts(userId, now),
     loadDashboardSuggestions(userId, now),
     db.query.userGoals.findMany({
       where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
@@ -1227,7 +1230,8 @@ export async function getDashboardData(
       totalContacts: counts.totalContacts,
       // The count of everyone due, not the length of the capped list below — the stat and
       // the card answer different questions and the card only ever showed twelve.
-      dueFollowUps: counts.dueFollowUpCount,
+      dueFollowUps: dueAttention.followUps,
+      dueReminders: dueAttention.reminders,
       strongConnections: strongTies,
       pendingReminders: pendingReminders.total,
       topCompany: null as { name: string; count: number } | null,

@@ -62,14 +62,7 @@ export function GoalsSummary({
         </Link>
       </CardHeader>
       <CardContent className="space-y-5">
-        {shownGoals.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Add goals to surface people who match what you&apos;re working toward.{" "}
-            <Link href="/settings" className="text-primary underline-offset-4 hover:underline">
-              Set up in settings
-            </Link>
-          </p>
-        ) : (
+        {shownGoals.length > 0 && (
           <ul className="flex flex-wrap gap-2">
             {shownGoals.map((g) => (
               <li

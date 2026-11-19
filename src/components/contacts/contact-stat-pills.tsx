@@ -56,43 +56,17 @@ export function ContactStatPills({
         body={
           <>
             <p className="text-muted-foreground">
-              Where this person sits in your network: your rating, how recently and how often
-              you&apos;re in touch, and how they fit your goals — ranked against everyone else
-              you know.
+              Orbit uses your rating, how recently and how often you&apos;re in touch, and how this person fits your goals.
             </p>
             <p className="border-t pt-2 text-muted-foreground">
-              Health, next to it, is how the conversation itself is going: reply speed, who
-              writes, and recency.
+              Inner, Mid, and Outer orbit show where this relationship sits in your network.
             </p>
           </>
         }
       >
         Closeness {pct}%
       </StatPillExplainer>
-      {health ? (
-        <HealthSparkline health={health} />
-      ) : (
-        // Shown rather than left out: a missing pill reads as a bug, not as "no data".
-        <StatPillExplainer
-          label="Health: nothing recent to score. Show what this means."
-          className="border border-dashed border-border bg-transparent font-normal text-muted-foreground"
-          title="Health · nothing recent to score"
-          body={
-            <>
-              <p className="text-muted-foreground">
-                Health scores how the conversation is going — reply speed, who writes, and
-                recency — from messages, emails and meetings in the last nine months. There
-                haven&apos;t been any with this person in that time.
-              </p>
-              <p className="text-muted-foreground">
-                Log a touch, or import your LinkedIn messages or email, and it will appear.
-              </p>
-            </>
-          }
-        >
-          Health —
-        </StatPillExplainer>
-      )}
+      {health && <HealthSparkline health={health} />}
       <Badge
         variant="secondary"
         className="rounded-full px-3 py-1 text-xs font-medium capitalize"

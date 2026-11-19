@@ -10,6 +10,7 @@ import "./smoke/_env";
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { aiResultCache, contacts, rateLimitBuckets, userSettings } from "../src/db/schema";
+import { addTargetCompany } from "../src/lib/events/target-companies";
 import { loadPeopleToMeet } from "../src/lib/people-to-meet";
 import type { DiscoveryResearcher } from "../src/lib/web-research";
 
@@ -89,14 +90,15 @@ async function main() {
     const f = fake();
     check("web search paused: nothing", (await loadPeopleToMeet(USER, { researcher: f.researcher, gates: { ...OPEN, paused: async () => true } })).length === 0 && f.calls.length === 0);
   }
-  await reset({ schools: [] });
+  await reset();
   {
     const f = fake();
-    check("no searchable query: nothing", (await loadPeopleToMeet(USER, { researcher: f.researcher, gates: OPEN })).length === 0 && f.calls.length === 0);
+    check("school alone: nothing", (await loadPeopleToMeet(USER, { researcher: f.researcher, gates: OPEN })).length === 0 && f.calls.length === 0);
   }
 
   console.log("\nweekly run");
   await reset();
+  await addTargetCompany(USER, "Stripe");
   const f = fake();
   const first = await loadPeopleToMeet(USER, { researcher: f.researcher, gates: OPEN, now: at(0) });
   check("released on a Free account: 2 results", first.length === 2, JSON.stringify(first));
@@ -126,7 +128,7 @@ async function main() {
     await db.update(userSettings).set({ schools: ["Duke"] }).where(eq(userSettings.userId, USER));
     const g = fake();
     const out = await loadPeopleToMeet(USER, { researcher: g.researcher, gates: OPEN, now: at(2) });
-    check("edited query, week's run spent: the newest cached run, no search", out.length === 2 && g.calls.length === 0, JSON.stringify(out.map((p) => p.name)));
+    check("edited query, week's run spent: hide unrelated cached results", out.length === 0 && g.calls.length === 0, JSON.stringify(out.map((p) => p.name)));
   }
 
   console.log("\nfirst run with no room");

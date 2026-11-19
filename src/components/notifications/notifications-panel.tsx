@@ -93,18 +93,13 @@ export function NotificationsPanelButton({
   );
   // A feedback reply counts as due until it is cleared from the panel (`panel-dismissals.ts`).
   const dismissedVersion = panelDismissals.useVersion();
-  const dueCount = useMemo(
-    () =>
-      data
-        ? data.items.filter(
-            (i) =>
-              i.urgency === "due" &&
-              !(i.kind === "feedback_reply" && panelDismissals.isDismissed(panelItemKey(i)))
-          ).length
-        : 0,
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `dismissedVersion` is the signal that the device's list changed
-    [data, dismissedVersion]
-  );
+  const dueCount = useMemo(() => {
+    const unreadReplies = data?.items.filter((item) =>
+      item.kind === "feedback_reply" && item.urgency === "due" && !panelDismissals.isDismissed(panelItemKey(item))
+    ).length ?? 0;
+    return (data?.dueCount ?? 0) + unreadReplies;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissedVersion tracks changes to the local dismissal store
+  }, [data, dismissedVersion]);
   // Unread missed notifications count toward the badge — that is the whole
   // point of keeping them; a failure nobody saw should say so on the bell.
   // They stop counting once the panel has been opened, but stay in the list.
@@ -203,7 +198,9 @@ export function NotificationsPanelButton({
               Notifications
             </SheetTitle>
             <SheetDescription>
-              What needs your attention right now.
+              {data?.dueBreakdown
+                ? `${data.dueBreakdown.reminders} due ${data.dueBreakdown.reminders === 1 ? "reminder" : "reminders"} and ${data.dueBreakdown.followUps} due ${data.dueBreakdown.followUps === 1 ? "follow-up" : "follow-ups"}. The badge also includes new notifications and active jobs.`
+                : "What needs your attention right now."}
             </SheetDescription>
           </SheetHeader>
 
