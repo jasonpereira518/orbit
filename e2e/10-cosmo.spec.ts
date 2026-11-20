@@ -14,7 +14,7 @@ test("Cosmo can be moved, steps out of the way, stays usable over a dialog and t
   await page.goto("/contacts", { waitUntil: "domcontentloaded" });
   await page.evaluate(() => localStorage.removeItem("orbit:cosmo-slot"));
   await page.reload({ waitUntil: "domcontentloaded" });
-  const orb = page.getByRole("button", { name: "Talk to Cosmo" });
+  const orb = page.getByRole("button", { name: "Cosmo voice", exact: true });
   const column = page.locator("[data-cosmo-slot]");
   await expect(orb).toBeVisible();
   await expect(column).toHaveAttribute("data-cosmo-slot", "bottom-right");
@@ -68,7 +68,7 @@ test("Cosmo can be moved, steps out of the way, stays usable over a dialog and t
         return `${hit?.getAttribute("aria-label") ?? hit?.tagName ?? "nothing"} @ ${el.closest("[data-cosmo-slot]")?.getAttribute("data-cosmo-slot")}`;
       }),
     )
-    .toMatch(/^Talk to Cosmo @/);
+    .toMatch(/^Cosmo voice @/);
   expect(await orb.evaluate((el) => el.closest('[aria-hidden="true"]') === null)).toBe(true);
   await page.keyboard.press("Escape");
   // Closed for good: it hands focus back on the way out, which would steal the field's below.
@@ -205,10 +205,9 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await page.evaluate(() => {
     localStorage.removeItem("orbit:cosmo-thread");
     localStorage.removeItem("orbit:cosmo-nudges");
-    localStorage.setItem("orbit:cosmo-first-call", "1"); // past the first-call question
   });
 
-  const orb = page.getByRole("button", { name: "Talk to Cosmo" });
+  const orb = page.getByRole("button", { name: "Cosmo voice", exact: true });
   await expect(orb).toBeVisible();
   const cornerHeight = () =>
     page.evaluate(() => parseFloat(document.documentElement.style.getPropertyValue("--orbit-cosmo-height") || "0"));
@@ -238,6 +237,13 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   const nudgeAtClick = (await chip.count()) ? await page.locator(".cosmo-idle").getAttribute("data-nudge") : null;
 
   await orb.click();
+  const prompt = page.getByRole("dialog", { name: "Cosmo voice" });
+  await expect(prompt).toBeVisible();
+  expect(starts).toHaveLength(0);
+  await prompt.getByRole("button", { name: "Cancel" }).click();
+  await expect(prompt).toHaveCount(0);
+  await orb.press("Enter");
+  await prompt.getByRole("button", { name: "Start voice call" }).click();
   const cosmo = page.getByRole("region", { name: "Cosmo", exact: true });
   await expect(cosmo.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
   await expect.poll(() => connected).toBe(1);
@@ -434,8 +440,10 @@ test("Cosmo starts from any page, survives navigation and resumes the day's thre
   await expect.poll(() => ends).toBe(1);
   await expect(orb).toBeVisible();
 
-  // The next click resumes the day's thread.
+  // Confirming the next call resumes the day's thread.
   await orb.click();
+  expect(starts).toHaveLength(1);
+  await prompt.getByRole("button", { name: "Start voice call" }).click();
   await expect.poll(() => starts.length).toBe(2);
   expect(starts[1]).toEqual({ threadId, freshIfMissing: true });
   await expect(cosmo.getByText("Under a minute of Cosmo left for now")).toBeVisible();

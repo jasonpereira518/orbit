@@ -10,8 +10,8 @@ import "./smoke/_env";
 import { eq, like, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { aiResultCache, contacts, rateLimitBuckets, userSettings } from "../src/db/schema";
-import { loadPeopleToMeet } from "../src/lib/people-to-meet";
 import { addTargetCompany } from "../src/lib/events/target-companies";
+import { loadPeopleToMeet } from "../src/lib/people-to-meet";
 import type { DiscoveryResearcher } from "../src/lib/web-research";
 
 const USER = "smoke-people-to-meet-user";
@@ -46,7 +46,7 @@ function fake() {
 
 const OPEN = { released: async () => true, canUseAi: async () => true, paused: async () => false };
 
-async function reset(settings: { schools?: string[] } = { schools: ["UNC"] }) {
+async function reset(settings: { schools?: string[]; schoolOnly?: boolean } = { schools: ["UNC"] }) {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
@@ -61,7 +61,7 @@ async function reset(settings: { schools?: string[] } = { schools: ["UNC"] }) {
   });
   await db.execute(sql`DELETE FROM target_companies WHERE user_id = ${USER}`);
   // A school alone is no reason to meet anyone; a target company is.
-  if (settings.schools?.length) await addTargetCompany(USER, "Acme Robotics");
+  if (settings.schools?.length && !settings.schoolOnly) await addTargetCompany(USER, "Acme Robotics");
   await db.insert(contacts).values([
     { userId: USER, fullName: "Grace Hopper", company: "Stripe" },
     { userId: USER, fullName: "L. Slug", company: "Somewhere", linkedinUrl: "https://www.linkedin.com/in/Linus-Slug/" },
@@ -93,10 +93,10 @@ async function main() {
     const f = fake();
     check("web search paused: nothing", (await loadPeopleToMeet(USER, { researcher: f.researcher, gates: { ...OPEN, paused: async () => true } })).length === 0 && f.calls.length === 0);
   }
-  await reset({ schools: [] });
+  await reset({ schools: ["UNC"], schoolOnly: true });
   {
     const f = fake();
-    check("no searchable query: nothing", (await loadPeopleToMeet(USER, { researcher: f.researcher, gates: OPEN })).length === 0 && f.calls.length === 0);
+    check("school alone: nothing", (await loadPeopleToMeet(USER, { researcher: f.researcher, gates: OPEN })).length === 0 && f.calls.length === 0);
   }
 
   console.log("\nweekly run");
@@ -130,7 +130,7 @@ async function main() {
     await db.update(userSettings).set({ schools: ["Duke"] }).where(eq(userSettings.userId, USER));
     const g = fake();
     const out = await loadPeopleToMeet(USER, { researcher: g.researcher, gates: OPEN, now: at(2) });
-    check("edited query, week's run spent: the newest cached run, no search", out.length === 2 && g.calls.length === 0, JSON.stringify(out.map((p) => p.name)));
+    check("edited query, week's run spent: hide unrelated cached results", out.length === 0 && g.calls.length === 0, JSON.stringify(out.map((p) => p.name)));
   }
 
   console.log("\nfirst run with no room");

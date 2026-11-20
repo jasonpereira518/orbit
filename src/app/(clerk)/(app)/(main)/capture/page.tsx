@@ -201,6 +201,7 @@ export default async function CapturePage({
       <CaptureHeader contactName={contactName} debrief={Boolean(initialMeeting && "eventId" in initialMeeting)} />
       {stale && (
         <StaleDraftNotice
+          key={stale.id}
           jobId={stale.id}
           kind={stale.sourceKind === "meeting" ? "meeting" : "notes"}
           updatedAt={stale.updatedAt}

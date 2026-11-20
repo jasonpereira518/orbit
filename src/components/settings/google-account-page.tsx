@@ -328,7 +328,7 @@ export function GoogleAccountPage({
           icon={<MailCheck className="size-4" />}
           tone={GOOGLE.red}
           title="Email activity"
-          description="Logs emails with people you know onto their timelines. Asks Google first."
+          description="Allow Gmail access to log emails with people you know on their timelines."
           control={{ kind: "action", label: "Allow" }}
           disabled={connection.busy}
           onAction={() => connection.connect(["email_intel"])}

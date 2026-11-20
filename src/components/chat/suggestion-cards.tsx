@@ -54,7 +54,7 @@ const PILL_BOX = "h-8 shrink-0 rounded-full";
  * running the full width of the composer. Every generic and every ordinary personalised
  * question fits well inside it; the longest generic measures 272px against this 352.
  */
-const PILL_MAX_W = "max-w-[22rem]";
+const PILL_MAX_W = "max-w-full sm:max-w-[22rem]";
 /** globals.css caps the cascade around 240ms; 30ms x 8 is the house step. */
 const STAGGER_STEP_MS = 30;
 const STAGGER_LIMIT = 8;
@@ -153,7 +153,7 @@ function Scroller({ children }: { children: React.ReactNode }) {
       data-slot="chat-suggestions"
       {...tourAnchor("chat.suggestions")}
       className={cn(
-        "-mx-1 flex items-center gap-2 overflow-x-auto overflow-y-hidden touch-pan-x px-1 pb-0.5",
+        "-mx-1 flex items-center gap-2 max-sm:flex-wrap sm:overflow-x-auto sm:overflow-y-hidden sm:touch-pan-x px-1 pb-0.5",
         "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
       )}
       // Both properties: this mask is computed at runtime, so — unlike the rest of the

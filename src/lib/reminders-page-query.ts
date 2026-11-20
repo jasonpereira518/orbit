@@ -183,13 +183,16 @@ export async function queryRemindersPage(
 
   const conds = filterConditions(userId, filters, opts.inboxId, today);
   const cursor = decodeCursor(filters.cursor, done);
+  const todayFirst = !filters.listId && filters.view === "today";
+  const todayRank = sql`case when ${dueDay} = ${today}::date then 0 else 1 end`;
   const withCursor = [...conds];
   if (cursor?.v === "a") {
     withCursor.push(sql`(
+      ${todayFirst ? sql`${todayRank},` : sql.empty()}
       coalesce(${dueDay}, ${INFINITE_DAY}),
       coalesce(${reminders.dueDate}, ${INFINITE_TS}),
       ${reminders.id}
-    ) > (${cursor.d}::date, ${cursor.t}::timestamptz, ${cursor.id}::uuid)`);
+    ) > (${todayFirst ? sql`${cursor.d === today ? 0 : 1}::int,` : sql.empty()}${cursor.d}::date, ${cursor.t}::timestamptz, ${cursor.id}::uuid)`);
   } else if (cursor?.v === "d") {
     withCursor.push(
       sql`(${reminders.createdAt}, ${reminders.id}) < (${cursor.c}::timestamptz, ${cursor.id}::uuid)`
@@ -199,6 +202,7 @@ export async function queryRemindersPage(
   const orderBy = done
     ? [sql`${reminders.createdAt} desc`, sql`${reminders.id} desc`]
     : [
+        ...(todayFirst ? [todayRank] : []),
         sql`coalesce(${dueDay}, ${INFINITE_DAY}) asc`,
         sql`coalesce(${reminders.dueDate}, ${INFINITE_TS}) asc`,
         sql`${reminders.id} asc`,

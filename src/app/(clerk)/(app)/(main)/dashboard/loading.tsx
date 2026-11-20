@@ -25,6 +25,12 @@ export default function DashboardLoading() {
     <div className="space-y-8">
       <DashboardHeader />
 
+      {/* Reminders + Due follow-ups: one section, two cards, always a pair. */}
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <DashboardCardSkeleton className="h-64" />
+        <DashboardCardSkeleton className="h-64" />
+      </div>
+
       <DashboardStatRowSkeleton />
 
       {/* Charts row — flex, matching page.tsx: the depth card removes itself on
@@ -38,12 +44,6 @@ export default function DashboardLoading() {
       <div className="flex flex-col items-stretch gap-6 lg:flex-row">
         <DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />
         <DashboardCardSkeleton className="h-64 min-w-0 lg:flex-1" />
-      </div>
-
-      {/* Reminders + Due follow-ups: one section, two cards, always a pair. */}
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <DashboardCardSkeleton className="h-64" />
-        <DashboardCardSkeleton className="h-64" />
       </div>
 
       {/* Recently updated owns a full-width row of its own. */}

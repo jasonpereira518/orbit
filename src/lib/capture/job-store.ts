@@ -87,7 +87,8 @@ export function seedCaptureJob(job: CaptureJobView | null, opts: { force?: boole
   set({ job, error: null });
 }
 
-export function clearCaptureJob() {
+export function clearCaptureJob(expectedJobId?: string) {
+  if (expectedJobId && snapshot.job?.id !== expectedJobId) return;
   set({ job: null, error: null });
 }
 

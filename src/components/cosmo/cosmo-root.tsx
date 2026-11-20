@@ -1,6 +1,7 @@
 "use client";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import Link from "next/link";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { usePathname } from "next/navigation";
 import { Captions, Loader2, MessageSquare, Mic, MicOff, X } from "lucide-react";
 import { setCaptions, useCaptions } from "@/lib/cosmo/captions-pref";
@@ -18,8 +19,6 @@ import { openVoice, setVoiceHandoff, updateVoiceState, useVoiceDock } from "@/li
 import { useVoiceCall, voiceActions } from "@/lib/voice/call-store";
 import type { VoicePublicState } from "@/lib/voice/contracts";
 import { useAppPulse } from "@/lib/app-pulse-store";
-import { hasStartedCall, markCallStarted } from "@/lib/cosmo/first-call";
-import { CosmoFirstCallConfirm } from "./cosmo-first-call-confirm";
 import { nudgeInput, pickNudge } from "@/lib/cosmo/nudge";
 import "@/components/chat/voice/voice-overlay.css";
 import "./cosmo.css";
@@ -95,10 +94,17 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
       /* Private mode: dismissed for this page view only. */
     }
   };
-  const [confirming, setConfirming] = useState(false);
-  const start = () => state && openVoice(dayThread(), state, "cosmo", nudge?.id);
-  // The orb and the chip both come through here: the first call on a browser asks first.
-  const talk = () => (hasStartedCall() ? start() : setConfirming(true));
+  const [voicePrompt, setVoicePrompt] = useState<{ nudgeId?: string } | null>(null);
+  const voiceTrigger = useRef<HTMLButtonElement>(null);
+  function talk(event: MouseEvent<HTMLButtonElement>) {
+    voiceTrigger.current = event.currentTarget;
+    setVoicePrompt({ nudgeId: nudge?.id });
+  }
+  function startVoice() {
+    if (!state || !voicePrompt || call) return;
+    setVoicePrompt(null);
+    openVoice(dayThread(), state, "cosmo", voicePrompt.nudgeId);
+  }
 
   useEffect(() => {
     let alive = true;
@@ -226,15 +232,18 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
     );
   return (
     <>
-      <CosmoFirstCallConfirm
-        open={confirming}
-        onCancel={() => setConfirming(false)}
-        onStart={() => {
-          markCallStarted();
-          setConfirming(false);
-          start();
-        }}
-      />
+      <Dialog open={voicePrompt !== null && !call} onOpenChange={(open) => !open && setVoicePrompt(null)}>
+        <DialogContent finalFocus={voiceTrigger}>
+          <DialogHeader>
+            <DialogTitle>Cosmo voice</DialogTitle>
+            <DialogDescription>Orbit uses your microphone and voice minutes during the call.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setVoicePrompt(null)}>Cancel</Button>
+            <Button disabled={!state} onClick={startVoice}>Start voice call</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {landing && (
         <div
           aria-hidden
@@ -344,7 +353,8 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
                 <button
                   type="button"
                   className="max-w-[13rem] truncate py-1.5 pl-3 pr-1 text-sm"
-                  aria-label={`${nudge.chip}: ask Cosmo`}
+                  aria-label={`${nudge.chip} · Cosmo voice`}
+                  aria-haspopup="dialog"
                   onClick={talk}
                 >
                   {nudge.chip}
@@ -361,10 +371,11 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
             )}
             <button
               type="button"
-              className="cosmo-idle pointer-events-auto"
+              className="cosmo-idle pointer-events-auto grid place-items-center text-white"
               data-nudge={nudge ? nudge.kind : undefined}
-              aria-label="Talk to Cosmo"
-              title="Talk to Cosmo · drag or use arrow keys to move"
+              aria-label="Cosmo voice"
+              aria-haspopup="dialog"
+              title="Cosmo voice · drag or use arrow keys to move"
               aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
               onPointerEnter={warmUp}
               onFocus={warmUp}
@@ -381,7 +392,9 @@ export function CosmoRoot({ tourActive = false, orb = true }: { tourActive?: boo
                 event.currentTarget.style.removeProperty("--cosmo-py");
               }}
               onClick={talk}
-            />
+            >
+              <Mic className="pointer-events-none size-4 drop-shadow-sm" aria-hidden />
+            </button>
           </div>
         )}
       </motion.div>

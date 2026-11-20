@@ -13,7 +13,6 @@ import { isSurfaceReleased } from "@/lib/surface-visibility";
 import {
   discoverPeople,
   loadCachedDiscovery,
-  loadLatestCachedDiscovery,
   type Candidate,
   type DiscoveryResearcher,
 } from "@/lib/web-research";
@@ -55,7 +54,7 @@ const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase().re
  * `page.find` is released, and one paid search per account per 7 days (`peopleToMeet` bucket;
  * the search also counts against `webResearch`). A run younger than a week is served from
  * `discoverPeople`'s cache; an older one is refreshed only if the week's bucket has room, else
- * the old run is served — or, when the query changed since, the newest run for any query. Every expected outcome — a gate, nothing to search, no room — is `[]`.
+ * the old run for that same query is served. An unrelated old query is never shown.
  */
 export async function loadPeopleToMeet(
   userId: string,
@@ -84,10 +83,6 @@ export async function loadPeopleToMeet(
       if (await claimWeeklyRun(userId)) {
         const run = await discoverPeople(userId, query, { fresh: true, now, researcher: opts.researcher });
         if (run.ok) candidates = run.result.candidates;
-      } else if (!cached) {
-        // The query changed mid-week (an edited aim or target company) after the week's run was
-        // spent: keep showing that run rather than an empty card until next week.
-        candidates = (await loadLatestCachedDiscovery(userId))?.candidates ?? [];
       }
     }
     return (await dropKnownPeople(userId, candidates)).slice(0, SHOWN).map(toPersonToMeet);

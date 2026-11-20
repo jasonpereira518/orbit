@@ -56,13 +56,10 @@ export function ContactStatPills({
         body={
           <>
             <p className="text-muted-foreground">
-              Where this person sits in your network: your rating, how recently and how often
-              you&apos;re in touch, and how they fit your goals — ranked against everyone else
-              you know.
+              Orbit uses your rating, how recently and how often you&apos;re in touch, and how this person fits your goals.
             </p>
             <p className="border-t pt-2 text-muted-foreground">
-              Health, next to it, is how the conversation itself is going: reply speed, who
-              writes, and recency.
+              Inner, Mid, and Outer orbit show where this relationship sits in your network.
             </p>
           </>
         }

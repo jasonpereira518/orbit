@@ -63,13 +63,15 @@ export default async function MeetingsPage({
     getActiveCaptureJobs().catch(() => []),
   ]);
   // The recorder only resumes a meeting's own review; a notes capture stays Capture's.
-  const found = jobs.find((j) => j.sourceKind === "meeting") ?? null;
+  const meetingJobs = jobs.filter((job) => job.sourceKind === "meeting");
+  const requestedJob = meetingJobs.find((job) => job.id === jobParam);
+  const found = requestedJob ?? meetingJobs[0] ?? null;
   // A days-old unsaved draft is offered as a notice instead of taking the page over.
   const stale =
     found &&
     !shouldAutoOpenJob(
       { status: found.status, updatedAt: new Date(found.updatedAt), itemCount: found.result?.items?.length ?? 0 },
-      { explicitJobParam: Boolean(jobParam), now: new Date() },
+      { explicitJobParam: Boolean(requestedJob), now: new Date() },
     )
       ? found
       : null;
@@ -86,7 +88,7 @@ export default async function MeetingsPage({
         </p>
       </div>
 
-      {stale && <StaleDraftNotice jobId={stale.id} kind="meeting" updatedAt={stale.updatedAt} itemCount={stale.result?.items?.length ?? 0} path="/meetings" />}
+      {stale && <StaleDraftNotice key={stale.id} jobId={stale.id} kind="meeting" updatedAt={stale.updatedAt} itemCount={stale.result?.items?.length ?? 0} path="/meetings" />}
 
       <CaptureFlowLazy
         // Resume (`?job=`) remounts the flow so it opens that draft, as on /capture.

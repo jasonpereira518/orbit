@@ -247,7 +247,7 @@ export function CaptureSummary({
           </div>
         )}
 
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div data-cosmo-avoid className="flex flex-col gap-2 sm:flex-row">
           <Button type="button" variant="outline" onClick={onStartOver} disabled={saving}>
             Start over
           </Button>

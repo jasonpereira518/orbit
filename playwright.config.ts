@@ -40,7 +40,7 @@ export default defineConfig({
       timeout: 15_000,
     },
     {
-      command: `./node_modules/.bin/next dev --port ${PORT}`,
+      command: `node ./node_modules/next/dist/bin/next dev --port ${PORT}`,
       // 200 only once the schema is reconciled on the fresh PGlite.
       url: `http://localhost:${PORT}/api/health`,
       reuseExistingServer: false,

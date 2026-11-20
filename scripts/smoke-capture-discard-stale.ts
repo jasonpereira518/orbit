@@ -24,21 +24,27 @@ async function statusOf(id: string) {
 
 async function seed(status: CaptureJobStatus) {
   const db = await getDb();
-  const [row] = await db.insert(captureJobs).values({ userId: USER, sourceKind: "meeting", status }).returning();
+  const [row] = await db.insert(captureJobs).values({ userId: USER, sourceKind: "meeting", status, updatedAt: new Date(Date.now() - 10 * 60_000) }).returning();
   return row!;
 }
 
 async function main() {
-  const saving = await seed("saving");
-  t.check("saving job is not discarded", !(await discardCaptureJobRow(USER, saving.id, { onlyStatuses: [...only] })));
-  t.check("saving job stays saving", (await statusOf(saving.id)) === "saving");
+  const db = await getDb();
+  try {
+    const saving = await seed("saving");
+    t.check("saving job is not discarded", !(await discardCaptureJobRow(USER, saving.id, { onlyStatuses: [...only] })));
+    t.check("saving job stays saving", (await statusOf(saving.id)) === "saving");
 
-  const ready = await seed("ready");
-  t.check("ready job is discarded", await discardCaptureJobRow(USER, ready.id, { onlyStatuses: [...only] }));
-  t.check("ready job is now discarded", (await statusOf(ready.id)) === "discarded");
+    const ready = await seed("ready");
+    t.check("ready job is discarded", await discardCaptureJobRow(USER, ready.id, { onlyStatuses: [...only] }));
+    t.check("ready job is now discarded", (await statusOf(ready.id)) === "discarded");
 
-  const reviewing = await seed("reviewing");
-  t.check("reviewing job is discarded", await discardCaptureJobRow(USER, reviewing.id, { onlyStatuses: [...only] }));
+    const reviewing = await seed("reviewing");
+    t.check("reviewing job is discarded", await discardCaptureJobRow(USER, reviewing.id, { onlyStatuses: [...only] }));
+  } finally {
+    // The CI shard shares this database with the capture stall sweep.
+    await db.delete(captureJobs).where(eq(captureJobs.userId, USER));
+  }
   t.done("capture-discard-stale");
 }
 
