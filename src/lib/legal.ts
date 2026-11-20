@@ -95,8 +95,11 @@ import { GOOGLE_SCOPES } from "@/lib/google-scopes";
 // switch it off, and Match photos) and Email activity (sender, recipients, subject and date of
 // recent mail, logged only against people already in your network) — and lists the writing-style
 // and signature reads under gmail.readonly, which the page already described further down.
-export const TERMS_VERSION = "2026-11-17";
-export const LEGAL_LAST_UPDATED = "November 17, 2026";
+// 2026-11-18 (draft-edit learning): Orbit keeps your newest 30 edited drafts (its draft next to
+// what you sent) and has your AI provider write down changes you made in at least three, as up
+// to five rules future drafts follow; turning it off deletes both.
+export const TERMS_VERSION = "2026-11-18";
+export const LEGAL_LAST_UPDATED = "November 18, 2026";
 
 /**
  * Clerk's `legal_accepted_at` from a user.created payload, as an acceptance to record.

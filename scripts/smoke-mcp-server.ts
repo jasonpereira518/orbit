@@ -13,7 +13,7 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { productEvents } from "../src/db/schema";
+import { contacts, productEvents } from "../src/db/schema";
 import { eventSchemas } from "../src/lib/product-event-schemas";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { mcpClientFrom, resetMcpClientCache } from "../src/lib/mcp/client";
@@ -355,6 +355,15 @@ run(async () => {
     notes: "Wrote the first compiler.",
   });
   check("update_contact writes the allowlisted fields", updated.updated === true, JSON.stringify(updated));
+  await call(writeKey, "update_contact", { contactId, notes: "Prefers email." });
+  {
+    const [row] = await (await getDb()).select({ notes: contacts.notes }).from(contacts).where(eq(contacts.id, contactId));
+    check(
+      "update_contact adds notes after what is there, never replacing it",
+      Boolean(row?.notes?.includes("Wrote the first compiler.") && row.notes.includes("Prefers email.")),
+      JSON.stringify(row?.notes)
+    );
+  }
 
   const noted = await call(writeKey, "add_note", {
     contactId,

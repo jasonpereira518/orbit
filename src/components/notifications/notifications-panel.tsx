@@ -93,13 +93,19 @@ export function NotificationsPanelButton({
   );
   // A feedback reply counts as due until it is cleared from the panel (`panel-dismissals.ts`).
   const dismissedVersion = panelDismissals.useVersion();
-  const dueCount = useMemo(() => {
-    const unreadReplies = data?.items.filter((item) =>
-      item.kind === "feedback_reply" && item.urgency === "due" && !panelDismissals.isDismissed(panelItemKey(item))
-    ).length ?? 0;
-    return (data?.dueCount ?? 0) + unreadReplies;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- dismissedVersion tracks changes to the local dismissal store
-  }, [data, dismissedVersion]);
+  const dueCount = useMemo(
+    () =>
+      data
+        ? // `data.dueCount` is the one count (reminders + follow-ups + feedback replies); a
+          // reply cleared from this device's list stops counting.
+          data.dueCount -
+          data.items.filter(
+            (i) => i.kind === "feedback_reply" && panelDismissals.isDismissed(panelItemKey(i))
+          ).length
+        : 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `dismissedVersion` is the signal that the device's list changed
+    [data, dismissedVersion]
+  );
   // Unread missed notifications count toward the badge — that is the whole
   // point of keeping them; a failure nobody saw should say so on the bell.
   // They stop counting once the panel has been opened, but stay in the list.
@@ -198,10 +204,18 @@ export function NotificationsPanelButton({
               Notifications
             </SheetTitle>
             <SheetDescription>
-              {data?.dueBreakdown
-                ? `${data.dueBreakdown.reminders} due ${data.dueBreakdown.reminders === 1 ? "reminder" : "reminders"} and ${data.dueBreakdown.followUps} due ${data.dueBreakdown.followUps === 1 ? "follow-up" : "follow-ups"}. The badge also includes new notifications and active jobs.`
-                : "What needs your attention right now."}
+              What needs your attention right now.
             </SheetDescription>
+            {data && data.dueBreakdown.reminders + data.dueBreakdown.followUps > 0 && (
+              <p className="text-sm text-muted-foreground" data-testid="due-breakdown">
+                <span className="font-medium text-ink">
+                  {data.dueBreakdown.reminders + data.dueBreakdown.followUps} due
+                </span>
+                {" · "}
+                {data.dueBreakdown.reminders} {data.dueBreakdown.reminders === 1 ? "reminder" : "reminders"} ·{" "}
+                {data.dueBreakdown.followUps} {data.dueBreakdown.followUps === 1 ? "follow-up" : "follow-ups"}
+              </p>
+            )}
           </SheetHeader>
 
           <NotificationsPanelBody onClose={() => setOpen(false)} />

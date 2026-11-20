@@ -41,6 +41,11 @@ const REAL_GATES: Gates = {
   paused: () => webSearchPaused(),
 };
 
+/** A school alone only finds alumni; a goal or a target company is a reason to meet someone. */
+export function hasMeetingSignal(input: { aim: string | null; targetCompanies: string[] }): boolean {
+  return !!input.aim?.trim() || input.targetCompanies.some((c) => c.trim());
+}
+
 const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
 /**
@@ -67,7 +72,7 @@ export async function loadPeopleToMeet(
       listTargetCompanies(userId),
       listSchools(userId),
     ]);
-    if (!aim?.field && companies.length === 0) return [];
+    if (!hasMeetingSignal({ aim: aim?.field ?? null, targetCompanies: companies.map((c) => c.name) })) return [];
     const query = buildDiscoveryQuery({ aim, companies: companies.map((c) => c.name), schools });
     if (!query) return [];
 

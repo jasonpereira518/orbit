@@ -158,8 +158,8 @@ export const MOBILE_BOTTOM_NAV: Array<
  * `scripts/smoke-nav-parity.ts` fails when a sidebar page is missing from the two lists.
  */
 export const MOBILE_MORE_NAV = [
-  RADAR,
   REMINDERS,
+  RADAR,
   CONSTELLATION,
   MEETINGS,
   EVENTS,

@@ -7,7 +7,7 @@
  * Run: npx tsx scripts/smoke-people-to-meet.ts
  */
 import "./smoke/_env";
-import { eq, like } from "drizzle-orm";
+import { eq, like, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { aiResultCache, contacts, rateLimitBuckets, userSettings } from "../src/db/schema";
 import { addTargetCompany } from "../src/lib/events/target-companies";
@@ -46,7 +46,7 @@ function fake() {
 
 const OPEN = { released: async () => true, canUseAi: async () => true, paused: async () => false };
 
-async function reset(settings: { schools?: string[] } = { schools: ["UNC"] }) {
+async function reset(settings: { schools?: string[]; schoolOnly?: boolean } = { schools: ["UNC"] }) {
   const db = await getDb();
   await db.delete(contacts).where(eq(contacts.userId, USER));
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
@@ -59,6 +59,9 @@ async function reset(settings: { schools?: string[] } = { schools: ["UNC"] }) {
     schools: settings.schools ?? [],
     socialLinks: { linkedin: "https://www.linkedin.com/in/ada-tester" },
   });
+  await db.execute(sql`DELETE FROM target_companies WHERE user_id = ${USER}`);
+  // A school alone is no reason to meet anyone; a target company is.
+  if (settings.schools?.length && !settings.schoolOnly) await addTargetCompany(USER, "Acme Robotics");
   await db.insert(contacts).values([
     { userId: USER, fullName: "Grace Hopper", company: "Stripe" },
     { userId: USER, fullName: "L. Slug", company: "Somewhere", linkedinUrl: "https://www.linkedin.com/in/Linus-Slug/" },
@@ -90,7 +93,7 @@ async function main() {
     const f = fake();
     check("web search paused: nothing", (await loadPeopleToMeet(USER, { researcher: f.researcher, gates: { ...OPEN, paused: async () => true } })).length === 0 && f.calls.length === 0);
   }
-  await reset();
+  await reset({ schools: ["UNC"], schoolOnly: true });
   {
     const f = fake();
     check("school alone: nothing", (await loadPeopleToMeet(USER, { researcher: f.researcher, gates: OPEN })).length === 0 && f.calls.length === 0);
@@ -98,7 +101,6 @@ async function main() {
 
   console.log("\nweekly run");
   await reset();
-  await addTargetCompany(USER, "Stripe");
   const f = fake();
   const first = await loadPeopleToMeet(USER, { researcher: f.researcher, gates: OPEN, now: at(0) });
   check("released on a Free account: 2 results", first.length === 2, JSON.stringify(first));

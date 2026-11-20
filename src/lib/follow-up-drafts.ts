@@ -11,7 +11,7 @@ import { isAiAccessError, type AiAccess } from "@/lib/ai-access";
 import type { AiOperationId } from "@/lib/ai-operations";
 import { senderProfileBlock } from "@/lib/sender-profile";
 import { loadSenderBio, loadSenderName } from "@/lib/sender-profile-server";
-import { FALLBACK_VOICE, draftWithFormat, formatRules, type MessageKind } from "@/lib/message-format";
+import { FALLBACK_VOICE, channelFromHistory, channelFromWords, draftWithFormat, formatRules, type MessageKind } from "@/lib/message-format";
 import { loadUserAim } from "@/lib/career-profile-server";
 import { AIM_LABELS, FIELD_LABELS, TIMELINE_LABELS } from "@/lib/about-you";
 import { formatHowMetSummary } from "@/lib/met-context";
@@ -92,6 +92,11 @@ function parseDraft(content: string): { body: string; purpose: string; subject: 
 }
 
 export type FollowUpDraft = {
+  /**
+   * The channel the draft was written for: the one asked for, else the one the user's words
+   * named, else the one they last wrote to this person on; null when none of those said.
+   */
+  channel: "email" | "linkedin" | "sms" | null;
   body: string;
   /** Email only: the subject line the house format asks for; "" for other channels. */
   subject: string;
@@ -265,12 +270,20 @@ async function draftFromContext(input: {
   const givenPurpose = normalizePurpose(input.purpose);
   const senderBlock = senderProfileBlock(senderBio);
 
+  // The caller's channel, else the one the user's words name (the intent they typed, then the
+  // reminder), else the one they last wrote to this person on. Undefined keeps today's DM.
+  const channel =
+    input.channel ??
+    channelFromWords([input.intent, input.reminderBlock]) ??
+    channelFromHistory(input.recent.map((r) => r.interactionType)) ??
+    undefined;
+
   const channelLabel =
-    input.channel === "email"
+    channel === "email"
       ? "email"
-      : input.channel === "sms"
+      : channel === "sms"
         ? "SMS / text message"
-        : input.channel === "linkedin"
+        : channel === "linkedin"
           ? "LinkedIn DM"
           : "LinkedIn DM, text, or short email";
 
@@ -287,7 +300,7 @@ async function draftFromContext(input: {
    * failed lookup drops the sign-off rather than costing the user their draft.
    */
   let senderFullName = await loadSenderName(input.userId);
-  if (!senderFullName && input.channel === "email") {
+  if (!senderFullName && channel === "email") {
     try {
       const { getCurrentUserProfile } = await import("@/lib/auth");
       const name = (await getCurrentUserProfile())?.name?.trim();
@@ -297,7 +310,7 @@ async function draftFromContext(input: {
     }
   }
 
-  const kind = followUpKind(input.channel);
+  const kind = followUpKind(channel);
   const email = kind === "email_warm";
   // Real free times for a meeting ask, email only (a DM asks loosely).
   const windows = email ? await freeWindows(input.userId) : null;
@@ -372,6 +385,7 @@ ${senderBlock ? "- Write from the sender's own background where it makes the ask
     purpose: givenPurpose || guardModelOutput(draft.purpose).text,
     contactId: input.contact.id,
     contactName,
+    channel: channel ?? null,
   };
 }
 

@@ -82,7 +82,7 @@ export function StaleDraftNotice({
   kind: "meeting" | "notes";
   /** ISO time the draft was last touched. */
   updatedAt: string;
-  /** People already pulled out of it; more than 0 makes Discard ask first. */
+  /** People already pulled out of the draft. */
   itemCount: number;
   path: "/capture" | "/meetings";
 }) {
@@ -139,7 +139,7 @@ export function StaleDraftNotice({
               variant="ghost"
               className="text-muted-foreground"
               disabled={busy}
-              onClick={() => (itemCount > 0 ? setConfirming(true) : void discard())}
+              onClick={() => setConfirming(true)}
             >
               Discard
             </Button>

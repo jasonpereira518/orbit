@@ -51,6 +51,7 @@ import { AiKeyNotice } from "@/components/ai-key-notice";
 import { aiDenialFromMessage } from "@/lib/ai-access-copy";
 import { friendlyError } from "@/lib/errors";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { recordDraftOutcome } from "@/actions/settings";
 
 type Platform = "email" | "linkedin" | "sms";
 
@@ -101,6 +102,8 @@ export function ContactFollowUpSection({
   const router = useRouter();
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [draft, setDraft] = useState("");
+  /** The draft as Orbit wrote it, compared with what is used (`recordDraftOutcome`). */
+  const [aiDraft, setAiDraft] = useState("");
   /** Email only: the draft's own subject, editable before it goes. */
   const [subject, setSubject] = useState("");
   const [aiError, setAiError] = useState<string | null>(null);
@@ -204,6 +207,7 @@ export function ContactFollowUpSection({
         }
         setAiError(null);
         setDraft(result.body);
+        setAiDraft(result.body);
         setSubject(result.subject);
         setPurpose(result.purpose);
         setPickedPurpose(result.purpose);
@@ -216,8 +220,16 @@ export function ContactFollowUpSection({
     });
   }
 
+  /** Orbit's draft next to the text used, to learn edits made again and again. */
+  function recordUse() {
+    if (!aiDraft || !draft.trim()) return;
+    const kind = platform === "email" ? "email" : platform === "linkedin" ? "linkedin" : "other";
+    void recordDraftOutcome({ surface: "follow_up", kind, aiText: aiDraft, finalText: draft }).catch(() => {});
+  }
+
   function openNative() {
     if (!draft.trim() || !platform) return;
+    recordUse();
     if (platform === "email" && sendOptions.email) {
       const subjectParam = encodeURIComponent(subject.trim() || `Hi ${contactName}`);
       const body = encodeURIComponent(draft);
@@ -253,6 +265,7 @@ export function ContactFollowUpSection({
           toast.error(res.message);
           return;
         }
+        recordUse();
         showUndoSendToast({ sendId: res.sendId, recipientLabel: contactName, onUndone: () => router.refresh() });
         router.refresh();
       } catch (err) {
@@ -268,6 +281,7 @@ export function ContactFollowUpSection({
         : platform === "linkedin"
           ? "linkedin_message"
           : "note";
+    recordUse();
     startMark(async () => {
       try {
         await completeFollowUpWithTouch(contactId, {

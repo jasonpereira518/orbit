@@ -85,6 +85,46 @@ export const HYPE_WORDS = [
 
 const HYPE_RE = new RegExp(`\\b(${HYPE_WORDS.join("|")})\\b`, "gi");
 
+export type ChannelCue = "email" | "linkedin";
+
+const EMAIL_CUE = /\b(e-?mails?|e-?mailing|inbox|subject line)\b/gi;
+const LINKEDIN_CUE = /\b(linked ?in|inmail|dms?|connection (?:note|request)|connect on)\b/gi;
+
+/**
+ * The channel the user's own words ask for, or null when they name none. `texts` come newest
+ * first (the intent they just typed, then the reminder they wrote earlier); inside one text the
+ * LAST mention wins, so "not on LinkedIn, email her" is an email.
+ *
+ * ponytail: a word match, not a parse. "my email is in my signature" reads as email; that only
+ * picks the format, and the draft shows which one it used so the person can switch.
+ */
+export function channelFromWords(texts: Array<string | null | undefined>): ChannelCue | null {
+  for (const text of texts) {
+    if (!text) continue;
+    let best: { at: number; cue: ChannelCue } | null = null;
+    for (const [re, cue] of [[EMAIL_CUE, "email"], [LINKEDIN_CUE, "linkedin"]] as const) {
+      for (const m of text.matchAll(re)) {
+        if (!best || m.index > best.at) best = { at: m.index, cue };
+      }
+    }
+    if (best) return best.cue;
+  }
+  return null;
+}
+
+/**
+ * The channel the person and the user last wrote to each other on, from interaction types
+ * newest first (`@/lib/interaction-types`): an email exchange means email, a LinkedIn message
+ * means LinkedIn. Meetings, calls and notes say nothing about where to write, so they are skipped.
+ */
+export function channelFromHistory(types: Array<string | null | undefined>): ChannelCue | null {
+  for (const type of types) {
+    if (type === "email") return "email";
+    if (type === "linkedin_message") return "linkedin";
+  }
+  return null;
+}
+
 /** A tone picked for one campaign: a nudge on the user's voice, not a costume. */
 export function toneNudge(tone: string | null | undefined): string | null {
   const t = tone?.trim().toLowerCase();

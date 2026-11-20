@@ -72,6 +72,17 @@ async function main() {
   check("a given purpose is used verbatim in the prompt", forced.system.includes(`The purpose of this message is: ${given}. Use it as given.`));
   check("a given purpose is returned exactly", forcedRes.purpose === given, forcedRes.purpose);
 
+  // The channel comes from the user's words, then the history, when the caller names none.
+  const asked = await only(() => generateContactFollowUpDraft(CASE_USER, contactId, [], { intent: "Email her about the London office" }));
+  const askedRes = await generateContactFollowUpDraft(CASE_USER, contactId, [], { intent: "Email her about the London office" });
+  check("an intent that says email drafts an email (subject in the shape)", asked.system.includes('"subject": string') && askedRes.channel === "email", askedRes.channel ?? "null");
+  const dm = await generateContactFollowUpDraft(CASE_USER, contactId, [], { intent: "Send her a LinkedIn DM" });
+  check("an intent that says LinkedIn drafts a LinkedIn message", dm.channel === "linkedin");
+  const plain = await generateContactFollowUpDraft(CASE_USER, contactId, [], { intent: "Say hi" });
+  check("no cue and only a coffee in the history: no channel picked", plain.channel === null);
+  const named = await generateContactFollowUpDraft(CASE_USER, contactId, [], { intent: "Email her", channel: "linkedin" });
+  check("a channel the caller names wins over the words", named.channel === "linkedin");
+
   if (failures) {
     console.error(`\n${failures} check(s) failed`);
     process.exit(1);

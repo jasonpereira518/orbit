@@ -26,7 +26,7 @@ test("a contact can be edited, shows up in the export, and is gone after delete"
 
   // Edit: the sheet's form is the same ContactForm as /contacts/new, in "Save changes" mode.
   await openEditSheet();
-  const companyInput = sheet.getByPlaceholder("Amazon Web Services (AWS)");
+  const companyInput = sheet.getByPlaceholder("Company", { exact: true }).first();
   await companyInput.fill(company);
   await sheet.getByRole("button", { name: "Save changes" }).click();
   await expect(sheet).toBeHidden({ timeout: 30_000 });

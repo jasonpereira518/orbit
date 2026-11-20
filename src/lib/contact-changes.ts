@@ -35,7 +35,8 @@ const RECENT_DAYS = 30;
 const isField = (f: string | null): f is FieldKey => FIELD_KEYS.includes(f as FieldKey);
 const asText = (v: unknown) => (typeof v === "string" ? v : null);
 
-export async function listContactChangesForUser(userId: string, limit = 50) {
+/** `contactId`: just that person's (the contact page). */
+export async function listContactChangesForUser(userId: string, limit = 50, contactId?: string) {
   const db = await getDb();
   const since = new Date(Date.now() - RECENT_DAYS * 86_400_000);
   const rows = await db
@@ -56,6 +57,7 @@ export async function listContactChangesForUser(userId: string, limit = 50) {
       and(
         eq(contactChanges.userId, userId),
         eq(contactChanges.kind, "field"),
+        ...(contactId ? [eq(contactChanges.contactId, contactId)] : []),
         or(
           eq(contactChanges.status, "suggested"),
           and(eq(contactChanges.status, "applied"), gte(contactChanges.createdAt, since))

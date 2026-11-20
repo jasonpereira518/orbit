@@ -12,6 +12,8 @@ import {
 } from "@/actions/contacts";
 import { ContactBriefCard } from "@/components/contacts/contact-brief-card";
 import { ContactExperienceSection } from "@/components/contacts/contact-experience-section";
+import { ContactChangesList } from "@/components/contacts/contact-changes-list";
+import { listContactChangesForUser } from "@/lib/contact-changes";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
@@ -445,6 +447,12 @@ export default async function ContactDetailPage({
         />
       </div>
 
+      {/* Newer details Orbit found for what you typed (contact-info accuracy): answered here
+          or on the Duplicates page. Renders nothing when none are waiting. */}
+      <Suspense fallback={null}>
+        <StreamedContactUpdates userId={userIdPromise} contactId={contact.id} />
+      </Suspense>
+
       {/* No fallback: the section renders its own empty state, and a skeleton that
           resolves into an empty state reads as a glitch. */}
       <Suspense fallback={null}>
@@ -560,6 +568,11 @@ async function StreamedFollowUp({
       <ContactFollowUpSection {...rest} sendOptions={resolved} />
     </div>
   );
+}
+
+async function StreamedContactUpdates({ userId, contactId }: { userId: Promise<string>; contactId: string }) {
+  const { suggestions } = await listContactChangesForUser(await userId, 20, contactId);
+  return <ContactChangesList suggestions={suggestions} applied={[]} />;
 }
 
 async function StreamedPendingSends({

@@ -77,7 +77,7 @@ export function OutlookImportPanel({
               : connection.connected && connection.hasMailScope
                 ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
                 : connection.connected
-                  ? `Connected as ${connection.emailAddress}, without permission to read mail. Allow mail access to scan for recruiters.`
+                  ? `Microsoft is connected as ${connection.emailAddress}, but Orbit can't read your mail yet. Allow mail access to find your recruiters.`
                   : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
           </p>
           {connection.status === "disarmed" ? (

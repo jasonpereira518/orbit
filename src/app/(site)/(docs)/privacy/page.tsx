@@ -381,6 +381,22 @@ export default function PrivacyPage() {
               in Settings, removes what it recorded.
             </p>
           </DocCallout>
+          <DocCallout title="Learning from your edits">
+            <p>
+              When you send or copy a message Orbit drafted (in Chat, Compose, a follow-up or a
+              campaign) after changing it, Orbit keeps the draft it wrote next to the text you
+              used, only your newest 30, so it can notice changes you make again and again. After
+              every few edited drafts it sends those pairs to the AI provider that runs your
+              account&rsquo;s AI features, which writes down only changes you made in at least
+              three of them, as up to five short rules such as &ldquo;drop the closing line&rdquo;.
+              Future drafts follow them.
+            </p>
+            <p>
+              You can read, edit or turn these off under &ldquo;How I like things written&rdquo; in
+              Chat. Turning them off deletes the rules and the kept drafts, and Orbit stops keeping
+              new ones. Deleting your preferences deletes both too.
+            </p>
+          </DocCallout>
           <DocCallout title="Matching your writing style">
             <p>
               So the messages Orbit drafts for you sound like you, Orbit reads about twenty of

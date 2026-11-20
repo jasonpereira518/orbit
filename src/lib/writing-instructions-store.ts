@@ -19,7 +19,7 @@ export async function loadWritingInstructions(userId: string): Promise<string | 
   const db = await getDb();
   const row = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, userId),
-    columns: { writingInstructions: true, writingStyleProfile: true },
+    columns: { writingInstructions: true, writingStyleProfile: true, writingEditLessons: true },
   });
   return writingInstructionsFromRow(row);
 }
@@ -40,9 +40,12 @@ export async function loadOwnWritingInstructions(userId: string): Promise<string
  * row read after any save this request made (see above for why a stale row is wrong here).
  */
 export function writingInstructionsFromRow(
-  row: { writingInstructions?: string | null; writingStyleProfile?: string | null } | null | undefined
+  row:
+    | { writingInstructions?: string | null; writingStyleProfile?: string | null; writingEditLessons?: string | null }
+    | null
+    | undefined
 ): string | null {
-  return withStyleProfile(row?.writingInstructions, row?.writingStyleProfile);
+  return withStyleProfile(row?.writingInstructions, row?.writingStyleProfile, row?.writingEditLessons);
 }
 
 /**

@@ -48,7 +48,7 @@ export async function loadKnowledgePeople(userId: string): Promise<KnowledgePeop
       .from(contacts)
       .leftJoin(contactBriefs, eq(contactBriefs.contactId, contacts.id))
       .where(eq(contacts.userId, userId))
-      .orderBy(sql`${contacts.lastInteractionAt} DESC NULLS LAST`, desc(contacts.updatedAt), desc(contacts.id))
+      .orderBy(sql`(${contacts.aiSummary} IS NULL OR ${contacts.aiSummary} = '') ASC`, sql`${contacts.lastInteractionAt} DESC NULLS LAST`, desc(contacts.updatedAt), desc(contacts.id))
       .limit(KNOWLEDGE_PEOPLE_LIMIT),
   ]);
 

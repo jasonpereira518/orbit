@@ -615,6 +615,13 @@ async function seed() {
     reason: "Same full name",
     confidence: 0.6,
   });
+  await db.insert(schema.draftEdits).values({
+    userId: USER,
+    surface: "chat",
+    kind: "email",
+    aiText: "Hi Ada, good to see you.",
+    finalText: "Hey Ada, good to see you.",
+  });
   await db.insert(schema.contactChanges).values({
     userId: USER,
     contactId: contact.id,

@@ -30,6 +30,7 @@ import { stripSignature } from "@/lib/email/signature";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { DraftLinkWarning } from "@/components/follow-up/draft-link-warning";
+import { recordDraftOutcome } from "@/actions/settings";
 
 /**
  * Write an email and send it from the user's own mailbox. It goes out after a 10-second undo
@@ -218,6 +219,8 @@ export function ComposeDialog({
           return;
         }
         clearComposeDraft(window.localStorage, key);
+        // Orbit's draft next to what went out, to learn edits made again and again.
+        if (aiBody) void recordDraftOutcome({ surface: "compose", kind: "email", aiText: aiBody, finalText: snapshot.body }).catch(() => {});
         onOpenChange(false);
         const who = contact?.name ?? res.to[0] ?? "them";
         const others = res.to.length - 1;

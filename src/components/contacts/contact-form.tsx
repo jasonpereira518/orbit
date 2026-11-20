@@ -304,7 +304,7 @@ export function ContactForm({
                 required
                 value={form.fullName}
                 onChange={(e) => set("fullName", e.target.value)}
-                placeholder="Jason Pereira"
+                placeholder="Full name"
               />
             </Field>
             <Field label="LinkedIn URL" description={lookingUp ? "Looking up profile…" : "Paste a profile URL to autofill role"}>
@@ -330,7 +330,7 @@ export function ContactForm({
                 autoComplete="off"
                 value={form.company}
                 onChange={(e) => set("company", e.target.value)}
-                placeholder="Amazon Web Services (AWS)"
+                placeholder="Company"
               />
             </Field>
             <Field label="Role">
@@ -338,7 +338,7 @@ export function ContactForm({
                 autoComplete="off"
                 value={form.title}
                 onChange={(e) => set("title", e.target.value)}
-                placeholder="Solutions Architect intern"
+                placeholder="Role"
               />
             </Field>
           </div>
@@ -360,7 +360,7 @@ export function ContactForm({
               required
               value={form.fullName}
               onChange={(e) => set("fullName", e.target.value)}
-              placeholder="Jason Pereira"
+              placeholder="Full name"
             />
           </Field>
           <Field label="Preferred name">
@@ -368,7 +368,7 @@ export function ContactForm({
               autoComplete="off"
               value={form.preferredName}
               onChange={(e) => set("preferredName", e.target.value)}
-              placeholder="Jason"
+              placeholder="Preferred name"
             />
           </Field>
         </div>
@@ -434,7 +434,7 @@ export function ContactForm({
               autoComplete="off"
               value={form.company}
               onChange={(e) => set("company", e.target.value)}
-              placeholder="Amazon Web Services (AWS)"
+              placeholder="Company"
             />
           </Field>
           <Field label="Role" description="Autofills from LinkedIn when available">
@@ -442,7 +442,7 @@ export function ContactForm({
               autoComplete="off"
               value={form.title}
               onChange={(e) => set("title", e.target.value)}
-              placeholder="Solutions Architect intern"
+              placeholder="Role"
             />
           </Field>
         </div>
@@ -462,7 +462,7 @@ export function ContactForm({
               onChange={(v) => set("school", v)}
               onSelect={selectSchool}
               suggestions={suggestions.schools}
-              placeholder="Columbia University"
+              placeholder="School"
             />
           </Field>
         </div>

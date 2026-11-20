@@ -21,9 +21,9 @@
     "stats": {
       "totalContacts": 25,
       "dueFollowUps": 5,
-      "dueReminders": 3,
       "strongConnections": 19,
       "pendingReminders": 8,
+      "dueReminders": 3,
       "topCompany": null
     },
     "recentContacts": [
@@ -2948,8 +2948,8 @@
     ],
     "dueCount": 8,
     "dueBreakdown": {
-      "followUps": 5,
-      "reminders": 3
+      "reminders": 3,
+      "followUps": 5
     },
     "totalCount": 23,
     "canUseExtension": true,
@@ -4144,7 +4144,7 @@
                   "maxLength": 500
                 },
                 "notes": {
-                  "description": "Replaces the existing notes.",
+                  "description": "Added to the end of their notes, dated; existing notes are kept.",
                   "type": "string",
                   "maxLength": 5000
                 },
@@ -6566,9 +6566,9 @@
     "stats": {
       "totalContacts": 27,
       "dueFollowUps": 4,
-      "dueReminders": 2,
       "strongConnections": 20,
       "pendingReminders": 11,
+      "dueReminders": 2,
       "topCompany": null
     },
     "recentContacts": [
