@@ -7,13 +7,13 @@ import { requireUserId } from "@/lib/auth";
  * The feedback inbox, live: a server-sent event whenever a new report lands or someone
  * replies in a conversation, so `/admin/feedback` refreshes itself instead of waiting for a
  * reload. Same shape and cost reasoning as `/api/feedback/[feedbackId]/stream` — one cheap
- * count a second, a rolled connection, and `maxDuration = 60` (an existing value, so no new
+ * count every 5 seconds, a rolled connection, and `maxDuration = 60` (an existing value, so no new
  * Vercel function under the Hobby cap).
  */
 export const maxDuration = 60;
 
 const STREAM_MS = 55_000;
-const TICK_MS = 1_000;
+const TICK_MS = 5_000;
 const HEARTBEAT_MS = 15_000;
 
 function sleep(ms: number, signal: AbortSignal) {
